@@ -406,10 +406,10 @@ def review_type_fields_by_template(template_ids) -> dict:
 
         type_index = curriculum_review_types.review_type_index()
         resolved = {}
-        for template_id in wanted:
-            template_row = curriculum_reviews.get_review_template_row(template_id)
-            if not template_row:
-                continue
+        for template_row in curriculum_reviews.get_review_template_rows(
+            f"id in ({', '.join(['%s'] * len(wanted))})", sorted(wanted), include_deleted=True,
+        ):
+            template_id = template_row['id']
             type_row = type_index.get(clean_text(template_row.get("review_type_id")))
             if not type_row:
                 continue
@@ -457,6 +457,7 @@ def resolve_curriculum_review_occurrences(
     window_start: date,
     window_end: date,
     template_cache: dict[str, list[dict]],
+    learner_scope: dict | None = None,
 ) -> list[dict]:
     """RAW occurrences of every enabled Review template on this learner's
     programme -- or [] if the programme has none configured, they are all
@@ -477,6 +478,7 @@ def resolve_curriculum_review_occurrences(
             window_start,
             window_end,
             template_cache=template_cache,
+            learner_scope=learner_scope,
         )
     except Exception as exc:  # Curriculum being unreachable must not blank the calendar entirely.
         logger.warning("Could not resolve Curriculum reviews for programme %s: %s", programme_id, exc)
@@ -4434,7 +4436,7 @@ TEAMS_SYNC_TEMPORARY_MESSAGE = (
     "The event was saved locally only; try again later or ask an admin to check Microsoft permissions."
 )
 TEAMS_SYNC_LINK_MISSING_MESSAGE = (
-    "Teams did not return a meeting link, so this event was moved back to Not Scheduled. "
+    "Teams did not return a meeting link. The appointment is saved. "
     "Try scheduling again after Microsoft sync is available."
 )
 
@@ -4444,6 +4446,11 @@ def public_graph_sync_warning(raw_message: str | None) -> str:
     message = clean_text(raw_message)
     if not message:
         return ""
+    if message in {
+        TEAMS_SYNC_PERMISSION_MESSAGE, TEAMS_SYNC_NOT_CONFIGURED_MESSAGE,
+        TEAMS_SYNC_TEMPORARY_MESSAGE, TEAMS_SYNC_LINK_MISSING_MESSAGE,
+    }:
+        return message
     lowered = message.casefold()
     if "credentials are not configured" in lowered:
         return TEAMS_SYNC_NOT_CONFIGURED_MESSAGE
@@ -4467,40 +4474,15 @@ def calendar_record_needs_schedule_repair(record: CoachCalendarEvent) -> bool:
     return not calendar_record_has_launch_url(record)
 
 
-def repair_calendar_record_to_needs_schedule(
-    record: CoachCalendarEvent,
-    *,
-    reason: str | None = None,
-) -> CoachCalendarEvent:
-    default_reason = "Teams meeting details were not stored, so this event has been returned to Not Scheduled."
-    if clean_text(record.graph_event_id):
-        delete_calendar_event_from_graph(record)
-
-    record.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
-    record.scheduled_date = None
-    record.scheduled_time = None
-    record.meeting_provider = ""
-    record.meeting_link = ""
-    record.graph_web_link = ""
-    record.graph_event_id = ""
-    record.last_graph_sync_error = public_graph_sync_warning(reason) or default_reason
-    record.save()
-    return record
-
-
 def normalize_calendar_records(records: list[CoachCalendarEvent]) -> list[CoachCalendarEvent]:
-    normalized_records: list[CoachCalendarEvent] = []
-    for record in records:
-        if calendar_record_needs_schedule_repair(record):
-            normalized_records.append(
-                repair_calendar_record_to_needs_schedule(
-                    record,
-                    reason=clean_text(record.last_graph_sync_error),
-                )
-            )
-            continue
-        normalized_records.append(record)
-    return normalized_records
+    """Calendar reads must never reschedule bookings or delete Graph events."""
+    return list(records)
+
+
+def save_calendar_sync_warning(record: CoachCalendarEvent, *, reason: str) -> CoachCalendarEvent:
+    record.last_graph_sync_error = public_graph_sync_warning(reason)
+    record.save(update_fields=['last_graph_sync_error', 'updated_at'])
+    return record
 
 
 def build_catchup_note_lines(record: CoachCalendarEvent, target_date: date) -> list[str]:
@@ -4604,6 +4586,8 @@ def build_catchup_calendar_event(
     if review_type_fields is None:
         review_type_fields = review_type_fields_by_template([review_template_id])
     record_review_type = review_type_fields.get(review_template_id) or review_type_event_fields(None)
+    if review_template_id:
+        event_type = review_event_type_for_type_code(record_review_type.get('reviewTypeCode'))
     event_title = {
         **BOOKED_EVENT_TITLES,
         "live-session": "Live Session",
@@ -4611,6 +4595,8 @@ def build_catchup_calendar_event(
         "welfare": "Welfare Session",
         "review": "Review",
     }.get(event_type, event_type.replace("-", " ").title())
+    if review_template_id:
+        event_title = resolve_review_display_title(event_type, review_template_id)
     target_date = record.target_date or record.scheduled_date or date.today()
     display_date = record.scheduled_date or target_date
     duration_minutes = record.duration_minutes or TIMETABLE_DEFAULT_DURATION_MINUTES
@@ -4634,6 +4620,8 @@ def build_catchup_calendar_event(
     programme = clean_text(getattr(learner, "programme", None)) or "--"
     cohort = clean_text(getattr(learner, "cohort", None)) or "--"
     event_kind = "welfare" if event_type == "student-support" else ("live-session" if event_type == "live-session" else "coaching")
+    if event_type in ('review', 'progress-review'):
+        event_kind = 'review'
     note_text = (
         " ".join(build_catchup_note_lines(record, target_date))
         if event_type == CATCH_UP_EVENT_TYPE
@@ -4658,6 +4646,8 @@ def build_catchup_calendar_event(
         "sequence": int(record.sequence or 1),
         "title": event_title,
         "reviewTemplateId": review_template_id or None,
+        "reviewInstanceId": clean_text(getattr(record, 'review_instance_id', '')) or None,
+        "occurrenceNumber": getattr(record, 'occurrence_number', None) or record.sequence,
         # A booked Review keeps its template's classification, so it filters
         # with the unbooked occurrences around it rather than dropping into
         # the generic bucket the moment somebody schedules it.
@@ -4764,6 +4754,8 @@ def fetch_standalone_event_records(owner_email: str) -> list[CoachCalendarEvent]
             .filter(
                 ~Q(event_type__in=["mcr", "progress-review"])
                 | Q(event_type__in=["mcr", "progress-review"], idempotency_key__startswith="learner-book:")
+                | ~Q(review_template_id="")
+                | Q(event_type__in=["mcr", "progress-review"], status__in=["scheduled", "in-progress", "awaiting-signature", "completed", "cancelled"])
             )
             .order_by("scheduled_date", "target_date", "scheduled_time", "learner_name")
         )
@@ -4796,8 +4788,8 @@ def build_generated_calendar_event(
     employer_name = clean_text((employer_attendee or {}).get("name"))
     employer_email = clean_email((employer_attendee or {}).get("email"))
     event = {
-        "eventKey": build_timetable_event_key(learner.id, event_type, sequence, target_date),
-        "id": build_timetable_event_key(learner.id, event_type, sequence, target_date),
+        "eventKey": curriculum_review_instances.review_calendar_event_key(learner.id, review_template_id, sequence) if review_template_id else build_timetable_event_key(learner.id, event_type, sequence, target_date),
+        "id": curriculum_review_instances.review_calendar_event_key(learner.id, review_template_id, sequence) if review_template_id else build_timetable_event_key(learner.id, event_type, sequence, target_date),
         "ownerEmail": owner_email,
         "ownerName": owner_name,
         "learnerId": str(learner.id),
@@ -4856,6 +4848,9 @@ def build_booked_calendar_event(record: CoachCalendarEvent) -> dict:
     passed through overlay_calendar_record like any generated event.
     """
     title = BOOKED_EVENT_TITLES.get(record.event_type, "Coaching Session")
+    template_id = clean_text(getattr(record, 'review_template_id', ''))
+    if template_id:
+        title = resolve_review_display_title(record.event_type, template_id)
     target_date = record.target_date or date.today()
     is_request = clean_text(record.status).lower() == CoachCalendarEvent.STATUS_NOT_SCHEDULED
     return {
@@ -4874,6 +4869,8 @@ def build_booked_calendar_event(record: CoachCalendarEvent) -> dict:
         "sequence": record.sequence,
         "title": title,
         "type": BOOKED_EVENT_JSON_TYPES.get(record.event_type, "coaching"),
+        "reviewTemplateId": template_id or None,
+        "occurrenceNumber": getattr(record, 'occurrence_number', None) or record.sequence,
         "targetDate": target_date.isoformat(),
         "date": target_date.isoformat(),
         "year": target_date.year,
@@ -5118,14 +5115,13 @@ def graph_organizer_mailbox(record: CoachCalendarEvent, base_event: dict) -> str
     Coach-calendar meetings are always owned by the coach/case owner mailbox.
     The learner (and, for PR, the employer) are invited as attendees.
     """
+    if clean_text(record.graph_event_id) and clean_email(record.graph_organizer_email):
+        return clean_email(record.graph_organizer_email)
     return clean_email(record.owner_email) or clean_email(record.learner_email)
 
 
 def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -> str:
     if not has_graph_credentials():
-        record.meeting_provider = ""
-        record.meeting_link = ""
-        record.graph_web_link = ""
         return TEAMS_SYNC_NOT_CONFIGURED_MESSAGE
 
     payload = build_graph_event_payload(record, base_event)
@@ -5133,6 +5129,8 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
     owner_key = urllib_parse.quote(organizer_mailbox, safe="")
     try:
         if clean_text(record.graph_event_id):
+            # Preserve the existing Teams body and attendee list on reschedule.
+            payload = {key: payload[key] for key in ('subject', 'start', 'end')}
             event_key = urllib_parse.quote(record.graph_event_id, safe="")
             response = microsoft_graph_request(
                 "PATCH",
@@ -5152,9 +5150,6 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
             )
     except RuntimeError as exc:
         logger.exception("Unable to sync coach timetable event to Microsoft Graph")
-        record.meeting_provider = ""
-        record.meeting_link = ""
-        record.graph_web_link = ""
         return public_graph_sync_warning(str(exc))
 
     response_event_id = clean_text(response.get("id")) or clean_text(record.graph_event_id)
@@ -5182,8 +5177,8 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
     record.graph_event_id = response_event_id
     record.graph_organizer_email = organizer_mailbox if response_event_id else ""
     record.meeting_provider = "Microsoft Teams" if (response_event_id or response_join_url or response_web_link) else ""
-    record.meeting_link = response_join_url or response_web_link
-    record.graph_web_link = response_web_link
+    record.meeting_link = response_join_url or record.meeting_link or response_web_link
+    record.graph_web_link = response_web_link or record.graph_web_link
 
     # The booking is already saved and invited by this point. These options are
     # the difference between a session that records and transcribes itself and one
@@ -5337,7 +5332,7 @@ def resolve_review_display_title(event_type: str, review_template_id: str | None
     """The live Curriculum Review name for a stored review_template_id, or the
     legacy fallback label for an old row that predates this linkage."""
     if review_template_id:
-        template_row = curriculum_reviews.get_review_template_row(review_template_id)
+        template_row = curriculum_reviews.get_review_template_row(review_template_id, include_deleted=True)
         name = clean_text((template_row or {}).get("name"))
         if name:
             return name
@@ -7520,7 +7515,7 @@ def collect_generated_timetable(
     review_template_cache: dict[str, list[dict]] = {}
 
     for learner in active_rows:
-        programme_id = resolve_curriculum_programme_id(getattr(learner, "programme", None))
+        programme_id = resolve_curriculum_programme_id(getattr(learner, "programme_id", None) or getattr(learner, "programme", None))
 
         # Review recurrence anchors STRICTLY to the learner's own enrolment
         # start date, and is resolved BEFORE the window below so that "this
@@ -7567,6 +7562,12 @@ def collect_generated_timetable(
             window_start=window_start,
             window_end=window_end,
             template_cache=review_template_cache,
+            learner_scope={
+                'cohort_id': getattr(learner, 'cohort_id', None),
+                'cohort': getattr(learner, 'cohort', None),
+                'group_id': getattr(learner, 'group_id', None),
+                'group': getattr(learner, 'group_name', None),
+            },
         ):
             event_type = review_event_type_for_type_code(occurrence.get("reviewTypeCode"))
             generated_events.append(
@@ -7595,6 +7596,19 @@ def collect_generated_timetable(
                 source_counts["reviewRows"] += 1
 
     persisted_standalone_records = fetch_standalone_event_records(owner_email)
+    legacy_keys = [
+        build_timetable_event_key(int(event['learnerId']), event['source'], event['sequence'], parse_schedule_date(event['targetDate']))
+        for event in generated_events
+    ]
+    legacy_records = fetch_calendar_event_records(owner_email, legacy_keys)
+    stored_records = {record.event_key: record for record in persisted_standalone_records}
+    stored_records.update(legacy_records)
+    record_map = curriculum_review_instances.reconcile_review_event_keys(generated_events, list(stored_records.values()))
+    persisted_standalone_records = [
+        record for record in persisted_standalone_records
+        if record.event_key not in record_map
+        and not (getattr(record, 'review_template_id', '') and record.status == CoachCalendarEvent.STATUS_NOT_SCHEDULED)
+    ]
     # One resolution pass for the whole list -- a booked Review keeps its
     # template's Review Type, and this is the only place these rows are shaped.
     standalone_review_type_fields = review_type_fields_by_template(
@@ -7625,7 +7639,7 @@ def collect_generated_timetable(
         )
     source_counts["catchUpRows"] = sum(1 for event in persisted_standalone_events if event["source"] == CATCH_UP_EVENT_TYPE)
 
-    record_map = fetch_calendar_event_records(owner_email, [event["eventKey"] for event in generated_events])
+    record_map.update(fetch_calendar_event_records(owner_email, [event["eventKey"] for event in generated_events]))
     events = [overlay_calendar_record(event, record_map.get(event["eventKey"])) for event in generated_events]
     events.extend(persisted_standalone_events)
     events.extend(live_session_events)
@@ -8081,13 +8095,14 @@ def persist_calendar_sync_reservation(candidate: CoachCalendarEvent) -> CoachCal
                 CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
             }
         ):
-            ensure_learner_session_not_booked_in_week(
-                learner_id=candidate.learner_id,
-                learner_email=candidate.learner_email,
-                session_type=candidate.event_type,
-                scheduled_date=candidate.scheduled_date,
-                exclude_record_id=candidate.pk,
-            )
+            if not clean_text(candidate.review_template_id):
+                ensure_learner_session_not_booked_in_week(
+                    learner_id=candidate.learner_id,
+                    learner_email=candidate.learner_email,
+                    session_type=candidate.event_type,
+                    scheduled_date=candidate.scheduled_date,
+                    exclude_record_id=candidate.pk,
+                )
             ensure_learner_calendar_available(
                 learner_id=candidate.learner_id,
                 learner_email=candidate.learner_email,
@@ -8136,6 +8151,7 @@ def synchronize_reserved_calendar_event(
             "attempt_count": record.sync_attempt_count,
         },
     )
+    existing_graph_event = bool(clean_text(record.graph_event_id))
     try:
         warning = sync_calendar_event_to_graph(record, base_event)
     except Exception:
@@ -8155,7 +8171,7 @@ def synchronize_reserved_calendar_event(
         )
         raise
     warning = public_graph_sync_warning(warning)
-    if not calendar_record_has_launch_url(record):
+    if warning or not calendar_record_has_launch_url(record):
         warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
         record.sync_state = CoachCalendarEvent.SYNC_FAILED
         record.last_graph_sync_error = public_graph_sync_warning(warning)
@@ -8178,22 +8194,23 @@ def synchronize_reserved_calendar_event(
             "coach_calendar_graph_finalize_failed",
             extra={"event": "coach_calendar_graph_finalize_failed", "operation_id": str(record.operation_id)},
         )
-        compensation_warning = delete_calendar_event_from_graph(record)
+        compensation_warning = delete_calendar_event_from_graph(record) if not existing_graph_event else ''
         recovery_state = (
             CoachCalendarEvent.SYNC_RECONCILIATION
             if compensation_warning
             else CoachCalendarEvent.SYNC_FAILED
         )
-        recovery_error = compensation_warning or "Graph event was compensated after local finalization failed."
+        recovery_error = compensation_warning or "Local finalization failed after Graph synchronization."
+        keep_graph_event = existing_graph_event or bool(compensation_warning)
         try:
             CoachCalendarEvent.objects.filter(pk=record.pk).update(
                 sync_state=recovery_state,
                 last_graph_sync_error=public_graph_sync_warning(recovery_error),
-                graph_event_id="" if not compensation_warning else record.graph_event_id,
-                graph_organizer_email="" if not compensation_warning else record.graph_organizer_email,
-                meeting_provider="" if not compensation_warning else record.meeting_provider,
-                meeting_link="" if not compensation_warning else record.meeting_link,
-                graph_web_link="" if not compensation_warning else record.graph_web_link,
+                graph_event_id=record.graph_event_id if keep_graph_event else "",
+                graph_organizer_email=record.graph_organizer_email if keep_graph_event else "",
+                meeting_provider=record.meeting_provider if keep_graph_event else "",
+                meeting_link=record.meeting_link if keep_graph_event else "",
+                graph_web_link=record.graph_web_link if keep_graph_event else "",
                 updated_at=timezone.now(),
             )
         except Exception:
@@ -8227,11 +8244,6 @@ def find_catchup_calendar_record(owner_email: str, event_key: str) -> tuple[Coac
         event_key=event_key,
         event_type__in=[CATCH_UP_EVENT_TYPE, "student-support"],
     ).first()
-    if record and calendar_record_needs_schedule_repair(record):
-        record = repair_calendar_record_to_needs_schedule(
-            record,
-            reason=clean_text(record.last_graph_sync_error),
-        )
     owner_name = fetch_owner_name(owner_email, fallback=clean_text(record.owner_name) or "Med Maher") if record else fetch_owner_name(owner_email)
     return record, owner_name
 
@@ -8316,7 +8328,7 @@ def coach_timetable_schedule_event(request):
         )
         if not calendar_record_has_launch_url(catchup_record):
             warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
-            catchup_record = repair_calendar_record_to_needs_schedule(catchup_record, reason=warning)
+            catchup_record = save_calendar_sync_warning(catchup_record, reason=warning)
         else:
             catchup_record.last_graph_sync_error = public_graph_sync_warning(warning)
             catchup_record.save()
@@ -8385,7 +8397,7 @@ def coach_timetable_schedule_event(request):
         record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
         if not calendar_record_has_launch_url(record):
             warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
-            record = repair_calendar_record_to_needs_schedule(record, reason=warning)
+            record = save_calendar_sync_warning(record, reason=warning)
         else:
             record.last_graph_sync_error = public_graph_sync_warning(warning)
             record.save()
@@ -8472,7 +8484,7 @@ def coach_timetable_schedule_event(request):
     record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
     if not calendar_record_has_launch_url(record):
         warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
-        record = repair_calendar_record_to_needs_schedule(record, reason=warning)
+        record = save_calendar_sync_warning(record, reason=warning)
     else:
         record.last_graph_sync_error = public_graph_sync_warning(warning)
         record.save()
@@ -8699,11 +8711,11 @@ def coach_timetable_event_action(request):
     if not record:
         return JsonResponse({"detail": "This event has not been scheduled yet."}, status=400)
     if calendar_record_needs_schedule_repair(record):
-        repair_calendar_record_to_needs_schedule(
+        save_calendar_sync_warning(
             record,
             reason=clean_text(record.last_graph_sync_error),
         )
-        return JsonResponse({"detail": "This event does not have a Teams link anymore and was moved back to Not Scheduled."}, status=409)
+        return JsonResponse({"detail": "This event does not have a Teams link. Retry calendar synchronization before continuing."}, status=409)
 
     record.owner_name = owner_name
     warning = ""
@@ -10558,6 +10570,8 @@ def coach_review_instance_signature(request, instance_id):
     except ValidationError as exc:
         return validation_error_response(exc)
     role = clean_text(payload.get("role")).lower()
+    if role != "advisor":
+        return JsonResponse({"detail": "A coach may only sign as the coach."}, status=403)
     owner_email = authenticated_coach_email(request)
     try:
         result = curriculum_review_instances.record_review_instance_signature(

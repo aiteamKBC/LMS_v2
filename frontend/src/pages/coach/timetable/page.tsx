@@ -1655,28 +1655,6 @@ export default function CoachTimetablePage() {
     }
   }, []);
 
-  const openSelectedProgressReviewForm = useCallback(() => {
-    if (!selectedEvent || selectedEvent.source !== 'progress-review') return;
-    setEventActionError(null);
-    setEventActionNotice(null);
-    // A Progress Review's questions come from Curriculum like every other
-    // Review, so this opens the same ReviewInstanceModal the Progress Reviews
-    // and Meetings pages open -- one review_instance, one form definition, one
-    // answer store, whichever screen the coach started from. The legacy
-    // hard-coded PR form is only for an old occurrence that carries neither a
-    // review instance nor the Curriculum template that would create one.
-    if (selectedEvent.reviewInstanceId) {
-      setReviewFormInstanceId(selectedEvent.reviewInstanceId);
-      setReviewFormEvent(selectedEvent);
-      return;
-    }
-    if (selectedEvent.reviewTemplateId) {
-      void openReviewForm(selectedEvent);
-      return;
-    }
-    setProgressReviewCompletionEvent(selectedEvent);
-  }, [openReviewForm, selectedEvent]);
-
   const handleProgressReviewSubmit = useCallback(async (responses: ProgressReviewResponses) => {
     if (!progressReviewCompletionEvent?.eventKey) return;
 
@@ -2608,9 +2586,9 @@ export default function CoachTimetablePage() {
                             <AppIcon className="ri-video-on-line mr-1"></AppIcon>Join
                           </button>
                         )}
-                        {selectedEvent.status === 'in-progress' && (
+                        {selectedEvent.status === 'in-progress' && !(selectedEvent.source === 'progress-review' && selectedEvent.reviewTemplateId) && (
                           <button
-                            onClick={selectedEvent.source === 'progress-review' ? openSelectedProgressReviewForm : () => handleEventAction('complete')}
+                            onClick={() => handleEventAction('complete')}
                             disabled={eventActionBusy}
                             className="rounded-lg bg-secondary-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-secondary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                           >

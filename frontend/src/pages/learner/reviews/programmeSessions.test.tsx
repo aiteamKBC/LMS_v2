@@ -95,17 +95,18 @@ it('falls back to generated sessions when an Aptem learner has no imported MCM r
   expect(within(region).getByRole('tablist')).toBeVisible();
 });
 
-it('shows all imported review types in the Reviews table', async () => {
+it('keeps completed imported review history in the Reviews table', async () => {
   detailActivityAvailable = true;
   historyReviews = [{
     id: 'review-1', aptemReviewId: 'A-1', name: 'Eligibility Review & FS Discussion',
     type: 'Eligibility Review & FS Discussion', reviewerName: 'Review officer',
     plannedDate: '2026-09-18', plannedTime: null, completedDate: null,
-    status: 'not-scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [],
+    status: 'completed', extractionStatus: 'complete', detailsAvailable: false, sections: [],
   }];
   mount(cases[0]);
 
   const region = await screen.findByRole('region', { name: 'Reviews sessions' });
+  fireEvent.click(within(region).getByRole('tab', { name: /Finished/ }));
   expect((await within(region).findAllByText('Eligibility Review & FS Discussion')).at(-1)).toBeVisible();
   expect(metric('Total')).toHaveTextContent('1');
 });
@@ -133,34 +134,27 @@ function mount(item: typeof cases[number], suffix = '?kind=apprenticeship&learne
 function metric(label: string) { return screen.getByText(label, { selector: '.ui-metric-card *' }).closest('.ui-metric-card')!; }
 
 describe.each(cases)('$path programme sessions', item => {
-  it.each([false, true])('books imported reviews using their own identity (existing booking: %s)', async existing => {
+  it('schedules the Curriculum occurrence when imported future reviews also exist', async () => {
     detailActivityAvailable = true;
-    historyReviews = [{ id: '908', aptemReviewId: 'A-908', name: 'Selected imported meeting',
-      type: item.source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review', reviewerName: 'Assigned coach',
-      plannedDate: '2026-10-02', plannedTime: existing ? '11:30' : null, completedDate: null,
-      status: existing ? 'scheduled' : 'not-scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [] }];
-    events = [{ ...session(item.source), date: '2026-10-02', targetDate: '2026-10-02' }];
-    if (existing) events.push({ ...session(item.source, 2, 'scheduled'), eventKey: 'owned-imported-booking',
-      reviewId: '908', scheduledDate: '2026-10-02', scheduledTime: '11:30', durationMinutes: 75 });
+    historyReviews = [{ id: '908', aptemReviewId: 'A-908', name: 'Old imported meeting',
+      type: 'Progress Review', reviewerName: 'Assigned coach',
+      plannedDate: '2026-10-02', plannedTime: null, completedDate: null,
+      status: 'not-scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [] }];
+    events = [{ ...session(item.source), title: 'Configured conversation', reviewTemplateId: 'REV-1',
+      reviewTypeCode: item.source === 'mcr' ? 'mcm' : 'progress_review' }];
     mount(item);
     const region = screen.getByRole('region', { name: item.region });
-    fireEvent.click(await within(region).findByRole('button', { name: existing ? 'Reschedule' : 'Schedule' }));
+    fireEvent.click(await within(region).findByRole('button', { name: 'Schedule' }));
     const dialog = await screen.findByRole('dialog');
-    const submit = within(dialog).getByRole('button', { name: existing ? 'Save new time' : 'Book session' });
+    const submit = within(dialog).getByRole('button', { name: 'Book session' });
     await waitFor(() => expect(submit).toBeEnabled());
-    expect(within(dialog).getByLabelText('Session')).toHaveValue('imported-review:908');
+    expect(within(dialog).getByLabelText('Session')).toHaveValue(events[0].eventKey);
     fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-05' } });
     fireEvent.click(submit);
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    if (existing) {
-      expect(reschedules).toEqual([expect.objectContaining({ eventKey: 'owned-imported-booking', reviewId: '908', durationMinutes: 75, scheduledTime: '11:30' })]);
-      expect(bookings).toHaveLength(0);
-    } else {
-      expect(bookings).toEqual([expect.objectContaining({ reviewId: '908', assignmentMonth: '2026-10', sessionType: item.source })]);
-      expect(bookings[0]).not.toHaveProperty('eventKey');
-      expect(reschedules).toHaveLength(0);
-    }
-    expect(within(region).getByRole('table')).toHaveTextContent('05 Oct 2026');
+    await waitFor(() => expect(bookings).toHaveLength(1));
+    expect(bookings[0]).toEqual(expect.objectContaining({ eventKey: events[0].eventKey, sessionType: item.source }));
+    expect(bookings[0]).not.toHaveProperty('reviewId');
+    expect(screen.queryByText('Old imported meeting')).not.toBeInTheDocument();
   });
 
   it('keeps the dialog and entered values when a booking conflicts, and allows retry', async () => {

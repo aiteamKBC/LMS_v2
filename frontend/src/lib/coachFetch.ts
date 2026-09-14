@@ -5,8 +5,26 @@ const CSRF_ENDPOINT = '/coach_api/csrf';
 
 let csrfTokenPromise: Promise<string> | null = null;
 
+// A dev-server reload (or any stalled connection) can leave this fetch
+// pending forever -- fetch() has no built-in timeout. Without a bound, the
+// cached promise below never rejects, so it never clears, and every future
+// unsafe request hangs waiting on it for the rest of the tab's session.
+const CSRF_REQUEST_TIMEOUT_MS = 15000;
+
 async function requestCoachCsrfToken(): Promise<string> {
-  const response = await fetch(CSRF_ENDPOINT, { credentials: 'include' });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), CSRF_REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(CSRF_ENDPOINT, { credentials: 'include', signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Timed out initialising request verification.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
   const payload = await response.json().catch(() => ({})) as { csrfToken?: string };
   if (!response.ok || !payload.csrfToken) {
     throw new Error('Unable to initialise request verification.');

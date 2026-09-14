@@ -6,10 +6,15 @@ import {
   fetchReviewInstanceForm,
   flattenReviewFields,
   saveReviewInstanceAnswers,
+  signReviewInstance,
   type ReviewInstanceFormDefinition,
 } from '@/api/reviewInstances';
 import { ModalHeader, ModalShell } from './ModalHeader';
 import { formatDateLabel } from './calendarEvents';
+import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
+import { useAuth } from '@/hooks/useAuth';
+
+const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
 
 /**
  * The generic "open a Curriculum-driven Review" screen -- what a coach sees
@@ -40,6 +45,7 @@ export function ReviewInstanceModal({
    *  one it landed on. */
   onCompleted: (status: string) => void;
 }) {
+  const { auth } = useAuth();
   const [definition, setDefinition] = useState<ReviewInstanceFormDefinition | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
@@ -51,6 +57,7 @@ export function ReviewInstanceModal({
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
+    setError(null);
     fetchReviewInstanceForm(instanceId, controller.signal)
       .then((data) => {
         setDefinition(data);
@@ -61,7 +68,13 @@ export function ReviewInstanceModal({
         setAnswers(initialAnswers);
         setOpenSectionId(data.sections.find((s) => s.enabled)?.id || '');
       })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Unable to load this review.'))
+      .catch((err) => {
+        // A superseded request (React 18 double-invokes this effect in dev,
+        // and a new instanceId aborts the previous one) is not a real load
+        // failure -- only a genuinely failed fetch should surface here.
+        if (isAbortError(err)) return;
+        setError(err instanceof Error ? err.message : 'Unable to load this review.');
+      })
       .finally(() => setLoading(false));
     return () => controller.abort();
   }, [instanceId]);
@@ -91,6 +104,10 @@ export function ReviewInstanceModal({
       const updated = await saveReviewInstanceAnswers(definition.instance.id, answers);
       setDefinition(updated);
     } catch (err) {
+      // A request cancelled mid-flight (e.g. a dev-server reload, or the
+      // modal closing) is not a real save failure -- nothing for the coach
+      // to act on, so it should not surface as an error banner.
+      if (isAbortError(err)) return;
       setError(err instanceof Error ? err.message : 'Unable to save this review.');
     } finally {
       setSaving(false);
@@ -101,7 +118,11 @@ export function ReviewInstanceModal({
     if (!definition) return;
     if (missingFieldIds.size > 0) {
       setShowErrors(true);
-      const firstMissingSection = definition.sections.find((section) => section.fields.some((f) => missingFieldIds.has(f.id)));
+      const containsMissingField = (fields: typeof definition.sections[number]['fields']): boolean => (
+        fields.some((field) => missingFieldIds.has(field.id) ||
+          containsMissingField(field.yesFields || []) || containsMissingField(field.noFields || []))
+      );
+      const firstMissingSection = definition.sections.find((section) => containsMissingField(section.fields));
       if (firstMissingSection) setOpenSectionId(firstMissingSection.id);
       setError('Please complete every required field before finishing the review.');
       return;
@@ -113,6 +134,7 @@ export function ReviewInstanceModal({
       const completed = await completeReviewInstance(definition.instance.id);
       onCompleted(completed.instance.status);
     } catch (err) {
+      if (isAbortError(err)) return;
       setError(err instanceof Error ? err.message : 'This review cannot be completed yet.');
     } finally {
       setSaving(false);
@@ -171,6 +193,20 @@ export function ReviewInstanceModal({
               openSectionId={openSectionId}
               onOpenSectionChange={setOpenSectionId}
             />
+            {definition.signatures.advisor?.required && !definition.signatures.advisor.signed &&
+              ['awaiting-signature', 'completed'].includes(definition.instance.status) ? (
+              <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+                <p className="mb-3 text-sm font-bold text-violet-950">Your coach signature is required</p>
+                <SignaturePad
+                  signatoryName={auth.user?.fullName || event.learner || 'Coach'}
+                  onCommit={(signature) => {
+                    void signReviewInstance(definition.instance.id, 'advisor', auth.user?.fullName || 'Coach', signature)
+                      .then(setDefinition);
+                  }}
+                  onCancel={() => undefined}
+                />
+              </div>
+            ) : null}
           </>
         ) : null}
 
