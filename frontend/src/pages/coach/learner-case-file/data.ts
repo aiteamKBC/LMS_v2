@@ -19,6 +19,7 @@ import {
 } from '@/pages/coach/shared/calendarEvents';
 import { fetchStudentActivity } from '@/api/studentActivity';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
+import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
 import { coachFetch } from '@/lib/coachFetch';
 
@@ -127,6 +128,18 @@ export interface CoachAttendanceLearner {
   nextSession: string;
   consecutiveMissed: number | null;
   hasAttendance: boolean;
+  /** Session-level register from the learner workspace attendance endpoint. */
+  sessionHistory?: Array<{
+    id: string;
+    date: string;
+    title: string;
+    sessionType: string;
+    status: 'attended' | 'missed' | 'late';
+    startTime: string;
+    endTime: string;
+    module: string;
+    coach: string;
+  }>;
 }
 
 interface CoachAttendanceResponse {
@@ -192,6 +205,11 @@ export interface CaseFileReviewMeeting {
   status: CoachCalendarEvent['status'];
   statusLabel: string;
   isNext: boolean;
+}
+
+interface CaseFileReviewHistory {
+  progressReviews: CaseFileReviewMeeting[];
+  monthlyCoachMeetings: CaseFileReviewMeeting[];
 }
 
 export interface CoachLearnerCaseFileData {
@@ -298,6 +316,7 @@ export function useCoachLearnerCaseFileData(args: {
         : null;
       let auditHours: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null = null;
       let liveAttendance: LearnerAttendance | null = null;
+      let reviewHistory: CaseFileReviewHistory | null = null;
 
       let detail: LearnerDetail | null = null;
       let resolvedKind: LearnerKind | null = null;
@@ -308,9 +327,10 @@ export function useCoachLearnerCaseFileData(args: {
           const detailResult = await directDetailPromise;
           detail = detailResult.detail;
           resolvedKind = detailResult.kind;
-          [auditHours, liveAttendance] = await Promise.all([
+          [auditHours, liveAttendance, reviewHistory] = await Promise.all([
             fetchAuditHours(resolvedKind, directEnrolmentId),
             fetchCaseFileAttendance(resolvedKind, directEnrolmentId),
+            detail.studentActivityAvailable ? fetchCaseFileReviewHistory(resolvedKind, directEnrolmentId) : Promise.resolve(null),
           ]);
 
           // Show the useful learner view as soon as its focused detail arrives.
@@ -326,6 +346,7 @@ export function useCoachLearnerCaseFileData(args: {
             timetableEvents: [],
             auditHours,
             liveAttendance,
+            reviewHistory,
           });
           if (!cancelled && initialData) {
             setData(initialData);
@@ -373,13 +394,19 @@ export function useCoachLearnerCaseFileData(args: {
         }
       }
 
-      if (!auditHours || !liveAttendance) {
-        const [hours, attendanceRecord] = await Promise.all([
+      if (!auditHours || !liveAttendance || !reviewHistory) {
+        const [hours, attendanceRecord, reviews] = await Promise.all([
           auditHours ? Promise.resolve(auditHours) : fetchAuditHours(resolvedKind, resolvedEnrolmentId),
           liveAttendance ? Promise.resolve(liveAttendance) : fetchCaseFileAttendance(resolvedKind, resolvedEnrolmentId),
+          reviewHistory
+            ? Promise.resolve(reviewHistory)
+            : detail?.studentActivityAvailable
+              ? fetchCaseFileReviewHistory(resolvedKind, resolvedEnrolmentId)
+              : Promise.resolve(null),
         ]);
         auditHours = hours;
         liveAttendance = attendanceRecord;
+        reviewHistory = reviews;
       }
 
       if (cancelled) {
@@ -397,6 +424,7 @@ export function useCoachLearnerCaseFileData(args: {
         timetableEvents,
         auditHours,
         liveAttendance,
+        reviewHistory,
       });
 
       if (!finalData) {
@@ -630,14 +658,29 @@ async function fetchAuditHours(kind: LearnerKind | null, enrolmentId: string | n
   }
 }
 
-/** The learner's own attendance register, read through the same endpoint their
- *  workspace uses so a coach and their learner never see different rates. */
+/** KBC's live register, available only when the learner has an Aptem ID. */
 async function fetchCaseFileAttendance(kind: LearnerKind | null, enrolmentId: string | null) {
   if (!kind || !enrolmentId) return null;
   try {
-    return await fetchLearnerAttendance(kind, enrolmentId);
+    return await fetchLearnerAttendance(kind, enrolmentId, undefined, false, 'kbc');
   } catch {
     return null;
+  }
+}
+
+async function fetchCaseFileReviewHistory(kind: LearnerKind | null, enrolmentId: string | null): Promise<CaseFileReviewHistory | null> {
+  if (!kind || !enrolmentId) return null;
+  try {
+    const [progress, monthly] = await Promise.all([
+      fetchReviewHistory(kind, enrolmentId, 'progress-review'),
+      fetchReviewHistory(kind, enrolmentId, 'monthly-coaching'),
+    ]);
+    return {
+      progressReviews: buildImportedReviewItems(progress.reviews),
+      monthlyCoachMeetings: buildImportedReviewItems(monthly.reviews),
+    };
+  } catch {
+    return { progressReviews: [], monthlyCoachMeetings: [] };
   }
 }
 
@@ -789,54 +832,31 @@ function reviewEventMatchesLearner(
   learner: Pick<CoachLearnerCaseFileData, 'learnerId' | 'displayName' | 'email' | 'programme' | 'cohort'>,
   source: 'mcr' | 'progress-review',
 ) {
-  if (event.source !== source || event.status === 'cancelled') {
-    return false;
-  }
+  if (event.source !== source || event.status === 'cancelled') return false;
 
   const learnerId = numericId(learner.learnerId) || String(learner.learnerId || '').trim();
   const eventLearnerId = String(event.learnerId || '').trim();
-  if (learnerId && eventLearnerId && learnerId === eventLearnerId) {
-    return true;
-  }
+  if (learnerId && eventLearnerId && learnerId === eventLearnerId) return true;
 
   const learnerEmail = normalizeEmailMatchValue(learner.email);
   const eventEmail = normalizeEmailMatchValue(event.email);
-  if (learnerEmail && eventEmail && learnerEmail === eventEmail) {
-    return true;
-  }
+  if (learnerEmail && eventEmail && learnerEmail === eventEmail) return true;
 
   const learnerName = normalizePersonName(learner.displayName);
   const eventLearnerName = normalizePersonName(event.learner);
-  if (!learnerName || !eventLearnerName || learnerName !== eventLearnerName) {
-    return false;
-  }
+  if (!learnerName || !eventLearnerName || learnerName !== eventLearnerName) return false;
 
   const learnerCohort = normalizeMatchValue(learner.cohort);
   const learnerProgramme = normalizeMatchValue(learner.programme);
   const eventCohort = normalizeMatchValue(event.cohort);
   const eventProgramme = normalizeMatchValue(event.programme);
-  if (learnerCohort && eventCohort && learnerCohort !== eventCohort) {
-    return false;
-  }
-  if (learnerProgramme && eventProgramme && learnerProgramme !== eventProgramme) {
-    return false;
-  }
-
-  return true;
+  return (!learnerCohort || !eventCohort || learnerCohort === eventCohort)
+    && (!learnerProgramme || !eventProgramme || learnerProgramme === eventProgramme);
 }
 
 function sortLearnerScheduleEvents(events: CoachCalendarEvent[]) {
-  const upcoming: CoachCalendarEvent[] = [];
-  const past: CoachCalendarEvent[] = [];
-
-  for (const event of events) {
-    if (isUpcomingCalendarEvent(event)) {
-      upcoming.push(event);
-    } else {
-      past.push(event);
-    }
-  }
-
+  const upcoming = events.filter(isUpcomingCalendarEvent);
+  const past = events.filter((event) => !isUpcomingCalendarEvent(event));
   return [...sortEvents(upcoming), ...sortEvents(past).reverse()];
 }
 
@@ -852,15 +872,11 @@ function buildReviewMeetingItems(
   const matchingEvents = sortLearnerScheduleEvents(
     timetableEvents.filter((event) => reviewEventMatchesLearner(event, learner, source)),
   ).slice(0, 6);
-
   let nextFlagAssigned = false;
   return matchingEvents.map((event) => {
     const displayDate = eventDisplayDate(event);
     const isNext = !nextFlagAssigned && isUpcomingCalendarEvent(event);
-    if (isNext) {
-      nextFlagAssigned = true;
-    }
-
+    if (isNext) nextFlagAssigned = true;
     return {
       id: event.eventKey || event.id,
       title: event.title || fallbackTitle,
@@ -878,6 +894,38 @@ function buildReviewMeetingItems(
       isNext,
     };
   });
+}
+
+function buildImportedReviewItems(reviews: ImportedReview[]): CaseFileReviewMeeting[] {
+  return [...reviews]
+    .sort((left, right) => (right.completedDate || right.plannedDate || '').localeCompare(left.completedDate || left.plannedDate || ''))
+    .map((review) => {
+      const date = review.completedDate || review.plannedDate;
+      const status = normalizeImportedReviewStatus(review.status);
+      return {
+        id: `imported-review:${review.id}`,
+        title: review.name || review.type || 'Review',
+        date: date ? formatCalendarDateLabel(date) : '--',
+        time: review.plannedTime || '--',
+        detail: [review.type, review.reviewerName ? `Reviewer: ${review.reviewerName}` : '', review.managerName ? `Manager: ${review.managerName}` : '']
+          .filter(Boolean)
+          .join(' - ') || 'Imported review record.',
+        status,
+        statusLabel: importedReviewStatusLabel(status),
+        isNext: false,
+      };
+    });
+}
+
+function normalizeImportedReviewStatus(status: string): CoachCalendarEvent['status'] {
+  return (['completed', 'scheduled', 'in-progress', 'awaiting-signature', 'confirmed', 'pending', 'cancelled', 'not-scheduled'] as const)
+    .includes(status as CoachCalendarEvent['status'])
+    ? status as CoachCalendarEvent['status']
+    : 'pending';
+}
+
+function importedReviewStatusLabel(status: CoachCalendarEvent['status']) {
+  return status.split('-').map((word) => word ? `${word[0].toUpperCase()}${word.slice(1)}` : '').join(' ');
 }
 
 function buildUpcomingLiveSessions(
@@ -930,6 +978,7 @@ function buildCaseFileData(args: {
   timetableEvents: CoachCalendarEvent[];
   auditHours?: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null;
   liveAttendance?: LearnerAttendance | null;
+  reviewHistory?: CaseFileReviewHistory | null;
 }): CoachLearnerCaseFileData | null {
   const displayName = args.detail?.name || args.snapshot?.name || args.attendance?.learner || args.evidence?.learner || '';
   if (!displayName) {
@@ -955,6 +1004,32 @@ function buildCaseFileData(args: {
     ),
   ).sort();
   const programme = args.detail?.programme || args.attendance?.programme || '';
+  const mergedAttendance = args.liveAttendance
+    ? args.attendance
+      ? {
+          ...args.attendance,
+        sessionHistory: args.liveAttendance?.sessionHistory || args.attendance.sessionHistory || [],
+        hasAttendance: true,
+        sessions: args.liveAttendance?.sessions ?? args.attendance.sessions,
+        present: args.liveAttendance?.present ?? args.attendance.present,
+        absent: args.liveAttendance?.absent ?? args.attendance.absent,
+        late: args.liveAttendance?.late ?? args.attendance.late,
+        catchup: args.liveAttendance?.catchup ?? args.attendance.catchup,
+        consecutiveMissed: args.liveAttendance?.consecutiveMissed ?? args.attendance.consecutiveMissed,
+        lastSessionDate: args.liveAttendance?.lastSessionDate ?? args.attendance.lastSessionDate,
+      }
+      : {
+          id: String(args.liveAttendance.learnerId), learner: args.liveAttendance.learnerName,
+          initials: getInitials(args.liveAttendance.learnerName), programme, cohort, group: '',
+          attendance: args.liveAttendance.attendanceRate, sessions: args.liveAttendance.sessions,
+          present: args.liveAttendance.present, absent: args.liveAttendance.absent, late: args.liveAttendance.late,
+          catchup: args.liveAttendance.catchup, trend: 'stable' as const, risk: null,
+          employer: '', overallProgress: 0, otjhCompleted: 0, otjhTarget: 0, ksbProgress: 0,
+          lastSession: '', lastSessionDate: args.liveAttendance.lastSessionDate, nextSession: '',
+          consecutiveMissed: args.liveAttendance.consecutiveMissed, hasAttendance: true,
+          sessionHistory: args.liveAttendance.sessionHistory,
+        }
+    : null;
   const group = args.detail?.group || args.snapshot?.group || args.attendance?.group || '';
   const email = args.detail?.email || args.snapshot?.email || args.attendance?.email || args.evidence?.email || '';
   const upcomingSessions = buildUpcomingLiveSessions(
@@ -965,15 +1040,14 @@ function buildCaseFileData(args: {
     },
     args.timetableEvents,
   );
-  const reviewEventContext = {
-    learnerId: args.learnerId,
-    displayName,
-    email,
-    programme,
-    cohort,
-  };
-  const progressReviews = buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'progress-review');
-  const monthlyCoachMeetings = buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'mcr');
+  const reviewEventContext = { learnerId: args.learnerId, displayName, email, programme, cohort };
+  const usesImportedReviews = args.detail?.studentActivityAvailable === true;
+  const progressReviews = usesImportedReviews
+    ? args.reviewHistory?.progressReviews || []
+    : buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'progress-review');
+  const monthlyCoachMeetings = usesImportedReviews
+    ? args.reviewHistory?.monthlyCoachMeetings || []
+    : buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'mcr');
   // The audit pair wins over learner-detail's training-plan reflection totals,
   // so the coach reads the same OTJ hours the learner sees on their own
   // workspace. `targetHours` paces the plan to the current week, so it is
@@ -995,7 +1069,7 @@ function buildCaseFileData(args: {
     learnerId: args.learnerId,
     kind: args.kind,
     snapshot: args.snapshot,
-    attendance: args.attendance,
+    attendance: mergedAttendance,
     evidence: args.evidence,
     detail: args.detail,
     journey,

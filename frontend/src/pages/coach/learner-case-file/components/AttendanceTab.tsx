@@ -31,6 +31,34 @@ export default function AttendanceTab({ data }: CaseFileTabProps) {
         <MetricCard icon="ri-close-circle-line" label="Absent" value={attendance.absent ?? '--'} tone={attendance.absent ? 'critical' : 'brand'} />
       </section>
 
+      {attendance.sessionHistory && attendance.sessionHistory.length > 0 && (
+        <section className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+          <div className="p-5 md:p-6 pb-3">
+            <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
+              <AppIcon className="ri-calendar-check-line text-primary-500"></AppIcon> Lecture Attendance
+            </h2>
+            <p className="text-[11px] text-foreground-400 mt-1">Live records from the KBC attendance register.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[12px]">
+              <thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500">
+                <tr><th className="px-5 py-3">Lecture</th><th className="px-3 py-3">Date</th><th className="px-3 py-3">Module</th><th className="px-5 py-3">Status</th></tr>
+              </thead>
+              <tbody className="divide-y divide-foreground-200/50">
+                {attendance.sessionHistory.map((session) => (
+                  <tr key={session.id} className="text-foreground-700">
+                    <td className="px-5 py-3"><p className="font-semibold text-foreground-900">{session.title || 'Lecture'}</p><p className="text-[10px] text-foreground-400">{session.sessionType || 'Live session'}</p></td>
+                    <td className="px-3 py-3 whitespace-nowrap">{formatDisplayDate(session.date)}</td>
+                    <td className="px-3 py-3">{session.module || '--'}</td>
+                    <td className="px-5 py-3"><StatusBadge tone={session.status === 'attended' ? 'positive' : session.status === 'late' ? 'caution' : 'critical'} label={session.status === 'attended' ? 'Attended' : session.status === 'late' ? 'Late' : 'Missed'} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       <section className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
@@ -75,12 +103,11 @@ export default function AttendanceTab({ data }: CaseFileTabProps) {
           </h2>
           <div className="space-y-2 text-[12px] text-foreground-600">
             <p>
-              This tab is now using the live coach attendance endpoint for learner-level metrics such as attendance percentage,
-              present versus absent counts, last session date, and trend direction.
+              This tab uses the live KBC attendance register for attendance percentage, present and absent counts,
+              and the last recorded session.
             </p>
             <p>
-              Session-by-session logs and heatmaps are not exposed by the current backend yet, so the old static mock timeline
-              was removed to avoid showing invented attendance history.
+              Attendance is available only when the learner has an Aptem ID linked to a KBC register.
             </p>
           </div>
         </div>

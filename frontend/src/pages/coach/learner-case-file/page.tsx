@@ -5,7 +5,6 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { fetchKsbProfile } from '@/api/curriculum';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
-import { coachFetch } from '@/lib/coachFetch';
 import { cn } from '@/lib/cn';
 import { statusTone, toneStyle, type StatusTone } from '@/lib/statusTone';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -25,6 +24,7 @@ import {
   formatFraction,
   formatHours,
   formatPercent,
+  formatDisplayDate,
   toneFromPercent,
   useCoachLearnerCaseFileData,
   type CaseFileActivityItem,
@@ -33,8 +33,6 @@ import {
 } from './data';
 
 const coachNav = roleNavMap.coach;
-const ATTENDANCE_DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
-
 const CASE_FILE_TABS = [
   { id: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
   { id: 'programme', label: 'Programme & Employer', icon: 'ri-building-line' },
@@ -88,15 +86,6 @@ interface AttendanceDetailSession {
   status: string;
   reason: string;
   catchupCompleted?: boolean;
-}
-
-interface AttendanceDetailsResponse {
-  sessions?: AttendanceDetailSession[];
-}
-
-interface AttendanceDetailsErrorResponse {
-  detail?: string;
-  error?: string;
 }
 
 export default function LearnerCaseFile() {
@@ -864,66 +853,22 @@ function KsbOverviewCard({
 
 function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }) {
   const attendance = data.attendance;
-  const [attendanceSessions, setAttendanceSessions] = useState<AttendanceDetailSession[]>([]);
-  const [detailsLoading, setDetailsLoading] = useState(false);
-  const [detailsError, setDetailsError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadAttendanceSessions() {
-      if (!attendance?.id || !attendance.hasAttendance) {
-        setAttendanceSessions([]);
-        setDetailsError(null);
-        setDetailsLoading(false);
-        return;
-      }
-
-      setDetailsLoading(true);
-      setDetailsError(null);
-      try {
-        const params = new URLSearchParams({ learner_id: String(attendance.id) });
-        const learnerEmail = attendance.email || data.email;
-        if (learnerEmail) {
-          params.set('learner_email', learnerEmail);
-        }
-
-        const response = await coachFetch(`${ATTENDANCE_DETAILS_ENDPOINT}?${params.toString()}`, {
-          headers: { 'Content-Type': 'application/json' },
-        });
-        const payload = await response.json().catch(() => null) as unknown;
-        const parsedPayload = payload && typeof payload === 'object'
-          ? payload as AttendanceDetailsResponse & AttendanceDetailsErrorResponse
-          : null;
-        if (!response.ok) {
-          const message = parsedPayload
-            ? String(parsedPayload.error || parsedPayload.detail || 'Unable to load learner attendance sessions.')
-            : 'Unable to load learner attendance sessions.';
-          throw new Error(message);
-        }
-
-        if (!cancelled) {
-          setAttendanceSessions(Array.isArray(parsedPayload?.sessions) ? parsedPayload.sessions : []);
-        }
-      } catch (loadError) {
-        if (!cancelled) {
-          setAttendanceSessions([]);
-          setDetailsError(loadError instanceof Error ? loadError.message : 'Unable to load learner attendance sessions.');
-        }
-      } finally {
-        if (!cancelled) {
-          setDetailsLoading(false);
-        }
-      }
-    }
-
-    void loadAttendanceSessions();
-    return () => {
-      cancelled = true;
-    };
-  }, [attendance?.id, attendance?.email, attendance?.hasAttendance, data.email]);
-
   if (!attendance || !attendance.hasAttendance) return <ReferencePanel title="Attendance" icon="ri-calendar-check-line" tone="primary"><ProfileEmpty text="Live attendance data is not available for this learner." /></ReferencePanel>;
+  const attendanceSessions: AttendanceDetailSession[] = (attendance.sessionHistory || []).map((session) => ({
+    learnerId: attendance.id,
+    learnerName: attendance.learner,
+    learnerEmail: attendance.email || data.email,
+    sessionId: session.id,
+    sessionTitle: session.title,
+    sessionType: session.sessionType || 'KBC attendance',
+    sessionDate: session.date || null,
+    sessionDateLabel: session.date ? formatDisplayDate(session.date) : '--',
+    startTime: session.startTime,
+    endTime: session.endTime,
+    status: session.status === 'attended' ? 'present' : session.status === 'missed' ? 'absent' : 'late',
+    reason: '--',
+    catchupCompleted: false,
+  }));
   const sessions = attendance.sessions || 0;
   const percentage = (value: number | null) => sessions > 0 && value !== null ? Math.round((value / sessions) * 100) : 0;
   const missedSessions = attendanceSessions.filter((session) => session.status === 'absent');
@@ -944,11 +889,7 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
           <ProfileProgress label={`Catch-up (${attendance.catchup ?? 0})`} value={percentage(attendance.catchup)} color="bg-foreground-300" />
         </ReferencePanel>
         <ReferencePanel title="Missed Sessions" icon="ri-close-circle-line" tone="red">
-          {detailsLoading ? (
-            <div className="p-2"><RowsSkeleton rows={3} avatar={false} /></div>
-          ) : detailsError ? (
-            <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-[12px] text-red-700">{detailsError}</div>
-          ) : missedSessions.length > 0 ? (
+          {missedSessions.length > 0 ? (
             <div className="space-y-3">
               <div className="rounded-xl border border-red-100 bg-red-50 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -998,11 +939,7 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
         </ReferencePanel>
       </div>
       <ReferencePanel title="Session History" icon="ri-table-line" tone="primary">
-        {detailsLoading ? (
-          <div className="p-2"><RowsSkeleton rows={3} avatar={false} /></div>
-        ) : detailsError ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-[12px] text-amber-800">{detailsError}</div>
-        ) : recentSessions.length ? (
+        {recentSessions.length ? (
           <div className="space-y-2">
             {recentSessions.map((session, index) => (
               <div key={`${session.sessionId}-${session.sessionDate || index}-history`} className="rounded-xl border border-foreground-100 bg-background-100/45 p-3">
