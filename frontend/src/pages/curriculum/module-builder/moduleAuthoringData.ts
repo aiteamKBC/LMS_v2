@@ -9,6 +9,7 @@ import {
   assertComponentUploadAllowed,
   uploadComponentFile,
 } from '@/pages/curriculum/shared/componentUploadPolicy';
+import { hoursToRoundedMinutes, roundedMinutesToHours } from '@/lib/format';
 import {
   componentTypeGroups,
   componentTypes,
@@ -180,9 +181,46 @@ function monthLabelOf(key: string) {
  */
 export interface ModuleWeekSessionPlan {
   sessions: Array<{ sessionNumber: number; date: string; day: string; slotDate?: string; slotDay?: string; skippedHolidays: string[] }>;
+  /** The curriculum spine: every delivery slot, open or closed. See `ModuleSessionSlot`. */
+  slots?: ModuleSessionSlot[];
   skippedHolidays: string[];
   finalEndDate: string;
+  /** Where the run would have ended with nothing closed, stated by the planner. */
+  originalEndDate?: string;
   warnings: string[];
+}
+
+/** One holiday, exactly as the curriculum already stores and serves it. */
+export interface ModuleSlotHoliday {
+  id?: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  type?: string;
+  notes?: string;
+}
+
+/**
+ * One position in the module's curriculum, open or closed.
+ *
+ * The backend walks the module's own delivery pattern and emits a slot for
+ * every delivery day it passes, so this is the curriculum as a reader sees it,
+ * not the session list. A `live-session` slot names the session delivered in
+ * it. A `reading-week` slot is a delivery day a holiday closed: it keeps its
+ * place in the curriculum, it consumes NO session, and it carries the holidays
+ * that closed it so the week can say why there is nothing to attend. Every
+ * closure therefore makes the spine one slot longer than the session list,
+ * which is what moves the delivery end date out by exactly one delivery slot
+ * per closure -- in the module's own pattern, never a hardcoded seven days.
+ */
+export interface ModuleSessionSlot {
+  slotNumber: number;
+  date: string;
+  day: string;
+  type: 'live-session' | 'reading-week';
+  cause?: string;
+  sessionNumber: number | null;
+  holidays: ModuleSlotHoliday[];
 }
 
 /**
@@ -258,26 +296,23 @@ export function moduleWeekSessionSlots(
  * of them. The rail shows the whole run so a Mon+Fri week reads as the two
  * delivery days it actually occupies.
  *
- * These are the week's SLOT dates — where the week sits on the calendar. A
- * closure pushes the live session out of the week and into the next open slot,
- * but the week itself does not follow it, so a week whose session was moved is
- * still read, still grouped under its own month, and still holds every other
- * component on the day it was authored for. Where the live sessions ended up is
- * `moduleWeekLiveSessionDates`.
+ * These are the week's delivered dates after holidays have pushed closed
+ * delivery days forward. `slotDate` remains available on the raw session plan
+ * for explaining which date was closed, but the structure rail reads the date
+ * the learner actually sees.
  */
 export function moduleWeekSessionDates(
   module: ModuleCatalogueItem | null | undefined,
   sessions: ModuleWeekSessionPlan['sessions'] | undefined,
 ): string[][] {
-  return moduleWeekPlanDates(module, sessions, session => session.slotDate || session.date);
+  return moduleWeekPlanDates(module, sessions, session => session.date);
 }
 
 /**
  * Where each authored week's live sessions actually run, in week order.
  *
- * The same walk as `moduleWeekSessionDates`, reading the other of the two dates
- * a planned session carries. Equal to the week's own run until a holiday closes
- * a delivery day; one slot later per closure after that.
+ * The same delivered dates as `moduleWeekSessionDates`, used separately because
+ * live-session components can each take one date inside a multi-session week.
  */
 export function moduleWeekLiveSessionDates(
   module: ModuleCatalogueItem | null | undefined,
@@ -304,18 +339,87 @@ function moduleWeekPlanDates(
 }
 
 /**
+ * Which authored week delivers each planned session number.
+ *
+ * The same walk `applyModuleWeekSessionPlan` and the backend's
+ * `apply_module_session_plan_to_weeks` make: a week owns one planned date per
+ * DELIVERY DAY, so a Mon+Fri week owns two session numbers. Shared rather than
+ * re-derived per screen, because every off-by-one bug in this area has been a
+ * second copy of this walk drifting from the first.
+ */
+export function moduleWeekIdBySessionNumber(
+  module: ModuleCatalogueItem | null | undefined,
+  sessions: ModuleWeekSessionPlan['sessions'] | undefined,
+): Map<number, string> {
+  const byNumber = new Map<number, string>();
+  const plan = sessions || [];
+  if (!module || !plan.length) return byNumber;
+  const slotCounts = moduleWeekSessionSlots(module, plan.length);
+  let cursor = 0;
+  module.weekStructure.forEach((week, weekIndex) => {
+    const slotCount = slotCounts[weekIndex] || 1;
+    for (let offset = 0; offset < slotCount; offset += 1) {
+      const session = plan[cursor];
+      cursor += 1;
+      if (session) byNumber.set(Number(session.sessionNumber) || cursor, week.id);
+    }
+  });
+  return byNumber;
+}
+
+/**
+ * Where each holiday reading week sits among the authored weeks.
+ *
+ * A closed delivery slot is a real curriculum position with no live session in
+ * it, and it belongs immediately ABOVE the authored week that delivers the next
+ * open slot -- that week now holds the session the closure displaced. Reading
+ * weeks after the final session have no week below them, so they come back in
+ * `trailing`; a plan whose last slots are closed is not a thing the walk can
+ * produce today, but a caller rendering the spine should not silently drop
+ * them if it ever is.
+ *
+ * Returns empty maps when the plan carries no spine, so a screen talking to an
+ * older payload renders exactly as it did before.
+ */
+export function holidayReadingWeeksByWeekId(
+  module: ModuleCatalogueItem | null | undefined,
+  plan: Pick<ModuleWeekSessionPlan, 'sessions' | 'slots'> | null | undefined,
+): { before: Map<string, ModuleSessionSlot[]>; trailing: ModuleSessionSlot[] } {
+  const before = new Map<string, ModuleSessionSlot[]>();
+  const trailing: ModuleSessionSlot[] = [];
+  const slots = plan?.slots || [];
+  if (!module || !slots.length) return { before, trailing };
+  const weekIdBySessionNumber = moduleWeekIdBySessionNumber(module, plan?.sessions);
+  let pending: ModuleSessionSlot[] = [];
+  slots.forEach(slot => {
+    if (slot.type === 'reading-week') {
+      pending.push(slot);
+      return;
+    }
+    if (!pending.length) return;
+    const weekId = weekIdBySessionNumber.get(Number(slot.sessionNumber));
+    // A session no authored week claims (the plan is longer than the weeks
+    // written so far) has nowhere to hang the reading week above, so it waits
+    // for the next session that does.
+    if (!weekId) return;
+    before.set(weekId, [...(before.get(weekId) || []), ...pending]);
+    pending = [];
+  });
+  trailing.push(...pending);
+  return { before, trailing };
+}
+
+/**
  * The module with every week carrying the day it now runs on.
  *
  * The plan is applied by *position*, because week N is session N: a seventh week
  * added to a six-week module takes the seventh delivery day from the start, and
  * the weeks before it keep the dates they already had.
  *
- * A week and the live session it holds can land on different days. The week
- * takes its planned SLOT -- the delivery day it was due on before any holiday
- * was ticked -- while the live session takes the date the plan walked it to,
- * past every closed day in the way. That is the whole of the holiday rule on
- * this screen: a closure moves the session out of the week, and everything else
- * the week holds stays on the week it was authored into.
+ * A week follows the delivered session date after holidays are skipped. The
+ * raw plan still carries `slotDate` -- the date that was closed -- so the UI can
+ * explain the shift, but the structure itself shows the replacement date the
+ * learner actually receives.
  *
  * With `followEndDate`, the module's end date follows the plan only when it *was*
  * the plan: an end date that is one of the planned session dates was calculated
@@ -350,9 +454,11 @@ export function applyModuleWeekSessionPlan(
     const slots = sessions.slice(sessionIndex, sessionIndex + slotCount);
     sessionIndex += slotCount;
     const firstSession: ModuleWeekSessionPlan['sessions'][number] | undefined = slots[0];
-    // The week's own day, not the one its session was pushed to.
-    const slotDate = firstSession ? (firstSession.slotDate || firstSession.date || '') : '';
-    const slotDay = firstSession ? (firstSession.slotDay || firstSession.day || '') : '';
+    // The week runs on the delivered day. The raw plan still carries slotDate
+    // for the "this date was closed" explanation, but the structure itself
+    // follows the actual session date after holiday shifts.
+    const sessionDate = firstSession ? (firstSession.date || '') : '';
+    const sessionDay = firstSession ? (firstSession.day || '') : '';
     let components = week.components;
     if (liveComponents.length) {
       const plannedByComponentId = new Map<string, ModuleWeekSessionPlan['sessions'][number] | undefined>();
@@ -361,7 +467,7 @@ export function applyModuleWeekSessionPlan(
       });
       let componentsMoved = false;
       const plannedComponents = week.components.map(component => {
-        if (component.type !== 'live-session') return component;
+      if (component.type !== 'live-session') return component;
         const planned = plannedByComponentId.get(component.id);
         if (!planned?.date) return component;
         const settings = component.settings || {};
@@ -385,11 +491,11 @@ export function applyModuleWeekSessionPlan(
     }
     if (
       components === week.components
-      && (week.sessionDate || '') === slotDate
-      && (week.sessionDay || '') === slotDay
+      && (week.sessionDate || '') === sessionDate
+      && (week.sessionDay || '') === sessionDay
     ) return week;
     weeksMoved = true;
-    return { ...week, components, sessionDate: slotDate, sessionDay: slotDay };
+    return { ...week, components, sessionDate, sessionDay };
   });
   const currentEndDate = String(module.endDate || '').trim();
   const endDateFollowsPlan = options.followEndDate !== false
@@ -649,6 +755,14 @@ function isGeneratedWeekPlaceholderComponent(component: ModuleComponent, week: P
   const typeKey = normalisePlaceholderText(component.type);
   const hasKsbMappings = Boolean((component.ksbMappings || []).length);
   return !hasKsbMappings && weekKeys.includes(titleKey) && (typeKey.includes('live') || typeKey.includes('session'));
+}
+
+/** A week's OTJH is exactly the sum of Expected OTJH on its own components. */
+export function weekExpectedOtjhTotal(week: Pick<ModuleWeek, 'components'>): number {
+  const totalMinutes = (week.components || []).reduce((total, component) => (
+    total + hoursToRoundedMinutes(Number(component.expectedOtjh || 0))
+  ), 0);
+  return roundedMinutesToHours(totalMinutes);
 }
 
 export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string }): ModuleCatalogueItem {
@@ -921,12 +1035,21 @@ export async function deleteModuleStructure(moduleCatalogueId: string) {
  * them twice in development. Uncached, that was four to six identical requests
  * for one payload, queued behind each other on the server until their timeout
  * aborted them; shared, it is one request and a two-minute answer.
+ *
+ * `skipCache` is for the callers that are about to WRITE the whole structure
+ * back. A save on this endpoint replaces every week and component, so it is only
+ * ever safe against the version the server holds right now -- a two-minute-old
+ * answer would have the builder write its stale copy over whatever was edited in
+ * the meantime, here or by somebody else.
  */
-export async function loadModuleStructure(catalogueId: string): Promise<ModuleCatalogueItem | null> {
+export async function loadModuleStructure(
+  catalogueId: string,
+  options: { skipCache?: boolean } = {},
+): Promise<ModuleCatalogueItem | null> {
   try {
     return recalculateModule(await fetchCurriculumJson<ModuleCatalogueItem>(
       `/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`,
-      { timeoutMs: 30000 },
+      { timeoutMs: 30000, skipCache: options.skipCache },
     ));
   } catch (err) {
     const status = err instanceof ApiError || err instanceof CurriculumApiError ? err.status : 0;
@@ -1066,6 +1189,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
   const description = cleanUserFacingText(module.notes || '');
   const tutor = String(module.tutor || '').trim();
   const coach = String(module.coach || '').trim();
+  const totalOtjh = Number(module.declaredTotalOtjh ?? module.totalOtjh ?? 0) || 0;
   const weekStructure = (module.weekStructure || []).map((week, index): ModuleWeek => {
     const weekId = String(week.id || makeAuthoringId('WEEK'));
     return {
@@ -1134,7 +1258,8 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     // weeks/sessions split, where the two were the same number. Current
     // responses always carry `weeks`, so it is normally never reached.
     weeks: module.weeks || module.sessionNames?.length || module.sessionsNumber || 1,
-    totalOtjh: 0,
+    totalOtjh,
+    declaredTotalOtjh: totalOtjh,
     ksbCount: module.ksbCount || module.ksbCodes?.length || 0,
     lessonCount: module.lessons || module.sessionNames?.length || 0,
     quizCount: module.quizzes || 0,
@@ -1210,7 +1335,8 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
   const componentKsbCodes = new Set(allComponents.flatMap(component => component.ksbMappings.map(mapping => mapping.code)));
   moduleKsbMappings.forEach(mapping => componentKsbCodes.add(mapping.code));
   normalisedWeeks.forEach(week => week.ksbMappings.forEach(mapping => componentKsbCodes.add(mapping.code)));
-  const totalOtjh = allComponents.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
+  const componentTotalOtjh = normalisedWeeks.reduce((total, week) => total + weekExpectedOtjhTotal(week), 0);
+  const totalOtjh = hasStructure ? componentTotalOtjh : Number(module.totalOtjh || 0);
   const totalPoints = allComponents.reduce((total, component) => total + Number(component.points || 0), 0);
   const quality = calculateQualityScore({ ...module, completionCriteria, totalOtjh, ksbCount: componentKsbCodes.size, moduleKsbMappings, weekStructure: normalisedWeeks });
 
@@ -1311,10 +1437,7 @@ export function calculateQualityChecklist(module: ModuleCatalogueItem) {
     module.completionCriteria.averageScoreRequiredEnabled ||
     module.completionCriteria.totalScoreRequiredEnabled ||
     Boolean(module.completionCriteria.additionalNotes.trim());
-  const expectedTotal = module.weekStructure.reduce(
-    (total, week) => total + week.components.reduce((weekTotal, component) => weekTotal + Number(component.expectedOtjh || 0), 0),
-    0,
-  );
+  const expectedTotal = module.weekStructure.reduce((total, week) => total + weekExpectedOtjhTotal(week), 0);
   const declaredTotal = typeof module.declaredTotalOtjh === 'number' && module.declaredTotalOtjh > 0 ? module.declaredTotalOtjh : module.totalOtjh;
 
   return [

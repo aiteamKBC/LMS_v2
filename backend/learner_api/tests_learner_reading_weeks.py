@@ -1,0 +1,326 @@
+"""The learner Training Plan shows the curriculum's own timeline, closures included.
+
+A learner who only ever receives session dates cannot tell a bank holiday from a
+mistake: the week simply is not there. ``attach_curriculum_slots`` gives every
+learner module the curriculum scheduler's slot spine, so a closed delivery day
+stays in the learner's timeline as a Reading Week that names the holiday.
+
+The point of these tests is that the learner surface has NO scheduling logic of
+its own. Every assertion below is checked twice -- once against the learner
+payload and once against ``build_module_session_plan`` directly -- so the two can
+never drift. The only thing patched is the cohort's database read; the holiday
+rules and the walk are the real ones.
+"""
+
+from unittest.mock import patch
+
+from django.test import SimpleTestCase
+
+from curriculum_api import views
+from learner_api.training_plan_dashboard import attach_curriculum_slots
+
+
+#: Real England bank holidays, in the shape ``curriculum.england_holidays`` stores.
+#: 4 May, 25 May and 31 August 2026 are Mondays; 3 April 2026 (Good Friday) is not.
+HOLIDAY_ROWS = [
+    {'id': 'england-and-wales:2026-04-03', 'title': 'Good Friday', 'holiday_date': '2026-04-03'},
+    {'id': 'england-and-wales:2026-05-04', 'title': 'Early May bank holiday', 'holiday_date': '2026-05-04'},
+    {'id': 'england-and-wales:2026-05-25', 'title': 'Spring bank holiday', 'holiday_date': '2026-05-25'},
+]
+
+#: Monday 13 April 2026 -- deliberately NOT a bank holiday, so week 1 delivers.
+START = '2026-04-13'
+COHORT = 'COHORT-1'
+
+
+def module_row(catalogue_id='MOD-1', delivery='Monday', sessions=6, start=START):
+    """A ``curriculum.modules`` row exactly as the dashboard's SELECT returns it."""
+    return {
+        'id': catalogue_id, 'cohort_id': COHORT, 'start_date': start,
+        'session_week_day': delivery, 'sessions_number': sessions, 'weeks_number': sessions,
+    }
+
+
+def holidays(*, excluded=()):
+    """The holidays this cohort applies, resolved by the curriculum's own rule."""
+    return views.scheduling_holidays_from(HOLIDAY_ROWS, START, list(excluded))
+
+
+def learner_module(row=None, *, excluded=(), week_count=None):
+    """Run the real learner adapter with only the cohort's DB read patched."""
+    row = row or module_row()
+    resolved = {COHORT: holidays(excluded=excluded)}
+    payload = {row['id']: {'id': row['id']}}
+    with patch.object(views, 'cohort_selected_holidays_by_cohort', return_value=resolved):
+        attach_curriculum_slots(
+            [row], payload,
+            {row['id']: row['sessions_number'] if week_count is None else week_count},
+        )
+    return payload[row['id']]
+
+
+def planner(row=None, *, excluded=()):
+    """The same module straight from the scheduler, for the drift check."""
+    row = row or module_row()
+    return views.build_module_session_plan(
+        row['start_date'], row['sessions_number'], row['session_week_day'], holidays(excluded=excluded),
+    )
+
+
+def spine(module):
+    return [(slot['date'], slot['type'], slot['sessionNumber']) for slot in module['curriculumSlots']]
+
+
+class TheLearnerAndTheCurriculumShareOneScheduler(SimpleTestCase):
+    """Case 12: the learner payload IS the scheduler's output, not a copy of it."""
+
+    def test_the_spine_is_identical_to_the_planner(self):
+        self.assertEqual(learner_module()['curriculumSlots'], planner()['slots'])
+
+    def test_the_end_dates_are_the_planners_own(self):
+        module, plan = learner_module(), planner()
+
+        self.assertEqual(module['effectiveEndDate'], plan['finalEndDate'])
+        self.assertEqual(module['originalEndDate'], plan['originalEndDate'])
+
+    def test_a_twice_weekly_module_agrees_too(self):
+        row = module_row(delivery='Monday, Thursday', sessions=12)
+
+        self.assertEqual(learner_module(row)['curriculumSlots'], planner(row)['slots'])
+
+    def test_the_cohort_id_is_not_published_to_the_learner(self):
+        # It is read so the scheduler can resolve holidays, and nothing else.
+        self.assertNotIn('cohort_id', learner_module())
+
+
+class AModuleWithNoHolidays(SimpleTestCase):
+    """Case 1: a clean Monday module is unchanged by any of this."""
+
+    def setUp(self):
+        self.module = learner_module(excluded=[
+            'england-and-wales:2026-05-04', 'england-and-wales:2026-05-25',
+        ])
+
+    def test_every_slot_delivers_a_session(self):
+        self.assertEqual(
+            spine(self.module),
+            [
+                ('2026-04-13', 'live-session', 1), ('2026-04-20', 'live-session', 2),
+                ('2026-04-27', 'live-session', 3), ('2026-05-04', 'live-session', 4),
+                ('2026-05-11', 'live-session', 5), ('2026-05-18', 'live-session', 6),
+            ],
+        )
+
+    def test_no_reading_week_appears(self):
+        self.assertEqual([slot for slot in self.module['curriculumSlots'] if slot['type'] == 'reading-week'], [])
+
+    def test_the_delivery_end_does_not_move(self):
+        self.assertEqual(self.module['effectiveEndDate'], '2026-05-18')
+        self.assertEqual(self.module['originalEndDate'], '2026-05-18')
+
+
+class OneHolidayReachesTheLearnerAsAReadingWeek(SimpleTestCase):
+    """Cases 2, 3, 4, 5, 15."""
+
+    def setUp(self):
+        self.module = learner_module(excluded=['england-and-wales:2026-05-25'])
+
+    def test_the_closed_day_is_a_reading_week_in_the_learner_timeline(self):
+        self.assertEqual(
+            spine(self.module),
+            [
+                ('2026-04-13', 'live-session', 1), ('2026-04-20', 'live-session', 2),
+                ('2026-04-27', 'live-session', 3),
+                # Monday 4 May is closed and still present.
+                ('2026-05-04', 'reading-week', None),
+                ('2026-05-11', 'live-session', 4), ('2026-05-18', 'live-session', 5),
+                ('2026-05-25', 'live-session', 6),
+            ],
+        )
+
+    def test_the_holiday_details_reach_the_learner(self):
+        reading = next(slot for slot in self.module['curriculumSlots'] if slot['type'] == 'reading-week')
+        holiday = reading['holidays'][0]
+
+        self.assertEqual(reading['cause'], 'holiday')
+        self.assertEqual(reading['sessionNumber'], None)
+        self.assertEqual(holiday['label'], 'Early May bank holiday')
+        self.assertEqual(holiday['startDate'], '2026-05-04')
+        self.assertEqual(holiday['type'], views.BANK_HOLIDAY_TYPE)
+
+    def test_the_session_due_that_week_shifts_to_the_next_slot(self):
+        delivered = [slot for slot in self.module['curriculumSlots'] if slot['type'] == 'live-session']
+        after = next(slot for slot in delivered if slot['date'] == '2026-05-11')
+
+        self.assertEqual(after['sessionNumber'], 4)
+
+    def test_the_delivery_end_moves_one_slot(self):
+        self.assertEqual(self.module['originalEndDate'], '2026-05-18')
+        self.assertEqual(self.module['effectiveEndDate'], '2026-05-25')
+
+    def test_no_live_session_is_placed_on_the_closed_day(self):
+        delivered = [slot['date'] for slot in self.module['curriculumSlots'] if slot['type'] == 'live-session']
+        self.assertNotIn('2026-05-04', delivered)
+
+
+class AnExcludedHolidayIsInvisibleToTheLearner(SimpleTestCase):
+    """Case 6: the cohort deny-list is honoured upstream, with nothing added here."""
+
+    def setUp(self):
+        self.module = learner_module(excluded=[
+            'england-and-wales:2026-05-04', 'england-and-wales:2026-05-25',
+        ])
+
+    def test_no_reading_week_is_created(self):
+        self.assertEqual([slot['type'] for slot in self.module['curriculumSlots']], ['live-session'] * 6)
+
+    def test_the_session_runs_on_the_unticked_day(self):
+        delivered = [slot['date'] for slot in self.module['curriculumSlots'] if slot['type'] == 'live-session']
+        self.assertIn('2026-05-04', delivered)
+
+    def test_delivery_is_not_extended(self):
+        self.assertEqual(self.module['effectiveEndDate'], self.module['originalEndDate'])
+
+    def test_the_holiday_never_reaches_the_learner_payload(self):
+        labels = [
+            holiday['label']
+            for slot in self.module['curriculumSlots'] for holiday in slot['holidays']
+        ]
+        self.assertEqual(labels, [])
+
+    def test_an_exclusion_between_two_applied_holidays_removes_only_itself(self):
+        # Case 8's awkward variant: 4 May excluded, 25 May still applied. Eight
+        # sessions, so the run is long enough to reach the second holiday -- a
+        # six-session run ends on 18 May and never meets it.
+        module = learner_module(module_row(sessions=8), excluded=['england-and-wales:2026-05-04'])
+        closed = [slot['date'] for slot in module['curriculumSlots'] if slot['type'] == 'reading-week']
+
+        self.assertEqual(closed, ['2026-05-25'])
+        # The excluded date delivers, and only one slot is lost overall.
+        self.assertIn('2026-05-04', [slot['date'] for slot in module['curriculumSlots'] if slot['type'] == 'live-session'])
+        self.assertEqual(module['effectiveEndDate'], '2026-06-08')
+
+
+class ConsecutiveAndSeparatedHolidays(SimpleTestCase):
+    """Cases 7 and 8."""
+
+    BACK_TO_BACK = [
+        {'id': 'h-1', 'title': 'First closure', 'holiday_date': '2026-04-20'},
+        {'id': 'h-2', 'title': 'Second closure', 'holiday_date': '2026-04-27'},
+    ]
+
+    def test_two_closures_in_a_row_are_two_reading_weeks(self):
+        resolved = {COHORT: views.scheduling_holidays_from(self.BACK_TO_BACK, START)}
+        payload = {'MOD-1': {'id': 'MOD-1'}}
+        with patch.object(views, 'cohort_selected_holidays_by_cohort', return_value=resolved):
+            attach_curriculum_slots([module_row(sessions=4)], payload, {'MOD-1': 4})
+
+        self.assertEqual(
+            [(slot['date'], slot['type'], slot['sessionNumber']) for slot in payload['MOD-1']['curriculumSlots']],
+            [
+                ('2026-04-13', 'live-session', 1),
+                ('2026-04-20', 'reading-week', None),
+                ('2026-04-27', 'reading-week', None),
+                ('2026-05-04', 'live-session', 2),
+                ('2026-05-11', 'live-session', 3),
+                ('2026-05-18', 'live-session', 4),
+            ],
+        )
+
+    def test_two_separated_holidays_cost_two_slots(self):
+        module = learner_module(module_row(sessions=8))
+        closed = [slot['date'] for slot in module['curriculumSlots'] if slot['type'] == 'reading-week']
+
+        self.assertEqual(closed, ['2026-05-04', '2026-05-25'])
+        self.assertEqual(module['originalEndDate'], '2026-06-01')
+        self.assertEqual(module['effectiveEndDate'], '2026-06-15')
+
+
+class TheLearnerTimelineLosesAndInventsNothing(SimpleTestCase):
+    """Cases 13 and 14, over every holiday combination the cohort can produce."""
+
+    def combinations(self):
+        return [
+            (),
+            ('england-and-wales:2026-05-04',),
+            ('england-and-wales:2026-05-25',),
+            ('england-and-wales:2026-05-04', 'england-and-wales:2026-05-25'),
+        ]
+
+    def test_every_session_appears_exactly_once_in_order(self):
+        for excluded in self.combinations():
+            with self.subTest(excluded=excluded):
+                module = learner_module(module_row(sessions=8), excluded=excluded)
+                delivered = [slot for slot in module['curriculumSlots'] if slot['type'] == 'live-session']
+                numbers = [slot['sessionNumber'] for slot in delivered]
+
+                self.assertEqual(numbers, list(range(1, 9)), 'sessions missing, duplicated or reordered')
+                dates = [slot['date'] for slot in delivered]
+                self.assertEqual(len(set(dates)), len(dates), 'two sessions on one date')
+                self.assertEqual(dates, sorted(dates))
+
+    def test_the_spine_is_strictly_ordered_and_never_repeats_a_date(self):
+        for excluded in self.combinations():
+            with self.subTest(excluded=excluded):
+                dates = [slot['date'] for slot in learner_module(module_row(sessions=8), excluded=excluded)['curriculumSlots']]
+
+                self.assertEqual(dates, sorted(dates))
+                self.assertEqual(len(set(dates)), len(dates))
+
+    def test_slot_numbers_are_a_gapless_run_from_one(self):
+        module = learner_module(module_row(sessions=8))
+        self.assertEqual(
+            [slot['slotNumber'] for slot in module['curriculumSlots']],
+            list(range(1, len(module['curriculumSlots']) + 1)),
+        )
+
+
+class TwiceWeeklyDelivery(SimpleTestCase):
+    """Case 9: the shift is the next delivery occurrence, never a flat seven days."""
+
+    def setUp(self):
+        self.row = module_row(delivery='Monday, Thursday', sessions=8)
+        self.module = learner_module(self.row, excluded=['england-and-wales:2026-05-25'])
+
+    def test_the_closed_monday_is_the_only_closed_slot(self):
+        closed = [slot['date'] for slot in self.module['curriculumSlots'] if slot['type'] == 'reading-week']
+        self.assertEqual(closed, ['2026-05-04'])
+
+    def test_the_displaced_session_runs_on_the_next_delivery_day(self):
+        after = next(slot for slot in self.module['curriculumSlots'] if slot['date'] == '2026-05-07')
+
+        # Thursday 7 May: three days later, not seven.
+        self.assertEqual(after['type'], 'live-session')
+        self.assertEqual(after['day'], 'Thursday')
+
+    def test_the_end_moves_by_one_occurrence_not_one_week(self):
+        self.assertEqual(self.module['originalEndDate'], '2026-05-07')
+        self.assertEqual(self.module['effectiveEndDate'], '2026-05-11')
+
+
+class ModulesThatCannotBePlanned(SimpleTestCase):
+    """A learner page must load for a module the scheduler cannot date."""
+
+    def test_a_module_with_no_start_date_gets_an_empty_spine(self):
+        row = {**module_row(), 'start_date': None}
+        payload = {row['id']: {'id': row['id']}}
+        with patch.object(views, 'cohort_selected_holidays_by_cohort', return_value={}):
+            attach_curriculum_slots([row], payload, {})
+
+        self.assertEqual(payload[row['id']]['curriculumSlots'], [])
+        self.assertEqual(payload[row['id']]['effectiveEndDate'], '')
+
+    def test_a_failed_holiday_read_still_produces_a_module(self):
+        row = module_row()
+        payload = {row['id']: {'id': row['id']}}
+        with patch.object(views, 'cohort_selected_holidays_by_cohort', side_effect=RuntimeError('cohort read down')):
+            attach_curriculum_slots([row], payload, {row['id']: 6})
+
+        # No holidays could be resolved, so nothing is skipped -- but the
+        # learner still gets a dated timeline rather than a broken page.
+        self.assertEqual(len(payload[row['id']]['curriculumSlots']), 6)
+        self.assertEqual(payload[row['id']]['effectiveEndDate'], '2026-05-18')
+
+    def test_a_module_the_payload_does_not_carry_is_skipped(self):
+        with patch.object(views, 'cohort_selected_holidays_by_cohort', return_value={}):
+            attach_curriculum_slots([module_row()], {}, {})

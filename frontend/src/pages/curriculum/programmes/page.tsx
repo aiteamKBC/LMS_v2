@@ -3142,7 +3142,11 @@ function ProgrammeStructureEditor({
   const [tab, setTab] = useState<'programme' | 'cohorts' | 'groups' | 'modules'>('programme');
   const [notice, setNotice] = useState<string | null>(null);
 
-  const liveProgramme = data?.programmes.find(item => matchesProgramme(programme, item.id) || matchesProgramme(programme, item.sourceId) || matchesProgramme(programme, item.name)) ?? programme;
+  // Ids across every programme before any name: a programme whose name matches
+  // another's id would otherwise claim this workspace by listing order alone.
+  const liveProgramme = data?.programmes.find(item => matchesProgramme(programme, item.id) || matchesProgramme(programme, item.sourceId))
+    ?? data?.programmes.find(item => matchesProgramme(programme, item.name))
+    ?? programme;
   const cohorts = useMemo(() => (data?.cohorts ?? []).filter(cohort => matchesProgramme(liveProgramme, cohort.programmeId) || matchesProgramme(liveProgramme, cohort.programme)), [data?.cohorts, liveProgramme]);
   const cohortIds = useMemo(() => new Set(cohorts.map(cohort => cohort.id)), [cohorts]);
   const groups = useMemo(() => (data?.groups ?? []).filter(group => cohortIds.has(group.cohortId) || matchesProgramme(liveProgramme, group.programme)), [cohortIds, data?.groups, liveProgramme]);
