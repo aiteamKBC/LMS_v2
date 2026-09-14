@@ -46,6 +46,7 @@ function mount(search = '?month=2026-09') {
 }
 
 beforeEach(() => {
+  sessionStorage.clear();
   vi.mocked(useLearnerDetailParam).mockReturnValue({ real, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
   mockRequests();
 });
@@ -205,10 +206,38 @@ it('expands long feedback, collapses it and resets the expanded state on assignm
 it('distinguishes an unmarked draft from an assignment awaiting review', async () => {
   mount();
   const result = await screen.findByRole('region', { name: 'Assignment marking result' });
-  expect(within(result).getByText('Not marked yet')).toBeVisible();
-  expect(within(result).getByText('No marking result is available yet.')).toBeVisible();
+  expect(within(result).getByText('Draft ? not submitted for review')).toBeVisible();
+  expect(within(result).getByText('Your assignment is still a draft. Submit it when you are ready for your coach to review it.')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: /Digital analytics/ }));
   const pending = screen.getByRole('region', { name: 'Assignment marking result' });
   expect(within(pending).getByText('Awaiting coach review')).toBeVisible();
   expect(within(pending).queryByRole('button')).toBeNull();
+});
+
+
+it('places assignment choices before the selected brief', async () => {
+  mount();
+  const choices = await screen.findByText('Assignments this month');
+  const brief = screen.getByText('Explain how data informs your marketing decisions.');
+  expect(choices.compareDocumentPosition(brief) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it('remembers the selected assignment when returning without query parameters', async () => {
+  const first = mount();
+  fireEvent.click(await screen.findByRole('button', { name: /Digital analytics/ }));
+  first.unmount();
+  mount('');
+  expect(await screen.findByText('Evaluate the analytics tools.')).toBeVisible();
+  expect(screen.getByRole('button', { name: /Digital analytics/ })).toHaveAttribute('aria-pressed', 'true');
+});
+
+it('honours explicit links over saved selection and ignores another learner selection', async () => {
+  sessionStorage.setItem('monthly-assignment-selection:commercial:125', JSON.stringify({ month: '2026-09', assignment: 'A2' }));
+  const first = mount('?month=2026-09&assignment=A1');
+  expect(await screen.findByText('Explain how data informs your marketing decisions.')).toBeVisible();
+  first.unmount();
+  sessionStorage.removeItem('monthly-assignment-selection:commercial:125');
+  sessionStorage.setItem('monthly-assignment-selection:commercial:999', JSON.stringify({ month: '2026-09', assignment: 'A2' }));
+  mount('?month=2026-09');
+  expect(await screen.findByText('Explain how data informs your marketing decisions.')).toBeVisible();
 });

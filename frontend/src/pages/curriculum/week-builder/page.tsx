@@ -1394,6 +1394,13 @@ export interface ComponentBodyProps {
 }
 
 export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting = false, liveSessionModule }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; restoreTeamsMeeting?: () => Promise<void>; restoringTeamsMeeting?: boolean; liveSessionModule?: TeamsMeetingModuleContext }) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus({ preventScroll: true });
+    editor.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  }, [component.id]);
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
@@ -1401,7 +1408,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
   const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule };
 
   return (
-    <div className="rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
+    <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
       <div className={`flex items-center gap-3 px-5 py-4 border-b ${tone.border} ${tone.soft}`}>
         <button onClick={onBack} title="Back to week overview" className="grid place-items-center w-8 h-8 shrink-0 rounded-lg text-foreground-500 hover:bg-background-50 hover:text-foreground-900 transition-smooth"><AppIcon className="ri-arrow-left-line"></AppIcon></button>
         <span className={`grid place-items-center w-11 h-11 rounded-xl text-white ${tone.marker}`}><AppIcon className={`${definition.icon} text-xl`}></AppIcon></span>
@@ -2324,10 +2331,8 @@ function LinkedQuizPreviewModal({ preview, onClose }: { preview: LinkedQuizPrevi
   );
 }
 
-// Assignment editor. Authors supply the question; the learner answers it in
-// the three-step assignment form and may attach their own Azure evidence.
-// The old downloadable-template source is intentionally no longer authored.
-function AssignmentBody({ component, onChange, setSetting, rulePoints }: ComponentBodyProps) {
+// Authors can write the question and attach a document for learner preview.
+function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
 
   return (
@@ -2338,7 +2343,30 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints }: Compone
 
         <div className="mt-4">
           <RichTextDraft label="Assignment question" value={s('assignmentContent')} onChange={value => setSetting('assignmentContent', value)} rows={14} />
-          <p className="mt-2 text-[11px] text-foreground-400">The learner answers this question in the assignment form. Supporting PDF, image, Word, PowerPoint or video files are uploaded by the learner as optional evidence.</p>
+          <p className="mt-2 text-[11px] text-foreground-400">The learner answers this question in the assignment form. You can also attach the question as a file below.</p>
+        </div>
+        <div className="mt-4">
+          <h4 className="mb-2 text-[12px] font-semibold">Assignment question file (optional)</h4>
+          <WeekComponentFileUpload
+            componentId={component.id}
+            componentType="assignment"
+            onUpload={uploadResource}
+            accept={READING_UPLOAD_ACCEPT}
+            uploadedName={s('uploadedFileName') || s('assignmentFileName')}
+            uploadedUrl={s('uploadedFileUrl') || s('assignmentFileUrl')}
+            uploadedSize={Number(component.settings.uploadedFileSize) || 0}
+            uploadedContentType={s('uploadedFileContentType')}
+            onUploaded={file => onChange({ settings: { ...component.settings,
+              uploadedFileName: file.fileName, uploadedFileUrl: file.url,
+              uploadedFileSize: file.size, uploadedFileContentType: file.contentType,
+              assignmentFileName: file.fileName, assignmentFileUrl: file.url,
+            } })}
+            onRemove={() => onChange({ settings: { ...component.settings,
+              uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0,
+              uploadedFileContentType: '', assignmentFileName: '', assignmentFileUrl: '',
+            } })}
+          />
+          <p className="mt-2 text-[11px] text-foreground-400">Upload a PDF, Word document or text file. Learners can preview the question on the assignment page without downloading it. PDF is recommended for preserving the layout.</p>
         </div>
       </Section>
 

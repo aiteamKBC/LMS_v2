@@ -114,6 +114,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
     owned = approved_evidence_ids(payload) if evidence_ids is None and evidence else (evidence_ids or set())
     answer_lines = [line.strip() for line in text(payload.get("assignmentAnswer")).splitlines() if line.strip()]
     linked_ids = set()
+    evidence_valid = True
     for entry in evidence:
         entry_id = text(entry.get("id"))
         url = text(entry.get("url"))
@@ -126,6 +127,8 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         valid_points = not point_text or (bool(points) and all(1 <= p <= len(answer_lines) for p in points))
         if entry_id and (is_link or entry_id in owned) and valid_points:
             linked_ids.add(entry_id)
+        else:
+            evidence_valid = False
     claims = [mapping(c) for c in items(monthly.get("claims"))]
     allowed = available_ksb_codes(payload) if allowed_ksbs is None and claims else (allowed_ksbs or set())
     claimed_codes = [text(c.get("code")) for c in claims]
@@ -137,8 +140,8 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
     checks = [
         ("answer", "Assignment answer: at least 120 words", words(payload.get("assignmentAnswer")) >= 120),
         ("learning", "Learned, understood and gained skills: at least 20 words each", all(words(v) >= 20 for v in [payload.get("whatYouLearned"), monthly.get("understood"), monthly.get("gainedSkills")])),
-        ("evidence", "At least one available evidence item; answer point numbers are optional and must be valid if provided", bool(linked_ids)),
-        ("ksbs", "Every claimed programme KSB has a 20-word explanation and linked evidence", bool(claims) and len(set(claimed_codes)) == len(claimed_codes) and set(claimed_codes) <= allowed and all(words(c.get("explanation")) >= 20 and bool(set(str(e) for e in items(c.get("evidenceIds"))) & linked_ids) for c in claims)),
+        ("evidence", "Evidence files and links are optional; any provided items and answer point numbers must be valid", evidence_valid),
+        ("ksbs", "Every claimed programme KSB has a 20-word explanation; evidence links are optional and must be valid if selected", bool(claims) and len(set(claimed_codes)) == len(claimed_codes) and set(claimed_codes) <= allowed and all(words(c.get("explanation")) >= 20 and set(str(e) for e in items(c.get("evidenceIds"))) <= linked_ids for c in claims)),
         ("planned", "Planned hours and KSBs reviewed", monthly.get("plannedReviewed") is True),
         ("declarations", "New learning, skills and employer evidence-sharing declarations confirmed", all(monthly.get(k) is True for k in ["newKnowledge", "newSkills", "sharingConsent"])),
         ("hours", "Positive time recorded and any out-of-hours work confirmed (no six-hour cap)", math.isfinite(hours) and hours > 0 and (not payload.get("outsideWorkingHours") or payload.get("outsideWorkingHoursConfirmed") is True)),

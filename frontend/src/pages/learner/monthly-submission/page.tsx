@@ -20,8 +20,14 @@ export default function MonthlySubmissionPage() {
   const nav = roleNavMap.learner;
   const groups = useMemo(() => real ? groupMonthlyAssignments(real, plan.metadata, plan.contract, plan.statuses) : [],
     [real, plan.metadata, plan.contract, plan.statuses]);
-  const group = groups.find(item => item.month === params.get('month')) || defaultAssignmentMonth(groups);
-  const assignment = group?.assignments.find(item => item.id === params.get('assignment'))
+  const selectionKey = `monthly-assignment-selection:${kind}:${id}`;
+  let savedSelection: { month?: string; assignment?: string } | null = null;
+  try { savedSelection = JSON.parse(sessionStorage.getItem(selectionKey) || 'null'); } catch { /* Storage may be unavailable. */ }
+  const requestedMonth = params.get('month') ?? savedSelection?.month;
+  const group = groups.find(item => item.month === requestedMonth) || defaultAssignmentMonth(groups);
+  const requestedAssignment = params.get('assignment')
+    ?? (savedSelection?.month === group?.month ? savedSelection?.assignment : undefined);
+  const assignment = group?.assignments.find(item => item.id === requestedAssignment)
     || group?.assignments.find(item => !item.submitted) || group?.assignments[0];
   const monthsRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -36,6 +42,17 @@ export default function MonthlySubmissionPage() {
     }, { replace: true });
   };
   const busy = loading || plan.loading;
+  useEffect(() => {
+    if (busy || loadError || plan.errors.length || !kind || !id || !group || !assignment) return;
+    try { sessionStorage.setItem(selectionKey, JSON.stringify({ month: group.month, assignment: assignment.id })); } catch { /* URL selection still works without storage. */ }
+    if (params.get('month') === group.month && params.get('assignment') === assignment.id) return;
+    setParams(current => {
+      const next = new URLSearchParams(current);
+      next.set('month', group.month);
+      next.set('assignment', assignment.id);
+      return next;
+    }, { replace: true });
+  }, [busy, loadError, plan.errors.length, kind, id, group, assignment, selectionKey, params, setParams]);
   return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel}
     pageTitle="Monthly submission" pageSubtitle="Your assignment, evidence and coaching preparation" userName={real?.name || 'Learner'} userRole="Learner">
     <main className={`page-container ${styles.page}`}>
@@ -57,7 +74,6 @@ export default function MonthlySubmissionPage() {
                 <small>{item.assignments.length} assignment{item.assignments.length === 1 ? '' : 's'} · {item.submitted} submitted</small>
               </button>)}
             </nav>
-            <AssignmentDetailsCard assignment={assignment} group={group} kind={kind} learnerId={id} />
             <section className={styles.assignmentSection} aria-label={`Assignments for ${group.label}`}>
               <div className={styles.sectionHeading}><div><p className={styles.eyebrow}>Assignments this month</p><h2>{group.label}</h2></div>
                 <span>{group.assignments.length} assignment{group.assignments.length === 1 ? '' : 's'}</span></div>
@@ -71,6 +87,7 @@ export default function MonthlySubmissionPage() {
                   <span>{row.id === assignment.id ? <><CheckCircle2 size={15} aria-hidden="true" />Selected</> : <>View details<ArrowUpRight size={15} aria-hidden="true" /></>}</span></span>
               </button>)}</div>
             </section>
+            <AssignmentDetailsCard assignment={assignment} group={group} kind={kind} learnerId={id} />
           </> : <div className={styles.empty}><FileText size={28} aria-hidden="true" /><h2>No assignments yet</h2><p>Your assigned monthly work will appear here when it is added to your Training Plan.</p></div>}
         </>}
     </main>

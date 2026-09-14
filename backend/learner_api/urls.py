@@ -1,3 +1,4 @@
+from .coach_availability import coach_available_slots
 from . import presentation_design
 from . import monthly_reflection_ai
 from . import ksb_generation
@@ -17,6 +18,7 @@ from . import historical_evidence
 from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
 urlpatterns = [
+    path("calendar/<str:kind>/<int:pk>/coach-availability/", coach_available_slots, name="coach-available-slots"),
     path('monthly-logs/learners/', monthly_logs.learners, name='monthly-log-learners'),
     path('monthly-logs/<int:learner_id>/', monthly_logs.summary, name='monthly-log-summary'),
     path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),

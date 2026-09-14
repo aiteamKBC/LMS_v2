@@ -205,7 +205,7 @@ class StoredRowOwnershipTests(SimpleTestCase):
 class CalendarResponseTests(SimpleTestCase):
     """The endpoint hands the page one calendar in date order."""
 
-    def _call(self, records, mirror, live_events=None):
+    def _call(self, records, mirror, live_events=None, module_ids=None):
         from django.test import RequestFactory
 
         from . import calendar as module
@@ -216,7 +216,9 @@ class CalendarResponseTests(SimpleTestCase):
                 patch.object(module.CoachCalendarEvent.objects, 'filter', return_value=queryset), \
                 patch('coach_api.views.collect_live_session_events', return_value=live_events or []) as collect_live, \
                 patch.object(module, 'learner_profile_for_source', return_value=mirror), \
+                patch.object(module.connections['enrolment'], 'cursor') as cursor, \
                 patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff', id=-1)):
+            cursor.return_value.__enter__.return_value.fetchall.return_value = [(key,) for key in (module_ids if module_ids is not None else ['MOD-1'])]
             models['commercial'].all_learners.filter.return_value.first.return_value = _learner()
             response = inspect.unwrap(module.learner_calendar)(RequestFactory().get('/x'), 'commercial', 101)
         import json
@@ -240,7 +242,7 @@ class CalendarResponseTests(SimpleTestCase):
         self.assertTrue(cycle)
         self.assertTrue(all(e['status'] == 'not-scheduled' for e in cycle))
 
-    def test_live_sessions_are_scoped_by_placement_not_coach_email(self):
+    def test_live_sessions_are_scoped_by_assigned_modules_not_profile_group(self):
         body, collect_live = self._call(
             [],
             _mirror(
@@ -277,7 +279,46 @@ class CalendarResponseTests(SimpleTestCase):
         _, _, kwargs = collect_live.mock_calls[0]
         self.assertFalse(kwargs['require_coach_access'])
         self.assertTrue(kwargs['include_past'])
-        self.assertEqual(kwargs['learner_scope']['group_id'], 'GROUP-1')
+        self.assertEqual(kwargs['learner_module_ids'], ['MOD-1'])
+        self.assertNotIn('learner_scope', kwargs)
         live = [event for event in body['events'] if event['source'] == 'live-session']
         self.assertEqual(len(live), 1)
         self.assertEqual(live[0]['meetingLink'], 'https://teams.example/join')
+
+    def test_no_assigned_modules_does_not_fall_back_to_group_sessions(self):
+        body, collect_live = self._call([], _mirror(), module_ids=[])
+        collect_live.assert_not_called()
+        self.assertFalse(any(event['source'] == 'live-session' for event in body['events']))
+
+
+class AssignedModuleLiveSessionTests(SimpleTestCase):
+    def test_explicit_assignment_includes_other_group_and_excludes_unassigned_module(self):
+        from coach_api import views
+        rows = [
+            {'id': key, 'module_name': key, 'start_date': '2026-09-01',
+             'sessions_number': 1, 'session_week_day': 'Tuesday',
+             '_meta': {'module_catalogue_id': key}}
+            for key in ['assigned-other-group', 'unassigned-same-group']
+        ]
+        with patch.object(views, 'get_program_config_rows', return_value=[]), \
+             patch.object(views, 'authoring_fetch_all', side_effect=lambda table, *args, **kwargs: [
+                 {'id': 'W1', 'module_catalogue_id': 'assigned-other-group', 'week_number': 1, 'title': 'Week 1'}
+             ] if table == views.AUTHORING_WEEKS_TABLE else []), \
+             patch.object(views, 'authoring_modules_as_training_rows', return_value=rows), \
+             patch.object(views, 'is_operational_training_row', return_value=True), \
+             patch.object(views, 'programme_identity', return_value={'name': 'Programme', 'sourceId': 'P'}), \
+             patch.object(views, 'actual_cohort_identity', return_value={'name': 'Cohort', 'id': 'C'}), \
+             patch.object(views, 'actual_group_identity', return_value={'name': 'Other group', 'id': 'OTHER'}), \
+             patch.object(views, 'live_session_matches_curriculum_scope', return_value=False) as placement_match, \
+             patch.object(views, 'fetch_cohort_selected_holidays', return_value=[]):
+            events = views.collect_live_session_events(
+                '', '', require_coach_access=False, include_past=True,
+                learner_scope={'group_id': 'ORIGINAL'},
+                learner_module_ids=['assigned-other-group'],
+            )
+            self.assertEqual([event['module'] for event in events], ['assigned-other-group'])
+            placement_match.assert_not_called()
+            self.assertEqual(views.collect_live_session_events(
+                '', '', require_coach_access=False, include_past=True,
+                learner_module_ids=[],
+            ), [])

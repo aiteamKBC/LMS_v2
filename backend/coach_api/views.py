@@ -4763,6 +4763,7 @@ def fetch_standalone_event_records(owner_email: str) -> list[CoachCalendarEvent]
             .filter(
                 ~Q(event_type__in=["mcr", "progress-review"])
                 | Q(event_type__in=["mcr", "progress-review"], idempotency_key__startswith="learner-book:")
+                | Q(event_type__in=["mcr", "progress-review"], scheduled_date__isnull=False, scheduled_time__isnull=False)
             )
             .order_by("scheduled_date", "target_date", "scheduled_time", "learner_name")
         )
@@ -7209,6 +7210,7 @@ def collect_live_session_events(
     end_date: date | None = None,
     require_coach_access: bool = True,
     learner_scope: dict | None = None,
+    learner_module_ids: list[str] | None = None,
     include_past: bool = False,
 ) -> list[dict]:
     if require_coach_access and not coach_has_live_session_access(owner_email):
@@ -7287,7 +7289,10 @@ def collect_live_session_events(
         group = actual_group_identity(row, cohort["id"])
         if not group:
             continue
-        if learner_scope is not None:
+        if learner_module_ids is not None:
+            if clean_text(row.get("_meta", {}).get("module_catalogue_id")) not in learner_module_ids:
+                continue
+        elif learner_scope is not None:
             if not live_session_matches_curriculum_scope(
                 programme=programme,
                 cohort=cohort["name"],
@@ -7598,7 +7603,11 @@ def collect_generated_timetable(
             else:
                 source_counts["reviewRows"] += 1
 
-    persisted_standalone_records = fetch_standalone_event_records(owner_email)
+    # Saved appointments survive changes to programme templates and event keys.
+    # A record matching a generated item is overlaid below, so show it only once.
+    generated_keys = {event["eventKey"] for event in generated_events}
+    persisted_standalone_records = [record for record in fetch_standalone_event_records(owner_email)
+                                    if record.event_key not in generated_keys]
     # One resolution pass for the whole list -- a booked Review keeps its
     # template's Review Type, and this is the only place these rows are shaped.
     standalone_review_type_fields = review_type_fields_by_template(
