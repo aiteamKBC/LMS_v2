@@ -56,9 +56,24 @@ describe('useLearnerWorkspaceAccess', () => {
     expect(access(56).canProgress).toBe(true);
   });
 
-  it('makes the workspace read-only for an admin viewing a learner', () => {
+  it('lets an admin edit and complete work for the selected learner', () => {
     signedIn(ADMIN);
+    expect(access('56')).toEqual({ canProgress: true, showReadOnlyNotice: false });
+    expect(access('19').canProgress).toBe(true);
+  });
+
+  it('keeps an ordinary staff preview read-only', () => {
+    signedIn({ ...ADMIN, role: 'staff' });
     expect(access('56')).toEqual({ canProgress: false, showReadOnlyNotice: true });
+  });
+
+  it('does not enable admin actions until both session and learner are resolved', () => {
+    signedIn(ADMIN, false);
+    expect(access('56').canProgress).toBe(false);
+    signedIn(ADMIN);
+    for (const id of [undefined, null, '', 'not-a-learner', '0', '-1']) {
+      expect(access(id).canProgress).toBe(false);
+    }
   });
 
   it('makes it read-only for a learner who opened somebody else', () => {

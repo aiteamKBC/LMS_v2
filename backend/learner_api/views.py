@@ -21,7 +21,6 @@ import json
 import logging
 
 from django.db import DatabaseError, transaction
-from django.db.models import BooleanField, Case, Q, Value, When
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -708,30 +707,10 @@ def enrolment_users(request):
                 f"Invalid learnerType: {wanted!r}. Allowed: {', '.join(LEARNER_TYPE_CHOICES)}", 400
             )
         try:
-            qs = EnrolmentUser.all_learners.all()
-            if wanted == "apprenticeship":
-                # Rows predating the merge have a NULL type and are apprenticeship.
-                qs = qs.exclude(learner_type="commercial")
-            elif wanted == "commercial":
-                qs = qs.filter(learner_type="commercial")
-            # The enrolment table contains many large JSON/text columns. The
-            # directory only needs this small projection; selecting every
-            # column for all learners made the request exceed PostgreSQL's
-            # statement timeout before the rows could be rendered.
-            learners = list(qs.only(
-                "id", "uuid", "username", "type", "email", "group", "status",
-                "programme_status", "programme",
-                "cohort", "learner_type", "organization",
-            ).annotate(
-                _has_learning_plan=Case(
-                    When(
-                        Q(learning_plan__isnull=False) | Q(training_plan__isnull=False),
-                        then=Value(True),
-                    ),
-                    default=Value(False),
-                    output_field=BooleanField(),
-                ),
-            ).order_by("id"))
+            # Use the shared projection and its mapper annotation together.
+            # A duplicate query with a different annotation name made the
+            # mapper fetch the deferred plan documents again for every learner.
+            learners = list(learner_directory_queryset(wanted))
             # Keep this collection read bounded: advancing every learner here
             # performs up to four compliance-document queries per row and can
             # exceed the database statement timeout on a directory-sized list.

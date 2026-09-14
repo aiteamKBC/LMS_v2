@@ -2,6 +2,7 @@
 from django.urls import path
 
 from . import admin_evidence, access_requests, microsoft_sso, platform_admin, views
+from old_otjh.entry import entry_status
 
 urlpatterns = [
     path("health/", views.health, name="login-health"),
@@ -10,6 +11,7 @@ urlpatterns = [
     path("login/", views.login, name="login"),
     path("logout/", views.logout, name="logout"),
     path("me/", views.me, name="login-me"),
+    path("learner-entry/", entry_status, name="learner-entry"),
 
     # --- sign in with Microsoft (see microsoft_sso.py) ---
     path("microsoft/start/", microsoft_sso.start, name="login-microsoft-start"),

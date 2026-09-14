@@ -21,7 +21,7 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from .evidence_storage import azure_configured, download_blob_bytes
-from login.permissions import learner_self_only, learner_self_or_staff
+from login.permissions import learner_self_or_admin, learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +139,8 @@ def _saved_signature(cur, learner_id):
 @csrf_exempt
 # READ and WRITE need different authorization, so this single-URL view splits by
 # method, exactly as the reflection submissions view does. A learner may only
-# WRITE their own monthly report (POST, self-only); the owner OR staff may READ
-# them (GET) - a coach reviews what the learner submitted.
+# WRITE their own monthly report, and admins can act on their behalf. The owner
+# OR staff may READ reports (GET) to review what was submitted.
 def monthly_reports(request, kind, pk):
     # Forwarded as KEYWORDS, not positionally: the permission gate reads the
     # learner id out of the view's kwargs (``kwarg="pk"``), so passing them
@@ -209,7 +209,7 @@ def _list_monthly_reports(request, kind, pk):
     )
 
 
-@learner_self_only(kwarg="pk")
+@learner_self_or_admin(kwarg="pk")
 def _submit_monthly_report(request, kind, pk):
     if request.method != "POST":
         return _error("Method not allowed.", 405)
@@ -225,6 +225,10 @@ def _submit_monthly_report(request, kind, pk):
     learned_summary = _text(payload.get("learnedSummary"))
     signature = _text(payload.get("signature"))
     signed_name = _text(payload.get("signedName")) or _text(payload.get("learnerName"))
+    account = getattr(request, "login_account", None)
+    admin_action = getattr(account, "role", None) == "admin"
+    if admin_action:
+        signed_name = account.display_name or account.email
 
     if not MONTH_KEY_RE.match(month_key):
         return _error("A valid monthKey (YYYY-MM) is required.")
@@ -316,7 +320,7 @@ def _submit_monthly_report(request, kind, pk):
                 # would lose the learner's work.
                 # The nested atomic() is a savepoint, so a failure here rolls
                 # back only this update and leaves the stored report intact.
-                if payload.get("saveSignature"):
+                if payload.get("saveSignature") and not admin_action:
                     try:
                         with transaction.atomic(using="enrolment"):
                             cur.execute(

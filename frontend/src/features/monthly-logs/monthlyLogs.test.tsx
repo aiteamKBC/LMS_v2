@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import MonthlyLogsPage from './page';
-import { getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, type LogDetail, type LogSummary } from './api';
+import { completeLogMonth, getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, type LogDetail, type LogSummary } from './api';
 import { learnerNavItems, coachNavItems } from '@/mocks/navigation';
 import { rememberLearner } from '@/hooks/useMyLearner';
 
@@ -15,7 +15,7 @@ vi.mock('@/features/old-otjh/JournalDownloads', () => ({ JournalDownloads: () =>
 vi.mock('@/features/old-otjh/SignatureCapture', () => ({ SignatureCapture: ({ dialogRole, onDraftStart, onSave }: {
   dialogRole: string; onDraftStart: () => void; onSave: (blob: Blob, capture: 'draw') => void;
 }) => <button onClick={() => { onDraftStart(); onSave(new Blob(['signature']), 'draw'); }}>Sign as {dialogRole}</button> }));
-vi.mock('./api', () => ({ getLogContent: vi.fn(), getLogLearners: vi.fn(), getLogMonth: vi.fn(), getLogSummary: vi.fn(), signLogMonth: vi.fn() }));
+vi.mock('./api', () => ({ completeLogMonth: vi.fn(), getLogContent: vi.fn(), getLogLearners: vi.fn(), getLogMonth: vi.fn(), getLogSummary: vi.fn(), signLogMonth: vi.fn() }));
 
 const current: LogDetail = { source: 'lms', month: '2026-09', status: 'awaiting_signature', row_count: 1,
   planned_hours: 2, actual_hours: 1, not_accepted_hours: 0, pending_revisions: 0, can_complete: false,
@@ -203,6 +203,25 @@ describe('monthly logs', () => {
     expect(await screen.findByRole('button', { name: 'Sign as coach' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign as learner' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /All months/ })).toHaveAttribute('href', '/coach/monthly-logs/7');
+  });
+
+  it('lets an admin sign for the selected learner using their own signature', async () => {
+    Object.assign(account, { role: 'admin', subjectId: 999, access: 'super-admin' });
+    vi.mocked(signLogMonth).mockResolvedValue({ ...current, student_signature: retained.student_signature, status: 'complete' });
+    page('/learner/monthly-logs/commercial/7/2026-09');
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign as learner' }));
+    expect(screen.queryByRole('button', { name: 'Sign as coach' })).not.toBeInTheDocument();
+    await waitFor(() => expect(signLogMonth).toHaveBeenCalledWith('7', '2026-09', 'reviewed-digest', expect.any(Blob), 'draw', 'csrf', 'learner'));
+  });
+
+  it('completes the selected learner month from admin view, not the admin account', async () => {
+    Object.assign(account, { role: 'admin', subjectId: 999, access: 'super-admin' });
+    vi.mocked(getLogMonth).mockResolvedValue({ ...retained, status: 'awaiting_signature', can_complete: true });
+    vi.mocked(completeLogMonth).mockResolvedValue(retained);
+    page('/learner/monthly-logs/commercial/7/2026-08');
+    fireEvent.click(await screen.findByRole('button', { name: 'Complete month' }));
+    await waitFor(() => expect(completeLogMonth).toHaveBeenCalledWith('7', '2026-08', 'csrf', 'learner'));
+    expect(await screen.findByText('This month has been reviewed, signed and completed.')).toBeInTheDocument();
   });
 
   it('shows the assigned coach learner list', async () => {

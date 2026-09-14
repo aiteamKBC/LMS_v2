@@ -1,10 +1,11 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { Panel } from '@/components/ui/Panel';
@@ -13,13 +14,17 @@ import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import type { PageTabItem } from '@/components/ui/PageTabs';
 import { RowAction } from '@/components/ui/ActionRow';
 import {
-  fetchAttendanceWorkspace, peekAttendanceWorkspace, updateAttendanceMode,
+  confirmAttendance, fetchAttendanceWorkspace, peekAttendanceWorkspace, updateAttendanceMode,
   type AttendanceLecture,
 } from '@/api/attendanceLectures';
 import AbsenceReportForm from './components/AbsenceReportForm';
 import AbsenceReportDialog from './components/AbsenceReportDialog';
 import AttendanceModePanel from './components/AttendanceModePanel';
 import AttendanceLectureList, { type AttendanceFilter } from './components/AttendanceLectureList';
+import FeaturedLecture from './components/FeaturedLecture';
+import CatchupBooking from './components/CatchupBooking';
+import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { featuredLecture, useLectureClock } from './liveLecture';
 import styles from './attendance.module.css';
 
 const learnerNav = roleNavMap.learner;
@@ -35,6 +40,7 @@ export function lectureCounts(lectures: AttendanceLecture[]) {
 
 export default function AttendancePage() {
   const learner = useMyLearner();
+  const access = useLearnerWorkspaceAccess(learner.id);
   const navigate = useNavigate();
   const read = useLiveLearnerRead(learner.kind, learner.id, true, fetchAttendanceWorkspace, peekAttendanceWorkspace);
   const data = read.data;
@@ -45,8 +51,23 @@ export default function AttendancePage() {
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState('');
   const [modeNotice, setModeNotice] = useState('');
+  const [catchup, setCatchup] = useState<AttendanceLecture | null>(null);
+  const [catchupBooking, setCatchupBooking] = useState<LearnerCalendarEvent | null>(null);
+  const [bookingBusy, setBookingBusy] = useState(false);
+  const [attendBusy, setAttendBusy] = useState(false);
+  const attendInFlight = useRef(false);
+  const [attendError, setAttendError] = useState('');
+  const [attendNotice, setAttendNotice] = useState('');
+  const [confirmations, setConfirmations] = useState<Record<string, number>>({});
+  const allLectures = useMemo(() => (data?.lectures || []).map(row => {
+    const minutes = confirmations[`${learner.kind}:${learner.id}:${row.id}`];
+    return minutes == null ? row : { ...row, status: 'completed' as const, attendanceConfirmed: true,
+      creditedMinutes: minutes, canReportAbsence: false, catchupStatus: null };
+  }), [data, confirmations, learner.kind, learner.id]);
+  const now = useLectureClock(allLectures);
+  const featured = featuredLecture(allLectures, now, data?.timeZone);
   const selectedModule = data?.modules.some(module => module.id === moduleId) ? moduleId : 'all';
-  const lectures = useMemo(() => (data?.lectures || []).filter(row => selectedModule === 'all' || row.moduleId === selectedModule), [data, selectedModule]);
+  const lectures = useMemo(() => allLectures.filter(row => selectedModule === 'all' || row.moduleId === selectedModule), [allLectures, selectedModule]);
   const counts = useMemo(() => lectureCounts(lectures), [lectures]);
   const tabs: PageTabItem[] = [
     { value: 'all', label: 'All', count: counts.all },
@@ -74,6 +95,21 @@ export default function AttendancePage() {
     const search = new URLSearchParams({ source: log.sourceRef });
     navigate(`/learner/monthly-logs/${learner.kind}/${learner.id}/${log.month}?${search}`);
   };
+  const attend = async (row: AttendanceLecture) => {
+    if (attendInFlight.current || !access.canProgress) return;
+    attendInFlight.current = true;
+    setAttendBusy(true); setAttendError(''); setAttendNotice('');
+    try {
+      const result = await confirmAttendance(learner.kind, learner.id, row.id);
+      setConfirmations(current => ({ ...current, [`${learner.kind}:${learner.id}:${row.id}`]: result.creditedMinutes }));
+      setAttendNotice(`Attendance recorded for ${row.title}. ${result.creditedHours} ${result.creditedHours === 1 ? 'hour' : 'hours'} credited.`);
+      read.refresh();
+    } catch (error) { setAttendError(error instanceof Error ? error.message : 'Could not save attendance. Please try again.'); }
+    finally { attendInFlight.current = false; setAttendBusy(false); }
+  };
+  const selectCatchupBooking = useCallback((event: LearnerCalendarEvent | null) => {
+    setCatchupBooking(event);
+  }, []);
 
   return <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}
     pageTitle="Attendance" pageSubtitle="Your lectures, attendance and learning activities"
@@ -85,6 +121,8 @@ export default function AttendancePage() {
         Lectures could not refresh. Showing the last loaded record. <button onClick={read.refresh} className="font-semibold underline">Retry</button>
       </div>}
       {read.loading ? <Panel><RowsSkeleton rows={6} /></Panel> : !data ? <LearnerLoadError error={read.error || 'Could not load lectures.'} onRetry={read.refresh} /> : <>
+        <FeaturedLecture lecture={featured} now={now} timeZone={data.timeZone} busy={attendBusy} canAttend={access.canProgress}
+          error={attendError} notice={attendNotice} onAttend={attend} onReport={setReport} />
         <div className={styles.workspace}>
           <div className={styles.mainColumn}>
             <Panel className={styles.overview}>
@@ -109,7 +147,8 @@ export default function AttendancePage() {
               </div>
             </Panel>
             <AttendanceLectureList key={selectedModule} lectures={lectures} moduleId={selectedModule} onModuleChange={setModuleId}
-              filter={filter} onFilterChange={setFilter} tabs={tabs} onOpen={openActivities} onReport={setReport} />
+              filter={filter} onFilterChange={setFilter} tabs={tabs} onOpen={openActivities} onReport={setReport}
+              onCatchup={row => { setCatchup(row); setCatchupBooking(null); }} />
             <p className={styles.learningNote}><AppIcon className="ri-information-line" />Complete the activities linked to missed lectures to cover your learning. Catch-up is tracked separately from live attendance.</p>
           </div>
           <aside className={styles.sidebar}>
@@ -140,6 +179,13 @@ export default function AttendancePage() {
       <AbsenceReportForm key={typeof report === 'string' ? report : report.id}
         preselectMatch={typeof report === 'string' ? null : { id: report.id, dateIso: report.date, title: report.title }}
         onSubmitted={() => read.refresh()} onCancel={() => setReport(null)} showGuidance={false} showHistory={false} compact />
+    </AbsenceReportDialog>}
+    {catchup && <AbsenceReportDialog title="Book Catchup Session" onClose={() => { setCatchup(null); read.refresh(); }}>
+      <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>
+      <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
+        sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
+        onSelect={selectCatchupBooking} onBusyChange={setBookingBusy} standalone />
+      <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Done</button>
     </AbsenceReportDialog>}
   </WorkspaceShell>;
 }

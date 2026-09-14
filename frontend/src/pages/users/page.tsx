@@ -328,6 +328,8 @@ export default function UsersListPage() {
   const navigate = useNavigate();
   const [draft, setDraft] = useState<UsersFilter>(EMPTY_FILTER);
   const [applied, setApplied] = useState<UsersFilter>(EMPTY_FILTER);
+  const [quickSearch, setQuickSearch] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -498,14 +500,17 @@ export default function UsersListPage() {
     [rows],
   );
 
+  const searchTerm = quickSearch.trim().toLowerCase();
   const filtered = useMemo(() => rows.filter((r) => {
+    if (searchTerm && ![r.name, r.email, r.group, r.programme]
+      .some((value) => (value ?? '').toLowerCase().includes(searchTerm))) return false;
     if (!matches(r, applied)) return false;
     if (summaryFilter === 'learners') return isLearnerRow(r);
     if (summaryFilter === 'admins') return r.source === 'staff';
     if (summaryFilter === 'employers') return r.source === 'employer';
     if (summaryFilter === 'active') return r.programmeStatus === 'Active';
     return true;
-  }), [rows, applied, summaryFilter]);
+  }), [rows, applied, summaryFilter, searchTerm]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const showingStart = filtered.length ? (page - 1) * PAGE_SIZE + 1 : 0;
@@ -531,7 +536,8 @@ export default function UsersListPage() {
       ...patch,
     }));
   const search = () => { setApplied(draft); setPage(1); };
-  const reset = () => { setDraft(EMPTY_FILTER); setApplied(EMPTY_FILTER); setSummaryFilter('all'); setPage(1); };
+  const updateQuickSearch = (value: string) => { setQuickSearch(value); setPage(1); };
+  const reset = () => { setDraft(EMPTY_FILTER); setApplied(EMPTY_FILTER); setQuickSearch(''); setSummaryFilter('all'); setPage(1); };
   const selectSummary = (next: SummaryFilter) => { setSummaryFilter(next); setPage(1); };
   // Commercial and apprenticeship ids come from different tables and overlap,
   // so every row action carries the row's source.
@@ -644,7 +650,7 @@ export default function UsersListPage() {
           </div>
           <div className="border-t border-foreground-100 p-4 md:p-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <TextFilter label="Search" placeholder="Search by name or email..." value={draft.userName ?? ''} onChange={(v) => set({ userName: v })} />
+            <TextFilter label="Name" placeholder="Search by name..." value={draft.userName ?? ''} onChange={(v) => set({ userName: v })} />
             {/* Programme -> cohort -> group, same gate as the Cohort filter: a
                 group only means something inside a programme. */}
             <MultiSelect
@@ -694,8 +700,32 @@ export default function UsersListPage() {
             <div className="flex items-center gap-3">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><AppIcon className="ri-group-line" /></span>
               <div className="flex items-center gap-2">
-                <h2 className="text-[15px] font-semibold text-foreground-900">Users ({rows.length})</h2>
+                <h2 className="text-[15px] font-semibold text-foreground-900">Users ({filtered.length})</h2>
               </div>
+            </div>
+            <div role="search" aria-label="User directory" className="relative order-last w-full sm:order-none sm:ml-auto sm:w-80">
+              <label htmlFor="users-search" className="sr-only">Search users</label>
+              <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" />
+              <input
+                ref={searchInputRef}
+                id="users-search"
+                type="search"
+                value={quickSearch}
+                onChange={(event) => updateQuickSearch(event.target.value)}
+                placeholder="Search name, email, group or programme..."
+                aria-controls="users-directory-table"
+                className={`${inputClass} pl-9 pr-9 [&::-webkit-search-cancel-button]:appearance-none`}
+              />
+              {quickSearch && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => { updateQuickSearch(''); searchInputRef.current?.focus(); }}
+                  className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-foreground-400 hover:bg-background-100 hover:text-primary-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-400"
+                >
+                  <AppIcon className="ri-close-line" />
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><AppIcon className="ri-layout-column-line" />Columns</button>
@@ -703,7 +733,7 @@ export default function UsersListPage() {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
+            <table id="users-directory-table" className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-foreground-200/70 bg-background-100/50">
                   {['User', 'Type', 'Email', 'Group', 'Programme', 'Subscription status', 'Learning plan', 'Programme status', 'Actions'].map((h) => (

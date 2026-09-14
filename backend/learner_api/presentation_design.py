@@ -10,7 +10,7 @@ from xml.etree import ElementTree as ET
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from login.permissions import learner_self_only
+from login.permissions import learner_self_or_admin
 
 DEFAULT = {'accent': '51258B', 'font': 'Aptos', 'ratio': 16 / 9}
 
@@ -45,7 +45,7 @@ def extract_design(content):
 
 @csrf_exempt
 @require_POST
-@learner_self_only(query_param='learnerId')
+@learner_self_or_admin(query_param='learnerId')
 def upload_design(request):
     try:
         from .presentation_template import load_owned_template

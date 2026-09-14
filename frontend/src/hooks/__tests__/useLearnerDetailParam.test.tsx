@@ -73,18 +73,32 @@ describe('learner View identity', () => {
     expect(result.current.loading).toBe(false);
   });
 
-  it('keeps the same learner visible on refresh and invalidates only their cache', async () => {
+  it('revalidates the same learner without dropping data or restarting unrelated reads', async () => {
     const invalidate = vi.spyOn(api, 'invalidateLearnerDetailCache');
     let resolve!: (data: LearnerDetail) => void;
-    vi.spyOn(api, 'fetchLearnerDetail').mockResolvedValueOnce(first)
+    const fetch = vi.spyOn(api, 'fetchLearnerDetail').mockResolvedValueOnce(first)
       .mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
     const { result } = renderHook(() => useLearnerDetailParam('commercial', '125'));
     await waitFor(() => expect(result.current.real).toBe(first));
     act(() => result.current.refresh());
     expect(result.current.real).toBe(first);
-    expect(result.current.loading).toBe(true);
-    expect(invalidate).toHaveBeenCalledWith('commercial', '125');
+    expect(result.current.loading).toBe(false);
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenLastCalledWith('commercial', '125', { revalidate: true });
     await act(async () => resolve({ ...first, name: 'Updated learner' }));
     expect(result.current.real?.name).toBe('Updated learner');
+  });
+
+  it('retains the learner after an unsuccessful background refresh and recovers when the connection returns', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    vi.spyOn(api, 'fetchLearnerDetail').mockResolvedValueOnce(first).mockRejectedValueOnce(new Error('Connection interrupted')).mockResolvedValueOnce(second);
+    const { result } = renderHook(() => useLearnerDetailParam('commercial', '125', true));
+    await waitFor(() => expect(result.current.real).toBe(first));
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.loadError).toBe('Connection interrupted'));
+    expect(result.current.real).toBe(first);
+    expect(result.current.loading).toBe(false);
+    act(() => window.dispatchEvent(new Event('online')));
+    await waitFor(() => expect(result.current.loadError).toBeNull());
   });
 });

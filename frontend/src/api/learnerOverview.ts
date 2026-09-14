@@ -20,6 +20,16 @@ export type OverviewWeek = {
   otjh: { actual: number | null; historical: number | null; new: number; undatedHistoricalRows: number };
 };
 
+export type HomeProgressCount = { completed: number; total: number };
+export type HomeProgress = {
+  period: { start: string | null; end: string; timezone: string };
+  otjh: { actual: number | null; submitted: number | null; planned: number | null; percent: number | null; missingPlannedActivities: number };
+  activities: HomeProgressCount | null; assignments: HomeProgressCount | null;
+  lectures: HomeProgressCount | null; modules: HomeProgressCount;
+  undatedActivities: number;
+};
+export type OverviewHome = OverviewWeek & { homeProgress: HomeProgress };
+
 function resource<T>(path: (kind: LearnerKind, id: string) => string, valid: (value: T) => boolean) {
   return {
     read: async (kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false) => {
@@ -35,6 +45,9 @@ function resource<T>(path: (kind: LearnerKind, id: string) => string, valid: (va
 }
 const weekPath = (kind: LearnerKind, id: string) => `/learner_api/overview-week/${kind}/${encodeURIComponent(id)}/`;
 export const overviewWeek = resource<OverviewWeek>(weekPath, value => !!value.weekStart && Array.isArray(value.modules) && Array.isArray(value.deadlines) && !!value.otjh);
+export const overviewHome = resource<OverviewHome>((kind, id) => `${weekPath(kind, id)}?section=home`,
+  value => !!value.weekStart && Array.isArray(value.modules) && Array.isArray(value.deadlines)
+    && !!value.homeProgress?.otjh && !!value.homeProgress.period && !!value.homeProgress.modules);
 export const overviewSchedule = resource<TrainingPlanDashboard>(
   (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=overview`,
   value => Array.isArray(value.sessions) && Array.isArray(value.reviews),

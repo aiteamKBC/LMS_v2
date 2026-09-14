@@ -89,7 +89,7 @@ it.each([
     expect(sidebar().getByRole('link', { name: 'Compliance documents' })).toBeVisible();
   }
 
-  for (const [label, path] of [['My Learning', '/learner/my-learning'], ['Dashboard', '/workspace/learner'], ['Monthly Logs', '/learner/monthly-logs']]) {
+  for (const [label, path] of [['My Learning', '/learner/my-learning'], ['Dashboard', '/workspace/learner/dashboard'], ['Monthly Logs', '/learner/monthly-logs']]) {
     await act(async () => { fireEvent.click(sidebar().getByRole('link', { name: new RegExp(`^${label}`) })); });
     expect(screen.getByTestId('path')).toHaveTextContent(path);
     expect(destinations()).toEqual(initialDestinations);

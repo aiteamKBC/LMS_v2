@@ -101,13 +101,16 @@ it.each(['/workspace/learner', '/coach/caseload'])('opens monitoring after email
   expect(screen.queryByRole('heading', { name: 'Learner destination' })).not.toBeInTheDocument();
 });
 
-it.each([false, true])('opens Dashboard for an imported learner (existing session: %s)', async existingSession => {
-  const account = { role: 'learner' as const, subjectId: 42, hasLegacyRecord: true, accessHome: '/workspace/learner' };
+it.each([
+  [false, false], [false, true], [true, false], [true, true],
+])('opens Student Home despite a remembered Dashboard (existing session: %s, imported: %s)', async (existingSession, hasLegacyRecord) => {
+  const account = { role: 'learner' as const, subjectId: 42, hasLegacyRecord, accessHome: '/workspace/learner' };
   if (existingSession) authState.account = account;
   else login.mockResolvedValue(account);
   render(<MemoryRouter initialEntries={[{ pathname: '/login', state: { from: '/workspace/learner' } }]}><Routes>
     <Route path="/login" element={<LoginPage />} />
     <Route path="/old-otjh" element={<h1>Transition portal</h1>} />
+    <Route path="/learner/home" element={<h1>Student Home destination</h1>} />
     <Route path="/workspace/learner" element={<h1>LMS destination</h1>} />
   </Routes></MemoryRouter>);
   if (!existingSession) {
@@ -115,7 +118,8 @@ it.each([false, true])('opens Dashboard for an imported learner (existing sessio
     autofill(screen.getByLabelText('Password', { exact: true }) as HTMLInputElement, ' Example password 7! ');
     fireEvent.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
   }
-  expect(await screen.findByRole('heading', { name: 'LMS destination' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Student Home destination' })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'LMS destination' })).not.toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: 'Transition portal' })).not.toBeInTheDocument();
   if (existingSession) expect(login).not.toHaveBeenCalled();
   else expect(login).toHaveBeenCalledWith('learner@example.test', ' Example password 7! ', false);

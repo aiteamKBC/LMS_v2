@@ -124,6 +124,17 @@ class StudentActivityTests(SimpleTestCase):
                 self.assertEqual(payload['completed'], expected)
                 self.assertTrue(payload['can_attempt'])
 
+    def test_material_allows_admin_attempts_but_keeps_other_viewers_read_only(self):
+        with patch('learner_api.student_activity._definition_for', return_value={'quiz': None}), \
+             patch('learner_api.student_activity.subject_store.state', return_value={'ready': True, 'history': []}):
+            for role, ident, expected in [('admin', 1, True), ('staff', 1, False), ('learner', 132, True), ('learner', 19, False)]:
+                with self.subTest(role=role, ident=ident), \
+                     patch('learner_api.student_activity.authenticate_request', return_value=SimpleNamespace(role=role, subject_id=ident)):
+                    response = _material_response(self.factory.get('/'), 132, 4176, {
+                        'learner_name': 'Test learner', '_source': {'activity_id': 10},
+                    })
+                self.assertEqual(json.loads(response.content)['can_attempt'], expected)
+
     def test_missing_hours_are_not_zero_and_shared_activities_count_once(self):
         item = {"source_activity_id": 10, "group_id": 1, "completed": True,
                 "hours_mapped": True, "actual": 1.5,

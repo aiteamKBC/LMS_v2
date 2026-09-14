@@ -741,6 +741,10 @@ export interface CalendarEvent {
    * an hour that was never arranged.
    */
   timeToBeConfirmed?: boolean;
+  syncWarning?: string;
+  /** Imported review identity carried through the same Calendar booking form. */
+  bookingReviewId?: string;
+  assignmentMonth?: string;
 }
 
 export interface ClubResource {

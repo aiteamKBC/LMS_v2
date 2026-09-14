@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchLearnerDetail, peekLearnerDetail, invalidateLearnerDetailCache, type LearnerDetail, type LearnerKind } from '@/api/learnerDetail';
+import { fetchLearnerDetail, peekLearnerDetail, type LearnerDetail, type LearnerKind } from '@/api/learnerDetail';
 
 /**
  * Shared real-vs-mock data hook for learner self-view and staff drill-down
@@ -15,9 +15,10 @@ export function useLearnerDetailParam(kind: string | undefined, id: string | und
   const [refreshTick, setRefreshTick] = useState(0);
 
   const refresh = useCallback(() => {
-    if (isRealMode && id) invalidateLearnerDetailCache(kind as LearnerKind, id);
+    // A read must not invalidate every learner resource and restart the route
+    // access check. Saves already invalidate their affected caches.
     setRefreshTick((tick) => tick + 1);
-  }, [isRealMode, kind, id]);
+  }, []);
 
   useEffect(() => {
     if (!refreshOnFocus || !identity) return;
@@ -30,9 +31,11 @@ export function useLearnerDetailParam(kind: string | undefined, id: string | und
       refresh();
     };
     window.addEventListener('focus', onReturn);
+    window.addEventListener('online', onReturn);
     document.addEventListener('visibilitychange', onReturn);
     return () => {
       window.removeEventListener('focus', onReturn);
+      window.removeEventListener('online', onReturn);
       document.removeEventListener('visibilitychange', onReturn);
     };
   }, [refreshOnFocus, identity, refresh]);
@@ -41,8 +44,11 @@ export function useLearnerDetailParam(kind: string | undefined, id: string | und
     if (!isRealMode || !id || !identity) return;
     let cancelled = false;
     const cached = peekLearnerDetail(kind as LearnerKind, id, true);
-    setState((previous) => ({ identity, real: previous?.identity === identity ? previous.real : cached ?? null, loading: !cached, loadError: null }));
-    fetchLearnerDetail(kind as LearnerKind, id)
+    setState((previous) => {
+      const real = previous?.identity === identity ? previous.real : cached ?? null;
+      return { identity, real, loading: !real, loadError: null };
+    });
+    fetchLearnerDetail(kind as LearnerKind, id, { revalidate: refreshTick > 0 })
       .then((data) => { if (!cancelled) setState({ identity, real: data, loading: false, loadError: null }); })
       .catch((error) => {
         if (!cancelled) setState((previous) => ({ identity, real: previous?.identity === identity ? previous.real : null, loading: false, loadError: error instanceof Error ? error.message : 'Could not load learner' }));

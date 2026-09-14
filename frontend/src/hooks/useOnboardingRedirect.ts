@@ -32,13 +32,13 @@ export const ONBOARDING_NAV_ITEMS: SidebarNavItem[] = [
 export const FRESH_STATUS = 'Fresh user';
 
 /** Where a fresh learner is sent: the overview, which explains the wait. */
-export const FRESH_ROUTE = '/workspace/learner';
+export const FRESH_ROUTE = '/workspace/learner/dashboard';
 
 /**
  * A fresh learner's entire menu. Just the overview, because that is the only
  * page with anything to say to them.
  */
-export const FRESH_NAV_IDS = ['learner-overview'];
+export const FRESH_NAV_IDS = ['learner-home', 'learner-overview'];
 
 /** Onboarding is signed off but delivery hasn't started — see the backend's
  *  promote_to_delivery_if_ready. */
@@ -51,6 +51,7 @@ export const DELIVERY_STATUS = 'Delivery';
  * paperwork — the Apprenticeship Agreement is waiting for their signature.
  */
 export const DELIVERY_NAV_IDS = [
+  'learner-home',
   'learner-overview',
   'learner-onboarding',
   'learner-compliance-documents',
@@ -150,15 +151,9 @@ export function useFreshUserRedirect(programmeStatus: string | undefined, enable
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const isFresh = enabled && isFreshStatus(programmeStatus);
-  // Matched as a prefix, not an exact string. A signed-in learner is always at
-  // the bare /workspace/learner, but somebody who reaches their own record by
-  // an explicit address — a staff member or administrator who is also a
-  // learner, opened from the workspace switcher — is at
-  // /workspace/learner/commercial/513. An exact match redirected THAT to the
-  // bare route, which strips the id and resolves the page from the signed-in
-  // SESSION instead — landing them on a demo or remembered learner rather than
-  // the account they actually opened.
-  const alreadyThere = pathname === FRESH_ROUTE || pathname.startsWith(`${FRESH_ROUTE}/`);
+  // Both the self dashboard and an explicitly selected learner dashboard show
+  // the waiting state. Keep the selected learner when already on either one.
+  const alreadyThere = /^\/workspace\/learner\/(?:dashboard|(?:commercial|apprenticeship)\/[^/]+\/dashboard)\/?$/.test(pathname);
 
   useEffect(() => {
     // Never redirect away from the destination itself, or it could never render.

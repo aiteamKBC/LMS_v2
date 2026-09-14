@@ -128,6 +128,65 @@ class TransitionTests(SimpleTestCase):
         self.record['aptem_id'] = ' '
         self.assertTrue(service.summary(self.learner())['can_access_lms'])
 
+    def test_workspace_link_uses_the_learners_own_months_only(self):
+        response = views.workspace_link(self.request(path='/audit_api/old-otjh/workspace-link/'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {'href': '/old-otjh/months'})
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        for query in ('learner_id=999', 'aptem_id=999', 'email=other@example.org', 'actor=admin'):
+            with self.subTest(query=query):
+                response = views.workspace_link(self.request(path=f'/audit_api/old-otjh/workspace-link/?{query}'))
+                self.assertIn(response.status_code, (403, 404))
+                self.assertNotIn('href', json.loads(response.content))
+
+    def test_new_learner_has_no_previous_record_link_or_cohort_entry(self):
+        for value in (None, '', '  '):
+            with self.subTest(aptem_id=value):
+                self.record['aptem_id'] = value
+                response = views.workspace_link(self.request(path='/audit_api/old-otjh/workspace-link/'))
+                self.assertEqual(json.loads(response.content), {'href': None})
+                response = views.cohort(self.request(path='/audit_api/last-audit/cohort/'))
+                self.assertEqual(json.loads(response.content)['learners'], [])
+        self.mocks['historical_learner'].assert_not_called()
+
+    def test_staff_workspace_link_resolves_only_the_selected_record(self):
+        for access in ('coach', 'super-admin'):
+            with self.subTest(access=access):
+                self.mocks['staff'].side_effect = lambda _: {'access': access, 'email': 'coach@example.org'}
+                response = views.workspace_link(self.request(
+                    path='/audit_api/old-otjh/workspace-link/?learner_id=7', user=account('staff')))
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(json.loads(response.content), {'href': '/old-otjh/coach/42/months?workspace=learner'})
+                self.record['aptem_id'] = None
+                response = views.workspace_link(self.request(
+                    path='/audit_api/old-otjh/workspace-link/?learner_id=7', user=account('staff')))
+                self.assertEqual(json.loads(response.content), {'href': None})
+                self.record['aptem_id'] = '42'
+
+    def test_workspace_link_does_not_expand_coach_permissions(self):
+        self.history[0]['coach_email'] = 'someone-else@example.org'
+        response = views.workspace_link(self.request(
+            path='/audit_api/old-otjh/workspace-link/?learner_id=7', user=account('staff')))
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn('href', json.loads(response.content))
+        for selection in ('', '?learner_id=999', '?learner_id=-1', '?learner_id=invalid'):
+            response = views.workspace_link(self.request(
+                path=f'/audit_api/old-otjh/workspace-link/{selection}', user=account('staff')))
+            self.assertIn(response.status_code, (404, 409))
+            self.assertNotIn('href', json.loads(response.content))
+
+    def test_old_and_new_learners_cannot_read_staff_directories(self):
+        with patch.object(repo, 'coach_learners') as directory:
+            for value in ('42', None):
+                self.record['aptem_id'] = value
+                for view, path in ((views.coach_learners, '/audit_api/old-otjh/coach/learners/'),
+                                   (views.monitor_dashboard, '/audit_api/old-otjh/monitor/')):
+                    with self.subTest(aptem_id=value, path=path):
+                        response = view(self.request(path=path))
+                        self.assertEqual(response.status_code, 403)
+                        self.assertNotIn('learners', json.loads(response.content))
+            directory.assert_not_called()
+
     def test_invalid_aptem_id_is_not_new_learner(self):
         self.record['aptem_id'] = 'broken-link'
         with self.assertRaises(service.ServiceError): self.learner()
@@ -554,6 +613,16 @@ class TransitionTests(SimpleTestCase):
         self.assertEqual(self.signs, saved)
         self.assertEqual(self.events, events)
         self.save_file.assert_called_once()
+
+    def test_admin_can_sign_a_learner_month_without_replacing_the_profile_signature(self):
+        admin = account('admin')
+        admin.display_name = 'Administrator'
+        result = service.sign(self.learner(), '2026-07', admin, 'learner', b'admin-png', service.digest(self.rows), {})
+        self.assertEqual(result['status'], 'complete')
+        self.assertEqual(result['student_signature']['signer_name'], 'Administrator')
+        self.mocks['save_learner_signature'].assert_not_called()
+        self.assertEqual([e[2] for e in self.events], ['signed', 'completed'])
+        self.assertTrue(all(e[3] is admin for e in self.events))
 
     def test_bulk_retry_preserves_images_finalizations_and_enrolment_capture(self):
         selected = self.bulk_months()

@@ -350,6 +350,15 @@ def _serialize_event(record):
     event_type = _s(record.event_type) or "mcr"
     display_date = record.scheduled_date or record.target_date
     meeting_link = _s(record.meeting_link) or _s(record.graph_web_link)
+    from coach_api.views import public_graph_sync_warning
+    sync_warning = public_graph_sync_warning(_s(record.last_graph_sync_error))
+    booking_parts = _s(getattr(record, "idempotency_key", "")).split(":")
+    imported_booking = (
+        len(booking_parts) == 6 and booking_parts[0] == "learner-book"
+        and booking_parts[1] == ("mcm" if event_type == "mcr" else "progress-review")
+        and event_type in {"mcr", "progress-review"}
+        and booking_parts[2] in SOURCE_MODELS and booking_parts[5].isdigit()
+    )
     return {
         "id": record.event_key,
         "eventKey": record.event_key,
@@ -376,7 +385,11 @@ def _serialize_event(record):
         # mailbox, ...). Without this the UI shows a confident "Booked" for a
         # meeting that reached nobody's calendar or inbox.
         "invited": bool(_s(record.graph_event_id)),
-        "syncError": _s(record.last_graph_sync_error),
+        "syncError": sync_warning,
+        "syncState": getattr(record, "sync_state", ""),
+        "syncWarning": _friendly_sync_warning(sync_warning) if sync_warning else "",
+        "reviewId": booking_parts[5] if imported_booking else "",
+        "assignmentMonth": booking_parts[4] if imported_booking else "",
     }
 
 
@@ -1154,6 +1167,7 @@ def learner_calendar_reschedule(request, kind, pk):
             record.scheduled_date == scheduled_date
             and record.scheduled_time == scheduled_time
             and record.duration_minutes == duration_minutes
+            and record.sync_state == CoachCalendarEvent.SYNC_SYNCED
         ):
             _mark_imported_review_scheduled(
                 payload.get("reviewId"), record.learner_id, scheduled_date, scheduled_time,

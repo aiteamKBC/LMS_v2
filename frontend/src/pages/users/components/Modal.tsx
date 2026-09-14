@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 
 interface ModalProps {
+  /** Mandatory access checks retain focus and cannot be dismissed. */
+  dismissible?: boolean;
   title: ReactNode;
   onClose: () => void;
   children: ReactNode;
@@ -27,7 +29,7 @@ interface ModalProps {
  * Generic modal: dimmed backdrop, title bar, body, footer.
  * Traps focus, closes on Esc, and restores focus to the trigger on close.
  */
-export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', className = '', scrollResetKey, returnFocusRef }: ModalProps) {
+export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', className = '', scrollResetKey, returnFocusRef, dismissible = true }: ModalProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -49,7 +51,7 @@ export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', cl
   // re-runs on each keystroke/selection and yanks focus back to the first control
   // — which scrolls the dialog and looks like the page jumping.
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  onCloseRef.current = dismissible ? onClose : () => undefined;
 
   useEffect(() => {
     previouslyFocused.current = document.activeElement as HTMLElement | null;
@@ -106,7 +108,7 @@ export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', cl
        its content height changes — picking a radio would visibly shift the whole
        dialog and scroll the answer you just clicked out of view. */
     <div className="fixed inset-0 z-[100] flex items-start justify-center p-4 overflow-y-auto">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => onCloseRef.current()} aria-hidden="true" />
       <div
         ref={panelRef}
         role="dialog"
@@ -117,13 +119,13 @@ export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', cl
       >
         <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-foreground-100 shrink-0">
           <h2 id={titleId} className="text-[15px] font-heading font-semibold text-foreground-900 leading-snug">{title}</h2>
-          <button
+          {dismissible && <button
             onClick={onClose}
             aria-label="Close"
             className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 hover:text-foreground-700 transition-smooth cursor-pointer shrink-0"
           >
             <AppIcon className="ri-close-line text-[18px]" />
-          </button>
+          </button>}
         </div>
         <div ref={bodyRef} className="flex-1 overflow-y-auto p-5">{children}</div>
         {footer && <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-foreground-100 shrink-0">{footer}</div>}

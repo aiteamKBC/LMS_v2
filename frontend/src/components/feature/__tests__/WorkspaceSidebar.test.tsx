@@ -58,7 +58,7 @@ beforeEach(() => {
 it('groups learner progress pages in the same menu while keeping direct destinations fixed', () => {
   const { sidebar, rail, panel } = showWorkspace('learner', '/learner/clubs/events');
   expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'false');
-  for (const name of ['Monthly Logs', 'Monthly Coaching Meeting', 'Progress Review']) {
+  for (const name of ['Monthly Submission', 'Monthly Logs', 'Monthly Coaching Meeting', 'Reviews']) {
     expect(within(rail).queryByRole('link', { name })).not.toBeInTheDocument();
   }
   expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
@@ -74,7 +74,7 @@ it('groups learner progress pages in the same menu while keeping direct destinat
   expect(within(sidebar).getAllByRole('link', { name: 'Dashboard' })).toHaveLength(1);
   expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'true');
   const destinations = within(rail).getAllByRole('link').map(link => link.getAttribute('href'));
-  for (const name of ['Monthly Logs', 'Monthly Coaching Meeting', 'Progress Review', 'Dashboard']) {
+  for (const name of ['Monthly Submission', 'Monthly Logs', 'Monthly Coaching Meeting', 'Reviews', 'Dashboard']) {
     const link = within(rail).getByRole('link', { name });
     fireEvent.mouseEnter(link);
     fireEvent.focus(link);

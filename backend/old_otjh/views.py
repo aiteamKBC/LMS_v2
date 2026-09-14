@@ -131,9 +131,34 @@ def start(request):
 
 
 @endpoint('GET')
+def workspace_link(request):
+    """Resolve a workspace shortcut without ever returning a learner directory."""
+    account = request.login_account
+    if account.role == 'learner':
+        # A learner cannot select a record through URL parameters or storage.
+        learner, _ = scope(request)
+        href = '/old-otjh/months'
+    else:
+        service.coach_actor(account)
+        try:
+            learner_id = int(request.GET.get('learner_id', ''))
+        except (TypeError, ValueError):
+            raise service.ServiceError('Choose a learner record.', 'not_found', 404)
+        if not 0 < learner_id <= 9223372036854775807:
+            raise service.ServiceError('Learner not found.', 'not_found', 404)
+        learner = service.resolve_record(learner_id)
+        if learner['aptem_id']:
+            learner, _ = service.coach_learner(account, learner['aptem_id'])
+        href = f"/old-otjh/coach/{learner['aptem_id']}/months?workspace=learner"
+    return JsonResponse({'href': href if learner['aptem_id'] else None})
+
+
+@endpoint('GET')
 def cohort(request):
     if request.login_account.role == 'learner':
         learner, _ = scope(request)
+        if not learner['aptem_id']:
+            return JsonResponse({'learners': [], 'total': 0, 'page': 1})
         return JsonResponse({'learners': [{'id': learner['aptem_id'], 'name': learner['name'],
                                           'programme': learner['programme']}], 'total': 1, 'page': 1})
     return _coach_cohort(request)

@@ -26,8 +26,7 @@ export function ReadOnlyLearnerNotice({ what, onBack }: {
         You are viewing this learner read-only
       </h2>
       <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-foreground-500">
-        Only the learner can {what}. Their progress record is the audit trail for
-        their off-the-job hours and KSB evidence, so it stays theirs to write.
+        The learner or an administrator can {what}.
         You can still review everything on their plan, and book a session with them.
       </p>
       {onBack && (

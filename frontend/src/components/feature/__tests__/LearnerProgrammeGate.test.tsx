@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LearnerProgrammeGate } from '../LearnerProgrammeGate';
@@ -14,7 +14,7 @@ const mounted = vi.fn();
 function Activity() { mounted(); return <h1>Lesson content</h1>; }
 function renderGate(path: string) {
   render(<MemoryRouter initialEntries={[path]}><Routes>
-    <Route path="/workspace/learner" element={<h1>Programme and plan</h1>} />
+    <Route path="/workspace/learner/dashboard" element={<h1>Programme and plan</h1>} />
     <Route path="*" element={<LearnerProgrammeGate><Activity /></LearnerProgrammeGate>} />
   </Routes></MemoryRouter>);
 }
@@ -47,5 +47,23 @@ describe('cohort start route gate', () => {
     renderGate('/learner/my-learning');
     expect(screen.getByText('Try again later')).toBeVisible();
     expect(mounted).not.toHaveBeenCalled();
+  });
+
+  it('keeps an already verified page mounted through a connection failure, with interaction paused until recovery', () => {
+    state.result.real.learningAccess.blocked = false;
+    const view = () => <MemoryRouter initialEntries={['/learner/my-learning']}><LearnerProgrammeGate><input aria-label="Unsaved answer" defaultValue="" /></LearnerProgrammeGate></MemoryRouter>;
+    const { rerender } = render(view());
+    const answer = screen.getByRole('textbox', { name: 'Unsaved answer' });
+    fireEvent.change(answer, { target: { value: 'My work' } });
+    state.result.loadError = 'Server unavailable';
+    rerender(view());
+    expect(screen.getByRole('alert')).toHaveTextContent('Your learning is still here');
+    expect(answer).toHaveValue('My work');
+    expect(answer.parentElement).toHaveAttribute('inert');
+    state.result.loadError = '';
+    rerender(view());
+    expect(answer).toHaveValue('My work');
+    expect(answer.parentElement).not.toHaveAttribute('inert');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
