@@ -196,6 +196,7 @@ describe('ModuleFormDrawer', () => {
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
     await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
     await userEvent.click(screen.getByRole('button', { name: /Group B/ }));
+    await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledTimes(2));
@@ -220,6 +221,7 @@ describe('ModuleFormDrawer', () => {
     });
 
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     expect(createNewModuleMock).not.toHaveBeenCalled();
@@ -236,7 +238,7 @@ describe('ModuleFormDrawer', () => {
       endTime: '12:00',
     });
     // The caller gets the canonical id so it can open the module straight away.
-    expect(onSaved).toHaveBeenCalledWith({ catalogueId: 'MOD-NEW', name: 'Data Modelling', created: true });
+    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ catalogueId: 'MOD-NEW', name: 'Data Modelling', created: true }));
   });
 
   it('reports saving for the full create and caller refresh lifecycle', async () => {
@@ -256,6 +258,7 @@ describe('ModuleFormDrawer', () => {
     });
 
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     await waitFor(() => expect(onSavingChange).toHaveBeenLastCalledWith(true));
@@ -284,6 +287,7 @@ describe('ModuleFormDrawer', () => {
     await userEvent.clear(endDate);
     await userEvent.type(endDate, '14/10/2026');
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Manual End');
+    await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     expect(createGroupModuleMock).toHaveBeenCalledWith('GROUP-1', expect.objectContaining({
@@ -588,7 +592,7 @@ describe('ModuleFormDrawer', () => {
       groupId: 'GROUP-1',
       cohortId: 'COHORT-1',
     });
-    expect(onSaved).toHaveBeenCalledWith({ catalogueId: 'MOD-1', name: 'Data Foundations II', created: false });
+    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ catalogueId: 'MOD-1', name: 'Data Foundations II', created: false }));
   });
 
   it('restores placement fields from a saved delivery when editing from the catalogue', async () => {
@@ -651,7 +655,7 @@ describe('ModuleFormDrawer', () => {
     updateCurriculumModuleMock.mockRejectedValueOnce(conflict);
 
     renderDrawer({
-      module: { id: 'MOD-1', name: 'Data Foundations', groupId: 'GROUP-1', tutor: 'Tutor One' },
+      module: { id: 'MOD-1', name: 'Data Foundations', groupId: 'GROUP-1', tutor: 'Tutor One', startDate: '2026-09-02' },
     });
 
     const name = screen.getByPlaceholderText('e.g. Data Modelling');

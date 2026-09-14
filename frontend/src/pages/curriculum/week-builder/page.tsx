@@ -1599,6 +1599,9 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
               settings: {
                 ...component.settings,
                 liveSessionUrl: meeting.joinUrl || meeting.webLink,
+                teamsMeetingUrl: meeting.joinUrl || meeting.webLink,
+                teamsCalendarSeries: JSON.stringify(meeting.calendarSeries || []),
+                teamsOnlineMeetingId: meeting.onlineMeetingId,
                 teamsEventId: meeting.eventId,
                 teamsLiveSessionId: meeting.liveSessionId,
                 teamsMeetingOptionsUrl: meeting.meetingOptionsUrl,

@@ -12,6 +12,7 @@ one field being asked to mean two things on the way in and out.
 """
 
 import json
+from datetime import datetime
 
 from curriculum_api import views
 from curriculum_api.tests import CurriculumPersistenceHarness
@@ -53,6 +54,55 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
         )
         self.assertTrue(rows, f'no stored row for {catalogue_id}')
         return rows[0]
+
+    def test_group_module_schedule_override_survives_catalogue_and_drives_one_series(self):
+        tree = self.tree_payload()
+        tree['cohorts'][0]['groups'][0]['modules'] = []
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', tree)
+        self.assertEqual(response.status_code, 200, response.content)
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
+            'moduleName': 'Two sessions each week',
+            'startDate': '2026-09-07', 'weeks': 4, 'sessionsNumber': 8,
+            'weekDays': 'Monday, Thursday', 'startTime': '09:00', 'endTime': '11:00',
+            'tutor': 'Tutor One',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        module_id = response.json()['created'][0]['catalogueId']
+        row = self.stored_row(module_id)
+        self.assertEqual(row['weeks_number'], 4)
+        self.assertEqual(row['sessions_number'], 8)
+        self.assertEqual(row['session_week_day'], 'Monday, Thursday')
+        # Editing from the catalogue must receive the override, not group Wednesday.
+        summary = views.authoring_catalogue_summaries()[module_id]
+        catalogue = views.authoring_summary_catalogue_item(summary)
+        self.assertEqual(catalogue['weekDays'], 'Monday, Thursday')
+        self.assertEqual(catalogue['startTime'], '09:00')
+        self.assertEqual(catalogue['endTime'], '11:00')
+        group = self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')
+        self.assertEqual(group['session_week_day'], 'Wednesday')
+
+        plan = views.module_session_plan_for_count(row, views.module_stored_session_count(row))
+        expected_dates = ['2026-09-07', '2026-09-10', '2026-09-14', '2026-09-17', '2026-09-21', '2026-09-24', '2026-09-28', '2026-10-01']
+        self.assertEqual([session['date'] for session in plan['sessions']], expected_dates)
+        # Both weekdays belong to one recurring event; no separate per-day series.
+        payload = {'scheduledOccurrences': [
+            {'sessionNumber': index + 1, 'startDateTimeUtc': f'{date}T08:00:00Z', 'durationMinutes': 120}
+            for index, date in enumerate(expected_dates)
+        ]}
+        anchor = datetime(2026, 9, 7, 9, 0)
+        weekdays = views.teams_recurrence_weekdays(payload, anchor)
+        recurrence = views.teams_event_recurrence('weekly', anchor, 8, weekdays)
+        self.assertEqual(recurrence['pattern']['daysOfWeek'], ['monday', 'thursday'])
+        self.assertEqual(recurrence['range']['numberOfOccurrences'], 8)
+
+        response = self.patch_json(f'/curriculum_api/curriculum/modules/{module_id}/', {
+            'weekDays': 'Tuesday, Friday', 'sessionsNumber': 8,
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        after = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(after['weekDays'], 'Tuesday, Friday')
+        self.assertEqual(after['weeks'], 4)
+        self.assertEqual(after['sessionsNumber'], 8)
 
     def test_creating_a_module_keeps_the_two_counts_distinct(self):
         catalogue_id = self.create_module(weeks=5, sessions=10)

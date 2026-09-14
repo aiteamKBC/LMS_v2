@@ -966,7 +966,7 @@ export const WEEKEND_DAYS = ['Saturday', 'Sunday'];
 export const WEEKEND_HINT = 'Saturday and Sunday are weekend holidays in England — delivery on these days is unusual.';
 
 /** Delivery days as a comma-separated string, which is how the API stores them. */
-export function WeekdayControl({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+export function WeekdayControl({ value, onChange, maxSelections }: { value: string; onChange: (value: string) => void; maxSelections?: number }) {
   const selected = value.split(',').map(day => day.trim()).filter(Boolean);
   const toggle = (day: string) => {
     const next = selected.includes(day) ? selected.filter(item => item !== day) : [...selected, day];
@@ -984,8 +984,10 @@ export function WeekdayControl({ value, onChange }: { value: string; onChange: (
               key={day}
               type="button"
               onClick={() => toggle(day)}
+              aria-pressed={active}
+              disabled={!active && maxSelections !== undefined && selected.length >= maxSelections}
               title={weekend ? WEEKEND_HINT : undefined}
-              className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth ${
+              className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-40 ${
                 active
                   ? 'border-primary-600 bg-primary-600 text-white'
                   : weekend

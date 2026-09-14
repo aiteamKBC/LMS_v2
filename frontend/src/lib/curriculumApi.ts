@@ -201,6 +201,12 @@ export interface CurriculumProgramme {
   requiredOtjh?: number | null;
 }
 
+export interface CurriculumWeeklySession {
+  day: string;
+  startTime: string;
+  endTime: string;
+}
+
 export interface CurriculumModule {
   id: string;
   // Temporary compatibility: moduleId may be a canonical ID or legacy delivery ID.
@@ -244,6 +250,10 @@ export interface CurriculumModule {
    * every edit round-trip multiply the weeks by the delivery days.
    */
   sessionsNumber?: number;
+  weeklySchedule?: CurriculumWeeklySession[];
+  weekDays?: string;
+  startTime?: string;
+  endTime?: string;
   startDate?: string;
   endDate?: string;
   totalOtjh?: number;
@@ -1700,7 +1710,7 @@ export interface CurriculumProgrammeDetail {
 }
 
 export interface CurriculumSessionPlanPreview {
-  sessions: Array<{ sessionNumber: number; date: string; day: string; skippedHolidays: string[] }>;
+  sessions: Array<{ sessionNumber: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; skippedHolidays: string[] }>;
   skippedHolidays: string[];
   finalEndDate: string;
   warnings: string[];
@@ -3198,6 +3208,7 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   endDate?: string;
   tutor?: string;
   coach?: string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -3233,6 +3244,7 @@ export type CurriculumModuleAttachmentInput = {
   endDate?: string;
   coach?: string;
   tutor?: string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -3603,7 +3615,7 @@ export function previewCohortEndDate(input: {
   return postJson<CurriculumCohortEndDatePreview>('/curriculum/preview/cohort-end-date/', input);
 }
 
-export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
+export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
   return postJson<CurriculumSessionPlanPreview>('/curriculum/preview/module-session-plan/', input);
 }
 
@@ -3611,6 +3623,7 @@ export function previewModuleSessionPlan(input: { startDate?: string; numberOfSe
 export interface CurriculumTutorAvailabilityInput {
   startDate?: string;
   sessionsNumber?: number | string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;

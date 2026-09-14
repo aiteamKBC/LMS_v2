@@ -1178,7 +1178,7 @@ export default function CurriculumTeamsMeetingsPage() {
       presenters: presenters.join('\n'),
       coOrganizers: '',
       details: '',
-      durationMinutes: String(row.durationMinutes),
+      durationMinutes: '',
     });
     // Starts from blank, so there is nothing typed by hand to overwrite.
     void prefillInvitees(row, createDrawer.patch);
@@ -1194,33 +1194,8 @@ export default function CurriculumTeamsMeetingsPage() {
       return;
     }
     if (!row.sessions.length) { createDrawer.setError('This module has no stored session dates yet.'); return; }
-    const meetingTitle = cleanText(row.name, 'Live session');
-    const duration = Math.max(15, Number(form.durationMinutes) || row.durationMinutes);
-    const occurrences = scheduledOccurrences(row).map(occurrence => ({ ...occurrence, durationMinutes: duration }));
-    const input: TeamsMeetingInput = {
-      title: meetingTitle,
-      organizerEmail: organizer,
-      attendees: emailList(form.attendees),
-      presenters: emailList(form.presenters),
-      coOrganizers: emailList(form.coOrganizers),
-      moduleCatalogueId: row.catalogueId,
-      moduleTitle: meetingTitle,
-      localStartDateTime: sessionNaiveLocal(row.sessions[0]),
-      startDateTimeUtc: occurrences[0].startDateTimeUtc,
-      durationMinutes: duration,
-      repeat: occurrences.length > 1 ? 'weekly' : 'none',
-      repeatOccurrences: occurrences.length,
-      scheduledOccurrences: occurrences,
-      lobbyBypass: form.lobbyBypass,
-      recording: form.recording,
-      spokenLanguage: form.spokenLanguage,
-      meetingType: form.meetingType,
-      details: form.details,
-      requestResponses: true,
-      allowNewTimeProposals: true,
-      hideAttendees: false,
-      transactionId: `TEAMS-${row.catalogueId}`,
-    };
+    const input = buildTeamsCalendarInput(row, form);
+    const occurrences = input.scheduledOccurrences || [];
     createDrawer.setSaving(true);
     createDrawer.setError(null);
     try {

@@ -81,17 +81,17 @@ export async function pushModulePlanToTeams({
   );
   const occurrences = planned.map((session, index) => ({
     sessionNumber: index + 1,
-    startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${time}`),
-    durationMinutes: duration,
+    startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || time}`),
+    durationMinutes: session.durationMinutes || minutesBetween(session.startTime || time, session.endTime || '') || duration,
   }));
 
   const result = await updateTeamsMeetingSchedule(summary.liveSessionId, {
     title: String(moduleName || summary.moduleTitle || '').trim() || 'Live session',
     organizerEmail: summary.organizerEmail,
     eventId: summary.eventId,
-    localStartDateTime: `${planned[0].date}T${time}`,
+    localStartDateTime: `${planned[0].date}T${planned[0].startTime || time}`,
     startDateTimeUtc: occurrences[0].startDateTimeUtc,
-    durationMinutes: duration,
+    durationMinutes: occurrences[0].durationMinutes,
     repeat: occurrences.length > 1 ? 'weekly' : 'none',
     repeatOccurrences: occurrences.length,
     scheduledOccurrences: occurrences,
