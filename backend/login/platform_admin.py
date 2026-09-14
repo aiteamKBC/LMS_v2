@@ -115,8 +115,20 @@ def certificate_template(request):
             with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
                 cursor.execute('SELECT COALESCE(MAX(version),0)+1 FROM "Learner".certificate_templates WHERE certificate_type=%s', ["progress-achievement"])
                 version = cursor.fetchone()[0]
+                superseded_count = 0
                 if publish:
                     cursor.execute('UPDATE "Learner".certificate_templates SET status=%s, updated_at=now() WHERE certificate_type=%s AND status=%s', ["archived", "progress-achievement", "published"])
+                    cursor.execute('''UPDATE "Learner".learner_certificates lc
+                        SET status=%s,
+                            revoked_by=%s,
+                            revoked_at=now(),
+                            revoke_reason=%s
+                        FROM "Learner".certificate_templates ct
+                        WHERE lc.template_id=ct.id
+                          AND ct.certificate_type=%s
+                          AND lc.status=%s''',
+                        ["superseded", actor, f"Superseded by certificate template version {version}", "progress-achievement", "issued"])
+                    superseded_count = cursor.rowcount
                 cursor.execute('''INSERT INTO "Learner".certificate_templates
                     (name,certificate_type,version,status,title,body_text,minimum_progress,require_final_test,layout_config,created_by,published_by,published_at)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,CASE WHEN %s THEN now() END)
@@ -125,7 +137,7 @@ def certificate_template(request):
                      "published" if publish else "draft", title, body, threshold, bool(payload.get("requireFinalTest")),
                      json.dumps(layout), actor, actor if publish else "", publish])
                 template_id, published_at = cursor.fetchone()
-                cursor.execute('INSERT INTO "Learner".certificate_audit_logs (actor_email,action,template_id,details) VALUES (%s,%s,%s,%s::jsonb)', [actor, "published" if publish else "draft-saved", template_id, json.dumps({"version": version})])
+                cursor.execute('INSERT INTO "Learner".certificate_audit_logs (actor_email,action,template_id,details) VALUES (%s,%s,%s,%s::jsonb)', [actor, "published" if publish else "draft-saved", template_id, json.dumps({"version": version, "supersededCertificates": superseded_count})])
                 return JsonResponse({"template": {
                     "id": template_id,
                     "name": str(payload.get("name") or "Progress certificate")[:160],
