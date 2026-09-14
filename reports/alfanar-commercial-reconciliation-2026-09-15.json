@@ -1,0 +1,1208 @@
+{
+  "checked_at_utc": "2026-09-14T21:37:26.328032+00:00",
+  "mode": "read_only_reconciliation_no_import_no_accounts_no_invitations",
+  "source_of_roster": "User pasted 26 Al Fanar rows plus earlier request to include Gary Beacham and Joshua Bowers",
+  "target_type": "commercial",
+  "target_programme_status": "Delivery",
+  "summary": {
+    "user_supplied_fanar_rows": 26,
+    "previously_requested_additional_rows": 2,
+    "combined_rows": 28,
+    "unique_normalized_emails": 28,
+    "exact_duplicate_email_rows": 0,
+    "new_to_previous_preview": 7,
+    "matching_current_source_rows": 21,
+    "matched_target_enrolments": 2,
+    "matched_target_profiles": 2,
+    "matched_target_accounts": 0,
+    "action_counts": {
+      "create_commercial_delivery": 26,
+      "preserve_existing": 2
+    },
+    "shared_phone_groups": [
+      {
+        "phone": "966541802229",
+        "names": [
+          "Adam Alrasheed",
+          "Adam Nayef"
+        ],
+        "emails": [
+          "Adam.alrasheed@alfanar.com",
+          "Ahmed.AlRasheed@Alfanar.com"
+        ]
+      }
+    ],
+    "unique_normalized_names": 28,
+    "new_candidate_rows_not_in_users": 26,
+    "new_candidate_rows_without_shared_phone": 24,
+    "identity_review_rows": 0,
+    "confirmed_duplicate_people_removed": 0,
+    "final_unique_person_count": null,
+    "final_selected_record_count": 28,
+    "new_records_selected": 26,
+    "existing_records_to_preserve": 2,
+    "person_count_note": "28 separately selected name/email records. Owner instructed retaining both shared-phone records; independent evidence did not establish whether they represent distinct people."
+  },
+  "candidates": [
+    {
+      "full_name": "Abdulaziz Hamoud",
+      "email": "abdulaziz.aldaham@alfanar.com",
+      "normalized_email": "abdulaziz.aldaham@alfanar.com",
+      "phone": "+966544484691",
+      "normalized_phone": "966544484691",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": false,
+      "source_ids": [],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [
+        "not_in_current_auto_extract_by_email"
+      ],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Abdulaziz Hassan",
+      "email": "abdulaziz.ghazwani@alfanar.com",
+      "normalized_email": "abdulaziz.ghazwani@alfanar.com",
+      "phone": "+966592117501",
+      "normalized_phone": "966592117501",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": false,
+      "source_ids": [],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [
+        "not_in_current_auto_extract_by_email"
+      ],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Abdulaziz Mohammed",
+      "email": "Abdulaziz.Alhijris@alfanar.com",
+      "normalized_email": "abdulaziz.alhijris@alfanar.com",
+      "phone": "+966555719899",
+      "normalized_phone": "966555719899",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5623
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Abdulhakim Musallam",
+      "email": "Abdulhakim.almarshadi@Alfanar.com",
+      "normalized_email": "abdulhakim.almarshadi@alfanar.com",
+      "phone": "966599176668",
+      "normalized_phone": "966599176668",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5618
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Abdullah Nawaf",
+      "email": "Abdullah.Almutrif@alfanar.com",
+      "normalized_email": "abdullah.almutrif@alfanar.com",
+      "phone": "966540009522",
+      "normalized_phone": "966540009522",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5632
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Abdulrahman Saad",
+      "email": "Abdulrahman.Alsahli@alfanar.com",
+      "normalized_email": "abdulrahman.alsahli@alfanar.com",
+      "phone": "+966549558005",
+      "normalized_phone": "966549558005",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5636
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Abdulsalam Abdulqader",
+      "email": "Abdulsalam.AlSalehi@alfanar.com",
+      "normalized_email": "abdulsalam.alsalehi@alfanar.com",
+      "phone": "+966532222649",
+      "normalized_phone": "966532222649",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5620
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Adam Alrasheed",
+      "email": "Adam.alrasheed@alfanar.com",
+      "normalized_email": "adam.alrasheed@alfanar.com",
+      "phone": "+966541802229",
+      "normalized_phone": "966541802229",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        6145
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [
+        "shared_phone_retained_per_owner_instruction"
+      ],
+      "proposed_action": "create_commercial_delivery",
+      "inclusion_decision": "Owner instructed to include both email records separately; no merge or deletion."
+    },
+    {
+      "full_name": "Adam Nayef",
+      "email": "Ahmed.AlRasheed@Alfanar.com",
+      "normalized_email": "ahmed.alrasheed@alfanar.com",
+      "phone": "+966541802229",
+      "normalized_phone": "966541802229",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": false,
+      "source_ids": [],
+      "source_phone_only_matches": [
+        {
+          "aptem_id": 6145,
+          "full_name": "Adam Alrasheed",
+          "email": "Adam.alrasheed@alfanar.com"
+        }
+      ],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [
+        "not_in_current_auto_extract_by_email",
+        "shared_phone_retained_per_owner_instruction"
+      ],
+      "proposed_action": "create_commercial_delivery",
+      "inclusion_decision": "Owner instructed to include both email records separately; no merge or deletion."
+    },
+    {
+      "full_name": "Ahmed Said",
+      "email": "ahmed.skhalifa@dar-engineering.com",
+      "normalized_email": "ahmed.skhalifa@dar-engineering.com",
+      "phone": "+966541281351",
+      "normalized_phone": "966541281351",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5622
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Alghareeb Atef",
+      "email": "Alghareeb.Hegazy@alfanar.com",
+      "normalized_email": "alghareeb.hegazy@alfanar.com",
+      "phone": "+966563702743",
+      "normalized_phone": "966563702743",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5621
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Barkat Muhammad",
+      "email": "barakat.muhammad@alfanar.com",
+      "normalized_email": "barakat.muhammad@alfanar.com",
+      "phone": "+966580535653",
+      "normalized_phone": "966580535653",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5625
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Faisal Saoud",
+      "email": "Faisal.Almutairi@alfanar.com",
+      "normalized_email": "faisal.almutairi@alfanar.com",
+      "phone": "+966507787748",
+      "normalized_phone": "966507787748",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5627
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Hossam Khairy",
+      "email": "hossam.abdelrassoul@alfanar.com",
+      "normalized_email": "hossam.abdelrassoul@alfanar.com",
+      "phone": "966595350553",
+      "normalized_phone": "966595350553",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5635
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Khalid Bashir",
+      "email": "khalid.bashir@alfanar.com",
+      "normalized_email": "khalid.bashir@alfanar.com",
+      "phone": "+966565482450",
+      "normalized_phone": "966565482450",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5567
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Khalid Nasser",
+      "email": "Khalid.Binafif@alfanar.com",
+      "normalized_email": "khalid.binafif@alfanar.com",
+      "phone": "+966505651400",
+      "normalized_phone": "966505651400",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5629
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Khalid Yusof",
+      "email": "khalid.alwashmi@alfanar.com",
+      "normalized_email": "khalid.alwashmi@alfanar.com",
+      "phone": "+966580790073",
+      "normalized_phone": "966580790073",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": false,
+      "source_ids": [],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [
+        "not_in_current_auto_extract_by_email"
+      ],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Manishkumar Mahendra",
+      "email": "manishkumar.varde@alfanar.com",
+      "normalized_email": "manishkumar.varde@alfanar.com",
+      "phone": "+966582293466",
+      "normalized_phone": "966582293466",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5626
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Mohammed Khalid",
+      "email": "Mohammed.Alangari@alfanar.com",
+      "normalized_email": "mohammed.alangari@alfanar.com",
+      "phone": "+966545589826",
+      "normalized_phone": "966545589826",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5630
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Muhammad Usman",
+      "email": "mohammad.khan@alfanar.com",
+      "normalized_email": "mohammad.khan@alfanar.com",
+      "phone": "966581695245",
+      "normalized_phone": "966581695245",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5631
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Nawaf Rashed",
+      "email": "Nawaf.Altwalah@alfanar.com",
+      "normalized_email": "nawaf.altwalah@alfanar.com",
+      "phone": "966552745705",
+      "normalized_phone": "966552745705",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": false,
+      "source_ids": [],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [
+        "not_in_current_auto_extract_by_email"
+      ],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Othman Hasan",
+      "email": "Othman.milhem@Alfanar.com",
+      "normalized_email": "othman.milhem@alfanar.com",
+      "phone": "966599686433",
+      "normalized_phone": "966599686433",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5637
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Salman Yousef",
+      "email": "salman.alasqah@alfanar.com",
+      "normalized_email": "salman.alasqah@alfanar.com",
+      "phone": "+966537220070",
+      "normalized_phone": "966537220070",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": false,
+      "source_ids": [],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [
+        "not_in_current_auto_extract_by_email"
+      ],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Samer Aali",
+      "email": "Samer.Alsalmi@alfanar.com",
+      "normalized_email": "samer.alsalmi@alfanar.com",
+      "phone": "+966541215338",
+      "normalized_phone": "966541215338",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": false,
+      "source_ids": [],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [
+        "not_in_current_auto_extract_by_email"
+      ],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Sulaiman Mohammed",
+      "email": "Sulaiman.Alhogail@alfanar.com",
+      "normalized_email": "sulaiman.alhogail@alfanar.com",
+      "phone": "966501015554",
+      "normalized_phone": "966501015554",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5628
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Ziyad Mohammed",
+      "email": "Ziyad.Almushawwah@alfanar.com",
+      "normalized_email": "ziyad.almushawwah@alfanar.com",
+      "phone": "+966558944199",
+      "normalized_phone": "966558944199",
+      "organisation": "AL Fanar",
+      "supplied_programme": "Project Control Professional Level 6 - Al Fanar",
+      "selection_reason": "user_supplied_fanar_list",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        5624
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [],
+      "target_profile_ids": [],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "create_commercial_delivery"
+    },
+    {
+      "full_name": "Joshua Bowers",
+      "email": "joshuab@sarginsons.co.uk",
+      "normalized_email": "joshuab@sarginsons.co.uk",
+      "phone": "07522373422",
+      "normalized_phone": "07522373422",
+      "organisation": "Sarginsons",
+      "supplied_programme": "Project Controls Professional Level 6 - June 2026",
+      "selection_reason": "previously_requested_by_owner",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        1423
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [
+        348
+      ],
+      "target_profile_ids": [
+        549
+      ],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "preserve_existing"
+    },
+    {
+      "full_name": "Gary Beacham",
+      "email": "garybeacham@duck.com",
+      "normalized_email": "garybeacham@duck.com",
+      "phone": "07368403698",
+      "normalized_phone": "07368403698",
+      "organisation": "Great Ormond Street NHS",
+      "supplied_programme": "Project Controls Professional Level 6 - Feb 2026",
+      "selection_reason": "previously_requested_by_owner",
+      "was_in_previous_preview": true,
+      "source_ids": [
+        6443
+      ],
+      "source_phone_only_matches": [],
+      "target_enrolment_ids": [
+        291
+      ],
+      "target_profile_ids": [
+        593
+      ],
+      "target_account_ids": [],
+      "target_name_or_phone_only_ids": [],
+      "review_flags": [],
+      "proposed_action": "preserve_existing"
+    }
+  ],
+  "current_auto_extract_matches": [
+    {
+      "aptem_id": 1423,
+      "full_name": "Joshua Bowers",
+      "email": "joshuab@sarginsons.co.uk",
+      "phone": "07522373422",
+      "programme": "Project Controls Professional Level 6 - June 2026",
+      "group_name": "PCP Level 6 - June 2026",
+      "source_status": "Active",
+      "start_date": "2026-06-30",
+      "end_date": "2028-03-31"
+    },
+    {
+      "aptem_id": 5567,
+      "full_name": "Khalid Bashir",
+      "email": "khalid.bashir@alfanar.com",
+      "phone": "+966565482450",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5618,
+      "full_name": "Abdulhakim Musallam",
+      "email": "Abdulhakim.almarshadi@Alfanar.com",
+      "phone": "966599176668",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5620,
+      "full_name": "Abdulsalam Abdulqader",
+      "email": "Abdulsalam.AlSalehi@alfanar.com",
+      "phone": "+966532222649",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5621,
+      "full_name": "Alghareeb Atef",
+      "email": "Alghareeb.Hegazy@alfanar.com",
+      "phone": "+966563702743",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5622,
+      "full_name": "Ahmed Said",
+      "email": "ahmed.skhalifa@dar-engineering.com",
+      "phone": "+966541281351",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5623,
+      "full_name": "Abdulaziz Mohammed",
+      "email": "Abdulaziz.Alhijris@alfanar.com",
+      "phone": "+966555719899",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5624,
+      "full_name": "Ziyad Mohammed",
+      "email": "Ziyad.Almushawwah@alfanar.com",
+      "phone": "+966558944199",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5625,
+      "full_name": "Barkat Muhammad",
+      "email": "barakat.muhammad@alfanar.com",
+      "phone": "+966580535653",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5626,
+      "full_name": "Manishkumar Mahendra",
+      "email": "manishkumar.varde@alfanar.com",
+      "phone": "+966582293466",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5627,
+      "full_name": "Faisal Saoud",
+      "email": "Faisal.Almutairi@alfanar.com",
+      "phone": "+966507787748",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5628,
+      "full_name": "Sulaiman Mohammed",
+      "email": "Sulaiman.Alhogail@alfanar.com",
+      "phone": "966501015554",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5629,
+      "full_name": "Khalid Nasser",
+      "email": "Khalid.Binafif@alfanar.com",
+      "phone": "+966505651400",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5630,
+      "full_name": "Mohammed Khalid",
+      "email": "Mohammed.Alangari@alfanar.com",
+      "phone": "+966545589826",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5631,
+      "full_name": "Muhammad Usman",
+      "email": "mohammad.khan@alfanar.com",
+      "phone": "966581695245",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5632,
+      "full_name": "Abdullah Nawaf",
+      "email": "Abdullah.Almutrif@alfanar.com",
+      "phone": "966540009522",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5635,
+      "full_name": "Hossam Khairy",
+      "email": "hossam.abdelrassoul@alfanar.com",
+      "phone": "966595350553",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5636,
+      "full_name": "Abdulrahman Saad",
+      "email": "Abdulrahman.Alsahli@alfanar.com",
+      "phone": "+966549558005",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 5637,
+      "full_name": "Othman Hasan",
+      "email": "Othman.milhem@Alfanar.com",
+      "phone": "966599686433",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 6145,
+      "full_name": "Adam Alrasheed",
+      "email": "Adam.alrasheed@alfanar.com",
+      "phone": "+966541802229",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter",
+      "start_date": "2025-10-31",
+      "end_date": "2027-06-29"
+    },
+    {
+      "aptem_id": 6443,
+      "full_name": "Gary Beacham",
+      "email": "garybeacham@duck.com",
+      "phone": "07368403698",
+      "programme": "Project Controls Professional Level 6 - Feb 2026",
+      "group_name": "AI in Project Control 2026",
+      "source_status": "Active",
+      "start_date": "2026-01-27",
+      "end_date": "2026-12-31"
+    }
+  ],
+  "local_aptem_mirror_matches": [
+    {
+      "aptem_id": 1423,
+      "full_name": "Joshua Bowers",
+      "email": "joshuab@sarginsons.co.uk",
+      "phone": "07522373422",
+      "programme": "Project Controls Professional Level 6 - June 2026",
+      "group_name": "PCP Level 6 - June 2026",
+      "source_status": "Active"
+    },
+    {
+      "aptem_id": 5567,
+      "full_name": "Khalid Bashir",
+      "email": "khalid.bashir@alfanar.com",
+      "phone": "+966565482450",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5618,
+      "full_name": "Abdulhakim Musallam",
+      "email": "Abdulhakim.almarshadi@Alfanar.com",
+      "phone": "966599176668",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5620,
+      "full_name": "Abdulsalam Abdulqader",
+      "email": "Abdulsalam.AlSalehi@alfanar.com",
+      "phone": "+966532222649",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5621,
+      "full_name": "Alghareeb Atef",
+      "email": "Alghareeb.Hegazy@alfanar.com",
+      "phone": "+966563702743",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5622,
+      "full_name": "Ahmed Said",
+      "email": "ahmed.skhalifa@dar-engineering.com",
+      "phone": "+966541281351",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5623,
+      "full_name": "Abdulaziz Mohammed",
+      "email": "Abdulaziz.Alhijris@alfanar.com",
+      "phone": "+966555719899",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5624,
+      "full_name": "Ziyad Mohammed",
+      "email": "Ziyad.Almushawwah@alfanar.com",
+      "phone": "+966558944199",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5625,
+      "full_name": "Barkat Muhammad",
+      "email": "barakat.muhammad@alfanar.com",
+      "phone": "+966580535653",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5626,
+      "full_name": "Manishkumar Mahendra",
+      "email": "manishkumar.varde@alfanar.com",
+      "phone": "+966582293466",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5627,
+      "full_name": "Faisal Saoud",
+      "email": "Faisal.Almutairi@alfanar.com",
+      "phone": "+966507787748",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5628,
+      "full_name": "Sulaiman Mohammed",
+      "email": "Sulaiman.Alhogail@alfanar.com",
+      "phone": "966501015554",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5629,
+      "full_name": "Khalid Nasser",
+      "email": "Khalid.Binafif@alfanar.com",
+      "phone": "+966505651400",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5630,
+      "full_name": "Mohammed Khalid",
+      "email": "Mohammed.Alangari@alfanar.com",
+      "phone": "+966545589826",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5631,
+      "full_name": "Muhammad Usman",
+      "email": "mohammad.khan@alfanar.com",
+      "phone": "966581695245",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5632,
+      "full_name": "Abdullah Nawaf",
+      "email": "Abdullah.Almutrif@alfanar.com",
+      "phone": "966540009522",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5635,
+      "full_name": "Hossam Khairy",
+      "email": "hossam.abdelrassoul@alfanar.com",
+      "phone": "966595350553",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5636,
+      "full_name": "Abdulrahman Saad",
+      "email": "Abdulrahman.Alsahli@alfanar.com",
+      "phone": "+966549558005",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 5637,
+      "full_name": "Othman Hasan",
+      "email": "Othman.milhem@Alfanar.com",
+      "phone": "966599686433",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 6145,
+      "full_name": "Adam Alrasheed",
+      "email": "Adam.alrasheed@alfanar.com",
+      "phone": "+966541802229",
+      "programme": "Project Control Professional Level 6 - Al Fanar",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "source_status": "NonStarter"
+    },
+    {
+      "aptem_id": 6443,
+      "full_name": "Gary Beacham",
+      "email": "garybeacham@duck.com",
+      "phone": "07368403698",
+      "programme": "Project Controls Professional Level 6 - Feb 2026",
+      "group_name": "AI in Project Control 2026",
+      "source_status": "Active"
+    }
+  ],
+  "matching_enrolments": [
+    {
+      "id": 291,
+      "uuid": "816cb99e-bbd3-4619-be72-d20771ff95e3",
+      "aptem_id": "6443",
+      "full_name": "Gary Beacham",
+      "email": "garybeacham@duck.com",
+      "phone": null,
+      "learner_type": "commercial",
+      "programme_status": "Delivery",
+      "programme": "Project Controls Professional Level 6",
+      "cohort": "Feb 2026",
+      "group_name": "AI in Project Control 2026"
+    },
+    {
+      "id": 348,
+      "uuid": "a3c8b511-2811-4048-9943-cb78fc3d1d77",
+      "aptem_id": "1423",
+      "full_name": "Joshua Bowers",
+      "email": "joshuab@sarginsons.co.uk",
+      "phone": null,
+      "learner_type": "commercial",
+      "programme_status": "Delivery",
+      "programme": "Project Controls Professional Level 6",
+      "cohort": "Oct 2026",
+      "group_name": "PCP Level 6 - June 2026"
+    }
+  ],
+  "matching_profiles": [
+    {
+      "id": 549,
+      "uuid": "a3c8b511-2811-4048-9943-cb78fc3d1d77",
+      "enrolment_id": 348,
+      "full_name": "Joshua Bowers",
+      "email": "joshuab@sarginsons.co.uk",
+      "phone_number": "",
+      "learner_type": "commercial",
+      "programme_status": "Delivery",
+      "lifecycle_status": "delivery",
+      "programme": "Project Controls Professional Level 6",
+      "programme_id": "PROG-PCP-L6",
+      "cohort": "Oct 2026",
+      "cohort_id": "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b",
+      "group_name": "PCP Level 6 - June 2026",
+      "group_id": "APTEM-GROUP-72a16ad34405083c617ebf5ff3a3ebbc"
+    },
+    {
+      "id": 593,
+      "uuid": "816cb99e-bbd3-4619-be72-d20771ff95e3",
+      "enrolment_id": 291,
+      "full_name": "Gary Beacham",
+      "email": "garybeacham@duck.com",
+      "phone_number": "",
+      "learner_type": "commercial",
+      "programme_status": "Delivery",
+      "lifecycle_status": "delivery",
+      "programme": "Project Controls Professional Level 6",
+      "programme_id": "PROG-PCP-L6",
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "group_name": "AI in Project Control 2026",
+      "group_id": "APTEM-GROUP-7013be7cb67dbebeeb0738f4812c79cf"
+    }
+  ],
+  "matching_accounts": [],
+  "placement_notes": "Existing group/cohort shown for review only. Historical programme-name review marks Al Fanar cohort unresolved; do not silently assign Feb 2026 from a prior date-derived mapping.",
+  "existing_learner_note": "Gary Beacham (Aptem 6443 / Users 291) and Joshua Bowers (Aptem 1423 / Users 348) already exist as commercial Delivery. Preserve their identities, profiles, plans, progress and current placement; do not reinsert them. Joshua source programme/group names refer to June 2026 while his target cohort is Oct 2026; report this discrepancy without changing placement.",
+  "identity_rule": "Normalize email casing/whitespace and phone punctuation. A shared phone is a review flag, never proof two records identify one person. Preserve both candidate records until resolved.",
+  "historical_audit_matches": [
+    {
+      "learner_id": 450,
+      "aptem_id": 1423,
+      "learner_name": "Joshua Bowers",
+      "learner_email": "joshuab@sarginsons.co.uk",
+      "lms_learner_name": "joshuabsarginsons-co-uk",
+      "lms_learner_email": "joshuab@sarginsons.co.uk",
+      "programme_name": "Project Controls Professional Level 6 - June 2026",
+      "programme_status": "Active"
+    },
+    {
+      "learner_id": 976,
+      "aptem_id": 6443,
+      "learner_name": "Gary Beacham",
+      "learner_email": "garybeacham@duck.com",
+      "lms_learner_name": "garybeachamduck-com",
+      "lms_learner_email": "garyBeacham@duck.com",
+      "programme_name": "Project Controls Professional Level 6 - Feb 2026",
+      "programme_status": "Active"
+    }
+  ],
+  "historical_audit_note": "Historical audit is supporting evidence only; it does not override the user-supplied roster, current target identity, or the unresolved shared phone.",
+  "pending_identity_question": {
+    "names": [
+      "Adam Alrasheed",
+      "Adam Nayef"
+    ],
+    "phone": "966541802229",
+    "question": "Same person or two different people? If the same person, which name and email should be retained?",
+    "if_distinct": {
+      "total_people": 28,
+      "new_users": 26,
+      "existing_users": 2
+    },
+    "if_same": {
+      "total_people": 27,
+      "new_users": 25,
+      "existing_users": 2
+    },
+    "resolution": {
+      "decision": "retain_both_email_records_separately",
+      "instruction": "Include both emails",
+      "recorded_at_utc": "2026-09-14T21:40:07.369444+00:00",
+      "independent_person_identity_verified": false
+    },
+    "status": "roster_inclusion_decided_by_owner"
+  },
+  "new_source_identity_note": "Seven emails from the user-supplied list have no exact match in the current Aptem auto-extract or local Aptem mirror; no Aptem ID is invented for these candidates. Preserve supplied details until source IDs can be verified.",
+  "execution_result": {
+    "state": "committed_and_verified",
+    "verified_at_utc": "2026-09-14T21:44:56.492790+00:00",
+    "inserted_enrolments": 26,
+    "inserted_profiles": 26,
+    "verified_total_records": 28,
+    "existing_records_preserved": 2,
+    "accounts_created": 0,
+    "invitations_sent": 0,
+    "result_report": "reports\\alfanar-commercial-import-20260914T214448276174Z-result.json",
+    "completed_report": "reports\\alfanar-commercial-import-completed-2026-09-15.md"
+  }
+}
