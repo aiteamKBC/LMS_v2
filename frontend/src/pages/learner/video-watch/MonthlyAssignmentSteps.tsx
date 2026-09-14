@@ -14,6 +14,7 @@ import type { AssignmentAnswers } from './AssignmentSubmissionWizard';
 import { CheckCircle2, Circle, Loader2, Info, AlertCircle } from 'lucide-react';
 import { startLiveDictation } from '@/utils/liveDictation';
 import { Modal } from '@/pages/users/components/Modal';
+import { AssignmentTimeEntries } from './AssignmentTimeEntries';
 
 const inputClass = 'mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
 const buttonClass = 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-blue-50 disabled:opacity-40';
@@ -290,8 +291,8 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       <header><h3 className="text-xl font-semibold text-slate-900">KSBs & hours claimed</h3><p className="mt-2 text-sm leading-6 text-slate-600">Record your learning time and review each KSB explanation. Selecting supporting evidence is optional.</p></header>
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time">
         <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-slate-900">Your learning time</h4><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm">Planned: {plannedOtjh == null ? 'Not set' : `${plannedOtjh} hours`}</span></div>
-        <fieldset disabled={disabled}>{timeControl}</fieldset>
-        <p className="text-sm text-slate-600">Enter your actual time. There is no six-hour cap; your planned hours stay the same.</p>
+        {disabled && !data.timeEntries?.length ? <fieldset disabled>{timeControl}</fieldset> :
+          <AssignmentTimeEntries kind={kind} learnerId={learnerId} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
         {check('paidHours', 'This learning was completed during paid working hours.')}
       </section>
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:p-5">

@@ -1,0 +1,23 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { AssignmentPdfPreview } from './AssignmentPdfPreview';
+import { getDocument } from 'pdfjs-dist';
+vi.mock('pdfjs-dist', () => ({ GlobalWorkerOptions: {}, getDocument: vi.fn() }));
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+it('renders pages without a browser save toolbar and cleans up the PDF', async () => {
+  const bytes = new Uint8Array([37, 80, 68, 70]).buffer;
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => bytes }));
+  const getPage = vi.fn().mockResolvedValue({ getViewport: () => ({ width: 800, height: 1100 }), render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }) });
+  const destroy = vi.fn().mockResolvedValue(undefined);
+  vi.mocked(getDocument).mockReturnValue({ promise: Promise.resolve({ numPages: 2, getPage }), destroy } as any);
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
+  const view = render(<AssignmentPdfPreview url="blob:report" filename="Assignment 5 - September 2026.pdf" />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Next page' })).toBeEnabled());
+  expect(screen.getByText('Assignment 5 - September 2026.pdf')).toBeVisible();
+  expect(getDocument).toHaveBeenCalledWith({ data: new Uint8Array(bytes) });
+  expect(view.container.querySelector('iframe')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  await waitFor(() => expect(getPage).toHaveBeenLastCalledWith(2));
+  expect(screen.getByText('Page 2 of 2')).toBeVisible();
+  view.unmount(); expect(destroy).toHaveBeenCalledOnce();
+});

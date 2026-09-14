@@ -46,6 +46,44 @@ class MonthlyAssignmentTests(SimpleTestCase):
         self.assertTrue(checks.pop("evidence"))
         self.assertFalse(any(checks.values()))
 
+    def test_topic_time_must_match_total_and_stay_in_submission_month(self):
+        payload = self.payload()
+        payload['actualTimeHours'] = '3.75'
+        rows = [dict(topic='Research', hours='1.5', date='2026-09-01'),
+                dict(topic='Writing', hours='2.25', date='2026-09-30')]
+        payload['monthlyAssignment']['timeEntries'] = rows
+        self.assertTrue(self.checks(payload)['hours'])
+        for invalid in [dict(date='2026-10-01'), dict(date='2026-09-31'), dict(date='2026-09-05'), dict(date='2026-09-06'),
+                        dict(topic=' '), dict(hours='-1'), dict(hours='NaN')]:
+            with self.subTest(invalid=invalid):
+                changed = deepcopy(payload)
+                changed['monthlyAssignment']['timeEntries'][0].update(invalid)
+                self.assertFalse(self.checks(changed)['hours'])
+        payload['actualTimeHours'] = '4'
+        self.assertFalse(self.checks(payload)['hours'])
+        payload['monthlyAssignment']['timeEntries'] = []
+        self.assertFalse(self.checks(payload)['hours'])
+
+    def test_topic_time_rejects_bank_holidays_but_allows_past_working_days(self):
+        payload = self.payload()
+        payload['monthlyAssignment']['month'] = '2026-12'
+        payload['monthlyAssignment']['timeEntries'] = [dict(topic='Research', hours='8', date='2026-12-25')]
+        self.assertFalse(self.checks(payload)['hours'])
+        payload['monthlyAssignment']['timeEntries'][0]['date'] = '2026-12-28'
+        self.assertFalse(self.checks(payload)['hours'])
+        payload['monthlyAssignment']['month'] = '2025-12'
+        payload['monthlyAssignment']['timeEntries'][0]['date'] = '2025-12-24'
+        self.assertTrue(self.checks(payload)['hours'])
+
+    def test_eight_hour_limit_is_per_topic_not_per_assignment(self):
+        payload = self.payload()
+        payload['monthlyAssignment']['timeEntries'] = [dict(topic='Research', hours='8', date='2026-09-01'), dict(topic='Writing', hours='8', date='2026-09-02')]
+        payload['actualTimeHours'] = '16'
+        self.assertTrue(self.checks(payload)['hours'])
+        payload['monthlyAssignment']['timeEntries'][0]['hours'] = '8.01'
+        payload['actualTimeHours'] = '16.01'
+        self.assertFalse(self.checks(payload)['hours'])
+
     def test_submission_without_evidence_passes_all_checks(self):
         payload = self.payload()
         monthly = payload['monthlyAssignment']
