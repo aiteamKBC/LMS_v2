@@ -55,9 +55,26 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
     const activityCount = summary?.total ?? activities.length;
     const groupId = subject.id.startsWith('legacy:') ? subject.id.slice(7) : '';
     const actual = data.actual.filter(row => groupId && row.groupId === groupId);
-    return { ...subject, activities, activityCount, moduleId, detail, sessions, dates, start, end,
-      weeks: new Set(dates.map(weekKey)).size, done, progress: percent(done, activityCount),
-      actual: actual.length ? actual.reduce((sum, row) => sum + row.hours, 0) : null };
+    const activityCounts = summary?.activityCounts || activities.reduce<Record<string, number>>((counts, activity) => {
+      counts[activity.category] = (counts[activity.category] || 0) + 1;
+      return counts;
+    }, {});
+    const ksbCodes = summary?.ksbCodes || [...new Set(activities.flatMap(activity =>
+      (activity.native?.ksbMappings || []).map(mapping => mapping.code).filter(Boolean)))].sort();
+    const ksbProgress = summary ? summary.ksbProgress : activities.some(activity => !activity.native?.ksbMappings) ? null
+      : activities.reduce((counts, activity) => {
+        const count = new Set((activity.native?.ksbMappings || []).map(mapping => mapping.code).filter(Boolean)).size;
+        return { total: counts.total + count, completed: counts.completed + (activity.completed ? count : 0) };
+      }, { completed: 0, total: 0 });
+    const historicalHours = actual.length ? actual.reduce((sum, row) => sum + row.hours, 0) : null;
+    const recordedHours = summary?.directHours != null
+      ? groupId ? data.actualAvailable ? (historicalHours || 0) + summary.directHours : null : summary.directHours
+      : historicalHours;
+    return { ...subject, activities, activityCount, activityCounts, ksbCodes,
+      ksbMappingMissing: summary ? summary.ksbMappingMissing : activities.some(activity => !activity.native?.ksbMappings),
+      moduleId, detail, sessions, dates, start, end,
+      weeks: new Set(dates.map(weekKey)).size, done, progress: percent(done, activityCount), ksbProgress,
+      actual: recordedHours };
   });
 }
 export type TimelineModule = ReturnType<typeof buildPlanModules>[number];
@@ -81,8 +98,8 @@ export function nextSession(sessions: PlanSession[], now: number) {
     .sort((a, b) => Date.parse(a.start) - Date.parse(b.start))[0] || null;
 }
 
-export function barPosition(start: string, end: string, year: number) {
-  const from = Date.UTC(year, 0, 1), to = Date.UTC(year + 1, 0, 1);
+export function barPosition(start: string, end: string, year: number, startMonth = 0) {
+  const from = Date.UTC(year, startMonth, 1), to = Date.UTC(year + 1, startMonth, 1);
   const first = Date.parse(start), last = Date.parse(end) + 86400000;
   if (!Number.isFinite(first) || !Number.isFinite(last) || first >= to || last <= from || last < first) return null;
   // Equal month columns: place dates within their own month's real day count.
@@ -91,7 +108,16 @@ export function barPosition(start: string, end: string, year: number) {
     if (time >= to) return 100;
     const date = new Date(time), month = date.getUTCMonth();
     const days = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-    return (month + (date.getUTCDate() - 1) / days) / 12 * 100;
+    const offset = (date.getUTCFullYear() - year) * 12 + month - startMonth;
+    return (offset + (date.getUTCDate() - 1) / days) / 12 * 100;
   };
   return { left: position(first), width: position(last) - position(first) };
+}
+
+export function timelineMonthKeys(year: number, startMonth = 0) {
+  return Array.from({ length: 12 }, (_, index) => new Date(Date.UTC(year, startMonth + index, 1)).toISOString().slice(0, 7));
+}
+
+export function timelinePeriodYear(month: string, startMonth = 0) {
+  return Number(month.slice(0, 4)) - (Number(month.slice(5, 7)) - 1 < startMonth ? 1 : 0);
 }

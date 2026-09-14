@@ -16,6 +16,8 @@ export interface AbsenceReport {
   evidenceType?: string;
   evidenceKind?: 'image' | 'file' | 'text' | 'none';
   evidenceText?: string;
+  recoveryMethod?: 'recorded' | 'catch-up' | '';
+  catchupEventKey?: string | null;
   evidenceImageUrl?: string;
   previousAbsences: number;
   attendanceRate: number;

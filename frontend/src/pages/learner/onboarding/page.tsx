@@ -186,7 +186,7 @@ export default function LearnerOnboardingPage() {
     >
       {/* w-full, matching the other learner pages — the shell already offsets for
           the collapsed sidebar rail, so an extra centred max-width fought it. */}
-      <main className="w-full p-3 sm:p-4 md:p-6">
+      <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {loading && (
           <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-5">
             <RowsSkeleton rows={5} />

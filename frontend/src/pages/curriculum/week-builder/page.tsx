@@ -1902,7 +1902,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
+          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for podcasts (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2986,6 +2986,26 @@ function Field({ label, children, className = '' }: { label: string; children: R
       <span className="block text-[11px] font-semibold text-foreground-500 mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+function DurationFields({ value, onChange, label = 'Expected OTJH' }: { value: number; onChange: (value: number) => void; label?: string }) {
+  const totalMinutes = Math.max(0, Math.round((Number(value) || 0) * 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const update = (nextHours: number, nextMinutes: number) => {
+    const safeHours = Number.isFinite(nextHours) ? Math.max(0, Math.floor(nextHours)) : 0;
+    const safeMinutes = Number.isFinite(nextMinutes) ? Math.min(59, Math.max(0, Math.floor(nextMinutes))) : 0;
+    onChange((safeHours * 60 + safeMinutes) / 60);
+  };
+  return (
+    <div>
+      <span className="block text-[11px] font-semibold text-foreground-500 mb-1">{label}</span>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="relative"><input type="number" min="0" step="1" value={hours} onChange={event => update(Number(event.target.value), minutes)} className={`${inputClass} pr-12 tabular-nums`} /><span className="pointer-events-none absolute right-3 top-2.5 text-[11px] font-semibold text-foreground-400">hours</span></div>
+        <div className="relative"><input type="number" min="0" max="59" step="5" value={minutes} onChange={event => update(hours, Number(event.target.value))} className={`${inputClass} pr-14 tabular-nums`} /><span className="pointer-events-none absolute right-3 top-2.5 text-[11px] font-semibold text-foreground-400">minutes</span></div>
+      </div>
+    </div>
   );
 }
 

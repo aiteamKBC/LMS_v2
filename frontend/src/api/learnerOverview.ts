@@ -5,11 +5,14 @@ import { peekLearnerJson, readLearnerJson } from './learnerRead';
 export type PlanSubjectSummary = {
   id: string; title: string; source: 'legacy' | 'current'; completed: number; total: number;
   dates: string[]; moduleIds: string[]; sessionTitles: { date: string; title: string }[];
+  activityCounts?: Record<string, number>; ksbCodes?: string[]; ksbMappingMissing?: boolean;
+  ksbProgress?: { completed: number; total: number } | null;
+  directHours?: number | null;
 };
 
 export type OverviewWeek = {
   planSubjects?: PlanSubjectSummary[];
-  weekStart: string; weekEnd: string; timezone: string; latestModuleId?: string | null;
+  weekStart: string; weekEnd: string; timezone: string;
   modules: { id: string; title: string; weekLabels: string[]; moduleIds?: string[]; completed: number; total: number;
     percent: number | null; ksbCodes: string[]; ksbMappingMissing: boolean }[];
   deadlines: { id: string; title: string; type: 'assignment' | 'checkpoint'; date: string; subjectId: string }[];

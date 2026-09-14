@@ -179,8 +179,8 @@ export function MockOtjhBody({ showHero = true }: { showHero?: boolean }) {
           ═══════════════════════════════════════════════════ */}
       {showHero && (
       <SectionReveal delay={0}>
-        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden workspace-page-hero" >
+          <div className="absolute inset-0 pointer-events-none overflow-hidden hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
             <div className="absolute animate-liquid-blob-3 opacity-10" style={{ width: '50%', height: '25%', left: '20%', bottom: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--primary-500) / 0.2) 0%, transparent 70%)', filter: 'blur(50px)' }} />
@@ -200,8 +200,8 @@ export function MockOtjhBody({ showHero = true }: { showHero?: boolean }) {
                   {pct}% of {p.otjhTarget}h target
                 </span>
               </div>
-              <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1.5">Off-the-Job Training Hours</h1>
-              <p className="text-sm text-white/40 max-w-lg">
+              <h1 className="text-lg md:text-xl font-heading font-bold text-primary-800 tracking-tight mb-1.5">Off-the-Job Training Hours</h1>
+              <p className="text-sm text-foreground-500 max-w-lg">
                 Track and log your apprenticeship training hours. All activities must occur during paid working time and be linked to relevant KSBs.
               </p>
             </div>
@@ -212,21 +212,21 @@ export function MockOtjhBody({ showHero = true }: { showHero?: boolean }) {
                   <div className="relative">
                     <DonutRing pct={pct} size={72} stroke={7} color={heroColor} trackClass="text-white/8" />
                     <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-lg font-heading font-bold text-white leading-none">{pct}%</span>
+                      <span className="text-lg font-heading font-bold text-primary-800 leading-none">{pct}%</span>
                     </div>
                   </div>
                   <div>
-                    <p className="text-xs text-white/40 mb-0.5">Total Progress</p>
-                    <p className="text-base font-heading font-bold text-white">{formatHoursMinutes(p.otjhCompleted)}<span className="text-white/30 text-sm font-normal"> / {formatHoursMinutes(p.otjhTarget)}</span></p>
-                    <p className="text-[10px] text-white/25 mt-0.5">{p.otjhTarget - p.otjhCompleted}h remaining</p>
+                    <p className="text-xs text-foreground-500 mb-0.5">Total Progress</p>
+                    <p className="text-base font-heading font-bold text-primary-800">{formatHoursMinutes(p.otjhCompleted)}<span className="text-foreground-500 text-sm font-normal"> / {formatHoursMinutes(p.otjhTarget)}</span></p>
+                    <p className="text-[10px] text-foreground-500 mt-0.5">{p.otjhTarget - p.otjhCompleted}h remaining</p>
                   </div>
                 </div>
                 <div className="w-px h-14 bg-accent-400/10 shrink-0" />
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                  <div><p className="text-[10px] text-white/35">Validated</p><p className="text-sm font-heading font-bold text-emerald-400">{totalValidated}h</p></div>
-                  <div><p className="text-[10px] text-white/35">Pending</p><p className="text-sm font-heading font-bold text-amber-400">{totalPending}h</p></div>
-                  <div><p className="text-[10px] text-white/35">Rejected</p><p className="text-sm font-heading font-bold text-red-400">{totalRejected}h</p></div>
-                  <div><p className="text-[10px] text-white/35">This Month</p><p className="text-sm font-heading font-bold text-white">{thisMonthTrend.logged}h</p></div>
+                  <div><p className="text-[10px] text-foreground-500">Validated</p><p className="text-sm font-heading font-bold text-emerald-400">{totalValidated}h</p></div>
+                  <div><p className="text-[10px] text-foreground-500">Pending</p><p className="text-sm font-heading font-bold text-amber-400">{totalPending}h</p></div>
+                  <div><p className="text-[10px] text-foreground-500">Rejected</p><p className="text-sm font-heading font-bold text-red-400">{totalRejected}h</p></div>
+                  <div><p className="text-[10px] text-foreground-500">This Month</p><p className="text-sm font-heading font-bold text-primary-800">{thisMonthTrend.logged}h</p></div>
                 </div>
               </div>
             </div>

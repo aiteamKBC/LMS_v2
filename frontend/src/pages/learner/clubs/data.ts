@@ -1,3 +1,5 @@
+import type { ImportedReview } from '@/api/reviewHistory';
+
 export interface EventSpeaker {
   name: string;
   role: string;
@@ -728,8 +730,10 @@ export interface CalendarEvent {
   durationMinutes?: number;
   /** Backend booking lifecycle status; kept separate from the display badge. */
   bookingStatus?: string;
+  /** Full imported Aptem review record, when this event came from review history. */
+  importedReview?: ImportedReview;
   /** Session type used to turn an unscheduled coaching-cycle item into a real booking. */
-  bookingSessionType?: 'catch-up' | 'student-support' | 'mcr' | 'progress-review';
+  bookingSessionType?: 'catch-up' | 'student-support' | 'mcr' | 'progress-review' | 'gateway' | 'other';
   /**
    * True when `time` is a placeholder rather than an agreed time — a coaching
    * slot the cycle says is due but nobody has booked yet. The grid still needs

@@ -487,7 +487,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
       // account" leaves somebody who cannot sign in at all; a mail failure
       // leaves a link that still exists and can be re-sent.
       const invite = row.invitation;
-      const saved = `${row.name || name} was saved to Enrolment_Users.`;
+      const saved = `${row.name || name} was saved.`;
       if (!invite) {
         success(`${label} created`, saved);
       } else if (invite.forbidden) {
@@ -502,7 +502,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
         // from Accounts once the record has been checked.
         success(
           label,
-          `${created} Send their invitation from Accounts in the Super Admin workspace when you are ready.`,
+          `${saved} Send their invitation from Accounts in the Super Admin workspace when you are ready.`,
         );
       } else if (!invite.invited) {
         success(`${label} created`, saved);

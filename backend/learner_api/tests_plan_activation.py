@@ -41,6 +41,10 @@ def _learner():
 
 
 class PlanSaveAdvancesLearnerTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
+        self.enterContext(patch('learner_api.learning_plan.sync_learning_plan_mirror'))
+
     def _patch(self, learner, body):
         request = RequestFactory().patch(
             "/learner_api/learning-plan/101/",

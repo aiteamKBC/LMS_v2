@@ -326,7 +326,7 @@ export default function OnboardingReviewsPage() {
         userName="Learner"
         userRole="Learner"
       >
-        <main className="p-4 md:p-6">
+        <main className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
           <div className="mx-auto max-w-2xl rounded-2xl border border-primary-200 bg-primary-50/40 p-8 text-center">
             <i className="ri-information-line text-3xl text-primary-600" />
             <h2 className="mt-3 text-lg font-heading font-semibold text-foreground-900">No onboarding reviews are required</h2>
@@ -348,7 +348,7 @@ export default function OnboardingReviewsPage() {
       userName="Learner"
       userRole="Learner"
     >
-      <main className="w-full p-4 md:p-6 space-y-4">
+      <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4 md:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">

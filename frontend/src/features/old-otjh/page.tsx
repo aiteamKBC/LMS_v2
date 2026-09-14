@@ -167,8 +167,10 @@ function Portal() {
           {query.data && <RecordBadge>{query.data.completed_months ?? 0}/{query.data.total_months ?? 0} months</RecordBadge>}</div>
         <h2 className="mt-1 text-lg font-heading font-semibold">Full monthly learning record</h2><p className="text-[13px] text-foreground-500">Review all your months, accepted hours and signatures.</p>
         <p className={styles.recordPeriod}><AppIcon className="ri-calendar-line" />Sep 2024 – Aug 2026</p>
-        <Link className={`${btnSecondary} mt-2`} to="/old-otjh/months">Review previous record<AppIcon className="ri-arrow-right-line" /></Link>
-        {query.data?.months[0] && <Link aria-label="Review first month" className={`${btnSecondary} mt-2`} to={`/old-otjh/months/${query.data.months[0].month}`}>View first month<AppIcon className="ri-arrow-right-line" /></Link>}
+        <div className={styles.recordsActions}>
+          <Link className={btnSecondary} to="/old-otjh/months">Review previous record<AppIcon className="ri-arrow-right-line" /></Link>
+          {query.data?.months[0] && <Link aria-label="Review first month" className={btnSecondary} to={`/old-otjh/months/${query.data.months[0].month}`}>View first month<AppIcon className="ri-arrow-right-line" /></Link>}
+        </div>
       </section>
     </div>
     {dialogOpen && (query.data || checkError || query.error) && <TransitionDialog returnFocusRef={lmsButton} summary={query.data}

@@ -21,6 +21,7 @@ import json
 import logging
 
 from django.db import DatabaseError, transaction
+from django.db.models import BooleanField, Case, Q, Value, When
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -29,7 +30,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import staff_only
 from login.permissions import learner_self_or_staff
 from login.permissions import require_access
-from login.models import Invitation, LoginAccount, LoginSession, PasswordReset
+from login.models import LoginAccount
 
 from .active_users import (
     PLACEMENT_SOURCE_FIELDS,
@@ -41,6 +42,8 @@ from .active_users import (
     sync_active_user,
 )
 from .identity import learner_profile_for_source
+from .account_deletion import delete_learner_account
+from .learner_dates import save_enrolment_fields
 from .directory import learner_directory_queryset
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
@@ -69,6 +72,7 @@ from .mappers import (
     to_staff_row,
     write_commercial_fields,
     write_fields,
+    validate_learner_dates,
     write_staff_fields,
 )
 from .models import CommercialUser, Employer, EnrolmentUser, LearnerProfile, LearnerTrainingPlanModule, StaffUser
@@ -704,10 +708,37 @@ def enrolment_users(request):
                 f"Invalid learnerType: {wanted!r}. Allowed: {', '.join(LEARNER_TYPE_CHOICES)}", 400
             )
         try:
-            # Loading the directory must not load everyone's plans or run
-            # hundreds of status checks/writes. Individual record reads,
-            # signing actions and the daily sweep already handle progression.
-            rows = [to_list_row(u) for u in learner_directory_queryset(wanted)]
+            qs = EnrolmentUser.all_learners.all()
+            if wanted == "apprenticeship":
+                # Rows predating the merge have a NULL type and are apprenticeship.
+                qs = qs.exclude(learner_type="commercial")
+            elif wanted == "commercial":
+                qs = qs.filter(learner_type="commercial")
+            # The enrolment table contains many large JSON/text columns. The
+            # directory only needs this small projection; selecting every
+            # column for all learners made the request exceed PostgreSQL's
+            # statement timeout before the rows could be rendered.
+            learners = list(qs.only(
+                "id", "uuid", "username", "type", "email", "group", "status",
+                "programme_status", "programme",
+                "cohort", "learner_type", "organization",
+            ).annotate(
+                _has_learning_plan=Case(
+                    When(
+                        Q(learning_plan__isnull=False) | Q(training_plan__isnull=False),
+                        then=Value(True),
+                    ),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                ),
+            ).order_by("id"))
+            # Keep this collection read bounded: advancing every learner here
+            # performs up to four compliance-document queries per row and can
+            # exceed the database statement timeout on a directory-sized list.
+            # Progression still runs on document/signature and learner updates,
+            # and the scheduled ``advance_learner_statuses`` sweep handles
+            # date-driven transitions between reads.
+            rows = [to_list_row(u) for u in learners]
             # Whether each person already has a sign-in account, so the
             # directory can offer "Send invitation" only where it applies.
             # Batched deliberately: asking per row would be one query per
@@ -818,19 +849,12 @@ def enrolment_user_detail(request, pk):
         if getattr(request, "learner_self_write", False):
             return _error("Only staff can delete a user account.", 403)
 
-        account = LoginAccount.objects.filter(
-            subject_type="learner", subject_id=user.pk
-        ).first()
         try:
-            with transaction.atomic(using="enrolment"):
-                # These tables use deliberate non-cascading links so account
-                # removal is explicit and active sessions are revoked first.
-                if account is not None:
-                    LoginSession.objects.filter(account_id=account.pk).delete()
-                    Invitation.objects.filter(account_id=account.pk).delete()
-                    PasswordReset.objects.filter(account_id=account.pk).delete()
-                    account.delete()
-                user.delete()
+            delete_learner_account(user.pk)
+        except EnrolmentUser.DoesNotExist:
+            return _error("User not found.", 404)
+        except ValidationError as exc:
+            return _error(str(exc), 400)
         except DatabaseError as exc:
             return _error(f"Could not delete user account: {exc}", 502)
         return JsonResponse({"deleted": True, "id": pk})
@@ -862,6 +886,7 @@ def enrolment_user_detail(request, pk):
                         pk, ", ".join(rejected),
                     )
             fields = write_fields(payload)
+            validate_learner_dates(fields, user)
             _check_employer_id(fields)
         except ValidationError as exc:
             return _error(str(exc), 400)
@@ -869,7 +894,7 @@ def enrolment_user_detail(request, pk):
             for attr, value in fields.items():
                 setattr(user, attr, value)
             if fields:
-                user.save(update_fields=list(fields.keys()))
+                save_enrolment_fields(user, fields)
                 # The address and name on this row ARE the sign-in identity, and
                 # the login account keeps its own copy — which is what an
                 # invitation is sent to. Correcting an email here without this
@@ -889,6 +914,12 @@ def enrolment_user_detail(request, pk):
                     # change has to reach that row too.
                     mirror_learner_placement(user)
                 advance_learner(user)
+                if 'programme_status' in fields:
+                    # An explicit staff status edit has already changed the
+                    # source before advance_learner runs. Its transition-only
+                    # hook cannot notice Active -> Active, leaving the profile
+                    # in Delivery and hiding coach/review/calendar records.
+                    sync_active_user(user)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(to_board(user))

@@ -78,7 +78,7 @@ export default function EventDetailPage() {
         pageTitle="Event Not Found" pageSubtitle=""
         userName={p.fullName} userRole={`${p.programme} Apprentice`}
       >
-        <div className="p-8 text-center">
+        <div className="text-center page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
           <p className="text-foreground-400 text-sm">Event not found.</p>
           <button onClick={() => navigate(-1)} className="mt-4 px-4 py-2 bg-primary-500 text-white rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap">
             Back to Events
@@ -211,7 +211,7 @@ export default function EventDetailPage() {
         </div>
       )}
 
-      <div className="p-6 space-y-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {/* Back */}
         <div className="flex items-center gap-2">
           <button

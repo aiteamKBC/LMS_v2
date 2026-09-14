@@ -10,15 +10,16 @@
 // editable: identity.ensure_account recomputes it from the person's enrolment
 // row on every request, so an edit here would be reverted within a request.
 // ============================================================================
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
-import { accountAction, fetchAccounts, type AccountStatus, type PlatformAccount } from '@/api/platformAdmin';
+import { accountAction, addLearnerRecord, fetchAccounts, type AccountStatus, type PlatformAccount } from '@/api/platformAdmin';
 import { accessLabel, accessShortLabel, fetchStaffUser, type StaffUserRow } from '@/api/staffUsers';
 import { useAuth } from '@/hooks/useAuth';
 import { EditStaffModal } from '@/pages/users/components/EditStaffModal';
 import { AccessPanel } from './AccessPanel';
+import { fetchCohorts, fetchGroups, fetchProgrammes } from '@/api/curriculum';
 
 const ROLE_FILTERS = [
   { id: '', label: 'All roles' },
@@ -63,6 +64,9 @@ export default function AdminAccountsPage() {
   const [busy, setBusy] = useState<number | null>(null);
   // The account whose access panel is open, from clicking its Access badge.
   const [editingAccess, setEditingAccess] = useState<PlatformAccount | null>(null);
+  // The account being given a learner record, if any. Opens a small form for
+  // the programme and cohort the record should start with.
+  const [enrollingAccount, setEnrollingAccount] = useState<PlatformAccount | null>(null);
   // The person record behind an account, open for editing from clicking their
   // name. A login account holds almost none of this — name, email, position and
   // contact details live on the staff row it points at — so the record is
@@ -351,6 +355,13 @@ export default function AdminAccountsPage() {
                         ) : (
                           <ActionButton busy={busy === account.id} onClick={() => runAction(account, 'resend-invitation')} tone="warn" icon="ri-mail-send-line" label="Resend invitation" />
                         )}
+                        {/* Staff and employers can also study a programme.
+                            Offered only to accounts that are not already a
+                            learner — the server refuses a duplicate anyway, so
+                            this hides an action that could only fail. */}
+                        {account.subjectType !== 'learner' && (
+                          <ActionButton busy={busy === account.id} onClick={() => setEnrollingAccount(account)} tone="ok" icon="ri-graduation-cap-line" label="Add as learner" />
+                        )}
                         {account.isActive ? (
                           <ActionButton busy={busy === account.id} onClick={() => runAction(account, 'suspend')} tone="bad" icon="ri-forbid-line" label="Suspend" />
                         ) : (
@@ -388,6 +399,23 @@ export default function AdminAccountsPage() {
         />
       )}
 
+      {enrollingAccount && (
+        <AddLearnerModal
+          account={enrollingAccount}
+          onClose={() => setEnrollingAccount(null)}
+          onCreated={learnerRecordId => {
+            // Said plainly, with where to go next: the record exists but is a
+            // draft, and the plan is assigned in the directory rather than here.
+            setActionNotice(
+              `${enrollingAccount.displayName || enrollingAccount.email} now has a learner record `
+              + `(#${learnerRecordId}). Assign their learning plan in the user directory, then `
+              + 'finish enrolment to make them a live learner.',
+            );
+            reload();
+          }}
+        />
+      )}
+
       {editingAccess && (
         <AccessPanel
           account={editingAccess}
@@ -416,6 +444,165 @@ export default function AdminAccountsPage() {
         reach follows from being a learner or an employer.
       </SourceNote>
     </AdminPage>
+  );
+}
+
+/**
+ * Give an account a learner record as well.
+ *
+ * Creates only the enrolment row. The person keeps the single account they
+ * already have — a second one on the same address would make sign-in ambiguous
+ * and lock them out — and reaches the learner side from the workspace switcher.
+ * The record starts as a draft, so it appears in the user directory where the
+ * learning plan is assigned; finishing enrolment there is what makes them live.
+ */
+function AddLearnerModal({ account, onClose, onCreated }: {
+  account: PlatformAccount;
+  onClose: () => void;
+  onCreated: (learnerRecordId: number) => void;
+}) {
+  const [programme, setProgramme] = useState('');
+  const [cohort, setCohort] = useState('');
+  const [group, setGroup] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Chosen from the curriculum, not typed. A free-text programme that does not
+  // match a real one leaves the learner with a plan nobody can build, and the
+  // three are a cascade: a cohort belongs to a programme and a group to a
+  // cohort, so each list is fetched once its parent is known.
+  const [programmes, setProgrammes] = useState<string[]>([]);
+  const [cohorts, setCohorts] = useState<string[]>([]);
+  const [groups, setGroups] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchProgrammes()
+      .then(rows => { if (!cancelled) setProgrammes(rows); })
+      .catch(() => { if (!cancelled) setProgrammes([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Cleared before each refetch, so the list can never show a moment of the
+  // previous programme's cohorts against the new one.
+  useEffect(() => {
+    let cancelled = false;
+    setCohorts([]);
+    setCohort('');
+    setGroup('');
+    if (!programme) return;
+    fetchCohorts(programme)
+      .then(rows => { if (!cancelled) setCohorts(rows); })
+      .catch(() => { if (!cancelled) setCohorts([]); });
+    return () => { cancelled = true; };
+  }, [programme]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setGroups([]);
+    setGroup('');
+    if (!programme || !cohort) return;
+    fetchGroups(programme, cohort)
+      .then(rows => { if (!cancelled) setGroups(rows); })
+      .catch(() => { if (!cancelled) setGroups([]); });
+    return () => { cancelled = true; };
+  }, [programme, cohort]);
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await addLearnerRecord(account.id, {
+        programme: programme.trim(),
+        cohort: cohort.trim(),
+        group: group.trim(),
+      });
+      onCreated(res.learnerRecordId);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not add the learner record.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-background-50 rounded-2xl border border-background-200 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="px-6 pt-6 pb-4 border-b border-foreground-200/60">
+          <h3 className="text-base font-heading font-semibold text-foreground-900">Add as learner</h3>
+          <p className="mt-1 text-[12px] text-foreground-500 leading-relaxed">
+            Creates a learner record for <strong>{account.displayName || account.email}</strong>.
+            They keep the account they already have and reach the learner workspace from the
+            Workspaces menu.
+          </p>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <label className="block">
+            <span className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">Programme</span>
+            <select
+              value={programme}
+              onChange={e => setProgramme(e.target.value)}
+              className="mt-1.5 w-full rounded-xl border border-foreground-200/60 bg-background-50 px-3 py-2 text-[13px] cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+            >
+              <option value="">Select a programme</option>
+              {programmes.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">Cohort</span>
+            <select
+              value={cohort}
+              onChange={e => setCohort(e.target.value)}
+              disabled={!programme}
+              className="mt-1.5 w-full rounded-xl border border-foreground-200/60 bg-background-50 px-3 py-2 text-[13px] cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="">{programme ? 'Select a cohort' : 'Select a programme first'}</option>
+              {cohorts.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">Group</span>
+            <select
+              value={group}
+              onChange={e => setGroup(e.target.value)}
+              disabled={!programme || !cohort}
+              className="mt-1.5 w-full rounded-xl border border-foreground-200/60 bg-background-50 px-3 py-2 text-[13px] cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="">{!programme ? 'Select a programme first' : !cohort ? 'Select a cohort first' : 'Select a group'}</option>
+              {groups.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+          <p className="text-[11px] text-foreground-400 leading-relaxed">
+            All three are optional and can be set later. The record starts as a draft — assign a
+            learning plan in the user directory, then finish enrolment to make them a live learner.
+          </p>
+          {error && (
+            <div className="bg-red-50 border border-red-200/60 rounded-xl p-3">
+              <p className="text-[11px] text-red-800 leading-relaxed">{error}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-foreground-200/60 flex items-center gap-3 bg-background-100/40">
+          <button
+            onClick={save}
+            disabled={saving}
+            className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-40"
+          >
+            <AppIcon className={`${saving ? 'ri-loader-4-line animate-spin' : 'ri-graduation-cap-line'} mr-1.5`}></AppIcon>
+            {saving ? 'Adding…' : 'Add as learner'}
+          </button>
+          <button
+            onClick={onClose}
+            className="px-4 py-2.5 bg-background-100 border border-background-200 rounded-xl text-[13px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

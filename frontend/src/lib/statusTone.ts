@@ -138,7 +138,7 @@ const STATUS_TONE: Record<string, StatusTone> = {
   // above) — found missing when Monthly Cycle's coaching-delivery status fell
   // through to `neutral` silently instead of the amber it should have been.
   needsschedule: 'caution',
-  notscheduled: 'caution',
+  notscheduled: 'critical',
   pending: 'caution',
   awaiting: 'caution',
   awaitingsignature: 'caution',

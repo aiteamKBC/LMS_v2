@@ -1,5 +1,10 @@
 # Local proofreading trial
 
+The application has reverted to OpenAI proofreading. `config/settings.py` now
+pins `PROOFREAD_PROVIDER` to `openai`; the environment toggle below is historical
+trial documentation and no longer switches the application. The standalone
+trial script still configures Ollama explicitly for isolated experiments.
+
 The existing proofreading button can use Ollama on the Django machine. Other
 AI features, including the server-side recorded-audio transcription fallback,
 retain their existing providers.

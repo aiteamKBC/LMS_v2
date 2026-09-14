@@ -26,12 +26,12 @@ export default function AttendanceHero({ missedCount, attendedCount, onReportAbs
   const offset = circ - (Math.min(s.currentRate, 100) / 100) * circ;
 
   return (
-    <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+    <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden workspace-page-hero" >
+      <div className="absolute inset-0 pointer-events-none overflow-hidden hidden">
         <div className="absolute opacity-20" style={{ width: '55%', height: '28%', left: '-8%', top: '-8%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.25) 0%, transparent 70%)', filter: 'blur(55px)' }} />
         <div className="absolute opacity-12" style={{ width: '65%', height: '32%', right: '-12%', top: '12%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.18) 0%, transparent 70%)', filter: 'blur(50px)' }} />
       </div>
-      <div className="relative p-6 md:p-8 flex flex-col lg:flex-row items-start lg:items-center gap-6 lg:gap-10">
+      <div className="relative p-6 md:p-6 flex flex-col lg:flex-row items-start lg:items-center gap-6 lg:gap-10">
         {/* Left — title + stats */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 mb-3 flex-wrap">
@@ -42,22 +42,22 @@ export default function AttendanceHero({ missedCount, attendedCount, onReportAbs
               {statusLabel}
             </span>
           </div>
-          <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1.5">Attendance</h1>
-          <p className="text-sm text-white/40 max-w-lg mb-4">
+          <h1 className="text-lg md:text-xl font-heading font-bold text-primary-800 tracking-tight mb-1.5">Attendance</h1>
+          <p className="text-sm text-foreground-500 max-w-lg mb-4">
             Target {s.target}% · Current {s.currentRate}% · {isOnTarget ? 'On target' : `${gap}% below target`} · {s.catchUpOutstanding} catch-up outstanding
           </p>
           {/* Stats inline */}
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={onReportAbsence}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-xs font-medium hover:bg-white/20 transition-all whitespace-nowrap cursor-pointer border border-white/10"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-100/60 text-foreground-500 text-xs font-medium hover:bg-primary-100 transition-all whitespace-nowrap cursor-pointer border border-primary-200/60"
             >
               <AppIcon className="ri-calendar-close-line text-xs"></AppIcon> Report Absence
             </button>
-            <Link to="/learner/catchup" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-xs font-medium hover:bg-white/20 transition-all whitespace-nowrap cursor-pointer border border-white/10">
+            <Link to="/learner/catchup" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-100/60 text-foreground-500 text-xs font-medium hover:bg-primary-100 transition-all whitespace-nowrap cursor-pointer border border-primary-200/60">
               <AppIcon className="ri-timer-flash-line text-xs"></AppIcon> Catch-Up Hub
             </Link>
-            <Link to="/learner/profile" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-xs font-medium hover:bg-white/20 transition-all whitespace-nowrap cursor-pointer border border-white/10">
+            <Link to="/learner/profile" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-100/60 text-foreground-500 text-xs font-medium hover:bg-primary-100 transition-all whitespace-nowrap cursor-pointer border border-primary-200/60">
               <AppIcon className="ri-user-line text-xs"></AppIcon> Profile
             </Link>
           </div>
@@ -71,23 +71,23 @@ export default function AttendanceHero({ missedCount, attendedCount, onReportAbs
               <circle cx="50" cy="50" r={r} fill="none" stroke={donutColor} strokeWidth="8" strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} className="transition-all duration-700 ease-out" />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-xl font-heading font-bold text-white">{s.currentRate}%</span>
-              <span className="text-[10px] text-white/50 font-medium">Attendance</span>
+              <span className="text-xl font-heading font-bold text-primary-800">{s.currentRate}%</span>
+              <span className="text-[10px] text-foreground-500 font-medium">Attendance</span>
             </div>
           </div>
-          <div className="w-px h-12 bg-white/10 hidden sm:block" />
+          <div className="w-px h-12 bg-primary-100/60 hidden sm:block" />
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-[11px] text-white/50">
+            <div className="flex items-center gap-2 text-[11px] text-foreground-500">
               <span className="w-2 h-2 rounded-full bg-emerald-400/80" />
-              <span className="text-white/80 font-medium">{attendedCount}</span> Attended
+              <span className="text-foreground-500 font-medium">{attendedCount}</span> Attended
             </div>
-            <div className="flex items-center gap-2 text-[11px] text-white/50">
+            <div className="flex items-center gap-2 text-[11px] text-foreground-500">
               <span className="w-2 h-2 rounded-full bg-red-400/80" />
-              <span className="text-white/80 font-medium">{missedCount}</span> Missed
+              <span className="text-foreground-500 font-medium">{missedCount}</span> Missed
             </div>
-            <div className="flex items-center gap-2 text-[11px] text-white/50">
+            <div className="flex items-center gap-2 text-[11px] text-foreground-500">
               <span className="w-2 h-2 rounded-full bg-amber-400/80" />
-              <span className="text-white/80 font-medium">{s.catchUpOutstanding}</span> Outstanding
+              <span className="text-foreground-500 font-medium">{s.catchUpOutstanding}</span> Outstanding
             </div>
           </div>
         </div>

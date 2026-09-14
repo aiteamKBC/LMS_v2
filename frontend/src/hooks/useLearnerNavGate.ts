@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
-import { fetchLearnerSummary } from '@/api/learnerDetail';
+import { fetchLearnerSummary, type LearnerSummary } from '@/api/learnerDetail';
+import { canViewAssignedProgramme } from '@/utils/learnerAccessGate';
 import { getRememberedLearner, rememberLearner } from './useMyLearner';
 import { isDeliveryStatus, navItemsForLearnerKind, navItemsForStatus } from './useOnboardingRedirect';
 
@@ -22,6 +23,16 @@ const statusCache = new Map<string, string>();
 const storageKey = (cacheKey: string) => `learner_status:${cacheKey}`;
 const learnerKindKey = (id: string) => `learner_kind:${id}`;
 const historyKey = (key: string) => `learner_previous_learning:${key}`;
+const readyKey = (key: string) => `learner_ready_for_learning:${key}`;
+const readyCache = new Map<string, boolean>();
+
+function cachedReady(key: string): boolean | undefined {
+  if (readyCache.has(key)) return readyCache.get(key);
+  try {
+    const value = sessionStorage.getItem(readyKey(key));
+    return value === null ? undefined : value === 'true';
+  } catch { return undefined; }
+}
 
 function cachedHistory(key: string): boolean | undefined {
   try {
@@ -82,10 +93,21 @@ export function syncLearnerStatus(
   kind: string | undefined,
   id: string | undefined,
   status: string | null | undefined,
+  summary?: Pick<LearnerSummary, 'accessGate' | 'learningAccess' | 'studentActivityAvailable'>,
 ): void {
   if (!kind || !id || status == null) return;
   const cacheKey = `${kind}:${id}`;
-  if (statusCache.get(cacheKey) === status) return;
+  let changed = statusCache.get(cacheKey) !== status;
+  if (summary) {
+    const ready = canViewAssignedProgramme(kind, summary.accessGate) && summary.learningAccess?.blocked === false;
+    changed ||= cachedReady(cacheKey) !== ready || cachedHistory(cacheKey) !== !!summary.studentActivityAvailable;
+    readyCache.set(cacheKey, ready);
+    try {
+      sessionStorage.setItem(readyKey(cacheKey), String(ready));
+      sessionStorage.setItem(historyKey(cacheKey), String(!!summary.studentActivityAvailable));
+    } catch { /* storage is optional */ }
+  }
+  if (!changed) return;
   rememberStatus(cacheKey, status);
   listeners.forEach((notify) => notify());
 }
@@ -97,12 +119,17 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], revi
     cacheKey ? cachedStatus(cacheKey) : null,
   );
   const [history, setHistory] = useState({ key: cacheKey, available: cachedHistory(cacheKey) === true });
+  const [ready, setReady] = useState({ key: cacheKey, available: cachedReady(cacheKey) === true });
 
   // Re-read the cache whenever syncLearnerStatus corrects it, so a learner
   // whose status changed mid-session gets their menu back without a reload.
   useEffect(() => {
     if (!cacheKey) return;
-    const notify = () => setStatus(cachedStatus(cacheKey));
+    const notify = () => {
+      setStatus(cachedStatus(cacheKey));
+      setHistory({ key: cacheKey, available: cachedHistory(cacheKey) === true });
+      setReady({ key: cacheKey, available: cachedReady(cacheKey) === true });
+    };
     listeners.add(notify);
     return () => {
       listeners.delete(notify);
@@ -120,7 +147,7 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], revi
       // browser value.
       try {
         if (sessionStorage.getItem(learnerKindKey(learner.id)) === learner.kind
-          && (!isDeliveryStatus(cached) || cachedHistory(cacheKey) !== undefined)) return;
+          && (!isDeliveryStatus(cached) || (cachedHistory(cacheKey) !== undefined && cachedReady(cacheKey) !== undefined))) return;
       } catch {
         // Storage is optional; verify from the API below.
       }
@@ -141,9 +168,10 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], revi
           /* storage unavailable */
         }
         const value = detail?.programmeStatus || '';
-        rememberStatus(cacheKey, value);
+        syncLearnerStatus(learner.kind, learner.id, value, detail);
         if (!cancelled) {
           setStatus(value);
+          setReady({ key: cacheKey, available: cachedReady(cacheKey) === true });
           setHistory((previous) => previous.key === cacheKey && previous.available === !!detail.studentActivityAvailable
             ? previous : { key: cacheKey, available: !!detail.studentActivityAvailable });
         }
@@ -171,5 +199,6 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], revi
   // an onboarding learner would see it visibly collapse once the status lands.
   if (status === null) return [];
   const hasPreviousLearning = history.key === cacheKey ? history.available : cachedHistory(cacheKey) === true;
-  return navItemsForStatus(status, navItems, learner.kind, hasPreviousLearning);
+  const readyForLearning = ready.key === cacheKey ? ready.available : cachedReady(cacheKey) === true;
+  return navItemsForStatus(status, navItems, learner.kind, hasPreviousLearning, readyForLearning);
 }

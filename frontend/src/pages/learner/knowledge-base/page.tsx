@@ -50,31 +50,31 @@ export default function LearnerKnowledgeBase() {
       userName={p.fullName}
       userRole={`${p.programme} ${p.programmeLevel} Apprentice`}
     >
-      <div className="p-3 md:p-6 space-y-5 md:space-y-7">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
 
         {/* ── Hero ── */}
-        <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950) / 0.95) 0%, oklch(var(--primary-900) / 0.9) 35%, oklch(var(--accent-900) / 0.85) 100%)' }}>
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden workspace-page-hero" >
+          <div className="absolute inset-0 pointer-events-none overflow-hidden hidden">
             <div className="absolute animate-liquid-blob-1 opacity-20" style={{ width: '55%', height: '28%', left: '-8%', top: '-8%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.35) 0%, transparent 70%)', filter: 'blur(50px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-10" style={{ width: '65%', height: '32%', right: '-12%', top: '12%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.25) 0%, transparent 70%)', filter: 'blur(45px)' }} />
           </div>
-          <div className="relative p-5 md:p-8">
+          <div className="relative p-5 md:p-6">
             <div className="flex flex-col lg:flex-row lg:items-center gap-5">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-2">
-                  <span className="w-11 h-11 md:w-12 md:h-12 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center shrink-0">
-                    <AppIcon className="ri-book-read-line text-white text-xl"></AppIcon>
+                  <span className="w-11 h-11 md:w-12 md:h-12 rounded-2xl bg-primary-100/60 backdrop-blur-sm flex items-center justify-center shrink-0">
+                    <AppIcon className="ri-book-read-line text-primary-800 text-xl"></AppIcon>
                   </span>
                   <div>
-                    <h1 className="text-lg md:text-xl font-heading font-bold text-white">Knowledge Base</h1>
-                    <p className="text-sm text-white/70">{LEARNER_KB_ARTICLES.length} articles across {LEARNER_KB_CATEGORIES.length} topics — your complete apprenticeship reference</p>
+                    <h1 className="text-lg md:text-xl font-heading font-bold text-primary-800">Knowledge Base</h1>
+                    <p className="text-sm text-foreground-500">{LEARNER_KB_ARTICLES.length} articles across {LEARNER_KB_CATEGORIES.length} topics — your complete apprenticeship reference</p>
                   </div>
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={() => setShowGlossary(true)}
-                  className="px-4 py-2.5 bg-white/10 border border-white/20 text-white rounded-xl text-sm font-semibold hover:bg-white/20 transition-smooth cursor-pointer whitespace-nowrap backdrop-blur-sm flex items-center gap-2"
+                  className="px-4 py-2.5 bg-primary-100/60 border border-primary-200/60 text-primary-800 rounded-xl text-sm font-semibold hover:bg-primary-100 transition-smooth cursor-pointer whitespace-nowrap backdrop-blur-sm flex items-center gap-2"
                 >
                   <AppIcon className="ri-book-2-line"></AppIcon> Glossary
                 </button>
@@ -83,18 +83,18 @@ export default function LearnerKnowledgeBase() {
 
             {/* Search */}
             <div className="mt-5 relative max-w-2xl">
-              <AppIcon className="ri-search-line absolute left-4 top-1/2 -translate-y-1/2 text-white/50 text-lg"></AppIcon>
+              <AppIcon className="ri-search-line absolute left-4 top-1/2 -translate-y-1/2 text-foreground-500 text-lg"></AppIcon>
               <input
                 type="text"
                 value={search}
                 onChange={e => { setSearch(e.target.value); setSelectedArticle(null); }}
                 placeholder="Search all articles by keyword, topic, or question..."
-                className="w-full pl-11 pr-12 py-3.5 rounded-xl bg-white/10 backdrop-blur-sm border border-white/15 text-sm text-white placeholder:text-white/40 focus:border-white/30 focus:ring-2 focus:ring-white/10 outline-none transition-smooth"
+                className="w-full pl-11 pr-12 py-3.5 rounded-xl bg-primary-100/60 backdrop-blur-sm border border-primary-200/60 text-sm text-primary-700 placeholder:text-primary-700 focus:border-primary-200/60 focus:ring-2 focus:ring-primary-200/60 outline-none transition-smooth"
               />
               {search && (
                 <button
                   onClick={() => setSearch('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/20 transition-smooth cursor-pointer"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg bg-primary-100/60 flex items-center justify-center text-foreground-500 hover:text-primary-900 hover:bg-primary-100 transition-smooth cursor-pointer"
                 >
                   <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
@@ -109,9 +109,9 @@ export default function LearnerKnowledgeBase() {
                 { icon: 'ri-book-2-line', label: 'Glossary Terms', value: LEARNER_KB_GLOSSARY.length },
                 { icon: 'ri-question-answer-line', label: 'Quick Links', value: LEARNER_KB_QUICK_LINKS.length },
               ].map(stat => (
-                <div key={stat.label} className="flex items-center gap-2 text-white/80">
+                <div key={stat.label} className="flex items-center gap-2 text-foreground-500">
                   <AppIcon className={`${stat.icon} text-white/50 text-sm`}></AppIcon>
-                  <span className="text-xs"><strong className="text-white font-semibold">{stat.value}</strong> {stat.label}</span>
+                  <span className="text-xs"><strong className="text-primary-800 font-semibold">{stat.value}</strong> {stat.label}</span>
                 </div>
               ))}
             </div>

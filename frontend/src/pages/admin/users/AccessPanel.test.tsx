@@ -88,6 +88,7 @@ describe('AccessPanel landing page', () => {
     render(
       <AccessPanel
         account={account({ access: 'coach', accesses: ['coach'] })}
+        isSelf={false}
         onClose={() => {}}
         onSaved={() => {}}
       />,

@@ -11,6 +11,7 @@ export interface AttendanceLecture {
   id: string; sessionId: string; reportId: string; date: string; title: string;
   moduleId: string; module: string; source: 'kbc-attendance' | 'microsoft-teams';
   startTime: string; endTime: string; durationMinutes: number | null;
+  startsAt?: string | null; endsAt?: string | null; joinUrl?: string;
   contentSummary: string; ksbs: string[]; activities: LectureActivity[];
   ksbScope?: 'lecture' | 'activities' | 'module' | null;
   status: LectureStatus; catchupStatus: 'completed' | 'pending' | null;

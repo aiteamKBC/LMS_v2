@@ -163,7 +163,18 @@ class PrefixMatchingTests(SimpleTestCase):
                 self.assertTrue(prefix.endswith("/"))
 
 
-class RoleRuleTests(SimpleTestCase):
+class PrefixRoleTestCase(SimpleTestCase):
+    def setUp(self):
+        super().setUp()
+        # These tests isolate role/prefix admission. Learner programme and
+        # previous-record gates have separate suites and need real identities.
+        for target in ('old_otjh.gate.refusal', 'learner_api.programme_access.refusal'):
+            patcher = mock.patch(target, return_value=None)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+
+class RoleRuleTests(PrefixRoleTestCase):
     """Which roles each prefix serves.
 
     The expectations here were read off what actually calls each prefix in the
@@ -204,6 +215,11 @@ class RoleRuleTests(SimpleTestCase):
         self.assertIsNone(
             self._refusal("/curriculum_api/curriculum/presentations/slides/", "learner")
         )
+
+    def test_learners_may_read_the_curriculum_refresh_counter(self):
+        path = "/curriculum_api/curriculum/cache-epoch/"
+        self.assertIsNone(self._refusal(path, "learner"))
+        self.assertEqual(self._refusal(path, "employer").status_code, 403)
 
     def test_programme_audit_material_tables_are_staff_only(self):
         path = "/curriculum_api/curriculum/programme-audit/materials/"
@@ -315,7 +331,7 @@ class GateResponseTests(SimpleTestCase):
         self.assertEqual(response.status_code, 401)
 
 
-class BatchSubrequestTests(SimpleTestCase):
+class BatchSubrequestTests(PrefixRoleTestCase):
     """The batch transport must not be a way around the role rules.
 
     ``config.batch`` dispatches by calling the resolved view function directly,

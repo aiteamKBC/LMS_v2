@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from django.db import DatabaseError
 from django.test import SimpleTestCase, RequestFactory
-from .overview_week import summarise_week, week_bounds, progress_day, overview_week, read_week, focus_latest_module, merged_activities, summarise_plan
+from .overview_week import summarise_week, week_bounds, progress_day, overview_week, read_week, merged_activities, summarise_plan, direct_hours_by_subject
 from .subject_dates import activity_schedule
 
 START, END = date(2026, 9, 7), date(2026, 9, 13)
@@ -22,6 +22,40 @@ def native(**changes):
 
 
 class OverviewWeekTests(SimpleTestCase):
+    def test_module_ksb_progress_counts_completed_point_occurrences_not_distinct_codes(self):
+        current = [native(id='one', ksb_mappings=['K1', 'S1']), native(id='two', ksb_mappings=['K1'])]
+        activities = merged_activities([], current, [{'componentId': 'one', 'kind': 'component', 'passed': True}], set(), {})
+        result = summarise_plan(activities, [], {'current:M1': 2.5})[0]
+        self.assertEqual(result['ksbProgress'], {'completed': 2, 'total': 3})
+        self.assertEqual(result['ksbCodes'], ['K1', 'S1'])
+        self.assertEqual(result['directHours'], 2.5)
+        unavailable = summarise_plan(merged_activities([], [native(ksb_mappings=None)], [], set(), {}), [])[0]
+        self.assertIsNone(unavailable['ksbProgress'])
+
+    def test_direct_hours_use_verified_components_and_do_not_guess_from_repeated_titles_or_ambiguous_quizzes(self):
+        current = [native(id='linked', quiz_id='shared'), native(id='other', module_id='M2', quiz_id='shared')]
+        progress = [
+            {'componentId': 'linked', 'kind': 'component', 'claimedSeconds': 3600, 'timeTrackingSource': 'component:input'},
+            {'componentId': 'other', 'kind': 'component', 'claimedSeconds': 7200, 'timeTrackingSource': 'component:input'},
+            {'quizId': 'shared', 'kind': 'quiz', 'claimedSeconds': 36000, 'timeTrackingSource': 'component:input'},
+            {'componentId': 'unknown', 'moduleTitle': 'Marketing', 'kind': 'component', 'claimedSeconds': 36000, 'timeTrackingSource': 'component:input'},
+        ]
+        self.assertEqual(direct_hours_by_subject(current, progress, {'linked': ('1', '2')}), {'legacy:1': 1, 'current:M2': 2})
+
+    def test_plan_details_count_merged_activities_and_distinct_ksbs_across_all_dates(self):
+        current = [native(id='linked', type='quiz', ksb_mappings=['K1', 'S2']),
+                   native(id='future', type='live_session', date='2027-01-01', ksb_mappings=['B1', 'S2']),
+                   native(id='undated', type='assignment', date=None, ksb_mappings=None)]
+        subjects = summarise_plan(merged_activities([old()], current, [], set(), {'linked': ('1', '2')}), [('M1', 'Marketing')])
+        old_subject = next(item for item in subjects if item['id'] == 'legacy:1')
+        new_subject = next(item for item in subjects if item['id'] == 'current:M1')
+        self.assertEqual(old_subject['activityCounts'], {'quiz': 1})
+        self.assertEqual(old_subject['ksbCodes'], ['K1', 'S2'])
+        self.assertEqual(new_subject['activityCounts'], {'live_session': 1, 'assignment': 1})
+        self.assertEqual(new_subject['ksbCodes'], ['B1', 'S2'])
+        self.assertTrue(new_subject['ksbMappingMissing'])
+        self.assertEqual(sum(sum(item['activityCounts'].values()) for item in subjects), 3)
+
     def test_plan_summary_keeps_all_dates_and_counts_without_activity_content(self):
         historical = [old(), old(activity_id=3, date=None, status='not_started')]
         current = [native(id='linked'), native(id='new', date='2025-01-08')]
@@ -46,25 +80,34 @@ class OverviewWeekTests(SimpleTestCase):
     def summary(self, historical=None, current=None, progress=None, attempts=None, links=None):
         return summarise_week(historical or [], current or [], progress or [], attempts or set(), links or {}, START, END)
 
-    def test_newest_assigned_module_is_visible_without_this_week_activities(self):
-        summary = self.summary([old(expected_hours=2)])
-        result = focus_latest_module(summary, ('NEW', 'Latest module'))
-        self.assertEqual(result['latestModuleId'], 'current:NEW')
-        self.assertEqual(result['modules'][0]['moduleIds'], ['NEW'])
-        self.assertEqual(result['modules'][0]['total'], 0)
-        self.assertIsNone(result['modules'][0]['percent'])
-        self.assertEqual(result['expectedHours'], 2)
+    def test_only_modules_with_current_week_activities_are_selectable(self):
+        current = [native(id='this-week', expected_hours=2),
+                   native(id='other', module_id='M2', module_title='Other weekly module', expected_hours=3),
+                   native(id='future', module_id='FUTURE', date='2027-02-15', expected_hours=20),
+                   native(id='overdue', module_id='PAST', date='2026-09-06', expected_hours=30)]
+        result = self.summary(current=current)
+        self.assertEqual({item['id'] for item in result['modules']}, {'current:M1', 'current:M2'})
+        self.assertEqual(result['expectedHours'], 5)
+        self.assertEqual(sum(item['total'] for item in result['modules']), 2)
 
-    def test_newest_module_uses_merged_historical_identity_without_duplicate(self):
-        summary = self.summary([old()], [native()], links={'new': ('1', '2')})
-        result = focus_latest_module(summary, ('M1', 'Latest module'))
-        self.assertEqual(result['latestModuleId'], 'legacy:1')
-        self.assertEqual(len(result['modules']), 1)
-        self.assertEqual(result['modules'][0]['title'], 'Latest module')
+    def test_empty_week_does_not_fall_back_to_future_or_unfinished_past_activities(self):
+        result = self.summary([old(date='2026-09-06', status='not_started')],
+                              [native(date='2027-02-15')])
+        self.assertEqual(result['modules'], [])
+        self.assertIsNone(result['expectedHours'])
 
-    def test_cleared_plan_does_not_keep_a_stale_latest_module(self):
-        summary = self.summary([old()])
-        self.assertIsNone(focus_latest_module(summary, None)['latestModuleId'])
+    def test_week_moves_forward_even_when_previous_week_is_unfinished(self):
+        current = [native(id='unfinished', expected_hours=2),
+                   native(id='next', module_id='NEXT', date='2026-09-14', expected_hours=3)]
+        previous = self.summary(current=current)
+        self.assertEqual(previous['modules'][0]['completed'], 0)
+        start, end = week_bounds(datetime(2026, 9, 13, 23, 30, tzinfo=timezone.utc))
+        result = summarise_week([], current, [], set(), {}, start, end)
+        self.assertEqual([item['id'] for item in result['modules']], ['current:NEXT'])
+        self.assertEqual(result['expectedHours'], 3)
+        # Leaving the weekly focus does not remove unfinished work from the plan.
+        plan = summarise_plan(merged_activities([], current, [], set(), {}), [])
+        self.assertEqual(next(item for item in plan if item['id'] == 'current:M1')['completed'], 0)
 
     def test_explicit_old_new_identity_keeps_completion_and_unions_ksbs(self):
         result = self.summary([old()], [native()], links={'new': ('1', '2')})
@@ -131,27 +174,42 @@ class OverviewWeekTests(SimpleTestCase):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
         cursor.fetchall.return_value = [('M1', 'Marketing')]
-        cursor.fetchone.return_value = ('M1', 'Marketing')
         progress = [{'componentId': 'new', 'kind': 'component', 'submittedAt': '2026-09-09T12:00:00Z',
                      'claimedSeconds': 3600, 'timeTrackingSource': 'component:input'},
                     {'componentId': 'older', 'kind': 'component', 'submittedAt': '2026-09-01T12:00:00Z',
                      'claimedSeconds': 7200, 'timeTrackingSource': 'component:input'}]
         with patch('learner_api.overview_week.connections', {'enrolment': connection}), \
              patch('learner_api.overview_week.rows', return_value=[native(title='9/9/2026', expected_hours=2)]), \
+             patch('learner_api.overview_week.read_builder_activity_dates', return_value={'new': activity_schedule('9/9/2026')}) as dates, \
              patch('learner_api.overview_week._direct_progress_records', return_value=progress), \
              patch('learner_api.overview_week.read_curriculum_schedules') as imported:
             result = read_week(SimpleNamespace(pk=125, aptem_id=None), datetime(2026, 9, 12, tzinfo=timezone.utc))
         self.assertEqual(result['otjh']['actual'], 1)
         self.assertEqual(result['expectedHours'], 2)
         self.assertEqual(result['modules'][0]['completed'], 1)
-        self.assertEqual(result['latestModuleId'], 'current:M1')
-        latest_query = cursor.execute.call_args_list[1]
-        self.assertIn('WHERE module_catalogue_id=ANY(%s)', latest_query.args[0])
-        self.assertIn('ORDER BY created_at DESC', latest_query.args[0])
-        self.assertNotIn('updated_at', latest_query.args[0])
-        self.assertEqual(latest_query.args[1], [['M1']])
+        self.assertNotIn('latestModuleId', result)
+        dates.assert_called_once_with(cursor, ['M1'])
         imported.assert_not_called()
         self.assertTrue(all('Last_audit' not in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_read_week_uses_builder_delivery_dates_and_keeps_future_modules_in_full_plan_only(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [('M1', 'Marketing'), ('FUTURE', 'Future module'), ('EMPTY', 'Empty module')]
+        current = [native(id='this-week', title='Reading without a date', expected_hours=2),
+                   native(id='future', module_id='FUTURE', title='Future reading', expected_hours=20)]
+        dates = {'this-week': activity_schedule('9/9/2026'), 'future': activity_schedule('15/2/2027')}
+        with patch('learner_api.overview_week.connections', {'enrolment': connection}), \
+             patch('learner_api.overview_week.rows', return_value=current), \
+             patch('learner_api.overview_week.read_builder_activity_dates', return_value=dates) as calendar, \
+             patch('learner_api.overview_week._direct_progress_records', return_value=[]):
+            result = read_week(SimpleNamespace(pk=125, aptem_id=None), datetime(2026, 9, 12, tzinfo=timezone.utc))
+        calendar.assert_called_once_with(cursor, ['M1', 'FUTURE', 'EMPTY'])
+        self.assertEqual([item['id'] for item in result['modules']], ['current:M1'])
+        self.assertEqual(result['modules'][0]['total'], 1)
+        self.assertEqual(result['expectedHours'], 2)
+        self.assertEqual({item['id'] for item in result['planSubjects']}, {'current:M1', 'current:FUTURE', 'current:EMPTY'})
+        self.assertEqual(next(item for item in result['planSubjects'] if item['id'] == 'current:FUTURE')['dates'], ['2027-02-15'])
 
     def test_endpoint_uses_enrolment_identity_and_private_no_store(self):
         source = SimpleNamespace(pk=125)

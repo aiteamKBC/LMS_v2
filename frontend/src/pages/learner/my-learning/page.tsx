@@ -50,10 +50,18 @@ export default function MyLearningPage() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
   usePrefetchStudentActivity(kind, id);
-  const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
+  const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, true);
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
 
-  const [tab, setTab] = useState<TabKey>(() => new URLSearchParams(location.search).get('tab') === 'assignments' ? 'assignments' : defaultTabForPath(location.pathname));
+  const requestedTab = new URLSearchParams(location.search).get('tab');
+  const tab = requestedTab === 'modules' || requestedTab === 'quizzes' || requestedTab === 'assignments'
+    ? requestedTab : defaultTabForPath(location.pathname);
+  const setTab = (next: TabKey) => {
+    if (next === tab) return;
+    const params = new URLSearchParams(location.search);
+    params.set('tab', next);
+    navigate({ pathname: location.pathname, search: params.toString() });
+  };
 
   const canTake = !!(kind && id) && canProgress;
 
@@ -86,7 +94,7 @@ export default function MyLearningPage() {
         ) : tab === 'modules' ? (
           <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} />
         ) : (
-          tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} /> :
+          tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
           <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} />
         )}
       </PageContainer>
@@ -409,7 +417,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
   useEffect(() => {
     if (loading || loadError || !activityAvailable || !kind || !id) return;
     const controller = new AbortController();
-    void fetchStudentActivity(kind, id, controller.signal).then((data) => {
+    void fetchStudentActivity(kind, id, controller.signal, activityRetry > 0).then((data) => {
       if (!controller.signal.aborted) setActivityState({ identity, real, retry: activityRetry, data, error: null });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setActivityState(previous => ({ identity, real, retry: activityRetry,

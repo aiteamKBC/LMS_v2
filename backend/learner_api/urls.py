@@ -1,7 +1,11 @@
+from . import presentation_design
+from . import monthly_reflection_ai
+from . import ksb_generation
 from django.urls import path
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
 from .overview_week import overview_week
+from .rewards_summary import learner_rewards_summary
 from .profile_photo import learner_profile_photo
 from .attendance_lectures import attendance_lectures
 from .attendance_mode import attendance_mode, review_attendance_mode
@@ -107,6 +111,7 @@ urlpatterns = [
     path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),
     path("metrics/<str:kind>/<int:pk>/", learner_metrics, name="learner-metrics"),
     path("overview-week/<str:kind>/<int:pk>/", overview_week, name="learner-overview-week"),
+    path("rewards-summary/<str:kind>/<int:pk>/", learner_rewards_summary, name="learner-rewards-summary"),
     path("student-activity/<str:kind>/<int:pk>/", student_activity.student_activity, name="student-activity"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/", student_activity.start_subject_attempt, name="subject-attempt-start"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/<uuid:attempt_id>/", student_activity.submit_subject_attempt, name="subject-attempt-submit"),
@@ -144,6 +149,9 @@ urlpatterns = [
     # British-English voice reflection transcription, moderation and learning-scope check
     path("reflection/transcribe/", reflection_ai.transcribe_reflection, name="reflection-transcribe"),
     path("reflection/proofread/", reflection_ai.proofread_reflection, name="reflection-proofread"),
+    path("reflection/ksb-explanations/", ksb_generation.generate_ksb_explanations, name="ksb-explanations"),
+    path("reflection/monthly-reflections/", monthly_reflection_ai.generate_monthly_reflections, name="monthly-reflections"),
+    path("reflection/learning-statements/", reflection_ai.generate_learning_statements, name="learning-statements"),
     path("reflection/submissions/", reflection_submissions.create_reflection_submission, name="reflection-submission-create"),
     # The learner's end-of-month report: GET lists the months already submitted
     # (or one month with ?month=YYYY-MM), POST submits/updates a month.
@@ -157,6 +165,7 @@ urlpatterns = [
     path("monthly-reports/<str:kind>/<int:pk>/", monthly_reports.monthly_reports, name="learner-monthly-reports"),
     path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
     path("reflection/assignment/legacy-document/<int:evidence_id>/", legacy_assignments.open_legacy_assignment_document, name="legacy-assignment-document"),
+    path("reflection/assignment/presentation-design/", presentation_design.upload_design, name="presentation-design"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),

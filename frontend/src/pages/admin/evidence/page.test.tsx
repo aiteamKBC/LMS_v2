@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -31,6 +31,44 @@ beforeEach(() => {
 });
 
 describe('Super Admin Evidence page', () => {
+  it('opens the selected learner summary from its icon and restores focus on close', async () => {
+    const summary = 'Three workplace assignments selected.\nThe full portfolio summary remains readable without truncation.';
+    const learners = [
+      { learnerId: 42, fullName: 'Alex', programme: 'Marketing', portfolioSummary: summary },
+      { learnerId: 43, fullName: 'Sam', programme: 'Project Controls', portfolioSummary: 'Sam has a different summary.' },
+    ].map(learner => ({ ...learner, assignmentsFound: 3, uniqueAssignmentsEvaluated: 3, assignmentsSelected: 2, portfolioReadiness: 'ready' }));
+    fetchClassifiedLearners.mockResolvedValue({ count: 2, page: 1, pageSize: 25, results: learners, programmes: [] });
+    render(<MemoryRouter><EvidencePage /></MemoryRouter>);
+    const trigger = await screen.findByRole('button', { name: 'View portfolio summary for Alex' });
+    expect(screen.queryByText(/Three workplace assignments/)).not.toBeInTheDocument();
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole('dialog', { name: 'Portfolio summary' });
+    expect(within(dialog).getByRole('heading', { name: 'Alex' })).toBeInTheDocument();
+    expect(within(dialog).getByText(/Three workplace assignments/).textContent).toBe(summary);
+    expect(within(dialog).queryByText('Sam has a different summary.')).not.toBeInTheDocument();
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'View portfolio summary for Sam' }));
+    expect(within(screen.getByRole('dialog')).getByText('Sam has a different summary.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(fetchLearnerAssignments).not.toHaveBeenCalled();
+  });
+
+  it('disables the summary icon when no summary is available', async () => {
+    fetchClassifiedLearners.mockResolvedValue({ count: 1, page: 1, pageSize: 25, programmes: [], results: [{
+      learnerId: 42, fullName: 'Alex', programme: 'Marketing', portfolioSummary: '   ',
+      assignmentsFound: 0, uniqueAssignmentsEvaluated: 0, assignmentsSelected: 0, portfolioReadiness: 'not_ready',
+    }] });
+    render(<MemoryRouter><EvidencePage /></MemoryRouter>);
+    const trigger = await screen.findByRole('button', { name: 'No portfolio summary available for Alex' });
+    expect(trigger).toBeDisabled();
+    fireEvent.click(trigger);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it.each(['mouse', 'keyboard'])('suggests matching learners while typing and selects with %s', async method => {
     const learner = {
       learnerId: 42, fullName: 'Aaron Chesworth', programme: 'Marketing',

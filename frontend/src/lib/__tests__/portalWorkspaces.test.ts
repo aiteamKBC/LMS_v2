@@ -16,7 +16,7 @@
  *    well-meant "fill in the missing email" would hand out the platform.
  */
 import { describe, it, expect } from 'vitest';
-import { PORTAL_WORKSPACES, activeWorkspace } from '../portalWorkspaces';
+import { PORTAL_WORKSPACES, activeWorkspace, workspacesFor } from '../portalWorkspaces';
 
 describe('activeWorkspace', () => {
   it('matches a workspace root', () => {
@@ -55,7 +55,7 @@ describe('activeWorkspace', () => {
 describe('the list itself', () => {
   it('is the curated set, Super Admin first', () => {
     expect(PORTAL_WORKSPACES.map((w) => w.slug)).toEqual([
-      'admin', 'coach', 'enrolment', 'engagement', 'tutor', 'curriculum', 'audit',
+      'admin', 'coach', 'enrolment', 'engagement', 'tutor', 'curriculum', 'audit', 'learner',
     ]);
   });
 
@@ -91,5 +91,41 @@ describe('the list itself', () => {
     const admin = PORTAL_WORKSPACES.find((w) => w.slug === 'admin');
     expect(admin).toBeDefined();
     expect(admin?.demoEmail).toBeNull();
+  });
+});
+
+describe('workspacesFor', () => {
+  it('hides Learner from somebody with no record of their own', () => {
+    // Every administrator would otherwise be offered a learner workspace with
+    // nothing behind it.
+    expect(workspacesFor(null).map((w) => w.slug)).not.toContain('learner');
+    expect(workspacesFor({ learnerRecordId: null }).map((w) => w.slug)).not.toContain('learner');
+  });
+
+  it('offers Learner to a staff member who is also studying', () => {
+    expect(workspacesFor({ learnerRecordId: 512 }).map((w) => w.slug)).toContain('learner');
+  });
+
+  it('addresses that record explicitly', () => {
+    // The bare /workspace/learner route resolves the learner from the session,
+    // and this person signs in as staff -- so without params it falls through
+    // to a remembered or demo learner and opens somebody else's record.
+    const learner = workspacesFor({ learnerRecordId: 512 }).find((w) => w.slug === 'learner');
+
+    expect(learner?.path).toBe('/workspace/learner/commercial/512');
+  });
+
+  it("uses the record's own kind when it is an apprenticeship", () => {
+    const learner = workspacesFor({ learnerRecordId: 7, learnerRecordKind: 'apprenticeship' })
+      .find((w) => w.slug === 'learner');
+
+    expect(learner?.path).toBe('/workspace/learner/apprenticeship/7');
+  });
+
+  it('leaves the other workspaces untouched', () => {
+    const withLearner = workspacesFor({ learnerRecordId: 512 });
+
+    expect(withLearner.filter((w) => w.slug !== 'learner'))
+      .toEqual(PORTAL_WORKSPACES.filter((w) => w.slug !== 'learner'));
   });
 });

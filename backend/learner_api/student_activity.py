@@ -23,7 +23,7 @@ from .student_activity_access import student_activity_available
 from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules, read_activity_sources
 from . import subject_store, subject_source
 from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list)
-from .subject_dates import activity_schedule
+from .builder_activity_dates import read_builder_activity_dates
 
 CURRENT_SUBJECTS_SQL = '''
     WITH source AS (
@@ -44,14 +44,6 @@ CURRENT_SUBJECTS_SQL = '''
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
     WHERE (cm.deleted_at IS NULL OR cm.deleted_via_parent IS NOT NULL)
-'''
-
-CURRENT_DATES_SQL = '''
-    SELECT c.id,c.title,c.created_at,w.title FROM curriculum.components c
-    JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-    WHERE c.module_catalogue_id=ANY(%s)
-      AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)
-      AND (w.deleted_at IS NULL OR w.deleted_via_parent IS NOT NULL)
 '''
 
 def _direct_progress_records(enrolment_id):
@@ -452,10 +444,7 @@ def subject_covers(request, pk):
                 cur, list(dict.fromkeys(refs + [f"current:{subject['id']}" for subject in current_subjects])),
             )
             covers.update(builder_covers)
-            cur.execute(CURRENT_DATES_SQL, [[subject['id'] for subject in current_subjects]])
-            dates = {str(component_id): activity_schedule(title, None, created_at,
-                     section_title=week_title, section_source='builder_section_title')
-                     for component_id, title, created_at, week_title in cur.fetchall()}
+            dates = read_builder_activity_dates(cur, [subject['id'] for subject in current_subjects])
         return _private({'covers': covers, 'can_manage': False,
                          'persistence_ready': available, 'csrf_token': get_token(request),
                          'activity_dates': dates, 'current_subjects': current_subjects,

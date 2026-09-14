@@ -30,6 +30,7 @@ from .active_users import completed_hours_from_progress, fmt_hours, hydrate_sour
 from .identity import learner_profile_for_source
 from .aptem_status import programme_status
 from .learner_progression import access_gate, advance_learner
+from .programme_access import learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 from .student_activity_access import student_activity_available
@@ -1701,6 +1702,7 @@ def build_learner_detail(source, pk, *, compact=False):
     # Why the learner cannot start yet, if they cannot. The workspace shows this
     # instead of assuming the answer is always their start date.
     detail["accessGate"] = access_gate(source)
+    detail["learningAccess"] = learning_access(source)
     _apply_cohort_schedule(detail, source)
     # Live-resolve titles + membership from the master authoring tables so coach
     # edits in Module Builder reflect here immediately (structured-plan learners).
@@ -1838,5 +1840,6 @@ def learner_summary(request, kind, pk):
         "programmeStartDate": _iso_date(start),
         "programmeEndDate": _iso_date(source.end_date or source.practical_period_end_date or source.apprenticeship_end_date or end),
         "accessGate": access_gate(source),
+        "learningAccess": learning_access(source),
         "studentActivityAvailable": student_activity_available(getattr(source, "aptem_id", None)),
     })

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -197,7 +197,11 @@ export function ProgressReviewsListPage() {
 }
 
 function ProgressReviewsList() {
+  const navigate = useNavigate();
   const myLearner = useLinkedLearner();
+  const openSchedule = (review: LearnerCalendarEvent) => {
+    navigate(`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}&event=${encodeURIComponent(review.eventKey || review.id)}`);
+  };
   const [learner, setLearner] = useState<LearnerDetail | null>(null);
   const [reviews, setReviews] = useState<LearnerCalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -588,7 +592,7 @@ export default function ProgressReviewsPage() {
               {reviewInstance.loading ? (
                 <div className="rounded-2xl border border-background-200 bg-white p-5"><RowsSkeleton rows={3} /></div>
               ) : reviewInstance.definition ? (
-                null
+                <LearnerReviewInstanceForm definition={reviewInstance.definition} />
               ) : (
                 <>
                 <Accordion id="progress-checks" title="Progress Checks" icon="ri-check-double-line" open={openSections.includes('progress-checks')} onToggle={toggleSection}>

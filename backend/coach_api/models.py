@@ -194,6 +194,9 @@ class CoachAbsenceReport(models.Model):
     previous_absences = models.PositiveIntegerField(default=0)
     attendance_rate = models.PositiveSmallIntegerField(null=True, blank=True)
     coach_note = models.TextField(blank=True)
+    # Added by owner-run SQL in backend/sql/attendance_absence_recovery.sql.
+    recovery_method = models.CharField(max_length=16, blank=True, default="")
+    catchup_event_key = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

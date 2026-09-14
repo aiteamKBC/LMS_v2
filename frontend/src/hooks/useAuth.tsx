@@ -146,6 +146,11 @@ const SIGNED_OUT: AuthState = {
   account: null,
 };
 
+function signedOutState(): AuthState {
+  rememberSignedInLearner(undefined, undefined);
+  return SIGNED_OUT;
+}
+
 function getLevelRank(level: PermissionLevel): number {
   const found = PERMISSION_LEVELS.find(l => l.value === level);
   return found?.rank ?? 0;
@@ -195,7 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // signing someone out must not depend on a toast being available.
   const toast = useToastOptional();
 
-  const [auth, setAuth] = useState<AuthState>(SIGNED_OUT);
+  const [auth, setAuth] = useState<AuthState>(signedOutState);
   // Starts false: the session lives in an HttpOnly cookie, which JS cannot
   // read, so the only way to know whether we are signed in is to ask the
   // server. Routes must wait for this rather than briefly rendering as
@@ -217,7 +222,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const account = await apiMe();
         if (!cancelled) {
           if (!account) { clearAllCachedResources(); cachedIdentity = null; }
-          setAuth(account ? stateFromAccount(account) : SIGNED_OUT);
+          setAuth(account ? stateFromAccount(account) : signedOutState());
           setInitializationError(null);
         }
       } catch {
@@ -302,7 +307,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearTutorViewAs();
         clearAllCachedResources();
         cachedIdentity = null;
-        setAuth(SIGNED_OUT);
+        setAuth(signedOutState());
         toast?.warning(
           'Your session has ended',
           'Please sign in again to continue where you left off.',
@@ -327,11 +332,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (e.newValue === null) {
         clearAllCachedResources();
         cachedIdentity = null;
-        setAuth(SIGNED_OUT);
+        setAuth(signedOutState());
         return;
       }
       void apiMe()
-        .then(account => setAuth(account ? stateFromAccount(account) : SIGNED_OUT))
+        .then(account => setAuth(account ? stateFromAccount(account) : signedOutState()))
         .catch(() => undefined);
     };
     window.addEventListener('storage', handleStorage);
@@ -354,6 +359,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const previewAs = useCallback((email: string) => {
     const foundUser = kbcUsers.find(u => u.email === email);
     if (!foundUser) return;
+    rememberSignedInLearner(undefined, undefined);
 
     const userRoles = foundUser.roles
       .map(rId => ALL_ROLES.find(r => r.id === rId))
@@ -379,7 +385,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(AUTH_STORAGE_KEY);
     clearCoachViewAs();
     clearTutorViewAs();
-    setAuth(SIGNED_OUT);
+    setAuth(signedOutState());
     navigate('/login');
   }, [navigate]);
 

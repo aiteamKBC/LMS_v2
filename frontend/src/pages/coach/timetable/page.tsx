@@ -4,6 +4,7 @@ import Swal from 'sweetalert2';
 import 'sweetalert2/dist/sweetalert2.min.css';
 import type { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
+import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Panel } from '@/components/ui/Panel';
@@ -495,7 +496,8 @@ function statusDot(status: TimetableEvent['status']) {
   if (status === 'in-progress') return 'bg-primary-500';
   if (status === 'awaiting-signature') return 'bg-violet-500';
   if (status === 'cancelled') return 'bg-red-500';
-  return 'bg-rose-500'; // pending / not-scheduled
+  if (status === 'not-scheduled') return 'bg-red-500';
+  return 'bg-rose-500'; // pending
 }
 
 function buildSummaryMetrics(events: TimetableEvent[], referenceDate = new Date()): TimetableSummaryMetrics {
@@ -612,7 +614,7 @@ const STATUS_FILTER_DOTS: Record<StatusFilter, string> = {
   all: 'bg-foreground-400',
   overdue: 'bg-red-500',
   'due-soon': 'bg-rose-500',
-  'needs-schedule': 'bg-rose-500',
+  'needs-schedule': 'bg-red-500',
   scheduled: 'bg-primary-500',
   'in-progress': 'bg-secondary-500',
   'awaiting-signature': 'bg-violet-500',
@@ -1871,10 +1873,10 @@ export default function CoachTimetablePage() {
         <div className="relative">
           {showNavigationSkeleton && <TimetableSurfaceSkeleton />}
           <div
-            className={`${showNavigationSkeleton ? 'pointer-events-none select-none opacity-0' : ''} calendar-layout-grid grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(360px,1fr)] xl:gap-2`}
+            className={`${showNavigationSkeleton ? 'pointer-events-none select-none opacity-0' : ''} calendar-layout-grid grid grid-cols-1 items-start gap-5 xl:gap-4`}
             aria-hidden={showNavigationSkeleton}
           >
-        <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02] xl:col-start-1 xl:row-start-1">
+        <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02]">
           <div className="grid gap-3 xl:grid-cols-[auto_minmax(260px,360px)] xl:items-center xl:justify-between">
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1 rounded-lg bg-background-100 p-1">
@@ -2057,7 +2059,7 @@ export default function CoachTimetablePage() {
         {/* â•â•â•â•â•â•â•â•â•â•â• MAIN CONTENT â•â•â•â•â•â•â•â•â•â•â• */}
         <div className="calendar-main-grid grid grid-cols-1 gap-5 xl:contents">
           {/* â”€â”€ Calendar Area (2/3) â”€â”€ */}
-          <div className="calendar-column space-y-4 xl:col-start-1 xl:row-start-2">
+          <div className="calendar-column space-y-4">
 
             {/* MONTH VIEW */}
             {viewMode === 'month' && (
@@ -2087,7 +2089,7 @@ export default function CoachTimetablePage() {
                     const isWeekend = [0, 6].includes(new Date(viewYear, viewMonth, day).getDay());
                     const hasEvents = eventsForDay.length > 0;
                     return (
-                      <button
+                      <div
                         key={`d-${day}`}
                         onClick={() => handleDayClick(day)}
                         className={`group relative flex min-h-[76px] flex-col border-b border-r p-2.5 text-left transition-all duration-200 ease-out xl:min-h-[78px] ${
@@ -2099,7 +2101,7 @@ export default function CoachTimetablePage() {
                         }`}
                       >
                         <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className={`flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-sm font-bold transition-all duration-200 ${
+                          <button type="button" aria-label={`Select ${day} ${MONTH_NAMES[viewMonth]} ${viewYear}`} className={`flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-sm font-bold transition-all duration-200 ${
                             isTdy
                               ? 'bg-primary-500 text-white shadow-sm'
                               : isSel
@@ -2109,7 +2111,7 @@ export default function CoachTimetablePage() {
                                   : 'text-foreground-800'
                           }`}>
                             {day}
-                          </span>
+                          </button>
                           {hasEvents && (
                             <span className="rounded-full bg-background-100 px-2 py-0.5 text-[12px] font-semibold text-foreground-500">
                               {eventsForDay.length}
@@ -2120,10 +2122,12 @@ export default function CoachTimetablePage() {
                           {eventsForDay.slice(0, 3).map(ev => {
                             const tc = eventConfig(ev);
                             return (
-                              <div
+                              <button
+                                type="button"
+                                aria-haspopup="dialog"
                                 key={ev.id}
                                 onClick={(e) => { e.stopPropagation(); focusEventOnCalendar(ev); }}
-                                className={`w-full rounded-lg border ${tc.border} ${tc.bg} px-2 py-1.5 text-[12px] font-semibold ${tc.text} shadow-sm transition-all duration-150 hover:-translate-y-0.5`}
+                                className={`w-full text-left rounded-lg border ${tc.border} ${tc.bg} px-2 py-1.5 text-[12px] font-semibold ${tc.text} shadow-sm transition-all duration-150 hover:-translate-y-0.5`}
                                 title={ev.title}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
@@ -2140,7 +2144,7 @@ export default function CoachTimetablePage() {
                                     {ev.learner || ev.programme}
                                   </p>
                                 )}
-                              </div>
+                              </button>
                             );
                           })}
                           {eventsForDay.length > 3 && (
@@ -2152,7 +2156,7 @@ export default function CoachTimetablePage() {
                         {!hasEvents && (
                           <span className="pointer-events-none mt-auto h-1 w-8 rounded-full bg-background-100 opacity-0 transition-opacity group-hover:opacity-100"></span>
                         )}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -2209,10 +2213,10 @@ export default function CoachTimetablePage() {
                                 const duration = ev.endHour - ev.startHour;
                                 const heightPx = Math.max(24, duration * 48);
                                 return (
-                                  <div
+                                  <button type="button" aria-haspopup="dialog"
                                     key={ev.id}
                                     onClick={(e) => { e.stopPropagation(); focusEventOnCalendar(ev); }}
-                                    className={`${tc.bg} ${tc.border} border rounded-md px-1.5 py-1 mb-0.5 cursor-pointer transition-all duration-150 hover:brightness-95`}
+                                    className={`w-full text-left ${tc.bg} ${tc.border} border rounded-md px-1.5 py-1 mb-0.5 cursor-pointer transition-all duration-150 hover:brightness-95`}
                                     style={{ minHeight: `${heightPx}px` }}
                                   >
                                     <p className={`text-[12px] font-semibold leading-tight truncate ${tc.text}`}>{ev.title}</p>
@@ -2229,7 +2233,7 @@ export default function CoachTimetablePage() {
                                         {ev.priority === 'urgent' ? '!' : 'High'}
                                       </span>
                                     )}
-                                  </div>
+                                  </button>
                                 );
                               })}
                             </div>
@@ -2274,10 +2278,10 @@ export default function CoachTimetablePage() {
                             {eventsInSlot.map(ev => {
                               const tc = eventConfig(ev);
                               return (
-                                <div
+                                <button type="button" aria-haspopup="dialog"
                                   key={ev.id}
                                   onClick={() => focusEventOnCalendar(ev)}
-                                  className={`p-3 rounded-lg border-l-[3px] cursor-pointer transition-smooth hover:shadow-sm hover:brightness-95 ${tc.bg} ${tc.border} ${selectedEvent?.id === ev.id ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
+                                  className={`w-full text-left p-3 rounded-lg border-l-[3px] cursor-pointer transition-smooth hover:shadow-sm hover:brightness-95 ${tc.bg} ${tc.border} ${selectedEvent?.id === ev.id ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
                                 >
                                   <div className="flex items-center justify-between mb-1">
                                     <span className={`text-sm font-semibold ${tc.text}`}>{ev.title}</span>
@@ -2300,7 +2304,7 @@ export default function CoachTimetablePage() {
                                     {ev.employer && <span className="font-medium text-foreground-600">{ev.employer}</span>}
                                     {ev.cohort && <span className="text-foreground-400">{ev.cohort}</span>}
                                   </div>
-                                </div>
+                                </button>
                               );
                             })}
                             {eventsInSlot.length === 0 && isCurrentRow && (
@@ -2349,10 +2353,10 @@ export default function CoachTimetablePage() {
                   {selectedDayEvents.sort((a, b) => a.startHour - b.startHour).map(ev => {
                     const tc = eventConfig(ev);
                     return (
-                      <div
+                      <button type="button" aria-haspopup="dialog"
                         key={ev.id}
                         onClick={() => focusEventOnCalendar(ev)}
-                        className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-smooth hover:-translate-y-0.5 hover:shadow-sm ${tc.bg} ${tc.border} ${selectedEvent?.id === ev.id ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
+                        className={`w-full text-left flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-smooth hover:-translate-y-0.5 hover:shadow-sm ${tc.bg} ${tc.border} ${selectedEvent?.id === ev.id ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
                       >
                         <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 bg-white/70 ${tc.text}`}>
                           <AppIcon className={tc.icon}></AppIcon>
@@ -2368,7 +2372,7 @@ export default function CoachTimetablePage() {
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[12px] font-semibold ${statusPillClass(ev.status)}`}>
                           {statusLabel(ev.status)}
                         </span>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -2377,42 +2381,32 @@ export default function CoachTimetablePage() {
           </div>
 
           {/* â”€â”€ Sidebar (1/3) â”€â”€ */}
-          <div className="calendar-sidebar space-y-4 xl:sticky xl:top-4 xl:col-start-2 xl:row-span-2 xl:row-start-1 xl:self-start">
-            {/* Event Detail */}
-            <div className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]">
-              {selectedEvent ? (
-                <div className="p-4 md:p-5">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <h3 className="flex items-center gap-2 text-sm font-heading font-bold text-foreground-950">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
-                        <AppIcon className={eventConfig(selectedEvent).icon}></AppIcon>
-                      </span>
-                      Event Details
-                    </h3>
-                    <button onClick={() => setSelectedEvent(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Clear selected event">
-                      <AppIcon className="ri-close-line"></AppIcon>
-                    </button>
-                  </div>
-                  <div className={`mb-4 overflow-hidden rounded-2xl border ${eventConfig(selectedEvent).border} bg-white`}>
-                    <div className={`${eventConfig(selectedEvent).bg} px-4 py-4`}>
-                      <div className="mb-3 flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="mb-2 flex flex-wrap items-center gap-2">
-                            <span className={`inline-flex items-center gap-1.5 rounded-full bg-white/80 px-2.5 py-1 text-[12px] font-bold ${eventConfig(selectedEvent).text}`}>
-                              <AppIcon className={eventConfig(selectedEvent).icon}></AppIcon>
-                              {eventConfig(selectedEvent).label}
-                            </span>
-                            <span className={`inline-flex rounded-full px-2.5 py-1 text-[12px] font-semibold ${statusPillClass(selectedEvent.status)}`}>
-                              {statusLabel(selectedEvent.status)}
-                            </span>
-                          </div>
-                          <h4 className={`text-lg font-heading font-bold leading-snug ${eventConfig(selectedEvent).text}`}>{selectedEvent.title}</h4>
-                        </div>
-                        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[12px] font-bold ${priorityBadge(selectedEvent.priority)}`}>
-                          {selectedEvent.priority === 'urgent' ? 'Urgent' : selectedEvent.priority === 'high' ? 'High' : 'Normal'}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-4">
+            {selectedEvent && !scheduleModalOpen && !createSessionOpen && !progressReviewCompletionEvent && (
+              <CalendarEventDialog
+                title={selectedEvent.title}
+                onClose={() => { if (!eventActionBusy) setSelectedEvent(null); }}
+                badges={<>
+                  <span className={`rounded-full px-2.5 py-1 ${eventConfig(selectedEvent).bg} ${eventConfig(selectedEvent).text}`}>{eventConfig(selectedEvent).label}</span>
+                  <span className={`rounded-full px-2.5 py-1 ${statusPillClass(selectedEvent.status)}`}>{statusLabel(selectedEvent.status)}</span>
+                  {selectedEvent.priority !== 'normal' && <span className={`rounded-full border px-2.5 py-1 ${priorityBadge(selectedEvent.priority)}`}>{selectedEvent.priority === 'urgent' ? 'Urgent' : 'High'}</span>}
+                </>}
+                actions={<>
+                  {!isLiveSessionEvent(selectedEvent) && canEditScheduleEvent(selectedEvent) && (
+                        <button
+                          onClick={() => openScheduleModal(selectedEvent)}
+                          disabled={eventActionBusy}
+                          className="rounded-lg bg-primary-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                        >
+                          <AppIcon className="ri-calendar-check-line mr-1"></AppIcon>
+                          {scheduleActionLabel(selectedEvent)}
+                        </button>
+                  )}
+                  {selectedEventMeetingUrl && <a href={selectedEventMeetingUrl} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold"><AppIcon className="ri-video-chat-line" />Join meeting</a>}
+                </>}
+              >
+                  <div className="mb-4 overflow-hidden rounded-2xl border border-background-200 bg-white">
+                    <div className="grid grid-cols-2 gap-2">
                         <EventDetailTile icon="ri-calendar-line" label="Date" value={formatEventDateLabel(selectedEvent)} />
                         <EventDetailTile
                           icon="ri-time-line"
@@ -2421,7 +2415,6 @@ export default function CoachTimetablePage() {
                           sub={`${selectedEvent.endHour - selectedEvent.startHour}h duration`}
                         />
                       </div>
-                    </div>
                   </div>
 
                   <div className="space-y-2">
@@ -2561,7 +2554,7 @@ export default function CoachTimetablePage() {
                           {selectedEvent.status === 'not-scheduled' && (selectedEvent.source === 'catch-up' || selectedEvent.source === 'student-support') ? 'Approve & Schedule' : 'Schedule Meeting'}
                         </h4>
                         {selectedEvent.status === 'not-scheduled' && (
-                          <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[12px] font-bold text-rose-700">Needs scheduling</span>
+                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-[12px] font-bold text-red-700">Needs scheduling</span>
                         )}
                       </div>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -2585,14 +2578,7 @@ export default function CoachTimetablePage() {
                         </div>
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-background-100 pt-3">
-                        <button
-                          onClick={() => openScheduleModal(selectedEvent)}
-                          disabled={eventActionBusy}
-                          className="rounded-lg bg-primary-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
-                        >
-                          <AppIcon className="ri-calendar-check-line mr-1"></AppIcon>
-                          {scheduleActionLabel(selectedEvent)}
-                        </button>
+
                         {selectedEvent.status === 'scheduled' && (
                         <button
                           onClick={() => handleEventAction('start')}
@@ -2652,41 +2638,8 @@ export default function CoachTimetablePage() {
                       </button>
                     </div>
                   )}
-                </div>
-              ) : (
-                <div className="p-4 md:p-5">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <h3 className="flex items-center gap-2 text-sm font-heading font-bold text-foreground-950">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
-                        <AppIcon className="ri-information-line"></AppIcon>
-                      </span>
-                      Event Details
-                    </h3>
-                    <span className="rounded-full bg-background-100 px-2.5 py-1 text-[12px] font-semibold text-foreground-500">
-                      {selectedDayEvents.length} selected
-                    </span>
-                  </div>
-                  <EmptyState
-                    size="sm"
-                    icon="ri-calendar-event-line"
-                    title="No event selected"
-                    description={selectedDayEvents.length > 0
-                      ? `${selectedDayEvents.length} event${selectedDayEvents.length === 1 ? '' : 's'} on the selected day.`
-                      : 'The selected day has no scheduled events.'}
-                  />
-                  <div className="mt-1 grid grid-cols-2 gap-2 text-left">
-                    <div className="rounded-lg border border-background-200 bg-white px-3 py-2">
-                      <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Selected Day</p>
-                      <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{selectedDayEvents.length}</p>
-                    </div>
-                    <div className="rounded-lg border border-background-200 bg-white px-3 py-2">
-                      <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Next 7 Days</p>
-                      <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{upcomingEvents.length}</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+              </CalendarEventDialog>
+            )}
 
             {/* Upcoming Events */}
             <div className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]">
@@ -2701,7 +2654,7 @@ export default function CoachTimetablePage() {
                   {upcomingEvents.length}
                 </span>
               </div>
-              <div className="max-h-[36rem] space-y-2 overflow-y-auto p-3 pr-2 md:p-4 md:pr-3">
+              <div className="grid max-h-[36rem] gap-2 overflow-y-auto p-3 sm:grid-cols-2 md:p-4 xl:grid-cols-3">
                 {upcomingEvents
                   .map(ev => {
                     const tc = eventConfig(ev);

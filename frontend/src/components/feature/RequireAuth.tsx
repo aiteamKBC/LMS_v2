@@ -3,6 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { RouteLoadingSkeleton } from './RouteLoadingSkeleton';
 import { homeRouteFor, mayAccessRoute } from '@/lib/routeAccess';
 import { OldOtjhGate } from '@/features/old-otjh/hooks';
+import { LearnerProgrammeGate } from './LearnerProgrammeGate';
 
 /**
  * The router-level gate. Everything that is not explicitly public in
@@ -78,7 +79,7 @@ export function RequireAuth() {
     return <NoAccess />;
   }
 
-  return <OldOtjhGate><Outlet /></OldOtjhGate>;
+  return <OldOtjhGate><LearnerProgrammeGate><Outlet /></LearnerProgrammeGate></OldOtjhGate>;
 }
 
 function NoAccess() {
