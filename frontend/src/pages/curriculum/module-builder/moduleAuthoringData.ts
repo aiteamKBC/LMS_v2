@@ -168,21 +168,154 @@ function monthLabelOf(key: string) {
  *
  * `skippedHolidays` on a session names the delivery days that were closed on the
  * way to it, so a date that moved can say why it moved.
+ *
+ * Each session carries two dates, because a closure moves only one thing.
+ * `date` is when the LIVE SESSION runs — walked past every closed delivery day
+ * on the way to it. `slotDate` is the delivery day it was due on counting from
+ * the module's start with no closure at all, and that is where the WEEK sits:
+ * a holiday closes the room, not the reading, the assignment or anything else
+ * the week holds, so those stay on the week they were authored into. The two
+ * agree until the first closure and differ by one delivery slot per closure
+ * after it.
  */
 export interface ModuleWeekSessionPlan {
-  sessions: Array<{ sessionNumber: number; date: string; day: string; skippedHolidays: string[] }>;
+  sessions: Array<{ sessionNumber: number; date: string; day: string; slotDate?: string; slotDay?: string; skippedHolidays: string[] }>;
   skippedHolidays: string[];
   finalEndDate: string;
   warnings: string[];
 }
 
 /**
+ * How many sessions one authored week delivers.
+ *
+ * The two counts a module carries are stored apart -- weeks are weeks and
+ * sessions are sessions -- so the delivery days a week runs on is the ratio
+ * between them: a Mon+Fri module storing 10 weeks and 20 sessions runs two.
+ * Never zero, so a module missing one of the counts simply reads as one session
+ * a week rather than dividing its weeks away. See
+ * backend/curriculum_api/tests_weeks_sessions_split.py, which pins the split.
+ */
+export function moduleDeliveryDaysPerWeek(module: ModuleCatalogueItem): number {
+  const weeks = module.weekStructure.length || module.weeks || 0;
+  if (!weeks) return 1;
+  return Math.max(1, Math.round((module.sessionsNumber || weeks) / weeks));
+}
+
+/**
+ * How many planned session dates each authored week consumes, in week order.
+ *
+ * This is THE walk. A module delivered Mon+Fri spends two of its twenty planned
+ * dates on every week it authors, so week 2 starts on session 3 -- and it spends
+ * them whether or not the second live-session component that will sit on the
+ * second date has been authored yet. Counting a week's live components instead
+ * left a ten-week Mon+Fri module consuming eleven of its twenty dates, so the
+ * back half of the run belonged to no week at all and the sessions drawer read
+ * "No week authored for this session" against nine dates of a fully authored
+ * module.
+ *
+ * A week over-authored with more live sessions than it has delivery days gets a
+ * slot for each ONLY while the plan has dates to spare -- every week owes its
+ * delivery days first. A ten-week, ten-session module with one week carrying a
+ * second live session has no spare date, so granting that week two dates pushed
+ * every week below it a session early and left week 10 with no date at all.
+ * Over-authoring a week moves nothing: the extra component reads as authored on
+ * a day the module does not deliver, which is what it is.
+ *
+ * `plannedSessionCount` is the length of the dated plan being walked. Callers
+ * that hold the plan pass it; the rest fall back to the module's own session
+ * count, which is what the plan is generated from.
+ *
+ * Every screen that pairs weeks with dates reads this -- the Course structure
+ * rail, the sessions drawer, the module workspace -- and the backend's
+ * `apply_module_session_plan_to_weeks` walks it the same way.
+ */
+export function moduleWeekSessionSlots(
+  module: ModuleCatalogueItem | null | undefined,
+  plannedSessionCount?: number,
+): number[] {
+  if (!module) return [];
+  const perWeek = moduleDeliveryDaysPerWeek(module);
+  const weeks = module.weekStructure;
+  // The dates left over once every week has claimed its delivery days. Only
+  // these can go to an over-authored week, and only in week order.
+  const planned = Number(plannedSessionCount);
+  const total = Number.isFinite(planned) && planned > 0
+    ? Math.floor(planned)
+    : (module.sessionsNumber || weeks.length * perWeek);
+  let spare = Math.max(0, total - weeks.length * perWeek);
+  return weeks.map(week => {
+    const authored = (week.components || []).filter(component => component.type === 'live-session').length;
+    const extra = Math.min(Math.max(0, authored - perWeek), spare);
+    spare -= extra;
+    return perWeek + extra;
+  });
+}
+
+/**
+ * The dates each authored week runs on, in week order.
+ *
+ * A week owns a run of dates, not one date: `week.sessionDate` is only the first
+ * of them. The rail shows the whole run so a Mon+Fri week reads as the two
+ * delivery days it actually occupies.
+ *
+ * These are the week's SLOT dates — where the week sits on the calendar. A
+ * closure pushes the live session out of the week and into the next open slot,
+ * but the week itself does not follow it, so a week whose session was moved is
+ * still read, still grouped under its own month, and still holds every other
+ * component on the day it was authored for. Where the live sessions ended up is
+ * `moduleWeekLiveSessionDates`.
+ */
+export function moduleWeekSessionDates(
+  module: ModuleCatalogueItem | null | undefined,
+  sessions: ModuleWeekSessionPlan['sessions'] | undefined,
+): string[][] {
+  return moduleWeekPlanDates(module, sessions, session => session.slotDate || session.date);
+}
+
+/**
+ * Where each authored week's live sessions actually run, in week order.
+ *
+ * The same walk as `moduleWeekSessionDates`, reading the other of the two dates
+ * a planned session carries. Equal to the week's own run until a holiday closes
+ * a delivery day; one slot later per closure after that.
+ */
+export function moduleWeekLiveSessionDates(
+  module: ModuleCatalogueItem | null | undefined,
+  sessions: ModuleWeekSessionPlan['sessions'] | undefined,
+): string[][] {
+  return moduleWeekPlanDates(module, sessions, session => session.date);
+}
+
+function moduleWeekPlanDates(
+  module: ModuleCatalogueItem | null | undefined,
+  sessions: ModuleWeekSessionPlan['sessions'] | undefined,
+  dateOf: (session: ModuleWeekSessionPlan['sessions'][number]) => string | undefined,
+): string[][] {
+  const plan = sessions || [];
+  if (!module || !plan.length) return [];
+  const slotCounts = moduleWeekSessionSlots(module, plan.length);
+  let sessionIndex = 0;
+  return module.weekStructure.map((_week, weekIndex) => {
+    const slotCount = slotCounts[weekIndex] || 1;
+    const dates = plan.slice(sessionIndex, sessionIndex + slotCount).map(session => dateOf(session) || '').filter(Boolean);
+    sessionIndex += slotCount;
+    return dates;
+  });
+}
+
+/**
  * The module with every week carrying the day it now runs on.
  *
  * The plan is applied by *position*, because week N is session N: a seventh week
- * added to a six-week module takes the seventh planned date -- the next delivery
- * day the cohort has not closed for a holiday -- and the weeks before it keep
- * the dates they already had.
+ * added to a six-week module takes the seventh delivery day from the start, and
+ * the weeks before it keep the dates they already had.
+ *
+ * A week and the live session it holds can land on different days. The week
+ * takes its planned SLOT -- the delivery day it was due on before any holiday
+ * was ticked -- while the live session takes the date the plan walked it to,
+ * past every closed day in the way. That is the whole of the holiday rule on
+ * this screen: a closure moves the session out of the week, and everything else
+ * the week holds stays on the week it was authored into.
  *
  * With `followEndDate`, the module's end date follows the plan only when it *was*
  * the plan: an end date that is one of the planned session dates was calculated
@@ -201,19 +334,30 @@ export function applyModuleWeekSessionPlan(
 ): ModuleCatalogueItem {
   const sessions = plan?.sessions || [];
   if (!sessions.length) return module;
+  // How many planned dates one authored week owns. A Mon+Fri module runs two
+  // sessions for every week it authors, so a ten-week module spends twenty
+  // planned dates -- and it spends them whether or not the live-session
+  // components that will sit on them have been authored yet. Walking the plan a
+  // component at a time instead left an authored week holding a single date, so
+  // ten weeks consumed ten of the twenty dates and the back half of the run
+  // (the months past the halfway point) belonged to no week at all.
+  const slotCounts = moduleWeekSessionSlots(module, sessions.length);
   let weeksMoved = false;
   let sessionIndex = 0;
-  const weekStructure = module.weekStructure.map(week => {
+  const weekStructure = module.weekStructure.map((week, weekIndex) => {
     const liveComponents = week.components.filter(component => component.type === 'live-session');
-    let firstSession: ModuleWeekSessionPlan['sessions'][number] | undefined;
+    const slotCount = slotCounts[weekIndex] || 1;
+    const slots = sessions.slice(sessionIndex, sessionIndex + slotCount);
+    sessionIndex += slotCount;
+    const firstSession: ModuleWeekSessionPlan['sessions'][number] | undefined = slots[0];
+    // The week's own day, not the one its session was pushed to.
+    const slotDate = firstSession ? (firstSession.slotDate || firstSession.date || '') : '';
+    const slotDay = firstSession ? (firstSession.slotDay || firstSession.day || '') : '';
     let components = week.components;
     if (liveComponents.length) {
       const plannedByComponentId = new Map<string, ModuleWeekSessionPlan['sessions'][number] | undefined>();
-      liveComponents.forEach(component => {
-        const planned = sessions[sessionIndex];
-        sessionIndex += 1;
-        firstSession ||= planned;
-        plannedByComponentId.set(component.id, planned);
+      liveComponents.forEach((component, offset) => {
+        plannedByComponentId.set(component.id, slots[offset]);
       });
       let componentsMoved = false;
       const plannedComponents = week.components.map(component => {
@@ -238,19 +382,14 @@ export function applyModuleWeekSessionPlan(
         };
       });
       if (componentsMoved) components = plannedComponents;
-    } else {
-      firstSession = sessions[sessionIndex];
-      sessionIndex += 1;
     }
-    const sessionDate = firstSession?.date || '';
-    const sessionDay = firstSession?.day || '';
     if (
       components === week.components
-      && (week.sessionDate || '') === sessionDate
-      && (week.sessionDay || '') === sessionDay
+      && (week.sessionDate || '') === slotDate
+      && (week.sessionDay || '') === slotDay
     ) return week;
     weeksMoved = true;
-    return { ...week, components, sessionDate, sessionDay };
+    return { ...week, components, sessionDate: slotDate, sessionDay: slotDay };
   });
   const currentEndDate = String(module.endDate || '').trim();
   const endDateFollowsPlan = options.followEndDate !== false
@@ -279,13 +418,19 @@ export function applyModuleWeekSessionPlan(
  */
 export function liveSessionNamesByNumber(module: ModuleCatalogueItem | null | undefined): Array<string | null> {
   const names: Array<string | null> = [];
-  (module?.weekStructure || []).forEach(week => {
+  const slotCounts = moduleWeekSessionSlots(module);
+  (module?.weekStructure || []).forEach((week, weekIndex) => {
     const liveComponents = (week.components || []).filter(component => component.type === 'live-session');
-    if (!liveComponents.length) {
-      names.push(null);
-      return;
+    const slotCount = slotCounts[weekIndex] || 1;
+    // One entry per date the week consumes, not per live session it holds. A
+    // Mon+Fri week carrying a single live session still delivers on both days,
+    // and the second date is a real gap in the authoring -- reported as `null`,
+    // the same as a content-only week, so the drawer says the week holds no live
+    // session for that date rather than dropping it off the end of the list.
+    for (let offset = 0; offset < slotCount; offset += 1) {
+      const component = liveComponents[offset];
+      names.push(component ? String(component.title || '').trim() : null);
     }
-    liveComponents.forEach(component => names.push(String(component.title || '').trim()));
   });
   return names;
 }

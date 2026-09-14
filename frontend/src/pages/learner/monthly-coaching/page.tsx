@@ -1,22 +1,34 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
-import { fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, type LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { useMyLearner } from '@/hooks/useMyLearner';
+import { fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
-import { ImportedReviewHistory } from '@/pages/learner/reviews/ImportedReviewHistory';
+import { useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
+import type { ImportedReview } from '@/api/reviewHistory';
+import { isoDate } from '@/pages/learner/reviews/bookingDates';
 import {
   activityTimeLabel,
   learningKsbCodes,
   learningMinutesForRecord,
   uniqueLearningProgress,
 } from '@/lib/reviewLearningProgress';
+import reviewStyles from '../progress-reviews/progressReviews.module.css';
+import FeaturedMeeting from '../reviews/FeaturedMeeting';
+import MeetingAttendanceActions from '../reviews/MeetingAttendanceActions';
+import { useMeetingAttendance } from '../reviews/useMeetingAttendance';
+import type { MeetingAttendance } from '@/api/meetingAttendance';
+import AbsenceReportDialog from '../attendance/components/AbsenceReportDialog';
+import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
+import { meetingCalendarHref } from '../reviews/meetingBooking';
+import { useMeetingBooking } from '../reviews/useMeetingBooking';
+import MeetingSchedulingAction from '../reviews/MeetingSchedulingAction';
+import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
 
 const learnerNav = roleNavMap.learner;
 
@@ -39,6 +51,9 @@ function monthLabel(value?: string | null): string {
 }
 
 function monthlyCoachingTitle(session?: LearnerCalendarEvent | null): string {
+  if (session?.importedReview) {
+    return session.importedReview.name || session.title || 'Monthly Coaching Meeting';
+  }
   const month = monthLabel(dateOf(session));
   return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${session?.sequence ? ` #${session.sequence}` : ''}`;
 }
@@ -57,16 +72,27 @@ function formatTime(value?: string | null): string {
   return new Date(2000, 0, 1, hour, minute).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-function calendarEventHref(session?: LearnerCalendarEvent | null): string {
-  const eventKey = session?.eventKey || session?.id;
-  return eventKey ? `/learner/calendar?event=${encodeURIComponent(eventKey)}` : '/learner/calendar';
-}
-
 function statusLabel(status?: string): string {
   const labels: Record<string, string> = {
     'not-scheduled': 'Not Scheduled', scheduled: 'Scheduled', 'in-progress': 'In Progress', completed: 'Completed', cancelled: 'Cancelled',
   };
   return status ? labels[status] || status : '-';
+}
+
+function normalizedSessionStatus(session: LearnerCalendarEvent): string {
+  return (session.status || '').toLowerCase().replace(/_/g, '-');
+}
+
+function sessionIsBooked(session: LearnerCalendarEvent): boolean {
+  return Boolean(session.scheduledDate)
+    && !['not-scheduled', 'planned', 'cancelled', 'unknown'].includes(normalizedSessionStatus(session));
+}
+
+function sessionSchedulingLabel(session: LearnerCalendarEvent): string {
+  if (['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(normalizedSessionStatus(session))) {
+    return 'View in calendar';
+  }
+  return sessionIsBooked(session) ? 'Reschedule' : 'Schedule';
 }
 
 function initials(name?: string): string {
@@ -86,6 +112,118 @@ function hoursLabel(minutes: number): string {
 
 function Empty({ children }: { children: ReactNode }) {
   return <div className="rounded-xl border border-dashed border-background-300 bg-background-100/50 px-5 py-7 text-center"><p className="text-xl font-bold text-foreground-300">-</p><p className="mt-1 text-xs text-foreground-400">{children}</p></div>;
+}
+
+function importedValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '-';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(importedValue).join(', ');
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
+/** Older Aptem exports kept question/answer pairs only in raw_text. */
+function rawTextFields(rawText: string): Array<{ label: string; value: string }> {
+  const blocks = rawText.split(/\r?\n\s*\r?\n+/)
+    .map((block) => block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))
+    .filter((lines) => lines.length);
+  return blocks.flatMap((lines) => {
+    const first = lines[0];
+    const separator = first.indexOf(':');
+    if (separator > 0) return [{ label: first.slice(0, separator).trim(), value: [first.slice(separator + 1).trim(), ...lines.slice(1)].filter(Boolean).join('\n') || '-' }];
+    return [{ label: first, value: lines.slice(1).join('\n') || '-' }];
+  });
+}
+
+function importedFieldValue(review: ImportedReview, labels: string[]): unknown {
+  const wanted = labels.map((label) => label.toLowerCase());
+  for (const section of review.sections) {
+    for (const field of section.fields) {
+      const label = String(field.label || '').toLowerCase();
+      if (wanted.some((value) => label === value || label.includes(value))) return field.value;
+    }
+  }
+  return undefined;
+}
+
+function importedDate(value?: unknown): string {
+  const text = importedValue(value);
+  if (text === '-') return '-';
+  const iso = /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : '';
+  if (iso) return new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB');
+  return text;
+}
+
+function ImportedSectionBody({ section }: { section: ImportedReview['sections'][number] }) {
+  const fields = section.fields.length ? section.fields : rawTextFields(section.rawText);
+  const links = section.fields.flatMap((field) => 'links' in field && Array.isArray(field.links) ? field.links : []);
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  return <div className="space-y-3">
+    {fields.map((field, index) => <div key={`${field.label || 'field'}:${index}`} className="rounded-lg border border-slate-200 bg-white p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{field.label || 'Response'}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{importedValue(field.value)}</p></div>)}
+    {links.length > 0 && <div className="space-y-1">{links.map((link, index) => { const url = link.azure_url || link.url || link.href; const name = link.text || link.title || `Attachment ${index + 1}`; return url ? <button key={index} type="button" onClick={() => setPreview({ url, name })} className="block max-w-full truncate text-left text-xs font-semibold text-primary-600 underline">{name}</button> : null; })}</div>}
+    {section.tables.map((table, index) => <div key={index} className="overflow-x-auto rounded-lg border border-slate-200 bg-white"><table className="min-w-full text-left text-xs"><tbody className="divide-y divide-slate-200">{(table.rows || []).map((row, rowIndex) => <tr key={rowIndex} className={rowIndex === 0 ? 'bg-slate-100 font-bold text-slate-800' : 'text-slate-700'}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-3 py-2.5 align-top">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>)}
+    {!fields.length && section.rawText && section.rawText !== 'EMPTY_STRING' && <p className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-700">{section.rawText}</p>}
+    {preview && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}><div role="dialog" aria-modal="true" aria-label={preview.name} className="flex h-[min(88vh,900px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3"><p className="truncate text-sm font-bold text-slate-900">{preview.name}</p><button type="button" aria-label="Close attachment preview" onClick={() => setPreview(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><AppIcon className="ri-close-line" /></button></div><iframe title={preview.name} src={preview.url} className="min-h-0 flex-1 bg-slate-100" /></div></div>}
+    {!fields.length && !section.tables.length && (!section.rawText || section.rawText === 'EMPTY_STRING') && <Empty>No response was recorded for this section.</Empty>}
+  </div>;
+}
+
+function ImportedMcmSections({ review }: { review: ImportedReview }) {
+  if (!review.sections.length) return <Empty>No section details were imported for this Aptem review.</Empty>;
+  return <div className="space-y-3">
+    {review.sections.map((section) => <section key={section.id} className="rounded-xl border border-background-200 bg-background-100/45 p-4">
+      <h2 className="text-sm font-bold text-foreground-900">{section.name.replace(/\s+(completed|incomplete)$/i, '').trim()}</h2>
+      <div className="mt-3"><ImportedSectionBody section={section} /></div>
+    </section>)}
+  </div>;
+}
+
+function ImportedMcmAccordion({ id, title, open, onToggle, children }: { id: string; title: string; open: boolean; onToggle: (id: string) => void; children: ReactNode }) {
+  return <section className="overflow-hidden border border-slate-300 bg-white shadow-[0_1px_4px_rgba(15,39,68,0.12)]">
+    <button type="button" onClick={() => onToggle(id)} aria-expanded={open} className="flex w-full items-center gap-3 bg-slate-50 px-4 py-3.5 text-left text-sm font-semibold text-slate-600 transition hover:bg-slate-100">
+      <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg text-slate-700`} />
+      <span className="min-w-0 flex-1">{title}</span>
+    </button>
+    {open && <div className="border-t border-slate-200 bg-white p-4 sm:p-6">{children}</div>}
+  </section>;
+}
+
+function ImportedMcmView({ selected, learner, openSections, toggle, onBack }: { selected: LearnerCalendarEvent; learner: ReturnType<typeof useReviewSessions>['learner']; openSections: string[]; toggle: (id: string) => void; onBack: () => void }) {
+  const review = selected.importedReview;
+  if (!review) return null;
+  const programmeStart = learner?.programmeStartDate || importedFieldValue(review, ['programme start date']);
+  const practicalEnd = learner?.gatewayStartDate || importedFieldValue(review, ['planned practical period end date']);
+  const gatewayDate = learner?.gatewayStartDate || importedFieldValue(review, ['planned gateway date']);
+  const apprenticeshipEnd = learner?.epaEndDate || learner?.programmeEndDate || importedFieldValue(review, ['planned apprenticeship end date']);
+  const mentor = importedFieldValue(review, ['mentor']) || '-';
+  const infoRows: [string, unknown][] = [
+    ['Programme Name', learner?.programme || importedFieldValue(review, ['programme name', 'programme'])],
+    ['Programme Start Date', programmeStart],
+    ['Planned Practical Period End Date', practicalEnd],
+    ['Planned Gateway Date', gatewayDate],
+    ['Planned Apprenticeship End Date', apprenticeshipEnd],
+    ['Programme Status', learner?.programmeStatus || importedFieldValue(review, ['programme status', 'status'])],
+    ['Employer', learner?.employer || importedFieldValue(review, ['employer'])],
+    ['Manager', learner?.lineManager || importedFieldValue(review, ['manager', 'line manager'])],
+    ['Mentor', mentor],
+  ];
+  const detailSections = review.sections.filter((section) => !section.name.toLowerCase().includes('learner information'));
+  const date = selected.scheduledDate || selected.targetDate || selected.date;
+  return <div className="space-y-3">
+    <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 pb-3">
+      <button type="button" onClick={onBack} aria-label="Back to coaching meetings" className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"><AppIcon className="ri-arrow-left-line" /></button>
+      <h1 className="text-xl font-bold text-slate-800 sm:text-2xl">Monthly Coaching Meeting <span className="font-normal text-slate-600">- {importedDate(date)}</span></h1>
+      <p className="ml-auto text-xs text-slate-500">Reviewed by: <span className="font-semibold text-slate-600">{review.reviewerName || selected.coachName || '-'}</span></p>
+    </header>
+
+    <ImportedMcmAccordion id="learner-information" title="Learner Information" open={openSections.includes('learner-information')} onToggle={toggle}>
+      <div className="grid gap-6 md:grid-cols-[280px_1fr]">
+        <div className="flex flex-col items-center justify-center border-b border-slate-200 pb-6 md:border-b-0 md:border-r md:pb-0 md:pr-8"><span className="flex h-20 w-20 items-center justify-center rounded-full bg-slate-400 text-xl font-bold text-white">{initials(learner?.name)}</span><p className="mt-3 text-xl font-bold text-slate-800">{learner?.name || '-'}</p></div>
+        <div className="grid gap-x-8 gap-y-4 sm:grid-cols-[minmax(210px,1fr)_minmax(260px,2fr)]">{infoRows.map(([label, value]) => <div key={label} className="contents"><p className="text-xs font-semibold text-slate-600">{label}:</p><p className="text-sm text-slate-500">{label.toLowerCase().includes('date') ? importedDate(value) : importedValue(value)}</p></div>)}</div>
+      </div>
+    </ImportedMcmAccordion>
+
+    {detailSections.length ? detailSections.map((section) => <ImportedMcmAccordion key={section.id} id={`imported-section:${section.id}`} title={section.name} open={openSections.includes(`imported-section:${section.id}`)} onToggle={toggle}><ImportedSectionBody section={section} /></ImportedMcmAccordion>) : <ImportedMcmAccordion id="imported-review" title="Review Details" open={openSections.includes('imported-review')} onToggle={toggle}><ImportedMcmSections review={review} /></ImportedMcmAccordion>}
+  </div>;
 }
 
 function SavedMcmAnswers({ sectionId, responses, emptyMessage }: { sectionId: string; responses?: ProgressReviewResponses; emptyMessage: string }) {
@@ -146,102 +284,99 @@ function Accordion({ id, title, icon, status, open, onToggle, children }: { id: 
   );
 }
 
-function useMonthlyCoachingData() {
-  const myLearner = useMyLearner();
-  const [learner, setLearner] = useState<LearnerDetail | null>(null);
-  const [sessions, setSessions] = useState<LearnerCalendarEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError('');
-    Promise.all([
-      fetchLearnerDetail(myLearner.kind, myLearner.id),
-      fetchLearnerCalendarEvents(myLearner.kind, myLearner.id),
-    ])
-      .then(([detail, calendar]) => {
-        if (cancelled) return;
-        setLearner(detail);
-        setSessions(calendar.events.filter((event) => event.source === 'mcr').sort((a, b) => a.sequence - b.sequence));
-      })
-      .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load monthly coaching sessions.'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [myLearner.kind, myLearner.id]);
-
-  return { learner, sessions, loading, error };
+export function MonthlyCoachingListPage() {
+  const learner = useLinkedLearner();
+  return <MonthlyCoachingList key={`${learner.kind}:${learner.id}`} />;
 }
 
-export function MonthlyCoachingListPage() {
-  const myLearner = useMyLearner();
-  const { learner, sessions, loading, error } = useMonthlyCoachingData();
+function MonthlyCoachingList() {
+  const { myLearner, learner, sessions, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('mcr');
+  const attendance = useMeetingAttendance(myLearner);
+  const [absence, setAbsence] = useState<MeetingAttendance | null>(null);
   const [page, setPage] = useState(1);
+  const [view, setView] = useState<'planned' | 'finished'>('planned');
   const pageSize = 10;
-  const totalPages = Math.max(1, Math.ceil(sessions.length / pageSize));
-  const visibleSessions = sessions.slice((page - 1) * pageSize, page * pageSize);
-  const completedCount = sessions.filter((session) => session.status === 'completed').length;
-  const scheduledCount = sessions.filter((session) => ['scheduled', 'in-progress'].includes(session.status)).length;
-  const cancelledCount = sessions.filter((session) => session.status === 'cancelled').length;
-  const coachName = sessions.find((session) => session.coachName)?.coachName || 'Your coach';
+  const finishedSessions = sessions.filter((session) => session.status.toLowerCase() === 'completed');
+  const plannedSessions = sessions.filter((session) => session.status.toLowerCase() !== 'completed');
+  const tabSessions = view === 'finished' ? finishedSessions : plannedSessions;
+  const totalPages = Math.max(1, Math.ceil(tabSessions.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const visibleSessions = tabSessions.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const completedCount = sessions.filter((review) => review.status.toLowerCase() === 'completed').length;
+  const scheduledCount = sessions.filter((review) => review.status.toLowerCase() === 'scheduled').length;
+  const inProgressCount = sessions.filter((review) => review.status.toLowerCase() === 'in-progress').length;
+  const notScheduledCount = sessions.filter((review) => ['not-scheduled', 'not scheduled', 'not_scheduled'].includes(review.status.toLowerCase())).length;
   const summaryMetrics = [
     { label: 'Total', value: sessions.length, icon: 'ri-stack-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
     { label: 'Scheduled', value: scheduledCount, icon: 'ri-calendar-check-line', tone: 'info' as const, iconClassName: 'bg-blue-100 text-blue-700' },
+    { label: 'In progress', value: inProgressCount, icon: 'ri-time-line', tone: 'caution' as const, iconClassName: 'bg-amber-100 text-amber-700' },
     { label: 'Completed', value: completedCount, icon: 'ri-checkbox-circle-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
-    { label: 'Cancelled', value: cancelledCount, icon: 'ri-close-circle-line', tone: 'neutral' as const, iconClassName: 'bg-rose-100 text-rose-700' },
+    { label: 'Not Scheduled', value: notScheduledCount, icon: 'ri-time-line', tone: 'neutral' as const, iconClassName: 'bg-amber-100 text-amber-700' },
   ];
+  const pageRows = visibleSessions;
+
+  const booking = useMeetingBooking({
+    learner: myLearner, rules: bookingCalendar, attendance: attendance.data?.sessions || [],
+    titleOf: monthlyCoachingTitle, setEvents, refresh: () => { refresh(); attendance.refresh(); },
+  });
+  const { openBooking } = booking;
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="30-day coaching meetings with your coach" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
-      <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
-        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
-        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
-          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
-          <div className="relative">
+      <main className={`page-container ${reviewStyles.page} min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6`}>
+        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
+        <section className="learner-super-admin-hero workspace-page-hero relative overflow-hidden rounded-2xl p-4 sm:rounded-3xl sm:p-6 md:p-6">
+          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><AppIcon className="ri-user-voice-line text-secondary-300" />One-to-one support</span>
-              <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Monthly Coaching Meeting</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Your 30-day coaching meetings with {coachName}. Review progress, learning evidence and agreed next steps.</p>
+              <span className="inline-flex items-center gap-2 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600"><AppIcon className="ri-calendar-event-line" />Monthly coaching</span>
+              <h1 className="mt-3 text-[22px] font-bold leading-tight text-primary-800 sm:text-2xl md:text-3xl">Monthly Coaching Meetings</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-foreground-500">Review your learning, progress and next actions with your coach and line manager.</p>
             </div>
-          </div>
-          <div className="relative z-0 mt-5 grid grid-cols-2 gap-2 border-t border-white/10 pt-4 sm:mt-6 sm:grid-cols-2 sm:pt-5 md:gap-3 lg:grid-cols-4">
-            {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" />)}
+            <div className="grid grid-cols-2 gap-2 lg:min-w-[650px] lg:grid-cols-5">
+              {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} value={loading ? '-' : metric.value} className="progress-review-hero-metric bg-white" valuePosition="stacked" />)}
+            </div>
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_8px_30px_rgba(27,12,52,0.06)]">
-          <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-calendar-event-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Monthly Coaching Meetings</h2><p className="mt-0.5 text-xs text-foreground-500">Open a meeting to review its 30-day learning summary.</p></div></div>
-            <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link>
+        {booking.notice}
+        <FeaturedMeeting sessions={sessions} source="mcr" learner={learner} learnerQuery={`kind=${myLearner.kind}&learner=${myLearner.id}`}
+          today={attendance.data?.today || bookingCalendar?.today || isoDate(new Date())} loading={loading} error={error}
+          onSchedule={openBooking} titleOf={monthlyCoachingTitle} attendance={attendance.data?.sessions || []}
+          timeZone={attendance.data?.timeZone} busy={attendance.busy} canAct={attendance.canAct} onAttend={attendance.attend} onReport={setAbsence} />
+        {attendance.error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{attendance.error}<button type="button" onClick={attendance.refresh} className="ml-2 underline">Retry attendance</button></p>}
+        {attendance.notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">{attendance.notice}</p>}
+        <section aria-label="Monthly Coaching Meetings" className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Monthly Coaching Meetings</h2><p className="mt-0.5 text-xs text-foreground-500">Check each meeting status and open the full coaching record.</p></div></div><div className="flex flex-wrap items-center gap-2"><Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link></div></div>
+          <div role="tablist" aria-label="Monthly coaching meeting status" className="flex overflow-x-auto border-b border-background-200 bg-white px-4 pt-3 sm:px-5">
+              {(['planned', 'finished'] as const).map((tab) => {
+                const count = tab === 'planned' ? plannedSessions.length : finishedSessions.length;
+                return <button key={tab} type="button" role="tab" aria-selected={view === tab} onClick={() => { setView(tab); setPage(1); }} className={`-mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-xs font-bold transition ${view === tab ? 'border-primary-600 text-primary-700' : 'border-transparent text-foreground-500 hover:border-primary-200 hover:text-primary-700'}`}><AppIcon className={tab === 'planned' ? 'ri-calendar-event-line' : 'ri-checkbox-circle-line'} />{tab === 'planned' ? 'Planned' : 'Finished'}<span className={`rounded-full px-2 py-0.5 text-[10px] ${view === tab ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}>{count}</span></button>;
+              })}
           </div>
-          {loading ? <div className="p-5"><RowsSkeleton rows={4} /></div> : sessions.length === 0 ? <div className="p-5"><Empty>No monthly coaching sessions were found.</Empty></div> : (
+          {loading ? <div className="p-5"><RowsSkeleton rows={8} className="divide-y divide-background-100 [&>div]:py-3" /></div> : error && sessions.length === 0 ? null : tabSessions.length === 0 ? <div className="p-5"><Empty>{view === 'finished' ? 'No finished monthly coaching reviews were found.' : 'No planned monthly coaching sessions were found.'}</Empty></div> : (
             <>
               <div className="divide-y divide-background-200 md:hidden">
-                {visibleSessions.map((session) => {
-                  const booked = Boolean(session.scheduledDate && session.scheduledTime) && !['not-scheduled', 'cancelled'].includes(session.status);
+                {pageRows.map((session) => {
+                  const booked = sessionIsBooked(session);
+                  const normalizedStatus = normalizedSessionStatus(session);
+                  const detailHref = `/learner/monthly-coaching/${encodeURIComponent(session.id)}?kind=${myLearner.kind}&learner=${myLearner.id}`;
                   return (
                     <article key={session.id} className="space-y-4 p-4">
                       <div className="flex items-start gap-3">
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-xs font-extrabold text-primary-700">#{session.sequence}</span>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
                               <h3 className="text-sm font-bold text-foreground-900">{monthlyCoachingTitle(session)}</h3>
-                              <p className="mt-1 text-[11px] text-foreground-500">30-day coaching meeting</p>
+                              <p className="mt-1 text-[11px] text-foreground-500">Monthly Coaching Review</p>
                             </div>
-                            <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${session.status === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : session.status === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}>
-                              <AppIcon className={session.status === 'completed' ? 'ri-checkbox-circle-line' : session.status === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(session.status)}
+                            <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${normalizedStatus === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : normalizedStatus === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}>
+                              <AppIcon className={normalizedStatus === 'completed' ? 'ri-checkbox-circle-line' : normalizedStatus === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(normalizedStatus)}
                             </span>
                           </div>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <div className="flex min-w-0 items-center gap-2 rounded-xl bg-background-100/70 p-2.5">
-                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(session.coachName)}</span>
-                          <div className="min-w-0"><p className="text-[9px] uppercase text-foreground-400">Coach</p><p className="truncate text-xs font-semibold text-foreground-800">{session.coachName || '-'}</p></div>
-                        </div>
+                      <div>
                         <div className="flex min-w-0 items-center gap-2 rounded-xl bg-background-100/70 p-2.5">
                           <AppIcon className="ri-calendar-line shrink-0 text-primary-500" />
                           <div className="min-w-0"><p className="text-[9px] uppercase text-foreground-400">{booked ? 'Scheduled' : 'Planned'}</p><p className="truncate text-xs font-semibold text-foreground-800">{formatDate(booked ? session.scheduledDate : session.targetDate)}</p>{booked && <p className="text-[10px] text-foreground-400">{formatTime(session.scheduledTime)}</p>}</div>
@@ -249,27 +384,39 @@ export function MonthlyCoachingListPage() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
-                        <Link to={calendarEventHref(session)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />{booked ? 'Reschedule' : 'Schedule'}</Link>
-                        <Link to={`/learner/monthly-coaching/${encodeURIComponent(session.id)}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700">View session <AppIcon className="ri-arrow-right-line" /></Link>
+                        <div className="col-span-2"><MeetingAttendanceActions session={attendance.data?.sessions.find(item => item.id === session.id)} busy={Boolean(attendance.busy)} canAct={attendance.canAct}
+                          onAttend={() => attendance.attend(session.id)} onReport={() => { const item = attendance.data?.sessions.find(item => item.id === session.id); if (item) setAbsence(item); }} onReschedule={() => openBooking(session)} /></div>
+                        <MeetingSchedulingAction label={sessionSchedulingLabel(session)}
+                          calendarHref={meetingCalendarHref(session, myLearner, undefined, attendance.data?.sessions.find(item => item.id === session.id))}
+                          onSchedule={() => openBooking(session)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2" />
+                        <Link to={detailHref} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-background-300 bg-white px-3 text-xs font-bold text-foreground-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">View session <AppIcon className="ri-arrow-right-line" /></Link>
                       </div>
                     </article>
                   );
                 })}
               </div>
-              <div className="hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[980px] text-left">
-                  <thead className="border-b border-primary-100 bg-primary-50/70 text-[10px] font-bold uppercase tracking-wide text-primary-900/60"><tr><th className="px-5 py-3.5">Session Name / Session Type</th><th className="px-5 py-3.5">Coach</th><th className="px-5 py-3.5">Planned / Scheduled Date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Scheduling Assistant</th><th className="px-5 py-3.5 text-right">Session Actions</th></tr></thead>
+              <div className={`${reviewStyles.tableWrap} hidden md:block`}>
+                <table className="w-full text-left">
+                  <thead><tr><th className="px-5 py-3.5">Meeting name / type</th><th className="px-5 py-3.5">Coach</th><th className="px-5 py-3.5">Planned / scheduled date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Attendance action</th><th className="px-5 py-3.5">Scheduling assistant</th><th className="px-5 py-3.5 text-right">Review actions</th></tr></thead>
                   <tbody className="divide-y divide-background-200">
-                    {visibleSessions.map((session) => {
-                      const booked = Boolean(session.scheduledDate && session.scheduledTime) && !['not-scheduled', 'cancelled'].includes(session.status);
+                    {pageRows.map((session) => {
+                      const booked = sessionIsBooked(session);
+                      const normalizedStatus = normalizedSessionStatus(session);
+                      const detailHref = `/learner/monthly-coaching/${encodeURIComponent(session.id)}?kind=${myLearner.kind}&learner=${myLearner.id}`;
                       return (
                         <tr key={session.id} className="group transition-colors hover:bg-primary-50/35">
-                          <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{session.sequence}</span><div><p className="text-xs font-bold text-foreground-900">{monthlyCoachingTitle(session)}</p><p className="mt-1 text-[10px] text-foreground-400">30-day coaching meeting</p></div></div></td>
-                          <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(session.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{session.coachName || '-'}</span></div></td>
+                          <td className="px-5 py-4"><p className="text-xs font-bold text-foreground-900">{monthlyCoachingTitle(session)}</p><p className="mt-1 text-[10px] text-foreground-500">Monthly Coaching Review</p></td>
+                          <td className="px-5 py-4"><div className="flex items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-[10px] font-bold text-primary-700">{initials(session.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{session.coachName || '-'}</span></div></td>
                           <td className="px-5 py-4"><div className="flex items-center gap-2"><AppIcon className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(booked ? session.scheduledDate : session.targetDate)}</p>{booked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(session.scheduledTime)}</p>}</div></div></td>
-                          <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${session.status === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : session.status === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}><AppIcon className={session.status === 'completed' ? 'ri-checkbox-circle-line' : session.status === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(session.status)}</span></td>
-                          <td className="px-5 py-4"><Link to={calendarEventHref(session)} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><AppIcon className="ri-calendar-2-line" />{booked ? 'Reschedule' : 'Schedule'}</Link></td>
-                          <td className="px-5 py-4"><div className="flex items-center justify-end"><Link to={`/learner/monthly-coaching/${encodeURIComponent(session.id)}`} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 hover:shadow-md">View <AppIcon className="ri-arrow-right-line" /></Link></div></td>
+                          <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${normalizedStatus === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : normalizedStatus === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}><AppIcon className={normalizedStatus === 'completed' ? 'ri-checkbox-circle-line' : normalizedStatus === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(normalizedStatus)}</span></td>
+                          <td className="px-5 py-4"><MeetingAttendanceActions session={attendance.data?.sessions.find(item => item.id === session.id)} busy={Boolean(attendance.busy)} canAct={attendance.canAct}
+                            onAttend={() => attendance.attend(session.id)} onReport={() => { const item = attendance.data?.sessions.find(item => item.id === session.id); if (item) setAbsence(item); }} onReschedule={() => openBooking(session)} /></td>
+                          <td className="px-5 py-4">
+                            <MeetingSchedulingAction label={sessionSchedulingLabel(session)}
+                          calendarHref={meetingCalendarHref(session, myLearner, undefined, attendance.data?.sessions.find(item => item.id === session.id))}
+                          onSchedule={() => openBooking(session)} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2" />
+                          </td>
+                          <td className="px-5 py-4 text-right"><Link to={detailHref} className={`${reviewStyles.primaryButton} inline-flex h-9 items-center gap-2 rounded-xl px-4 text-xs font-bold transition focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2`}>View <AppIcon className="ri-arrow-right-line" /></Link></td>
                         </tr>
                       );
                     })}
@@ -277,13 +424,18 @@ export function MonthlyCoachingListPage() {
                 </table>
               </div>
               <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-                <div className="flex items-center gap-1.5"><button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-left-line" /></button><button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line" /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} aria-current={page === number ? 'page' : undefined} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}<button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line" /></button><button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button><span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span></div>
-                <p className="text-[10px] text-foreground-500">{(page - 1) * pageSize + 1} - {Math.min(page * pageSize, sessions.length)} of {sessions.length} items</p>
+                <div className="flex items-center gap-1.5"><button type="button" onClick={() => setPage(1)} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-left-line" /></button><button type="button" onClick={() => setPage((value) => Math.max(1, Math.min(value, totalPages) - 1))} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line" /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} aria-current={currentPage === number ? 'page' : undefined} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${currentPage === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}<button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line" /></button><button type="button" onClick={() => setPage(totalPages)} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button><span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span></div>
+                <p className="text-[10px] text-foreground-500">{tabSessions.length === 0 ? 0 : (currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, tabSessions.length)} of {tabSessions.length} items</p>
               </div>
             </>
           )}
         </section>
-        <ImportedReviewHistory kind={myLearner.kind} learnerId={myLearner.id} category="monthly-coaching" />
+        {booking.dialog}
+        {absence?.absenceSessionId && absence.date && <AbsenceReportDialog onClose={() => setAbsence(null)}>
+          <AbsenceReportForm key={absence.id} scope="meetings" compact showHistory={false}
+            preselectMatch={{ id: absence.absenceSessionId, dateIso: absence.date, title: absence.title }}
+            onSubmitted={() => attendance.refresh()} onCancel={() => setAbsence(null)} />
+        </AbsenceReportDialog>}
       </main>
     </WorkspaceShell>
   );
@@ -292,10 +444,16 @@ export function MonthlyCoachingListPage() {
 export default function MonthlyCoachingPage() {
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId: string }>();
-  const { learner, sessions, loading, error } = useMonthlyCoachingData();
-  const myLearner = useMyLearner();
-  const [openSections, setOpenSections] = useState<string[]>(['learning']);
+  const { myLearner, learner, sessions, loading, error, refresh } = useReviewSessions('mcr');
+  // Keep the data-driven Aptem review details visible on first open while
+  // preserving the existing learning-summary default for legacy meetings.
+  const [openSections, setOpenSections] = useState<string[]>(['learning', 'imported-review']);
   const selected = sessions.find((session) => session.id === sessionId) || null;
+  const reviewInstance = useLearnerReviewInstance(
+    myLearner.kind,
+    myLearner.id,
+    selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
+  );
   const index = selected ? sessions.findIndex((session) => session.id === selected.id) : -1;
   const previous = index > 0 ? sessions[index - 1] : null;
 
@@ -338,13 +496,13 @@ export default function MonthlyCoachingPage() {
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Your 30-day coaching meeting with your coach" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
-      <div className="space-y-4 p-4 md:p-6">
-        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
-        <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
-        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : (
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
+        <button type="button" onClick={() => navigate(`/learner/monthly-coaching?kind=${myLearner.kind}&learner=${myLearner.id}`)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
+        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}</p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(`/learner/monthly-coaching?kind=${myLearner.kind}&learner=${myLearner.id}`)} /> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
-              <div className="learner-super-admin-hero bg-gradient-to-r from-primary-950 to-primary-800 p-5 text-white sm:p-6"><span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-white">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-white/60">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
+              <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
               <div className="space-y-5 p-5 sm:p-6">
                 {shouldShowLearnerMeetingRecording(selected) ? (
                   <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
@@ -354,10 +512,12 @@ export default function MonthlyCoachingPage() {
               </div>
             </section>
 
-            <Accordion id="learning" title="30-Day Learning Progress & Summary" icon="ri-graduation-cap-line" open={openSections.includes('learning')} onToggle={toggle}>
+            {!selected.importedReview && <Accordion id="learning" title="30-Day Learning Progress & Summary" icon="ri-graduation-cap-line" open={openSections.includes('learning')} onToggle={toggle}>
               <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-primary-50 p-4"><p className="text-[10px] font-semibold uppercase text-primary-500">Completed activities</p><p className="mt-1 text-2xl font-bold text-primary-800">{uniqueProgress.length}</p></div><div className="rounded-xl bg-accent-50 p-4"><p className="text-[10px] font-semibold uppercase text-accent-600">Completed activity time</p><p className="mt-1 text-2xl font-bold text-accent-800">{hoursLabel(learningMinutes)}</p></div><div className="rounded-xl bg-emerald-50 p-4"><p className="text-[10px] font-semibold uppercase text-emerald-600">KSBs evidenced</p><p className="mt-1 text-2xl font-bold text-emerald-800">{ksbCodes.length}</p></div></div>
               <div className="mt-4"><div className="mb-2 flex items-center justify-between"><h2 className="text-xs font-bold text-foreground-800">What the learner completed</h2><span className="text-[10px] text-foreground-400">{learningItems.length} {learningItems.length === 1 ? 'record' : 'records'}</span></div>{learningItems.length === 0 ? <Empty>No completed learning was recorded in this 30-day period.</Empty> : <div className="divide-y divide-background-200 rounded-xl border border-background-200">{learningItems.map((item) => <div key={item.key} className="flex items-start gap-3 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><AppIcon className="ri-checkbox-circle-line" /></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground-800">{item.title}</p><p className="text-xs text-foreground-400">{item.detail}</p></div><span className="text-[10px] text-foreground-400">{new Date(item.at).toLocaleDateString('en-GB')}</span></div>)}</div>}</div>
-            </Accordion>
+            </Accordion>}
+            {selected.importedReview && <Accordion id="imported-review" title="Review Details" icon="ri-file-list-3-line" open={openSections.includes('imported-review')} onToggle={toggle}><ImportedMcmSections review={selected.importedReview} /></Accordion>}
+            {!selected.importedReview && <>
             <Accordion id="previous-summary" title="Previous Meeting Summary" icon="ri-history-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'previous-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('previous-summary')} onToggle={toggle}>
               <SavedMcmAnswers sectionId="previous-summary" responses={selected.reviewResponses} emptyMessage="No previous meeting summary has been recorded." />
             </Accordion>
@@ -378,6 +538,7 @@ export default function MonthlyCoachingPage() {
               <SavedMcmAnswers sectionId="confirm-next" responses={selected.reviewResponses} emptyMessage="The next meeting confirmation has not been recorded." />
             </Accordion>
             <Accordion id="meeting-summary" title="Meeting Summary" icon="ri-file-text-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'meeting-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('meeting-summary')} onToggle={toggle}><SavedMcmAnswers sectionId="meeting-summary" responses={selected.reviewResponses} emptyMessage="No meeting summary has been recorded." /></Accordion>
+            </>}
           </>
         )}
       </div>

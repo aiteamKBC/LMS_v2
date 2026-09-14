@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { placeActivity, toggleExpandedWeek, weekComponentRows, type SidebarWeek } from '../weekPreview';
+import { placeActivity, toggleExpandedWeek, weekComponentRows, weekMonthHeadings, type SidebarWeek } from '../weekPreview';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import type { LearnerDetail } from '@/api/learnerDetail';
 
@@ -89,6 +89,29 @@ describe('toggleExpandedWeek', () => {
   });
 });
 
+describe('module month headings', () => {
+  it('groups each four teaching weeks and leaves assessments and introduction separate', () => {
+    const weeks = ['Introduction', ...Array.from({ length: 10 }, (_, index) => `Week ${index + 1}`), 'Module assessments'];
+    expect(weekMonthHeadings(weeks.map(week => ({ week })), '2026-08-03')).toEqual([
+      null, 'August 2026', null, null, null, 'September 2026', null, null, null, 'October 2026', null, null,
+    ]);
+  });
+
+  it.each([
+    ['2026-12-31', ['December 2026', 'January 2027', 'February 2027']],
+    ['2026-01-31', ['January 2026', 'February 2026', 'March 2026']],
+    ['2026-02-30', ['Month 1', 'Month 2', 'Month 3']],
+  ])('preserves calendar month order for training-plan start %s', (start, expected) => {
+    const weeks = Array.from({ length: 10 }, (_, index) => ({ week: `Week ${index + 1}` }));
+    expect(weekMonthHeadings(weeks, start).filter(Boolean)).toEqual(expected);
+  });
+
+  it('uses plan order for named or repeated weeks', () => {
+    expect(weekMonthHeadings(Array.from({ length: 6 }, () => ({ week: 'Marketing workshop' }))))
+      .toEqual(['Month 1', null, null, null, 'Month 2', null]);
+  });
+});
+
 describe('placeActivity', () => {
   // The plan as the learner detail carries it: a module list, week rows, and
   // flat component rows that buildLearnerJourney groups into the journey.
@@ -138,6 +161,21 @@ describe('placeActivity', () => {
     const placement = placeActivity(detail, { componentId: 'COMP-READ-9' }, new Set());
 
     expect(placement?.weekTitle).toBe('Week 2');
+  });
+
+  it('keeps identically named weeks and their completion counts separate', () => {
+    const repeated = {
+      ...detail,
+      week: detail.week.map((w, index) => ({ ...w, week: 'Marketing Week', weekId: `W${index + 1}` })),
+      components: detail.components.map((c) => ({ ...c, week: 'Marketing Week', weekId: c.week === 'Week 1' ? 'W1' : 'W2' })),
+    };
+    const placement = placeActivity(repeated, { componentId: 'COMP-READ-9' }, new Set(['COMP-READ-2']));
+
+    expect(placement?.weekLabel).toBe('Week 2 · Marketing Week');
+    expect(placement?.weeks.map((w) => [w.key, w.active, w.completed])).toEqual([
+      ['W1', false, 1], ['W2', true, 0],
+    ]);
+    expect(placement?.weekComponents.map((c) => c.componentId)).toEqual(['COMP-READ-9']);
   });
 
   it('has no placement for an activity that is not in the plan', () => {

@@ -32,13 +32,13 @@ export const ONBOARDING_NAV_ITEMS: SidebarNavItem[] = [
 export const FRESH_STATUS = 'Fresh user';
 
 /** Where a fresh learner is sent: the overview, which explains the wait. */
-export const FRESH_ROUTE = '/workspace/learner';
+export const FRESH_ROUTE = '/workspace/learner/dashboard';
 
 /**
  * A fresh learner's entire menu. Just the overview, because that is the only
  * page with anything to say to them.
  */
-export const FRESH_NAV_IDS = ['learner-overview'];
+export const FRESH_NAV_IDS = ['learner-home', 'learner-overview'];
 
 /** Onboarding is signed off but delivery hasn't started — see the backend's
  *  promote_to_delivery_if_ready. */
@@ -51,6 +51,7 @@ export const DELIVERY_STATUS = 'Delivery';
  * paperwork — the Apprenticeship Agreement is waiting for their signature.
  */
 export const DELIVERY_NAV_IDS = [
+  'learner-home',
   'learner-overview',
   'learner-onboarding',
   'learner-compliance-documents',
@@ -113,6 +114,7 @@ export function navItemsForStatus(
   fullNav: SidebarNavItem[],
   learnerKind?: string,
   hasPreviousLearning = false,
+  readyForLearning = false,
 ): SidebarNavItem[] {
   const commercial = learnerKind?.toLowerCase() === 'commercial';
   const availableNav = navItemsForLearnerKind(fullNav, learnerKind);
@@ -126,6 +128,7 @@ export function navItemsForStatus(
   if (isFreshStatus(programmeStatus)) return pick(FRESH_NAV_IDS);
   if (isOnboardingStatus(programmeStatus)) return commercial ? pick(FRESH_NAV_IDS) : ONBOARDING_NAV_ITEMS;
   if (isDeliveryStatus(programmeStatus)) {
+    if (commercial && readyForLearning) return availableNav;
     const ids = commercial ? FRESH_NAV_IDS : DELIVERY_NAV_IDS;
     return pick(hasPreviousLearning ? [...ids, 'learner-my-learning'] : ids);
   }
@@ -148,13 +151,16 @@ export function useFreshUserRedirect(programmeStatus: string | undefined, enable
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const isFresh = enabled && isFreshStatus(programmeStatus);
+  // Both the self dashboard and an explicitly selected learner dashboard show
+  // the waiting state. Keep the selected learner when already on either one.
+  const alreadyThere = /^\/workspace\/learner\/(?:dashboard|(?:commercial|apprenticeship)\/[^/]+\/dashboard)\/?$/.test(pathname);
 
   useEffect(() => {
     // Never redirect away from the destination itself, or it could never render.
-    if (isFresh && pathname !== FRESH_ROUTE) {
+    if (isFresh && !alreadyThere) {
       navigate(FRESH_ROUTE, { replace: true });
     }
-  }, [isFresh, pathname, navigate]);
+  }, [isFresh, alreadyThere, navigate]);
 
   return isFresh;
 }

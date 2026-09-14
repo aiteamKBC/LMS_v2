@@ -429,27 +429,10 @@ export default function CurriculumProgrammes() {
 
   // Programmes are also created from other places — the structure wizard, a
   // programme's own page, a second tab — and this page has no way to hear about
-  // those. Coming back to the tab is the moment the reader expects to be looking
-  // at the truth, so that is when it re-reads. Silent: the cards stay on screen
-  // with the previous data rather than collapsing to skeletons on every focus.
-  // (Same pattern as the staff-profile refresh in ProgrammeStructureEditor.)
-  // Read through a ref so the listeners are bound once: `reload` is a fresh
-  // closure on every render, and re-subscribing on each one would swap the
-  // handlers under the events they are meant to catch.
-  const reloadRef = useRef(reload);
-  reloadRef.current = reload;
-  useEffect(() => {
-    const refresh = () => {
-      if (document.visibilityState && document.visibilityState !== 'visible') return;
-      void reloadRef.current({ skipCache: true, silent: true });
-    };
-    window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', refresh);
-    return () => {
-      window.removeEventListener('focus', refresh);
-      document.removeEventListener('visibilitychange', refresh);
-    };
-  }, []);
+  // those. That re-read now lives in useCurriculumProgrammes, so every list of
+  // programmes gets it, and it asks with `revalidate` rather than `skipCache`:
+  // a forced overview rebuild on every tab switch cost seconds for rows the
+  // server already had current.
 
   const refreshProgrammeCards = async () => {
     const [nextKsbSets, nextStandards] = await Promise.all([
@@ -3176,18 +3159,7 @@ function ProgrammeStructureEditor({
     showProgrammeSwalToast('Saved', message);
   };
 
-  useEffect(() => {
-    const refreshStaffProfiles = () => {
-      if (document.visibilityState && document.visibilityState !== 'visible') return;
-      void reloadStaffProfiles({ silent: true });
-    };
-    window.addEventListener('focus', refreshStaffProfiles);
-    document.addEventListener('visibilitychange', refreshStaffProfiles);
-    return () => {
-      window.removeEventListener('focus', refreshStaffProfiles);
-      document.removeEventListener('visibilitychange', refreshStaffProfiles);
-    };
-  }, [reloadStaffProfiles]);
+  // The staff re-read on return now lives in useCurriculumStaffProfiles.
 
   const tabs = [
     { key: 'programme' as const, label: 'Programme', count: 1 },

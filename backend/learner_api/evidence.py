@@ -33,7 +33,7 @@ from .evidence_storage import (
     azure_configured, upload_to_quarantine, move_blob, blob_url, get_download_sas,
     delete_blob,
 )
-from login.permissions import learner_self_only, learner_self_or_staff
+from login.permissions import learner_self_or_admin, learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 
@@ -125,31 +125,19 @@ def _record_approved_evidence(cur, blob_name, original_filename, approved_path):
 
 
 def _learner_profile_ids_for_source(cur, learner_id):
-    learner_id = str(learner_id or "").strip()
-    if not learner_id:
-        return []
+    from .reflection_submissions import _learner_profile_ids_for_source as resolve
+    return resolve(cur, learner_id)
 
-    ids = {learner_id}
-    email = ""
-    cur.execute('select "Email" from enrolment."Created_users" where id::text = %s limit 1', [learner_id])
-    row = cur.fetchone()
-    if row:
-        email = str(row[0] or "").strip()
 
-    if email:
-        cur.execute(
-            """
-            select id::text
-              from "Learner".learners
-             where id::text = %s
-                or lower(email) = lower(%s)
-            """,
-            [learner_id, email],
-        )
-    else:
-        cur.execute('select id::text from "Learner".learners where id::text = %s', [learner_id])
-    ids.update(str(row[0] or "").strip() for row in cur.fetchall() if row and str(row[0] or "").strip())
-    return sorted(ids)
+def _training_plan_details(value):
+    # Raw PostgreSQL cursors may return JSON/JSONB as text. The client expects
+    # an object: forwarding text loses the entered title, placement and KSBs.
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError):
+            return None
+    return value if isinstance(value, dict) else None
 
 
 def _evidence_lineage(kind, learner_id, section_ref):
@@ -185,9 +173,8 @@ def _evidence_lineage(kind, learner_id, section_ref):
 
 
 @csrf_exempt
-# Evidence is the learner's own portfolio: staff assess what is uploaded, they
-# do not upload on the learner's behalf from the learner's own page.
-@learner_self_only(kwarg="pk")
+# Learners and admins can upload to the selected learner's portfolio.
+@learner_self_or_admin(kwarg="pk")
 def upload_evidence(request, kind, pk):
     """Multipart upload -> quarantine -> (scan) -> promote to approved.
     On approval the blob is recorded in "Learner"."Evidence"."""
@@ -343,7 +330,7 @@ def list_evidence(request, kind, pk):
             "id": str(r[0]), "filename": r[1], "contentType": r[2], "sizeBytes": r[3],
             "status": r[4], "scanResult": r[5], "sectionRef": r[6],
             "uploadedAt": r[7].isoformat() if r[7] else None,
-            "trainingPlanDetails": r[8],
+            "trainingPlanDetails": _training_plan_details(r[8]),
             "componentRef": r[9],
             "progressEntryId": r[10],
             # False once the activity has been handed in: the file is part of
@@ -453,9 +440,8 @@ def _is_submitted_for_marking(kind, learner_id, section_ref):
 
 
 @csrf_exempt
-# Same rule as upload: a learner curates their own portfolio. Staff assess what
-# is there, they do not remove a learner's file from the learner's own page.
-@learner_self_only(kwarg="pk")
+# Portfolio removal uses the same owner/admin permission as uploads.
+@learner_self_or_admin(kwarg="pk")
 def delete_evidence(request, kind, pk, file_id):
     """Remove one of the learner's own evidence files.
 

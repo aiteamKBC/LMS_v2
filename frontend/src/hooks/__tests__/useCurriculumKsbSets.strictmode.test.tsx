@@ -45,6 +45,9 @@ describe('useCurriculumKsbSets under StrictMode', () => {
     );
 
     await waitFor(() => expect(getByTestId('state')).toHaveTextContent('ready:1'));
-    expect(fetch).toHaveBeenCalledTimes(1);
+    // Counted per endpoint rather than in total: the hook also subscribes to
+    // remote writes, which seeds the cache-epoch poll with one small read.
+    const calls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.filter(([url]) => String(url).includes('/ksb-sets/'))).toHaveLength(1);
   });
 });

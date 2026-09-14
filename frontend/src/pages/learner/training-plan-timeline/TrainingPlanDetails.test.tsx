@@ -34,12 +34,137 @@ beforeEach(()=>{HTMLElement.prototype.scrollIntoView=vi.fn();vi.useFakeTimers({t
 afterEach(()=>{cleanup();vi.useRealTimers();vi.restoreAllMocks();HTMLElement.prototype.scrollIntoView=originalScrollIntoView;});
 
 describe('Dashboard training plan controls',()=>{
-  it('jumps to the timeline below the cards',()=>{
+  it('switches between monthly sessions and reviews while retaining all filters',()=>{
+    renderBoard();
+    fireEvent.change(screen.getByRole('combobox',{name:'Filter monthly sessions'}),{target:{value:'pending'}});
+    fireEvent.change(screen.getByRole('combobox',{name:'Focus module'}),{target:{value:'current:NEW'}});
+    fireEvent.click(screen.getByRole('tab',{name:'Reviews'}));
+    expect(screen.getByRole('region',{name:'Programme reviews'})).toBeVisible();
+    expect(screen.queryByRole('region',{name:'Monthly study plan'})).not.toBeInTheDocument();
+    expect(screen.getByRole('tabpanel')).toHaveAccessibleName('Reviews');
+    fireEvent.click(screen.getByRole('tab',{name:'Live Sessions'}));
+    expect(screen.getByRole('combobox',{name:'Filter monthly sessions'})).toHaveValue('pending');
+    expect(screen.getByRole('combobox',{name:'Focus module'})).toHaveValue('current:NEW');
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-09');
+    expect(screen.getByText('Missed session')).toBeVisible();
+    expect(screen.queryByRole('region',{name:'Programme reviews'})).not.toBeInTheDocument();
+  });
+
+  it('supports keyboard switching between the session and review tabs',()=>{
+    renderBoard();
+    const sessionsTab=screen.getByRole('tab',{name:'Live Sessions'});
+    const reviewsTab=screen.getByRole('tab',{name:'Reviews'});
+    sessionsTab.focus();
+    fireEvent.keyDown(sessionsTab,{key:'ArrowRight'});
+    expect(reviewsTab).toHaveFocus();
+    expect(reviewsTab).toHaveAttribute('aria-selected','true');
+    fireEvent.keyDown(reviewsTab,{key:'Home'});
+    expect(sessionsTab).toHaveFocus();
+    expect(sessionsTab).toHaveAttribute('aria-selected','true');
+  });
+
+  it('synchronises Gantt bars and module names with the overview without changing the month or session filter',()=>{
+    renderBoard();
+    fireEvent.change(screen.getByLabelText('Focus month'),{target:{value:'2026-12'}});
+    fireEvent.change(screen.getByRole('combobox',{name:'Filter monthly sessions'}),{target:{value:'completed'}});
+    fireEvent.click(screen.getByRole('button',{name:'Show Marketing overview'}));
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-12');
+    expect(screen.getByRole('combobox',{name:'Focus module'})).toHaveValue('legacy:10');
+    expect(screen.getByRole('button',{name:'Show Marketing overview'})).toHaveAttribute('aria-pressed','true');
+    expect(within(screen.getByRole('region',{name:'Module overview'})).getByRole('heading',{name:'Marketing'})).toBeVisible();
+    fireEvent.click(screen.getByRole('button',{name:'New module'}));
+    expect(within(screen.getByRole('region',{name:'Module overview'})).getByRole('heading',{name:'New module'})).toBeVisible();
+    expect(screen.getByRole('combobox',{name:'Focus module'})).toHaveValue('current:NEW');
+    expect(screen.getByRole('combobox',{name:'Filter monthly sessions'})).toHaveValue('completed');
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-12');
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('destination')).not.toBeInTheDocument();
+  });
+
+  it('keeps module selection when opening and closing the full-screen timeline',()=>{
+    renderBoard();
+    fireEvent.click(screen.getByRole('button',{name:'Full screen'}));
+    fireEvent.click(screen.getByRole('button',{name:'Show New module overview'}));
+    expect(within(screen.getByRole('complementary')).getByRole('heading',{name:'New module'})).toBeVisible();
+    fireEvent.click(screen.getByRole('button',{name:'Exit full screen'}));
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region',{name:'Module overview'})).getByRole('heading',{name:'New module'})).toBeVisible();
+    expect(screen.getByRole('combobox',{name:'Focus module'})).toHaveValue('current:NEW');
+  });
+
+  it('restores the selected module plan, timetable, activity breakdown and mapped KSBs from compact summaries',()=>{
+    const data=fixture();
+    data.modules[0]={...data.modules[0],programme_name:'Marketing Level 4',cohort_name:'October 2026',group_name:'G1',
+      total_otjh:140,weeks_number:16,sessions_number:16,session_week_day:'Thursday',session_start_time:'09:00',session_end_time:'11:00',
+      coach_name:'Module coach',learning_outcomes:['Plan a campaign','Measure campaign results']};
+    data.sessions=[];
+    render(<MemoryRouter><TrainingPlanDetails data={data} subjects={[{
+      id:'legacy:10',title:'Marketing',source:'legacy',total:345,completed:1,dates:['2026-10-05'],moduleIds:['M10'],sessionTitles:[],
+      activityCounts:{reading:67,powerpoint:48,assignment:6,quiz:48,live_session:16,podcast:48,video:112},ksbCodes:['K1','S2','B3'],ksbMappingMissing:false,
+    }]} kind="commercial" learnerId="125" initialSubjectId="legacy:10" onRefresh={vi.fn()} onRetryContract={vi.fn()} /></MemoryRouter>);
+    const panel=within(screen.getByRole('region',{name:'Module overview'}));
+    for(const value of ['140 hours','Thursday · 09:00–11:00','Cohort: October 2026','Group: G1','Marketing Level 4','Module coach','Assigned tutor','1 of 345 activities completed · 344 remaining']) {
+      expect(panel.getByText(value)).toBeVisible();
+    }
+    expect(panel.queryByText('Planned live sessions')).not.toBeInTheDocument();
+    expect(panel.queryByText('Next session')).not.toBeInTheDocument();
+    expect(panel.getByText('Videos').parentElement).toHaveTextContent('112');
+    const ksbToggle=panel.getByText('View 3 mapped KSBs');
+    fireEvent.click(ksbToggle);
+    expect(ksbToggle.closest('details')).toHaveAttribute('open');
+    expect(panel.getByText('S2')).toBeVisible();
+    fireEvent.click(panel.getByText('Learning outcomes (2)'));
+    expect(panel.getByText('Measure campaign results')).toBeVisible();
+  });
+
+  it('shows future programme reviews even when none falls within the selected module',()=>{
+    const data=fixture();
+    data.reviews=[review('monthly','2026-11-30','not-scheduled','mcr'),review('progress','2027-03-18')];
+    renderBoard(data);
+    fireEvent.click(screen.getByRole('tab',{name:'Reviews'}));
+    const panel=within(screen.getByRole('region',{name:'Programme reviews'}));
+    expect(panel.getByText('0 of 2 completed · Whole programme')).toBeVisible();
+    expect(panel.getAllByRole('link',{name:'Schedule'})).toHaveLength(2);
+    expect(panel.queryByText('Your reviews will appear here once planned.')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox',{name:'Focus module'}),{target:{value:'current:NEW'}});
+    expect(panel.getAllByRole('article')).toHaveLength(2);
+    fireEvent.click(panel.getAllByRole('link',{name:'Schedule'})[0]);
+    expect(screen.getByTestId('destination')).toHaveTextContent('event=monthly&action=schedule');
+  });
+
+  it('offers Attend only for an active booking with a meeting link and keeps completed reviews viewable',()=>{
+    const data=fixture();
+    data.reviews=[{...review('join','2026-09-15','scheduled'),meetingLink:'https://teams.microsoft.com/l/meetup-join/review',invited:true},
+      {...review('finished','2026-09-01','completed'),meetingLink:'https://teams.microsoft.com/l/meetup-join/old'},
+      {...review('cancelled','2026-09-02','cancelled'),meetingLink:'https://teams.microsoft.com/l/meetup-join/cancelled'},
+      review('pending','2026-09-16','scheduled')];
+    renderBoard(data);
+    fireEvent.click(screen.getByRole('tab',{name:'Reviews'}));
+    const panel=within(screen.getByRole('region',{name:'Programme reviews'}));
+    expect(panel.getAllByRole('article')).toHaveLength(3);
+    expect(panel.getAllByRole('link',{name:'Attend'})).toHaveLength(1);
+    expect(panel.getByRole('link',{name:'Attend'})).toHaveAttribute('href','https://teams.microsoft.com/l/meetup-join/review');
+    expect(panel.getByRole('link',{name:'Attend'})).toHaveAttribute('target','_blank');
+    expect(panel.getByRole('link',{name:'View'})).toHaveAttribute('href','/learner/calendar?kind=commercial&learner=125&event=finished');
+    expect(panel.getByText('Meeting link pending')).toBeVisible();
+    expect(panel.getByRole('link',{name:'View booking'})).toBeVisible();
+  });
+
+  it('keeps the plan visible without activity or meeting links before cohort start',()=>{
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={subjects} kind="commercial" learnerId="499"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} canOpenActivities={false}/></MemoryRouter>);
+    expect(screen.getByRole('region',{name:'Monthly study plan'})).toBeVisible();
+    expect(screen.getByRole('region',{name:'Module timeline'})).toBeVisible();
+    expect([...document.querySelectorAll('a')].filter(link=>link.getAttribute('href')?.startsWith('/learner/modules/'))).toHaveLength(0);
+    expect(screen.queryByRole('link',{name:'Join Teams'})).not.toBeInTheDocument();
+  });
+  it('places the timeline beside the module overview below monthly learning',()=>{
     renderBoard();
     expect(screen.getByRole('link',{name:'View full timeline'})).toHaveAttribute('href','#module-timeline');
     const cards=screen.getByRole('region',{name:'Module overview'});
     const timeline=screen.getByRole('region',{name:'Module timeline'});
-    expect(cards.compareDocumentPosition(timeline)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(timeline.parentElement?.parentElement).toBe(cards.parentElement);
+    expect(timeline.compareDocumentPosition(cards)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
   it('moves the month controls with the panel and supports year boundaries',()=>{
     renderBoard();
@@ -68,7 +193,7 @@ describe('Dashboard training plan controls',()=>{
     expect(screen.getByRole('combobox',{name:'Focus module'})).toHaveValue('current:NEW');
     expect(within(screen.getByRole('region',{name:'Module overview'})).getByRole('heading',{name:'New module'})).toBeVisible();
     expect(screen.queryByTestId('destination')).not.toBeInTheDocument();
-    expect(screen.getByRole('complementary',{name:'Timeline module details'})).toBeVisible();
+    expect(screen.queryByRole('complementary',{name:'Timeline module details'})).not.toBeInTheDocument();
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
   });
   it('preserves selected month calculations and filters actual attendance',()=>{
@@ -101,9 +226,10 @@ describe('Dashboard training plan controls',()=>{
     fireEvent.click(screen.getAllByRole('link',{name:label})[0]);
     expect(screen.getByTestId('destination')).toHaveTextContent('/learner/modules/commercial/125?subject=legacy%3A10');
   });
-  it.each([['Book now','overdue'],['View booking','booked'],['View','done']])('opens %s on the specific review',(label,id)=>{
+  it.each([['Schedule','overdue'],['View booking','booked'],['View','done']])('opens %s on the specific review',(label,id)=>{
     renderBoard();
-    const panel=within(screen.getByRole('region',{name:'Reviews this period'}));
+    fireEvent.click(screen.getByRole('tab',{name:'Reviews'}));
+    const panel=within(screen.getByRole('region',{name:'Programme reviews'}));
     fireEvent.click(panel.getAllByRole('link',{name:label})[0]);
     expect(screen.getByTestId('destination')).toHaveTextContent(`/learner/calendar?kind=commercial&learner=125&event=${id}`);
   });
@@ -112,12 +238,15 @@ describe('Dashboard training plan controls',()=>{
     fireEvent.click(screen.getByRole('link',{name:'Progress Review on 8 Sept'}));
     expect(screen.getByTestId('destination')).toHaveTextContent('event=overdue');
     cleanup();renderBoard();
+    fireEvent.click(screen.getByRole('tab',{name:'Reviews'}));
     fireEvent.click(screen.getByRole('link',{name:'View all your reviews'}));
     expect(screen.getByTestId('destination')).toHaveTextContent('/learner/progress-reviews?kind=commercial&learner=125');
   });
   it('uses the assigned coach booking URL and exact Teams occurrence URL',()=>{
     renderBoard();
+    fireEvent.click(screen.getByRole('tab',{name:'Reviews'}));
     for(const label of ['Book a support session'])expect(screen.getByRole('link',{name:label})).toHaveAttribute('href','https://outlook.office.com/book/assigned-coach');
+    fireEvent.click(screen.getByRole('tab',{name:'Live Sessions'}));
     for(const label of ['Join Teams']){
       const link=screen.getByRole('link',{name:label});
       expect(link).toHaveAttribute('href','https://teams.microsoft.com/l/meetup-join/verified');
@@ -126,9 +255,11 @@ describe('Dashboard training plan controls',()=>{
   });
   it('uses a support booking fallback and keeps absent bookings/sessions non-interactive',()=>{
     const data=fixture();data.reviews=[];data.sessions=[];renderBoard(data);
+    fireEvent.click(screen.getByRole('tab',{name:'Reviews'}));
     expect(screen.getAllByRole('link',{name:'Book a support session'})).toHaveLength(1);
     expect(screen.queryByRole('link',{name:'Join live session'})).not.toBeInTheDocument();
     cleanup();data.coach.bookingUrl=null;renderBoard(data);
+    fireEvent.click(screen.getByRole('tab',{name:'Reviews'}));
     expect(screen.queryByRole('link',{name:/support session/i})).not.toBeInTheDocument();
     expect(screen.queryByRole('link',{name:'Book review'})).not.toBeInTheDocument();
   });

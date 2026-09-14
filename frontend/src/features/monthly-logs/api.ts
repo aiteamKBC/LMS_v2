@@ -4,7 +4,7 @@ import type { ActivityContent, JournalSummary, MonthDetail, MonthState, Signatur
 
 export type LogMonth = MonthState & { source: 'legacy' | 'lms' };
 export type LogDetail = MonthDetail & { source: 'legacy' | 'lms' };
-export type LogSummary = JournalSummary & {
+export type LogSummary = Omit<JournalSummary, 'months'> & {
   months: LogMonth[]; total_months: number; completed_months: number; read_only: boolean; csrf_token: string;
 };
 export type LogLearner = { id: number; name: string; programme: string };
@@ -27,6 +27,16 @@ export async function getLogContent(id: string, month: string, rowId: number, pe
   })) };
 }
 export const getLogLearners = () => read<{ learners: LogLearner[] }>('learners/');
+
+export async function completeLogMonth(id: string, month: string, csrfToken: string, perspective: LogPerspective = 'learner') {
+  const response = await fetch(url(`${id}/${month}/complete/`, perspective), {
+    method: 'POST', credentials: 'include', headers: { 'X-CSRFToken': csrfToken },
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) throw new Error(data?.error || 'Could not complete this month. Please try again.');
+  invalidateLearnerReads();
+  return data as LogDetail;
+}
 
 export async function signLogMonth(id: string, month: string, digest: string, blob: Blob, capture: SignatureCaptureMethod, csrfToken: string, perspective: LogPerspective = 'coach') {
   const form = new FormData();

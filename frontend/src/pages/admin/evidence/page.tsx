@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { SelectMenu } from '@/components/feature/SelectField';
+import { Modal } from '@/pages/users/components/Modal';
 import {
   fetchClassifiedLearners,
   fetchLearnerAssignments,
@@ -52,6 +54,7 @@ export default function AdminEvidencePage() {
 
 function ClassifiedLearnerList() {
   const navigate = useNavigate();
+  const [summaryLearner, setSummaryLearner] = useState<ClassifiedLearner | null>(null);
   const [draft, setDraft] = useState(EMPTY_FILTERS);
   const [filters, setFilters] = useState<ClassifiedLearnerQuery>({});
   const [page, setPage] = useState(1);
@@ -127,7 +130,7 @@ function ClassifiedLearnerList() {
       <DataPanel loading={loading && !data} error={error} empty={learners.length === 0} emptyMessage="No active learners match these filters." onRetry={reload}>
         <div className="overflow-hidden rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)]">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1180px] text-[12px]">
+            <table className="w-full min-w-[960px] text-[12px]">
               <thead>
                 <tr className="border-b border-foreground-300/60 bg-background-100/40">
                   {['Learner', 'Programme', 'Found', 'Evaluated', 'Selected', 'Readiness', 'Portfolio summary'].map(column => (
@@ -137,7 +140,7 @@ function ClassifiedLearnerList() {
               </thead>
               <tbody>
                 {learners.map(learner => (
-                  <LearnerRow key={learner.learnerId} learner={learner} onOpen={() => navigate(`/admin/evidence/${learner.learnerId}`)} />
+                  <LearnerRow key={learner.learnerId} learner={learner} onOpen={() => navigate(`/admin/evidence/${learner.learnerId}`)} onSummary={() => setSummaryLearner(learner)} />
                 ))}
               </tbody>
             </table>
@@ -145,13 +148,28 @@ function ClassifiedLearnerList() {
           <Pager page={page} pageSize={PAGE_SIZE} count={data?.count ?? 0} onPage={setPage} />
         </div>
       </DataPanel>
+      {summaryLearner && (
+        <Modal title="Portfolio summary" size="max-w-2xl" onClose={() => setSummaryLearner(null)}>
+          <div className="mb-5 flex items-start gap-3 rounded-xl bg-primary-50 p-4">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700">
+              <AppIcon className="ri-file-text-line text-xl" />
+            </span>
+            <div className="min-w-0">
+              <h3 className="break-words text-sm font-semibold text-foreground-900">{summaryLearner.fullName}</h3>
+              <p className="mt-1 break-words text-xs text-foreground-600">{summaryLearner.programme}</p>
+            </div>
+          </div>
+          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground-700">{summaryLearner.portfolioSummary}</p>
+        </Modal>
+      )}
     </AdminPage>
   );
 }
 
-function LearnerRow({ learner, onOpen }: { learner: ClassifiedLearner; onOpen: () => void }) {
+function LearnerRow({ learner, onOpen, onSummary }: { learner: ClassifiedLearner; onOpen: () => void; onSummary: () => void }) {
+  const hasSummary = Boolean(learner.portfolioSummary?.trim());
   return (
-    <tr className="border-b border-background-100/70 hover:bg-primary-50/30">
+    <tr className="border-b border-background-100/70">
       <td className="px-3 py-3">
         <button type="button" onClick={onOpen} className="text-left font-semibold text-primary-700 hover:underline">
           {learner.fullName}
@@ -162,7 +180,14 @@ function LearnerRow({ learner, onOpen }: { learner: ClassifiedLearner; onOpen: (
       <td className="px-3 py-3 tabular-nums text-foreground-700">{learner.uniqueAssignmentsEvaluated}</td>
       <td className="px-3 py-3 tabular-nums font-semibold text-foreground-800">{learner.assignmentsSelected}</td>
       <td className="px-3 py-3"><StatusBadge status={label(learner.portfolioReadiness)} tone={readinessTone(learner.portfolioReadiness)} /></td>
-      <td className="max-w-[280px] px-3 py-3 text-foreground-500"><span className="line-clamp-3">{learner.portfolioSummary || '—'}</span></td>
+      <td className="px-3 py-3 text-center">
+        <button type="button" onClick={onSummary} disabled={!hasSummary} aria-haspopup="dialog"
+          aria-label={hasSummary ? `View portfolio summary for ${learner.fullName}` : `No portfolio summary available for ${learner.fullName}`}
+          title={hasSummary ? 'View portfolio summary' : 'No portfolio summary available'}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-700 shadow-sm hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40">
+          <AppIcon className="ri-file-text-line text-lg" />
+        </button>
+      </td>
     </tr>
   );
 }

@@ -1,6 +1,6 @@
 import json
 from contextlib import nullcontext
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
@@ -406,6 +406,12 @@ class LearnerProfileResolutionTests(SimpleTestCase):
     exactly why the explicit column exists.
     """
 
+    def setUp(self):
+        patcher = patch('learner_api.identity.EnrolmentUser.all_learners.filter')
+        self.source_filter = patcher.start()
+        self.source_filter.return_value.exclude.return_value.exists.return_value = False
+        self.addCleanup(patcher.stop)
+
     @staticmethod
     def _returns(*results):
         """Make ``LearnerProfile.objects.filter(...).first()`` yield each result
@@ -447,7 +453,7 @@ class LearnerProfileResolutionTests(SimpleTestCase):
         self.assertIs(result, expected)
         self.assertEqual(calls, [
             {"enrolment_id": 19, "lifecycle_status": "active"},
-            {"email__iexact": "Learner@Example.com", "lifecycle_status": "active"},
+            {"email__iexact": "Learner@Example.com", "enrolment_id__isnull": True, "lifecycle_status": "active"},
         ])
 
     @patch("learner_api.identity.LearnerProfile.objects.filter")
@@ -482,7 +488,7 @@ class LearnerProfileResolutionTests(SimpleTestCase):
         self.assertIs(result, expected)
         self.assertEqual(calls, [
             {"enrolment_id": 19, "lifecycle_status": "active"},
-            {"pk": 19, "lifecycle_status": "active"},
+            {"pk": 19, "enrolment_id__isnull": True, "lifecycle_status": "active"},
         ])
 
     @patch("learner_api.identity.LearnerProfile.objects.filter")
@@ -502,8 +508,16 @@ class LearnerProfileResolutionTests(SimpleTestCase):
         # Never a third, pk-based lookup.
         self.assertEqual(calls, [
             {"enrolment_id": 19, "lifecycle_status": "active"},
-            {"email__iexact": "missing@example.com", "lifecycle_status": "active"},
+            {"email__iexact": "missing@example.com", "enrolment_id__isnull": True, "lifecycle_status": "active"},
         ])
+
+    @patch('learner_api.identity.LearnerProfile.objects.filter')
+    def test_duplicate_source_email_does_not_claim_unlinked_work(self, profile_filter):
+        profile = SimpleNamespace(id=2, enrolment_id=None, save=Mock())
+        profile_filter.side_effect = self._returns(None, profile)[0]
+        self.source_filter.return_value.exclude.return_value.exists.return_value = True
+        self.assertIsNone(learner_profile_for_source(SimpleNamespace(email='shared@example.com'), 500))
+        profile.save.assert_not_called()
 
 
 class AttendanceSummaryTests(SimpleTestCase):
@@ -539,6 +553,28 @@ class AttendanceSummaryTests(SimpleTestCase):
 
     def test_returns_none_without_session_rows(self):
         self.assertIsNone(_summarize_attendance([]))
+
+    @override_settings(TIME_ZONE='Europe/London')
+    def test_only_counts_sessions_up_to_now_in_the_business_timezone(self):
+        common = {
+            'learner_id': 2, 'learner_name': 'Test Learner',
+            'learner_email': 'learner@example.com', 'minutes_late': 0,
+            'catchup_completed': False, 'updated_at': None,
+        }
+        now = datetime(2026, 9, 13, 12, tzinfo=timezone.utc)  # 13:00 UK
+        rows = [
+            {**common, 'session_date': date(2026, 9, 12), 'attendance_status': 'present'},
+            {**common, 'session_date': date(2026, 9, 13), 'session_start_time': time(12, 30), 'attendance_status': 'late'},
+            {**common, 'session_date': date(2026, 9, 13), 'session_start_time': time(13), 'attendance_status': 'absent'},
+            {**common, 'session_date': date(2026, 9, 13), 'session_start_time': time(14), 'attendance_status': 'absent'},
+            {**common, 'session_date': date(2026, 9, 14), 'attendance_status': 'present', 'source': 'microsoft-teams'},
+        ]
+        summary = _summarize_attendance(rows, now=now)
+        self.assertEqual((summary['present'], summary['sessions'], summary['attendanceRate']), (2, 3, 67))
+        self.assertEqual(len(summary['sessionHistory']), 3)
+        self.assertEqual(summary['lastSessionDate'], '2026-09-13')
+        self.assertEqual(summary['source'], 'kbc-attendance')
+        self.assertIsNone(_summarize_attendance(rows[3:], now=now))
 
     def test_late_status_counts_as_attended(self):
         rows = [
@@ -693,9 +729,11 @@ class TeamsAttendanceEligibilityTests(SimpleTestCase):
 
 
 class LearnerAttendanceEndpointTests(SimpleTestCase):
+    @patch('learner_api.attendance_confirmation.read_confirmations', return_value={})
+    @patch('learner_api.attendance_lectures.read_native_occurrences', return_value=[])
     @patch('learner_api.attendance.fetch_verified_teams_attendance_rows', return_value=[])
     @patch('learner_api.attendance.fetch_kbc_attendance_rows', return_value=[])
-    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams):
+    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams, scheduled, confirmations):
         source = SimpleNamespace(
             id=19,
             username='Test Learner',
@@ -1227,7 +1265,7 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(result, fetch_from_profile_source.return_value)
         resolve_programme_id.assert_called_once_with("Programme A", training_plan=[{"moduleId": "MOD-1"}])
-        fetch_for_programme.assert_called_once_with("PROG-1", "Programme A")
+        fetch_for_programme.assert_not_called()
         resolve_profile_source.assert_called_once_with(
             programme_id="PROG-1",
             programme="Programme A",
@@ -1257,7 +1295,7 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(result, fetch_from_profile_source.return_value)
         resolve_programme_id.assert_called_once_with("Programme A", training_plan=[{"moduleId": "MOD-1"}])
-        fetch_for_programme.assert_called_once_with("PROG-1", "Programme A")
+        fetch_for_programme.assert_not_called()
         resolve_profile_source.assert_called_once_with(
             programme_id="PROG-1",
             programme="Programme A",

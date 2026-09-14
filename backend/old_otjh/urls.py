@@ -7,6 +7,7 @@ urlpatterns = [
     path('old-otjh/monitor/', views.monitor_dashboard, name='old-otjh-monitor'),
     path('old-otjh/csrf/', views.csrf, name='old-otjh-csrf'),
     path('old-otjh/me/summary/', views.summary, name='old-otjh-summary'),
+    path('old-otjh/workspace-link/', views.workspace_link, name='old-otjh-workspace-link'),
     path('old-otjh/start/', views.start, name='old-otjh-start'),
     path('old-otjh/coach/learners/', views.coach_learners, name='old-otjh-coach-learners'),
     path('old-otjh/refresh-months/', views.refresh_months, name='old-otjh-refresh-months'),

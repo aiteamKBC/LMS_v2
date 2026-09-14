@@ -1,3 +1,4 @@
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useEffect, useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -134,14 +135,14 @@ export default function LearnerEventsPage() {
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Events" pageSubtitle="Community workshops, networking and celebrations" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Apprentice` : 'Apprentice'}>
-      <main className="w-full space-y-4 p-3 sm:p-4 md:space-y-5 md:p-6">
-        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#17032d] via-[#33105e] to-[#6a2ca0] p-4 text-white shadow-[0_18px_50px_rgba(39,12,73,0.18)] sm:rounded-3xl sm:p-6 md:p-7">
-          <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-fuchsia-300/15 blur-3xl"></div>
+      <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl p-4 text-primary-800 sm:rounded-3xl sm:p-6 md:p-6 workspace-page-hero">
+          <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-fuchsia-300/15 blur-3xl hidden"></div>
           <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1fr)_500px] lg:items-end">
-            <div><span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.15em] text-secondary-100"><AppIcon className="ri-calendar-event-line text-secondary-300"></AppIcon>Community calendar</span><h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Connect beyond the classroom</h1><p className="mt-2 max-w-xl text-sm leading-6 text-white/70">Find workshops, networking sessions and community events, with all the details you need in one place.</p></div>
+            <div><span className="inline-flex items-center gap-2 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.15em] text-primary-600"><AppIcon className="ri-calendar-event-line text-primary-600"></AppIcon>Community calendar</span><h1 className="mt-3 text-[22px] font-bold leading-tight text-primary-800 sm:text-2xl md:text-3xl">Connect beyond the classroom</h1><p className="mt-2 max-w-xl text-sm leading-6 text-foreground-500">Find workshops, networking sessions and community events, with all the details you need in one place.</p></div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">{[
               ['All events', events.length, 'ri-calendar-2-line', 'text-violet-200'], ['Upcoming', counts.upcoming, 'ri-calendar-schedule-line', 'text-amber-300'], ['Live now', counts.ongoing, 'ri-live-line', 'text-blue-300'], ['Attendances', counts.attendees, 'ri-group-line', 'text-pink-300'],
-            ].map(([label, value, icon, colour]) => <div key={String(label)} className="learner-hero-kpi flex min-w-0 items-center gap-2.5 rounded-xl border border-white/[0.09] bg-white/[0.08] p-3 backdrop-blur-sm sm:rounded-2xl sm:p-3.5"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.08]"><AppIcon className={`${icon} ${colour}`}></AppIcon></span><div className="min-w-0"><p className="text-lg font-bold text-white sm:text-xl">{loading ? '–' : value}</p><p className="truncate text-[10px] text-white/60">{label}</p></div></div>)}</div>
+            ].map(([label, value, icon]) => <div key={String(label)} className="ui-metric-card coach-metric-card"><WorkspaceMetricContent label={String(label)} value={loading ? '?' : value} icon={String(icon)} valuePosition="stacked" /></div>)}</div>
           </div>
         </section>
 

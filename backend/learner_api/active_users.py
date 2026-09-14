@@ -1854,10 +1854,12 @@ def mirror_placement_to_enrolment(profile):
 def sync_active_user(source):
     """Upsert one permanent learner and refresh authored plan/KSB child rows."""
     from .apprenticeship_agreement import _group_dates
+    from .learner_dates import learner_date_values
 
     status = _s(getattr(source, "programme_status", ""))
     start_date, end_date, _ = _group_dates(source)
     defaults = {
+        **learner_date_values(source),
         "full_name": _s(getattr(source, "username", ""))
         or _s(getattr(source, "email", ""))
         or f"Learner {source.id}",
@@ -1880,16 +1882,9 @@ def sync_active_user(source):
     }
     try:
         with transaction.atomic(using="enrolment"):
-            source_email = _s(getattr(source, "email", "")).strip()
             # Prefer the explicit link; fall back to email for profiles created
             # before enrolment_id existed (see identity.learner_profile_for_source).
-            learner = LearnerProfile.objects.filter(enrolment_id=source.id).first()
-            if learner is None:
-                learner = (
-                    LearnerProfile.objects.filter(email__iexact=source_email).first()
-                    if source_email
-                    else LearnerProfile.objects.filter(pk=source.id).first()
-                )
+            learner = learner_profile_for_source(source, source.id)
             # Whether found or about to be created, it belongs to this source row.
             defaults["enrolment_id"] = source.id
             # Carried across on every upsert so the profile never has to guess

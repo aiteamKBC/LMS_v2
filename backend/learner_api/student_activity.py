@@ -11,7 +11,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from audit_api.last_audit_ledger_views import _connection, _is_completed
 from audit_api.learner_exclusions import is_excluded_learner
-from login.permissions import learner_self_or_staff, learner_self_only, staff_only
+from login.permissions import learner_self_or_staff, learner_self_or_admin, staff_only
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
@@ -23,7 +23,7 @@ from .student_activity_access import student_activity_available
 from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules, read_activity_sources
 from . import subject_store, subject_source
 from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list)
-from .subject_dates import activity_schedule
+from .builder_activity_dates import read_builder_activity_dates
 
 CURRENT_SUBJECTS_SQL = '''
     WITH source AS (
@@ -44,14 +44,6 @@ CURRENT_SUBJECTS_SQL = '''
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
     WHERE (cm.deleted_at IS NULL OR cm.deleted_via_parent IS NOT NULL)
-'''
-
-CURRENT_DATES_SQL = '''
-    SELECT c.id,c.title,c.created_at,w.title FROM curriculum.components c
-    JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-    WHERE c.module_catalogue_id=ANY(%s)
-      AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)
-      AND (w.deleted_at IS NULL OR w.deleted_via_parent IS NOT NULL)
 '''
 
 def _direct_progress_records(enrolment_id):
@@ -300,7 +292,10 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
                               'passed': row.get('quiz_passed'), 'attempt_number': row.get('quiz_attempt_number'),
                               'answers': historical_answers, 'status': row.get('status')},
                'persistence_ready': saved['ready'],
-               'can_attempt': bool(account and account.role == 'learner' and int(account.subject_id) == pk and saved['ready']),
+               'can_attempt': bool(account and saved['ready'] and (
+                   account.role == 'admin'
+                   or (account.role == 'learner' and int(account.subject_id) == pk)
+               )),
                'csrf_token': get_token(request)}
     return _private(payload)
 
@@ -353,7 +348,7 @@ def subject_file(request, kind, pk, group_id, activity_id, attachment_id):
 
 
 @require_POST
-@learner_self_only(kwarg='pk')
+@learner_self_or_admin(kwarg='pk')
 def start_subject_attempt(request, kind, pk, group_id, activity_id):
     try:
         aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
@@ -374,7 +369,7 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
 
 
 @require_POST
-@learner_self_only(kwarg='pk')
+@learner_self_or_admin(kwarg='pk')
 def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id):
     try:
         if len(request.body) > 256 * 1024:
@@ -452,10 +447,7 @@ def subject_covers(request, pk):
                 cur, list(dict.fromkeys(refs + [f"current:{subject['id']}" for subject in current_subjects])),
             )
             covers.update(builder_covers)
-            cur.execute(CURRENT_DATES_SQL, [[subject['id'] for subject in current_subjects]])
-            dates = {str(component_id): activity_schedule(title, None, created_at,
-                     section_title=week_title, section_source='builder_section_title')
-                     for component_id, title, created_at, week_title in cur.fetchall()}
+            dates = read_builder_activity_dates(cur, [subject['id'] for subject in current_subjects])
         return _private({'covers': covers, 'can_manage': False,
                          'persistence_ready': available, 'csrf_token': get_token(request),
                          'activity_dates': dates, 'current_subjects': current_subjects,

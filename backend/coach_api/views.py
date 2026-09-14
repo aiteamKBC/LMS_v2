@@ -76,6 +76,7 @@ from learner_api.student_activity_data import read_audit_hour_totals_bulk, read_
 from learner_api.attendance import fetch_kbc_attendance_rates
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
+    slugify as curriculum_slugify,
     actual_cohort_identity,
     actual_group_identity,
     apply_teams_meeting_options,
@@ -101,11 +102,15 @@ from curriculum_api.views import (
     parse_int,
     parse_json_value,
     program_config_by_id,
+    programme_config_by_identifier,
+    programme_config_id,
     programme_identity,
     schedule_time_parts,
     teams_meeting_base_path,
     teams_online_meeting_from_join_url,
 )
+from curriculum_api import review_instances as curriculum_review_instances
+from curriculum_api import reviews as curriculum_reviews
 
 
 logger = logging.getLogger(__name__)
@@ -300,9 +305,181 @@ COACH_RAG_LABELS = {
     "amber": "Amber",
     "red": "Red",
 }
+# Legacy fixed-interval constants. No longer the source of truth for MCM/PR
+# occurrence dates -- see resolve_curriculum_review_occurrences, which reads
+# recurrence/eligibility from curriculum.review_templates instead. A Review
+# Type never implies a recurrence: Curriculum's schedule is the only source
+# of truth for when a Review of any type happens. Kept only
+# as the fallback numbering base for progress_reviews_api.period's PPTX pack
+# generation until a programme's Progress Review template is configured in
+# Curriculum (see that module for why the two must agree).
 TIMETABLE_MCR_INTERVAL = timedelta(days=30)
 TIMETABLE_PROGRESS_REVIEW_INTERVAL = timedelta(weeks=12)
 TIMETABLE_DEFAULT_DURATION_MINUTES = 60
+
+# Curriculum review_types.code values -- the Curriculum-side classification
+# every Review template carries. Coach never matches a Review by its display
+# name: a Review named "Monthly Learner Catch-up" whose TYPE is Monthly
+# Coaching Meeting still routes to the MCR bucket, and renaming it changes
+# nothing. These codes say "which of these two Coach pages" and nothing about
+# a Review's business rules -- recurrence, questions, signatures and
+# eligibility all come from the template itself.
+REVIEW_TYPE_CODE_MCM = "mcm"
+REVIEW_TYPE_CODE_PROGRESS_REVIEW = "progress_review"
+
+# Every Curriculum Review of any other type -- a custom type a curriculum
+# admin created, or a template not yet classified -- still belongs on the
+# calendar, under this generic event type. It is a routing bucket only, and
+# it deliberately leaves the two filters above untouched.
+GENERIC_REVIEW_EVENT_TYPE = "review"
+
+REVIEW_TYPE_EVENT_TYPES = {
+    REVIEW_TYPE_CODE_MCM: "mcr",
+    REVIEW_TYPE_CODE_PROGRESS_REVIEW: "progress-review",
+}
+
+
+def review_event_type_for_type_code(review_type_code: str | None) -> str:
+    """Which calendar bucket a Review's occurrences appear under, decided by
+    its Review Type code alone.
+
+    Lossy on purpose -- it exists to keep the two dedicated Coach pages
+    working. Anything that needs to tell one custom Review Type from another
+    reads the review_type_* fields instead (see review_type_event_fields).
+    """
+    return REVIEW_TYPE_EVENT_TYPES.get(clean_text(review_type_code).lower(), GENERIC_REVIEW_EVENT_TYPE)
+
+
+def review_type_event_fields(review_type: dict | None) -> dict:
+    """The Review Type block every review-driven Coach calendar event carries.
+
+    Same four fields, same meanings, as the learner calendar sends (see
+    learner_api.calendar._review_type_fields) so one frontend helper can
+    bucket both:
+
+        reviewTypeId        stable filter identity
+        reviewTypeCode      stable routing code ('mcm', 'career_review', ...)
+        reviewTypeName      the FILTER label -- never the card title, which
+                            stays review_templates.name
+        reviewTypeIsSystem  orders system types ahead of custom ones without
+                            matching a code literal
+
+    All four are None/False for a legacy occurrence whose template has no
+    Review Type, which the frontend keeps in a generic "Review" bucket.
+    """
+    review_type = review_type or {}
+    return {
+        "reviewTypeId": clean_text(review_type.get("reviewTypeId")) or None,
+        "reviewTypeCode": clean_text(review_type.get("reviewTypeCode")) or None,
+        "reviewTypeName": clean_text(review_type.get("reviewTypeName")) or None,
+        "reviewTypeIsSystem": bool(review_type.get("reviewTypeIsSystem")),
+    }
+
+
+# Last-resort wording for an occurrence whose Curriculum template could not be
+# read at all. Every normal event takes its title from review_templates.name.
+EVENT_TYPE_FALLBACK_TITLES = {
+    "mcr": "Monthly Coaching",
+    "progress-review": "Progress Review",
+    GENERIC_REVIEW_EVENT_TYPE: "Review",
+}
+
+
+def review_type_fields_by_template(template_ids) -> dict:
+    """{review_template_id: review_type_event_fields(...)} for a batch of rows.
+
+    A STORED calendar row links to Curriculum only by ``review_template_id``,
+    so its classification is whatever that template points at right now --
+    reclassifying a Review in Curriculum re-buckets its existing events, which
+    is the intent (Review Type is routing metadata; the frozen
+    definition_snapshot on a review instance is what protects the answers).
+
+    Batched deliberately: one pass over the wanted templates plus one tiny
+    catalogue read, rather than a pair of queries per event.
+    """
+    wanted = {clean_text(template_id) for template_id in template_ids if clean_text(template_id)}
+    if not wanted:
+        return {}
+    try:
+        from curriculum_api import review_types as curriculum_review_types
+
+        type_index = curriculum_review_types.review_type_index()
+        resolved = {}
+        for template_id in wanted:
+            template_row = curriculum_reviews.get_review_template_row(template_id)
+            if not template_row:
+                continue
+            type_row = type_index.get(clean_text(template_row.get("review_type_id")))
+            if not type_row:
+                continue
+            resolved[template_id] = review_type_event_fields({
+                "reviewTypeId": type_row.get("id"),
+                "reviewTypeCode": type_row.get("code"),
+                "reviewTypeName": type_row.get("name"),
+                "reviewTypeIsSystem": type_row.get("is_system"),
+            })
+        return resolved
+    except Exception:
+        # Curriculum being unreachable costs the coach their Review filters,
+        # never their calendar.
+        logger.warning("Could not resolve Review Types for the coach calendar.", exc_info=True)
+        return {}
+
+
+def resolve_curriculum_programme_id(programme_name: str | None) -> str | None:
+    """A learner's `programme` display name -> curriculum.programmes.programme_id.
+
+    Returns None if the name does not resolve to any configured Curriculum
+    programme -- callers must treat that as "no Curriculum Review templates
+    are reachable for this learner right now", not fall back to any
+    hard-coded schedule.
+    """
+    name = clean_text(programme_name)
+    if not name:
+        return None
+    # A learner row carries the programme's *display* name ("Final Test"), while
+    # programme_config_by_identifier matches ids and slugs -- so the slug form is
+    # tried too, otherwise every learner looks like they are on no Curriculum
+    # programme at all and no Review ever reaches their calendar.
+    config = programme_config_by_identifier(name) or programme_config_by_identifier(curriculum_slugify(name))
+    if not config:
+        return None
+    return programme_config_id(config) or None
+
+
+def resolve_curriculum_review_occurrences(
+    *,
+    programme_id: str | None,
+    learner_id: int,
+    learner_status: str | None,
+    learner_start_date: date,
+    window_start: date,
+    window_end: date,
+    template_cache: dict[str, list[dict]],
+) -> list[dict]:
+    """RAW occurrences of every enabled Review template on this learner's
+    programme -- or [] if the programme has none configured, they are all
+    disabled, or the learner is not currently eligible for any of them.
+
+    There is deliberately no list of Review types here: Coach asks Curriculum
+    what this learner's programme produces and renders whatever comes back.
+    See curriculum_api.review_instances for the engine itself.
+    """
+    if not programme_id:
+        return []
+    try:
+        return curriculum_review_instances.resolve_programme_review_occurrences(
+            programme_id,
+            learner_id,
+            learner_status,
+            learner_start_date,
+            window_start,
+            window_end,
+            template_cache=template_cache,
+        )
+    except Exception as exc:  # Curriculum being unreachable must not blank the calendar entirely.
+        logger.warning("Could not resolve Curriculum reviews for programme %s: %s", programme_id, exc)
+        return []
 MICROSOFT_GRAPH_DEFAULT_SCOPE = "https://graph.microsoft.com/.default"
 MICROSOFT_GRAPH_DEFAULT_BASE_URL = "https://graph.microsoft.com/v1.0"
 MICROSOFT_GRAPH_DEFAULT_TIMEZONE = "GMT Standard Time"
@@ -549,6 +726,8 @@ BOOKED_EVENT_TITLES = {
     "student-support": "Student Support",
     "mcr": "Monthly Coaching",
     "progress-review": "Progress Review",
+    "gateway": "Gateway",
+    "other": "Other",
     "eligibility-review": "Eligibility Review & FS Discussion",
     "workspace": "RPL And Experience",
     "training-plan": "Workplace Health & Safety Declaration",
@@ -560,6 +739,8 @@ BOOKED_EVENT_TITLES = {
 LEARNER_BOOKED_EVENT_TYPES = {
     CATCH_UP_EVENT_TYPE,
     "student-support",
+    "gateway",
+    "other",
     "eligibility-review",
     "workspace",
     "training-plan",
@@ -571,6 +752,8 @@ COACH_BOOKABLE_EVENT_TYPES = ("catch-up", "student-support")
 # Calendar colour/type vocabulary for the booked types above.
 BOOKED_EVENT_JSON_TYPES = {
     "student-support": "welfare",
+    "gateway": "review",
+    "other": "coaching",
     "eligibility-review": "review",
     "workspace": "review",
     "training-plan": "review",
@@ -1750,6 +1933,99 @@ def resolve_schedule_window(
     return start_date, end_date
 
 
+# Why a learner could not be anchored for Review recurrence. One vocabulary
+# shared by the warning logs, the timetable's diagnostic counts and the
+# audit_review_anchor_dates command, so a reason string never has to be
+# re-spelled at a call site.
+REVIEW_ANCHOR_MISSING_ROW = "missing_created_users_row"
+REVIEW_ANCHOR_MISSING_START = "missing_start_date"
+REVIEW_ANCHOR_INVALID_START = "invalid_start_date"
+
+
+def resolve_review_anchor_date(
+    learner_id: int,
+    commercial_rows: dict[int, CommercialUser],
+    enrolment_rows: dict[int, EnrolmentUser],
+) -> tuple[date | None, str | None]:
+    """The anchor Review recurrence counts from -- STRICTLY the learner's own
+    enrolment."Created_users"."Start_date", or nothing at all.
+
+    Deliberately NOT ``resolve_schedule_window``. That helper ends with
+
+        start_value = start_value or getattr(learner, "start_date", None)
+
+    and "Learner"."learners".start_date is the profile mirror, which
+    ``active_users.mirror_learner_placement`` stamps with the COHORT delivery
+    window on every placement edit. For a window bound that fallback is
+    reasonable -- it only decides how far ahead occurrences are listed. For the
+    ANCHOR it is not: it silently turns "we do not know when this learner
+    started" into "they started when their cohort did", and every Review date
+    downstream inherits that guess with nothing to show it was guessed. A
+    learner with no enrolment record must generate no Reviews, loudly.
+
+    The source-row preference (commercial first, then enrolment) matches
+    ``resolve_schedule_window`` exactly, so no learner whose enrolment row
+    carries a usable date sees their anchor move.
+
+    The column is TEXT in Postgres (see EnrolmentUser.start_date), so the raw
+    value is always put through ``parse_date_value`` -- never compared to a
+    ``date`` directly.
+
+    Returns ``(anchor, None)`` or ``(None, reason)`` where reason is one of the
+    REVIEW_ANCHOR_* constants above.
+    """
+    source_row = commercial_rows.get(learner_id) or enrolment_rows.get(learner_id)
+    if source_row is None:
+        return None, REVIEW_ANCHOR_MISSING_ROW
+
+    raw_start = getattr(source_row, "start_date", None)
+    if not clean_text(raw_start):
+        return None, REVIEW_ANCHOR_MISSING_START
+
+    parsed = parse_date_value(raw_start)
+    if isinstance(parsed, datetime):
+        parsed = parsed.date()
+    if parsed is None:
+        return None, REVIEW_ANCHOR_INVALID_START
+    return parsed, None
+
+
+def log_review_anchor_skip(
+    learner: LearnerProfile | SimpleNamespace,
+    reason: str,
+    *,
+    programme_id: str | None,
+    template_cache: dict[str, list[dict]] | None = None,
+) -> None:
+    """Say which Reviews were NOT generated for this learner, and why.
+
+    One line per Review template the programme would have produced, so the
+    message names the actual review_template_id / review_type_code a coach is
+    missing rather than only the learner. Identifiers only -- no dates, no
+    progress data, nothing beyond what is needed to find and fix the record.
+    """
+    try:
+        templates = curriculum_review_instances.programme_review_template_identifiers(
+            programme_id, template_cache=template_cache,
+        )
+    except Exception:  # a diagnostic must never be the thing that breaks a page
+        templates = []
+
+    base = (
+        "Review generation skipped: no learner-specific start date. "
+        "learner_id=%s learner_email=%s learner_name=%s programme_id=%s "
+        "review_template_id=%s review_type_code=%s reason=%s"
+    )
+    learner_id = getattr(learner, "id", None)
+    learner_email = clean_text(getattr(learner, "email", ""))
+    learner_name = clean_text(getattr(learner, "full_name", "")) or clean_text(getattr(learner, "username", ""))
+    if not templates:
+        logger.warning(base, learner_id, learner_email, learner_name, programme_id, None, None, reason)
+        return
+    for template_id, type_code in templates:
+        logger.warning(base, learner_id, learner_email, learner_name, programme_id, template_id, type_code, reason)
+
+
 def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newest_first: bool = False) -> list[dict]:
     activity_reader = getattr(row, "activity_feed_entries", None)
     if callable(activity_reader):
@@ -2865,7 +3141,7 @@ def monthly_learning_tone(entry: dict) -> str:
 def monthly_status_label(status: str) -> str:
     value = clean_text(status).lower()
     if value == CoachCalendarEvent.STATUS_NOT_SCHEDULED:
-        return "Needs schedule"
+        return "Not Scheduled"
     if value == CoachCalendarEvent.STATUS_IN_PROGRESS:
         return "In progress"
     return value.replace("-", " ").title() if value else "--"
@@ -4142,7 +4418,7 @@ def calendar_record_has_launch_url(record: CoachCalendarEvent) -> bool:
 
 TEAMS_SYNC_PERMISSION_MESSAGE = (
     "Teams calendar sync needs updated Microsoft permissions. "
-    "The event was saved locally only; reconnect Microsoft Calendar or ask an admin to refresh access."
+    "The event was saved locally only; ask your Microsoft 365 administrator to grant the booking application calendar access to the organiser mailbox."
 )
 TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = "Teams calendar sync is not configured. The event was saved locally only."
 # A coach session is recorded and transcribed like a taught one: the recording is
@@ -4157,7 +4433,7 @@ TEAMS_SYNC_TEMPORARY_MESSAGE = (
     "The event was saved locally only; try again later or ask an admin to check Microsoft permissions."
 )
 TEAMS_SYNC_LINK_MISSING_MESSAGE = (
-    "Teams did not return a meeting link, so this event was moved back to Needs Schedule. "
+    "Teams did not return a meeting link, so this event was moved back to Not Scheduled. "
     "Try scheduling again after Microsoft sync is available."
 )
 
@@ -4185,7 +4461,7 @@ def calendar_record_needs_schedule_repair(record: CoachCalendarEvent) -> bool:
     if record.status not in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}:
         return False
     event_type = clean_text(record.event_type).lower()
-    if event_type not in {"mcr", "progress-review", CATCH_UP_EVENT_TYPE}:
+    if event_type not in {"mcr", "progress-review", GENERIC_REVIEW_EVENT_TYPE, CATCH_UP_EVENT_TYPE}:
         return False
     return not calendar_record_has_launch_url(record)
 
@@ -4195,7 +4471,7 @@ def repair_calendar_record_to_needs_schedule(
     *,
     reason: str | None = None,
 ) -> CoachCalendarEvent:
-    default_reason = "Teams meeting details were not stored, so this event has been returned to Needs Schedule."
+    default_reason = "Teams meeting details were not stored, so this event has been returned to Not Scheduled."
     if clean_text(record.graph_event_id):
         delete_calendar_event_from_graph(record)
 
@@ -4317,8 +4593,16 @@ def build_catchup_calendar_event(
     *,
     owner_name: str | None = None,
     learner: LearnerProfile | None = None,
+    review_type_fields: dict | None = None,
 ) -> dict:
+    """``review_type_fields`` is review_type_fields_by_template()'s batch,
+    passed by callers shaping a whole list. A single-event caller can omit it
+    and pay for one lookup."""
     event_type = clean_text(record.event_type).lower() or CATCH_UP_EVENT_TYPE
+    review_template_id = clean_text(getattr(record, "review_template_id", ""))
+    if review_type_fields is None:
+        review_type_fields = review_type_fields_by_template([review_template_id])
+    record_review_type = review_type_fields.get(review_template_id) or review_type_event_fields(None)
     event_title = {
         **BOOKED_EVENT_TITLES,
         "live-session": "Live Session",
@@ -4372,6 +4656,11 @@ def build_catchup_calendar_event(
         "source": event_type,
         "sequence": int(record.sequence or 1),
         "title": event_title,
+        "reviewTemplateId": review_template_id or None,
+        # A booked Review keeps its template's classification, so it filters
+        # with the unbooked occurrences around it rather than dropping into
+        # the generic bucket the moment somebody schedules it.
+        **record_review_type,
         "type": event_kind,
         "targetDate": target_date.isoformat(),
         "date": display_date.isoformat(),
@@ -4471,7 +4760,10 @@ def fetch_standalone_event_records(owner_email: str) -> list[CoachCalendarEvent]
     return normalize_calendar_records(
         list(
             CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email)
-            .exclude(event_type__in=["mcr", "progress-review"])
+            .filter(
+                ~Q(event_type__in=["mcr", "progress-review"])
+                | Q(event_type__in=["mcr", "progress-review"], idempotency_key__startswith="learner-book:")
+            )
             .order_by("scheduled_date", "target_date", "scheduled_time", "learner_name")
         )
     )
@@ -4487,9 +4779,16 @@ def build_generated_calendar_event(
     target_date: date,
     source_row: CommercialUser | EnrolmentUser | SimpleNamespace | dict | None = None,
     employer_attendee: dict[str, str] | None = None,
+    review_template_id: str | None = None,
+    review_title: str | None = None,
+    review_type: dict | None = None,
 ) -> dict:
-    source = "mcr" if event_type == "mcr" else "progress-review"
-    title = "Monthly Coaching" if event_type == "mcr" else "Progress Review"
+    source = clean_text(event_type) or GENERIC_REVIEW_EVENT_TYPE
+    # The display title always comes from the Curriculum Review template that
+    # produced this occurrence (review_templates.name, read live) -- never a
+    # hard-coded "Monthly Coaching"/"Progress Review" string. The fallback
+    # only fires for an occurrence with no resolvable template at all.
+    title = clean_text(review_title) or EVENT_TYPE_FALLBACK_TITLES.get(source, "Review")
     employer_attendee = employer_attendee if employer_attendee is not None else (
         learner_employer_attendee(learner, source_row) if source == "progress-review" else {}
     )
@@ -4509,7 +4808,15 @@ def build_generated_calendar_event(
         "source": source,
         "sequence": sequence,
         "title": title,
-        "type": "coaching" if event_type == "mcr" else "review",
+        "reviewTemplateId": review_template_id,
+        "occurrenceNumber": sequence,
+        # Classification, carried alongside `source` rather than replacing it.
+        # `source` stays the routing bucket every scheduling, Teams, artifact
+        # and theming path is keyed on; these say which Curriculum Review Type
+        # the occurrence actually is, so the calendar can offer one filter per
+        # type instead of collapsing every custom type into "review".
+        **review_type_event_fields(review_type),
+        "type": "coaching" if source == "mcr" else "review",
         "targetDate": target_date.isoformat(),
         "date": target_date.isoformat(),
         "year": target_date.year,
@@ -4529,7 +4836,7 @@ def build_generated_calendar_event(
         "graphWebLink": "",
         "platform": "--",
         "location": "--",
-        "notes": f"Generated from learner start date. Target date: {format_date(target_date)}.",
+        "notes": f"Generated from the Curriculum review schedule using the learner start date. Target date: {format_date(target_date)}.",
         "rawPlanned": target_date.isoformat(),
         "rawStatus": "Not Scheduled",
     }
@@ -4666,6 +4973,11 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "notes": " ".join(event_note_lines(base_event, record)),
             "reviewResponses": record.review_responses if record and isinstance(record.review_responses, dict) else {},
             "reviewCompletedAt": record.review_completed_at.isoformat() if record and record.review_completed_at else None,
+            # Set once this occurrence is first scheduled (see
+            # ensure_review_instance_for_calendar_record) -- the frontend uses
+            # its presence to route "open review" to the dynamic
+            # Curriculum-driven form instead of any hard-coded one.
+            "reviewInstanceId": clean_text(record.review_instance_id) if record else None,
             "managerSignedAt": record.manager_signed_at.isoformat() if record and record.manager_signed_at else None,
             "managerSignedBy": clean_text(record.manager_signed_by) if record else "",
             "priority": generated_event_priority(status, target_date, display_date),
@@ -4897,21 +5209,67 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
     return ""
 
 
-def delete_calendar_event_from_graph(record: CoachCalendarEvent) -> str:
-    if not clean_text(record.graph_event_id) or not has_graph_credentials():
-        return ""
+# Outcomes of an external Graph calendar deletion, used by
+# delete_calendar_event_from_graph_detailed. Kept coarse on purpose: the only
+# question a caller ever has is "is the external event gone, and if not, is it
+# safe to carry on".
+GRAPH_DELETE_SUCCESS = "SUCCESS"            # Graph accepted the DELETE
+GRAPH_DELETE_ALREADY_GONE = "ALREADY_GONE"  # 404/410 -- nothing left to cancel
+GRAPH_DELETE_NOT_REQUIRED = "NOT_REQUIRED"  # no graph_event_id on the row
+GRAPH_DELETE_FAILED = "FAILED"              # auth, permission, network, 5xx
+
+
+def delete_calendar_event_from_graph_detailed(record: CoachCalendarEvent) -> tuple[str, str]:
+    """Cancel one row's external Microsoft event, reporting what happened.
+
+    The single implementation of "remove this event from Microsoft"; both
+    delete_calendar_event_from_graph (coach-facing, returns sanitised copy) and
+    the cleanup_legacy_reviews management command go through here, so there is
+    never a second Graph path to keep in step.
+
+    Returns (outcome, detail). ``detail`` is the RAW Graph diagnostic, which is
+    what makes the outcome classifiable at all -- public_graph_sync_warning
+    deliberately collapses 404 and 500 into the same coach-facing sentence, so
+    a caller that must tell "already deleted" from "server error" cannot use it.
+
+    A missing graph_event_id is NOT_REQUIRED, not a failure: a row can carry a
+    meeting_link or graph_web_link with no event id, and there is nothing
+    addressable to delete.
+    """
+    if not clean_text(record.graph_event_id):
+        return GRAPH_DELETE_NOT_REQUIRED, ""
+    if not has_graph_credentials():
+        return GRAPH_DELETE_FAILED, "Microsoft Graph credentials are not configured."
 
     # The event lives on whichever mailbox organized it. New coach-calendar
     # events use the coach/owner mailbox; older rows may still carry a different
-    # graph_organizer_email, so keep respecting the stored organizer.
+    # graph_organizer_email, so keep respecting the stored organizer. Never
+    # inferred from the learner.
     mailbox = clean_text(record.graph_organizer_email) or clean_text(record.owner_email)
+    if not mailbox:
+        return GRAPH_DELETE_FAILED, "No organizer mailbox stored on this row."
     owner_key = urllib_parse.quote(mailbox, safe="")
     event_key = urllib_parse.quote(record.graph_event_id, safe="")
     try:
         microsoft_graph_request("DELETE", f"users/{owner_key}/events/{event_key}")
     except RuntimeError as exc:
+        detail = str(exc)
+        # microsoft_graph_request formats HTTPError as "... failed: HTTP <code>; ..."
+        if "HTTP 404" in detail or "HTTP 410" in detail or "ErrorItemNotFound" in detail:
+            return GRAPH_DELETE_ALREADY_GONE, detail
         logger.exception("Unable to delete coach timetable event from Microsoft Graph")
-        return public_graph_sync_warning(str(exc))
+        return GRAPH_DELETE_FAILED, detail
+    return GRAPH_DELETE_SUCCESS, ""
+
+
+def delete_calendar_event_from_graph(record: CoachCalendarEvent) -> str:
+    """Coach-facing wrapper: '' when there is nothing to worry about, else a
+    safe sentence. Behaviour is unchanged from before this was split -- an
+    already-deleted event still reports no warning, which is what every
+    existing caller expects."""
+    outcome, detail = delete_calendar_event_from_graph_detailed(record)
+    if outcome == GRAPH_DELETE_FAILED:
+        return public_graph_sync_warning(detail)
     return ""
 
 
@@ -4924,7 +5282,7 @@ COACH_MEETING_ATTENDANCE_REPORTS_RELATION = '"Coach".coach_meeting_attendance_re
 COACH_MEETING_ATTENDANCE_RELATION = '"Coach".coach_meeting_attendance'
 COACH_MEETING_SUMMARIES_RELATION = '"Coach".coach_meeting_summaries'
 COACH_MEETING_ATTENDANCE_STATUSES = {"attended", "absent", "pending", "extra"}
-COACH_MEETING_SUMMARY_TYPES = {"mcr", "progress-review"}
+COACH_MEETING_SUMMARY_TYPES = {"mcr", "progress-review", GENERIC_REVIEW_EVENT_TYPE}
 COACH_MEETING_SUMMARY_MODEL = getattr(settings, "OPENAI_MEETING_SUMMARY_MODEL", "") or getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
 
 
@@ -4946,8 +5304,47 @@ def parse_jsonish(value, fallback):
         return fallback
 
 
-def default_meeting_summary_payload(event_type: str = "") -> dict:
-    label = "Progress Review" if clean_text(event_type).lower() == "progress-review" else "Monthly Coaching"
+def ensure_review_instance_for_calendar_record(record: CoachCalendarEvent, base_event: dict) -> None:
+    """Creates (idempotently) the durable curriculum.review_instances row for
+    a Curriculum-driven occurrence the moment it is first scheduled, and
+    links the two rows both ways. Scheduling/Teams/calendar state stays on
+    CoachCalendarEvent, exactly as before -- this only adds the pointer back
+    to the Review definition that produced the occurrence, it does not
+    duplicate any scheduling data.
+    """
+    template_row = curriculum_reviews.get_review_template_row(record.review_template_id)
+    if not template_row:
+        return
+    instance = curriculum_review_instances.ensure_review_instance(
+        template_row,
+        learner_id=record.learner_id,
+        learner_kind='',
+        programme_id=template_row.get('programme_id'),
+        occurrence_number=record.occurrence_number or record.sequence,
+        target_date=record.target_date,
+        coach_email=record.owner_email,
+        actor=record.owner_email or 'coach',
+    )
+    if not instance:
+        return
+    record.review_instance_id = instance.get('id')
+    record.save(update_fields=["review_instance_id", "review_template_id", "occurrence_number", "updated_at"])
+    curriculum_review_instances.link_calendar_event(instance.get('id'), record.pk, actor=record.owner_email or 'coach')
+
+
+def resolve_review_display_title(event_type: str, review_template_id: str | None) -> str:
+    """The live Curriculum Review name for a stored review_template_id, or the
+    legacy fallback label for an old row that predates this linkage."""
+    if review_template_id:
+        template_row = curriculum_reviews.get_review_template_row(review_template_id)
+        name = clean_text((template_row or {}).get("name"))
+        if name:
+            return name
+    return EVENT_TYPE_FALLBACK_TITLES.get(clean_text(event_type).lower(), "Monthly Coaching")
+
+
+def default_meeting_summary_payload(event_type: str = "", review_template_id: str | None = None) -> dict:
+    label = resolve_review_display_title(event_type, review_template_id)
     return {
         "title": f"{label} Recap",
         "overview": "",
@@ -5624,8 +6021,7 @@ def openai_meeting_summary(record: CoachCalendarEvent, transcript_text: str) -> 
     except ImportError as exc:
         raise RuntimeError("The OpenAI client library is not installed on the server.") from exc
 
-    source = clean_text(record.event_type).lower()
-    meeting_label = "Progress Review" if source == "progress-review" else "Monthly Coaching Meeting"
+    meeting_label = resolve_review_display_title(record.event_type, record.review_template_id)
     system = (
         "You create concise learner-facing meeting recaps for a UK learning platform. "
         "Use a professional, supportive tone. Do not expose raw transcript wording, private speculation, "
@@ -7111,12 +7507,43 @@ def collect_generated_timetable(
     source_counts = {
         "progressReviewRows": 0,
         "mcrRows": 0,
+        "reviewRows": 0,
         "catchUpRows": 0,
         "liveSessionRows": len(live_session_events),
         "caseloadLearners": len(active_rows),
         "learnersWithDates": 0,
+        # Diagnostic only -- how many of this caseload produced no Reviews
+        # because their own enrolment start date could not be resolved. Read by
+        # support/logging, not by the UI.
+        "reviewAnchorSkipped": 0,
+        "reviewAnchorSkipReasons": {},
     }
+    # Cache of programme_id -> that programme's enabled Review template rows,
+    # shared across every learner in the caseload this call processes, so a
+    # programme's Reviews are read once per call rather than once per learner.
+    review_template_cache: dict[str, list[dict]] = {}
+
     for learner in active_rows:
+        programme_id = resolve_curriculum_programme_id(getattr(learner, "programme", None))
+
+        # Review recurrence anchors STRICTLY to the learner's own enrolment
+        # start date, and is resolved BEFORE the window below so that "this
+        # learner has no start date of their own" is always reported rather
+        # than being absorbed by the window gate.
+        review_anchor, anchor_reason = resolve_review_anchor_date(
+            learner.id, commercial_rows, enrolment_rows,
+        )
+        if review_anchor is None:
+            log_review_anchor_skip(
+                learner, anchor_reason,
+                programme_id=programme_id, template_cache=review_template_cache,
+            )
+            source_counts["reviewAnchorSkipped"] += 1
+            source_counts["reviewAnchorSkipReasons"][anchor_reason] = (
+                source_counts["reviewAnchorSkipReasons"].get(anchor_reason, 0) + 1
+            )
+            continue
+
         learner_start_date, learner_end_date = resolve_schedule_window(learner.id, commercial_rows, enrolment_rows, learner)
         if not learner_start_date or not learner_end_date or learner_end_date <= learner_start_date:
             continue
@@ -7128,53 +7555,61 @@ def collect_generated_timetable(
         )
         employer_attendee = learner_employer_attendee(learner, source_row)
         source_counts["learnersWithDates"] += 1
-        for sequence, target_date in iterate_generated_schedule_dates(
-            learner_start_date,
-            learner_end_date,
-            TIMETABLE_MCR_INTERVAL,
-            range_start=start_date,
-            range_end=end_date,
-        ):
-            generated_events.append(
-                build_generated_calendar_event(
-                    learner=learner,
-                    owner_email=owner_email,
-                    owner_name=owner_name,
-                    event_type="mcr",
-                    sequence=sequence,
-                    target_date=target_date,
-                    source_row=source_row,
-                )
-            )
-            source_counts["mcrRows"] += 1
 
-        for sequence, target_date in iterate_generated_schedule_dates(
-            learner_start_date,
-            learner_end_date,
-            TIMETABLE_PROGRESS_REVIEW_INTERVAL,
-            range_start=start_date,
-            range_end=end_date,
+        learner_status = clean_text(getattr(learner, "programme_status", None) or getattr(learner, "status", None))
+        # The window still keeps resolve_schedule_window's long-standing
+        # profile fallback -- it only decides how far ahead occurrences are
+        # listed. Only the ANCHOR is strict.
+        window_start = start_date or learner_start_date
+        window_end = end_date or learner_end_date
+
+        for occurrence in resolve_curriculum_review_occurrences(
+            programme_id=programme_id,
+            learner_id=learner.id,
+            learner_status=learner_status,
+            learner_start_date=review_anchor,
+            window_start=window_start,
+            window_end=window_end,
+            template_cache=review_template_cache,
         ):
+            event_type = review_event_type_for_type_code(occurrence.get("reviewTypeCode"))
             generated_events.append(
                 build_generated_calendar_event(
                     learner=learner,
                     owner_email=owner_email,
                     owner_name=owner_name,
-                    event_type="progress-review",
-                    sequence=sequence,
-                    target_date=target_date,
+                    event_type=event_type,
+                    sequence=occurrence["occurrenceNumber"],
+                    target_date=occurrence["targetDate"],
                     source_row=source_row,
-                    employer_attendee=employer_attendee,
+                    employer_attendee=employer_attendee if event_type == "progress-review" else None,
+                    review_template_id=occurrence["reviewTemplateId"],
+                    review_title=occurrence["reviewName"],
+                    # The occurrence already carries its Review Type -- the
+                    # engine resolved it once for the whole programme, so
+                    # there is nothing to look up per event here.
+                    review_type=occurrence,
                 )
             )
-            source_counts["progressReviewRows"] += 1
+            if event_type == "mcr":
+                source_counts["mcrRows"] += 1
+            elif event_type == "progress-review":
+                source_counts["progressReviewRows"] += 1
+            else:
+                source_counts["reviewRows"] += 1
 
     persisted_standalone_records = fetch_standalone_event_records(owner_email)
+    # One resolution pass for the whole list -- a booked Review keeps its
+    # template's Review Type, and this is the only place these rows are shaped.
+    standalone_review_type_fields = review_type_fields_by_template(
+        getattr(record, "review_template_id", "") for record in persisted_standalone_records
+    )
     persisted_standalone_events = [
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
             learner=learner_profile_map.get(record.learner_id),
+            review_type_fields=standalone_review_type_fields,
         )
         for record in persisted_standalone_records
     ]
@@ -7230,7 +7665,7 @@ def collect_generated_timetable(
     events = assign_timetable_slots(events)
     events = sorted(events, key=lambda event: (event["date"], event["startHour"], event["learner"]))
     summary = build_timetable_summary(events, needs_scheduling, source_counts, source_needs_scheduling)
-    summary["timeAvailability"] = "MCR events are generated every 30 days after the learner start date; progress reviews are generated every 12 weeks; catch-up and support sessions can be created by the coach for any learner in their caseload."
+    summary["timeAvailability"] = "MCR and progress review dates are generated from the Curriculum review schedule using each learner's start date; catch-up and support sessions can be created by the coach for any learner in their caseload."
     return {
         "owner_name": owner_name,
         "events": events,
@@ -7623,6 +8058,15 @@ def persist_calendar_sync_reservation(candidate: CoachCalendarEvent) -> CoachCal
         "duration_minutes",
         "status",
         "notes",
+        # The Curriculum linkage travels with the scheduling inputs. It is set
+        # on the candidate by both scheduling paths (coach_timetable_schedule
+        # _event and learner_calendar_book) immediately before this call, and
+        # leaving it out of the copy silently discarded it: the row reloaded
+        # here is a fresh instance, so the assignment never reached the
+        # database and ensure_review_instance_for_calendar_record then saw a
+        # blank template id and created no review instance at all.
+        "review_template_id",
+        "occurrence_number",
     )
     with transaction.atomic():
         lock_learner_calendar(candidate.learner_id)
@@ -8009,6 +8453,11 @@ def coach_timetable_schedule_event(request):
     record.duration_minutes = duration_minutes
     record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
+    review_template_id = clean_text(base_event.get("reviewTemplateId"))
+    if review_template_id:
+        record.review_template_id = review_template_id
+        record.occurrence_number = parse_int(base_event.get("occurrenceNumber"), record.sequence)
+
     try:
         record = persist_calendar_sync_reservation(record)
     except LearnerCalendarConflict as exc:
@@ -8020,6 +8469,10 @@ def coach_timetable_schedule_event(request):
             message="Calendar event synchronization is already in progress.",
             status=409,
         )
+
+    if review_template_id:
+        ensure_review_instance_for_calendar_record(record, base_event)
+
     record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
     if not calendar_record_has_launch_url(record):
         warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
@@ -8254,7 +8707,7 @@ def coach_timetable_event_action(request):
             record,
             reason=clean_text(record.last_graph_sync_error),
         )
-        return JsonResponse({"detail": "This event does not have a Teams link anymore and was moved back to Needs Schedule."}, status=409)
+        return JsonResponse({"detail": "This event does not have a Teams link anymore and was moved back to Not Scheduled."}, status=409)
 
     record.owner_name = owner_name
     warning = ""
@@ -8413,6 +8866,22 @@ def coach_timetable_event_action(request):
         record.status = CoachCalendarEvent.STATUS_COMPLETED
         record.manager_signed_at = timezone.now()
         record.manager_signed_by = clean_text(payload.get("managerName")) or "Line Manager"
+        if record.review_instance_id:
+            # Mirror into the Curriculum-driven Review's own signature record
+            # so a Review opened later (or completed against a Curriculum
+            # template requiring more than one signature) reads a consistent
+            # signed state -- this existing button remains the actual sign-off
+            # action; the new instance/answers path only listens to it.
+            try:
+                instance_row = curriculum_review_instances.get_review_instance(record.review_instance_id)
+                if instance_row:
+                    curriculum_review_instances.record_review_instance_signature(
+                        instance_row, "advisor",
+                        signed_by=owner_email, signed_name=record.manager_signed_by,
+                        signature="signed", actor=owner_email,
+                    )
+            except ValueError:
+                logger.exception("Could not mirror manager signature onto review instance %s", record.review_instance_id)
     elif action == "cancel":
         record, warning = cancel_reserved_calendar_event(record)
 
@@ -9391,6 +9860,8 @@ def serialize_absence_report(
         "evidenceKind": report.evidence_kind,
         "evidenceType": "Image" if report.evidence_kind == "image" else "Text" if report.evidence_kind == "text" else None,
         "evidenceText": report.evidence_text or None,
+        "recoveryMethod": report.recovery_method,
+        "catchupEventKey": report.catchup_event_key,
         "evidenceImageUrl": evidence_url or None,
         "previousAbsences": previous_absences_override if previous_absences_override is not None else report.previous_absences,
         "attendanceRate": attendance_rate,
@@ -9945,3 +10416,177 @@ def coach_evidence_awaiting_review(request):
             "items": items,
         }
     )
+
+
+# --------------------------------------------------------------------------
+# Curriculum-driven Review instances -- opening a scheduled MCM/Progress
+# Review, saving its answers, signing it and completing it. The instance's
+# question set/signature rules were resolved by Curriculum
+# (curriculum_api.review_instances); this only enforces that a coach may
+# reach an instance they are themselves the assigned coach for, exactly the
+# same ownership boundary every other coach/timetable endpoint enforces.
+
+def _authorized_review_instance(request, instance_id):
+    owner_email = authenticated_coach_email(request)
+    instance_row = curriculum_review_instances.get_review_instance(clean_text(instance_id))
+    if not instance_row:
+        return None, JsonResponse({"detail": "Review not found."}, status=404)
+    if clean_email(instance_row.get("coach_email")) != clean_email(owner_email):
+        return None, JsonResponse({"detail": "Review not found."}, status=404)
+    return instance_row, None
+
+
+@coach_access_required
+def coach_review_instance_for_event(request):
+    """Open the Curriculum Review form for a calendar event.
+
+    A Review occurrence exists on the calendar before anybody schedules it, so
+    the coach can open its form from a generated slot too -- the durable
+    instance row is created on first open, idempotently and keyed exactly the
+    same way scheduling creates it, so the two paths converge on one instance.
+    """
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    try:
+        payload = parse_json_body(request)
+        validator = ObjectValidator(payload)
+        event_key = validator.text("eventKey", required=True, max_length=255)
+        validator.check()
+    except ValidationError as exc:
+        return validation_error_response(exc)
+
+    owner_email = authenticated_coach_email(request)
+    record = CoachCalendarEvent.objects.filter(event_key=event_key, owner_email__iexact=owner_email).first()
+    if record and clean_text(record.review_instance_id):
+        return JsonResponse({"instanceId": clean_text(record.review_instance_id)})
+
+    base_event, _owner_name = find_generated_timetable_event(owner_email, event_key)
+    if not base_event:
+        return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+
+    review_template_id = clean_text(base_event.get("reviewTemplateId")) or (record and clean_text(record.review_template_id))
+    if not review_template_id:
+        return JsonResponse({"detail": "This event is not a Curriculum review."}, status=400)
+
+    template_row = curriculum_reviews.get_review_template_row(review_template_id)
+    if not template_row:
+        return JsonResponse({"detail": "This review is no longer configured in Curriculum."}, status=404)
+
+    target_date = parse_date_value(base_event.get("targetDate"))
+    if isinstance(target_date, datetime):
+        target_date = target_date.date()
+
+    instance = curriculum_review_instances.ensure_review_instance(
+        template_row,
+        learner_id=int(base_event["learnerId"]),
+        learner_kind='',
+        programme_id=template_row.get("programme_id"),
+        occurrence_number=parse_int(base_event.get("occurrenceNumber"), int(base_event.get("sequence") or 1)),
+        target_date=target_date,
+        coach_email=owner_email,
+        actor=owner_email or "coach",
+    )
+    if not instance:
+        return JsonResponse({"detail": "This review could not be opened."}, status=400)
+
+    if record:
+        record.review_template_id = review_template_id
+        record.occurrence_number = parse_int(base_event.get("occurrenceNumber"), record.sequence)
+        record.review_instance_id = instance.get("id")
+        record.save(update_fields=["review_template_id", "occurrence_number", "review_instance_id", "updated_at"])
+        curriculum_review_instances.link_calendar_event(instance.get("id"), record.pk, actor=owner_email or "coach")
+
+    return JsonResponse({"instanceId": instance.get("id")})
+
+
+@coach_access_required
+def coach_review_instance_detail(request, instance_id):
+    if request.method != "GET":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+    if not instance_row.get("started_at") and instance_row.get("status") == curriculum_review_instances.STATUS_SCHEDULED:
+        curriculum_review_instances.set_review_instance_status(
+            instance_row["id"], curriculum_review_instances.STATUS_IN_PROGRESS,
+            actor=authenticated_coach_email(request), extra={"started_at": datetime.utcnow()},
+        )
+        instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
+    return JsonResponse(curriculum_review_instances.review_instance_form_definition(instance_row))
+
+
+@coach_access_required
+def coach_review_instance_answers(request, instance_id):
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+    try:
+        payload = parse_json_body(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    answers = payload.get("answers")
+    if not isinstance(answers, dict):
+        return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+    owner_email = authenticated_coach_email(request)
+    result = curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
+    return JsonResponse(result)
+
+
+@coach_access_required
+def coach_review_instance_complete(request, instance_id):
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+    owner_email = authenticated_coach_email(request)
+    ok, errors = curriculum_review_instances.complete_review_instance(instance_row, actor=owner_email)
+    if not ok:
+        return JsonResponse({"detail": "This review cannot be completed yet.", "errors": errors}, status=400)
+    instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
+    _sync_calendar_record_to_review_instance_status(instance_row)
+    return JsonResponse(curriculum_review_instances.review_instance_form_definition(instance_row))
+
+
+@coach_access_required
+def coach_review_instance_signature(request, instance_id):
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+    try:
+        payload = parse_json_body(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    role = clean_text(payload.get("role")).lower()
+    owner_email = authenticated_coach_email(request)
+    try:
+        result = curriculum_review_instances.record_review_instance_signature(
+            instance_row, role,
+            signed_by=owner_email, signed_name=clean_text(payload.get("signedName")),
+            signature=clean_text(payload.get("signature")), actor=owner_email,
+        )
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+    _sync_calendar_record_to_review_instance_status(curriculum_review_instances.get_review_instance(instance_row["id"]))
+    return JsonResponse(result)
+
+
+def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:
+    """Mirrors a Review instance's status onto its linked CoachCalendarEvent
+    row -- the existing calendar/status-filter UI reads CoachCalendarEvent,
+    not review_instances, so this is not a second competing status source,
+    only a projection of the one this instance already owns."""
+    calendar_event_id = instance_row.get("calendar_event_id")
+    if not calendar_event_id:
+        return
+    status = instance_row.get("status")
+    if status == curriculum_review_instances.STATUS_COMPLETED:
+        CoachCalendarEvent.objects.filter(pk=calendar_event_id).update(
+            status=CoachCalendarEvent.STATUS_COMPLETED, review_completed_at=instance_row.get("completed_at") or datetime.utcnow(),
+        )
+    elif status == curriculum_review_instances.STATUS_AWAITING_SIGNATURE:
+        CoachCalendarEvent.objects.filter(pk=calendar_event_id).update(status=CoachCalendarEvent.STATUS_AWAITING_SIGNATURE)

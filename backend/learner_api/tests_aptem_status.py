@@ -72,7 +72,8 @@ class AptemWithdrawalTests(SimpleTestCase):
 
         source = learner(programme_status='Active', _aptem_programme_status='Withdrawn',
                          start_date=date(2025, 1, 1), end_date=date(2027, 1, 1))
-        with patch.object(EnrolmentUser.all_learners, 'only') as query:
+        with patch.object(EnrolmentUser.all_learners, 'only') as query, \
+             patch('learner_api.learner_detail.learning_access', return_value={'open': True}):
             query.return_value.get.return_value = source
             response = learner_summary.__wrapped__(RequestFactory().get('/'), 'commercial', 132)
         payload = json.loads(response.content)

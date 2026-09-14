@@ -7,24 +7,13 @@ import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
 import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
-import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { formatHoursMinutes } from '@/lib/format';
-// Assigning learners to a module is a learning-plan save, not a roster of its
-// own: the picker ticks this module on and off each learner's plan on
-// enrolment."Created_users". See backend/learner_api/learning_plan.py.
-import {
-  fetchModuleLearners,
-  saveModuleLearners,
-  type ModuleLearnerRow,
-} from '@/api/learningPlan';
 import {
   fetchCurriculumHolidays,
   fetchCurriculumOverview,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
-  updateCurriculumModuleCover,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumHoliday,
@@ -39,19 +28,11 @@ import {
 // and whether its Teams series exists -- used to live on a separate Curriculum
 // -> Modules page. This catalogue lists it now, and each delivery row opens the
 // module workspace where that delivery (tutor included) is edited.
-import {
-  formatDateLabel,
-  moduleIdentity,
-  namedCurriculumWorkspacePath,
-  sortEntities,
-  MODULE_SORT_OPTIONS,
-} from '../shared/entities/model';
-import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
+import { formatDateLabel, moduleIdentity } from '../shared/entities/model';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
-import { ModuleFormDrawer, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
-import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
+import { ModuleFormDrawer, type ModuleFormTarget } from '../shared/entities/moduleForm';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
 import {
   calculateQualityChecklist,
@@ -77,8 +58,6 @@ import {
   restoreModuleTeamsMeeting,
   saveModuleStructure,
   uploadComponentResource,
-  utcIsoToCalendarParts,
-  weekPlacementLabel,
   type AdvancedModuleDetails,
   type CompletionCriteria,
   type KsbMapping,
@@ -96,7 +75,6 @@ import {
 // and the RichTextEditor included) off the initial Module Builder load. Types come
 // from the non-lazy barrel — type imports are erased and pull in no runtime code.
 import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel } from '@/pages/curriculum/shared/components/weekAuthoringLazy';
-import { LiveSessionScheduleEditor } from './LiveSessionScheduleEditor';
 import type { GroupOption, WeekComponentUploader, WeekScope } from '@/pages/curriculum/shared/components/weekAuthoring';
 import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDetail, filterWeekTemplatesForScope, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
 // Round-trip the module's components to Excel so KSBs can be filled in ChatGPT
@@ -245,35 +223,10 @@ async function showBuilderDeleteSwal({
   });
 }
 
-/**
- * Coach validation is on for every component. Turning it off is the exception,
- * so it costs a confirmation rather than one stray click on a checkbox sitting
- * between two that toggle freely.
- */
-function confirmCoachValidationOff(onConfirm: () => void) {
-  return showCurriculumConfirm({
-    title: 'Turn off coach validation?',
-    text: 'Coach validation is on for every component. Turn it off and no coach has to sign this component off before it counts.',
-    icon: 'warning',
-    confirmButtonText: 'Turn it off',
-    cancelButtonText: 'Keep it on',
-    onConfirm,
-  });
-}
-
 export default function ModuleBuilder() {
-  const reduceMotion = useReducedMotion();
   const [searchParams, setSearchParams] = useSearchParams();
-  const requestedCreateScopeRef = useRef({
-    programmeId: (searchParams.get('programme') || searchParams.get('programmeId') || '').trim(),
-    programmeName: (searchParams.get('programmeName') || '').trim(),
-    cohortId: (searchParams.get('cohort') || '').trim(),
-    groupId: (searchParams.get('group') || '').trim(),
-  });
   const [search, setSearch] = useState('');
-  // Which order the catalogue is in. Empty is the order the endpoint returned.
-  const [sort, setSort] = useState('');
-  const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
+  const [programmeFilter, setProgrammeFilter] = useState<string>('All');
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
   // cascade can never offer a cohort or group no module is actually delivered to.
@@ -291,12 +244,7 @@ export default function ModuleBuilder() {
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
-  const [coverModule, setCoverModule] = useState<ModuleCatalogueItem | null>(null);
-  const [createOpen, setCreateOpen] = useState(() => searchParams.get('create') === '1');
-  // The create drawer can fan one module out into several group deliveries.
-  // Keep the catalogue visibly busy until creation and its silent reload both
-  // finish, matching the progress line used by the Groups table.
-  const [moduleCreating, setModuleCreating] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   // Programme -> cohort -> group tree plus the holiday list: read only by the
   // module form, so it is fetched the first time that drawer opens rather than
   // on every Module Builder load.
@@ -310,22 +258,11 @@ export default function ModuleBuilder() {
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
-  // Adding a component and selecting it cannot happen against the same render:
-  // the editor must wait until the new component exists in workingModule.
-  const [pendingComponentSelection, setPendingComponentSelection] = useState<{ weekId: string; componentId: string } | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
-  // Which week a picked template should be added to. Null means the picker was
-  // opened from the module header, where a template still becomes a new week.
-  const [weekTemplateTargetWeekId, setWeekTemplateTargetWeekId] = useState<string | null>(null);
-  const [bulkTeamsMeetingOpen, setBulkTeamsMeetingOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
   const [programmeKsbMap, setProgrammeKsbMap] = useState<ProgrammeKsbMapState | null>(null);
-  // The module whose learner assignment is open. Holds the catalogue id the
-  // plan refers to plus the title, so the modal names the module it is about
-  // without keeping a whole list item alive.
-  const [assignLearnersModule, setAssignLearnersModule] = useState<{ moduleId: string; title: string } | null>(null);
   const [ksbMapLoadingId, setKsbMapLoadingId] = useState<string | null>(null);
   const [programmeKsbLoading, setProgrammeKsbLoading] = useState(false);
   const [sessionKsbMappingOpen, setSessionKsbMappingOpen] = useState(false);
@@ -348,26 +285,8 @@ export default function ModuleBuilder() {
   const savedModuleSnapshotRef = useRef('');
   const saveRequestRef = useRef(0);
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
-  // Both revalidate rather than skipCache. The request still goes to the network
-  // every time, and every curriculum write calls invalidate_curriculum_cache() on
-  // the backend, so a reload after a save still rebuilds and returns our write.
-  // What it no longer does is send Cache-Control: no-cache on the *mount* read,
-  // which forced a rebuild from Neon and cost these two ~9s and ~14s.
-  const { modules, loading, error, reload } = useCurriculumModules({ compact: true, revalidate: true });
-  const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ revalidate: true, visibility: 'all' });
-  const programmeDesignUrl = useMemo(() => {
-    const requested = (searchParams.get('programme') || searchParams.get('programmeId') || '').trim();
-    if (!requested) return '';
-    const requestedKey = normaliseDeepLinkValue(requested);
-    const programme = curriculumProgrammes.find(item => (
-      [item.id, item.sourceId, item.name, item.standard]
-        .map(normaliseDeepLinkValue)
-        .filter(Boolean)
-        .includes(requestedKey)
-    ));
-    const programmeId = String(programme?.sourceId || programme?.id || requested).trim();
-    return programmeId ? `/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=modules` : '';
-  }, [curriculumProgrammes, searchParams]);
+  const { modules, loading, error, reload } = useCurriculumModules({ compact: true, skipCache: true });
+  const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ skipCache: true, visibility: 'all' });
   // KSB sets, standards and their derived labels only matter once something on
   // the page actually asks for KSB data: the build drawer, a card's KSB map, or
   // the programme-wide KSB map. The plain catalogue list never reads them, so
@@ -401,6 +320,28 @@ export default function ModuleBuilder() {
     return () => { active = false; };
   }, [workingModule?.programmeId, workingModule?.programmeName]);
 
+  // The cohort and group filters below list the records themselves, not only the
+  // ones a module already reaches: a programme with two cohorts and no modules
+  // must still show its two cohorts, or the filter contradicts every other page.
+  // Same cached compact overview the component picker above already loads.
+  const [scopeCohorts, setScopeCohorts] = useState<CurriculumCohort[]>([]);
+  const [scopeGroups, setScopeGroups] = useState<CurriculumGroup[]>([]);
+  // Settled either way — a failed load must not hold the cascade below forever.
+  const [scopeLoaded, setScopeLoaded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    loadCurriculumScope()
+      .then((scope) => {
+        if (!active) return;
+        const cohorts = (scope as unknown as { cohorts?: CurriculumCohort[] }).cohorts || [];
+        setScopeCohorts(cohorts);
+        setScopeGroups(scope.groups);
+      })
+      .catch(() => {})
+      .finally(() => { if (active) setScopeLoaded(true); });
+    return () => { active = false; };
+  }, []);
+
   const catalogueModules = useMemo(() => {
     void storageVersion;
     const remoteModules = modules.map(module => curriculumModuleToCatalogue(module));
@@ -411,51 +352,15 @@ export default function ModuleBuilder() {
       ));
   }, [modules, storageVersion, hiddenModuleIds, curriculumProgrammes]);
 
-  // Every programme identifier at least one catalogue module answers to. A
-  // programme with no modules only ever renders "no modules match", so it is
-  // not worth offering in the filter.
-  const programmeKeysWithModules = useMemo(() => new Set(
-    catalogueModules
-      .flatMap(module => [
-        module.programmeName,
-        module.programmeId,
-        module.sourceModule?.programme,
-        module.sourceModule?.programmeId,
-        ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
-      ])
-      .map(normaliseDeepLinkValue)
-      .filter(Boolean),
-  ), [catalogueModules]);
-
   const programmeOptions = useMemo(() => {
-    // The programme the page was deep linked into, and whatever is currently
-    // selected, stay listed even if archived after the fact - so the <select>
-    // never holds a value with no matching option, and an explicit deep link
-    // is honoured rather than silently dropped.
-    const stickyKeys = [
-      requestedCreateScopeRef.current.programmeId,
-      requestedCreateScopeRef.current.programmeName,
-      programmeFilter === 'All' ? '' : programmeFilter,
-    ].map(normaliseDeepLinkValue).filter(Boolean);
     const byName = new Map<string, string>();
     curriculumProgrammes.forEach(programme => {
       const name = String(programme.name || programme.sourceId || programme.id || '').trim();
       if (!name) return;
-      const keys = [programme.name, programme.id, programme.sourceId, programme.standard]
-        .map(normaliseDeepLinkValue)
-        .filter(Boolean);
-      const isSticky = keys.some(key => stickyKeys.includes(key));
-      // curriculumProgrammes is fetched with visibility: 'all' so a module whose
-      // programme was archived can still resolve its identity. The picker itself
-      // is for choosing where to work next, so an archived programme is left out
-      // of it the same way the Programmes page hides it from the active list. An
-      // active programme is offered even with zero modules yet - the catalogue
-      // then says so plainly (see emptyProgrammeScope) instead of hiding it.
-      if (programmeIsArchived(programme) && !isSticky) return;
       byName.set(normaliseDeepLinkValue(name) || name.toLowerCase(), name);
     });
     return ['All', ...Array.from(byName.values()).sort((a, b) => a.localeCompare(b))];
-  }, [curriculumProgrammes, programmeFilter]);
+  }, [curriculumProgrammes]);
 
   const programmeLookup = useMemo(() => {
     const lookup = new Map<string, { id: string; name: string }>();
@@ -608,88 +513,6 @@ export default function ModuleBuilder() {
     return () => { active = false; };
   }, [moduleFormOpen]);
 
-  const closeCreateDrawer = useCallback(() => {
-    setCreateOpen(false);
-    setSearchParams(previous => {
-      const next = new URLSearchParams(previous);
-      next.delete('create');
-      return next;
-    }, { replace: true });
-  }, [setSearchParams]);
-
-  const openSavedModule = useCallback(async (saved: SavedModuleRef) => {
-    await reload({ silent: true });
-    if (!saved.created || !saved.catalogueId) return;
-    setSearchParams(previous => {
-      const next = new URLSearchParams(previous);
-      next.delete('create');
-      next.set('module', saved.catalogueId);
-      return next;
-    }, { replace: true });
-  }, [reload, setSearchParams]);
-
-  const requestedHierarchy = requestedCreateScopeRef.current;
-  const hierarchyProgramme = useMemo(() => {
-    const keys = [
-      requestedHierarchy.programmeId,
-      requestedHierarchy.programmeName,
-      programmeFilter === 'All' ? '' : programmeFilter,
-    ].map(normaliseDeepLinkValue).filter(Boolean);
-    if (!keys.length) return null;
-    return curriculumProgrammes.find(programme => (
-      [programme.id, programme.sourceId, programme.name, programme.standard]
-        .map(normaliseDeepLinkValue)
-        .filter(Boolean)
-        .some(key => keys.includes(key))
-    )) || null;
-  }, [curriculumProgrammes, programmeFilter, requestedHierarchy.programmeId, requestedHierarchy.programmeName]);
-  const hierarchyCohort = useMemo(() => {
-    const key = normaliseDeepLinkValue(requestedHierarchy.cohortId || cohortFilter);
-    if (!key) return null;
-    return moduleFormScope.cohorts.find(cohort => (
-      [cohort.id, cohort.name].map(normaliseDeepLinkValue).includes(key)
-    )) || null;
-  }, [cohortFilter, moduleFormScope.cohorts, requestedHierarchy.cohortId]);
-  const hierarchyGroup = useMemo(() => {
-    const key = normaliseDeepLinkValue(requestedHierarchy.groupId || groupFilter);
-    if (!key) return null;
-    return moduleFormScope.groups.find(group => (
-      [group.id, group.name].map(normaliseDeepLinkValue).includes(key)
-    )) || null;
-  }, [groupFilter, moduleFormScope.groups, requestedHierarchy.groupId]);
-
-  const catalogueHierarchy = useMemo(() => {
-    const programmeId = String(hierarchyProgramme?.sourceId || hierarchyProgramme?.id || requestedHierarchy.programmeId || '').trim();
-    const programmeName = String(
-      hierarchyProgramme?.name
-      || requestedHierarchy.programmeName
-      || (programmeFilter === 'All' ? requestedHierarchy.programmeId : programmeFilter)
-      || '',
-    ).trim();
-    if (!programmeName) return null;
-    return {
-      programme: { label: programmeName, href: programmeId ? `/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=modules` : '' },
-      cohort: hierarchyCohort ? { label: hierarchyCohort.name, href: `/curriculum/cohorts/${encodeURIComponent(hierarchyCohort.id)}` } : undefined,
-      group: hierarchyGroup ? { label: hierarchyGroup.name, href: namedCurriculumWorkspacePath('groups', hierarchyGroup.id, hierarchyGroup.name) } : undefined,
-      current: 'Modules',
-    };
-  }, [hierarchyCohort, hierarchyGroup, hierarchyProgramme, programmeFilter, requestedHierarchy.programmeId, requestedHierarchy.programmeName]);
-
-  const workingHierarchy = useMemo(() => {
-    if (!workingModule) return null;
-    const usage = deliveryUsageForModuleScope(workingModule as ModuleBuilderListItem, programmeFilter, curriculumProgrammes)
-      || moduleDeliveryUsageFallback(workingModule as ModuleBuilderListItem);
-    const programmeIdentity = resolveProgrammeIdentity(usage.programme || workingModule.programmeName, usage.programmeId || workingModule.programmeId);
-    return {
-      programme: programmeIdentity.programmeName && programmeIdentity.programmeName !== 'Unassigned programme'
-        ? { label: programmeIdentity.programmeName, href: `/curriculum/programmes/${encodeURIComponent(programmeIdentity.programmeId)}?tab=modules` }
-        : undefined,
-      cohort: usage.cohort ? { label: usage.cohort, href: usage.cohortId ? `/curriculum/cohorts/${encodeURIComponent(usage.cohortId)}` : '' } : undefined,
-      group: usage.group ? { label: usage.group, href: usage.groupId ? namedCurriculumWorkspacePath('groups', usage.groupId, usage.group) : '' } : undefined,
-      current: workingModule.title,
-    };
-  }, [curriculumProgrammes, programmeFilter, resolveProgrammeIdentity, workingModule]);
-
   // Scope + module-scoped uploader passed to the shared week-builder editor.
   const weekScopeForModule = useMemo<WeekScope>(() => ({
     courseType: 'paid',
@@ -711,22 +534,8 @@ export default function ModuleBuilder() {
     setNoticeAlert(null);
     const wasDirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(module) !== savedModuleSnapshotRef.current);
     try {
-      const [result, sessionPlan] = await Promise.all([
-        restoreModuleTeamsMeeting(module.catalogueId),
-        loadModuleWeekSessionPlan(module.catalogueId, module.weekStructure.length),
-      ]);
+      const result = await restoreModuleTeamsMeeting(module.catalogueId);
       const meetingSettings = result.meeting as ModuleComponent['settings'];
-      // What a live-session component can inherit from the series before it has a
-      // stored twin — everything except the per-session schedule. The date keys
-      // are stripped so the series' first-session date can never overwrite a
-      // session's own; applyModuleWeekSessionPlan dates each session below. This
-      // is the frontend mirror of the backend's shared_series_settings, and it is
-      // what keeps the join link on an unsaved or freshly generated session
-      // instead of leaving it blank until the next restore pairs it by id.
-      const seriesDateKeys = new Set(['sessionDate', 'sessionDay', 'sessionTime', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc']);
-      const seriesLinkSettings = Object.fromEntries(
-        Object.entries(meetingSettings || {}).filter(([key]) => !seriesDateKeys.has(key)),
-      ) as ModuleComponent['settings'];
       // The endpoint answers with the module as it now stands, and each week's
       // live-session component carries that week's own session — so the stored
       // component is what is merged in, not one set of series settings applied
@@ -735,7 +544,7 @@ export default function ModuleBuilder() {
       let nextSnapshot = '';
       setWorkingModule(current => {
         if (!current || current.catalogueId !== module.catalogueId) return current;
-        const restoredModule = recalculateModule({
+        const next = recalculateModule({
           ...current,
           deliveryMetadata: {
             ...(current.deliveryMetadata || {}),
@@ -750,20 +559,11 @@ export default function ModuleBuilder() {
               sessionDate: restored?.sessionDate ?? week.sessionDate,
               sessionDay: restored?.sessionDay ?? week.sessionDay,
               components: [
-                ...week.components.map(component => {
-                  if (component.type !== 'live-session') return component;
-                  const restoredComponent = restoredById.get(component.id);
-                  if (restoredComponent) {
-                    // The stored twin carries this session's own date and link.
-                    return { ...component, settings: { ...component.settings, ...restoredComponent.settings } };
-                  }
-                  // No stored twin yet (unsaved or freshly generated). Give it the
-                  // series' join link now — but not the series' date — so it stops
-                  // reading as "no meeting" the moment re-attach succeeds, rather
-                  // than only after a later restore pairs it by id.
-                  if (component.settings.liveSessionUrl || component.settings.teamsMeetingUrl) return component;
-                  return { ...component, settings: { ...component.settings, ...seriesLinkSettings } };
-                }),
+                ...week.components.map(component => (
+                  component.type === 'live-session'
+                    ? { ...component, settings: { ...component.settings, ...(restoredById.get(component.id)?.settings || meetingSettings) } }
+                    : component
+                )),
                 // A week that had no live session now has the one the re-attach
                 // created for it; without this the module would only show it
                 // after a reload.
@@ -772,9 +572,6 @@ export default function ModuleBuilder() {
             };
           }),
         });
-        const next = sessionPlan
-          ? applyModuleWeekSessionPlan(restoredModule, sessionPlan, { followEndDate: false })
-          : restoredModule;
         nextSnapshot = moduleSnapshot(next);
         return next;
       });
@@ -814,19 +611,42 @@ export default function ModuleBuilder() {
     [catalogueModules],
   );
 
+  /**
+   * The cohorts of the programme in the filter, whether or not a module reaches
+   * them. The deliveries are folded in afterwards so a module scoped to a cohort
+   * the overview does not carry still gets an option to be found by — but they
+   * are no longer the only source, which is what made a programme with two
+   * cohorts and no modules report "no cohorts".
+   */
   const cohortFilterOptions = useMemo(() => {
     const options = new Map<string, string>();
+    scopeCohorts
+      .filter(cohort => recordMatchesProgrammeFilter(cohort.programme, cohort.programmeId, programmeFilter, curriculumProgrammes))
+      .forEach(cohort => {
+        const value = deliveryFilterValue(cohort.id, cohort.name);
+        if (value) options.set(value, cleanModuleMeta(cohort.name) || value);
+      });
     deliveryUsages
       .filter(usage => usageMatchesProgrammeFilter(usage, programmeFilter, curriculumProgrammes))
       .forEach(usage => {
         const value = deliveryFilterValue(usage.cohortId, usage.cohort);
-        if (value) options.set(value, cleanModuleMeta(usage.cohort) || value);
+        if (value && !options.has(value)) options.set(value, cleanModuleMeta(usage.cohort) || value);
       });
     return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [curriculumProgrammes, deliveryUsages, programmeFilter]);
+  }, [curriculumProgrammes, deliveryUsages, programmeFilter, scopeCohorts]);
 
+  /** The groups of the programme and cohort in the filter, on the same terms. */
   const groupFilterOptions = useMemo(() => {
     const options = new Map<string, string>();
+    scopeGroups
+      .filter(group => (
+        recordMatchesProgrammeFilter(group.programme, group.programmeId, programmeFilter, curriculumProgrammes)
+        && deliveryFilterMatches(cohortFilter, group.cohortId, group.cohort)
+      ))
+      .forEach(group => {
+        const value = deliveryFilterValue(group.id, group.name);
+        if (value) options.set(value, cleanModuleMeta(group.name) || value);
+      });
     deliveryUsages
       .filter(usage => (
         usageMatchesProgrammeFilter(usage, programmeFilter, curriculumProgrammes)
@@ -834,10 +654,10 @@ export default function ModuleBuilder() {
       ))
       .forEach(usage => {
         const value = deliveryFilterValue(usage.groupId, usage.group);
-        if (value) options.set(value, cleanModuleMeta(usage.group) || value);
+        if (value && !options.has(value)) options.set(value, cleanModuleMeta(usage.group) || value);
       });
     return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [cohortFilter, curriculumProgrammes, deliveryUsages, programmeFilter]);
+  }, [cohortFilter, curriculumProgrammes, deliveryUsages, programmeFilter, scopeGroups]);
 
   /** Every tutor who could be assigned: the staff roster plus anyone already on a delivery. */
   const tutorNames = useMemo(() => {
@@ -851,13 +671,18 @@ export default function ModuleBuilder() {
   }, [deliveryUsages, tutorProfiles]);
 
   // Drop a child filter its parent no longer contains, so the cascade can never
-  // show a contradictory Programme / Cohort / Group combination.
+  // show a contradictory Programme / Cohort / Group combination. Held until the
+  // cohort and group records have landed: until then the options are the
+  // deliveries alone, and a deep link to a cohort with no modules would be
+  // thrown away a beat before the option that justifies it arrives.
   useEffect(() => {
+    if (!scopeLoaded) return;
     if (cohortFilter && !cohortFilterOptions.some(option => option.value === cohortFilter)) setCohortFilter('');
-  }, [cohortFilter, cohortFilterOptions]);
+  }, [cohortFilter, cohortFilterOptions, scopeLoaded]);
   useEffect(() => {
+    if (!scopeLoaded) return;
     if (groupFilter && !groupFilterOptions.some(option => option.value === groupFilter)) setGroupFilter('');
-  }, [groupFilter, groupFilterOptions]);
+  }, [groupFilter, groupFilterOptions, scopeLoaded]);
 
   useEffect(() => {
     if (!filtersTouchedRef.current) return;
@@ -887,15 +712,7 @@ export default function ModuleBuilder() {
 
   const deliveryFiltersActive = Boolean(cohortFilter || groupFilter || tutorFilter);
 
-  // A programme scope that genuinely holds nothing - reached by deep link from
-  // its workspace, since the filter no longer offers empty programmes. The
-  // empty state should name it and offer a module, not blame the filters.
-  const emptyProgrammeScope = programmeFilter !== 'All'
-    && !search.trim()
-    && !deliveryFiltersActive
-    && !programmeFilterKeys(programmeFilter, curriculumProgrammes).some(key => programmeKeysWithModules.has(key));
-
-  const filteredModules = catalogueModules.filter(module => {
+  const filtered = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
@@ -909,9 +726,6 @@ export default function ModuleBuilder() {
       && (!tutorFilter || normaliseDeepLinkValue(usage.tutor) === normaliseDeepLinkValue(tutorFilter))
     ));
   });
-  // Sorted after filtering, so the chosen order applies to what is on screen
-  // rather than to the whole catalogue behind it.
-  const filtered = sortEntities(filteredModules, MODULE_SORT_OPTIONS, sort);
 
   const deliveryStats = useMemo(() => ({
     deliveries: deliveryUsages.length,
@@ -992,14 +806,7 @@ export default function ModuleBuilder() {
       const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
-      const firstWeek = next.weekStructure[0];
-      const firstComponent = firstWeek?.components[0];
-      const defaultSelection: Selection | null = firstComponent
-        ? { kind: 'component', weekId: firstWeek.id, componentId: firstComponent.id }
-        : firstWeek
-          ? { kind: 'week', weekId: firstWeek.id }
-          : null;
-      setSelection(deepLinkTarget.selection || defaultSelection);
+      setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
@@ -1009,16 +816,6 @@ export default function ModuleBuilder() {
       setOpeningModuleComplete(false);
     }
   }, [finishLoadingProgress, resolveModuleScopeLock]);
-
-  // The plan refers to modules by their catalogue id, so a module with no
-  // canonical one cannot be assigned. The picker says so itself rather than
-  // this hiding the button, so the gap is named where it is acted on.
-  const openAssignLearners = useCallback((module: ModuleCatalogueItem) => {
-    setAssignLearnersModule({
-      moduleId: moduleStructureIdentifier(module) || '',
-      title: module.title,
-    });
-  }, []);
 
   const openKsbMap = useCallback(async (module: ModuleBuilderListItem) => {
     const loadingId = module.catalogueId || moduleStructureIdentifier(module) || module.title;
@@ -1106,16 +903,11 @@ export default function ModuleBuilder() {
     // Same trigger as needsKsbData: standards only feed KSB source
     // resolution, never the plain catalogue list.
     if (!needsKsbData || standardsLoadedRef.current) return undefined;
+    standardsLoadedRef.current = true;
     const controller = new AbortController();
     setStandardsLoading(true);
     fetchCurriculumStandards(controller.signal)
-      .then(result => {
-        setStandards(result);
-        // As with the KSB-set hook, only a response delivered to this mounted
-        // effect counts as loaded. Otherwise StrictMode can abort the first
-        // subscriber and the second effect will never issue a usable request.
-        standardsLoadedRef.current = true;
-      })
+      .then(result => setStandards(result))
       .catch(error => {
         if (controller.signal.aborted) return;
         console.warn('Unable to load Skills England standards.', error);
@@ -1164,26 +956,16 @@ export default function ModuleBuilder() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || '';
+    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || params.get('moduleTitle') || '';
     const requestedKey = requestedModule.trim();
-    // Read separately from the id, rather than only as the last resort when no
-    // id-shaped param is present: the delivery side and the catalogue
-    // sometimes disagree on which id is canonical for the same module, so a
-    // guessed id that matches nothing here still deserves a second try by name
-    // before the link is declared dead.
-    const requestedTitle = (params.get('moduleTitle') || '').trim();
-    const dedupeKey = requestedKey || requestedTitle;
-    if (!dedupeKey || loading || error || workingModule || deepLinkedModuleRef.current === dedupeKey) return;
+    if (!requestedKey || loading || error || workingModule || deepLinkedModuleRef.current === requestedKey) return;
 
     const requestedNormalised = normaliseDeepLinkValue(requestedKey);
-    const requestedTitleNormalised = normaliseDeepLinkValue(requestedTitle);
     const target = catalogueModules.find(module => {
       const identifiers = moduleDeepLinkIdentifiers(module);
       const titles = [module.title, module.sourceModule?.name];
-      return (!!requestedKey && (
-        identifiers.some(value => value === requestedKey)
-        || titles.some(value => normaliseDeepLinkValue(value) === requestedNormalised)
-      )) || (!!requestedTitleNormalised && titles.some(value => normaliseDeepLinkValue(value) === requestedTitleNormalised));
+      return identifiers.some(value => value === requestedKey)
+        || titles.some(value => normaliseDeepLinkValue(value) === requestedNormalised);
     });
 
     // A deep link only ever *opens* a module. It used to fall through to creating
@@ -1191,13 +973,13 @@ export default function ModuleBuilder() {
     // that had been renamed or deleted silently wrote a new record instead.
     if (!target) {
       if (catalogueModules.length) {
-        deepLinkedModuleRef.current = dedupeKey;
-        setActionMessage(`Unable to find module "${requestedKey || requestedTitle}" in Module Builder.`);
+        deepLinkedModuleRef.current = requestedKey;
+        setActionMessage(`Unable to find module "${requestedKey}" in Module Builder.`);
       }
       return;
     }
 
-    deepLinkedModuleRef.current = dedupeKey;
+    deepLinkedModuleRef.current = requestedKey;
     openModule(target);
   }, [catalogueModules, error, loading, openModule, workingModule]);
 
@@ -1205,23 +987,6 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
   }, []);
-
-  const openAddedComponent = useCallback((weekId: string, componentId: string) => {
-    setExpandedWeekIds(current => {
-      const next = new Set(current);
-      next.add(weekId);
-      return next;
-    });
-    setPendingComponentSelection({ weekId, componentId });
-  }, []);
-
-  useEffect(() => {
-    if (!pendingComponentSelection || !workingModule) return;
-    const week = workingModule.weekStructure.find(item => item.id === pendingComponentSelection.weekId);
-    if (!week?.components.some(component => component.id === pendingComponentSelection.componentId)) return;
-    setSelection({ kind: 'component', ...pendingComponentSelection });
-    setPendingComponentSelection(null);
-  }, [pendingComponentSelection, workingModule]);
 
   // Import a saved week template as a NEW week in this module: copy the week's
   // fields + components, regenerating ids so they're independent of the source.
@@ -1246,67 +1011,24 @@ export default function ModuleBuilder() {
     setWeekTemplateImportOpen(false);
   }, [updateWorkingModule]);
 
-  // Add a template's components to a week that already exists, keeping whatever
-  // is in it. Appended, not replaced: a template is a set of lessons to drop in
-  // beside the ones already authored, and picking one should never quietly
-  // discard a week's existing work.
-  //
-  // Every component is given a fresh id and rebound to this week, exactly as
-  // importing a template as a new week does -- reusing the template's own ids
-  // would make two modules claim the same component.
-  const addWeekTemplateToWeek = useCallback((weekId: string, template: WeekTemplate) => {
-    if (!workingModule) return;
-    const week = workingModule.weekStructure.find(item => item.id === weekId);
-    if (!week) return;
-    const copies = (template.components || []).map(component => ({
-      ...component,
-      id: makeAuthoringId('component'),
-      weekId: week.id,
-      ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-    }));
-    const lastComponent = copies.at(-1);
-    updateWorkingModule(module => ({
-      ...module,
-      weekStructure: module.weekStructure.map(item => {
-        if (item.id !== weekId) return item;
-        return {
-          ...item,
-          // The week keeps its own title and summary. Only the KSB mappings are
-          // merged, because those describe the components being added.
-          components: [...item.components, ...copies],
-          ksbMappings: [
-            ...(item.ksbMappings || []),
-            ...(template.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-          ],
-        };
-      }),
-    }));
-    setWeekTemplateImportOpen(false);
-    setWeekTemplateTargetWeekId(null);
-    if (lastComponent) openAddedComponent(weekId, lastComponent.id);
-  }, [openAddedComponent, updateWorkingModule, workingModule]);
-
   // Copy components chosen from the reuse library into an existing week. The
   // copies land in client state and are persisted by the normal module save -
   // a per-component write would be undone by it, because saving re-upserts the
   // module's whole week structure.
   const addLibraryComponentsToWeek = useCallback((weekId: string, picked: LibraryComponent[]) => {
-    if (!workingModule) return;
-    const week = workingModule.weekStructure.find(item => item.id === weekId);
-    if (!week) return;
-    const copies = picked.map(source => copyComponentIntoWeek(source, week.id, workingModule.id));
-    const lastComponent = copies.at(-1);
-    if (!lastComponent) return;
+    let lastComponentId = '';
     updateWorkingModule(module => ({
       ...module,
       weekStructure: module.weekStructure.map(week => {
         if (week.id !== weekId) return week;
+        const copies = picked.map(source => copyComponentIntoWeek(source, week.id, module.id));
+        if (copies.length) lastComponentId = copies[copies.length - 1].id;
         return { ...week, components: [...week.components, ...copies] };
       }),
     }));
+    if (lastComponentId) setSelection({ kind: 'component', weekId, componentId: lastComponentId });
     setReusePickerWeekId(null);
-    openAddedComponent(weekId, lastComponent.id);
-  }, [openAddedComponent, updateWorkingModule, workingModule]);
+  }, [updateWorkingModule]);
 
   const confirmDeleteWeek = async (weekId: string) => {
     if (!workingModule) return;
@@ -1383,12 +1105,9 @@ export default function ModuleBuilder() {
       savedModuleSnapshotRef.current = moduleSnapshot(saved);
       setStorageVersion(version => version + 1);
       setActionMessage(null);
-      // A brief, self-dismissing confirmation rather than a click-to-close modal:
-      // the footer already reads "All changes saved" with a green Saved button, and
-      // a dialog that waits on the reader is an interruption in a screen people save
-      // constantly. This only confirms the save landed — it is not a readiness
-      // check, so it shows the same "Saved" on a week that still has unmapped KSBs.
-      void showCurriculumAlert({ title: 'Saved', icon: 'success', timer: 1200 });
+      // No dialog on a successful save. The footer already reads "All changes
+      // saved" with a green Saved button, and a modal on every save is an
+      // interruption in a screen people save constantly.
       reload();
       return saved;
     } catch (err) {
@@ -1407,6 +1126,7 @@ export default function ModuleBuilder() {
   const exportKsbSheet = useCallback(async () => {
     if (!workingModule) return;
     setActionMessage(null);
+    setNoticeAlert(null);
     // Guard before exporting so an empty module never downloads a blank sheet.
     if (!workingModule.weekStructure.some(week => week.components.length)) {
       setActionMessage('This module has no components to export yet.');
@@ -1425,6 +1145,7 @@ export default function ModuleBuilder() {
   const importKsbSheet = useCallback(async (file: File) => {
     if (!workingModule) return;
     setActionMessage(null);
+    setNoticeAlert(null);
     try {
       const { module: nextModule, summary } = await importModuleKsbWorkbook(file, workingModule);
       if (!summary.rowsWithKsbs) {
@@ -1508,15 +1229,8 @@ export default function ModuleBuilder() {
     setSettingsOpen(false);
     setPreviewOpen(false);
     setLessonPickerWeekId(null);
-    setPendingComponentSelection(null);
     setNoticeAlert(null);
     setActionMessage(null);
-    setSearchParams(previous => {
-      const next = new URLSearchParams(previous);
-      ['module', 'moduleId', 'catalogueId', 'moduleTitle', 'week', 'weekId', 'component', 'componentId', 'focus', 'settings']
-        .forEach(key => next.delete(key));
-      return next;
-    }, { replace: true });
   };
 
   const restoreSavedWorkingModule = useCallback(() => {
@@ -1697,7 +1411,6 @@ export default function ModuleBuilder() {
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${workingModule.title} - authoring workspace`} userName="Rachel Myers" userRole="Curriculum Designer">
         <div className="min-h-[calc(100vh-96px)] bg-background-100 px-3 py-4 sm:px-5 lg:px-6">
           <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-4">
-          {workingHierarchy && <CurriculumHierarchyNav {...workingHierarchy} />}
           <WorkspaceHeader
             module={workingModule}
             programmeOptions={programmeOptions.filter(option => option !== 'All')}
@@ -1741,20 +1454,7 @@ export default function ModuleBuilder() {
               dragState={dragState}
               onDragState={setDragState}
               onSelectWeek={weekId => { void requestSelectionChange({ kind: 'week', weekId }); }}
-              onSelectComponent={(weekId, componentId) => {
-                const alreadyExists = workingModule.weekStructure
-                  .find(week => week.id === weekId)
-                  ?.components.some(component => component.id === componentId);
-                if (alreadyExists) {
-                  requestSelectionChange({ kind: 'component', weekId, componentId });
-                } else {
-                  // The rail calls onChange and onSelect in the same browser
-                  // event. React has not committed the new component yet, so
-                  // wait for it instead of validating against the old list and
-                  // falling back to the week overview.
-                  openAddedComponent(weekId, componentId);
-                }
-              }}
+              onSelectComponent={(weekId, componentId) => { void requestSelectionChange({ kind: 'component', weekId, componentId }); }}
               onAddWeekFromTemplate={() => setWeekTemplateImportOpen(true)}
               onReuseComponents={weekId => setReusePickerWeekId(weekId)}
               onAddWeek={() => {
@@ -1769,17 +1469,10 @@ export default function ModuleBuilder() {
                 updateWorkingModule(generateMissingLiveSessions);
                 void showCurriculumAlert({
                   title: 'Live sessions added',
-                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added across ${weekCount} week${weekCount === 1 ? '' : 's'}. Use "Create all Teams meetings" once to create the module calendar and link every session.`,
+                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added across ${weekCount} week${weekCount === 1 ? '' : 's'}. Open each one and use "Create Teams meeting" to schedule it in Teams.`,
                   timer: 3200,
                 });
               }}
-              onCreateAllTeamsMeetings={() => setBulkTeamsMeetingOpen(true)}
-              onRestoreAllTeamsMeetings={() => { void restoreTeamsMeetingForWorkingModule(); }}
-              hasTrackedTeamsMeeting={
-                teamsMeetings.some(summary => String(summary.moduleCatalogueId || '').trim().toLowerCase() === String(workingModule.catalogueId || '').trim().toLowerCase())
-                || workingModule.weekStructure.some(week => week.components.some(component => component.type === 'live-session' && String(component.settings?.liveSessionUrl || component.settings?.teamsMeetingUrl || '').trim()))
-              }
-              restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
               onDeleteWeek={weekId => {
                 void confirmDeleteWeek(weekId);
               }}
@@ -1836,11 +1529,10 @@ export default function ModuleBuilder() {
                   rulePoints={componentPointsByType[selectedComponent.type]}
                   weekScope={weekScopeForModule}
                   weekSessionDate={selectedWeek.sessionDate}
-                  weekSessionTime={selectedWeek.sessionStartTime}
                   uploadResource={uploadComponentForModule}
                   restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
                   restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
-                  liveSessionModule={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
+                  liveSessionModule={{ catalogueId: workingModule.catalogueId, title: workingModule.title }}
                 />
               ) : selectedWeek ? (
                 <ModuleWeekPanel
@@ -1853,7 +1545,6 @@ export default function ModuleBuilder() {
                     setLessonPickerWeekId(selectedWeek.id);
                   }}
                   onReuseComponents={() => setReusePickerWeekId(selectedWeek.id)}
-                  onAddFromTemplate={() => { setWeekTemplateTargetWeekId(selectedWeek.id); setWeekTemplateImportOpen(true); }}
                 />
               ) : (
                 <EmptyEditor onAddWeek={() => {
@@ -1871,7 +1562,6 @@ export default function ModuleBuilder() {
                 ksbSourceLabels={ksbSourceLabels}
               ksbPrompt={ksbMappingPrompt}
               ksbProfileCount={workspaceKsbProfileEntries.length}
-              ksbProfileLoading={ksbSetsLoading || standardsLoading}
               onExportKsb={() => { void exportKsbSheet(); }}
               onImportKsb={() => ksbImportInputRef.current?.click()}
               onAddKsb={target => setKsbTarget(target)}
@@ -1956,66 +1646,23 @@ export default function ModuleBuilder() {
                 ...module,
                 weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...components] } : item),
               }));
+              setSelection({ kind: 'component', weekId: week.id, componentId: components[components.length - 1].id });
               setLessonPickerWeekId(null);
-              openAddedComponent(week.id, components[components.length - 1].id);
             }}
           />
         )}
         {weekTemplateImportOpen && workingModule && (
           <WeekTemplateImportModal
             scope={{ programmeId: workingModule.programmeId, programmeName: workingModule.programmeName }}
-            // Named so the dialog can say where the components will land, which
-            // is the whole difference between the two ways in.
-            targetWeekLabel={(() => {
-              if (!weekTemplateTargetWeekId) return '';
-              const week = workingModule.weekStructure.find(item => item.id === weekTemplateTargetWeekId);
-              return week ? weekPlacementLabel(week, ' — ') : '';
-            })()}
-            existingComponentCount={(() => {
-              if (!weekTemplateTargetWeekId) return 0;
-              const week = workingModule.weekStructure.find(item => item.id === weekTemplateTargetWeekId);
-              return week?.components.length ?? 0;
-            })()}
-            onClose={() => { setWeekTemplateImportOpen(false); setWeekTemplateTargetWeekId(null); }}
-            onImport={template => {
-              if (weekTemplateTargetWeekId) addWeekTemplateToWeek(weekTemplateTargetWeekId, template);
-              else importWeekTemplateAsNewWeek(template);
-            }}
+            onClose={() => setWeekTemplateImportOpen(false)}
+            onImport={importWeekTemplateAsNewWeek}
           />
         )}
-        {/* Bulk "Create all Teams meetings": the same create form a single live
-            session uses, opened at module level (its defaults come from the first
-            live-session component, its title from the module). One Teams series is
-            built on the module's saved dates; on success the restore endpoint
-            writes the join link + settings into EVERY live-session component and
-            persists them server-side, so there is no separate save step. */}
-        {bulkTeamsMeetingOpen && workingModule && (() => {
-          const liveSessions = workingModule.weekStructure.flatMap(week => week.components.filter(component => component.type === 'live-session'));
-          const base = liveSessions[0];
-          if (!base) return null;
-          return (
-            <TeamsMeetingModal
-              component={{ ...base, title: workingModule.title }}
-              module={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
-              onClose={() => setBulkTeamsMeetingOpen(false)}
-              // The series is now tracked against this module, so re-attaching pulls
-              // its join link into every live-session component and saves them — the
-              // one-step "create and it's saved" the per-component modal can't give.
-              onCreated={() => {
-                // Generated components may still be local. Persist their ids first
-                // so restore can pair every one with its own tracked occurrence.
-                void saveModuleStructure(workingModule.catalogueId, workingModule)
-                  .then(() => restoreTeamsMeetingForWorkingModule())
-                  .catch(err => setActionMessage(err instanceof Error ? err.message : 'Unable to save live sessions before restoring Teams data.'));
-              }}
-            />
-          );
-        })()}
         {reusePickerWeekId && (
           <ComponentLibraryModal
             weekLabel={(() => {
               const week = workingModule.weekStructure.find(item => item.id === reusePickerWeekId);
-              return week ? weekPlacementLabel(week, ' — ') : 'this week';
+              return week ? `Week ${week.weekNumber}${week.title ? ` — ${week.title}` : ''}` : 'this week';
             })()}
             onClose={() => setReusePickerWeekId(null)}
             onAddMany={picked => addLibraryComponentsToWeek(reusePickerWeekId, picked)}
@@ -2045,8 +1692,6 @@ export default function ModuleBuilder() {
             ksbSetsLoading={ksbSetsLoading}
             initialSourceId={workspaceKsbProfileValue}
             lockedSourceId={workspaceKsbProfileValue}
-            existingMappings={mappingsForTarget(workingModule, ksbTarget)}
-            limitPerKind={ksbTarget.scope === 'component' ? COMPONENT_KSB_LIMIT_PER_KIND : undefined}
             onClose={() => setKsbTarget(null)}
             onAddMany={(items) => {
               updateWorkingModule(module => items.reduce(
@@ -2063,8 +1708,7 @@ export default function ModuleBuilder() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${published} published - ${draftCount} draft - ${totalComponents} components`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
-        {catalogueHierarchy && <CurriculumHierarchyNav {...catalogueHierarchy} />}
+      <div className="p-4 sm:p-5 space-y-4">
         <div className="rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-3">
@@ -2072,12 +1716,6 @@ export default function ModuleBuilder() {
                 <AppIcon className="ri-layout-4-line text-xl"></AppIcon>
               </span>
               <div className="min-w-0">
-                {programmeDesignUrl && (
-                  <Link to={programmeDesignUrl} className="mb-1 inline-flex items-center gap-1 text-[10px] font-bold text-primary-700 hover:text-primary-900">
-                    <AppIcon className="ri-arrow-left-line"></AppIcon>
-                    Back to Programme Modules
-                  </Link>
-                )}
                 <h2 className="text-lg font-heading font-bold text-foreground-950">Module Builder</h2>
                 <p className="mt-1 max-w-2xl text-[12px] leading-5 text-foreground-500">
                   {loading ? 'Loading live LMS modules...' : 'Manage module structures, delivery scope and KSB mapping in one workspace.'}
@@ -2138,13 +1776,17 @@ export default function ModuleBuilder() {
               >
                 {programmeOptions.map(option => <option key={option} value={option}>{option === 'All' ? 'All programmes' : option}</option>)}
               </select>
+              {/* Empty here now means the records genuinely do not exist, not
+                  that no module reaches them, so the labels can say so plainly. */}
               <select
                 aria-label="Cohort"
                 value={cohortFilter}
                 onChange={event => changeFilter(() => { setCohortFilter(event.target.value); setGroupFilter(''); })}
                 className={FILTER_SELECT_CLASS}
               >
-                <option value="">{cohortFilterOptions.length ? 'All cohorts' : 'No cohorts in scope'}</option>
+                <option value="">{cohortFilterOptions.length
+                  ? 'All cohorts'
+                  : programmeFilter === 'All' ? 'No cohorts' : 'No cohorts in this programme'}</option>
                 {cohortFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
               <select
@@ -2153,7 +1795,9 @@ export default function ModuleBuilder() {
                 onChange={event => changeFilter(() => setGroupFilter(event.target.value))}
                 className={FILTER_SELECT_CLASS}
               >
-                <option value="">{groupFilterOptions.length ? 'All groups' : 'No groups in scope'}</option>
+                <option value="">{groupFilterOptions.length
+                  ? 'All groups'
+                  : cohortFilter ? 'No groups in this cohort' : 'No groups'}</option>
                 {groupFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
               <select
@@ -2165,26 +1809,15 @@ export default function ModuleBuilder() {
                 <option value="">All tutors</option>
                 {tutorNames.map(name => <option key={name} value={name}>{name}</option>)}
               </select>
-              <select
-                aria-label="Sort modules"
-                value={sort}
-                onChange={event => setSort(event.target.value)}
-                className={FILTER_SELECT_CLASS}
-              >
-                {MODULE_SORT_OPTIONS.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
               <button
                 type="button"
-                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive && !sort}
+                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive}
                 onClick={() => changeFilter(() => {
                   setSearch('');
                   setProgrammeFilter('All');
                   setCohortFilter('');
                   setGroupFilter('');
                   setTutorFilter('');
-                  setSort('');
                 })}
                 className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40 disabled:hover:bg-background-50"
               >
@@ -2193,18 +1826,6 @@ export default function ModuleBuilder() {
               </button>
             </div>
           </div>
-          <div className="relative h-0.5 overflow-hidden" aria-hidden="true">
-            {moduleCreating && !loading && (
-              <span
-                className={reduceMotion
-                  ? 'absolute inset-0 bg-primary-500/40'
-                  : 'absolute inset-y-0 left-0 w-1/4 animate-entity-refresh rounded-full bg-primary-500/70'}
-              />
-            )}
-          </div>
-          <span className="sr-only" role="status" aria-live="polite">
-            {moduleCreating && !loading ? 'Creating module and refreshing the catalogue' : ''}
-          </span>
           <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
             {loading ? (
               <ModuleListSkeleton />
@@ -2217,43 +1838,12 @@ export default function ModuleBuilder() {
                     teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
-                    onAssignLearners={() => openAssignLearners(module)}
                     onBuild={() => openModule(module)}
                     onSettings={() => openPlacementForm(module)}
-                    onCover={() => setCoverModule(module)}
                     onDuplicate={() => duplicateModule(module)}
                     onDelete={() => confirmDeleteModule(module)}
                   />
                 ))}
-              </div>
-            ) : emptyProgrammeScope ? (
-              <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
-                <span className="grid h-14 w-14 place-items-center rounded-full bg-primary-50 text-primary-500">
-                  <AppIcon className="ri-book-open-line text-2xl"></AppIcon>
-                </span>
-                <div>
-                  <p className="text-[13px] font-semibold text-foreground-700">{programmeFilter} has no modules yet</p>
-                  <p className="mt-1 max-w-xs text-[12px] text-foreground-400">Create the first module for this programme to start mapping its delivery, weeks and KSBs.</p>
-                </div>
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setCreateOpen(true)}
-                    disabled={saving}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70"
-                  >
-                    <AppIcon className="ri-add-line text-sm"></AppIcon>
-                    New module
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => changeFilter(() => setProgrammeFilter('All'))}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
-                  >
-                    <AppIcon className="ri-apps-2-line text-sm"></AppIcon>
-                    Show all programmes
-                  </button>
-                </div>
               </div>
             ) : catalogueModules.length > 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
@@ -2272,7 +1862,6 @@ export default function ModuleBuilder() {
                     setCohortFilter('');
                     setGroupFilter('');
                     setTutorFilter('');
-                    setSort('');
                   })}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
                 >
@@ -2305,20 +1894,19 @@ export default function ModuleBuilder() {
         <ModuleFormDrawer
           open={createOpen}
           defaults={{
-            programmeId: programmeFilter === 'All'
-              ? requestedHierarchy.programmeId
-              : resolveProgrammeIdentity(programmeFilter).programmeId,
-            cohortId: cohortFilter || requestedHierarchy.cohortId,
-            groupId: groupFilter || requestedHierarchy.groupId,
+            programmeId: programmeFilter === 'All' ? '' : resolveProgrammeIdentity(programmeFilter).programmeId,
+            cohortId: cohortFilter,
+            groupId: groupFilter,
           }}
           programmes={curriculumProgrammes}
           cohorts={moduleFormScope.cohorts}
           groups={moduleFormScope.groups}
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
-          onSavingChange={setModuleCreating}
-          onClose={closeCreateDrawer}
-          onSaved={openSavedModule}
+          onClose={() => setCreateOpen(false)}
+          onSaved={async () => {
+            await reload({ silent: true });
+          }}
         />
         <ModuleFormDrawer
           open={Boolean(placementModule)}
@@ -2333,14 +1921,6 @@ export default function ModuleBuilder() {
             await reload({ silent: true });
           }}
         />
-        {coverModule && (
-          <ModuleCoverDrawer
-            key={coverModule.catalogueId}
-            module={coverModule}
-            onClose={() => setCoverModule(null)}
-            onSaved={async () => { await reload({ silent: true }); }}
-          />
-        )}
         {ksbMapDisplayModule && (
           <ModuleKsbMapModal
             module={ksbMapDisplayModule}
@@ -2354,13 +1934,6 @@ export default function ModuleBuilder() {
               setKsbMapModule(null);
               void openModule(module);
             }}
-          />
-        )}
-        {assignLearnersModule && (
-          <AssignLearnersModal
-            moduleId={assignLearnersModule.moduleId}
-            moduleTitle={assignLearnersModule.title}
-            onClose={() => setAssignLearnersModule(null)}
           />
         )}
         {programmeKsbMap && (
@@ -2438,56 +2011,6 @@ function SaveStatusPanel({ saving, elapsedSeconds, error, module }: {
   );
 }
 
-function CurriculumHierarchyNav({ programme, cohort, group, current }: {
-  programme?: { label: string; href: string };
-  cohort?: { label: string; href: string };
-  group?: { label: string; href: string };
-  current: string;
-}) {
-  const items = [
-    programme ? { kind: 'Programme', icon: 'ri-book-2-line', ...programme } : null,
-    cohort ? { kind: 'Cohort', icon: 'ri-group-line', ...cohort } : null,
-    group ? { kind: 'Group', icon: 'ri-team-line', ...group } : null,
-  ].filter((item): item is { kind: string; icon: string; label: string; href: string } => Boolean(item));
-
-  return (
-    <nav aria-label="Curriculum hierarchy" className="overflow-x-auto rounded-2xl border border-foreground-200/70 bg-background-50 px-3 py-2 shadow-sm">
-      <div className="flex min-w-max items-center gap-1.5">
-        {items.map(item => (
-          <Fragment key={`${item.kind}:${item.label}`}>
-            {item.href ? (
-              <Link to={item.href} className="group inline-flex min-h-10 items-center gap-2 rounded-xl px-2.5 py-1.5 text-left transition-smooth hover:bg-background-100">
-                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-background-100 text-foreground-500 group-hover:bg-background-50 group-hover:text-primary-700">
-                  <AppIcon className={`${item.icon} text-sm`}></AppIcon>
-                </span>
-                <span>
-                  <span className="block text-[9px] font-bold uppercase tracking-wider text-foreground-400">{item.kind}</span>
-                  <span className="block max-w-44 truncate text-[11px] font-bold text-foreground-800">{item.label}</span>
-                </span>
-              </Link>
-            ) : (
-              <span className="inline-flex min-h-10 items-center gap-2 rounded-xl px-2.5 py-1.5">
-                <AppIcon className={`${item.icon} text-foreground-400`}></AppIcon>
-                <span className="text-[11px] font-bold text-foreground-700">{item.label}</span>
-              </span>
-            )}
-            <AppIcon className="ri-arrow-right-s-line text-foreground-300" aria-hidden="true"></AppIcon>
-          </Fragment>
-        ))}
-        <span aria-current="page" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary-50 px-3 py-1.5 text-primary-800 ring-1 ring-primary-100">
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
-            <AppIcon className="ri-stack-line text-sm"></AppIcon>
-          </span>
-          <span>
-            <span className="block text-[9px] font-bold uppercase tracking-wider text-primary-500">{current === 'Modules' ? 'Next step' : 'Module'}</span>
-            <span className="block max-w-52 truncate text-[11px] font-extrabold">{current}</span>
-          </span>
-        </span>
-      </div>
-    </nav>
-  );
-}
-
 function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
@@ -2504,7 +2027,7 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   const moduleMetrics = [
     { label: 'Weeks', value: String(module.weekStructure.length), icon: 'ri-stack-line' },
     { label: 'Components', value: String(module.lessonCount), icon: 'ri-layout-grid-line' },
-    { label: 'OTJH', value: formatHoursMinutes(module.totalOtjh), icon: 'ri-time-line' },
+    { label: 'OTJH', value: module.totalOtjh.toFixed(1), icon: 'ri-time-line' },
   ];
   const programmeLocked = Boolean(scopeLock?.locked);
   const lockedKsbLabel = scopeLock?.ksbSourceLabel || (ksbProfileValue ? ksbProfileValue.replace(/^(profile|standard):/, '') : 'No source selected');
@@ -2599,39 +2122,11 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModul
   );
 }
 
-/** The Monday of the calendar week a session date falls in, as 'YYYY-MM-DD'. */
-function mondayKeyOf(sessionDate: string): string {
-  const date = new Date(`${sessionDate.slice(0, 10)}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return '';
-  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-/**
- * The month a calendar week belongs to: the one holding most of its seven days.
- *
- * A week straddling a month boundary has to be counted once, not in both
- * months — otherwise a module whose last August session lands on the final
- * Monday shows five weeks in August and two in September for six weeks of
- * delivery. Seven days never split evenly, so there is always a clear owner.
- */
-function owningMonthKeyOf(mondayKey: string): string {
-  const monday = new Date(`${mondayKey}T12:00:00`);
-  const daysPerMonth = new Map<string, number>();
-  for (let offset = 0; offset < 7; offset += 1) {
-    const day = new Date(monday);
-    day.setDate(monday.getDate() + offset);
-    const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}`;
-    daysPerMonth.set(key, (daysPerMonth.get(key) || 0) + 1);
-  }
-  return [...daysPerMonth.entries()].sort((left, right) => right[1] - left[1])[0][0];
-}
-
 // Course structure: a week navigator whose rows double as an accordion —
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onCreateAllTeamsMeetings, onRestoreAllTeamsMeetings, hasTrackedTeamsMeeting, restoringTeamsMeeting, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -2641,10 +2136,6 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onAddWeek: () => void;
   onAddWeekFromTemplate: () => void;
   onGenerateLiveSessions: () => void;
-  onCreateAllTeamsMeetings: () => void;
-  onRestoreAllTeamsMeetings: () => void;
-  hasTrackedTeamsMeeting: boolean;
-  restoringTeamsMeeting: boolean;
   onDeleteWeek: (weekId: string) => void;
   onDropReorder: (targetWeekId: string) => void;
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
@@ -2657,26 +2148,11 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
   const missingLiveSessionWeekCount = weeksMissingLiveSession(module).length;
   const missingLiveSessionCount = countAddedLiveSessions(module);
-  const hasLiveSessions = module.weekStructure.some(week => week.components.some(component => component.type === 'live-session'));
 
   // The weeks, split into the months they run in. A module is authored week by
   // week but delivered and reported on by month, so the rail says which month
   // each stretch of weeks belongs to. Empty until the module has session dates.
   const monthGroups = groupWeeksByMonth(module.weekStructure);
-  // Which months have sessions in each calendar week the module runs in. A week
-  // is normally counted by the month owning most of its days, but if that month
-  // has no session in it the week would vanish from every count — so it stays
-  // with the month that does deliver in it.
-  const monthKeysByCalendarWeek = new Map<string, Set<string>>();
-  monthGroups.forEach(group => {
-    group.weeks.forEach(week => {
-      const mondayKey = week.sessionDate ? mondayKeyOf(week.sessionDate) : '';
-      if (!mondayKey) return;
-      const months = monthKeysByCalendarWeek.get(mondayKey) || new Set<string>();
-      months.add(group.key);
-      monthKeysByCalendarWeek.set(mondayKey, months);
-    });
-  });
   const monthHeadings = new Map(monthGroups.flatMap(group => {
     const first = group.weeks[0];
     if (!first) return [];
@@ -2685,39 +2161,8 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
       0,
     );
     const components = group.weeks.reduce((total, week) => total + week.components.length, 0);
-    const sessionDates = group.weeks.map(week => week.sessionDate).filter((value): value is string => Boolean(value));
-    const mondayKeys = new Set(sessionDates.map(mondayKeyOf).filter(Boolean));
-    const calendarWeeks = [...mondayKeys].filter(mondayKey => {
-      const owner = owningMonthKeyOf(mondayKey);
-      return owner === group.key || !monthKeysByCalendarWeek.get(mondayKey)?.has(owner);
-    }).length;
-    // How many days a week the module runs on, to explain why the row numbers
-    // outrun the week count.
-    const daysPerWeek = new Set(
-      sessionDates.map(value => new Date(`${value.slice(0, 10)}T12:00:00`).getDay()),
-    ).size;
-    return [[first.id, { label: group.label, rows: group.weeks.length, calendarWeeks, daysPerWeek, components, otjh }]];
+    return [[first.id, { label: group.label, weeks: group.weeks.length, components, otjh }]];
   }));
-  // Which month heading each week falls under, so collapsing a heading (keyed
-  // by its first week's id) can hide every week in that stretch, not just the
-  // heading row itself.
-  const monthGroupIdByWeekId = new Map(monthGroups.flatMap(group => {
-    const first = group.weeks[0];
-    if (!first) return [];
-    return group.weeks.map(week => [week.id, first.id] as const);
-  }));
-  const [collapsedMonthIds, setCollapsedMonthIds] = useState<Set<string>>(new Set());
-  const toggleMonthCollapsed = (monthId: string) => {
-    setCollapsedMonthIds(prev => {
-      const next = new Set(prev);
-      if (next.has(monthId)) {
-        next.delete(monthId);
-      } else {
-        next.add(monthId);
-      }
-      return next;
-    });
-  };
 
   const toggleExpanded = (weekId: string) => {
     const next = new Set(expandedWeekIds);
@@ -2763,37 +2208,9 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             Generate live sessions ({missingLiveSessionCount} across {missingLiveSessionWeekCount} week{missingLiveSessionWeekCount === 1 ? '' : 's'})
           </button>
         )}
-        {/* One whole-module Teams action, on the module's saved session dates,
-            without leaving the editor. If a meeting was already created for this
-            module (e.g. from the Live Teams Meetings tab before these components
-            existed), creating again would duplicate it — so the button switches
-            to Restore, which pulls the existing dates and join links into every
-            live-session component instead. Otherwise it opens the create form. */}
-        {hasLiveSessions && module.catalogueId && (
-          hasTrackedTeamsMeeting ? (
-            <button
-              onClick={onRestoreAllTeamsMeetings}
-              disabled={restoringTeamsMeeting}
-              title="This module already has a Teams meeting. Restore its saved dates and join links onto every live-session component instead of creating a duplicate."
-              className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60"
-            >
-              <AppIcon className={restoringTeamsMeeting ? 'ri-loader-4-line animate-spin' : 'ri-links-line'}></AppIcon>
-              {restoringTeamsMeeting ? 'Restoring Teams sessions…' : 'Restore Teams sessions & links'}
-            </button>
-          ) : (
-            <button
-              onClick={onCreateAllTeamsMeetings}
-              title="Create the Microsoft Teams meeting for the whole module at once, on its saved session dates, and attach its join link to every live-session component."
-              className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-cyan-50 px-3 text-[11px] font-bold text-cyan-700 transition-smooth hover:bg-cyan-100"
-            >
-              <AppIcon className="ri-microsoft-teams-line"></AppIcon>
-              Create all Teams meetings
-            </button>
-          )
-        )}
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <MiniStructureMetric label="Items" value={String(totalComponents)} />
-          <MiniStructureMetric label="OTJH" value={formatHoursMinutes(module.totalOtjh)} />
+          <MiniStructureMetric label="OTJH" value={module.totalOtjh.toFixed(1)} />
           <MiniStructureMetric label="KSBs" value={String(module.ksbCount)} />
         </div>
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
@@ -2809,41 +2226,17 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           const expanded = expandedWeekIds.has(week.id);
           const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
           const monthHeading = monthHeadings.get(week.id);
-          const monthGroupId = monthGroupIdByWeekId.get(week.id);
-          const monthCollapsed = monthGroupId ? collapsedMonthIds.has(monthGroupId) : false;
-          if (monthCollapsed && !monthHeading) return null;
-          // Undated weeks sit in no calendar week, so the row count is the only
-          // week count there is.
-          const monthHeadingWeeks = monthHeading ? monthHeading.calendarWeeks || monthHeading.rows : 0;
           return (
             <Fragment key={week.id}>
             {monthHeading && (
-              <button
-                type="button"
-                onClick={() => toggleMonthCollapsed(week.id)}
-                aria-expanded={!monthCollapsed}
-                className="w-full rounded-lg px-1 pb-1 pt-2 text-left first:pt-0 hover:bg-background-100"
-              >
-                <span className="flex items-baseline justify-between gap-2">
-                  <span className="flex items-center gap-1 text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">
-                    <AppIcon className={monthCollapsed ? 'ri-arrow-right-s-line' : 'ri-arrow-down-s-line'}></AppIcon>
-                    {monthHeading.label}
-                  </span>
-                  <span className="text-[10px] font-semibold text-foreground-400">
-                    {monthHeadingWeeks} {monthHeadingWeeks === 1 ? 'week' : 'weeks'} · {formatHoursMinutes(monthHeading.otjh)}
-                  </span>
-                </span>
-                {/* Says why the row numbers run past the week count: a module
-                    delivered twice a week authors two "Week" rows per calendar
-                    week, so eight rows in August are four weeks, not eight. */}
-                {monthHeading.rows > monthHeadingWeeks && monthHeading.daysPerWeek > 1 && (
-                  <span className="mt-0.5 block pl-5 text-[10px] font-medium leading-snug text-foreground-400">
-                    {monthHeading.daysPerWeek} delivery days a week, so the {monthHeading.rows} rows below run over {monthHeadingWeeks} {monthHeadingWeeks === 1 ? 'week' : 'weeks'}
-                  </span>
-                )}
-              </button>
+              <div className="flex items-baseline justify-between gap-2 px-1 pb-0.5 pt-2 first:pt-0">
+                <p className="text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">{monthHeading.label}</p>
+                <p className="text-[10px] font-semibold text-foreground-400">
+                  {monthHeading.weeks} {monthHeading.weeks === 1 ? 'week' : 'weeks'} · {monthHeading.otjh.toFixed(1)}h
+                </p>
+              </div>
             )}
-            {monthCollapsed ? null : <div
+            <div
               className={`overflow-visible rounded-xl border transition-smooth ${dragging ? 'border-primary-300 bg-background-50 shadow-lg ring-2 ring-primary-200' : active ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
             >
               <div
@@ -2870,7 +2263,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
                     <span>{week.components.length} components</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
-                    <span>{formatHoursMinutes(totalOtjh)}</span>
+                    <span>{totalOtjh.toFixed(1)}h</span>
                     {week.sessionDate && (
                       <>
                         <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
@@ -2908,7 +2301,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   />
                 </div>
               )}
-            </div>}
+            </div>
             </Fragment>
           );
         })}
@@ -3158,13 +2551,12 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
 // different: it copies real authored components out of the library instead
 // of creating empty ones. The only saved-template control on this screen is
 // "From template" in the Course structure rail, which builds a whole new week.
-function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents, onAddFromTemplate }: {
+function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
   week: ModuleWeek;
   onChange: (updates: Partial<ModuleWeek>) => void;
   onOpenSessionKsbMapping?: () => void;
   onAddLesson: () => void;
   onReuseComponents: () => void;
-  onAddFromTemplate: () => void;
 }) {
   const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
 
@@ -3175,21 +2567,13 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-full bg-primary-100 px-2.5 py-1 text-[10px] font-bold text-primary-700">Week {week.weekNumber}</span>
             <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{formatHoursMinutes(totalOtjh)} OTJH</span>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
           </div>
           <div className="mt-1.5">
             <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          {/* Adds a template's components to THIS week, beside whatever is
-              already in it. The module header's own template button still
-              creates a whole new week — both ways in are useful, and which one
-              you get follows from where you pressed. */}
-          <button onClick={onAddFromTemplate} title="Add a saved week template's components to this week" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
-            <AppIcon className="ri-layout-masonry-line"></AppIcon>
-            From template
-          </button>
           <button onClick={onReuseComponents} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
             <AppIcon className="ri-file-copy-line"></AppIcon>
             Reuse
@@ -3246,7 +2630,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <MiniMetric label="OTJH" value={formatHoursMinutes(Number(component.expectedOtjh || 0))} />
+            <MiniMetric label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} />
             <MiniMetric label="Points" value={String(component.points || 0)} />
           </div>
         </div>
@@ -3285,17 +2669,6 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
               <Checkbox label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
               <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
-              <Checkbox
-                label="Coach validation"
-                checked={component.coachValidationRequired}
-                onChange={value => {
-                  if (value) {
-                    onChange({ coachValidationRequired: true });
-                    return;
-                  }
-                  void confirmCoachValidationOff(() => onChange({ coachValidationRequired: false }));
-                }}
-              />
             </div>
             <TextArea label="Completion rule" value={String(component.settings.completionRule ?? 'Mark complete')} onChange={value => onSettingChange('completionRule', value)} rows={2} />
             {/* Only asked for once reflection is required — there is nowhere for
@@ -3362,7 +2735,7 @@ function TypeSpecificFields({
   const [uploadError, setUploadError] = useState('');
   const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
 
-  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading') => {
+  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment') => {
     setUploadingResource(true);
     setUploadError('');
     try {
@@ -3387,30 +2760,14 @@ function TypeSpecificFields({
       } else if (componentType === 'reading') {
         onSettingChange('readingSource', 'File');
         onSettingChange('resourceUrl', uploaded.url);
+      } else {
+        onSettingChange('assignmentFileName', uploaded.fileName);
+        onSettingChange('assignmentFileUrl', uploaded.url);
       }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Unable to upload file.');
     } finally {
       setUploadingResource(false);
-    }
-  };
-
-  // Mirror of handleResourceUpload: clears exactly the keys an upload writes so
-  // an author can drop a wrongly attached file without uploading a replacement.
-  const handleResourceRemove = (componentType: 'podcast' | 'powerpoint' | 'reading') => {
-    setUploadError('');
-    onSettingChange('uploadedFileName', '');
-    onSettingChange('uploadedFileUrl', '');
-    onSettingChange('uploadedFileSize', 0);
-    onSettingChange('uploadedFileContentType', '');
-    onSettingChange('uploadSource', '');
-    if (componentType === 'podcast') {
-      onSettingChange('podcastUrl', '');
-    } else if (componentType === 'powerpoint') {
-      onSettingChange('fileName', '');
-      onSettingChange('presentationUrl', '');
-    } else if (componentType === 'reading') {
-      onSettingChange('resourceUrl', '');
     }
   };
 
@@ -3479,7 +2836,7 @@ function TypeSpecificFields({
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase text-foreground-400">Microsoft Teams meeting</p>
               {getString('liveSessionUrl') ? (
-                <a href={getString('liveSessionUrl')} target="_blank" rel="noreferrer" className="meeting-join-action mt-1 inline-flex max-w-full items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-bold">
+                <a href={getString('liveSessionUrl')} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[12px] font-bold text-primary-600 hover:text-primary-700">
                   <AppIcon className="ri-microsoft-teams-line mr-1"></AppIcon>
                   Open meeting link
                 </a>
@@ -3494,16 +2851,13 @@ function TypeSpecificFields({
               className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
             >
               <AppIcon className="ri-calendar-event-line"></AppIcon>
-              {getString('liveSessionUrl') ? 'Meeting already created' : 'Create Teams meeting'}
+              {getString('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
             </button>
           </div>
           {getString('liveSessionUrl') && (
-            <LiveSessionScheduleEditor
-              component={component}
-              onSettingChange={onSettingChange}
-              fallbackDate={week.sessionDate}
-              fallbackTime={week.sessionStartTime}
-            />
+            <div className="mt-3">
+              <TextInput label="Teams meeting URL" value={getString('liveSessionUrl')} onChange={value => onSettingChange('liveSessionUrl', value)} />
+            </div>
           )}
         </div>
         <TextArea label="Session outline" value={getString('sessionPurpose')} onChange={value => onSettingChange('sessionPurpose', value)} rows={3} />
@@ -3514,16 +2868,6 @@ function TypeSpecificFields({
             onClose={() => setTeamsMeetingOpen(false)}
             onCreated={(result, input) => {
               const meeting = result.meeting;
-              const liveSessionIndex = module.weekStructure
-                .flatMap(item => item.components.filter(candidate => candidate.type === 'live-session'))
-                .findIndex(candidate => candidate.id === component.id);
-              const scheduled = liveSessionIndex >= 0 ? input.scheduledOccurrences?.[liveSessionIndex] : undefined;
-              const scheduledParts = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc) : { date: '', time: '' };
-              const hasExplicitSchedule = Boolean(
-                component.settings.sessionDate
-                || component.settings.sessionDateTimeUtc
-                || (component.settings.teamsLiveSessionId && Number(component.settings.teamsSessionNumber || 0) > 0),
-              );
               onSettingChange('liveSessionUrl', meeting.joinUrl || meeting.webLink);
               onSettingChange('teamsEventId', meeting.eventId);
               onSettingChange('teamsLiveSessionId', meeting.liveSessionId);
@@ -3531,16 +2875,7 @@ function TypeSpecificFields({
               onSettingChange('teamsOrganizerEmail', meeting.organizerEmail);
               onSettingChange('teamsAttendees', meeting.attendees);
               onSettingChange('teamsPresenters', meeting.presenters);
-              onSettingChange('teamsCoOrganizers', meeting.coOrganizers || []);
-              if (scheduled) {
-                onSettingChange('teamsSessionNumber', scheduled.sessionNumber);
-                if (!hasExplicitSchedule) {
-                  onSettingChange('sessionDateTimeUtc', scheduled.startDateTimeUtc);
-                  onSettingChange('teamsStartDateTimeUtc', scheduled.startDateTimeUtc);
-                  if (scheduledParts.date) onSettingChange('sessionDate', scheduledParts.date);
-                  if (scheduledParts.time) onSettingChange('sessionTime', scheduledParts.time);
-                }
-              }
+              onSettingChange('sessionDateTimeUtc', meeting.startDateTimeUtc);
               onSettingChange('durationMinutes', meeting.durationMinutes);
               onSettingChange('teamsProvider', meeting.provider);
               onSettingChange('teamsRepeat', meeting.repeat);
@@ -3617,7 +2952,6 @@ function TypeSpecificFields({
           uploading={uploadingResource}
           error={uploadError}
           onUpload={file => handleResourceUpload(file, 'podcast')}
-          onRemove={() => handleResourceRemove('podcast')}
         />
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <NumberInput label="Duration in minutes" value={getNumber('durationMinutes')} min={0} step={1} onChange={value => onSettingChange('durationMinutes', value)} />
@@ -3650,7 +2984,6 @@ function TypeSpecificFields({
             uploading={uploadingResource}
             error={uploadError}
             onUpload={file => handleResourceUpload(file, 'reading')}
-            onRemove={() => handleResourceRemove('reading')}
           />
         )}
         <RichTextDraft label="Short description of the component" value={getString('shortDescription')} onChange={value => onSettingChange('shortDescription', value)} rows={5} compact />
@@ -3672,7 +3005,6 @@ function TypeSpecificFields({
           uploading={uploadingResource}
           error={uploadError}
           onUpload={file => handleResourceUpload(file, 'powerpoint')}
-          onRemove={() => handleResourceRemove('powerpoint')}
         />
       </EditorBlock>
     );
@@ -3711,10 +3043,18 @@ function TypeSpecificFields({
   if (component.type === 'assignment') {
     return (
       <EditorBlock title="Assignment">
-        <RichTextDraft label="Assignment question" value={getString('assignmentContent') || getString('assignmentBrief')} onChange={value => onSettingChange('assignmentContent', value)} rows={14} htmlOnly />
-        <p className="rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[11px] font-medium leading-5 text-primary-700">
-          Learners complete an eight-step monthly submission: answer and learning statements; evidence cross-references; KSBs and actual hours; full-month reflection; employer impact; action plan and EPA; quality checks; coaching booking and editable PowerPoint. Incomplete work can always be saved as a draft. There is no six-hour cap. Historical imports are handled separately and are exempt from new-submission checks.
-        </p>
+        <TextArea label="Assignment brief" value={getString('assignmentBrief')} onChange={value => onSettingChange('assignmentBrief', value)} rows={4} />
+        <ComponentResourceUpload
+          label="Upload assignment file"
+          accept=".doc,.docx,.pdf,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv,application/zip"
+          uploadedName={getString('uploadedFileName') || getString('assignmentFileName')}
+          uploadedUrl={getString('uploadedFileUrl') || getString('assignmentFileUrl')}
+          uploadedSize={getNumber('uploadedFileSize')}
+          uploading={uploadingResource}
+          error={uploadError}
+          onUpload={file => handleResourceUpload(file, 'assignment')}
+        />
+        <TextArea label="Submission instructions" value={getString('submissionInstructions')} onChange={value => onSettingChange('submissionInstructions', value)} rows={3} />
         <TextInput label="Due timing relative to week" value={getString('dueTiming')} onChange={value => onSettingChange('dueTiming', value)} />
       </EditorBlock>
     );
@@ -4119,7 +3459,7 @@ function findModuleForDeliveryPath(
 }
 
 
-function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbPrompt, ksbProfileCount, ksbProfileLoading, onExportKsb, onImportKsb, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbWeightClass }: {
+function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbPrompt, ksbProfileCount, onExportKsb, onImportKsb, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbWeightClass }: {
   module: ModuleCatalogueItem;
   week: ModuleWeek | null;
   component: ModuleComponent | null;
@@ -4128,7 +3468,6 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
   ksbPrompt: string;
   /** How many KSBs the module's source offers — 0 warns the prompt has no profile. */
   ksbProfileCount: number;
-  ksbProfileLoading: boolean;
   onExportKsb: () => void;
   onImportKsb: () => void;
   onAddKsb: (target: KsbTarget) => void;
@@ -4136,7 +3475,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
   onUpdateKsbWeight: (target: KsbTarget, mappingId: string, weight: number) => void;
   onUpdateKsbWeightClass: (target: KsbTarget, mappingId: string, weightClass: KsbWeightClass) => void;
 }) {
-  const ksbExcelPanel = <KsbExcelPanel prompt={ksbPrompt} profileCount={ksbProfileCount} loading={ksbProfileLoading} onExport={onExportKsb} onImport={onImportKsb} />;
+  const ksbExcelPanel = <KsbExcelPanel prompt={ksbPrompt} profileCount={ksbProfileCount} onExport={onExportKsb} onImport={onImportKsb} />;
   if (!week) {
     return (
       <aside className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm xl:sticky xl:top-4">
@@ -4155,7 +3494,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
     const weekWeightSummary = ksbWeightSummary(mappedKsbs);
     const readinessItems = [
       { label: 'Components', ready: week.components.length > 0, value: week.components.length ? `${week.components.length} added` : 'Missing' },
-      { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? formatHoursMinutes(totalOtjh) : 'Missing' },
+      { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? `${totalOtjh.toFixed(1)} h` : 'Missing' },
       { label: 'KSBs', ready: mappedKsbs.length > 0, value: mappedKsbs.length ? `${mappedKsbs.length} mapped` : 'Needs mapping' },
     ];
     const readyCount = readinessItems.filter(item => item.ready).length;
@@ -4244,7 +3583,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
           ))}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <MiniMetric label="OTJH" value={formatHoursMinutes(Number(component.expectedOtjh || 0))} />
+          <MiniMetric label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} />
           <MiniMetric label="Points" value={String(component.points || 0)} />
         </div>
         <KsbWeightSummary summary={componentWeightSummary} />
@@ -4302,11 +3641,7 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
               <TextInput label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
               <SelectInput label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
               <NumberInput label="Weeks" value={module.weeks} min={1} step={1} onChange={value => resizeWeeks(module, value, onChange)} />
-              {/* Derived, never typed: the module total is the sum of every
-                  component's Expected OTJH across every week. It was an editable
-                  box, but the save recomputes it from the components anyway, so
-                  anything typed here was discarded on the next save. */}
-              <ReadOnlyInput label="Total OTJH hours" value={formatHoursMinutes(module.totalOtjh)} />
+              <NumberInput label="Total OTJH hours" value={module.declaredTotalOtjh ?? module.totalOtjh} min={0} step={0.25} onChange={value => onChange({ declaredTotalOtjh: value })} />
             </div>
             <TextArea label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
           </SettingsSection>
@@ -4756,8 +4091,6 @@ function sessionKsbKind(code: string): 'knowledge' | 'skill' | 'behaviour' {
   return 'knowledge';
 }
 
-const COMPONENT_KSB_LIMIT_PER_KIND = 2;
-
 function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComponent) {
   const settings = component.settings || {};
   const names = Array.isArray(settings.selectedGroupNames) ? settings.selectedGroupNames : [];
@@ -4769,15 +4102,13 @@ function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComp
   return [...new Set(labels)];
 }
 
-function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, existingMappings, limitPerKind, onClose, onAddMany }: {
+function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, onClose, onAddMany }: {
   standards: CurriculumStandard[];
   standardsLoading: boolean;
   ksbSets: CurriculumKsbSet[];
   ksbSetsLoading: boolean;
   initialSourceId: string;
   lockedSourceId?: string;
-  existingMappings: KsbMapping[];
-  limitPerKind?: number;
   onClose: () => void;
   onAddMany: (items: Array<{ option: KsbOption; weight: number; weightClass: KsbWeightClass }>) => void;
 }) {
@@ -4788,7 +4119,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   const [sourceMode, setSourceMode] = useState<'standard' | 'profile'>('profile');
   const [addingKsbs, setAddingKsbs] = useState(false);
   const [ksbSearch, setKsbSearch] = useState('');
-  const [ksbTypeFilter, setKsbTypeFilter] = useState<'knowledge' | 'skill' | 'behaviour'>('knowledge');
+  const [ksbTypeFilter, setKsbTypeFilter] = useState<'all' | 'knowledge' | 'skill' | 'behaviour'>('all');
   const sourceLocked = Boolean(lockedSourceId);
   const standardSourceOptions = useMemo(() => standards.map(standard => ({
       id: ksbStandardSourceId(standard),
@@ -4804,10 +4135,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
       options,
     };
   }), [ksbSets]);
-  const sourceOptions = useMemo(
-    () => [...profileSourceOptions, ...standardSourceOptions],
-    [profileSourceOptions, standardSourceOptions],
-  );
+  const sourceOptions = [...profileSourceOptions, ...standardSourceOptions];
   useEffect(() => {
     const preferredSourceId = lockedSourceId;
     if (sourceLocked && preferredSourceId) {
@@ -4827,82 +4155,31 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     ],
     ...sourceOptions.flatMap(source => ksbSourceIdAliases(source.id).map(alias => [alias, source.label])),
   ]);
-  const sourceKsbOptions = useMemo(
-    () => resolvedSelectedSource?.options || [],
-    [resolvedSelectedSource],
-  );
-  const existingMappingByOptionId = useMemo(() => new Map(
-    sourceKsbOptions.flatMap(option => {
-      const existing = existingMappings.find(mapping => (
-        String(mapping.ksbId || '').trim() === String(option.id || '').trim()
-        || (
-          String(mapping.code || '').trim().toUpperCase() === String(option.code || '').trim().toUpperCase()
-          && ksbSourceIdsMatch(mapping.sourceId, option.sourceId)
-        )
-      ));
-      return existing ? [[option.id, existing] as const] : [];
-    }),
-  ), [existingMappings, sourceKsbOptions]);
-  const existingKindCounts = useMemo(() => existingMappings.reduce(
-    (counts, mapping) => {
-      counts[sessionKsbKind(mapping.code)] += 1;
-      return counts;
-    },
-    { knowledge: 0, skill: 0, behaviour: 0 },
-  ), [existingMappings]);
-  const selectedKindCounts = useMemo(() => sourceKsbOptions.reduce(
-    (counts, option) => {
-      if (selectedKsbIds.has(option.id)) counts[sessionKsbKind(option.code)] += 1;
-      return counts;
-    },
-    { knowledge: 0, skill: 0, behaviour: 0 },
-  ), [selectedKsbIds, sourceKsbOptions]);
-  const availableKindCounts = useMemo(() => sourceKsbOptions.reduce(
-    (counts, option) => {
-      counts[sessionKsbKind(option.code)] += 1;
-      return counts;
-    },
-    { knowledge: 0, skill: 0, behaviour: 0 },
-  ), [sourceKsbOptions]);
-  const optionLimitReached = (option: KsbOption) => {
-    if (!limitPerKind || selectedKsbIds.has(option.id)) return false;
-    const kind = sessionKsbKind(option.code);
-    return existingKindCounts[kind] + selectedKindCounts[kind] >= limitPerKind;
-  };
+  const sourceKsbOptions = resolvedSelectedSource?.options || [];
   const filteredKsbOptions = useMemo(() => {
     const query = ksbSearch.trim().toLowerCase();
     return sourceKsbOptions.filter(option => {
-      if (sessionKsbKind(option.code) !== ksbTypeFilter) return false;
+      const tone = ksbVisualTone(option.code, option.type);
+      if (ksbTypeFilter !== 'all' && tone.label.toLowerCase() !== ksbTypeFilter) return false;
       if (!query) return true;
       return option.code.toLowerCase().includes(query) || option.description.toLowerCase().includes(query);
     });
   }, [sourceKsbOptions, ksbSearch, ksbTypeFilter]);
-  const weightForOption = (option: KsbOption) => weightsByKsbId[option.id]
-    ?? existingMappingByOptionId.get(option.id)?.weight
-    ?? defaultKsbWeight(weightClassForOption(option));
+  const weightForOption = (option: KsbOption) => weightsByKsbId[option.id] ?? defaultKsbWeight(weightClassForOption(option));
   const updateOptionWeight = (option: KsbOption, value: number) => {
     setWeightsByKsbId(current => ({ ...current, [option.id]: clampKsbWeight(value) }));
   };
-  const weightClassForOption = (option: KsbOption) => weightClassesByKsbId[option.id]
-    ?? normaliseKsbWeightClass(existingMappingByOptionId.get(option.id)?.weightClass || existingMappingByOptionId.get(option.id)?.weight_class);
+  const weightClassForOption = (option: KsbOption) => weightClassesByKsbId[option.id] ?? DEFAULT_KSB_WEIGHT_CLASS;
   const updateOptionWeightClass = (option: KsbOption, value: string) => {
     const nextWeightClass = normaliseKsbWeightClass(value);
     setWeightClassesByKsbId(current => ({ ...current, [option.id]: nextWeightClass }));
     setWeightsByKsbId(current => ({ ...current, [option.id]: defaultKsbWeight(nextWeightClass) }));
   };
   const toggleOption = (option: KsbOption) => {
-    if (existingMappingByOptionId.has(option.id)) return;
     setSelectedKsbIds(current => {
       const next = new Set(current);
       if (next.has(option.id)) next.delete(option.id);
-      else {
-        const kind = sessionKsbKind(option.code);
-        const selectedOfKind = sourceKsbOptions.filter(candidate => (
-          current.has(candidate.id) && sessionKsbKind(candidate.code) === kind
-        )).length;
-        if (limitPerKind && existingKindCounts[kind] + selectedOfKind >= limitPerKind) return current;
-        next.add(option.id);
-      }
+      else next.add(option.id);
       return next;
     });
   };
@@ -4947,16 +4224,13 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     }, 250);
   };
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-2 sm:p-4" onClick={onClose}>
-      <div className="flex max-h-[calc(100dvh-2rem)] w-full min-w-0 max-w-3xl flex-col rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
-        <div className="shrink-0 px-4 py-3 sm:px-5 bg-primary-950 text-white flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-heading font-bold text-white">Choose KSBs</h3>
-            <p className="mt-0.5 text-[10px] text-white/65">Previously added KSBs stay visible and cannot be selected twice.</p>
-          </div>
-          <button onClick={onClose} aria-label="Close KSB chooser" className="w-8 h-8 shrink-0 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
+        <div className="px-5 py-4 bg-primary-950 text-white flex items-center justify-between">
+          <h3 className="text-sm font-heading font-bold text-white">Add KSBs</h3>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
-        <div className="min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-5 space-y-3">
+        <div className="p-5 space-y-4">
           <div className="space-y-3">
             {!sourceLocked ? (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
@@ -4969,63 +4243,41 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                 <p className="mt-0.5 truncate text-[12px] font-bold text-primary-950">{sourceLabels[selectedSourceValue] || selectedSourceValue.replace(/^(profile|standard):/, '')}</p>
               </div>
             )}
-            {limitPerKind ? (
-              <div role='note' className='rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sky-800'>
-                <p className='text-[10px] font-bold uppercase tracking-wide'>Component KSB selection limit</p>
-                <p className='mt-0.5 text-[11px] font-semibold'>Choose up to 2 Knowledge, 2 Skills and 2 Behaviours for this component. Previously added KSBs count towards each limit.</p>
-              </div>
-            ) : null}
           </div>
           {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="KSB categories">
-                {([
-                  { value: 'knowledge', code: 'K', label: 'Knowledge', activeClass: 'border-violet-400 bg-violet-600 text-white', iconClass: 'bg-violet-100 text-violet-700' },
-                  { value: 'skill', code: 'S', label: 'Skills', activeClass: 'border-amber-400 bg-amber-500 text-white', iconClass: 'bg-amber-100 text-amber-700' },
-                  { value: 'behaviour', code: 'B', label: 'Behaviours', activeClass: 'border-emerald-400 bg-emerald-600 text-white', iconClass: 'bg-emerald-100 text-emerald-700' },
-                ] as const).map(category => {
-                  const active = ksbTypeFilter === category.value;
-                  const chosen = existingKindCounts[category.value] + selectedKindCounts[category.value];
-                  return (
-                    <button
-                      key={category.value}
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      onClick={() => setKsbTypeFilter(category.value)}
-                      className={`rounded-xl border px-2 py-2.5 text-left transition-smooth ${active ? category.activeClass : 'border-background-200 bg-background-100 text-foreground-700 hover:border-primary-200 hover:bg-background-50'}`}
-                    >
-                      <span className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
-                        <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[12px] font-black ${active ? 'bg-white/20 text-white' : category.iconClass}`}>{category.code}</span>
-                        <span className="min-w-0">
-                          <span className="block truncate text-[10px] font-black sm:text-[11px]">{category.label}</span>
-                          <span className={`block text-[9px] font-semibold ${active ? 'text-white/75' : 'text-foreground-400'}`}>
-                            {availableKindCounts[category.value]} available{limitPerKind ? ` · ${chosen}/${limitPerKind} chosen` : ''}
-                          </span>
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="relative">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="relative flex-1 sm:max-w-[220px]">
                 <AppIcon className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-foreground-400"></AppIcon>
                 <input
                   type="text"
                   value={ksbSearch}
                   onChange={event => setKsbSearch(event.target.value)}
-                  placeholder={`Search ${ksbTypeFilter} KSBs`}
+                  placeholder="Search KSB code or text"
                   className="h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 pl-7 pr-2 text-[11px] font-semibold text-foreground-900 outline-none focus:border-primary-300"
                 />
               </div>
+              <div className="flex flex-wrap gap-1">
+                {(['all', 'knowledge', 'skill', 'behaviour'] as const).map(filterValue => (
+                  <button
+                    key={filterValue}
+                    type="button"
+                    onClick={() => setKsbTypeFilter(filterValue)}
+                    className={`rounded-full px-2.5 py-1 text-[10px] font-bold capitalize transition-smooth ${
+                      ksbTypeFilter === filterValue
+                        ? 'bg-primary-500 text-white'
+                        : 'bg-background-100 text-foreground-500 hover:bg-background-200'
+                    }`}
+                  >
+                    {filterValue}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
-          <div className="space-y-2">
+          <div className="max-h-96 overflow-y-auto space-y-2">
             {filteredKsbOptions.map(option => {
               const tone = ksbVisualTone(option.code, option.type);
-              const alreadyAdded = existingMappingByOptionId.has(option.id);
-              const limitReached = !alreadyAdded && optionLimitReached(option);
-              const selected = alreadyAdded || selectedKsbIds.has(option.id);
+              const selected = selectedKsbIds.has(option.id);
               return (
               <div key={option.id} className={`rounded-xl border border-l-4 px-3 py-2 transition-smooth ${selected ? tone.selectedRow : tone.row}`}>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -5033,10 +4285,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                     <input
                       type="checkbox"
                       checked={selected}
-                      disabled={alreadyAdded || limitReached}
                       onChange={() => toggleOption(option)}
-                      aria-label={alreadyAdded ? `${option.code} already added` : limitReached ? `${option.code} unavailable because the component limit is reached` : `Select ${option.code}`}
-                      className="mt-1 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300 disabled:cursor-not-allowed disabled:opacity-70"
+                      className="mt-1 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300"
                     />
                     <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${tone.iconClass}`}>
                       <AppIcon className={`${tone.icon} text-[13px]`}></AppIcon>
@@ -5046,7 +4296,6 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                         <span className="text-[12px] font-bold text-foreground-900">{option.code}</span>
                         <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${tone.weightClass}`}>{clampKsbWeight(weightForOption(option))}%</span>
-                        {alreadyAdded && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">Already added</span>}
                       </div>
                       <p className="mt-1 text-[11px] text-foreground-600 leading-relaxed">{option.description}</p>
                     </div>
@@ -5056,9 +4305,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight class</span>
                       <select
                         value={weightClassForOption(option)}
-                        disabled={alreadyAdded || limitReached}
                         onChange={event => updateOptionWeightClass(option, event.target.value)}
-                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
+                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300"
                       >
                         <option value="hard">Hard</option>
                         <option value="soft">Soft</option>
@@ -5072,9 +4320,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                         min={1}
                         step={1}
                         value={clampPositiveKsbWeight(weightForOption(option), weightClassForOption(option))}
-                        disabled={alreadyAdded || limitReached}
                         onChange={event => updateOptionWeight(option, Number(event.target.value))}
-                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
+                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300"
                       />
                     </label>
                   </div>
@@ -5087,35 +4334,27 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
             {resolvedSelectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
             {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && !filteredKsbOptions.length && <EmptyState text="No KSBs match your search or filter." />}
           </div>
-        </div>
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-3 py-3 sm:px-5">
-            <p className="text-[11px] font-semibold text-foreground-500">
-              {existingMappingByOptionId.size ? `${existingMappingByOptionId.size} already added · ` : ''}
-              {selectedItems.length} new selected
-            </p>
+          <div className="flex items-center justify-between gap-3 border-t border-background-200 pt-3">
+            <p className="text-[11px] font-semibold text-foreground-500">{selectedItems.length} KSB{selectedItems.length === 1 ? '' : 's'} selected</p>
             <button
               type="button"
               disabled={!selectedItems.length || addingKsbs}
               onClick={handleAddSelectedKsbs}
-              className="h-9 shrink-0 rounded-lg bg-primary-500 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-foreground-200 disabled:text-foreground-400"
+              className="h-9 rounded-lg bg-primary-500 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-foreground-200 disabled:text-foreground-400"
             >
               {addingKsbs ? 'Adding...' : 'Add KSBs'}
             </button>
           </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function WeekTemplateImportModal({ scope, onClose, onImport, targetWeekLabel = '', existingComponentCount = 0 }: {
+function WeekTemplateImportModal({ scope, onClose, onImport }: {
   scope: { programmeId: string; programmeName: string };
   onClose: () => void;
   onImport: (template: WeekTemplate) => void;
-  /** Set when the picker was opened from a week, empty when opened from the
-   *  module header. The two do different things — add to this week, or create a
-   *  new one — so the dialog says which is about to happen. */
-  targetWeekLabel?: string;
-  existingComponentCount?: number;
 }) {
   const [templates, setTemplates] = useState<WeekTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -5150,17 +4389,8 @@ function WeekTemplateImportModal({ scope, onClose, onImport, targetWeekLabel = '
       <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-4 border-b border-background-200 px-5 py-4">
           <div>
-            <h3 className="font-heading text-[15px] font-bold text-foreground-950">
-              {targetWeekLabel ? 'Add template components to this week' : 'Add a week from a template'}
-            </h3>
-            <p className="mt-0.5 text-[11px] text-foreground-500">
-              {targetWeekLabel
-                ? `Copies the template's components into ${targetWeekLabel}`
-                  + (existingComponentCount
-                    ? `, keeping the ${existingComponentCount} already there.`
-                    : '.')
-                : "Copies the template's components into a new week in this module."}
-            </p>
+            <h3 className="font-heading text-[15px] font-bold text-foreground-950">Add a week from a template</h3>
+            <p className="mt-0.5 text-[11px] text-foreground-500">Copies the template's components into a new week in this module.</p>
           </div>
           <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
         </div>
@@ -5325,10 +4555,10 @@ function PreviewModal({ module, onClose }: { module: ModuleCatalogueItem; onClos
           </div>
           {module.weekStructure.map(week => (
             <div key={week.id} className="rounded-xl border border-background-200 bg-background-100/50 p-4">
-              <h3 className="text-sm font-bold text-foreground-900">{weekPlacementLabel(week, ': ')}</h3>
+              <h3 className="text-sm font-bold text-foreground-900">Week {week.weekNumber}: {week.title}</h3>
               <p className="text-[11px] text-foreground-500 mt-1">{week.summary}</p>
               <div className="mt-3 space-y-2">
-                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {formatHoursMinutes(component.expectedOtjh)} OTJH - {component.points} pts</div>)}
+                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {component.expectedOtjh} OTJH - {component.points} pts</div>)}
               </div>
             </div>
           ))}
@@ -5883,7 +5113,6 @@ function ComponentResourceUpload({
   uploading,
   error,
   onUpload,
-  onRemove,
 }: {
   label: string;
   accept: string;
@@ -5893,17 +5122,8 @@ function ComponentResourceUpload({
   uploading: boolean;
   error: string;
   onUpload: (file: File) => void | Promise<void>;
-  // Clears the stored file without replacing it, for a file attached by mistake.
-  onRemove?: () => void;
 }) {
   const inputId = useMemo(() => `component-upload-${Math.random().toString(36).slice(2)}`, []);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const hasFile = Boolean(uploadedUrl || uploadedName);
-
-  // Don't leave a prompt open against a file that is already gone or replaced.
-  useEffect(() => {
-    if (!hasFile) setConfirmRemove(false);
-  }, [hasFile]);
   return (
     <div className="rounded-xl border border-background-200 bg-background-50 p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -5913,20 +5133,12 @@ function ComponentResourceUpload({
             {uploadedName ? uploadedName : 'No file uploaded yet'}
             {uploadedSize > 0 && <span className="ml-2 text-foreground-400">{formatFileSize(uploadedSize)}</span>}
           </p>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            {uploadedUrl && (
-              <a href={uploadedUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">
-                <AppIcon className="ri-external-link-line"></AppIcon>
-                Open uploaded file
-              </a>
-            )}
-            {onRemove && hasFile && !confirmRemove && (
-              <button type="button" disabled={uploading} onClick={() => setConfirmRemove(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:text-red-700 disabled:opacity-50">
-                <AppIcon className="ri-delete-bin-line"></AppIcon>
-                Remove file
-              </button>
-            )}
-          </div>
+          {uploadedUrl && (
+            <a href={uploadedUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">
+              <AppIcon className="ri-external-link-line"></AppIcon>
+              Open uploaded file
+            </a>
+          )}
         </div>
         <div className="shrink-0">
           <input
@@ -5941,33 +5153,12 @@ function ComponentResourceUpload({
               if (file) void onUpload(file);
             }}
           />
-          <label htmlFor={inputId} className={`primary-action inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
+          <label htmlFor={inputId} className={`inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
             <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'}></AppIcon>
             {uploading ? 'Uploading...' : 'Upload from device'}
           </label>
         </div>
       </div>
-      <p className="mt-2 flex items-center gap-1 text-[10px] font-medium text-foreground-400">
-        <AppIcon className="ri-information-line shrink-0"></AppIcon>
-        Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL}.
-      </p>
-      {onRemove && confirmRemove && (
-        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold text-red-700">
-            <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
-            <span>Remove this file from the component? The component keeps its other details and you can upload a new file later.</span>
-          </p>
-          <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={() => setConfirmRemove(false)} className="inline-flex h-8 items-center justify-center rounded-md border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 hover:bg-background-100">
-              Cancel
-            </button>
-            <button type="button" onClick={() => { setConfirmRemove(false); onRemove(); }} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-red-600 px-3 text-[11px] font-bold text-white hover:bg-red-700">
-              <AppIcon className="ri-delete-bin-line !text-white"></AppIcon>
-              Remove file
-            </button>
-          </div>
-        </div>
-      )}
       {error && <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
     </div>
   );
@@ -6012,444 +5203,15 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
 }
 
 /**
- * Who is taught this module.
- *
- * There is no module roster: a learner is taught a module because that module
- * is on their learning plan, so ticking a box here appends it to their plan and
- * unticking removes it (see backend/learner_api/learning_plan.py). The list is
- * every learner in enrolment."Created_users", both apprenticeship and
- * commercial, because a module can be taught outside its own programme.
- *
- * A tick the learner inherited from their group's preset is labelled as the
- * group's rather than shown as an agreed choice, and saving with it untouched
- * writes nothing -- opening this picker must not quietly turn presets into
- * agreed plans.
+ * Only the states that ask for something are badged. Published is what a
+ * finished module is supposed to be, so it carries no badge: on a list where
+ * nearly everything is published, the badge said nothing and cost a line.
  */
-function AssignLearnersModal({ moduleId, moduleTitle, onClose }: {
-  moduleId: string;
-  moduleTitle: string;
-  onClose: () => void;
-}) {
-  const [learners, setLearners] = useState<ModuleLearnerRow[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [assignedAtLoad, setAssignedAtLoad] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [programmeFilter, setProgrammeFilter] = useState('');
-  const [cohortFilter, setCohortFilter] = useState('');
-  const [groupFilter, setGroupFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [assignedOnly, setAssignedOnly] = useState(false);
-
-  const applyResponse = useCallback((rows: ModuleLearnerRow[]) => {
-    setLearners(rows);
-    const assigned = new Set(rows.filter(row => row.assigned).map(row => row.id));
-    setSelected(new Set(assigned));
-    setAssignedAtLoad(assigned);
-  }, []);
-
-  useEffect(() => {
-    if (!moduleId) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchModuleLearners(moduleId)
-      .then(response => {
-        if (cancelled) return;
-        applyResponse(response.learners);
-      })
-      .catch(err => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Unable to load learners.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [moduleId, applyResponse]);
-
-  const programmes = useMemo(
-    () => Array.from(new Set(learners.map(row => row.programme).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [learners],
-  );
-  // Cohort and group options narrow to the placement already chosen: a
-  // programme's cohorts, then that cohort's groups. Offering all 60 cohorts
-  // under one programme would be a list of dead ends.
-  const cohorts = useMemo(
-    () => Array.from(new Set(learners
-      .filter(row => !programmeFilter || row.programme === programmeFilter)
-      .map(row => row.cohort)
-      .filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [learners, programmeFilter],
-  );
-  const groups = useMemo(
-    () => Array.from(new Set(learners
-      .filter(row => (!programmeFilter || row.programme === programmeFilter) && (!cohortFilter || row.cohort === cohortFilter))
-      .map(row => row.group)
-      .filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [learners, programmeFilter, cohortFilter],
-  );
-  const learnerTypes = useMemo(
-    () => Array.from(new Set(learners.map(row => row.learnerType.trim().toLowerCase()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [learners],
-  );
-  const statuses = useMemo(
-    () => Array.from(new Set(learners.map(row => row.programmeStatus.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [learners],
-  );
-
-  const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    return learners.filter(row => {
-      if (programmeFilter && row.programme !== programmeFilter) return false;
-      if (cohortFilter && row.cohort !== cohortFilter) return false;
-      if (groupFilter && row.group !== groupFilter) return false;
-      if (typeFilter && row.learnerType.trim().toLowerCase() !== typeFilter) return false;
-      if (statusFilter && row.programmeStatus.trim() !== statusFilter) return false;
-      if (assignedOnly && !selected.has(row.id)) return false;
-      if (!needle) return true;
-      return [row.name, row.email, row.programme, row.cohort, row.group]
-        .some(value => value.toLowerCase().includes(needle));
-    });
-  }, [learners, search, programmeFilter, cohortFilter, groupFilter, typeFilter, statusFilter, assignedOnly, selected]);
-
-  const activeFilterCount = [programmeFilter, cohortFilter, groupFilter, typeFilter, statusFilter].filter(Boolean).length
-    + (search.trim() ? 1 : 0)
-    + (assignedOnly ? 1 : 0);
-  const clearFilters = () => {
-    setSearch('');
-    setProgrammeFilter('');
-    setCohortFilter('');
-    setGroupFilter('');
-    setTypeFilter('');
-    setStatusFilter('');
-    setAssignedOnly(false);
-  };
-
-  const toAdd = useMemo(
-    () => Array.from(selected).filter(id => !assignedAtLoad.has(id)).length,
-    [selected, assignedAtLoad],
-  );
-  const toRemove = useMemo(
-    () => Array.from(assignedAtLoad).filter(id => !selected.has(id)).length,
-    [selected, assignedAtLoad],
-  );
-  const dirty = toAdd > 0 || toRemove > 0;
-
-  const toggle = (id: string) => {
-    setSelected(previous => {
-      const next = new Set(previous);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-
-  // Select/clear act on what is on screen, not the whole directory: a filtered
-  // list with a "select all" that silently ticked 400 hidden learners would be
-  // the one mistake this picker must not make.
-  const setAllFiltered = (assign: boolean) => {
-    setSelected(previous => {
-      const next = new Set(previous);
-      filtered.forEach(row => { if (assign) next.add(row.id); else next.delete(row.id); });
-      return next;
-    });
-  };
-
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      const response = await saveModuleLearners(moduleId, Array.from(selected));
-      applyResponse(response.learners);
-      const changed = response.changedCount ?? 0;
-      await showCurriculumAlert({
-        title: 'Learners assigned',
-        text: changed
-          ? `${changed} learner${changed === 1 ? "'s" : "s'"} plan${changed === 1 ? '' : 's'} updated for ${moduleTitle}.`
-          : `No plans needed changing for ${moduleTitle}.`,
-        timer: 1800,
-      });
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save the assignment.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[86] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={saving ? undefined : onClose}>
-      <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="flex flex-col gap-3 bg-primary-950 px-5 py-4 text-white lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">Learning plans</p>
-            <h3 className="mt-0.5 text-base font-heading font-bold text-white">Assign learners</h3>
-            <p className="mt-1 line-clamp-1 text-[12px] font-semibold text-white/70">{moduleTitle}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <MetricPill label="Assigned" value={String(selected.size)} />
-            <MetricPill label="Learners" value={String(learners.length)} />
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={saving}
-              className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20 disabled:opacity-50"
-            >
-              <AppIcon className="ri-close-line"></AppIcon>
-            </button>
-          </div>
-        </div>
-
-        {!moduleId ? (
-          <div className="p-6">
-            <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
-              This module has no catalogue id yet, and a learning plan refers to modules by that id. Save the module from Edit module first, then assign learners to it.
-            </p>
-          </div>
-        ) : (
-          <>
-            <div className="space-y-2 border-b border-background-200 bg-background-100/50 px-5 py-3">
-              <label className="relative block">
-                <span className="sr-only">Search learners</span>
-                <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
-                <input
-                  value={search}
-                  onChange={event => setSearch(event.target.value)}
-                  placeholder="Search by name, email, cohort or group"
-                  className="h-9 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[12px] font-semibold text-foreground-800 focus:border-primary-300 focus:outline-none"
-                />
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Changing a placement clears the narrower ones under it, so a
-                    programme's cohort can never sit over another programme's
-                    group and filter the list down to nobody. */}
-                <PickerFilter
-                  label="All programmes"
-                  value={programmeFilter}
-                  options={programmes}
-                  onChange={value => { setProgrammeFilter(value); setCohortFilter(''); setGroupFilter(''); }}
-                />
-                <PickerFilter
-                  label="All cohorts"
-                  value={cohortFilter}
-                  options={cohorts}
-                  onChange={value => { setCohortFilter(value); setGroupFilter(''); }}
-                />
-                <PickerFilter
-                  label="All groups"
-                  value={groupFilter}
-                  options={groups}
-                  onChange={setGroupFilter}
-                />
-                {learnerTypes.length > 1 && (
-                  <PickerFilter
-                    label="All learner types"
-                    value={typeFilter}
-                    options={learnerTypes}
-                    onChange={setTypeFilter}
-                    optionLabel={value => value.charAt(0).toUpperCase() + value.slice(1)}
-                  />
-                )}
-                {statuses.length > 1 && (
-                  <PickerFilter
-                    label="All statuses"
-                    value={statusFilter}
-                    options={statuses}
-                    onChange={setStatusFilter}
-                  />
-                )}
-                <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700">
-                  <input
-                    type="checkbox"
-                    checked={assignedOnly}
-                    onChange={event => setAssignedOnly(event.target.checked)}
-                    className="h-3.5 w-3.5 accent-primary-600"
-                  />
-                  Assigned only
-                </label>
-                {activeFilterCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={clearFilters}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
-                  >
-                    <AppIcon className="ri-filter-off-line text-[12px]"></AppIcon>
-                    Clear {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-background-200 px-5 py-2">
-              <p className="text-[11px] font-semibold text-foreground-500">
-                {loading ? 'Loading learners...' : `Showing ${filtered.length} of ${learners.length} learners`}
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setAllFiltered(true)}
-                  disabled={loading || saving || !filtered.length}
-                  className="rounded-lg border border-background-200 bg-background-50 px-2.5 py-1 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-40"
-                >
-                  Select shown
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAllFiltered(false)}
-                  disabled={loading || saving || !filtered.length}
-                  className="rounded-lg border border-background-200 bg-background-50 px-2.5 py-1 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-40"
-                >
-                  Clear shown
-                </button>
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              {loading ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    <div key={index} className="h-14 animate-pulse rounded-xl bg-background-200/60" />
-                  ))}
-                </div>
-              ) : filtered.length ? (
-                <ul className="space-y-2">
-                  {filtered.map(row => {
-                    const checked = selected.has(row.id);
-                    return (
-                      <li key={row.id}>
-                        <label
-                          className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-smooth ${checked
-                            ? 'border-primary-200 bg-primary-50/60'
-                            : 'border-background-200 bg-background-50 hover:border-primary-100 hover:bg-background-100/50'}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={saving}
-                            onChange={() => toggle(row.id)}
-                            className="mt-0.5 h-4 w-4 accent-primary-600"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="flex flex-wrap items-center gap-2">
-                              <span className="truncate text-[12.5px] font-bold text-foreground-950">{row.name}</span>
-                              {row.learnerType.toLowerCase() === 'commercial' && (
-                                <span className="rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[9.5px] font-bold uppercase text-foreground-500">Commercial</span>
-                              )}
-                              {row.programmeStatus && (
-                                <span className="rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[9.5px] font-bold text-foreground-500">{row.programmeStatus}</span>
-                              )}
-                            </span>
-                            <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">
-                              {[row.programme, row.cohort, row.group].filter(Boolean).join(' - ') || 'No programme placement yet'}
-                            </span>
-                            <span className="mt-0.5 block truncate text-[10.5px] text-foreground-400">
-                              {row.email || 'No email on record'}
-                              {' - '}
-                              {row.moduleCount} module{row.moduleCount === 1 ? '' : 's'} on plan
-                            </span>
-                            {row.fromPreset && (
-                              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9.5px] font-bold text-amber-800">
-                                <AppIcon className="ri-group-line text-[10px]"></AppIcon>
-                                From {row.group || 'their group'}&apos;s preset, not an agreed plan
-                              </span>
-                            )}
-                          </span>
-                        </label>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : learners.length ? (
-                <div className="px-4 py-8 text-center">
-                  <p className="text-[12px] font-semibold text-foreground-600">
-                    None of the {learners.length} learners match {activeFilterCount === 1 ? 'this filter' : 'these filters'}.
-                  </p>
-                  {activeFilterCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={clearFilters}
-                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
-                    >
-                      <AppIcon className="ri-filter-off-line text-[12px]"></AppIcon>
-                      Clear {activeFilterCount === 1 ? 'it' : 'them all'}
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <EmptyState text="There are no learners on record yet." />
-              )}
-            </div>
-          </>
-        )}
-
-        <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[11px] font-semibold text-foreground-500">
-            {error
-              ? <span className="text-red-600">{error}</span>
-              : dirty
-                ? `${toAdd} to add, ${toRemove} to remove. Saving writes each learner's plan.`
-                : 'Ticking a learner adds this module to their learning plan.'}
-          </p>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={saving}
-              className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => { void save(); }}
-              disabled={!moduleId || loading || saving || !dirty}
-              aria-busy={saving}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-4 py-2 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-line'}></AppIcon>
-              {saving ? 'Saving...' : 'Save assignment'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// One filter in the Assign learners picker. Disabled rather than hidden when
-// the rows above it leave nothing to choose from, so the filter bar keeps the
-// same shape and the greyed control says the narrowing already happened.
-function PickerFilter({ label, value, options, onChange, optionLabel }: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-  optionLabel?: (value: string) => string;
-}) {
-  return (
-    <label className="inline-flex">
-      <span className="sr-only">{label}</span>
-      <select
-        value={value}
-        onChange={event => onChange(event.target.value)}
-        disabled={options.length === 0}
-        className={`h-9 max-w-[190px] rounded-lg border px-2 text-[12px] font-semibold focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${value
-          ? 'border-primary-300 bg-primary-50 text-primary-800'
-          : 'border-background-200 bg-background-50 text-foreground-700 focus:border-primary-300'}`}
-      >
-        <option value="">{options.length === 0 ? `${label} (none)` : label}</option>
-        {options.map(option => (
-          <option key={option} value={option}>{optionLabel ? optionLabel(option) : option}</option>
-        ))}
-      </select>
-    </label>
-  );
+function StatusBadge({ status }: { status: string }) {
+  if (status === 'published') return null;
+  const classes = status === 'draft' ? 'bg-amber-100 text-amber-700' : 'bg-primary-100 text-primary-700';
+  const label = status === 'review' ? 'in review' : status;
+  return <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${classes}`}>{label}</span>;
 }
 
 function ModuleCatalogueCard({
@@ -6457,10 +5219,8 @@ function ModuleCatalogueCard({
   teamsSummary,
   onKsbMap,
   ksbMapLoading,
-  onAssignLearners,
   onBuild,
   onSettings,
-  onCover,
   onDuplicate,
   onDelete,
 }: {
@@ -6468,10 +5228,8 @@ function ModuleCatalogueCard({
   teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
-  onAssignLearners: () => void;
   onBuild: () => void;
   onSettings: () => void;
-  onCover: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
@@ -6486,15 +5244,7 @@ function ModuleCatalogueCard({
   const hasContent = componentCount > 0;
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
-  const primaryDeliveryHref = primaryDelivery ? namedCurriculumWorkspacePath('modules', primaryDelivery.deliveryModuleId, module.title) : '';
-  // The module's own artwork replaces the generic icon when it has one. An
-  // address that fails to load falls back to the icon rather than leaving a
-  // broken frame beside the title -- a pasted URL can rot, and a card with a
-  // hole in it reads as a broken module.
-  const [coverBroken, setCoverBroken] = useState(false);
-  const coverImage = String(module.coverImage || '').trim();
-  useEffect(() => { setCoverBroken(false); }, [coverImage]);
-  const showCover = Boolean(coverImage) && !coverBroken;
+  const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
   // Legacy fallbacks retained by the merge were:
   // weekCount = module.weekStructure.length || module.weeks || 0
 
@@ -6503,29 +5253,22 @@ function ModuleCatalogueCard({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
         <div className="min-w-0">
           <div className="flex flex-wrap items-start gap-3">
-            {showCover ? (
-              <span className="h-10 w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-background-200">
-                <img
-                  src={coverImage}
-                  alt=""
-                  className="h-full w-full object-cover"
-                  onError={() => setCoverBroken(true)}
-                />
-              </span>
-            ) : (
-              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
-                <AppIcon className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></AppIcon>
-              </span>
-            )}
+            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
+              <AppIcon className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></AppIcon>
+            </span>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[14px] font-heading font-bold text-foreground-950">{module.title}</h3>
+                <StatusBadge status={module.status} />
               </div>
               {subLabel && <p className="mt-1 text-[11px] text-foreground-500">{subLabel}</p>}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-600">
-                  {cleanModuleMeta(module.programmeName) || 'No programme'}
-                </span>
+                <ModuleFactPill
+                  icon="ri-graduation-cap-line"
+                  label="Programme"
+                  value={cleanModuleMeta(module.programmeName) || 'Not set'}
+                  tone={cleanModuleMeta(module.programmeName) ? 'default' : 'muted'}
+                />
                 <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} weeks`} />
                 <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} components`} tone={hasContent ? 'default' : 'muted'} />
               </div>
@@ -6544,17 +5287,6 @@ function ModuleCatalogueCard({
               Open delivery
             </Link>
           )}
-          {/* Beside Open delivery, and shown whether or not the module has a
-              delivery row: who is taught a module is their learning plan, which
-              exists before the module is scheduled anywhere. */}
-          <button
-            type="button"
-            onClick={onAssignLearners}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:ring-offset-1"
-          >
-            <AppIcon name="ri-user-add-line" size={15}></AppIcon>
-            Assign learners
-          </button>
           <button
             onClick={onKsbMap}
             disabled={ksbMapLoading}
@@ -6569,38 +5301,12 @@ function ModuleCatalogueCard({
             Edit components
           </button>
           <ModuleCardActionButton label="Edit module" icon="ri-edit-line" onClick={onSettings} />
-          <ModuleCardActionButton label={coverImage ? 'Change image' : 'Upload image'} icon="ri-image-add-line" onClick={onCover} />
           <ModuleCardActionButton label="Duplicate module" icon="ri-file-copy-line" onClick={onDuplicate} />
           <ModuleCardActionButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
         </div>
       </div>
     </article>
   );
-}
-
-function ModuleCoverDrawer({ module, onClose, onSaved }: {
-  module: ModuleCatalogueItem; onClose: () => void; onSaved: () => Promise<void>;
-}) {
-  const [cover, setCover] = useState(module.coverImage || '');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const save = async () => {
-    setSaving(true); setError(null);
-    try {
-      await updateCurriculumModuleCover(module.catalogueId, cover);
-      await onSaved();
-      onClose();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Could not save the module image.');
-    } finally {
-      setSaving(false);
-    }
-  };
-  return <EntityDrawer open title="Module image" subtitle={module.title} onClose={onClose} onSubmit={save}
-    submitLabel="Save image" saving={saving} error={error} dirty={cover !== (module.coverImage || '')}>
-    <p className="text-sm text-foreground-500">This image appears in Module Builder and on learners' subject cards.</p>
-    <CoverImageControl value={cover} onChange={(value) => { setCover(value); setError(null); }} onError={setError} alt={`${module.title} cover`} />
-  </EntityDrawer>;
 }
 
 function ModuleCardActionButton({ label, icon, onClick, tone = 'default' }: { label: string; icon: string; onClick: () => void; tone?: 'default' | 'danger' }) {
@@ -6644,6 +5350,15 @@ type ModuleKsbPlacement = {
   scope: 'Module' | 'Week' | 'Component';
   otjh: number;
   points: number;
+  /**
+   * Which column of the heatmap this placement belongs in: 'module' for a
+   * module-level mapping, `week:<index>` for anything inside a week. Set by
+   * `moduleKsbMapRows` from the week structure itself rather than parsed back
+   * out of the label, so a week titled "Week 3 / Intro" cannot be misread.
+   */
+  columnKey?: string;
+  /** The component's own title, when the placement is a component. */
+  detail?: string;
 };
 
 function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programmes, onClose, onBuild }: {
@@ -6704,6 +5419,22 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
   const visiblePlacementCount = filteredRows.reduce((total, row) => total + row.placements.length, 0);
   const visibleWeight = filteredRows.reduce((total, row) => total + row.weight, 0);
   const visibleOtjh = uniquePlacementOtjh(filteredRows);
+  // The heatmap is the way in — it answers "where in this module is this
+  // taught?" at a glance, the same question the programme heatmap answers one
+  // level up. The card view is kept for the per-placement OTJH and points
+  // breakdown the matrix has no room for.
+  const [view, setView] = useState<'heatmap' | 'cards'>('heatmap');
+  const columns = useMemo(() => moduleKsbHeatmapColumns(module), [module]);
+  const weekCount = module.weekStructure.length;
+  const coveredWeeks = useMemo(() => {
+    const touched = new Set<string>();
+    filteredRows.forEach(row => {
+      row.placements.forEach(placement => {
+        if (placement.columnKey && placement.columnKey !== MODULE_KSB_COLUMN) touched.add(placement.columnKey);
+      });
+    });
+    return touched.size;
+  }, [filteredRows]);
   return (
     <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
@@ -6935,12 +5666,222 @@ function ModuleKsbMapCard({ row }: { row: ModuleKsbMapRow }) {
   );
 }
 
+/**
+ * The module-scope answer to the programme's KSB heatmap. Same question asked
+ * one level down: the programme matrix puts a module in every column, so this
+ * one puts a week there, with the module's own mappings pinned in the first
+ * column. Rows stay grouped by Knowledge / Skills / Behaviours, because a
+ * flat alphabetical list of forty codes is what made the old panel view hard to
+ * read in the first place.
+ */
+function ModuleKsbHeatmapMatrix({ columns, groups, onBuild }: {
+  columns: ReturnType<typeof moduleKsbHeatmapColumns>;
+  groups: { key: 'K' | 'S' | 'B'; title: string; icon: string; rows: ModuleKsbMapRow[] }[];
+  onBuild: () => void;
+}) {
+  // Weeks are narrow because a week column only ever holds a count; the KSB and
+  // the trail are what need room. Everything scrolls inside the box rather than
+  // pushing the modal, so the header stays put while a 40-week module is read.
+  const gridTemplateColumns = `minmax(230px, 1.1fr) repeat(${columns.length}, minmax(60px, 72px)) minmax(96px, 0.4fr) minmax(220px, 1fr)`;
+  const visibleGroups = groups.filter(group => group.rows.length);
+
+  return (
+    <div className="max-h-[58vh] overflow-auto rounded-2xl border border-background-200 bg-background-50 shadow-sm">
+      <div className="min-w-[900px]">
+        <div className="sticky top-0 z-30 grid items-end gap-2 border-b border-background-200 bg-background-100 px-4 py-3" style={{ gridTemplateColumns }}>
+          {/* Frozen both ways, the same way the programme matrix does it: the
+              column heads must survive scrolling down and the KSB column must
+              survive scrolling right, or a cell loses the row it belongs to. */}
+          <span className="sticky left-0 z-10 -ml-4 bg-background-100 pl-4 text-[10px] font-bold uppercase text-foreground-400 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">KSB outcome</span>
+          {columns.map(column => (
+            <span
+              key={column.key}
+              title={column.label}
+              className={`truncate text-center text-[10px] font-bold uppercase ${column.isModule ? 'text-sky-700' : 'text-foreground-400'}`}
+            >
+              {column.short}
+            </span>
+          ))}
+          <span className="text-center text-[10px] font-bold uppercase text-foreground-400">Weight</span>
+          <span className="text-[10px] font-bold uppercase text-foreground-400">Taught in</span>
+        </div>
+        <div className="divide-y divide-background-200">
+          {visibleGroups.map(group => (
+            <div key={group.key}>
+              <div className="sticky top-[45px] z-20 flex items-center gap-2 border-b border-background-200 bg-background-100/95 px-4 py-1.5 backdrop-blur-sm">
+                <AppIcon className={`${group.icon} text-[12px] text-foreground-500`}></AppIcon>
+                <span className="text-[10px] font-black uppercase tracking-wide text-foreground-600">{group.title}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${ksbVisualTone(group.key).badgeClass}`}>{group.rows.length}</span>
+              </div>
+              <div className="divide-y divide-background-200">
+                {group.rows.map(row => (
+                  <ModuleKsbHeatmapRow key={`${row.code}-${row.source}`} row={row} columns={columns} />
+                ))}
+              </div>
+            </div>
+          ))}
+          {!visibleGroups.length && (
+            <div className="px-4 py-10 text-center">
+              <p className="text-[12px] font-bold text-foreground-600">Nothing matches that search.</p>
+              <button type="button" onClick={onBuild} className="mt-2 text-[11px] font-bold text-primary-600 underline-offset-2 hover:underline">
+                Open Edit mappings
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModuleKsbHeatmapRow({ row, columns }: {
+  row: ModuleKsbMapRow;
+  columns: ReturnType<typeof moduleKsbHeatmapColumns>;
+}) {
+  const cells = moduleKsbRowCells(row);
+  const kind = row.code.toUpperCase().slice(0, 1);
+  const tone = ksbVisualTone(kind);
+  const gridTemplateColumns = `minmax(230px, 1.1fr) repeat(${columns.length}, minmax(60px, 72px)) minmax(96px, 0.4fr) minmax(220px, 1fr)`;
+  const touchedColumns = columns.filter(column => (cells.get(column.key) || []).length);
+  const totalOtjh = row.placements.reduce((total, placement) => total + Number(placement.otjh || 0), 0);
+
+  return (
+    // Opaque, because the frozen first cell inherits this background to hide the
+    // week cells sliding underneath it.
+    <div className="grid items-stretch gap-2 bg-background-50 px-4 py-2.5 transition-smooth hover:bg-background-100" style={{ gridTemplateColumns }}>
+      <div className="sticky left-0 z-10 -ml-4 min-w-0 bg-inherit pl-4 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`rounded-lg border px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{row.code}</span>
+          <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
+          {row.source && <span className="truncate rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{row.source}</span>}
+        </div>
+        <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-relaxed text-foreground-700">{row.description || 'No description available.'}</p>
+      </div>
+      {columns.map(column => (
+        <ModuleKsbHeatCell key={column.key} column={column} placements={cells.get(column.key) || []} />
+      ))}
+      <div className="flex flex-col items-center justify-center gap-0.5">
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{formatKsbWeight(row.weight)}</span>
+        <span className="text-[9px] font-semibold text-foreground-400">{formatKsbOtjh(totalOtjh)} · {row.placements.length} place{row.placements.length === 1 ? '' : 's'}</span>
+      </div>
+      <div className="flex min-w-0 flex-wrap content-start items-start gap-1">
+        {touchedColumns.map(column => {
+          const placements = cells.get(column.key) || [];
+          const components = placements.filter(placement => placement.detail).map(placement => placement.detail);
+          return (
+            <span
+              key={column.key}
+              title={components.length ? `${column.label}: ${components.join(', ')}` : `${column.label}: mapped at ${placements[0]?.scope.toLowerCase()} level`}
+              className="inline-flex max-w-full items-center gap-1 truncate rounded-md border border-background-200 bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-600"
+            >
+              <AppIcon className={`${column.isModule ? 'ri-stack-line' : 'ri-calendar-check-line'} text-[10px]`}></AppIcon>
+              <span className="truncate">{column.short}{components.length ? ` · ${components[0]}` : ''}{components.length > 1 ? ` +${components.length - 1}` : ''}</span>
+            </span>
+          );
+        })}
+        {!touchedColumns.length && <span className="text-[9px] font-bold text-foreground-300">Not placed</span>}
+      </div>
+    </div>
+  );
+}
+
+function ModuleKsbHeatCell({ column, placements }: {
+  column: ReturnType<typeof moduleKsbHeatmapColumns>[number];
+  placements: ModuleKsbPlacement[];
+}) {
+  const count = placements.length;
+  // A week can hold the KSB at week level and again on its components; saying
+  // which is what tells an author whether the teaching is actually placed.
+  const scopes = Array.from(new Set(placements.map(placement => placement.scope)));
+  const title = count
+    ? `${column.label} — ${placements.map(placement => placement.label).join(', ')}`
+    : `${column.label} — not mapped`;
+  return (
+    <div
+      title={title}
+      className={`grid min-h-11 place-items-center rounded-lg border text-[11px] font-black ${moduleKsbHeatCellClass(count, column.isModule)}`}
+    >
+      {count ? (
+        <span className="flex flex-col items-center leading-none">
+          <span>{count}</span>
+          <span className="mt-0.5 text-[8px] font-bold uppercase opacity-80">{scopes.includes('Component') ? 'comp' : scopes[0].toLowerCase()}</span>
+        </span>
+      ) : (
+        <span className="text-[10px] font-bold">·</span>
+      )}
+    </div>
+  );
+}
+
+function ModuleKsbHeatmapLegend({ weekCount }: { weekCount: number }) {
+  return (
+    <div className="mb-3 flex flex-col gap-3 rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-wrap items-center gap-2">
+        {(['K', 'S', 'B'] as const).map(key => {
+          const tone = ksbVisualTone(key);
+          return (
+            <span key={key} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${tone.badgeClass}`}>
+              <AppIcon className={`${tone.icon} text-[11px]`}></AppIcon>
+              {tone.label}
+            </span>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-foreground-500">
+        <span>Placements per week</span>
+        <span className="grid h-5 w-8 place-items-center rounded border border-primary-100 bg-primary-50 text-primary-700">1</span>
+        <span className="grid h-5 w-8 place-items-center rounded border border-primary-300 bg-primary-200 text-primary-900">2</span>
+        <span className="grid h-5 w-8 place-items-center rounded border border-primary-500 bg-primary-600 text-white">3+</span>
+        <span className="grid h-5 w-14 place-items-center rounded border border-sky-200 bg-sky-50 text-[9px] text-sky-800">Module</span>
+        <span className="ml-1 text-foreground-400">{weekCount} week{weekCount === 1 ? '' : 's'} across the columns; weight is the mapping total, not a per-week split</span>
+      </div>
+    </div>
+  );
+}
+
 function KsbCoverageMetric({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
   return (
     <div className={`rounded-lg border border-background-200 bg-background-100 ${compact ? 'px-2 py-1.5' : 'min-w-20 px-3 py-2'}`}>
       <p className="text-[8px] font-black uppercase text-foreground-400">{label}</p>
       <p className={`${compact ? 'text-[11px]' : 'text-[13px]'} mt-0.5 font-black text-foreground-900`}>{value}</p>
     </div>
+  );
+}
+
+/**
+ * A catalogue fact with the word for what it is next to it. A bare value —
+ * "Test-Zyad", "Sept 2026 / Group A", a date range — reads as an unexplained
+ * string to anyone who did not author the module, so the card names the field
+ * rather than leaving the reader to infer it from position.
+ */
+function ModuleFactPill({ icon, label, value, tone = 'default' }: { icon: string; label: string; value: string; tone?: 'default' | 'muted' }) {
+  const valueClass = tone === 'muted' ? 'text-foreground-400' : 'text-foreground-700';
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-[10px]"
+      title={`${label}: ${value}`}
+    >
+      <AppIcon className={`${icon} text-[11px] text-primary-600`}></AppIcon>
+      <span className="font-bold uppercase tracking-wide text-foreground-400">{label}</span>
+      <span className={`font-semibold ${valueClass}`}>{value}</span>
+    </span>
+  );
+}
+
+/** The same labelled fact, unboxed, for the delivery rows under the card. */
+function ModuleFact({ icon, label, value, valueClass = 'font-semibold text-foreground-600', title }: {
+  icon: string;
+  label: string;
+  value: string;
+  valueClass?: string;
+  title?: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px]" title={title || `${label}: ${value}`}>
+      <AppIcon className={`${icon} text-[12px] text-foreground-400`}></AppIcon>
+      <span className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</span>
+      <span className={valueClass}>{value}</span>
+    </span>
   );
 }
 
@@ -6998,24 +5939,32 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
         const sessions = usage.sessions || 0;
         const facts = (
           <>
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-foreground-900">
-              <AppIcon className="ri-route-line text-[12px] text-primary-600"></AppIcon>
-              {formatDeliveryUsage(usage)}
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500">
-              <AppIcon className="ri-calendar-event-line text-[12px]"></AppIcon>
-              {formatDateLabel(usage.startDate)} – {formatDateLabel(usage.endDate)}
-            </span>
+            <ModuleFact
+              icon="ri-group-line"
+              label="Cohort / group"
+              value={formatDeliveryUsage(usage)}
+              valueClass="font-bold text-foreground-900"
+            />
+            <ModuleFact
+              icon="ri-calendar-event-line"
+              label="Runs"
+              value={`${formatDateLabel(usage.startDate)} – ${formatDateLabel(usage.endDate)}`}
+            />
             {sessions > 0 && sessions !== expectedSessions && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-700">
-                <AppIcon className="ri-calendar-2-line text-[12px]"></AppIcon>
-                {sessions} session{sessions === 1 ? '' : 's'}
-              </span>
+              <ModuleFact
+                icon="ri-calendar-2-line"
+                label="Sessions"
+                value={String(sessions)}
+                valueClass="font-semibold text-amber-700"
+                title={`Sessions: ${sessions} in this delivery, which differs from the module plan`}
+              />
             )}
-            <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${teams.tone}`}>
-              <AppIcon className="ri-vidicon-line text-[12px]"></AppIcon>
-              {teams.text}
-            </span>
+            <ModuleFact
+              icon="ri-vidicon-line"
+              label="Teams"
+              value={teams.text}
+              valueClass={`font-semibold ${teams.tone}`}
+            />
           </>
         );
         if (!usage.deliveryModuleId) {
@@ -7101,12 +6050,6 @@ function moduleDefinitionKey(module: ModuleCatalogueItem) {
   return `${programme || 'programme'}::${title || module.catalogueId}`;
 }
 
-/** Same rule the Programmes page uses to split its active list from its archive. */
-function programmeIsArchived(programme: CurriculumProgramme) {
-  if (typeof programme.isArchived === 'boolean') return programme.isArchived;
-  return String(programme.status || 'active').trim().toLowerCase() === 'archived';
-}
-
 /** Every identifier the selected programme answers to: name, id, source id, standard. */
 function programmeFilterKeys(programmeName: string, programmes: CurriculumProgramme[]) {
   const selected = programmes.find(programme => normaliseDeepLinkValue(programme.name) === normaliseDeepLinkValue(programmeName));
@@ -7120,9 +6063,17 @@ function programmeFilterKeys(programmeName: string, programmes: CurriculumProgra
 }
 
 function usageMatchesProgrammeFilter(usage: ModuleDeliveryUsage, programmeName: string, programmes: CurriculumProgramme[]) {
+  return recordMatchesProgrammeFilter(usage.programme, usage.programmeId, programmeName, programmes);
+}
+
+/**
+ * The same programme test for a stored cohort or group, which carries its
+ * programme under the same two fields a delivery does.
+ */
+function recordMatchesProgrammeFilter(programme: string | undefined, programmeId: string | undefined, programmeName: string, programmes: CurriculumProgramme[]) {
   if (programmeName === 'All') return true;
   const selectedKeys = programmeFilterKeys(programmeName, programmes);
-  return [usage.programme, usage.programmeId]
+  return [programme, programmeId]
     .map(normaliseDeepLinkValue)
     .filter(Boolean)
     .some(key => selectedKeys.includes(key));
@@ -7145,10 +6096,11 @@ function deliveryFilterMatches(filter: string, id?: string, name?: string) {
 }
 
 function teamsMeetingLabel(summary?: CurriculumTeamsMeetingSummary) {
-  if (!summary) return { text: 'Teams not created', tone: 'text-foreground-400' };
+  // The row prints the field name, so the value says only what the state is.
+  if (!summary) return { text: 'Not created', tone: 'text-foreground-400' };
   if (summary.upcomingCount > 0) return { text: `${summary.upcomingCount} upcoming`, tone: 'text-emerald-700' };
   if (summary.occurrenceCount > 0) return { text: `${summary.occurrenceCount} held`, tone: 'text-foreground-600' };
-  return { text: 'Teams scheduled', tone: 'text-sky-700' };
+  return { text: 'Scheduled', tone: 'text-sky-700' };
 }
 
 function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
@@ -7178,11 +6130,7 @@ function moduleBelongsToVisibleProgramme(module: ModuleBuilderListItem, programm
     module.sourceModule?.programme,
     module.sourceModule?.programmeId,
     ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
-  ].map(normaliseDeepLinkValue).filter(key => Boolean(key) && !UNASSIGNED_PROGRAMME_KEYS.has(key));
-  // No programme is a state a module is allowed to be in ("assign later"), and
-  // it reaches here as the placeholder name rather than as a blank. Counting
-  // that placeholder as a programme key hid every unassigned module from the
-  // catalogue, including the one just created.
+  ].map(normaliseDeepLinkValue).filter(Boolean);
   if (!moduleKeys.length) return true;
   return moduleKeys.some(key => visibleKeys.has(key));
 }
@@ -7301,9 +6249,6 @@ function normaliseDeepLinkValue(value: unknown) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
-/** Normalised placeholders a module with no programme carries in place of one. */
-const UNASSIGNED_PROGRAMME_KEYS = new Set(['unassignedprogramme', 'unassigned']);
-
 function isCanonicalModuleCatalogueId(value: unknown) {
   return /^MOD-[A-Z0-9][A-Z0-9_-]*$/i.test(String(value || '').trim());
 }
@@ -7369,7 +6314,6 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     status: module.status,
     notes: module.description,
     color: module.color,
-    coverImage: module.coverImage,
     deliveryUsages: (module as ModuleBuilderListItem).deliveryUsages,
   };
 }
@@ -7598,10 +6542,6 @@ function mappingsForTarget(module: ModuleCatalogueItem, target: KsbTarget) {
 function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: KsbOption, weight = defaultKsbWeight(), weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS): ModuleCatalogueItem {
   const nextIdentity = ksbMappingIdentity(option);
   if (mappingsForTarget(module, target).some(mapping => ksbMappingIdentity(mapping) === nextIdentity)) return module;
-  if (
-    target.scope === 'component'
-    && mappingsForTarget(module, target).filter(mapping => sessionKsbKind(mapping.code) === sessionKsbKind(option.code)).length >= COMPONENT_KSB_LIMIT_PER_KIND
-  ) return module;
   const mapping: KsbMapping = {
     id: makeAuthoringId('KSBMAP'),
     ksbId: option.id,
@@ -7696,6 +6636,59 @@ function uniqueMappings(mappings: KsbMapping[]) {
   });
 }
 
+/** The heatmap's first column: mappings made against the module as a whole. */
+const MODULE_KSB_COLUMN = 'module';
+
+function moduleKsbWeekColumnKey(index: number) {
+  return `week:${index}`;
+}
+
+/**
+ * The heatmap's columns, in delivery order. A module's children are its weeks,
+ * which is what the programme heatmap's module columns become one scope down —
+ * so a reader sees the same shape and asks the same question of it: where in the
+ * run is this KSB actually taught?
+ */
+function moduleKsbHeatmapColumns(module: ModuleCatalogueItem) {
+  return [
+    { key: MODULE_KSB_COLUMN, short: 'Module', label: 'Module level', isModule: true },
+    ...module.weekStructure.map((week, index) => ({
+      key: moduleKsbWeekColumnKey(index),
+      short: `W${week.weekNumber || index + 1}`,
+      label: week.title || `Week ${week.weekNumber || index + 1}`,
+      isModule: false,
+    })),
+  ];
+}
+
+/**
+ * One row's placements bucketed by column. A placement with no column key —
+ * only possible for rows built by the programme-wide builder — is dropped
+ * rather than guessed at.
+ *
+ * Deliberately no per-cell weight: the weight lives on the mapping, not the
+ * placement, so it cannot be split between the cells a KSB appears in without
+ * inventing precision. The row total gets its own column, and each cell says
+ * only what it can stand behind — how many times, at what scope, and where.
+ */
+function moduleKsbRowCells(row: ModuleKsbMapRow) {
+  const cells = new Map<string, ModuleKsbPlacement[]>();
+  row.placements.forEach(placement => {
+    if (!placement.columnKey) return;
+    cells.set(placement.columnKey, [...(cells.get(placement.columnKey) || []), placement]);
+  });
+  return cells;
+}
+
+/** Cell shading: how densely this KSB lands in one week, not its weight. */
+function moduleKsbHeatCellClass(count: number, isModule: boolean) {
+  if (!count) return 'border-dashed border-background-200 bg-background-100/40 text-foreground-300';
+  if (isModule) return 'border-sky-200 bg-sky-50 text-sky-800';
+  if (count >= 3) return 'border-primary-500 bg-primary-600 text-white';
+  if (count === 2) return 'border-primary-300 bg-primary-200 text-primary-900';
+  return 'border-primary-100 bg-primary-50 text-primary-700';
+}
+
 function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<string, string>, source?: KsbSourceOption | null, allowSelectedSourceCodeFallback = false): ModuleKsbMapRow[] {
   const rows = new Map<string, ModuleKsbMapRow>();
   const fallbackSourceFull = source ? (sourceLabels[source.id] || source.label) : '';
@@ -7769,24 +6762,30 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
     scope: 'Module' as const,
     otjh: Number(module.declaredTotalOtjh ?? module.totalOtjh ?? 0) || 0,
     points: module.weekStructure.reduce((total, week) => total + week.components.reduce((weekTotal, component) => weekTotal + Number(component.points || 0), 0), 0),
+    columnKey: MODULE_KSB_COLUMN,
   };
   module.moduleKsbMappings.forEach(mapping => addMapping(mapping, modulePlacement));
-  module.weekStructure.forEach(week => {
+  module.weekStructure.forEach((week, index) => {
     const weekLabel = week.title || `Week ${week.weekNumber}`;
+    const columnKey = moduleKsbWeekColumnKey(index);
     const weekPlacement = {
       label: weekLabel,
       scope: 'Week' as const,
       otjh: week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0),
       points: week.components.reduce((total, component) => total + Number(component.points || 0), 0),
+      columnKey,
     };
     week.ksbMappings.forEach(mapping => addMapping(mapping, weekPlacement));
     week.components.forEach(component => {
-      const location = `${weekLabel} / ${readableComponentTitle(component.title) || 'Component'}`;
+      const componentTitle = readableComponentTitle(component.title) || 'Component';
+      const location = `${weekLabel} / ${componentTitle}`;
       const componentPlacement = {
         label: location,
         scope: 'Component' as const,
         otjh: Number(component.expectedOtjh || 0),
         points: Number(component.points || 0),
+        columnKey,
+        detail: componentTitle,
       };
       component.ksbMappings.forEach(mapping => addMapping(mapping, componentPlacement));
     });
@@ -7893,7 +6892,8 @@ function uniquePlacementOtjh(rows: ModuleKsbMapRow[]) {
 }
 
 function formatKsbOtjh(value: number) {
-  return formatHoursMinutes(Number(value || 0));
+  const amount = Number(value || 0);
+  return `${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(1)}h`;
 }
 
 function formatKsbWeight(value: number) {

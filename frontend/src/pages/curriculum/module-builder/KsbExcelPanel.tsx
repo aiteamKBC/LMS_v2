@@ -5,12 +5,15 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // component to a sheet, copy the ChatGPT prompt (pinned to the KSB profile) that
 // fills it, then import the returned file back onto the components. Shared by the
 // Module Builder and Week Builder so the flow reads identically in both.
-export function KsbExcelPanel({ prompt, profileCount, loading = false, onExport, onImport }: {
+export function KsbExcelPanel({ prompt, profileCount, loading = false, onExport, onImport, onExportTemplate, onImportTemplate }: {
   prompt: string;
   profileCount: number;
   loading?: boolean;
   onExport: () => void;
   onImport: () => void;
+  /** Optional complete module workbook actions (Module Builder only). */
+  onExportTemplate?: () => void;
+  onImportTemplate?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
@@ -34,13 +37,13 @@ export function KsbExcelPanel({ prompt, profileCount, loading = false, onExport,
         <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700">Map KSBs with ChatGPT</p>
       </div>
       <p className="mt-1 text-[10px] leading-4 text-foreground-500">
-        Export the components, fill the KSBs in ChatGPT with the prompt below, then import the file back.
+        {onExportTemplate ? 'Download or upload the complete module template. Sheets are grouped by component type.' : 'Export the components, fill the KSBs in ChatGPT with the prompt below, then import the file back.'}
       </p>
       <div className="mt-2.5 grid grid-cols-2 gap-1.5">
-        <button onClick={onExport} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-background-200 bg-background-50 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
-          <AppIcon className="ri-file-excel-2-line text-[12px]"></AppIcon>Export
+        <button onClick={onExportTemplate || onExport} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-background-200 bg-background-50 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
+          <AppIcon className="ri-file-excel-2-line text-[12px]"></AppIcon>{onExportTemplate ? 'Export Template' : 'Export'}
         </button>
-        <button onClick={onImport} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-background-200 bg-background-50 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
+        <button onClick={onImportTemplate || onImport} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-background-200 bg-background-50 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
           <AppIcon className="ri-file-upload-line text-[12px]"></AppIcon>Import
         </button>
       </div>

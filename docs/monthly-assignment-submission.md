@@ -4,6 +4,11 @@
 
 - Learner sidebar: **My Progress → Monthly submission** (`/learner/monthly-submission`). Only live assigned assignment components are listed.
 - The existing assignment component page and the monthly submission route use the same wizard and APIs.
+- Monthly submission groups live assignments by the same Builder delivery dates used in Training Plan. Month names and focus topics use the selected Training Plan contract; missing or ambiguous delivery dates stay under **Not scheduled**. Repeated component IDs are listed once.
+- The full-width selected-assignment card shows the question, expected assignment OTJ hours, planned date, module/week, KSBs and submission status. Its assignment action starts, resumes, revises or opens the existing submission. A new draft starts with the selected plan month; saved drafts keep their saved month.
+- **Book 1:1 coach support** opens the existing Student Support booking form with the learner identity and assignment/month context in editable notes. This does not book a session automatically or replace the monthly coaching requirement inside the wizard.
+- The card shows the coach's marking result, feedback, reviewer and review date below the question. Feedback longer than six visible lines has a **View full feedback** / **Show less feedback** toggle; unmarked and pending assignments show their review state without inventing a grade.
+- When the assignment has an attached resource, the card shows its filename with **View file** and **Download file** actions. Preview uses the existing document viewer and loads only when opened. File-only briefs direct learners to the attachment and keep the existing submission action available.
 - Author the question in Module Builder → Assignment question. Planned hours, fixed engagement points, assurance, version and group assignment remain owned by the existing component editor.
 - All eight steps are saved under `full_submission.monthlyAssignment` in the existing `Learner.learning_reflection_submissions` table. Existing answer/learning/impact columns and payload fields remain compatible with tutor review.
 - Evidence uploads continue through the existing Azure upload/scanning service. Cross-references store permanent evidence IDs, never expiring download URLs. External evidence links and references to the learner's evidence library are also supported.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   fetchAbsenceReports,
@@ -10,6 +10,9 @@ import { useMyLearner } from '@/hooks/useMyLearner';
 import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
+import styles from '../attendance.module.css';
+import CatchupBooking from './CatchupBooking';
+import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 
 const REASONS = [
   { value: 'illness', label: 'Illness or medical appointment', icon: 'ri-heart-pulse-line' },
@@ -37,6 +40,7 @@ interface EvidencePreview {
 }
 
 export interface AbsenceReportFormProps {
+  scope?: 'meetings';
   /** Preselect the missed session that matches this date + title, once loaded. */
   preselectMatch?: { id?: string; dateIso: string; title: string } | null;
   /** Called once a report has been saved, in addition to the inline confirmation. */
@@ -46,6 +50,8 @@ export interface AbsenceReportFormProps {
   showGuidance?: boolean;
   /** Renders the "Previous reports" list. Defaults to true. */
   showHistory?: boolean;
+  /** Compact layout for the Attendance page dialog. */
+  compact?: boolean;
 }
 
 export default function AbsenceReportForm({
@@ -54,6 +60,8 @@ export default function AbsenceReportForm({
   onCancel,
   showGuidance = false,
   showHistory = true,
+  compact = false,
+  scope,
 }: AbsenceReportFormProps) {
   const myLearner = useMyLearner();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -76,6 +84,14 @@ export default function AbsenceReportForm({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [didPreselect, setDidPreselect] = useState(false);
+  const [recoveryMethod, setRecoveryMethod] = useState<'' | 'recorded' | 'catch-up'>('');
+  const [catchupBooking, setCatchupBooking] = useState<{ sessionId: string; event: LearnerCalendarEvent } | null>(null);
+  const [bookingBusy, setBookingBusy] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const selectedBooking = catchupBooking?.sessionId === sessionId ? catchupBooking.event : null;
+  const selectBooking = useCallback((event: LearnerCalendarEvent | null) => {
+    setCatchupBooking(event ? { sessionId, event } : null);
+  }, [sessionId]);
 
   const selectedSession = useMemo(
     () => missedSessions.find((session) => session.id === sessionId),
@@ -92,23 +108,24 @@ export default function AbsenceReportForm({
   }, [missedSessions, reports]);
   const hasReason = Boolean(reasonType && (reasonType !== 'other' || otherReason.trim()));
   const canUploadEvidence = Boolean(sessionId && hasReason);
-  const canSubmit = Boolean(sessionId && hasReason);
+  const canSubmit = Boolean(sessionId && hasReason && confirmed && !bookingBusy
+    && (scope === 'meetings' || recoveryMethod === 'recorded' || (recoveryMethod === 'catch-up' && selectedBooking)));
   const resolvedCount = reports.filter((report) => report.status !== 'Pending').length;
 
   useEffect(() => {
     let cancelled = false;
     setReportsLoading(true);
-    fetchAbsenceReports(myLearner.kind, myLearner.id)
+    fetchAbsenceReports(myLearner.kind, myLearner.id, scope)
       .then((data) => {
         if (!cancelled) {
           setReports(data.results);
-          setMissedSessions(data.missedSessions);
+          setMissedSessions(scope && preselectMatch?.id ? data.missedSessions.filter(session => session.id === preselectMatch.id) : data.missedSessions);
         }
       })
       .catch((error: unknown) => { if (!cancelled) setRequestError(error instanceof Error ? error.message : 'Could not load reports.'); })
       .finally(() => { if (!cancelled) setReportsLoading(false); });
     return () => { cancelled = true; };
-  }, [myLearner.kind, myLearner.id]);
+  }, [myLearner.kind, myLearner.id, scope, preselectMatch?.id]);
 
   // Preselect the missed session a caller opened this form for (e.g. from a
   // row in the attendance history) once the real session list has loaded.
@@ -157,6 +174,9 @@ export default function AbsenceReportForm({
     setSubmitted(false);
     setSubmittedReport(null);
     setRequestError('');
+    setRecoveryMethod('');
+    setCatchupBooking(null);
+    setConfirmed(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -173,6 +193,8 @@ export default function AbsenceReportForm({
     payload.append('reasonCategory', reasonType);
     payload.append('otherReason', otherReason.trim());
     payload.append('explanation', explanation.trim());
+    payload.append('recoveryMethod', recoveryMethod);
+    if (recoveryMethod === 'catch-up' && selectedBooking) payload.append('catchupEventKey', selectedBooking.eventKey);
     if (file) payload.append('evidence', file);
     try {
       const created = await submitAbsenceReport(myLearner.kind, myLearner.id, payload);
@@ -239,6 +261,7 @@ export default function AbsenceReportForm({
             Your report for <strong className="text-foreground-800">{submittedReport?.sessionTitle}</strong> has been saved for your coach to review.
           </p>
           <div className="mx-auto mb-5 grid max-w-xl gap-3 rounded-xl bg-background-100/70 p-4 text-left sm:grid-cols-2">
+            {submittedReport?.recoveryMethod && <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Catch-up plan</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport.recoveryMethod === 'recorded' ? 'Watch the recording' : 'Catch-up session booked / awaiting approval'}</p></div>}
             <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Reference</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport?.reference}</p></div>
             <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Current status</p><p className="text-[13px] font-semibold text-amber-600">Pending review</p></div>
             <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Session</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport ? displayDate(submittedReport.sessionDate) : ''}</p></div>
@@ -250,27 +273,30 @@ export default function AbsenceReportForm({
         </Panel>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-5">
-          <Panel className="space-y-5">
-            <SectionHeader title="Absence details" description="Fields marked with * are required" icon="ri-edit-box-line" />
+          <Panel className={compact ? styles.absenceForm : 'space-y-5'}>
+            {!compact && <SectionHeader title="Absence details" description="Fields marked with * are required" icon="ri-edit-box-line" />}
 
             <div>
-              <label htmlFor="missed-session" className="mb-2 block text-[13px] font-semibold text-foreground-700">Lecture *</label>
-              <select id="missed-session" value={sessionId} onChange={(event) => setSessionId(event.target.value)} required disabled={reportsLoading || availableSessions.length === 0} className="w-full rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-3 text-[13px] text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400">
-                <option value="">{reportsLoading ? 'Loading lectures...' : availableSessions.length === 0 ? 'No unreported absent or upcoming lectures' : 'Choose an absent or upcoming lecture'}</option>
+              <label htmlFor="missed-session" className="mb-2 block text-[13px] font-semibold text-foreground-700">{scope === 'meetings' ? 'Meeting *' : 'Lecture *'}</label>
+              <select id="missed-session" value={sessionId} onChange={(event) => { setSessionId(event.target.value); setRecoveryMethod(''); setCatchupBooking(null); setConfirmed(false); }} required disabled={reportsLoading || availableSessions.length === 0 || bookingBusy || submitting} className="w-full rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-3 text-[13px] text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400">
+                <option value="">{scope === 'meetings' ? reportsLoading ? 'Loading meeting...' : availableSessions.length ? 'Choose a meeting' : 'No unreported meetings available' : reportsLoading ? 'Loading lectures...' : availableSessions.length === 0 ? 'No unreported absent or upcoming lectures' : 'Choose an absent or upcoming lecture'}</option>
                 {availableSessions.map((session) => <option key={session.id} value={session.id}>{displayDate(session.dateIso)} - {session.title}{session.status === 'upcoming' ? ' (Upcoming)' : ''}</option>)}
               </select>
-              {selectedSession && (
+              {selectedSession && (compact ? <p className={styles.absenceDate}>Date: {displayDate(selectedSession.dateIso)}{selectedSession.startTime && `, ${selectedSession.startTime}`}{selectedSession.endTime && ` – ${selectedSession.endTime}`}</p> : (
                 <div className="mt-3 grid gap-2 rounded-xl border border-primary-100 bg-primary-50/60 p-3 sm:grid-cols-3">
                   <div className="flex items-center gap-2 text-[12px] text-foreground-600"><AppIcon className="ri-time-line text-primary-500" />{selectedSession.startTime}{selectedSession.endTime ? ` - ${selectedSession.endTime}` : ''}</div>
                   <div className="flex items-center gap-2 text-[12px] text-foreground-600"><AppIcon className="ri-user-star-line text-primary-500" />{selectedSession.coach || 'Coach not assigned'}</div>
                   <div className="flex items-center gap-2 text-[12px] text-foreground-600"><AppIcon className="ri-book-open-line text-primary-500" />{selectedSession.module || selectedSession.sessionType.replaceAll('_', ' ')}</div>
                 </div>
-              )}
+              ))}
             </div>
 
             <fieldset>
               <legend className="mb-2 block text-[13px] font-semibold text-foreground-700">Main reason *</legend>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {compact ? <select aria-label="Main reason" value={reasonType} onChange={event => setReasonType(event.target.value)} required>
+                <option value="">Select a reason</option>
+                {REASONS.map(reason => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+              </select> : <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {REASONS.map((reason) => (
                   <label key={reason.value} className={`flex cursor-pointer items-center gap-2.5 rounded-xl border p-3 text-[12px] font-medium transition ${reasonType === reason.value ? 'border-primary-400 bg-primary-50 text-primary-700 ring-1 ring-primary-200' : 'border-foreground-200 bg-background-50 text-foreground-600 hover:border-primary-200'}`}>
                     <input type="radio" name="reason" value={reason.value} checked={reasonType === reason.value} onChange={(event) => setReasonType(event.target.value)} className="sr-only" />
@@ -279,7 +305,7 @@ export default function AbsenceReportForm({
                     {reasonType === reason.value && <AppIcon className="ri-check-line ml-auto text-primary-600" />}
                   </label>
                 ))}
-              </div>
+              </div>}
               {reasonType === 'other' && (
                 <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50/40 p-3.5">
                   <label htmlFor="other-absence-reason" className="mb-2 block text-[12px] font-semibold text-foreground-700">
@@ -301,6 +327,7 @@ export default function AbsenceReportForm({
               )}
             </fieldset>
 
+            <OptionalDetails compact={compact}>
             <div>
               <div className="mb-2 flex items-center justify-between gap-3">
                 <label htmlFor="absence-explanation" className="text-[13px] font-semibold text-foreground-700">Additional information (optional)</label>
@@ -344,12 +371,22 @@ export default function AbsenceReportForm({
               {fileError && <p className="mt-2 flex items-center gap-1 text-[12px] text-red-600"><AppIcon className="ri-error-warning-line" />{fileError}</p>}
             </div>
 
-            <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-background-100/60 p-3.5">
-              <input type="checkbox" required className="mt-0.5 h-4 w-4 rounded border-foreground-300 text-primary-500 focus:ring-primary-300" />
+            </OptionalDetails>
+            {scope === 'meetings' ? <p className={styles.recoveryHint}>Your coach will review your absence report. Use Reschedule on the meeting page to arrange another time.</p> : <fieldset className={styles.recoveryPlan} disabled={!selectedSession || bookingBusy || submitting}>
+              <legend>How will you catch up? *</legend>
+              <div className={styles.recoveryOptions}>
+                <label><input type="radio" name="recovery-method" value="recorded" required checked={recoveryMethod === 'recorded'} onChange={() => { setRecoveryMethod('recorded'); setConfirmed(false); }} /><span>Watch the recording</span></label>
+                <label><input type="radio" name="recovery-method" value="catch-up" required checked={recoveryMethod === 'catch-up'} onChange={() => { setRecoveryMethod('catch-up'); setConfirmed(false); }} /><span>Book a Catch-up session</span></label>
+              </div>
+            </fieldset>}
+            {recoveryMethod === 'recorded' && <p className={styles.recoveryHint}>Complete the lecture's recorded activities to catch up.{selectedBooking && ' Your existing catch-up booking remains in your calendar.'}</p>}
+            {recoveryMethod === 'catch-up' && selectedSession && <CatchupBooking key={selectedSession.id} lecture={selectedSession} selectedKey={selectedBooking?.eventKey || ''} onSelect={selectBooking} onBusyChange={setBookingBusy} disabled={submitting} />}
+            <label className={`flex cursor-pointer items-start gap-3 rounded-xl bg-background-100/60 p-3.5 ${compact ? styles.absenceConfirmation : ''}`}>
+              <input type="checkbox" required checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={bookingBusy || submitting} className="mt-0.5 h-4 w-4 rounded border-foreground-300 text-primary-500 focus:ring-primary-300" />
               <span className="text-[12px] leading-5 text-foreground-500">I confirm the information in this report is accurate and I understand my coach may contact me for more details.</span>
             </label>
 
-            <div className="flex flex-col-reverse gap-3 border-t border-foreground-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className={`flex flex-col-reverse gap-3 border-t border-foreground-100 pt-4 sm:flex-row sm:items-center sm:justify-between ${compact ? styles.absenceFooter : ''}`}>
               {onCancel && <button type="button" onClick={onCancel} className="rounded-lg border border-foreground-200 px-4 py-2 text-sm font-semibold">Cancel</button>}
               <p className="flex items-center gap-1.5 text-[11px] text-foreground-400"><AppIcon className="ri-shield-check-line text-emerald-500" />Your information is only shared with the relevant support team.</p>
               <button type="submit" disabled={!canSubmit || submitting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary-600 px-5 py-3 text-[13px] font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40">
@@ -454,4 +491,8 @@ export default function AbsenceReportForm({
       )}
     </div>
   );
+}
+
+function OptionalDetails({ compact, children }: { compact: boolean; children: ReactNode }) {
+  return compact ? <details className={styles.absenceOptional}><summary>Add details or evidence (optional)</summary>{children}</details> : <>{children}</>;
 }

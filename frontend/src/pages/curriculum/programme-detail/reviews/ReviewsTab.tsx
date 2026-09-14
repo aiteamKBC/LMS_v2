@@ -27,7 +27,12 @@ function statusesLabel(statuses: string[]): string {
   return statuses.length ? statuses.join(', ') : 'All statuses';
 }
 
-export function ReviewsTab({ programmeId, programmeName }: { programmeId: string; programmeName: string }) {
+export function ReviewsTab({ programmeId, programmeName, defaultStartDate }: {
+  programmeId: string;
+  programmeName: string;
+  /** Earliest cohort start date on this programme, ISO -- prefills a new review's first occurrence date. */
+  defaultStartDate?: string;
+}) {
   const [reviews, setReviews] = useState<ReviewSummary[] | null>(null);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -160,6 +165,7 @@ export function ReviewsTab({ programmeId, programmeName }: { programmeId: string
         <ReviewFormModal
           programmeId={programmeId}
           review={formTarget === 'new' ? null : formTarget}
+          defaultStartDate={defaultStartDate}
           onClose={() => setFormTarget(null)}
           onSaved={() => { setFormTarget(null); void load({ silent: true, skipCache: true }); }}
         />

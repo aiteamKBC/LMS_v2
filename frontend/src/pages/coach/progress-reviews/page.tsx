@@ -21,6 +21,7 @@ import { CalendarEventMeta, CalendarEventRow } from '../shared/CalendarEventRow'
 import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
 import { InfoTile, ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
+import { ReviewInstanceModal } from '../shared/ReviewInstanceModal';
 import {
   type CalendarAction,
   type CoachCalendarEvent,
@@ -672,7 +673,7 @@ export function buildProgressReviewSlidesDeck(
           items: [
             { title: 'Review status', badge: statusLabel(review.status), tone: toneForStatus(review.status), detail: `Current review window: ${window.label}.` },
             { title: 'Programme position', badge: `${ksbCoverage}% KSB`, tone: ksbCoverage >= 70 ? 'good' : ksbCoverage >= 45 ? 'warn' : 'danger', detail: `${recentActivities.length} activities and ${recentEvidence.length} evidence items found.` },
-            { title: 'OTJ position', badge: displayValue(detail.otjhStatus), tone: toneForStatus(detail.otjhStatus), detail: displayValue(detail.otjhProgressHours) !== '--' ? displayValue(detail.otjhProgressHours) : 'Confirm recorded OTJ hours during the review.' },
+            { title: 'OTJ position', badge: displayValue(detail.otjhStatus), tone: toneForStatus(detail.otjhStatus), detail: displayValue(detail.completedHours) !== '--' ? displayValue(detail.completedHours) : 'Confirm recorded OTJ hours during the review.' },
           ],
         },
         {
@@ -1340,6 +1341,14 @@ export default function CoachProgressReviews() {
                         disabled={!reviewHasLearnerReference(review)}
                         onClick={() => { handleCreateSlides(review); }}
                       />
+                      {review.status === 'in-progress' ? (
+                        <RowAction
+                          label="Open form"
+                          icon="ri-file-edit-line"
+                          disabled={isBusy}
+                          onClick={() => { openCompletionForm(review); }}
+                        />
+                      ) : null}
                       <RowAction
                         label={needsScheduling(review) ? 'Schedule' : 'Manage'}
                         emphasis="primary"
@@ -1448,7 +1457,25 @@ export default function CoachProgressReviews() {
           </div>
         </Panel>
 
-        {completionEvent ? (
+        {completionEvent && completionEvent.reviewInstanceId ? (
+          // A Curriculum-driven Review instance exists for this occurrence --
+          // open the generic dynamic form instead of the legacy hard-coded
+          // Progress Review questions. Existing Create slides / Bulk generate
+          // slides / signature workflow (below) are untouched.
+          <ReviewInstanceModal
+            key={eventIdentity(completionEvent)}
+            event={completionEvent}
+            instanceId={completionEvent.reviewInstanceId}
+            onClose={() => setCompletionEvent(null)}
+            onCompleted={(status) => {
+              updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
+              setCompletionEvent(null);
+            }}
+          />
+        ) : null}
+
+        {completionEvent && !completionEvent.reviewInstanceId ? (
+          // Legacy path for an occurrence scheduled before this migration.
           <ProgressReviewCompletionModal
             key={eventIdentity(completionEvent)}
             event={completionEvent}

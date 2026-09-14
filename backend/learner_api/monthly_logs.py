@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import csrf_protect
 
-from login.permissions import login_required
+from login.permissions import audit_admin_learner_action, login_required
 from old_otjh import repository as old_repo, service as old, storage
 from old_otjh.views import public_detail, public_state
 from . import monthly_log_sources as sources
@@ -43,6 +43,8 @@ def endpoint(*methods):
                 response = JsonResponse({'error': 'Monthly logs are temporarily unavailable. Please try again.'}, status=503)
             except ContentUnavailable as error:
                 response = JsonResponse({'error': str(error)}, status=503)
+            if getattr(request, 'admin_learner_action', False):
+                audit_admin_learner_action(request, request.admin_learner_id, response)
             response['Cache-Control'] = 'private, no-store'
             response['Vary'] = 'Cookie'
             return response
@@ -67,15 +69,19 @@ def scope(request, learner_id):
     coach_email = old.normalize((profile or {}).get('coach_email') or learner.get('coach_email'))
     if role == 'coach' and coach_email != actor['email']:
         raise old.ServiceError('Learner not found.', 'not_found', 404)
-    # Admin view-as is a read-only narrowing of the real account's permissions.
+    # An admin opening the learner workspace can perform learner actions.
+    # A coach preview keeps its separate read-only scope.
     from coach_api.auth import _requested_view_as_email
     learner_preview = request.GET.get('perspective') == 'learner' and role != 'learner'
-    if learner_preview and request.method != 'GET':
+    admin_action = learner_preview and account.role == 'admin' and role == 'admin'
+    if learner_preview and not admin_action and request.method != 'GET':
         raise old.ServiceError('The learner preview is read-only.', 'forbidden', 403)
     view_as = _requested_view_as_email(request) if role == 'admin' and not learner_preview else None
     if view_as and (coach_email != old.normalize(view_as) or request.method != 'GET'):
         raise old.ServiceError('This coach workspace is read-only.', 'forbidden', 403)
-    return {**learner, '_profile': profile, '_view_as': bool(view_as) or learner_preview}, role
+    request.admin_learner_action = admin_action
+    request.admin_learner_id = learner_id
+    return {**learner, '_profile': profile, '_view_as': bool(view_as) or (learner_preview and not admin_action)}, 'learner' if admin_action else role
 
 
 def valid_month(month):
@@ -261,6 +267,22 @@ def sign(request, learner_id, month):
             ON CONFLICT (learner_id,programme_key,report_month,signer_role) DO NOTHING''',
             [f'lms:{learner_id}', key, month, signer_role, name, capture, report['snapshot_digest'], VERSION])
         return JsonResponse(detail_data(learner, month))
+
+
+@endpoint('POST')
+def complete(request, learner_id, month):
+    learner, role = scope(request, learner_id)
+    if role != 'learner':
+        raise old.ServiceError('Open the learner workspace to complete this month.', 'forbidden', 403)
+    valid_month(month)
+    if learner.get('aptem_id') and month <= old_repo.CUTOFF:
+        result = old.complete(learner, month, request.login_account, role)
+        return JsonResponse({**public_detail(learner, result), 'source': 'legacy'})
+    # Current LMS months complete when their learner signature is saved.
+    report = detail_data(learner, month)
+    if report['status'] != 'complete':
+        raise old.ServiceError('The learner signature is required.', 'signatures_required', 409)
+    return JsonResponse(report)
 
 
 @endpoint('GET')

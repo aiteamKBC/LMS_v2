@@ -15,6 +15,7 @@ import {
 import {
   formatCalendarDateTime,
   liveSessionNamesByNumber,
+  moduleWeekSessionSlots,
   loadModuleStructure,
   loadTeamsMeetingArtifacts,
   teamsMeetingArtifactPreviewUrl,
@@ -530,19 +531,30 @@ export default function ModuleWorkspacePage() {
   const totalOtjh = structure?.totalOtjh ?? 0;
 
   // A week's date is the first date it consumes, and a week can consume more
-  // than one: a group delivering Mon+Thu runs two live sessions of the same
-  // week, so week 2 starts on session 3 rather than session 2. The walk is the
-  // one `liveSessionNamesByNumber` does -- live components take the flat plan in
-  // week-then-display order, and a content-only week still takes one date -- so
-  // pairing week number with session number reads a week onto the wrong day the
-  // moment a group delivers more than once a week.
-  const planSessionDates = (plan?.sessions || []).map(session => session.date);
+  // than one: a group delivering Mon+Thu runs two sessions of the same week, so
+  // week 2 starts on session 3 rather than session 2. Pairing week number with
+  // session number reads a week onto the wrong day the moment a group delivers
+  // more than once a week.
+  //
+  // How many dates each week takes is `moduleWeekSessionSlots` -- the delivery
+  // days a week runs on, whether or not a live session has been authored for
+  // each of them. Counting the week's live components instead made a week that
+  // is one live session short consume one date rather than two, and every week
+  // below it slid a day early.
+  //
+  // The date read here is the week's SLOT -- the delivery day it was authored
+  // into, before any holiday was ticked. A closure moves the live session out
+  // of the week and nothing else, so the week is still grouped under, and read
+  // in, the month it runs in. Taking the session's own date instead slid every
+  // week after a closure into a month it does not teach in, and disagreed with
+  // the Course structure rail, which reads the same slots.
+  const planSessionDates = (plan?.sessions || []).map(session => session.slotDate || session.date);
+  const weekSlotCounts = moduleWeekSessionSlots(structure, planSessionDates.length);
   const weekDateByNumber = new Map<number, string>();
   let planDateCursor = 0;
-  weekStructure.forEach(week => {
-    const liveComponents = (week.components || []).filter(component => component.type === 'live-session');
+  weekStructure.forEach((week, weekIndex) => {
     weekDateByNumber.set(week.weekNumber, planSessionDates[planDateCursor] || '');
-    planDateCursor += Math.max(1, liveComponents.length);
+    planDateCursor += weekSlotCounts[weekIndex] || 1;
   });
   const weekMonthGroups: Array<{ key: string; label: string; weeks: typeof weekStructure }> = [];
   weekStructure.forEach(week => {

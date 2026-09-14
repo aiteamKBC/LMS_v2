@@ -1,11 +1,16 @@
-import { createCachedResource } from './cachedRequest';
-import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
+﻿import { createCachedResource } from './cachedRequest';
+import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
+import type { ImportedReview } from '@/api/reviewHistory';
+import type { ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 
 const BASE = '/learner_api/calendar';
 const calendarResource = createCachedResource<LearnerCalendarResponse>('learner-calendar', key =>
   readLearnerJson(`${BASE}/${key.replace(':', '/')}/`));
+// Programme, placement and plan saves expire shared reads too. The outer
+// calendar snapshot must not outlive those changes.
+subscribeLearnerReadInvalidation(() => calendarResource.invalidate());
 
 export interface LearnerCalendarEvent {
   id: string;
@@ -14,6 +19,14 @@ export interface LearnerCalendarEvent {
   source: 'mcr' | 'progress-review' | string;
   type: 'coaching' | 'review' | string;
   sequence: number;
+  reviewTemplateId?: string | null;
+  reviewInstanceId?: string | null;
+  reviewTypeId?: string | null;
+  reviewTypeCode?: string | null;
+  reviewTypeName?: string | null;
+  reviewTypeIsSystem?: boolean;
+  occurrenceNumber?: number | null;
+  bookingStatus?: string;
   status: 'not-scheduled' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | string;
   date: string | null;
   targetDate: string | null;
@@ -32,10 +45,16 @@ export interface LearnerCalendarEvent {
   /** False when the Microsoft Graph sync failed: saved locally, but no invite sent. */
   invited?: boolean;
   syncError?: string;
+  syncState?: 'pending' | 'syncing' | 'synced' | 'failed' | 'reconciliation' | 'cancelled';
+  syncWarning?: string;
+  reviewId?: string;
+  assignmentMonth?: string;
   programme?: string;
   cohort?: string;
   group?: string;
   module?: string;
+  /** Present when this event came from Learner.reviews (Aptem import). */
+  importedReview?: ImportedReview;
 }
 
 export interface LearnerCalendarResponse {
@@ -78,9 +97,19 @@ export function invalidateLearnerCalendarCache(kind?: LearnerKind, id?: string):
   invalidateLearnerReads();
 }
 
-export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, options: { force?: boolean } = {}): Promise<LearnerCalendarResponse> {
+export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean } = {}): Promise<LearnerCalendarResponse> {
   if (options.force) invalidateLearnerCalendarCache(kind, id);
-  return calendarResource.read(`${kind}:${id}`);
+  return calendarResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
+}
+
+/** Fetch the Curriculum-authored review form for an existing calendar occurrence. */
+export function fetchLearnerEventReviewInstance(
+  kind: LearnerKind,
+  learnerId: string,
+  eventKey: string,
+  signal?: AbortSignal,
+): Promise<ReviewInstanceFormDefinition | { instance: null }> {
+  return request<ReviewInstanceFormDefinition | { instance: null }>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`, { signal, credentials: 'include' });
 }
 
 export function fetchLearnerMeetingArtifacts(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {
@@ -113,6 +142,9 @@ export type BookableSessionType =
   // than filling a scheduled slot.
   | 'mcr'
   | 'progress-review'
+  | 'review'
+  | 'gateway'
+  | 'other'
   // The three onboarding reviews, bookable while still Onboarding (they go to
   // the learner's case owner rather than a coach, who doesn't exist yet).
   | OnboardingReviewType;
@@ -144,6 +176,9 @@ export function fetchOnboardingReviews(kind: LearnerKind, id: string): Promise<O
 }
 
 export interface BookSessionInput {
+  assignmentMonth?: string;
+  /** Imported Aptem review row to mark scheduled after an MCR booking. */
+  reviewId?: string;
   sessionType: BookableSessionType;
   /** Required when booking a generated MCM/Progress Review slot. */
   eventKey?: string;
@@ -193,7 +228,7 @@ export async function bookLearnerCalendarSession(
 export type RescheduleSessionInput = Pick<
   BookSessionInput,
   'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'timezoneOffsetMinutes'
-> & { eventKey: string };
+> & { eventKey: string; reviewId?: string };
 
 /** Move an existing booking; the backend updates the same Graph/Teams event. */
 export async function rescheduleLearnerCalendarSession(

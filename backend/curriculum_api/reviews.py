@@ -49,6 +49,7 @@ from django.db import connection, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from . import review_types
 from . import schema_gate
 from . import views as curriculum_views
 
@@ -63,15 +64,18 @@ RECURRENCE_UNITS = ('days', 'weeks', 'months')
 FIELD_TYPES = (
     'text', 'boolean', 'numeric', 'date', 'list_item', 'boolean_case_block',
     'email', 'phone', 'postcode_address', 'title_description', 'text_multiline',
+    'action_button',
 )
 
 # Every field type carries a title/question, including title_description
-# ("Title & Description" is a display block whose own Title is that title).
+# ("Title & Description" is a display block whose own Title is that title)
+# and action_button (its Title is the text shown on the button itself, e.g.
+# "Take snapshot" -- chosen by whoever builds the form).
 FIELD_TYPES_REQUIRING_TITLE = FIELD_TYPES
 
 # Field types that never expect a learner-entered answer -- Required/Optional
 # is not a meaningful control for these in the Form Builder UI.
-DISPLAY_ONLY_FIELD_TYPES = ('title_description',)
+DISPLAY_ONLY_FIELD_TYPES = ('title_description', 'action_button')
 
 # Only a boolean_case_block field may own conditional yes/no children, and
 # only these two condition values are valid on a child.
@@ -79,6 +83,12 @@ CONDITIONAL_FIELD_TYPE = 'boolean_case_block'
 CONDITION_VALUES = ('yes', 'no')
 
 PARTICIPANT_ROLES = ('advisor', 'employer', 'participant', 'referrer')
+
+# Every Review carries a Review Type -- its classification, chosen in the
+# General tab next to the Review's name. The catalogue of types lives in
+# review_types.py; this module only stores which one a template points at.
+# Type never implies recurrence, questions, signatures or eligibility: a
+# "Monthly Coaching Meeting" scheduled every 6 weeks is valid and supported.
 
 _REVIEW_TABLES_READY = False
 
@@ -89,7 +99,10 @@ def ensure_review_tables():
     if _REVIEW_TABLES_READY:
         return
     if not schema_gate.runtime_bootstrap_allowed():
-        schema_gate.require_tables(REVIEW_TEMPLATES_TABLE, REVIEW_SECTIONS_TABLE, REVIEW_FIELDS_TABLE)
+        schema_gate.require_tables(
+            REVIEW_TEMPLATES_TABLE, REVIEW_SECTIONS_TABLE, REVIEW_FIELDS_TABLE,
+            review_types.REVIEW_TYPES_TABLE,
+        )
         _REVIEW_TABLES_READY = True
         return
     provision_review_template_tables()
@@ -117,6 +130,8 @@ def provision_review_template_tables():
                 recurrence_interval integer not null default 1,
                 recurrence_unit varchar(16) not null default 'weeks',
                 schedule_anchor_date date not null default current_date,
+                occurrence_count integer,
+                review_type_id varchar(128),
                 applicable_statuses {json_type},
                 signature_advisor boolean not null default false,
                 signature_employer boolean not null default false,
@@ -127,6 +142,8 @@ def provision_review_template_tables():
                 visible_participant boolean not null default true,
                 visible_referrer boolean not null default true,
                 record_time_spent boolean not null default false,
+                expected_otjh numeric(8, 2) not null default 0,
+                counts_towards_otjh boolean not null default false,
                 allow_editing_prior_days integer not null default 0,
                 notify_employer boolean not null default false,
                 notify_participant boolean not null default false,
@@ -174,6 +191,9 @@ def provision_review_template_tables():
                 updated_at timestamp not null default current_timestamp
             )
         ''')
+    # A Review cannot be saved without a Review Type, so the type catalogue is
+    # part of the same provisioning step rather than a separate opt-in.
+    review_types.provision_review_types_table()
     _REVIEW_TABLES_READY = True
 
 
@@ -215,7 +235,12 @@ def get_review_field_rows(review_id):
 
 # ------------------------------------------------------------------ payload
 
-def review_field_payload(row, *, yes_fields=None, no_fields=None):
+def review_field_payload(row, children_of):
+    """``children_of(parent_id, condition)`` looks up a field's direct
+    yes/no children within its own section. Recurses to any depth -- a
+    conditional child may itself be a ``boolean_case_block`` with its own
+    yesFields/noFields, and so on.
+    """
     payload = {
         'id': row.get('id'),
         'reviewId': row.get('review_id'),
@@ -231,8 +256,8 @@ def review_field_payload(row, *, yes_fields=None, no_fields=None):
         'updatedAt': row.get('updated_at'),
     }
     if row.get('field_type') == CONDITIONAL_FIELD_TYPE:
-        payload['yesFields'] = [review_field_payload(f) for f in (yes_fields or [])]
-        payload['noFields'] = [review_field_payload(f) for f in (no_fields or [])]
+        payload['yesFields'] = [review_field_payload(f, children_of) for f in children_of(row.get('id'), 'yes')]
+        payload['noFields'] = [review_field_payload(f, children_of) for f in children_of(row.get('id'), 'no')]
     return payload
 
 
@@ -241,7 +266,9 @@ def assemble_review_sections(review_id, *, section_rows=None, field_rows=None):
 
     Exactly two queries regardless of how many sections/fields/children a
     Review has -- callers with 10 sections and 100 fields never issue more
-    than get_review_section_rows + get_review_field_rows.
+    than get_review_section_rows + get_review_field_rows. The tree can be
+    arbitrarily deep (a case block nested inside a case block, and so on);
+    every level is resolved from the same two in-memory lists.
     """
     section_rows = get_review_section_rows(review_id) if section_rows is None else section_rows
     field_rows = get_review_field_rows(review_id) if field_rows is None else field_rows
@@ -250,23 +277,19 @@ def assemble_review_sections(review_id, *, section_rows=None, field_rows=None):
     for row in field_rows:
         fields_by_section[row.get('section_id')].append(row)
 
-    def children(section_id, parent_id, condition):
-        return [
-            row for row in fields_by_section.get(section_id, [])
-            if row.get('parent_field_id') == parent_id and row.get('condition_value') == condition
-        ]
-
     sections = []
     for section in section_rows:
-        top_fields = [
-            row for row in fields_by_section.get(section.get('id'), [])
-            if not row.get('parent_field_id')
-        ]
-        field_payloads = []
-        for field_row in top_fields:
-            yes_fields = children(section.get('id'), field_row.get('id'), 'yes') if field_row.get('field_type') == CONDITIONAL_FIELD_TYPE else None
-            no_fields = children(section.get('id'), field_row.get('id'), 'no') if field_row.get('field_type') == CONDITIONAL_FIELD_TYPE else None
-            field_payloads.append(review_field_payload(field_row, yes_fields=yes_fields, no_fields=no_fields))
+        section_id = section.get('id')
+        section_rows_list = fields_by_section.get(section_id, [])
+
+        def children_of(parent_id, condition, _rows=section_rows_list):
+            return [
+                row for row in _rows
+                if row.get('parent_field_id') == parent_id and row.get('condition_value') == condition
+            ]
+
+        top_fields = [row for row in section_rows_list if not row.get('parent_field_id')]
+        field_payloads = [review_field_payload(field_row, children_of) for field_row in top_fields]
         sections.append({
             'id': section.get('id'),
             'reviewId': section.get('review_id'),
@@ -293,7 +316,11 @@ def flatten_fields(sections):
     return flattened
 
 
-def review_template_summary_payload(row):
+def review_template_summary_payload(row, *, type_index=None):
+    """``type_index`` is review_types.review_type_index()'s {id: row} map --
+    pass it when serialising a list so the type catalogue is read once for the
+    whole response instead of once per Review."""
+    type_row = _resolve_review_type(row.get('review_type_id'), type_index)
     return {
         'id': row.get('id'),
         'programmeId': row.get('programme_id') or '',
@@ -306,6 +333,16 @@ def review_template_summary_payload(row):
         # The date the first occurrence is calculated from -- see
         # review_schedule.py, which is the only other reader of this column.
         'scheduleAnchorDate': curriculum_views.format_date(row.get('schedule_anchor_date')),
+        # None/unset means unlimited -- the review keeps recurring indefinitely.
+        'occurrenceCount': row.get('occurrence_count'),
+        # The Review's classification. ``reviewTypeId`` is the stable
+        # identity everything downstream keys on; the code/name are echoed
+        # for display and for Coach's calendar routing. Nothing anywhere
+        # classifies a Review by ``name`` -- "Monthly Learner Catch-up" of
+        # type Monthly Coaching Meeting still routes as MCM.
+        'reviewTypeId': row.get('review_type_id') or '',
+        'reviewTypeCode': (type_row or {}).get('code') or '',
+        'reviewTypeName': (type_row or {}).get('name') or '',
         'applicableStatuses': curriculum_views.as_json_value(row.get('applicable_statuses'), []),
         'fieldCount': curriculum_views.parse_int(row.get('field_count'), 0),
         'createdAt': row.get('created_at'),
@@ -313,10 +350,10 @@ def review_template_summary_payload(row):
     }
 
 
-def review_template_detail_payload(row, sections=None):
+def review_template_detail_payload(row, sections=None, *, type_index=None):
     sections = assemble_review_sections(row.get('id')) if sections is None else sections
     return {
-        **review_template_summary_payload(row),
+        **review_template_summary_payload(row, type_index=type_index),
         'signatures': {
             'advisor': bool(row.get('signature_advisor')),
             'employer': bool(row.get('signature_employer')),
@@ -330,6 +367,10 @@ def review_template_detail_payload(row, sections=None):
             'referrer': bool(row.get('visible_referrer')),
         },
         'recordTimeSpent': bool(row.get('record_time_spent')),
+        'expectedOtjh': float(row.get('expected_otjh') or 0),
+        # Whether completing an occurrence of this review adds expectedOtjh
+        # hours to the learner's total OTJH.
+        'countsTowardsOtjh': bool(row.get('counts_towards_otjh')),
         'allowEditingPriorDays': curriculum_views.parse_int(row.get('allow_editing_prior_days'), 0),
         'notifications': {
             'employer': bool(row.get('notify_employer')),
@@ -400,6 +441,68 @@ def validate_schedule_anchor_date(payload, errors, *, required=True):
     return parsed
 
 
+def _resolve_review_type(review_type_id, type_index=None):
+    review_type_id = curriculum_views.clean_str(review_type_id)
+    if not review_type_id:
+        return None
+    if type_index is not None:
+        return type_index.get(review_type_id)
+    return review_types.get_review_type(review_type_id)
+
+
+def validate_review_type_id(payload, errors):
+    """The Review's classification -- required, and always a review_types.id.
+
+    Never a name: the type is what Coach routes on, so it has to survive the
+    Review being renamed. An archived (inactive) type is still accepted on an
+    existing Review so that deactivating a type never blocks editing the
+    Reviews already classified with it.
+    """
+    raw = curriculum_views.clean_str(payload.get('reviewTypeId'))
+    if not raw:
+        errors['reviewTypeId'] = 'Review type is required.'
+        return None
+    if not review_types.get_review_type(raw):
+        errors['reviewTypeId'] = 'Choose a valid review type.'
+        return None
+    return raw
+
+
+def validate_occurrence_count(payload, errors):
+    """How many times a Review recurs before it stops -- optional; blank/None
+    means unlimited (the field's existing, still-default behaviour).
+    """
+    raw = payload.get('occurrenceCount')
+    if raw is None or raw == '':
+        return None
+    try:
+        count = int(raw)
+    except (TypeError, ValueError):
+        errors['occurrenceCount'] = 'Number of occurrences must be a whole number.'
+        return None
+    if count <= 0:
+        errors['occurrenceCount'] = 'Number of occurrences must be a positive number.'
+        return None
+    return count
+
+
+def validate_expected_otjh(payload, errors):
+    """Expected OTJH hours for one occurrence of this review -- see
+    ``validate_review_payload``'s ``countsTowardsOtjh`` handling for whether
+    completing it actually adds that many hours to the learner's total (the
+    module docstring's future ``learner_review_instances`` is where that flag
+    gets acted on)."""
+    try:
+        expected_otjh = float(payload.get('expectedOtjh', 0) or 0)
+    except (TypeError, ValueError):
+        errors['expectedOtjh'] = 'Expected OTJH must be a number.'
+        return 0
+    if expected_otjh < 0:
+        errors['expectedOtjh'] = 'Expected OTJH must be zero or a positive number.'
+        return 0
+    return expected_otjh
+
+
 def validate_statuses(payload, errors):
     statuses = payload.get('applicableStatuses')
     if statuses is None:
@@ -448,11 +551,18 @@ def _validate_field_configuration(field_type, configuration, path, errors):
     return configuration if isinstance(configuration, dict) else {}
 
 
-def validate_field_payload(field, path, errors, *, allow_conditional_children=True):
-    """Validate one Field (top-level or a conditional child). Returns cleaned dict.
+# Case blocks may nest inside case blocks to any depth, but a payload is
+# still attacker/mistake-controlled input -- cap recursion so a malformed or
+# malicious deeply-nested body can't blow the stack or produce a runaway tree.
+MAX_FIELD_NESTING_DEPTH = 8
+
+
+def validate_field_payload(field, path, errors, *, depth=0):
+    """Validate one Field (top-level or a conditional child, at any depth).
+    Returns cleaned dict.
 
     ``path`` is the dotted/bracketed location used in error keys, e.g.
-    ``sections[0].fields[1]`` or ``sections[0].fields[1].yesFields[0]``.
+    ``sections[0].fields[1]`` or ``sections[0].fields[1].yesFields[0].yesFields[2]``.
     """
     if not isinstance(field, dict):
         field = {}
@@ -484,18 +594,13 @@ def validate_field_payload(field, path, errors, *, allow_conditional_children=Tr
     no_fields_payload = field.get('noFields')
     has_conditional_payload = bool(yes_fields_payload) or bool(no_fields_payload)
 
-    if not allow_conditional_children:
-        # A conditional child cannot itself be a case block, or carry children --
-        # nesting one Boolean with case block inside another is not supported.
-        if field_type == CONDITIONAL_FIELD_TYPE:
-            errors[f'{path}.fieldType'] = 'A "Boolean with case block" field cannot be nested inside another one.'
-        elif has_conditional_payload:
-            errors[f'{path}.yesFields'] = 'Conditional fields cannot themselves have conditional children.'
-        return cleaned
-
     if field_type != CONDITIONAL_FIELD_TYPE:
         if has_conditional_payload:
             errors[f'{path}.yesFields'] = 'Only "Boolean with case block" fields may have conditional fields.'
+        return cleaned
+
+    if depth >= MAX_FIELD_NESTING_DEPTH:
+        errors[f'{path}.fieldType'] = f'"Boolean with case block" fields cannot nest more than {MAX_FIELD_NESTING_DEPTH} levels deep.'
         return cleaned
 
     for branch_key, branch_payload in (('yes_fields', yes_fields_payload), ('no_fields', no_fields_payload)):
@@ -506,7 +611,7 @@ def validate_field_payload(field, path, errors, *, allow_conditional_children=Tr
             errors[f'{path}.{branch_name}'] = f'{branch_name} must be a list.'
             continue
         cleaned[branch_key] = [
-            validate_field_payload(child, f'{path}.{branch_name}[{index}]', errors, allow_conditional_children=False)
+            validate_field_payload(child, f'{path}.{branch_name}[{index}]', errors, depth=depth + 1)
             for index, child in enumerate(branch_payload)
         ]
 
@@ -584,6 +689,14 @@ def validate_review_payload(payload, *, partial=False):
         if anchor is not None:
             cleaned['schedule_anchor_date'] = anchor
 
+    if not partial or 'reviewTypeId' in payload:
+        review_type_id = validate_review_type_id(payload, errors)
+        if review_type_id is not None:
+            cleaned['review_type_id'] = review_type_id
+
+    if not partial or 'occurrenceCount' in payload:
+        cleaned['occurrence_count'] = validate_occurrence_count(payload, errors)
+
     if not partial or 'applicableStatuses' in payload:
         cleaned['applicable_statuses'] = validate_statuses(payload, errors)
 
@@ -599,6 +712,12 @@ def validate_review_payload(payload, *, partial=False):
 
     if not partial or 'recordTimeSpent' in payload:
         cleaned['record_time_spent'] = bool(payload.get('recordTimeSpent'))
+
+    if not partial or 'expectedOtjh' in payload:
+        cleaned['expected_otjh'] = validate_expected_otjh(payload, errors)
+
+    if not partial or 'countsTowardsOtjh' in payload:
+        cleaned['counts_towards_otjh'] = bool(payload.get('countsTowardsOtjh'))
 
     if not partial or 'allowEditingPriorDays' in payload:
         try:
@@ -653,18 +772,16 @@ def _insert_field_row(review_id, section_id, field, index, *, parent_field_id=No
     return field_id
 
 
-def save_section_fields(review_id, section_id, fields):
+def save_section_fields(review_id, section_id, fields, *, parent_field_id=None, condition_value=None):
+    """Insert one level of fields and recurse into their yes/no children --
+    a case block's children may themselves be case blocks, to any depth."""
     count = 0
     for index, field in enumerate(fields or []):
-        field_id = _insert_field_row(review_id, section_id, field, index)
+        field_id = _insert_field_row(review_id, section_id, field, index, parent_field_id=parent_field_id, condition_value=condition_value)
         count += 1
         if field['field_type'] == CONDITIONAL_FIELD_TYPE:
-            for y_index, y_field in enumerate(field.get('yes_fields') or []):
-                _insert_field_row(review_id, section_id, y_field, y_index, parent_field_id=field_id, condition_value='yes')
-                count += 1
-            for n_index, n_field in enumerate(field.get('no_fields') or []):
-                _insert_field_row(review_id, section_id, n_field, n_index, parent_field_id=field_id, condition_value='no')
-                count += 1
+            count += save_section_fields(review_id, section_id, field.get('yes_fields'), parent_field_id=field_id, condition_value='yes')
+            count += save_section_fields(review_id, section_id, field.get('no_fields'), parent_field_id=field_id, condition_value='no')
     return count
 
 
@@ -782,10 +899,11 @@ def clone_review(source_row, destination_programme_id, *, actor='review-clone'):
     template definition."""
     new_id = curriculum_views.unique_prefixed_id('REV', '', existing_review_ids)
     copy_columns = (
-        'name', 'enabled', 'recurrence_interval', 'recurrence_unit', 'schedule_anchor_date', 'applicable_statuses',
+        'name', 'enabled', 'recurrence_interval', 'recurrence_unit', 'schedule_anchor_date', 'occurrence_count', 'applicable_statuses',
+        'review_type_id',
         'signature_advisor', 'signature_employer', 'signature_participant', 'signature_referrer',
         'visible_advisor', 'visible_employer', 'visible_participant', 'visible_referrer',
-        'record_time_spent', 'allow_editing_prior_days', 'notify_employer', 'notify_participant',
+        'record_time_spent', 'expected_otjh', 'counts_towards_otjh', 'allow_editing_prior_days', 'notify_employer', 'notify_participant',
         'incomplete_marker', 'field_count',
     )
     insert_payload = {column: source_row.get(column) for column in copy_columns}
@@ -815,13 +933,11 @@ def clone_review(source_row, destination_programme_id, *, actor='review-clone'):
         })
 
         section_fields = [f for f in get_review_field_rows(source_row.get('id')) if f.get('section_id') == section.get('id')]
-        id_remap = {}
-        # Parents first (display_order already ascending; a top-level field's
-        # display_order interleaves with its own children's ordering scope,
-        # but parents always sort before their children were inserted, since
-        # save_section_fields always writes a parent row before its children).
-        top_level = [f for f in section_fields if not f.get('parent_field_id')]
-        children = [f for f in section_fields if f.get('parent_field_id')]
+        # Grouped by parent so a case block nested inside a case block (to any
+        # depth) clones parent-before-child at every level, not just two.
+        children_by_parent = defaultdict(list)
+        for field_row in section_fields:
+            children_by_parent[field_row.get('parent_field_id') or None].append(field_row)
 
         def _clone_field_row(field_row, parent_field_id=None):
             new_field_id = curriculum_views.unique_prefixed_id('REVF')
@@ -843,15 +959,13 @@ def clone_review(source_row, destination_programme_id, *, actor='review-clone'):
             curriculum_views.insert_row(REVIEW_FIELDS_TABLE, payload)
             return new_field_id
 
-        for field_row in top_level:
-            id_remap[field_row.get('id')] = _clone_field_row(field_row)
-        for child_row in children:
-            new_parent_id = id_remap.get(child_row.get('parent_field_id'))
-            if not new_parent_id:
-                # Source data integrity issue (orphan child) -- skip rather
-                # than clone a dangling reference into the destination.
-                continue
-            _clone_field_row(child_row, parent_field_id=new_parent_id)
+        def _clone_subtree(field_row, parent_field_id=None):
+            new_field_id = _clone_field_row(field_row, parent_field_id=parent_field_id)
+            for child_row in children_by_parent.get(field_row.get('id'), []):
+                _clone_subtree(child_row, parent_field_id=new_field_id)
+
+        for field_row in children_by_parent.get(None, []):
+            _clone_subtree(field_row)
 
     return new_id
 
@@ -874,7 +988,10 @@ def curriculum_programme_review_collection(request, programme_id):
         if not _programme_exists(programme_id):
             return curriculum_views.json_error('Programme not found.', status=404)
         rows = get_review_template_rows('programme_id = %s', [programme_id])
-        return curriculum_views.curriculum_results_response([review_template_summary_payload(row) for row in rows])
+        type_index = review_types.review_type_index()
+        return curriculum_views.curriculum_results_response(
+            [review_template_summary_payload(row, type_index=type_index) for row in rows]
+        )
 
     if request.method != 'POST':
         return curriculum_views.json_error('Method not allowed.', status=405)
@@ -982,10 +1099,11 @@ def curriculum_review_clone(request, programme_id):
     )
 
     rows = get_review_template_rows('programme_id = %s', [destination_programme_id])
+    type_index = review_types.review_type_index()
     return JsonResponse({
         'cloned': True,
         'sourceProgrammeId': source_programme_id,
         'programmeId': destination_programme_id,
         'reviewIds': new_ids,
-        'reviews': [review_template_summary_payload(row) for row in rows],
+        'reviews': [review_template_summary_payload(row, type_index=type_index) for row in rows],
     })

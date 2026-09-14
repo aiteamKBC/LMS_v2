@@ -30,6 +30,10 @@ import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { EMPTY_VALUE } from '@/lib/format';
 import { fetchStudentActivity, peekStudentActivity, type StudentActivityItem, type StudentActivityResponse } from '@/api/studentActivity';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import { LearningHero } from './LearningCatalogue';
+import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { overviewSchedule, overviewWeek } from '@/api/learnerOverview';
+import learningStyles from './SubjectWorkspace.module.css';
 
 const learnerNav = roleNavMap.learner;
 
@@ -44,16 +48,24 @@ function defaultTabForPath(pathname: string): TabKey {
   return 'modules';
 }
 
-export default function MyLearningPage() {
+export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalogue' | 'map' }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
   usePrefetchStudentActivity(kind, id);
-  const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
+  const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, true);
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
 
-  const [tab, setTab] = useState<TabKey>(() => new URLSearchParams(location.search).get('tab') === 'assignments' ? 'assignments' : defaultTabForPath(location.pathname));
+  const requestedTab = new URLSearchParams(location.search).get('tab');
+  const tab = view === 'map' ? 'modules' : requestedTab === 'modules' || requestedTab === 'quizzes' || requestedTab === 'assignments'
+    ? requestedTab : defaultTabForPath(location.pathname);
+  const setTab = (next: TabKey) => {
+    if (next === tab) return;
+    const params = new URLSearchParams(location.search);
+    params.set('tab', next);
+    navigate({ pathname: location.pathname, search: params.toString() });
+  };
 
   const canTake = !!(kind && id) && canProgress;
 
@@ -73,23 +85,25 @@ export default function MyLearningPage() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle={loading ? 'Loading learner…' : (real?.name || 'Learner')}
+      pageTitle={view === 'map' ? 'Learner’s Map' : 'My Learning'}
       pageSubtitle={subtitle}
       userName={real?.name || 'Learner'}
       userRole={real?.programme ? `${real.programme} Learner` : 'Learner'}
+      breadcrumbCurrentLabel={view === 'map' ? 'Learner’s Map' : 'My Learning'}
     >
-      <PageContainer>
-        <PageTabs items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />
+      <PageContainer><div className={learningStyles.learningPage}>
+        {view === 'catalogue' && <LearningHero />}
+        {view === 'catalogue' && <PageTabs items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
 
         {!isRealMode ? (
           <Panel><EmptyState size="sm" title="No learner selected" description="Open this page from a learner record." /></Panel>
         ) : tab === 'modules' ? (
-          <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} />
+          <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} view={view} onRefresh={refresh} />
         ) : (
-          tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} /> :
+          tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
           <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} />
         )}
-      </PageContainer>
+      </div></PageContainer>
     </WorkspaceShell>
   );
 }
@@ -381,15 +395,15 @@ function JourneyStepper({ statuses, moduleProgress }: { statuses: StageStatus[];
 /* ═══════════════════════════════════════════════════════
    MODULES TAB — the old Training Plan, reused and tightened
    ═══════════════════════════════════════════════════════ */
-export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNotice }: {
+export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNotice, view = 'catalogue', onRefresh }: {
   real: ReturnType<typeof useLearnerDetailParam>['real'];
   loading: boolean;
   loadError: string | null;
   kind?: LearnerKind;
   id?: string;
   showReadOnlyNotice?: boolean;
+  view?: 'catalogue' | 'map'; onRefresh?: () => void;
 }) {
-  const metrics = useLearnerMetrics(kind, id);
   const identity = `${kind}:${id}`;
   const [activityState, setActivityState] = useState<{
     identity: string; real: LearnerDetail | null; retry: number;
@@ -405,11 +419,17 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
   // On a revisit, cached activity can populate the first frame immediately.
   const activityLoading = activityAvailable && !current
     && (activityState?.identity === identity || !activityData) && !loadError;
+  // Get the actual subjects on screen before starting the secondary source
+  // reads. Their failure must never hold up the materials.
+  const primaryReady = !!real && !loading && (!activityAvailable || !!activityData);
+  const metrics = useLearnerMetrics(kind, id, primaryReady);
+  const schedule = useLiveLearnerRead(kind, id, primaryReady, overviewSchedule.read, overviewSchedule.peek);
+  const week = useLiveLearnerRead(kind, id, primaryReady && view === 'catalogue', overviewWeek.read, overviewWeek.peek);
 
   useEffect(() => {
     if (loading || loadError || !activityAvailable || !kind || !id) return;
     const controller = new AbortController();
-    void fetchStudentActivity(kind, id, controller.signal).then((data) => {
+    void fetchStudentActivity(kind, id, controller.signal, activityRetry > 0).then((data) => {
       if (!controller.signal.aborted) setActivityState({ identity, real, retry: activityRetry, data, error: null });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setActivityState(previous => ({ identity, real, retry: activityRetry,
@@ -421,28 +441,26 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
 
   return (
     <div className="space-y-3">
-      <SectionHeader
-        title="Modules"
-        description="Your subjects, activities and progress"
-        icon="ri-book-2-line"
-      />
+      {schedule.error && view === 'map' && <p role="alert" className="text-sm text-amber-800">The current module schedule could not be loaded. Choose a module below. <button onClick={schedule.refresh} className="font-semibold underline">Retry schedule</button></p>}
       {metrics.error && <p role="alert" className="text-sm text-amber-800">{metrics.error} <button onClick={metrics.refresh} className="font-semibold underline">Retry programme totals</button></p>}
       {showReadOnlyNotice && (
         <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
           <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
           <p className="text-[12px] leading-snug text-foreground-600">
             <span className="font-semibold text-foreground-800">Viewing read-only.</span>{' '}
-            Only the learner can complete activities, upload evidence or submit reflections.
+            The learner or an administrator can complete activities, upload evidence or submit reflections.
           </p>
         </div>
       )}
       <SubjectCardsPanel
         metrics={metrics.data}
+        view={view} schedule={schedule.data} scheduleLoading={schedule.loading}
+        deadlines={week.data?.deadlines} deadlinesLoading={week.loading} deadlinesError={week.error} onRetryDeadlines={week.refresh}
         kind={kind} learnerId={id} real={real}
         data={activityData ?? null}
         loading={loading || (activityAvailable && activityLoading)}
         error={loadError || current?.error || null}
-        onRetry={() => setActivityRetry((value) => value + 1)}
+        onRetry={() => { setActivityRetry((value) => value + 1); if (loadError) onRefresh?.(); }}
         onProgress={() => { setActivityRetry((value) => value + 1); metrics.refresh(); }}
       />
     </div>

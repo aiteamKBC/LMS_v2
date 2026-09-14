@@ -115,6 +115,10 @@ TARGET_CONTEXT = {
 class PairingCase:
     """The pairing view under one learner, with progress and reviews stubbed."""
 
+    def setUp(self):
+        super().setUp()
+        self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
+
     def _call(self, entries, reviews=(), **query):
         params = {"from": "MOD-A", "to": "MOD-B"}
         params.update(query)

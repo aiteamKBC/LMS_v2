@@ -1,6 +1,6 @@
 """Shared identity resolution for enrolment rows and learner profiles."""
 
-from .models import LearnerProfile
+from .models import EnrolmentUser, LearnerProfile
 
 
 def learner_profile_for_source(source, source_pk=None, *, active_only=False):
@@ -32,8 +32,11 @@ def learner_profile_for_source(source, source_pk=None, *, active_only=False):
 
     email = str(getattr(source, "email", "") or "").strip()
     if email:
-        profile = LearnerProfile.objects.filter(email__iexact=email, **filters).first()
+        profile = LearnerProfile.objects.filter(email__iexact=email, enrolment_id__isnull=True, **filters).first()
         if profile is not None:
+            # A shared address cannot identify which enrolment owns legacy work.
+            if EnrolmentUser.all_learners.filter(email__iexact=email).exclude(pk=source_pk).exists():
+                return None
             # Self-healing: record the link we just had to infer, so the next
             # lookup takes the fast, correct path. Best-effort — a failure here
             # must not stop the caller getting their profile.
@@ -47,4 +50,4 @@ def learner_profile_for_source(source, source_pk=None, *, active_only=False):
 
     if source_pk is None:
         return None
-    return LearnerProfile.objects.filter(pk=source_pk, **filters).first()
+    return LearnerProfile.objects.filter(pk=source_pk, enrolment_id__isnull=True, **filters).first()

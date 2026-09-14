@@ -1,9 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
-import { PageSkeleton } from '@/components/feature/Skeletons';
-import { useRecordSummary } from './useRecordSummary';
+import { LearnerEntryGate } from './LearnerEntryGate';
 
 export function OldOtjhProvider({ children }: { children: ReactNode }) {
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: {
@@ -13,23 +10,5 @@ export function OldOtjhProvider({ children }: { children: ReactNode }) {
 }
 
 export function OldOtjhGate({ children }: { children: ReactNode }) {
-  const { auth } = useAuth();
-  const location = useLocation();
-  if (auth.account?.role !== 'learner' || !auth.account.hasLegacyRecord
-      || location.pathname.startsWith('/old-otjh') || location.pathname.startsWith('/profile')
-      || location.pathname.startsWith('/learner/onboarding') || location.pathname.startsWith('/messages')) {
-    return <>{children}</>;
-  }
-  return <LegacyLearningGate>{children}</LegacyLearningGate>;
-}
-
-function LegacyLearningGate({ children }: { children: ReactNode }) {
-  const query = useRecordSummary();
-  const { pathname } = useLocation();
-  const learnerRoute = pathname === '/learner'
-    || pathname.startsWith('/learner/')
-    || pathname.startsWith('/workspace/learner');
-  if (query.isPending) return <PageSkeleton workspaceRole={learnerRoute ? 'learner' : undefined} />;
-  if (query.error || !query.data?.can_access_lms) return <Navigate to="/old-otjh" replace state={{ contactCoach: true }} />;
-  return <>{children}</>;
+  return <LearnerEntryGate>{children}</LearnerEntryGate>;
 }

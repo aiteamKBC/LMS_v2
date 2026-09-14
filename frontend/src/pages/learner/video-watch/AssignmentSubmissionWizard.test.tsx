@@ -34,6 +34,25 @@ afterEach(async () => {
 });
 
 describe('monthly assignment drafts', () => {
+  it('seeds a new submission with its Training Plan month', async () => {
+    render(<AssignmentSubmissionWizard {...props} initialMonth="2026-03" />);
+    await screen.findByText('Step 1 of 8 — Assignment answer');
+    expect(screen.getByLabelText('Submission month')).toHaveValue('2026-03');
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({
+      monthlyAssignment: expect.objectContaining({ month: '2026-03' }),
+    })));
+  });
+
+  it('preserves the saved month when opened from a different Training Plan month', async () => {
+    vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ status: 'draft',
+      monthlyAssignment: emptyMonthlyAssignment([], '2026-04'),
+    } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+    render(<AssignmentSubmissionWizard {...props} initialMonth="2026-03" />);
+    await screen.findByText('Step 1 of 8 — Assignment answer');
+    expect(screen.getByLabelText('Submission month')).toHaveValue('2026-04');
+  });
+
   it('renders HTML stored in a legacy question field and removes unsafe markup', async () => {
     render(<AssignmentSubmissionWizard {...props} questionText={'<span style="font-size:14px" onclick="alert(1)">What have you learned this month?</span><script>alert(1)</script>'} />);
     const question = await screen.findByText('What have you learned this month?');
@@ -151,5 +170,30 @@ describe('monthly assignment drafts', () => {
     expect(props.onSubmitProgress).toHaveBeenCalledOnce();
     expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.every(([payload]) => payload.submissionMode === 'draft')).toBe(true);
     expect(sessionStorage.getItem('monthly-assignment-draft:commercial:1:COMP-1')).toBeNull();
+  });
+
+  it('does not submit when the final validation returns an incomplete check set', async () => {
+    render(<AssignmentSubmissionWizard {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
+    vi.mocked(checkMonthlyAssignment).mockResolvedValueOnce([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
+    await screen.findByText(/Complete the outstanding checks/);
+    expect(props.onSubmitProgress).not.toHaveBeenCalled();
+    expect(screen.queryByText('Submission preview')).not.toBeInTheDocument();
+  });
+
+  it('discards previously passed checks when revalidation fails, and can retry', async () => {
+    render(<AssignmentSubmissionWizard {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
+    vi.mocked(checkMonthlyAssignment).mockRejectedValueOnce(new Error('Validation service unavailable'));
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    await screen.findByText('Validation service unavailable');
+    expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
   });
 });

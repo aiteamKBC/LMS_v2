@@ -18,6 +18,7 @@ import { MonthlyCoachingCompletionModal } from './MonthlyCoachingCompletionModal
 import { CalendarEventMeta, CalendarEventRow } from '../shared/CalendarEventRow';
 import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
 import { InfoTile, ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
+import { ReviewInstanceModal } from '../shared/ReviewInstanceModal';
 import {
   type CalendarAction,
   type CoachCalendarEvent,
@@ -565,7 +566,26 @@ export default function CoachMeetings() {
           </div>
         </Panel>
 
-        {completionEvent ? (
+        {completionEvent && completionEvent.reviewInstanceId ? (
+          // A Curriculum-driven Review instance exists for this occurrence
+          // (it has been scheduled at least once) -- open the generic
+          // dynamic form instead of the legacy hard-coded MCM questions.
+          <ReviewInstanceModal
+            key={eventIdentity(completionEvent)}
+            event={completionEvent}
+            instanceId={completionEvent.reviewInstanceId}
+            onClose={() => setCompletionEvent(null)}
+            onCompleted={(status) => {
+              updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
+              setCompletionEvent(null);
+            }}
+          />
+        ) : null}
+
+        {completionEvent && !completionEvent.reviewInstanceId ? (
+          // Legacy path: an event scheduled before this occurrence carried a
+          // review_instance_id. Kept so an in-flight meeting is not stranded
+          // mid-migration -- see the final report's backward-compatibility notes.
           <MonthlyCoachingCompletionModal
             key={eventIdentity(completionEvent)}
             event={completionEvent}

@@ -1236,7 +1236,7 @@ function UploadModal({
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept="application/pdf,image/png,image/jpeg,video/mp4"
+                accept=".pdf,.png,.jpg,.jpeg,.mp4,.doc,.docx,.ppt,.pptx,.ppsx"
                 className="hidden"
                 onClick={e => e.stopPropagation()}
                 onChange={e => {
@@ -1250,7 +1250,7 @@ function UploadModal({
               <p className="text-sm text-foreground-600 font-medium">
                 Drop files here or <span className="text-primary-600">click to browse</span>
               </p>
-              <p className="text-[11px] text-foreground-400 mt-1">PDF, PNG, JPG or MP4 up to 50MB</p>
+              <p className="text-[11px] text-foreground-400 mt-1">PDF, Word, PowerPoint, PNG, JPG or MP4 up to 50MB</p>
             </div>
           </div>
         </div>

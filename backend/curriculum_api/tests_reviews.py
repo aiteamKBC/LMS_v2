@@ -4,7 +4,7 @@ import json
 from django.db import connection
 from django.test import TestCase
 
-from . import reviews, views
+from . import review_types, reviews, views
 
 
 class ReviewTemplateTestCase(TestCase):
@@ -14,6 +14,7 @@ class ReviewTemplateTestCase(TestCase):
         self.client_ = None
         self._ensure_programmes_table()
         reviews.provision_review_template_tables()
+        review_types.provision_review_types_table()
         self._clear()
 
     def _ensure_programmes_table(self):
@@ -43,6 +44,9 @@ class ReviewTemplateTestCase(TestCase):
         for table in (reviews.REVIEW_FIELDS_TABLE, reviews.REVIEW_SECTIONS_TABLE, reviews.REVIEW_TEMPLATES_TABLE, 'programmes'):
             with connection.cursor() as cursor:
                 cursor.execute(f'delete from {views.authoring_table_name(table)}')
+        with connection.cursor() as cursor:
+            cursor.execute(f'delete from {views.authoring_table_name(review_types.REVIEW_TYPES_TABLE)}')
+        review_types.seed_system_review_types()
 
     def _programme(self, programme_id='PROG-DATA', name='Data Technician'):
         views.insert_row('programmes', {
@@ -59,10 +63,14 @@ class ReviewTemplateTestCase(TestCase):
         views.invalidate_curriculum_cache()
         return programme_id
 
+    def _system_type_id(self, code=None):
+        return review_types.get_review_type_by_code(code or review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)['id']
+
     def _basic_payload(self, **overrides):
         payload = {
             'name': 'Progress Review',
             'enabled': True,
+            'reviewTypeId': self._system_type_id(),
             'recurrence': {'interval': 12, 'unit': 'weeks'},
             'applicableStatuses': ['Active'],
             'signatures': {'advisor': True, 'employer': False, 'participant': True, 'referrer': False},

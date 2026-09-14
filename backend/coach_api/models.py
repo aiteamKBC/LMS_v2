@@ -70,6 +70,15 @@ class CoachCalendarEvent(models.Model):
     notes = models.TextField(blank=True)
     review_responses = models.JSONField(default=dict, blank=True)
     review_completed_at = models.DateTimeField(null=True, blank=True)
+    # Links this row back to the Curriculum Review that produced it. Set once
+    # the row is generated from a Curriculum review_templates occurrence
+    # (event_type "mcr"/"progress-review"); left blank for booked session
+    # types (catch-up, student-support, ...), which have no Curriculum Review
+    # behind them. See curriculum_api.review_instances for the engine that
+    # resolves recurrence/eligibility/sections/fields from these ids.
+    review_template_id = models.CharField(max_length=128, blank=True)
+    review_instance_id = models.CharField(max_length=128, blank=True)
+    occurrence_number = models.PositiveIntegerField(null=True, blank=True)
     manager_signed_at = models.DateTimeField(null=True, blank=True)
     manager_signed_by = models.CharField(max_length=255, blank=True)
     last_graph_sync_error = models.TextField(blank=True)
@@ -185,6 +194,9 @@ class CoachAbsenceReport(models.Model):
     previous_absences = models.PositiveIntegerField(default=0)
     attendance_rate = models.PositiveSmallIntegerField(null=True, blank=True)
     coach_note = models.TextField(blank=True)
+    # Added by owner-run SQL in backend/sql/attendance_absence_recovery.sql.
+    recovery_method = models.CharField(max_length=16, blank=True, default="")
+    catchup_event_key = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

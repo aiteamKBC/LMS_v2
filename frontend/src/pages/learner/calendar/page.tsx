@@ -7,6 +7,10 @@ import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
+import { fetchLearnerDetail } from '@/api/learnerDetail';
+import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
+import { moveCalendarDate } from './navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -20,7 +24,12 @@ import {
   type LearnerCalendarEvent, type BookableSessionType, type PersonalCalendarConnection,
   type PersonalCalendarProvider, type CalendarBusySlot, type BookingCalendarRules,
 } from '@/api/learnerCalendar';
+import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
+import { meetingBookingWarning } from '../reviews/meetingBooking';
+import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
+import { importedReviewsToEvents } from '../reviews/useReviewSessions';
+import { firstAvailableBookingDate } from '../reviews/bookingDates';
 
 /** The header's secondary-actions menu — everything that isn't booking a
  * coach session (the primary action) moves in here so the toolbar stays a
@@ -121,7 +130,7 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
-const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review']);
+const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review', 'gateway', 'other']);
 const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review']);
 
 const CALENDAR_PROVIDERS: Array<{ provider: PersonalCalendarProvider; title: string; subtitle: string; icon: string }> = [
@@ -208,6 +217,49 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
     timeToBeConfirmed: !ev.scheduledTime,
+    syncWarning: meetingBookingWarning(ev),
+    bookingReviewId: ev.reviewId,
+    assignmentMonth: ev.assignmentMonth,
+  };
+}
+
+/** Map an Aptem review to the calendar shape without changing its identity. */
+function mapImportedReview(review: ImportedReview, source: 'mcr' | 'progress-review'): CalendarEvent | null {
+  const iso = review.plannedDate || review.completedDate;
+  if (!iso) return null;
+  const [year, month, day] = iso.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+  const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+  const status = review.status || 'unknown';
+  const hasTime = Boolean(review.plannedTime);
+  const start = review.plannedTime || '09:00';
+  const [hour, minute] = start.split(':').map(Number);
+  const end = new Date(year, month - 1, day, hour || 0, (minute || 0) + 60);
+  return {
+    id: `imported-review:${review.id}`,
+    eventKey: `imported-review:${review.id}`,
+    title: review.name || (source === 'mcr' ? 'Monthly Coaching Meeting' : 'Review'),
+    date: `${day} ${MONTH_NAMES[month - 1].slice(0, 3)}`,
+    dayName,
+    time: `${start}\u2013${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`,
+    club: source === 'mcr' ? 'Coaching' : 'Reviews',
+    clubId: '',
+    type: source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review',
+    format: 'Imported Aptem review',
+    location: hasTime ? 'Online' : 'To be confirmed',
+    host: review.reviewerName || 'Review team',
+    points: 0,
+    status: ['scheduled', 'in-progress', 'awaiting-signature', 'completed'].includes(status) ? 'confirmed' : 'pending',
+    description: `${review.type || 'Review'} imported from Aptem.`,
+    isoDate: iso,
+    source,
+    durationMinutes: 60,
+    bookingStatus: status,
+    bookingSessionType: source,
+    timeToBeConfirmed: !hasTime && status === 'not-scheduled',
+    importedReview: review,
   };
 }
 
@@ -270,11 +322,11 @@ function getWeekDates(year: number, month: number, selectedDay: number) {
   const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
   const monday = new Date(date);
   monday.setDate(date.getDate() - mondayOffset);
-  const week: { day: number; month: number; monthName: string }[] = [];
+  const week: { day: number; month: number; monthName: string; year: number }[] = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
-    week.push({ day: d.getDate(), month: d.getMonth(), monthName: MONTH_NAMES[d.getMonth()] });
+    week.push({ day: d.getDate(), month: d.getMonth(), monthName: MONTH_NAMES[d.getMonth()], year: d.getFullYear() });
   }
   return week;
 }
@@ -401,11 +453,11 @@ function restoreNotifications() {
 }
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
-type LearnerSourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up' | 'student-support' | 'personal' | 'busy';
+type LearnerSourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'gateway' | 'catch-up' | 'student-support' | 'other' | 'personal' | 'busy';
 type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'completed';
 
-const LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support', 'personal', 'busy'];
-const VISIBLE_LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support'];
+const LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'gateway', 'catch-up', 'student-support', 'other', 'personal', 'busy'];
+const VISIBLE_LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'gateway', 'catch-up', 'student-support', 'other'];
 const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'completed'];
 
 const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: string; dot: string }> = {
@@ -413,15 +465,17 @@ const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: s
   'live-session': { label: 'Live Sessions', short: 'Live Session', dot: 'bg-violet-500' },
   mcr: { label: 'Monthly Coaching Meeting', short: 'Monthly Coaching Meeting', dot: 'bg-orange-500' },
   'progress-review': { label: 'Progress Review', short: 'Progress Review', dot: 'bg-teal-500' },
+  gateway: { label: 'Gateway', short: 'Gateway', dot: 'bg-indigo-500' },
   'catch-up': { label: 'Catch-up', short: 'Catch-up', dot: 'bg-rose-500' },
   'student-support': { label: 'Student Support', short: 'Support', dot: 'bg-blue-500' },
+  other: { label: 'Other', short: 'Other', dot: 'bg-slate-500' },
   personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
   busy: { label: 'Busy Time', short: 'Busy', dot: 'bg-slate-500' },
 };
 
 const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string }> = {
   all: { label: 'All', dot: 'bg-foreground-400' },
-  'needs-schedule': { label: 'Needs Booking', dot: 'bg-rose-500' },
+  'needs-schedule': { label: 'Not Scheduled', dot: 'bg-rose-500' },
   scheduled: { label: 'Scheduled', dot: 'bg-primary-500' },
   pending: { label: 'Pending', dot: 'bg-amber-500' },
   'in-progress': { label: 'In Progress', dot: 'bg-secondary-500' },
@@ -473,6 +527,10 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
       return 'Student Support';
     case 'catch-up':
       return 'Catch-up';
+    case 'other':
+      return 'Other';
+    case 'gateway':
+      return 'Gateway';
     default:
       return 'Coach Session';
   }
@@ -484,8 +542,10 @@ function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
   if (event.source === 'live-session') return 'live-session';
   if (event.source === 'mcr') return 'mcr';
   if (event.source === 'progress-review') return 'progress-review';
+  if (event.source === 'gateway') return 'gateway';
   if (event.source === 'catch-up') return 'catch-up';
   if (event.source === 'student-support') return 'student-support';
+  if (event.source === 'other') return 'other';
   return 'personal';
 }
 
@@ -549,14 +609,29 @@ function LearnerCalendarBody() {
   const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
   const [selectedDay, setSelectedDay] = useState(() => new Date().getDate());
+  useEffect(() => {
+    const date = new URLSearchParams(location.search).get('date');
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const [year, month, day] = date.split('-').map(Number);
+    const parsed = new Date(year, month - 1, day, 12);
+    if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return;
+    setViewYear(year);
+    setViewMonth(month - 1);
+    setSelectedDay(day);
+  }, [location.search]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterSource, setFilterSource] = useState<LearnerSourceFilter>('all');
   const [filterStatus, setFilterStatus] = useState<LearnerStatusFilter>('all');
   const [myEvents, setMyEvents] = useState<CalendarEvent[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [calendarRevision, setCalendarRevision] = useState(0);
+  const importedBooking = useImportedMeetingBooking(myLearner, location.search);
+  const [schedulingError, setSchedulingError] = useState('');
+  const calendarWriteVersionRef = useRef(0);
+  const refreshCalendar = useCallback(() => setCalendarRevision(value => value + 1), []);
+  useLiveRefresh(refreshCalendar);
   const [addToCalendarToast, setAddToCalendarToast] = useState<string | null>(null);
-  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDayDrawer, setShowDayDrawer] = useState(false);
@@ -583,6 +658,7 @@ function LearnerCalendarBody() {
   const [bookTime, setBookTime] = useState('10:00');
   const [bookDuration, setBookDuration] = useState('60');
   const [bookNotes, setBookNotes] = useState('');
+  const [otherSessionType, setOtherSessionType] = useState('');
   const [bookSubmitting, setBookSubmitting] = useState(false);
   const [bookError, setBookError] = useState<string | null>(null);
   const [bookingCalendar, setBookingCalendar] = useState<BookingCalendarRules | null>(null);
@@ -623,8 +699,13 @@ function LearnerCalendarBody() {
   const focusedEventKey = useMemo(() => new URLSearchParams(location.search).get('event') || '', [location.search]);
 
   useEffect(() => {
-    if (new URLSearchParams(location.search).get('book') === 'student-support') {
+    const params = new URLSearchParams(location.search);
+    if (params.get('book') === 'student-support') {
+      setRescheduleEvent(null);
+      setBookingSourceEvent(null);
       setBookType('student-support');
+      setBookNotes((params.get('notes') || '').slice(0, 500));
+      setBookError(null);
       setShowBookModal(true);
     }
   }, [location.search]);
@@ -638,8 +719,9 @@ function LearnerCalendarBody() {
     setViewYear(focusDate.year ?? viewYear);
     setViewMonth(focusDate.month);
     setSelectedDay(focusDate.day);
-    setSelectedEvent(focusEvent);
-  }, [displayedEvents, focusedEventKey, viewYear]);
+    const params = new URLSearchParams(location.search);
+    if (!['schedule', 'reschedule'].includes(params.get('action') || '') && !params.get('reviewId')) setShowEventDetails(focusEvent);
+  }, [displayedEvents, focusedEventKey, viewYear, location.search]);
   const visibleRangeEvents = useMemo(() => (
     displayedEvents.filter((event) => {
       const eventDate = parseEventDate(event);
@@ -701,6 +783,15 @@ function LearnerCalendarBody() {
       filterStatus === 'all' || learnerEventStatus(event) === filterStatus
     ))
   ), [filterStatus, sourceFilteredVisibleRangeEvents]);
+  const untimedEvents = filteredEvents.filter(event => event.timeToBeConfirmed);
+  const timelineHours = useMemo(() => {
+    const scheduledHours = filteredEvents.filter(event => !event.timeToBeConfirmed)
+      .map(event => Number.parseInt(event.time.split(':')[0], 10))
+      .filter(hour => Number.isInteger(hour) && hour >= 0 && hour <= 23);
+    const first = Math.min(HOURS[0], ...scheduledHours);
+    const last = Math.max(HOURS[HOURS.length - 1], ...scheduledHours);
+    return Array.from({ length: last - first + 1 }, (_, index) => first + index);
+  }, [filteredEvents]);
   const upcomingEvents = useMemo(() => {
     const todayDate = new Date(todayYear, todayMonth, todayDay);
     const sevenDaysFromToday = new Date(todayYear, todayMonth, todayDay + 7);
@@ -733,11 +824,11 @@ function LearnerCalendarBody() {
       });
   }, [displayedEvents, filterSource, filterStatus, searchTerm, todayDay, todayMonth, todayYear, viewYear]);
 
-  const getEventsForDay = useCallback((day: number, month: number): CalendarEvent[] => {
+  const getEventsForDay = useCallback((day: number, month: number, year = viewYear): CalendarEvent[] => {
     return filteredEvents.filter((ev) => {
       const evDate = parseEventDate(ev);
       if (!evDate) return false;
-      return evDate.day === day && evDate.month === month && (evDate.year === null || evDate.year === viewYear);
+      return evDate.day === day && evDate.month === month && (evDate.year === null || evDate.year === year);
     });
   }, [filteredEvents, viewYear]);
 
@@ -754,10 +845,8 @@ function LearnerCalendarBody() {
     return `${dayName}, ${selectedDay} ${MONTH_NAMES[viewMonth]}`;
   }, [selectedDay, viewMonth, viewYear]);
   useEffect(() => {
-    if (selectedEvent && !filteredEvents.some((event) => event.id === selectedEvent.id)) {
-      setSelectedEvent(null);
-    }
-  }, [filteredEvents, selectedEvent]);
+    setShowEventDetails(current => current ? displayedEvents.find(event => event.id === current.id) || null : null);
+  }, [displayedEvents]);
   const selectedIso = useMemo(
     () => `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`,
     [viewYear, viewMonth, selectedDay],
@@ -796,11 +885,16 @@ function LearnerCalendarBody() {
     setRescheduleEvent(null);
     setBookingSourceEvent(sourceEvent || null);
     setBookType(sourceEvent?.bookingSessionType || 'catch-up');
-    setBookDate(date || bookingToday);
+    setBookDate(firstAvailableBookingDate(date || bookingToday, bookingCalendar));
+    setBookTime('09:00');
+    setBookDuration(String(sourceEvent?.durationMinutes || 60));
+    setBookNotes('');
+    setOtherSessionType('');
     setBookError(null);
     setShowDayDrawer(false);
+    setShowEventDetails(null);
     setShowBookModal(true);
-  }, [bookingToday]);
+  }, [bookingToday, bookingCalendar]);
   const openRescheduleSession = useCallback((event: CalendarEvent) => {
     if (!event.bookingSessionType || !event.isoDate || event.timeToBeConfirmed) return;
     const range = getEventTimeRange(event.time);
@@ -814,11 +908,62 @@ function LearnerCalendarBody() {
     setBookTime(event.time.split('\u2013')[0].trim());
     setBookDuration(String(event.durationMinutes || calculatedDuration || 60));
     setBookNotes('');
+    setOtherSessionType('');
     setBookError(null);
-    setShowEventDetails(null);
     setShowDayDrawer(false);
+    setShowEventDetails(null);
     setShowBookModal(true);
   }, []);
+  const handledScheduleRef = useRef('');
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const action = params.get('action');
+    const reviewId = params.get('reviewId');
+    if (!['schedule', 'reschedule'].includes(action || '') && !reviewId) {
+      handledScheduleRef.current = '';
+      setSchedulingError('');
+      return;
+    }
+    const requestKey = location.search;
+    if (handledScheduleRef.current === requestKey || calendarLoading || calendarError) return;
+    let event: CalendarEvent | undefined;
+    if (reviewId) {
+      if (!importedBooking.target) return;
+      const { review, eventKey, source } = importedBooking.target;
+      if (eventKey) {
+        event = myEvents.find(item => item.eventKey === eventKey);
+        if (!event) {
+          setSchedulingError('The saved appointment could not be loaded. Refresh the calendar and try again.');
+          return;
+        }
+      } else if (['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status)) {
+        setSchedulingError('This review is no longer available for scheduling.');
+        return;
+      } else {
+        event = mapCoachEvent({ ...importedReviewsToEvents([review], source)[0], status: 'not-scheduled', scheduledDate: null, scheduledTime: null }) || undefined;
+      }
+      if (event) event = { ...event, title: review.name || event.title, bookingReviewId: review.id, assignmentMonth: review.plannedDate?.slice(0, 7) };
+    } else {
+      const eventKey = params.get('event');
+      // Older source/date links are accepted only when they identify one slot.
+      const matches = myEvents.filter(item => eventKey ? item.eventKey === eventKey || item.id === eventKey
+        : item.source === params.get('source') && item.isoDate === params.get('date') && item.timeToBeConfirmed);
+      if (matches.length === 1) event = matches[0];
+    }
+    if (!event || !event.bookingSessionType) {
+      setSchedulingError('This meeting is no longer available. Return to your meetings and refresh the list.');
+      return;
+    }
+    handledScheduleRef.current = requestKey;
+    setSchedulingError('');
+    if (action === 'reschedule' && event.bookingStatus === 'scheduled' && !event.timeToBeConfirmed) {
+      openRescheduleSession(event);
+    } else if (['schedule', 'reschedule'].includes(action || '') && event.bookingStatus === 'not-scheduled') {
+      openBookSession(event.isoDate, event);
+    } else {
+      setShowEventDetails(event);
+    }
+  }, [location.search, myEvents, calendarLoading, calendarError, importedBooking.target, openBookSession, openRescheduleSession]);
   const confirmedCount = myEvents.filter((ev) => ev.status === 'confirmed').length;
   const pendingCount = myEvents.filter((ev) => ev.status === 'pending').length;
   const totalPoints = myEvents.filter((ev) => ev.status === 'confirmed').reduce((s, ev) => s + ev.points, 0);
@@ -875,29 +1020,66 @@ function LearnerCalendarBody() {
     return () => { cancelled = true; };
   }, [showBookModal, calendarConnections.length, bookDate, myLearner.kind, myLearner.id]);
 
-  // Load the learner's coaching sessions from Coach.coach_calendar_event.
+  // Non-Aptem learners use the Review-Coach generated/calendar flow. Aptem
+  // learners keep their imported review rows as the source of truth for MCM
+  // and Progress Review bookings.
   useEffect(() => {
     let cancelled = false;
-    setCalendarLoading(true);
-    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { force: true })
-      .then((res) => {
-        if (cancelled) return;
+    const writeVersion = calendarWriteVersionRef.current;
+    const calendarPromise = fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true });
+    // Keep the calendar load independent of the optional Aptem identity
+    // lookup. A failed detail request falls back to the review endpoint,
+    // whose empty result is the normal response for learners without Aptem.
+    const detailPromise = fetchLearnerDetail(myLearner.kind, myLearner.id, { revalidate: true }).catch(() => null);
+    calendarPromise
+      .then(async (res) => {
+        if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
         const coachEvents = res.events
           .map(mapCoachEvent)
           .filter((ev): ev is CalendarEvent => ev !== null);
+        let events = coachEvents;
+        // Calendar data remains usable if the detail endpoint is unavailable;
+        // the flag only determines whether Aptem review rows should replace
+        // the generated MCM/Progress Review cards.
+        const detail = await detailPromise;
+        if (detail?.studentActivityAvailable || detail === null) {
+          const histories = await Promise.allSettled([
+            fetchReviewHistory(myLearner.kind, myLearner.id, 'monthly-coaching'),
+            fetchReviewHistory(myLearner.kind, myLearner.id, 'reviews'),
+          ]);
+          if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
+          const monthly = histories[0].status === 'fulfilled' ? histories[0].value.reviews : [];
+          const progress = histories[1].status === 'fulfilled' ? histories[1].value.reviews : [];
+          const importedMonthly = monthly
+            .map((review) => mapImportedReview(review, 'mcr'))
+            .filter((ev): ev is CalendarEvent => ev !== null);
+          const importedProgress = progress
+            .map((review) => mapImportedReview(review, 'progress-review'))
+            .filter((ev): ev is CalendarEvent => ev !== null);
+          const importedSources = new Set<LearnerSourceFilter>();
+          if (importedMonthly.length) importedSources.add('mcr');
+          if (importedProgress.length) importedSources.add('progress-review');
+          events = [
+            ...coachEvents.filter((event) => !importedSources.has(learnerEventSource(event))),
+            ...importedMonthly,
+            ...importedProgress,
+          ];
+        }
         setBookingCalendar(res.bookingCalendar || null);
         // Keep locally-created personal events; replace the DB-backed ones.
-        setMyEvents((prev) => [...coachEvents, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
+        setMyEvents((prev) => [...events, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
         setCalendarError(null);
       })
-      .catch((err: Error) => { if (!cancelled) setCalendarError(err.message); })
+      .catch((err: Error) => {
+        if (!cancelled && writeVersion === calendarWriteVersionRef.current) setCalendarError(err.message);
+      })
       .finally(() => { if (!cancelled) setCalendarLoading(false); });
     // The assigned coach (Active_users mirror) — powers the "Book a session" panel.
     fetchLearnerCoach(myLearner.id)
-      .then((res) => { if (!cancelled && res.coachEmail) setCoach({ name: res.coachName || 'Your coach', email: res.coachEmail }); })
+      .then((res) => { if (!cancelled) setCoach(res.coachEmail ? { name: res.coachName || 'Your coach', email: res.coachEmail } : null); })
       .catch(() => { /* no mirror row / no coach assigned — booking panel shows a hint */ });
     return () => { cancelled = true; };
-  }, [myLearner.kind, myLearner.id]);
+  }, [myLearner.kind, myLearner.id, calendarRevision]);
 
   const selectedSlotConflicts = useMemo(() => {
     if (!bookDate || !bookTime) return false;
@@ -937,6 +1119,7 @@ function LearnerCalendarBody() {
     return myEvents.find((event) => (
       event.id !== rescheduleEvent?.id
       && event.id !== bookingSourceEvent?.id
+      && !event.timeToBeConfirmed
       && (event.bookingStatus === 'scheduled' || event.bookingStatus === 'not-scheduled')
       && event.bookingSessionType === bookType
       && Boolean(event.isoDate)
@@ -1005,30 +1188,70 @@ function LearnerCalendarBody() {
       setBookError('This time overlaps an event in your connected personal calendar. Please choose another time.');
       return;
     }
+    if (!rescheduleEvent && !bookingSourceEvent && bookType === 'other' && !otherSessionType.trim()) {
+      setBookError('Please enter the type of session you need.');
+      return;
+    }
     setBookSubmitting(true);
     setBookError(null);
     try {
-      const res = rescheduleEvent
+      const sourceEvent = rescheduleEvent || bookingSourceEvent;
+      const importedReview = sourceEvent?.importedReview;
+      const importedReviewId = importedReview?.id || sourceEvent?.bookingReviewId;
+      const importedReviewDate = sourceEvent?.isoDate || importedReview?.plannedDate || importedReview?.completedDate || bookDate;
+      const importedReviewBooking = Boolean(importedReviewId);
+      const requestNotes = [
+        bookType === 'other' ? `Requested session type: ${otherSessionType.trim()}` : '',
+        bookNotes.trim(),
+      ].filter(Boolean).join('\n');
+      const res = rescheduleEvent && !importedReviewBooking
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
             eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
+            reviewId: rescheduleEvent.bookingReviewId,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
-            timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+            timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           })
         : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
+            assignmentMonth: importedReviewBooking ? importedReviewDate.slice(0, 7) : undefined,
+            reviewId: importedReviewId,
             sessionType: bookType,
-            eventKey: bookingSourceEvent?.eventKey,
+            // An imported Aptem key identifies the history row, not the
+            // CoachCalendarEvent row created by the booking.
+            eventKey: importedReviewBooking ? undefined : bookingSourceEvent?.eventKey,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
-            notes: bookNotes.trim() || undefined,
-            timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+            notes: requestNotes || undefined,
+            timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           });
+      // A read started before this save must not restore the old appointment.
+      calendarWriteVersionRef.current += 1;
       const mapped = mapCoachEvent(res.event);
-      if (mapped) setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id), mapped]);
+      if (mapped) {
+        const updatedImportedReview = importedReview
+          ? { ...importedReview, status: 'scheduled', plannedDate: bookDate, plannedTime: bookTime }
+          : undefined;
+        const updatedEvent = updatedImportedReview
+          ? { ...mapped, id: sourceEvent?.id || mapped.id, importedReview: updatedImportedReview }
+          : {
+              ...mapped,
+              bookingReviewId: sourceEvent?.bookingReviewId,
+              assignmentMonth: sourceEvent?.assignmentMonth,
+            };
+        setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id && ev.id !== sourceEvent?.id), updatedEvent]);
+        const date = parseEventDate(updatedEvent);
+        if (date) {
+          setViewYear(date.year ?? viewYear);
+          setViewMonth(date.month);
+          setSelectedDay(date.day);
+        }
+        setShowEventDetails(updatedEvent);
+      }
       setShowBookModal(false);
       setBookNotes('');
+      setOtherSessionType('');
       setRescheduleEvent(null);
       setBookingSourceEvent(null);
       setAddToCalendarToast(res.warning
@@ -1046,16 +1269,13 @@ function LearnerCalendarBody() {
     }
   };
 
-  const handlePrev = () => {
+  const movePeriod = (direction: -1 | 1) => {
     setShowDayDrawer(false);
-    if (viewMode === 'daily') { const d = new Date(viewYear, viewMonth, selectedDay); d.setDate(d.getDate() - 1); setViewYear(d.getFullYear()); setViewMonth(d.getMonth()); setSelectedDay(d.getDate()); }
-    else { if (viewMonth === 0) { setViewMonth(11); setViewYear(viewYear - 1); } else setViewMonth(viewMonth - 1); }
+    const next = moveCalendarDate(new Date(viewYear, viewMonth, selectedDay, 12), viewMode, direction);
+    setViewYear(next.getFullYear()); setViewMonth(next.getMonth()); setSelectedDay(next.getDate());
   };
-  const handleNext = () => {
-    setShowDayDrawer(false);
-    if (viewMode === 'daily') { const d = new Date(viewYear, viewMonth, selectedDay); d.setDate(d.getDate() + 1); setViewYear(d.getFullYear()); setViewMonth(d.getMonth()); setSelectedDay(d.getDate()); }
-    else { if (viewMonth === 11) { setViewMonth(0); setViewYear(viewYear + 1); } else setViewMonth(viewMonth + 1); }
-  };
+  const handlePrev = () => movePeriod(-1);
+  const handleNext = () => movePeriod(1);
   const handleToday = () => { setShowDayDrawer(false); setViewYear(today.getFullYear()); setViewMonth(today.getMonth()); setSelectedDay(today.getDate()); };
 
   const handleAddToCalendar = (event: CalendarEvent) => {
@@ -1129,6 +1349,10 @@ function LearnerCalendarBody() {
       }
     }
     setCustomTitle(''); setCustomDescription(''); setCustomLocation(''); setCustomDate(todayISO()); setCustomStartTime('14:00'); setCustomEndTime('15:00'); setCustomReminder('15'); setCustomColor('sky'); setCustomRecurrence('none'); setShowCreateModal(false);
+    setShowEventDetails(newEvent);
+    setViewYear(dateObj.getFullYear());
+    setViewMonth(dateObj.getMonth());
+    setSelectedDay(day);
     setAddToCalendarToast(`"${newEvent.title}" created${customRecurrence !== 'none' ? ` and ${customRecurrence === 'monthly' ? '3 monthly' : '4 recurring'} instances added` : ''}!`);
     setTimeout(() => setAddToCalendarToast(null), 3000);
   };
@@ -1147,7 +1371,7 @@ function LearnerCalendarBody() {
   return (
     <>
       {/* Toast */}
-      {addToCalendarToast && (
+      {addToCalendarToast && !showEventDetails && (
         <div className="fixed top-20 right-6 z-50 bg-background-50 rounded-xl border border-emerald-200/60 shadow-lg px-4 py-3 flex items-center gap-3 animate-in slide-in-from-right-4 duration-300">
           <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-calendar-check-line"></AppIcon></span>
           <p className="text-sm font-semibold text-foreground-900">{addToCalendarToast}</p>
@@ -1207,10 +1431,10 @@ function LearnerCalendarBody() {
 
       {showBookModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowBookModal(false)}>
-          <div className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="calendar-booking-title" className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className={`${rescheduleEvent || bookingSourceEvent ? 'ri-calendar-schedule-line' : 'ri-user-star-line'} text-primary-500`}></AppIcon>{rescheduleEvent ? 'Reschedule Session' : bookingSourceEvent ? `Schedule ${sessionTypeLabel(bookingSourceEvent.bookingSessionType)}` : 'Book a Coach Session'}</h3>
-              <button onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
+              <h3 id="calendar-booking-title" className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className={`${rescheduleEvent || bookingSourceEvent ? 'ri-calendar-schedule-line' : 'ri-user-star-line'} text-primary-500`}></AppIcon>{rescheduleEvent ? 'Reschedule Session' : bookingSourceEvent ? `Schedule ${sessionTypeLabel(bookingSourceEvent.bookingSessionType)}` : 'Book a Coach Session'}</h3>
+              <button aria-label="Close booking dialog" onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
             </div>
             <p className="text-sm text-foreground-500 mb-5">
               {rescheduleEvent
@@ -1235,6 +1459,10 @@ function LearnerCalendarBody() {
                   {([
                     { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
                     { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
+                    { value: 'progress-review' as BookableSessionType, label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
+                    { value: 'mcr' as BookableSessionType, label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
+                    { value: 'gateway' as BookableSessionType, label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
+                    { value: 'other' as BookableSessionType, label: 'Other', icon: 'ri-more-line', desc: 'Request another session type' },
                   ]).map((t) => (
                     <button key={t.value} type="button" onClick={() => {
                       setBookType(t.value);
@@ -1247,10 +1475,11 @@ function LearnerCalendarBody() {
                     </button>
                   ))}
                 </div>
+                {bookType === 'other' && <div className="mt-3"><label htmlFor="other-session-type" className="text-xs font-semibold text-foreground-500">Other <span className="text-red-400">*</span></label><input id="other-session-type" type="text" value={otherSessionType} onChange={(e) => { setOtherSessionType(e.target.value); setBookError(null); }} maxLength={100} placeholder="Write the session type you need" className="mt-1.5 w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>}
               </div>}
               <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input type="date" value={bookDate} min={bookingToday} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
+                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input aria-label="Date" type="date" value={bookDate} min={bookingToday} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
+                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input aria-label="Time" type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
               </div>
               {bookDateRestriction && (
                 <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
@@ -1319,7 +1548,7 @@ function LearnerCalendarBody() {
               )}
               <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Duration</label>
-                <select value={bookDuration} onChange={(e) => setBookDuration(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
+                <select aria-label="Duration" value={bookDuration} disabled={Boolean(bookingSourceEvent?.bookingReviewId && bookType === 'mcr')} onChange={(e) => setBookDuration(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
                   {![30, 45, 60].includes(Number(bookDuration)) && <option value={bookDuration}>{bookDuration} minutes</option>}
                   <option value="30">30 minutes</option>
                   <option value="45">45 minutes</option>
@@ -1341,7 +1570,7 @@ function LearnerCalendarBody() {
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent ? 'Booking...' : 'Sending...'}</> : <><AppIcon className="ri-calendar-check-line mr-1"></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent ? 'Book Session' : 'Send Request'}</>}
+                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent ? 'Booking...' : 'Sending...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent ? 'Book Session' : 'Send Request'}</>}
               </button>
             </div>
           </div>
@@ -1376,33 +1605,16 @@ function LearnerCalendarBody() {
       )}
 
       {/* ═══════════ EVENT DETAILS MODAL ═══════════ */}
-      {showEventDetails && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowEventDetails(null)}>
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-background-50 p-6 mx-4 shadow-xl animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4"><span className={`text-xs font-semibold px-2 py-1 rounded-full ${statusConfig[showEventDetails.status].cls}`}>{statusConfig[showEventDetails.status].label}</span><button onClick={() => setShowEventDetails(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button></div>
-            <h3 className="text-lg font-heading font-bold text-foreground-900 mb-2">{showEventDetails.title}</h3>
-            <div className="space-y-2 mb-4">
-              <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-calendar-line text-foreground-400"></AppIcon><span className="font-semibold">{showEventDetails.date}, {showEventDetails.dayName} &middot; {showEventDetails.timeToBeConfirmed ? 'Time to be confirmed' : showEventDetails.time}</span></div>
-              <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-map-pin-line text-foreground-400"></AppIcon><span>{showEventDetails.location}</span></div>
-              <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-team-line text-foreground-400"></AppIcon><span>{showEventDetails.club}</span></div>
-            </div>
-            <p className="text-sm text-foreground-500 leading-relaxed mb-5">{showEventDetails.description}</p>
-            {shouldShowMeetingArtifacts(showEventDetails) ? (
-              <CoachMeetingArtifactsPanel event={{ id: showEventDetails.id, eventKey: showEventDetails.eventKey, source: showEventDetails.source, meetingLink: showEventDetails.meetingLink }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="mb-5 border-primary-100 bg-primary-50/30" />
-            ) : null}
-            {showEventDetails.timeToBeConfirmed && showEventDetails.bookingSessionType && (
-              <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
-                <AppIcon className="ri-information-line mt-0.5 shrink-0" />
-                <p className="text-xs font-semibold">This is your official {sessionTypeLabel(showEventDetails.bookingSessionType)} session. Choose a date and time here, and the Microsoft Teams meeting link will be created when it is confirmed.</p>
-              </div>
-            )}
-            {!showEventDetails.timeToBeConfirmed && !showEventDetails.meetingLink && showEventDetails.club !== 'Personal' && (
-              <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
-                <AppIcon className="ri-error-warning-line mt-0.5 shrink-0" />
-                <p className="text-xs font-semibold">{showEventDetails.bookingStatus === 'not-scheduled' ? 'Your preferred time has been sent to your coach. A Teams link will be created after coach approval.' : 'The meeting time is scheduled, but the Teams link is not available yet. Please contact your coach.'}</p>
-              </div>
-            )}
-            <div className="flex flex-wrap gap-2">
+      {showEventDetails && !conflictEvent && (
+        <CalendarEventDialog
+          title={showEventDetails.title}
+          onClose={() => setShowEventDetails(null)}
+          badges={<>
+            <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{LEARNER_SOURCE_META[learnerEventSource(showEventDetails)].label}</span>
+            <span className="rounded-full bg-background-200 px-2.5 py-1 text-foreground-700">{LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}</span>
+          </>}
+          actions={<>
+
               {showEventDetails.timeToBeConfirmed && showEventDetails.bookingSessionType && (
                 <button
                   type="button"
@@ -1427,9 +1639,34 @@ function LearnerCalendarBody() {
               {showEventDetails.id.startsWith('custom-') && (
                 <button onClick={() => handleRemoveFromCalendar(showEventDetails.id)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-calendar-close-line h-4 w-4 shrink-0"></AppIcon><span>Remove</span></button>
               )}
-            </div>
-          </div>
-        </div>
+
+          </>}
+        >
+          {addToCalendarToast && <p role="status" className="mb-4 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-sm text-primary-800">{addToCalendarToast}</p>}
+          <dl className="mb-5 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+            <div><dt className="mb-1 flex items-center gap-2 text-xs text-foreground-500"><AppIcon className="ri-calendar-line" />Date</dt><dd className="font-semibold">{showEventDetails.isoDate ? new Date(`${showEventDetails.isoDate}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : `${showEventDetails.dayName}, ${showEventDetails.date}`}</dd></div>
+            <div><dt className="mb-1 flex items-center gap-2 text-xs text-foreground-500"><AppIcon className="ri-time-line" />Time</dt><dd className="font-semibold">{showEventDetails.timeToBeConfirmed ? 'Time to be confirmed' : showEventDetails.time}</dd>{showEventDetails.durationMinutes && <dd className="mt-1 text-xs text-foreground-500">{showEventDetails.durationMinutes} minutes</dd>}</div>
+            <div><dt className="mb-1 flex items-center gap-2 text-xs text-foreground-500"><AppIcon className="ri-user-line" />Host</dt><dd className="font-semibold">{showEventDetails.host}</dd><dd className="mt-1 text-xs text-foreground-500">{showEventDetails.club}</dd></div>
+            <div><dt className="mb-1 flex items-center gap-2 text-xs text-foreground-500"><AppIcon className="ri-map-pin-line" />Location</dt><dd className="font-semibold">{showEventDetails.location}</dd><dd className="mt-1 text-xs text-foreground-500">{showEventDetails.format}</dd></div>
+          </dl>
+          {showEventDetails.description && <div className="mb-5 border-t border-foreground-100 pt-4"><h3 className="mb-2 text-xs font-semibold text-foreground-500">About this event</h3><p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground-700">{showEventDetails.description}</p></div>}
+            {showEventDetails.syncWarning && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">{showEventDetails.syncWarning}</p>}
+            {shouldShowMeetingArtifacts(showEventDetails) ? (
+              <CoachMeetingArtifactsPanel event={{ id: showEventDetails.id, eventKey: showEventDetails.eventKey, source: showEventDetails.source, meetingLink: showEventDetails.meetingLink }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="mb-5 border-primary-100 bg-primary-50/30" />
+            ) : null}
+            {showEventDetails.timeToBeConfirmed && showEventDetails.bookingSessionType && (
+              <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
+                <AppIcon className="ri-information-line mt-0.5 shrink-0" />
+                <p className="text-xs font-semibold">This is your official {sessionTypeLabel(showEventDetails.bookingSessionType)} session. Choose a date and time here, and the Microsoft Teams meeting link will be created when it is confirmed.</p>
+              </div>
+            )}
+            {!showEventDetails.timeToBeConfirmed && !showEventDetails.meetingLink && !showEventDetails.syncWarning && showEventDetails.club !== 'Personal' && (
+              <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
+                <AppIcon className="ri-error-warning-line mt-0.5 shrink-0" />
+                <p className="text-xs font-semibold">{showEventDetails.bookingStatus === 'not-scheduled' ? 'Your preferred time has been sent to your coach. A Teams link will be created after coach approval.' : 'The meeting time is scheduled, but the Teams link is not available yet. Please contact your coach.'}</p>
+              </div>
+            )}
+        </CalendarEventDialog>
       )}
 
       {/* ═══════════ SHARE CALENDAR MODAL ═══════════ */}
@@ -1477,15 +1714,6 @@ function LearnerCalendarBody() {
                   <p className={`text-sm ${selectedDateRestriction ? 'max-w-xs font-semibold text-amber-800' : 'text-foreground-500'}`}>
                     {selectedDateRestriction || 'No events scheduled'}
                   </p>
-                  {!selectedDateRestriction && (
-                    <button
-                      type="button"
-                      onClick={() => openBookSession(selectedIso)}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-primary-500 px-4 py-2 text-xs font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"
-                    >
-                      <AppIcon className="ri-user-star-line text-sm"></AppIcon>Book Session
-                    </button>
-                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1495,7 +1723,7 @@ function LearnerCalendarBody() {
                       <button
                         key={ev.id}
                         type="button"
-                        onClick={() => { setSelectedEvent(ev); setShowDayDrawer(false); }}
+                        onClick={() => { setShowEventDetails(ev); setShowDayDrawer(false); }}
                         className="group flex w-full items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer"
                       >
                         <div className="w-12 shrink-0 pt-0.5">
@@ -1533,10 +1761,12 @@ function LearnerCalendarBody() {
 
       <PageContainer className="learner-calendar-page">
 
+        {(schedulingError || importedBooking.error) && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{schedulingError || importedBooking.error}</p>}
         {calendarError && (
           <div className="rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 flex items-center gap-3 shadow-sm">
             <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>
             <p className="text-sm text-red-700">Could not load your coaching sessions: {calendarError}</p>
+            <button type="button" onClick={refreshCalendar} className="shrink-0 text-sm font-semibold text-red-700 underline">Retry calendar</button>
           </div>
         )}
         {calendarLoading && !calendarError && (
@@ -1585,9 +1815,9 @@ function LearnerCalendarBody() {
           <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
             <button onClick={handleToday} className="px-3 py-1.5 text-xs font-semibold text-primary-600 bg-primary-100 rounded-lg hover:bg-primary-200 transition-smooth cursor-pointer whitespace-nowrap">Today</button>
             <div className="flex items-center gap-1">
-              <button onClick={handlePrev} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-arrow-left-s-line"></AppIcon></button>
+              <button aria-label={`Previous ${viewMode === 'monthly' ? 'month' : viewMode === 'weekly' ? 'week' : 'day'}`} onClick={handlePrev} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-arrow-left-s-line"></AppIcon></button>
               <span className="text-sm font-heading font-bold text-foreground-900 min-w-[130px] text-center whitespace-nowrap">{viewMode === 'daily' ? `${DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, ${selectedDay} ${MONTH_NAMES[viewMonth]} ${viewYear}` : `${MONTH_NAMES[viewMonth]} ${viewYear}`}</span>
-              <button onClick={handleNext} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-arrow-right-s-line"></AppIcon></button>
+              <button aria-label={`Next ${viewMode === 'monthly' ? 'month' : viewMode === 'weekly' ? 'week' : 'day'}`} onClick={handleNext} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-arrow-right-s-line"></AppIcon></button>
             </div>
           </div>
           </div>
@@ -1666,10 +1896,25 @@ function LearnerCalendarBody() {
         </Panel>
 
         {/* ═══════════ MAIN CONTENT ═══════════ */}
-        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 items-start gap-4">
 
-          {/* ── CALENDAR VIEW AREA (2/3) ── */}
-          <div className="lg:col-span-2 space-y-4">
+          {/* Calendar */}
+          <div className="space-y-4">
+
+            {viewMode !== 'monthly' && untimedEvents.length > 0 && (
+              <section aria-label="Sessions awaiting a time" className="rounded-2xl border border-foreground-200 bg-background-50 p-4">
+                <h3 className="mb-3 text-sm font-semibold text-foreground-900">Time to be confirmed</h3>
+                <div className="flex flex-wrap gap-2">
+                  {untimedEvents.map(event => (
+                    <button key={event.id} type="button" aria-haspopup="dialog" onClick={() => setShowEventDetails(event)}
+                      className="rounded-xl border border-primary-200 bg-primary-50 px-3 py-2 text-left text-sm text-primary-800">
+                      <span className="block font-semibold">{event.title}</span>
+                      <span className="text-xs">{event.date}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {/* MONTHLY VIEW */}
             {viewMode === 'monthly' && (
@@ -1701,13 +1946,13 @@ function LearnerCalendarBody() {
                     const visibleEvents = eventsForDay.slice(0, 3);
                     const extraCount = eventsForDay.length - visibleEvents.length;
                     return (
-                      <button
+                      <div
                         key={`d-${day}`}
                         onClick={() => { setSelectedDay(day); setShowDayDrawer(false); }}
                         title={dateRestriction || undefined}
                         className={`relative flex min-h-[11.5rem] cursor-pointer flex-col border-b border-r border-foreground-100 p-1 text-left transition-all duration-150 hover:z-10 sm:p-1.5 ${isClosedDate ? 'bg-background-100/80' : 'bg-background-50 hover:bg-primary-50/20'} ${isSel ? 'z-10 border-primary-300 bg-primary-50/60 ring-1 ring-primary-300 ring-inset' : isTdy ? 'bg-primary-50/15' : ''}`}
                       >
-                        <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isSel ? 'bg-primary-100 text-primary-800' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-500'}`}>{day}</span>
+                        <button type="button" aria-label={`Select ${day} ${MONTH_NAMES[viewMonth]} ${viewYear}`} className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isSel ? 'bg-primary-100 text-primary-800' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-500'}`}>{day}</button>
                         {showClosedBadge && (
                           <span className="absolute right-1 top-1 inline-flex items-center gap-0.5 rounded-full bg-primary-50 px-1.5 py-0.5 text-[8px] font-bold uppercase text-primary-700 ring-1 ring-primary-100 sm:text-[9px]">
                             <AppIcon className="ri-lock-line" />Closed
@@ -1726,10 +1971,12 @@ function LearnerCalendarBody() {
                             const eventSource = learnerEventSource(ev);
                             const sourceMeta = LEARNER_SOURCE_META[eventSource];
                             return (
-                              <div
+                              <button
+                                type="button"
+                                aria-haspopup="dialog"
                                 key={ev.id}
-                                onClick={(event) => { event.stopPropagation(); setSelectedEvent(ev); }}
-                                className={`rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
+                                onClick={(event) => { event.stopPropagation(); setShowEventDetails(ev); }}
+                                className={`w-full rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
                                 title={`${LEARNER_SOURCE_META[eventSource].label} · ${ev.title}`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
@@ -1739,12 +1986,12 @@ function LearnerCalendarBody() {
                                   <span className={`ml-auto h-2 w-2 shrink-0 rounded-full border border-white/80 ${LEARNER_STATUS_META[learnerEventStatus(ev)].dot}`} title={LEARNER_STATUS_META[learnerEventStatus(ev)].label}></span>
                                 </div>
                                 {(ev.host || ev.club) && <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</p>}
-                              </div>
+                              </button>
                             );
                           })}
-                          {extraCount > 0 && <span className="block rounded-md bg-white/80 px-2 py-0.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">+{extraCount} more</span>}
+                          {extraCount > 0 && <button type="button" onClick={event => { event.stopPropagation(); setSelectedDay(day); setShowDayDrawer(true); }} className="block w-full rounded-md bg-white/80 px-2 py-0.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">+{extraCount} more</button>}
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -1779,11 +2026,11 @@ function LearnerCalendarBody() {
                         <button
                           key={ev.id}
                           type="button"
-                          onClick={() => setSelectedEvent(ev)}
+                          onClick={() => setShowEventDetails(ev)}
                           className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:shadow-sm cursor-pointer ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
                         >
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/75 shadow-sm">
-                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : eventSource === 'mcr' ? 'ri-calendar-check-line' : eventSource === 'progress-review' ? 'ri-line-chart-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
+                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : eventSource === 'mcr' ? 'ri-calendar-check-line' : eventSource === 'progress-review' ? 'ri-line-chart-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'other' ? 'ri-more-line' : eventSource === 'busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="mb-1 flex min-w-0 items-center gap-1.5">
@@ -1820,10 +2067,10 @@ function LearnerCalendarBody() {
                 <div className="grid min-w-[760px] grid-cols-8 border-b border-foreground-100">
                   <div className="px-2 py-3 bg-background-100/30"></div>
                   {weekDates.map((wd, idx) => {
-                    const isTdy = isToday(wd.day, wd.month, viewYear);
+                    const isTdy = isToday(wd.day, wd.month, wd.year);
                     const isSel = wd.day === selectedDay && wd.month === viewMonth;
                     return (
-                      <button key={`wh-${wd.day}-${wd.month}`} onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); }}
+                      <button key={`wh-${wd.day}-${wd.month}`} aria-label={`Select ${wd.day} ${wd.monthName} ${wd.year}`} onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); setViewYear(wd.year); }}
                         className={`px-2 py-3 text-center cursor-pointer transition-smooth ${isSel ? 'bg-primary-50/60' : 'hover:bg-background-100/50'} ${idx >= 5 ? 'bg-background-100/20' : ''}`}>
                         <span className="text-[10px] font-semibold text-foreground-400 uppercase block">{DAYS_SHORT[idx]}</span>
                         <span className={`text-sm font-bold inline-flex items-center justify-center w-7 h-7 rounded-full mt-1 ${isSel ? 'bg-primary-100 text-primary-800 ring-1 ring-primary-300' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-700'}`}>{wd.day}</span>
@@ -1833,7 +2080,7 @@ function LearnerCalendarBody() {
                 </div>
                 {/* Time grid */}
                 <div className="overflow-y-auto max-h-[600px]">
-                  {HOURS.map((hour) => {
+                  {timelineHours.map((hour) => {
                     const isCurrentHourRow = viewMode === 'weekly' && currentHour === hour;
                     return (
                       <div key={`h-${hour}`} className={`grid min-w-[760px] grid-cols-8 border-b border-foreground-100 ${isCurrentHourRow ? 'bg-primary-50/15' : ''}`}>
@@ -1841,7 +2088,7 @@ function LearnerCalendarBody() {
                           <span className="text-xs font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
                         {weekDates.map((wd, wdi) => {
-                          const eventsInSlot = getEventsForDay(wd.day, wd.month).filter((ev) => {
+                          const eventsInSlot = getEventsForDay(wd.day, wd.month, wd.year).filter((ev) => {
                             const startHour = parseInt(ev.time.split(':')[0]);
                             return startHour === hour;
                           });
@@ -1849,15 +2096,15 @@ function LearnerCalendarBody() {
                           return (
                             <div key={`ws-${wd.day}-${wd.month}-${hour}`}
                               className={`min-h-[48px] p-0.5 relative cursor-pointer transition-smooth hover:bg-primary-50/15 ${isSel ? 'bg-primary-50/60' : ''} ${wdi >= 5 ? 'bg-background-100/10' : ''}`}
-                              onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); }}>
+                              onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); setViewYear(wd.year); }}>
                               {eventsInSlot.map((ev) => {
                                 const typeColor = getEventColorClass(ev.type, ev.color);
                                 return (
-                                  <div key={ev.id} className={`text-[10px] font-semibold px-1.5 py-1 rounded-md mb-0.5 truncate cursor-pointer border-l-2 hover:brightness-95 transition-all ${typeColor}`}
-                                    onClick={(e) => { e.stopPropagation(); setSelectedEvent(ev); }} title={`${ev.title} (${ev.time})`}>
+                                  <button type="button" aria-haspopup="dialog" key={ev.id} className={`w-full text-left text-[10px] font-semibold px-1.5 py-1 rounded-md mb-0.5 truncate cursor-pointer border-l-2 hover:brightness-95 transition-all ${typeColor}`}
+                                    onClick={(e) => { e.stopPropagation(); setShowEventDetails(ev); }} title={`${ev.title} (${ev.time})`}>
                                     <span className="text-[9px] text-foreground-400 block truncate">{ev.time.split('\u2013')[0]}</span>
                                     {ev.title}
-                                  </div>
+                                  </button>
                                 );
                               })}
                               {isCurrentHourRow && eventsInSlot.length === 0 && (
@@ -1886,7 +2133,7 @@ function LearnerCalendarBody() {
                 </div>
                 {/* Day timeline */}
                 <div className="overflow-y-auto max-h-[600px]">
-                  {HOURS.map((hour) => {
+                  {timelineHours.map((hour) => {
                     const eventsInSlot = selectedDayEvents.filter((ev) => {
                       const startHour = parseInt(ev.time.split(':')[0]);
                       return startHour === hour;
@@ -1903,8 +2150,8 @@ function LearnerCalendarBody() {
                             {eventsInSlot.map((ev) => {
                               const typeColor = getEventColorClass(ev.type, ev.color);
                               return (
-                                <div key={ev.id} className={`p-3 rounded-xl cursor-pointer hover:shadow-sm hover:brightness-95 transition-all duration-200 border-l-[3px] ${typeColor}`}
-                                  onClick={() => setSelectedEvent(ev)}>
+                                <button type="button" aria-haspopup="dialog" key={ev.id} className={`w-full text-left p-3 rounded-xl cursor-pointer hover:shadow-sm hover:brightness-95 transition-all duration-200 border-l-[3px] ${typeColor}`}
+                                  onClick={() => setShowEventDetails(ev)}>
                                   <div className="flex items-center justify-between mb-1">
                                     <span className="text-sm font-semibold text-foreground-900">{ev.title}</span>
                                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
@@ -1914,7 +2161,7 @@ function LearnerCalendarBody() {
                                     <span className="flex items-center gap-1"><AppIcon className="ri-map-pin-line text-foreground-400 text-xs"></AppIcon>{ev.location}</span>
                                     {ev.club !== 'Personal' && <span className="flex items-center gap-1"><AppIcon className="ri-team-line text-foreground-400 text-xs"></AppIcon>{ev.club}</span>}
                                   </div>
-                                </div>
+                                </button>
                               );
                             })}
                           </div>
@@ -1928,117 +2175,18 @@ function LearnerCalendarBody() {
 
           </div>
 
-          {/* ── SIDEBAR (1/3) ── */}
+          {/* Upcoming events */}
           <div className="space-y-4">
-
-            {/* Event Details */}
-            <Panel>
-              <div className="flex items-center justify-between gap-3">
-                <SectionHeader title="Event Details" icon="ri-information-line" />
-                <span className="rounded-full bg-background-100 px-2.5 py-1 text-[12px] font-semibold text-foreground-500">
-                  {selectedDayEvents.length} selected
-                </span>
-              </div>
-              {selectedEvent ? (() => {
-                const sourceMeta = LEARNER_SOURCE_META[learnerEventSource(selectedEvent)];
-                const statusMeta = LEARNER_STATUS_META[learnerEventStatus(selectedEvent)];
-                return (
-                  <div className="mt-4 space-y-3">
-                    <div className={`rounded-2xl border border-background-200 p-4 ${getEventColorClass(selectedEvent.type, selectedEvent.color).replace('border-l-', 'border-')}`}>
-                      <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${sourceMeta.dot}`}></span>
-                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-bold text-foreground-700">{sourceMeta.label}</span>
-                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-bold text-foreground-700">{statusMeta.label}</span>
-                      </div>
-                      <h3 className="text-base font-heading font-bold text-foreground-950">{selectedEvent.title}</h3>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Date</p>
-                        <p className="mt-1 text-sm font-bold text-foreground-900">{selectedEvent.dayName}, {selectedEvent.date}</p>
-                      </div>
-                      <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Time</p>
-                        <p className="mt-1 text-sm font-bold text-foreground-900">{selectedEvent.timeToBeConfirmed ? 'To be confirmed' : selectedEvent.time}</p>
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-background-200 bg-white px-3 py-3">
-                      <p className="text-sm font-bold text-foreground-900">{selectedEvent.host}</p>
-                      <p className="mt-0.5 text-xs text-foreground-500">{selectedEvent.club} · {selectedEvent.location}</p>
-                    </div>
-                    {selectedEvent.description && (
-                      <div className="rounded-xl border border-background-200 bg-white px-3 py-3">
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Notes</p>
-                        <p className="mt-1 text-xs leading-relaxed text-foreground-600">{selectedEvent.description}</p>
-                      </div>
-                    )}
-                    <div className="flex flex-wrap gap-2">
-                      {selectedEvent.timeToBeConfirmed && selectedEvent.bookingSessionType && (
-                        <button
-                          type="button"
-                          onClick={() => openBookSession(selectedEvent.isoDate && selectedEvent.isoDate >= bookingToday ? selectedEvent.isoDate : bookingToday, selectedEvent)}
-                          className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary-500 px-3 py-2 text-xs font-bold text-white transition-smooth hover:bg-primary-600 cursor-pointer"
-                        >
-                          <AppIcon className="ri-calendar-check-line"></AppIcon>
-                          Schedule {sessionTypeLabel(selectedEvent.bookingSessionType)}
-                        </button>
-                      )}
-                      {selectedEvent.meetingLink && (
-                        <a href={selectedEvent.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-smooth cursor-pointer">
-                          <AppIcon className="ri-video-chat-line"></AppIcon>
-                          Join
-                        </a>
-                      )}
-                      {selectedEvent.bookingStatus === 'scheduled' && selectedEvent.bookingSessionType && (
-                        <button type="button" onClick={() => openRescheduleSession(selectedEvent)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2 text-xs font-bold text-primary-700 transition-smooth hover:bg-primary-100 cursor-pointer">
-                          <AppIcon className="ri-calendar-schedule-line"></AppIcon>
-                          Reschedule
-                        </button>
-                      )}
-                      {!selectedEvent.timeToBeConfirmed && (
-                        <button type="button" onClick={() => handleExportICS(selectedEvent)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-background-300 bg-white px-3 py-2 text-xs font-bold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer">
-                          <AppIcon className="ri-download-line"></AppIcon>
-                          Export
-                        </button>
-                      )}
-                      <button type="button" onClick={() => setSelectedEvent(null)} className="inline-flex items-center justify-center rounded-xl border border-background-300 bg-white px-3 py-2 text-xs font-bold text-foreground-500 transition-smooth hover:bg-background-100 cursor-pointer">
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                );
-              })() : (
-                <div className="mt-4">
-                  <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-background-200 bg-background-50 px-4 py-8 text-center">
-                    <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary-50 text-primary-500">
-                      <AppIcon className="ri-calendar-event-line text-lg"></AppIcon>
-                    </span>
-                    <p className="text-sm font-bold text-foreground-900">No event selected</p>
-                    <p className="text-xs text-foreground-500">{selectedDayEvents.length} event{selectedDayEvents.length === 1 ? '' : 's'} on the selected day.</p>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
-                      <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Selected Day</p>
-                      <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{selectedDayEvents.length}</p>
-                    </div>
-                    <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
-                      <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Next 7 Days</p>
-                      <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{upcomingEvents.length}</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </Panel>
 
             {/* Upcoming Events */}
             <Panel>
               <SectionHeader title="Next 7 days" icon="ri-calendar-todo-line" />
-              <div className="mt-3 space-y-2">
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {upcomingEvents.slice(0, 8).map((ev) => {
                   const sourceMeta = LEARNER_SOURCE_META[learnerEventSource(ev)];
                   const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                   return (
-                  <div key={ev.id} className="flex items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-2.5 transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer group" onClick={() => setSelectedEvent(ev)}>
+                  <button type="button" aria-haspopup="dialog" key={ev.id} className="w-full text-left flex items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-2.5 transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer group" onClick={() => setShowEventDetails(ev)}>
                     <div className="w-11 shrink-0 rounded-lg bg-background-100 px-2 py-2 text-center">
                       <p className="text-[10px] font-bold text-foreground-500 leading-tight">{ev.date.split(' ')[0]}</p>
                       <p className="text-[9px] font-semibold text-foreground-400 leading-tight">{ev.date.split(' ')[1]}</p>
@@ -2054,7 +2202,7 @@ function LearnerCalendarBody() {
                         <span className="text-xs text-foreground-400">{ev.time}</span>
                       </div>
                     </div>
-                  </div>
+                  </button>
                   );
                 })}
                 {upcomingEvents.length === 0 && (

@@ -114,7 +114,7 @@ export interface SubjectMaterial {
     answers: { question_id: number; question_body: string; learner_answer: unknown; is_correct: boolean }[] };
 }
 
-export async function subjectRequest<T>(url: string, options: RequestInit = {}): Promise<T> {
+export async function subjectRequest<T>(url: string, options: RequestInit & { revalidate?: boolean } = {}): Promise<T> {
   if (!options.method || options.method.toUpperCase() === 'GET') {
     const cacheable = url.includes('/subject-covers/');
     return readLearnerJson<T>(url, { ...options, ttlMs: cacheable ? 30_000 : 0 });
@@ -127,10 +127,10 @@ export async function subjectRequest<T>(url: string, options: RequestInit = {}):
   return body as T;
 }
 
-export async function fetchStudentActivity(kind: LearnerKind, learnerId: string, signal?: AbortSignal): Promise<StudentActivityResponse> {
+export async function fetchStudentActivity(kind: LearnerKind, learnerId: string, signal?: AbortSignal, force = false): Promise<StudentActivityResponse> {
   const payload = await readLearnerJson<StudentActivityResponse>(
     `/learner_api/student-activity/${kind}/${learnerId}/`,
-    { signal, headers: { Accept: 'application/json' }, ttlMs: 30_000 },
+    { signal, headers: { Accept: 'application/json' }, ttlMs: 30_000, force },
   );
   if (!Array.isArray(payload.activities)) {
     invalidateLearnerReads();

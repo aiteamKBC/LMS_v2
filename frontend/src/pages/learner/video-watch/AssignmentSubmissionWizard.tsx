@@ -17,6 +17,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { checkMonthlyAssignment, emptyMonthlyAssignment, MONTHLY_STEPS, type MonthlyAssignment, type AssignmentQualityCheck } from '@/api/monthlyAssignment';
 import { MonthlyAnswerField, MonthlyAssignmentSteps } from './MonthlyAssignmentSteps';
 import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
+import { useLearningStatements } from '@/hooks/useLearningStatements';
 
 export type AssignmentAnswers = {
   assignmentAnswer: string;
@@ -53,6 +54,7 @@ export function AssignmentSubmissionWizard({
   moduleTitle,
   weekTitle,
   plannedOtjh,
+  initialMonth,
   questionHtml,
   questionText,
   ksbMappings,
@@ -81,6 +83,7 @@ export function AssignmentSubmissionWizard({
   moduleTitle: string;
   weekTitle: string;
   plannedOtjh: number | null;
+  initialMonth?: string | null;
   questionHtml?: string | null;
   questionText?: string | null;
   ksbMappings: ComponentKsbMapping[];
@@ -102,7 +105,9 @@ export function AssignmentSubmissionWizard({
 }) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<AssignmentAnswers>(EMPTY_ANSWERS);
-  const [monthly, setMonthly] = useState<MonthlyAssignment>(() => emptyMonthlyAssignment(ksbMappings.map(m => m.code), londonDate().slice(0, 7)));
+  // The Training Plan month seeds a new assignment; a saved draft always wins.
+  const [defaultMonth] = useState(() => initialMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(initialMonth) ? initialMonth : londonDate().slice(0, 7));
+  const [monthly, setMonthly] = useState<MonthlyAssignment>(() => emptyMonthlyAssignment(ksbMappings.map(m => m.code), defaultMonth));
   const [checks, setChecks] = useState<AssignmentQualityCheck[]>([]);
   const [checking, setChecking] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -131,6 +136,20 @@ export function AssignmentSubmissionWizard({
 
   const locked = historicalReadOnly || imported || status === 'submitted_for_tutor_review' || status === 'accepted';
   const readOnly = locked || loadFailed || submittingProgress;
+  const learningGeneration = useLearningStatements(
+    answers.assignmentAnswer, learnerId, kind, componentId, !readOnly && !loading && step === 0,
+    { whatYouLearned: answers.whatYouLearned, understood: monthly.understood, gainedSkills: monthly.gainedSkills },
+    result => {
+      if (!Object.keys(result).length || submittingRef.current) return;
+      setChecks([]);
+      setAnswers(current => ({ ...current, ...(result.whatYouLearned !== undefined ? { whatYouLearned: result.whatYouLearned } : {}) }));
+      setMonthly(current => ({ ...current,
+        ...(result.understood !== undefined ? { understood: result.understood } : {}),
+        ...(result.gainedSkills !== undefined ? { gainedSkills: result.gainedSkills } : {}),
+        presentationReviewed: false, presentationToken: '',
+      }));
+    },
+  );
   lockedRef.current = locked;
   const evidenceNames = evidenceFiles.map(file => file.filename);
   const cleanQuestionHtml = useMemo(
@@ -228,7 +247,7 @@ export function AssignmentSubmissionWizard({
         setStatus(submission.status || '');
         setImported(['imported_legacy', 'classified_legacy'].includes(submission.submissionOrigin || ''));
         if (submission.monthlyAssignment) {
-          const restored = { ...emptyMonthlyAssignment(ksbMappings.map(m => m.code), londonDate().slice(0, 7)), ...submission.monthlyAssignment };
+          const restored = { ...emptyMonthlyAssignment(ksbMappings.map(m => m.code), defaultMonth), ...submission.monthlyAssignment };
           setMonthly(restored);
           setStep(Math.max(0, Math.min(7, Number(restored.step) || 0)));
         }
@@ -251,7 +270,7 @@ export function AssignmentSubmissionWizard({
         }
       });
     return () => { active = false; };
-  }, [kind, learnerId, componentId]);
+  }, [kind, learnerId, componentId, defaultMonth]);
 
   const saveDraft = async (_showSaved = true): Promise<boolean> => {
     if (locked || !loadedRef.current || submittingRef.current) return false;
@@ -302,9 +321,12 @@ export function AssignmentSubmissionWizard({
   }, [locked, draftSaved, savingDraft]);
 
   const runChecks = async (): Promise<boolean> => {
-    setChecking(true); setSaveError('');
+    setChecking(true); setChecks([]); setSaveError('');
     try {
       const result = await checkMonthlyAssignment(payload('draft'));
+      if (!Array.isArray(result) || result.length !== 13 || result.some(check => !check || typeof check.passed !== 'boolean')) {
+        throw new Error('Could not verify all submission requirements. Please run the checks again.');
+      }
       setChecks(result);
       return result.every(check => check.passed);
     } catch (e) { setSaveError(e instanceof Error ? e.message : 'Could not check your submission.'); return false; }
@@ -473,12 +495,24 @@ export function AssignmentSubmissionWizard({
                   )}
                 </div>
               </div>
-              <MonthlyAnswerField title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine />
+              <MonthlyAnswerField title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
+              <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">Write at least 120 words, then click Generate learning statements to draft the three fields below. Review and edit the generated text before submitting.</p>
+              {learningGeneration.status && <div
+                className={`mt-4 flex items-start gap-3 rounded-xl border p-4 sm:p-5 ${learningGeneration.phase === 'error' ? 'border-amber-300 bg-amber-50 text-amber-950' : learningGeneration.phase === 'success' ? 'border-emerald-300 bg-emerald-50 text-emerald-950' : 'border-blue-300 bg-blue-50 text-blue-950'}`}
+                role={learningGeneration.phase === 'error' ? 'alert' : 'status'}
+                aria-live="polite"
+              >
+                <AppIcon className={`mt-0.5 shrink-0 text-xl ${learningGeneration.phase === 'loading' ? 'ri-loader-4-line animate-spin' : learningGeneration.phase === 'success' ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}`} />
+                <div className="min-w-0">
+                  <p className="text-sm font-bold sm:text-base">{learningGeneration.phase === 'loading' ? 'Preparing your learning statements' : learningGeneration.phase === 'success' ? 'Your learning statements have been updated' : 'Learning statements could not be generated'}</p>
+                  <p className="mt-1 text-sm leading-relaxed">{learningGeneration.status}</p>
+                </div>
+              </div>}
             </div>
           )}
 
           {!historicalContent && <div className="mt-5">
-            {historicalReadOnly && step === 6 ? <p className="text-sm text-slate-600">This historical submission keeps its original assessment status. New-form completeness checks do not apply.</p> : <MonthlyAssignmentSteps step={step} data={monthly} onChange={changeMonthly} answers={answers} onAnswer={setAnswer}
+            {historicalReadOnly && step === 6 ? <p className="text-sm text-slate-600">This historical submission keeps its original assessment status. New-form completeness checks do not apply.</p> : <MonthlyAssignmentSteps question={questionHtml || questionText || ''} activityId={componentId} step={step} data={monthly} onChange={changeMonthly} answers={answers} onAnswer={setAnswer}
               kind={kind} learnerId={learnerId} title={title} plannedOtjh={plannedOtjh} mappings={ksbMappings}
               evidenceFiles={evidenceFiles} timeControl={timeControl} disabled={readOnly || submittingRef.current} historical={historicalReadOnly}
               evidenceUploader={historicalReadOnly ? <button type="button" className="text-sm font-semibold text-primary-700" onClick={() => setPreviewOpen(true)}>View original files and assessment reports in Preview</button> : <AssignmentEvidence kind={kind} learnerId={learnerId} componentId={componentId} trainingPlanDetails={evidenceDetails} onUploaded={onEvidenceChanged} readOnly={readOnly} />}

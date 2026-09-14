@@ -5,7 +5,7 @@ import { fetchTrainingPlanContract, type TrainingPlanContract } from '@/api/trai
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 
 export function useDashboardPlan(kind: LearnerKind, id: string) {
-  // These reads are shared with This week / Upcoming, including refreshes.
+  // These reads are shared with This week, including refreshes.
   const week = useLiveLearnerRead(kind, id, true, overviewWeek.read, overviewWeek.peek);
   const schedule = useLiveLearnerRead(kind, id, true, overviewSchedule.read, overviewSchedule.peek);
   const identity = `${kind}:${id}`;

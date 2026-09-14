@@ -2,11 +2,12 @@
 
 import inspect
 import json
-from datetime import date, time
+from datetime import date, datetime, time
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
+from django.db import DatabaseError
 
 from .booking_calendar import booking_calendar_payload, booking_date_restriction
 
@@ -51,6 +52,36 @@ class BookingDateRestrictionTests(SimpleTestCase):
         self.assertIn("Boxing Day", holiday["title"])
         self.assertIn(2026, payload["coveredYears"])
         self.assertEqual(payload["today"], "2026-09-07")
+
+
+class ImportedReviewBookingTests(SimpleTestCase):
+    def test_sync_targets_the_owned_monthly_review_row(self):
+        from . import calendar as module
+
+        cursor = Mock()
+        cursor.rowcount = 1
+        connection = Mock()
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection.cursor.return_value = cursor_context
+        with patch.object(module, "connection", connection):
+            module._mark_imported_review_scheduled("62", 272, date(2026, 11, 26), time(9, 0))
+
+        params = cursor.execute.call_args.args[1]
+        self.assertEqual(params[:4], ["scheduled", datetime(2026, 11, 26, 9, 0), 62, 272])
+
+    def test_sync_fails_when_the_review_is_not_owned_by_the_learner(self):
+        from . import calendar as module
+
+        cursor = Mock()
+        cursor.rowcount = 0
+        connection = Mock()
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection.cursor.return_value = cursor_context
+        with patch.object(module, "connection", connection):
+            with self.assertRaises(DatabaseError):
+                module._mark_imported_review_scheduled("62", 999, date(2026, 11, 26), time(9, 0))
 
 
 class BookingEndpointRestrictionTests(SimpleTestCase):
@@ -145,6 +176,7 @@ class RescheduleEndpointTests(SimpleTestCase):
             meeting_link="https://teams.microsoft.com/l/meetup-join/test",
             graph_web_link="https://outlook.office.com/calendar/item/test",
             graph_event_id="graph-event-1",
+            sync_state="synced",
             notes="",
             review_responses={},
             review_completed_at=None,
@@ -203,6 +235,28 @@ class RescheduleEndpointTests(SimpleTestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn("already has another session", json.loads(response.content)["error"])
         sync.assert_not_called()
+
+    def test_retry_same_time_after_failed_sync_retries_the_existing_event(self):
+        from . import calendar as module
+
+        record = self.scheduled_record()
+        record.scheduled_date = date(2026, 9, 9)
+        record.scheduled_time = time(11, 30)
+        record.duration_minutes = 45
+        record.sync_state = "failed"
+        view = inspect.unwrap(module.learner_calendar_reschedule)
+        with patch.object(module, "SOURCE_MODELS", {"commercial": Mock()}), \
+                patch.object(module, "_learner_booking_record", return_value=record), \
+                patch("learner_api.booking_calendar.timezone.localdate", return_value=date(2026, 9, 7)), \
+                patch("learner_api.calendar_connections.booking_conflicts", return_value=False), \
+                patch("coach_api.views.build_booked_calendar_event", return_value={}), \
+                patch("coach_api.views.persist_calendar_sync_reservation", return_value=record) as persist, \
+                patch("coach_api.views.synchronize_reserved_calendar_event", return_value=(record, "", True)) as sync:
+            response = view(self.request(), "commercial", 101)
+        self.assertEqual(response.status_code, 200)
+        persist.assert_called_once_with(record)
+        sync.assert_called_once_with(record.pk, {})
+        self.assertEqual(record.graph_event_id, "graph-event-1")
 
     def test_booking_lookup_accepts_current_active_users_mirror_id(self):
         from . import calendar as module

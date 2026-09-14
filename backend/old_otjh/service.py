@@ -36,7 +36,7 @@ def normalize(value):
 
 def resolve_record(learner_id, *, links=None, history=None):
     learner = repo.student(learner_id)
-    if not learner:
+    if not learner or 'aptem_id' not in learner:
         identity_error()
     raw = str(learner.get('aptem_id') or '').strip()
     if not raw:
@@ -393,7 +393,9 @@ def sign(learner, month, account, actor_role, image_bytes, expected_digest, requ
                        {**request_metadata, 'file_id': file_id, 'signer_role': role,
                         'file_sha256': hashlib.sha256(image_bytes).hexdigest(), 'snapshot_digest': current_digest,
                         'material_check_performed': False})
-            if role == 'learner':
+            # Admins may sign a month on behalf of its learner, but their image
+            # must not replace the learner's saved profile signature.
+            if role == 'learner' and account.role == 'learner':
                 repo.save_learner_signature(learner, account.display_name or '', image_bytes)
             if state['status'] != 'complete' and (role == 'learner' or state['student_signature']):
                 _finalize_signed_month(learner, month, rows, transition, account, actor_role)

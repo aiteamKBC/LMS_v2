@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchCurriculumKsbSets, type CurriculumKsbSet } from '@/lib/curriculumApi';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 
 type UseCurriculumKsbSetsOptions = {
   all?: boolean;
@@ -20,11 +21,11 @@ export function useCurriculumKsbSets({ all = false, enabled = true }: UseCurricu
   const [error, setError] = useState<string | null>(null);
   const hasLoadedRef = useRef(false);
 
-  const load = useCallback(() => {
+  const load = useCallback((options: { silent?: boolean } = {}) => {
     const controller = new AbortController();
     let mounted = true;
 
-    setLoading(true);
+    if (!options.silent) setLoading(true);
     fetchCurriculumKsbSets(controller.signal, { all })
       .then(result => {
         if (!mounted) return;
@@ -42,7 +43,7 @@ export function useCurriculumKsbSets({ all = false, enabled = true }: UseCurricu
         setError(err instanceof Error ? err.message : 'Unable to load KSB mapping');
       })
       .finally(() => {
-        if (mounted) setLoading(false);
+        if (mounted && !options.silent) setLoading(false);
       });
 
     return () => {
@@ -55,6 +56,10 @@ export function useCurriculumKsbSets({ all = false, enabled = true }: UseCurricu
     if (!enabled || hasLoadedRef.current) return undefined;
     return load();
   }, [enabled, load]);
+
+  // Only once there is something on screen to keep current -- before the first
+  // load this hook is deliberately idle, and a refresh must not be what fetches.
+  useLiveRefresh(() => { load({ silent: true }); }, { enabled: enabled && hasLoadedRef.current });
 
   return { ksbSets, loading, error, reload: () => load() };
 }

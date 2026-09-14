@@ -82,6 +82,13 @@ export interface CoachCalendarEvent {
   reviewCompletedAt?: string | null;
   managerSignedAt?: string | null;
   managerSignedBy?: string;
+  /** The Curriculum review_templates.id this occurrence was generated from. */
+  reviewTemplateId?: string | null;
+  /** Set once this occurrence has been scheduled at least once -- its
+   *  presence is what routes "open review" to the dynamic Curriculum-driven
+   *  form (see reviewInstances.ts) instead of any hard-coded one. */
+  reviewInstanceId?: string | null;
+  occurrenceNumber?: number | null;
 }
 
 interface CoachTimetableResponse {
@@ -508,6 +515,7 @@ export function statusPillClass(status: CoachCalendarStatus) {
   if (status === 'in-progress') return 'bg-primary-100 text-primary-700';
   if (status === 'awaiting-signature') return 'bg-violet-100 text-violet-700';
   if (status === 'cancelled') return 'bg-red-100 text-red-700';
+  if (status === 'not-scheduled') return 'bg-red-100 text-red-700';
   return 'bg-rose-100 text-rose-700';
 }
 

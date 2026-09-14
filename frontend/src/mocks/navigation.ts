@@ -14,24 +14,12 @@ export const learnerDashboardLinks: (SidebarNavItem & { href: string; descriptio
 // LEARNER WORKSPACE — Core learning and progress navigation
 // ============================================================================
 export const learnerNavItems: SidebarNavItem[] = [
-  // Dashboard — the learner workspace's default page (not grouped).
-  { id: 'learner-overview', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/learner', matchPaths: learnerDashboardLinks.map(item => item.href) },
-  // The learner's own enrolment wizard — relevant while onboarding, and stays
-  // available afterwards as a record of what they submitted.
-  { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
+  { id: 'learner-home', label: 'Home', icon: 'ri-home-line', href: '/workspace/learner' },
+  { id: 'learner-overview', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/learner/dashboard', matchPaths: learnerDashboardLinks.map(item => item.href) },
 
-  // Statutory paperwork the learner signs (Apprenticeship Agreement today, the
-  // rest of DOC_TYPES as their generators land).
-  { id: 'learner-compliance-documents', label: 'Compliance documents', icon: 'ri-shield-check-line', href: '/learner/compliance-documents' },
-
-  // Calendar
-  { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
-
-  // Evidence — the learner's own submissions and where each one is in review.
-  { id: 'learner-evidence', label: 'Evidence', icon: 'ri-folder-upload-line', href: '/learner/evidence' },
-
-  // Attendance — single item; reporting an absence is an action inside the page.
-  { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
+  // My Learning — training plan, learning journey and quizzes merged into
+  // Overview/Modules/Quizzes tabs on one page.
+  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
 
   // My Progress
   {
@@ -40,21 +28,35 @@ export const learnerNavItems: SidebarNavItem[] = [
     icon: 'ri-loop-left-line',
     href: '',
     children: [
+      { id: 'learner-monthly-submission', label: 'Monthly Submission', icon: 'ri-file-upload-line', href: '/learner/monthly-submission' },
       { id: 'learner-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/learner/monthly-logs', matchPaths: ['/learner/monthly-cycle'] },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
-      { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-progress-reviews', label: 'Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
+
+  // Attendance — single item; reporting an absence is an action inside the page.
+  { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
+
+  // Evidence — the learner's own submissions and where each one is in review.
+  { id: 'learner-evidence', label: 'Evidence', icon: 'ri-folder-upload-line', href: '/learner/evidence' },
+
+  // Calendar
+  { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
+
+  // The learner's own enrolment wizard — relevant while onboarding, and stays
+  // available afterwards as a record of what they submitted.
+  { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
+
+  // Statutory paperwork the learner signs (Apprenticeship Agreement today, the
+  // rest of DOC_TYPES as their generators land).
+  { id: 'learner-compliance-documents', label: 'Compliance documents', icon: 'ri-shield-check-line', href: '/learner/compliance-documents' },
 
   // Community tools now live on the dashboard. Readiness and Help still use
   // demonstration records, so they are not advertised in learner navigation.
 
   // The learner's database-backed coach conversation.
   { id: 'learner-messages', label: 'Messages', icon: 'ri-message-3-line', href: '/learner/messages' },
-
-  // My Learning — training plan, learning journey and quizzes merged into
-  // Overview/Modules/Quizzes tabs on one page.
-  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
 ];
 
 // ============================================================================

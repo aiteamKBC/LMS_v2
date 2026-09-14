@@ -25,6 +25,7 @@ import {
   apiMe,
   apiResetPassword,
   describePasswordProblem,
+  isOwnLearnerRecord,
   MIN_PASSWORD_LENGTH,
 } from '../auth';
 
@@ -317,5 +318,54 @@ describe('describePasswordProblem', () => {
     // A password this client accepts can still be refused server-side (the
     // common-password list lives there), so the pages must handle a 400.
     expect(describePasswordProblem('password1234')).toBeNull();
+  });
+});
+
+describe('isOwnLearnerRecord', () => {
+  // A staff member or administrator who is ALSO a learner
+  // (login/learner_enrolment.py) reaches their own record from the workspace
+  // switcher at their own learnerRecordId/Kind. The same account can also
+  // browse a DIFFERENT learner's page from the enrolment workspace — that must
+  // read as "not my own record" so the reviewing (read-only, full menu, no
+  // progression gates) behaviour still applies there.
+  it('is true when the account’s own record matches the page', () => {
+    const account = { learnerRecordId: 512, learnerRecordKind: 'commercial' };
+    expect(isOwnLearnerRecord(account, 'commercial', '512')).toBe(true);
+  });
+
+  it('is false when the id does not match — reviewing somebody else', () => {
+    const account = { learnerRecordId: 512, learnerRecordKind: 'commercial' };
+    expect(isOwnLearnerRecord(account, 'commercial', '19')).toBe(false);
+  });
+
+  it('is false when the kind does not match, even with the same id', () => {
+    const account = { learnerRecordId: 512, learnerRecordKind: 'commercial' };
+    expect(isOwnLearnerRecord(account, 'apprenticeship', '512')).toBe(false);
+  });
+
+  it('defaults the record kind to commercial when the server omitted it', () => {
+    const account = { learnerRecordId: 512, learnerRecordKind: null };
+    expect(isOwnLearnerRecord(account, 'commercial', '512')).toBe(true);
+    expect(isOwnLearnerRecord(account, 'apprenticeship', '512')).toBe(false);
+  });
+
+  it('is false for an account with no learner record at all', () => {
+    // The ordinary admin/staff case — nothing they open is ever "their own".
+    expect(isOwnLearnerRecord({ learnerRecordId: null, learnerRecordKind: null }, 'commercial', '512')).toBe(false);
+    expect(isOwnLearnerRecord(null, 'commercial', '512')).toBe(false);
+    expect(isOwnLearnerRecord(undefined, 'commercial', '512')).toBe(false);
+  });
+
+  it('is false when the page has no resolved kind or id yet', () => {
+    // Guards the loading state — before the URL/summary resolves, this must
+    // not accidentally read as "yes, this is mine".
+    const account = { learnerRecordId: 512, learnerRecordKind: 'commercial' };
+    expect(isOwnLearnerRecord(account, undefined, '512')).toBe(false);
+    expect(isOwnLearnerRecord(account, 'commercial', undefined)).toBe(false);
+  });
+
+  it('compares the id as a string, since the URL param is always a string', () => {
+    const account = { learnerRecordId: 512, learnerRecordKind: 'commercial' };
+    expect(isOwnLearnerRecord(account, 'commercial', '512')).toBe(true);
   });
 });

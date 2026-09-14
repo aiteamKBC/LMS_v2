@@ -1,3 +1,4 @@
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { GATEWAY_READINESS_SCORE, getReadinessBand, GATEWAY_BLOCKERS, GATEWAY_COUNTDOWN, GATEWAY_PROGRESS_STATUS } from '@/mocks/gateway-readiness';
 
 export function GatewayHeroSection() {
@@ -6,42 +7,38 @@ export function GatewayHeroSection() {
   return (
     <div className="space-y-4">
       {/* Hero Banner */}
-      <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
-        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden workspace-page-hero" >
+        <div className="absolute inset-0 pointer-events-none overflow-hidden hidden">
           <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
           <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
         </div>
-        <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-          <span className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center shrink-0">
-            <AppIcon className="ri-flag-line text-white text-2xl"></AppIcon>
+        <div className="relative p-6 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center gap-5">
+          <span className="w-14 h-14 rounded-2xl bg-primary-100/60 backdrop-blur-sm flex items-center justify-center shrink-0">
+            <AppIcon className="ri-flag-line text-primary-800 text-2xl"></AppIcon>
           </span>
           <div className="flex-1">
-            <h2 className="text-lg font-heading font-bold text-white mb-1">Gateway Readiness Dashboard</h2>
-            <p className="text-sm text-white/80 leading-relaxed max-w-2xl">
+            <h2 className="text-lg font-heading font-bold text-primary-800 mb-1">Gateway Readiness Dashboard</h2>
+            <p className="text-sm text-foreground-500 leading-relaxed max-w-2xl">
               Your Gateway target date is <strong>October 2027</strong>. You are currently at Week 4 of your programme.
               The Gateway is your formal checkpoint before entering the End-Point Assessment (EPA) phase.
             </p>
           </div>
           {/* Readiness Score */}
           <div className="flex items-center gap-3 shrink-0">
-            <div className="learner-hero-kpi bg-white/15 backdrop-blur-sm rounded-xl px-5 py-4 text-center min-w-[140px]">
-              <p className="text-3xl font-bold text-white">{GATEWAY_READINESS_SCORE}%</p>
-              <p className="text-xs text-white/70 font-medium uppercase tracking-wide mt-1">Gateway Ready</p>
-              <span className={`inline-block mt-2 text-[9px] font-bold px-2 py-0.5 rounded-full ${band.bg} ${band.text}`}>
+            <div className="ui-metric-card coach-metric-card"><WorkspaceMetricContent label="Gateway Ready" value={<>{GATEWAY_READINESS_SCORE}%</>} icon="ri-flag-line" valuePosition="stacked" /><span className={`inline-block mt-2 text-[9px] font-bold px-2 py-0.5 rounded-full ${band.bg} ${band.text}`}>
                 {band.label}
-              </span>
-            </div>
+              </span></div>
           </div>
         </div>
         {/* Readiness Band Bar */}
         <div className="relative px-6 sm:px-8 pb-5">
-          <div className="flex items-center gap-1 text-[9px] font-semibold text-white/60 uppercase tracking-wide mb-1.5">
+          <div className="flex items-center gap-1 text-[9px] font-semibold text-foreground-500 uppercase tracking-wide mb-1.5">
             <span>Getting Started</span>
             <span className="flex-1 text-center">Developing</span>
             <span className="flex-1 text-center">On Track</span>
             <span>Gateway Ready</span>
           </div>
-          <div className="h-2 rounded-full bg-white/10 overflow-hidden flex">
+          <div className="h-2 rounded-full bg-primary-100/60 overflow-hidden flex">
             <div className="flex-1 bg-red-400/60"></div>
             <div className="flex-1 bg-amber-400/60"></div>
             <div className="flex-1 bg-emerald-400/60"></div>

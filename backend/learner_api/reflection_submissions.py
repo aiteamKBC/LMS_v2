@@ -9,7 +9,7 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import learner_self_only, learner_self_or_staff
+from login.permissions import learner_self_or_admin, learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,10 @@ def _learner_profile_ids_for_source(cur, learner_id):
     if not learner_id:
         return []
 
-    ids = {learner_id}
+    cur.execute('select id::text from "Learner".learners where enrolment_id::text = %s', [learner_id])
+    linked = [_text(row[0]) for row in cur.fetchall() if row and _text(row[0])]
+    if linked:
+        return sorted(set(linked))
     email = ""
     cur.execute('select "Email" from enrolment."Created_users" where id::text = %s limit 1', [learner_id])
     row = cur.fetchone()
@@ -80,15 +83,19 @@ def _learner_profile_ids_for_source(cur, learner_id):
             """
             select id::text
               from "Learner".learners
-             where id::text = %s
-                or lower(email) = lower(%s)
+             where enrolment_id is null
+               and lower(email) = lower(%s)
+               and not exists (
+                   select 1 from enrolment."Created_users" other
+                    where other.id::text <> %s and lower(other."Email") = lower(%s)
+               )
             """,
-            [learner_id, email],
+            [email, learner_id, email],
         )
     else:
-        cur.execute('select id::text from "Learner".learners where id::text = %s', [learner_id])
-    ids.update(_text(row[0]) for row in cur.fetchall() if row and _text(row[0]))
-    return sorted(ids)
+        cur.execute('select id::text from "Learner".learners where id::text = %s and enrolment_id is null', [learner_id])
+    ids = {_text(row[0]) for row in cur.fetchall() if row and _text(row[0])}
+    return sorted(ids) if len(ids) == 1 else []
 
 
 def _reflection_lineage(learner_id, activity_id):
@@ -152,7 +159,7 @@ def create_reflection_submission(request):
     return _submit_reflection(request)
 
 
-@learner_self_only(body_field="learnerId")
+@learner_self_or_admin(body_field="learnerId")
 def _submit_reflection(request):
     if request.method != "POST":
         return _error("Method not allowed.", 405)

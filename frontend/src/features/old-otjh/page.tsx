@@ -22,6 +22,7 @@ import { MonthBadge, RecordBadge, RecordProgress, SignatureChip } from './Record
 import styles from './design.module.css';
 import journal from './journal.module.css';
 import shell from './shell.module.css';
+import { useRecordHref } from './recordNavigation';
 
 const btnPrimary = styles.primaryButton;
 const btnSecondary = styles.secondaryButton;
@@ -32,13 +33,15 @@ function Shell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { aptemId, month } = useParams<{ aptemId: string; month: string }>();
+  const recordHref = useRecordHref();
+  const learnerPreview = Boolean(aptemId) && new URLSearchParams(location.search).get('workspace') === 'learner';
   const student = auth.account?.role === 'learner';
   const monitor = auth.account?.access === 'record-monitor';
-  const backFallback = month ? (aptemId ? `/old-otjh/coach/${aptemId}/months` : '/old-otjh/months')
-    : student ? '/old-otjh' : monitor ? '/old-otjh/monitor' : aptemId ? '/old-otjh/coach' : '/workspace/coach';
-  if (student) return <div className={`${styles.scope} ${shell.shell}`}>
+  const backFallback = month ? recordHref(aptemId ? `/old-otjh/coach/${aptemId}/months` : '/old-otjh/months')
+    : learnerPreview ? '/workspace/learner' : student ? '/old-otjh' : monitor ? '/old-otjh/monitor' : aptemId ? '/old-otjh/coach' : '/workspace/coach';
+  if (student || learnerPreview) return <div className={`${styles.scope} ${shell.shell}`}>
     <header className={shell.header}>
-      <Link to="/old-otjh" className={shell.brand} aria-label="My learning">
+      <Link to={learnerPreview ? '/workspace/learner' : '/old-otjh'} className={shell.brand} aria-label="My learning">
         <img src="/assets/kbc-logo.png" alt="Kent Business College" className={shell.logo} />
         <div className={shell.brandText}>
           <p>Training &amp; Development Reports</p>
@@ -146,7 +149,7 @@ function Portal() {
       if (result.error) throw result.error;
       const fresh = result.data;
       if (!fresh) throw new Error('The record could not be loaded.');
-      if (fresh.can_access_lms) navigate('/workspace/learner');
+      if (fresh.can_access_lms) navigate('/learner/home');
       else setDialogOpen(true);
     } catch (error) { setCheckError(error instanceof Error ? error.message : 'The record could not be loaded.'); setDialogOpen(true); }
     finally { setChecking(false); }
@@ -167,8 +170,10 @@ function Portal() {
           {query.data && <RecordBadge>{query.data.completed_months ?? 0}/{query.data.total_months ?? 0} months</RecordBadge>}</div>
         <h2 className="mt-1 text-lg font-heading font-semibold">Full monthly learning record</h2><p className="text-[13px] text-foreground-500">Review all your months, accepted hours and signatures.</p>
         <p className={styles.recordPeriod}><AppIcon className="ri-calendar-line" />Sep 2024 – Aug 2026</p>
-        <Link className={`${btnSecondary} mt-2`} to="/old-otjh/months">Review previous record<AppIcon className="ri-arrow-right-line" /></Link>
-        {query.data?.months[0] && <Link aria-label="Review first month" className={`${btnSecondary} mt-2`} to={`/old-otjh/months/${query.data.months[0].month}`}>View first month<AppIcon className="ri-arrow-right-line" /></Link>}
+        <div className={styles.recordsActions}>
+          <Link className={btnSecondary} to="/old-otjh/months">Review previous record<AppIcon className="ri-arrow-right-line" /></Link>
+          {query.data?.months[0] && <Link aria-label="Review first month" className={btnSecondary} to={`/old-otjh/months/${query.data.months[0].month}`}>View first month<AppIcon className="ri-arrow-right-line" /></Link>}
+        </div>
       </section>
     </div>
     {dialogOpen && (query.data || checkError || query.error) && <TransitionDialog returnFocusRef={lmsButton} summary={query.data}
@@ -181,6 +186,7 @@ function Portal() {
 }
 
 function MonthList({ aptemId }: { aptemId?: number }) {
+  const recordHref = useRecordHref();
   const query = useRecordSummary(aptemId, true);
   const { auth } = useAuth();
   const client = useQueryClient();
@@ -281,10 +287,10 @@ function MonthList({ aptemId }: { aptemId?: number }) {
       </dl>
       <div className={styles.signatureChips}><SignatureChip signed={Boolean(month.student_signature)} label="Learner signature" /><SignatureChip signed={Boolean(month.coach_signature)} label="Coach signature" /></div>
       <div className={styles.monthCardFooter}><MonthBadge month={month} />
-        <Link className={styles.monthReviewLink} to={`${base}/${month.month}`}>Review month<AppIcon className="ri-arrow-right-line" /></Link></div>
+        <Link className={styles.monthReviewLink} to={recordHref(`${base}/${month.month}`)}>Review month<AppIcon className="ri-arrow-right-line" /></Link></div>
     </section>)}</div>}
     </section>)}</div>
-    {query.data.can_access_lms && aptemId === undefined && <Link className={btnPrimary} to="/workspace/learner">Continue to new LMS</Link>}
+    {query.data.can_access_lms && aptemId === undefined && <Link className={btnPrimary} to="/learner/home">Continue to new LMS</Link>}
     {auth.account?.access === 'super-admin' && aptemId !== undefined && <Panel className="space-y-3">
       <h2 className="font-semibold">Review months</h2><p className="text-sm text-foreground-500">New source months: {query.data.additional_source_months?.join(', ') || 'None'}</p>
       <input className={inputClass} aria-label="Reason for updating review months" value={reason} onChange={e => setReason(e.target.value)} placeholder="Reason for updating the required months" />
@@ -350,6 +356,14 @@ function CoachList() {
   </>;
 }
 
+function OwnMonthlyRecord({ month }: { month?: string }) {
+  const query = useRecordSummary();
+  if (query.isPending) return <MonthListSkeleton />;
+  if (query.error) return <ErrorState error={query.error} retry={query.retryStart} />;
+  if (query.data?.is_legacy !== true) return <Navigate to="/learner/home" replace />;
+  return month ? <MonthReport key={month} month={month} /> : <MonthList />;
+}
+
 export default function OldOtjhPage() {
   const { auth } = useAuth();
   const { aptemId, month } = useParams<{ aptemId: string; month: string }>();
@@ -357,8 +371,14 @@ export default function OldOtjhPage() {
   const coachPath = location.pathname.startsWith('/old-otjh/coach');
   const student = auth.account?.role === 'learner';
   const monitor = auth.account?.access === 'record-monitor';
+  // Resolve learners before any staff/monitor branch, including direct URLs.
+  // No route parameter can select another person's record for a learner.
+  if (student) {
+    if (coachPath || location.pathname.replace(/\/$/, '') === '/old-otjh/monitor') return <Navigate to="/old-otjh/months" replace />;
+    return <Shell>{month || location.pathname.replace(/\/$/, '').endsWith('/months')
+      ? <OwnMonthlyRecord month={month} /> : <Portal />}</Shell>;
+  }
   if (location.pathname === '/old-otjh/monitor') return <Shell><MonitoringDashboard /></Shell>;
-  if (student && coachPath) return <Navigate to="/old-otjh" replace />;
   if (monitor && (!coachPath || !aptemId)) return <Navigate to="/old-otjh/monitor" replace />;
   if (!student && !coachPath) return <Navigate to="/old-otjh/coach" replace />;
   const selectedId = coachPath && aptemId ? Number(aptemId) : undefined;

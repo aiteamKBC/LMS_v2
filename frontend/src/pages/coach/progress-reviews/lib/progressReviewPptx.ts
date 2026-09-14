@@ -1,3 +1,4 @@
+import { reviewDeckMetadata } from './reviewDeckMetadata';
 import JSZip from 'jszip';
 import type {
   ProgressReviewSlide,
@@ -71,18 +72,13 @@ function shapeXml(shape: Shape, index: number) {
 }
 
 function titleShapes(deck: ProgressReviewSlidesDeck, slide: ProgressReviewSlide): Shape[] {
-  const programme = slide.type === 'cover'
-    ? safeText(slide.details.find(detail => detail.label.toLowerCase() === 'programme')?.value, 'Marketing Executive Level 4 Apprenticeship')
-    : 'Marketing Executive Level 4 Apprenticeship';
-  const employer = slide.type === 'cover'
-    ? safeText(slide.details.find(detail => detail.label.toLowerCase() === 'employer')?.value, 'KBC LearningOS')
-    : 'KBC LearningOS';
+  const { programme, employer } = reviewDeckMetadata(deck);
   return [
     { x: 0, y: 0, w: SLIDE_W, h: inches(0.55), fill: '24103F' },
     { x: M, y: inches(0.18), w: inches(7.5), h: inches(0.2), text: programme.toUpperCase(), fontSize: 7, bold: true, color: 'EDE9FE' },
     { x: inches(9.7), y: inches(0.18), w: inches(2.8), h: inches(0.2), text: 'PROGRESS REVIEW', fontSize: 7, bold: true, color: 'EDE9FE', align: 'ctr' },
     { x: M, y: inches(0.82), w: inches(8.9), h: inches(0.32), text: slide.title.toUpperCase(), fontSize: 8, bold: true, color: '6D28D9' },
-    { x: M, y: inches(1.15), w: inches(8.9), h: inches(0.38), text: 'heading' in slide ? slide.heading : slide.title, fontSize: 17, bold: true, color: '111827' },
+    { x: M, y: inches(1.15), w: inches(8.9), h: inches(0.38), text: slide.heading, fontSize: 17, bold: true, color: '111827' },
     { x: M, y: inches(1.55), w: inches(8.9), h: inches(0.38), text: 'subheading' in slide ? slide.subheading : '', fontSize: 9, color: '4B5563' },
     { x: 0, y: inches(7.08), w: SLIDE_W, h: inches(0.42), fill: 'F8FAFC', stroke: 'E5E7EB' },
     { x: M, y: inches(7.22), w: inches(7.8), h: inches(0.16), text: employer.toUpperCase(), fontSize: 6, bold: true, color: '64748B' },

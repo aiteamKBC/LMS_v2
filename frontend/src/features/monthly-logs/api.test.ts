@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readLearnerJson } from '@/api/learnerRead';
 import { clearCoachViewAs, setCoachViewAs } from '@/lib/coachViewAs';
-import { getLogContent, getLogMonth, getLogSummary, signLogMonth } from './api';
+import { completeLogMonth, getLogContent, getLogMonth, getLogSummary, signLogMonth } from './api';
 
 vi.mock('@/api/learnerRead', () => ({ readLearnerJson: vi.fn(), invalidateLearnerReads: vi.fn() }));
 
@@ -36,6 +36,14 @@ describe('monthly log workspace scope', () => {
     vi.stubGlobal('fetch', fetcher);
     await signLogMonth('7', '2026-09', 'reviewed', new Blob(['signature']), 'draw', 'token', 'learner');
     expect(fetcher).toHaveBeenCalledWith('/learner_api/monthly-logs/7/2026-09/sign/?perspective=learner',
+      expect.objectContaining({ method: 'POST', credentials: 'include', headers: { 'X-CSRFToken': 'token' } }));
+  });
+
+  it('completes the explicitly selected learner month without a stale coach scope', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ month: '2026-08', source: 'legacy' })));
+    vi.stubGlobal('fetch', fetcher);
+    await completeLogMonth('7', '2026-08', 'token', 'learner');
+    expect(fetcher).toHaveBeenCalledWith('/learner_api/monthly-logs/7/2026-08/complete/?perspective=learner',
       expect.objectContaining({ method: 'POST', credentials: 'include', headers: { 'X-CSRFToken': 'token' } }));
   });
 });

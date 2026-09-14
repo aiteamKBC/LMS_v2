@@ -118,13 +118,20 @@ describe('curriculum request layer', () => {
   });
 
   it('does not let a failed response become a shared or cached result', async () => {
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
+    // A 500 is transient, so the read is attempted three times in all before it
+    // gives up -- see RETRY_ATTEMPTS.
+    const serverError = { ok: false, status: 500, json: async () => ({}) };
+    fetchMock
+      .mockResolvedValueOnce(serverError)
+      .mockResolvedValueOnce(serverError)
+      .mockResolvedValueOnce(serverError);
     await expect(fetchCurriculumModules()).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
 
     // The failed entry must be gone, so the next call actually refetches.
     fetchMock.mockResolvedValueOnce(collection([{ id: 'm1' }]));
     await expect(fetchCurriculumModules()).resolves.toEqual([{ id: 'm1' }]);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('lets an aborted caller leave a completed shared GET in cache', async () => {

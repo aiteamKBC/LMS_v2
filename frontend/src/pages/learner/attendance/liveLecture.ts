@@ -1,0 +1,56 @@
+import { useEffect, useState } from 'react';
+import type { AttendanceLecture } from '@/api/attendanceLectures';
+
+export function lectureToday(now: number, timeZone = 'Europe/London'): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+}
+
+export function featuredLecture(lectures: AttendanceLecture[], now: number, timeZone?: string): AttendanceLecture | null {
+  const today = lectureToday(now, timeZone);
+  const candidates = lectures.filter(row => row.date === today ||
+    (row.date > today && row.status === 'upcoming'));
+  const priority = (row: AttendanceLecture) => row.date !== today ? 4 :
+    ['completed', 'late'].includes(row.status) ? 3 : isLectureLive(row, now) ? 0 :
+      !row.endsAt || Date.parse(row.endsAt) > now ? 1 : 2;
+  return candidates.sort((a, b) => priority(a) - priority(b) ||
+    `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`) || a.id.localeCompare(b.id))[0] || null;
+}
+
+export function isLectureLive(lecture: AttendanceLecture, now: number): boolean {
+  const start = Date.parse(lecture.startsAt || '');
+  const end = Date.parse(lecture.endsAt || '');
+  return Number.isFinite(start) && Number.isFinite(end) && start <= now && now < end;
+}
+
+export function lectureJoinUrl(lecture: AttendanceLecture): string | null {
+  try {
+    const url = new URL(lecture.joinUrl || '');
+    return ['https:', 'http:'].includes(url.protocol) ? url.href : null;
+  } catch { return null; }
+}
+
+/** Change the action at a lecture boundary even while the API response is cached. */
+export function useLectureClock(lectures: AttendanceLecture[]): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      clearTimeout(timer);
+      const current = Date.now();
+      setNow(current);
+      const next = lectures.flatMap(lecture => [Date.parse(lecture.startsAt || ''), Date.parse(lecture.endsAt || '')])
+        .filter(boundary => boundary > current);
+      // Periodically account for changes to the system clock as well as exact boundaries.
+      timer = setTimeout(tick, Math.min(60_000, Math.max(1, Math.min(...next) - current)));
+    };
+    tick();
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('focus', tick);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [lectures]);
+  return now;
+}

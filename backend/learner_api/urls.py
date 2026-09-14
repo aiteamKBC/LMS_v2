@@ -1,9 +1,15 @@
+from . import presentation_design
+from . import monthly_reflection_ai
+from . import ksb_generation
 from django.urls import path
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
 from .overview_week import overview_week
+from .rewards_summary import learner_rewards_summary
 from .profile_photo import learner_profile_photo
 from .attendance_lectures import attendance_lectures
+from .attendance_confirmation import confirm_attendance
+from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, review_attendance_mode
 
 from . import certificates, monthly_assignment, legacy_assignments, review_history
@@ -16,8 +22,12 @@ urlpatterns = [
     path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),
     path('monthly-logs/<int:learner_id>/<str:month>/', monthly_logs.detail, name='monthly-log-detail'),
     path('monthly-logs/<int:learner_id>/<str:month>/sign/', monthly_logs.sign, name='monthly-log-sign'),
+    path('monthly-logs/<int:learner_id>/<str:month>/complete/', monthly_logs.complete, name='monthly-log-complete'),
     path('monthly-logs/<int:learner_id>/<str:month>/activities/<int:row_id>/', monthly_logs.content, name='monthly-log-content'),
     path('attendance/<str:kind>/<int:learner_id>/lectures/', attendance_lectures, name='attendance-lectures'),
+    path('attendance/<str:kind>/<int:learner_id>/attend/', confirm_attendance, name='confirm-attendance'),
+    path('meeting-attendance/<str:kind>/<int:learner_id>/', meeting_attendance, name='meeting-attendance'),
+    path('meeting-attendance/<str:kind>/<int:learner_id>/attend/', confirm_meeting_attendance, name='confirm-meeting-attendance'),
     path('attendance/<str:kind>/<int:learner_id>/mode/', attendance_mode, name='attendance-mode'),
     path('attendance-mode/review/', review_attendance_mode, name='attendance-mode-review'),
     path('profile-photo/<str:kind>/<int:pk>/', learner_profile_photo, name='learner-profile-photo'),
@@ -107,6 +117,7 @@ urlpatterns = [
     path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),
     path("metrics/<str:kind>/<int:pk>/", learner_metrics, name="learner-metrics"),
     path("overview-week/<str:kind>/<int:pk>/", overview_week, name="learner-overview-week"),
+    path("rewards-summary/<str:kind>/<int:pk>/", learner_rewards_summary, name="learner-rewards-summary"),
     path("student-activity/<str:kind>/<int:pk>/", student_activity.student_activity, name="student-activity"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/", student_activity.start_subject_attempt, name="subject-attempt-start"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/<uuid:attempt_id>/", student_activity.submit_subject_attempt, name="subject-attempt-submit"),
@@ -146,6 +157,9 @@ urlpatterns = [
     # British-English voice reflection transcription, moderation and learning-scope check
     path("reflection/transcribe/", reflection_ai.transcribe_reflection, name="reflection-transcribe"),
     path("reflection/proofread/", reflection_ai.proofread_reflection, name="reflection-proofread"),
+    path("reflection/ksb-explanations/", ksb_generation.generate_ksb_explanations, name="ksb-explanations"),
+    path("reflection/monthly-reflections/", monthly_reflection_ai.generate_monthly_reflections, name="monthly-reflections"),
+    path("reflection/learning-statements/", reflection_ai.generate_learning_statements, name="learning-statements"),
     path("reflection/submissions/", reflection_submissions.create_reflection_submission, name="reflection-submission-create"),
     # The learner's end-of-month report: GET lists the months already submitted
     # (or one month with ?month=YYYY-MM), POST submits/updates a month.
@@ -159,6 +173,7 @@ urlpatterns = [
     path("monthly-reports/<str:kind>/<int:pk>/", monthly_reports.monthly_reports, name="learner-monthly-reports"),
     path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
     path("reflection/assignment/legacy-document/<int:evidence_id>/", legacy_assignments.open_legacy_assignment_document, name="legacy-assignment-document"),
+    path("reflection/assignment/presentation-design/", presentation_design.upload_design, name="presentation-design"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
@@ -170,6 +185,8 @@ urlpatterns = [
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/artifacts/", calendar.learner_calendar_event_artifacts, name="learner-calendar-event-artifacts"),
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content/", calendar.learner_calendar_event_artifact_content, name="learner-calendar-event-artifact-content"),
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/sign/", calendar.learner_progress_review_sign, name="learner-progress-review-sign"),
+    # Read-only: the Curriculum Review form behind a scheduled occurrence.
+    path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/review/", calendar.learner_calendar_event_review, name="learner-calendar-event-review"),
     # Declared before the <path:event_key> route below, which would otherwise
     # never be reached for the bare list URL.
     path("reviews/<str:kind>/<int:pk>/", review_form.enrolment_review_documents, name="enrolment-review-documents"),

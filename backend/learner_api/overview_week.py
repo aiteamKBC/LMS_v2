@@ -9,6 +9,7 @@ from django.views.decorators.http import require_GET
 
 from login.permissions import learner_self_or_staff
 from audit_api.last_audit_ledger_views import _is_completed
+from .builder_activity_dates import read_builder_activity_dates
 from .dashboard_metrics import point_codes, ratio
 from .progress_rules import progress_counts_as_achieved
 from .learner_detail import SOURCE_MODELS
@@ -37,22 +38,6 @@ def progress_day(value):
         return None
 
 
-def focus_latest_module(summary, latest):
-    """Keep the newest assigned Builder module visible before its first lesson."""
-    if not latest:
-        return {**summary, 'latestModuleId': None}
-    module_id, title = latest
-    existing = next((module for module in summary['modules'] if module_id in module['moduleIds']), None)
-    if existing:
-        return {**summary, 'latestModuleId': existing['id'], 'modules': [
-            {**module, 'title': clean_text(title) or module['title']} if module['id'] == existing['id'] else module
-            for module in summary['modules']]}
-    placeholder = {'id': f'current:{module_id}', 'title': clean_text(title) or 'Learning activities',
-                   'moduleIds': [module_id], 'weekLabels': [], 'completed': 0, 'total': 0,
-                   'percent': None, 'ksbCodes': [], 'ksbMappingMissing': False}
-    return {**summary, 'modules': [placeholder, *summary['modules']], 'latestModuleId': placeholder['id']}
-
-
 def merged_activities(historical, native, progress, attempts, links):
     """Merge only explicit identities, using the same completion rule as the cards."""
     achieved = [row for row in progress if progress_counts_as_achieved(row.get('kind'), row.get('passed'))]
@@ -71,6 +56,7 @@ def merged_activities(historical, native, progress, attempts, links):
         done = str(row['id']) in component_ids or bool(row.get('quiz_id') and str(row['quiz_id']) in quiz_ids)
         if previous:
             previous['completed'] |= done
+            previous.setdefault('component_ids', []).append(str(row['id']))
             # A mapped Builder activity can be rescheduled after the export.
             if row.get('date') and not row.get('date_needs_review'):
                 for field in ('date', 'week_start', 'week_end', 'section_title', 'date_needs_review'):
@@ -89,17 +75,46 @@ def merged_activities(historical, native, progress, attempts, links):
     return activities.values()
 
 
-def summarise_plan(activities, assigned):
-    """Monthly cards need counts and dates, never lesson bodies or attempts."""
+def direct_hours_by_subject(native, progress, links):
+    """Attribute recorded time by component/quiz identity, never by a module title."""
+    components, quizzes = {}, {}
+    for row in native:
+        placement = links.get(str(row['id']))
+        subject = f'legacy:{placement[0]}' if placement else f'current:{row["module_id"]}'
+        components[str(row['id'])] = subject
+        if row.get('quiz_id'):
+            quizzes.setdefault(str(row['quiz_id']), set()).add(subject)
+    grouped = {}
+    for entry in progress:
+        subject = components.get(str(entry.get('componentId')))
+        candidates = quizzes.get(str(entry.get('quizId')), set())
+        if not subject and len(candidates) == 1:
+            subject = next(iter(candidates))
+        if subject:
+            grouped.setdefault(subject, []).append(entry)
+    return {subject: round(_direct_progress_otjh(entries), 4) for subject, entries in grouped.items()}
+
+
+def summarise_plan(activities, assigned, direct_hours=None):
+    """Plan cards need counts, dates and mapped KSBs, never lesson bodies or attempts."""
     subjects = {}
     for row in activities:
         subject = subjects.setdefault(row['subject'], {
             'id': row['subject'], 'title': clean_text(row.get('module_title')) or 'Learning activities',
             'source': 'legacy' if row['subject'].startswith('legacy:') else 'current',
             'total': 0, 'completed': 0, 'dates': set(), 'moduleIds': set(), 'sessionTitles': [],
+            'activityCounts': {}, 'ksbCodes': set(), 'ksbMappingMissing': False,
+            'ksbProgress': {'completed': 0, 'total': 0},
         })
         subject['total'] += 1
         subject['completed'] += bool(row['completed'])
+        category = clean_text(row.get('type') or row.get('category')) or 'activity'
+        subject['activityCounts'][category] = subject['activityCounts'].get(category, 0) + 1
+        codes = point_codes(row.get('ksb_mappings')) if row.get('ksb_mappings') is not None else None
+        subject['ksbCodes'].update(codes or [])
+        subject['ksbMappingMissing'] |= codes is None
+        subject['ksbProgress']['total'] += len(codes or [])
+        subject['ksbProgress']['completed'] += len(codes or []) if row['completed'] else 0
         if row.get('module_id'):
             subject['moduleIds'].add(row['module_id'])
         day = as_date(row.get('date'))
@@ -113,8 +128,13 @@ def summarise_plan(activities, assigned):
             subjects[f'current:{module_id}'] = {
                 'id': f'current:{module_id}', 'title': clean_text(title), 'source': 'current',
                 'total': 0, 'completed': 0, 'dates': set(), 'moduleIds': {module_id}, 'sessionTitles': [],
+                'activityCounts': {}, 'ksbCodes': set(), 'ksbMappingMissing': False,
+                'ksbProgress': {'completed': 0, 'total': 0},
             }
-    return [{**subject, 'dates': sorted(subject['dates']), 'moduleIds': sorted(subject['moduleIds'])}
+    return [{**subject, 'dates': sorted(subject['dates']), 'moduleIds': sorted(subject['moduleIds']),
+             'ksbCodes': sorted(subject['ksbCodes']),
+             'ksbProgress': None if subject['ksbMappingMissing'] else subject['ksbProgress'],
+             'directHours': (direct_hours or {}).get(subject['id'], 0) if direct_hours is not None else None}
             for subject in sorted(subjects.values(), key=lambda item: (item['title'].casefold(), item['id']))]
 
 
@@ -165,7 +185,7 @@ def summarise_week(historical, native, progress, attempts, links, start, end):
             'missingExpectedHours': sum(value is None for value in expected.values())}
 
 
-def read_week(source, now=None):
+def read_week(source, now=None, *, home_kind=None):
     start, end = week_bounds(now)
     migrated = student_activity_available(source.aptem_id)
     historical, attempts, links = [], set(), {}
@@ -175,16 +195,8 @@ def read_week(source, now=None):
         cur.execute(CURRENT_SUBJECTS_SQL, [source.pk])
         assigned = cur.fetchall()
         module_ids = [row[0] for row in assigned]
-        # Eligibility comes from this learner's plan. A later title/schedule edit
-        # must not turn an older module into their newest module.
-        cur.execute('''SELECT module_catalogue_id,title FROM curriculum.modules
-            WHERE module_catalogue_id=ANY(%s)
-            ORDER BY created_at DESC NULLS LAST,module_catalogue_id DESC LIMIT 1''', [module_ids])
-        latest_module = cur.fetchone()
         cur.execute('''SELECT c.id,c.module_catalogue_id AS module_id,m.title AS module_title,c.title,c.type,c.expected_otjh AS expected_hours,
             w.title AS section_title,c.settings_json->>'dueTiming' AS due_timing,
-            c.settings_json->>'sessionDate' AS session_date,
-            coalesce(c.settings_json->>'sessionDateTimeUtc',c.settings_json->>'teamsStartDateTimeUtc') AS session_instant,
             coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code)) FROM curriculum.ksb_mappings k
                  WHERE k.component_id=c.id AND (k.deleted_at IS NULL OR k.deleted_via_parent IS NOT NULL)), '[]'::jsonb) AS ksb_mappings,
@@ -195,13 +207,11 @@ def read_week(source, now=None):
             WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)
               AND (w.id IS NULL OR w.deleted_at IS NULL OR w.deleted_via_parent IS NOT NULL)''', [module_ids])
         native = rows(cur)
+        # Match My Learning's delivery calendar, including undated lesson titles,
+        # empty teaching weeks and cohort holidays.
+        dates = read_builder_activity_dates(cur, module_ids)
         for row in native:
-            schedule = activity_schedule(row['title'], section_title=row['section_title'])
-            if row['type'] == 'live_session':
-                day = progress_day(row['session_instant']) or as_date(row['session_date'])
-                if day:
-                    schedule = activity_schedule(day.isoformat())
-            row.update(schedule)
+            row.update(dates.get(str(row['id'])) or activity_schedule(row['title'], section_title=row['section_title']))
         if migrated:
             aptem_id = int(str(source.aptem_id).strip())
             cur.execute('SELECT learner_email FROM "Last_audit".learners WHERE aptem_id=%s', [aptem_id])
@@ -209,6 +219,7 @@ def read_week(source, now=None):
             if len(identities) != 1 or not source.email or str(identities[0][0] or '').strip().casefold() != source.email.strip().casefold():
                 raise LookupError('Previous learning could not be linked to this learner.')
             cur.execute('''SELECT gl.group_id,ga.activity_id,g.group_name AS module_title,a.title,
+                coalesce(a.activity_type,r.activity_type) AS type,
                 r.status,r.video_completed,r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
                 CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
                 CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
@@ -258,11 +269,17 @@ def read_week(source, now=None):
             old_hours = number(raw_hours)
     weekly_progress = [row for row in progress if (day := progress_day(row.get('submittedAt'))) and start <= day <= end]
     new_hours = _direct_progress_otjh(weekly_progress)
-    return {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(), 'timezone': 'Europe/London',
-            **focus_latest_module(summarise_week(historical, native, progress, attempts, links, start, end), latest_module),
-            'planSubjects': summarise_plan(merged_activities(historical, native, progress, attempts, links), assigned),
+    result = {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(), 'timezone': 'Europe/London',
+            **summarise_week(historical, native, progress, attempts, links, start, end),
+            'planSubjects': summarise_plan(merged_activities(historical, native, progress, attempts, links), assigned,
+                                          direct_hours_by_subject(native, progress, links)),
             'otjh': {'actual': round(old_hours + new_hours, 4) if old_hours is not None and not undated_hours else None,
                      'historical': old_hours, 'new': round(new_hours, 4), 'undatedHistoricalRows': undated_hours}}
+    if home_kind:
+        from .home_progress import read_home_progress
+        result['homeProgress'] = read_home_progress(source, home_kind,
+            merged_activities(historical, native, progress, attempts, links), native, progress, assigned, end)
+    return result
 
 
 
@@ -273,8 +290,12 @@ def overview_week(request, kind, pk):
     if model is None:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     try:
-        source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
-        payload = read_week(source)
+        home = request.GET.get('section') == 'home'
+        fields = ['id', 'aptem_id', 'email']
+        if home:
+            fields.extend(['username', 'employer_id', 'start_date', 'end_date', 'programme', 'cohort'])
+        source = model.all_learners.only(*fields).get(pk=pk)
+        payload = read_week(source, home_kind=kind) if home else read_week(source)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except LookupError as error:

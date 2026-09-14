@@ -1,6 +1,6 @@
 import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
-import type { LearnerAccessGate } from '@/utils/learnerAccessGate';
+import type { LearnerAccessGate, LearnerLearningAccess } from '@/utils/learnerAccessGate';
 // ============================================================================
 // Learner-detail API client.
 // Talks to the Django backend at /learner_api (proxied to :8000 by Vite in dev).
@@ -199,12 +199,13 @@ export interface LearnerDetail {
    * `blocked: false` when nothing is holding them back.
    */
   accessGate?: LearnerAccessGate;
+  learningAccess?: LearnerLearningAccess;
 }
 
 export type LearnerSummary = Pick<LearnerDetail,
   'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' |
   'cohort' | 'group' | 'employer' | 'employerId' | 'learnerType' | 'isActive'
-> & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'programmeEndDate' | 'accessGate'>;
+> & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'programmeEndDate' | 'accessGate' | 'learningAccess'>;
 
 /** Small identity response for pages that only need the learner heading. */
 export function fetchLearnerSummary(kind: LearnerKind, id: string, force = false): Promise<LearnerSummary> {
@@ -291,10 +292,10 @@ export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): v
 }
 
 /** Share the expensive workspace payload between learner pages. */
-export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; componentId?: string } = {}): Promise<LearnerDetail> {
+export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean; componentId?: string } = {}): Promise<LearnerDetail> {
   if (options.force) invalidateLearnerDetailCache(kind, id);
   if (options.componentId) return componentResource.read(JSON.stringify([kind, id, options.componentId]));
-  return detailResource.read(`${kind}:${id}`);
+  return detailResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
 }
 
 export function peekLearnerSummary(kind: LearnerKind, id: string): LearnerSummary | undefined {

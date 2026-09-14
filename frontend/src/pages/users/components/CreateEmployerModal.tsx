@@ -333,8 +333,8 @@ export function CreateEmployerModal({
         // outcome of creating somebody: an administrator sends the invitation
         // from Accounts once the record has been checked.
         success(
-          label,
-          `${created} Send their invitation from Accounts in the Super Admin workspace when you are ready.`,
+          'Employer created',
+          `${saved.name} was saved. Send their invitation from Accounts in the Super Admin workspace when you are ready.`,
         );
       } else if (!invite.invited) {
         success('Employer created', `${saved.name} was saved.`);

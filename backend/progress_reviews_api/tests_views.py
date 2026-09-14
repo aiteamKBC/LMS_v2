@@ -41,7 +41,13 @@ class ProgrammeWindowTests(SimpleTestCase):
 
     @patch("learner_api.identity.learner_profile_for_source")
     @patch("learner_api.models.EnrolmentUser")
-    def test_profile_dates_take_priority_over_enrolment_user_dates(self, mock_model, mock_profile_lookup):
+    def test_the_learners_own_start_date_beats_the_cohort_stamped_profile(self, mock_model, mock_profile_lookup):
+        """enrolment."Created_users"."Start_date" is the learner's OWN date;
+        LearnerProfile.start_date is the profile mirror, which
+        active_users.mirror_learner_placement stamps with the COHORT window on
+        every placement edit. Review periods must anchor on the same date the
+        coach calendar anchors its Progress Review occurrences on, or the pack
+        covers a window the review it belongs to never had."""
         source = MagicMock(start_date="2020-01-01", end_date="2020-12-31", learner_type="apprenticeship")
         mock_model.DoesNotExist = Exception
         mock_model.all_learners.get.return_value = source
@@ -49,10 +55,24 @@ class ProgrammeWindowTests(SimpleTestCase):
 
         start, end, kind, resolved_source = _programme_window(1)
 
-        self.assertEqual(start, date(2025, 1, 1))
+        self.assertEqual(start, date(2020, 1, 1))
+        # End date keeps its existing preference: the profile's real DateField
+        # first, since that is the delivery window the learner is measured to.
         self.assertEqual(end, date(2026, 6, 30))
         self.assertEqual(kind, "apprenticeship")
         self.assertIs(resolved_source, source)
+
+    @patch("learner_api.identity.learner_profile_for_source")
+    @patch("learner_api.models.EnrolmentUser")
+    def test_the_profile_still_fills_in_when_the_learner_has_no_date(self, mock_model, mock_profile_lookup):
+        source = MagicMock(start_date="", end_date="", learner_type="commercial")
+        mock_model.DoesNotExist = Exception
+        mock_model.all_learners.get.return_value = source
+        mock_profile_lookup.return_value = MagicMock(start_date=date(2025, 1, 1), end_date=date(2026, 6, 30))
+
+        start, _end, _kind, _source = _programme_window(1)
+
+        self.assertEqual(start, date(2025, 1, 1))
 
 
 class GenerateForLearnerTests(SimpleTestCase):

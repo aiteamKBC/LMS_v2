@@ -25,6 +25,17 @@ export interface LearnerAccessGate {
   outstandingDocuments: string[];
 }
 
+/** Teaching opens on the cohort start date, independently of saved status. */
+export interface LearnerLearningAccess {
+  blocked: boolean;
+  startDate: string;
+}
+
+export function canViewAssignedProgramme(kind: string | undefined, gate?: LearnerAccessGate): boolean {
+  return kind === 'commercial' && !!gate?.startDate
+    && !gate.reasons.some(reason => reason === 'plan' || reason === 'invitation' || reason === 'documents');
+}
+
 export interface WaitingCopy {
   title: string;
   /** Body paragraphs, most important first. */

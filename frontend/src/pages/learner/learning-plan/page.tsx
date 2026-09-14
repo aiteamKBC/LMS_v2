@@ -28,7 +28,7 @@ export default function LearnerLearningPlanPage() {
   const subtitle = real
     ? [real.programme, real.employer, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
     : '';
-  const overviewHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
+  const overviewHref = kind && id ? `/workspace/learner/${kind}/${id}/dashboard` : '/workspace/learner/dashboard';
   const modulesHref = learnerRoute('/learner/learning-plan/modules', kind, id);
 
   return (

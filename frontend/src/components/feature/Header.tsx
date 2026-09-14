@@ -11,6 +11,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { useTheme } from '@/hooks/useTheme';
 import { BrandLockup } from '@/components/BrandLockup';
 import { WorkspaceSwitcher } from '@/components/feature/WorkspaceSwitcher';
+import { PreviousRecordMenuItem } from '@/features/old-otjh/PreviousRecordMenuItem';
 
 interface HeaderProps {
   pageTitle: string;
@@ -345,6 +346,7 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
               {/* Appearance is kept next to the existing account action so the
                   preference is available anywhere the profile menu is available. */}
               <div className="border-t border-background-200/70 p-1.5">
+                {role === 'learner' && <PreviousRecordMenuItem onNavigate={() => setProfileOpen(false)} />}
                 <button
                   type="button"
                   role="menuitemcheckbox"
