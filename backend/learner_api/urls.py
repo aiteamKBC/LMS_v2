@@ -8,6 +8,8 @@ from .overview_week import overview_week
 from .rewards_summary import learner_rewards_summary
 from .profile_photo import learner_profile_photo
 from .attendance_lectures import attendance_lectures
+from .attendance_confirmation import confirm_attendance
+from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, review_attendance_mode
 
 from . import certificates, monthly_assignment, legacy_assignments, review_history
@@ -20,8 +22,12 @@ urlpatterns = [
     path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),
     path('monthly-logs/<int:learner_id>/<str:month>/', monthly_logs.detail, name='monthly-log-detail'),
     path('monthly-logs/<int:learner_id>/<str:month>/sign/', monthly_logs.sign, name='monthly-log-sign'),
+    path('monthly-logs/<int:learner_id>/<str:month>/complete/', monthly_logs.complete, name='monthly-log-complete'),
     path('monthly-logs/<int:learner_id>/<str:month>/activities/<int:row_id>/', monthly_logs.content, name='monthly-log-content'),
     path('attendance/<str:kind>/<int:learner_id>/lectures/', attendance_lectures, name='attendance-lectures'),
+    path('attendance/<str:kind>/<int:learner_id>/attend/', confirm_attendance, name='confirm-attendance'),
+    path('meeting-attendance/<str:kind>/<int:learner_id>/', meeting_attendance, name='meeting-attendance'),
+    path('meeting-attendance/<str:kind>/<int:learner_id>/attend/', confirm_meeting_attendance, name='confirm-meeting-attendance'),
     path('attendance/<str:kind>/<int:learner_id>/mode/', attendance_mode, name='attendance-mode'),
     path('attendance-mode/review/', review_attendance_mode, name='attendance-mode-review'),
     path('profile-photo/<str:kind>/<int:pk>/', learner_profile_photo, name='learner-profile-photo'),

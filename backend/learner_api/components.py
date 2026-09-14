@@ -28,7 +28,7 @@ from .time_tracking import (
     tracking_session_already_used,
     verify_tracking_session,
 )
-from login.permissions import learner_self_only
+from login.permissions import learner_self_or_admin
 
 from .marking_queue_entry import queue_for_marking, requires_tutor_validation
 
@@ -255,7 +255,7 @@ def _completion_criteria(component_id, kind, learner_id, component_type=None):
 
 
 @csrf_exempt
-@learner_self_only(query_param="learnerId")
+@learner_self_or_admin(query_param="learnerId")
 def submit_component_progress(request, component_id):
     if request.method != "POST":
         return _error("Method not allowed.", 405)

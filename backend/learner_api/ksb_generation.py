@@ -6,7 +6,7 @@ from django.db import connections
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from login.permissions import learner_self_only
+from login.permissions import learner_self_or_admin
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def evidence_context(kind, learner_id, evidence):
 
 @csrf_exempt
 @require_POST
-@learner_self_only(body_field='learnerId')
+@learner_self_or_admin(body_field='learnerId')
 def generate_ksb_explanations(request):
     from .reflection_ai import _openai_client, _moderation_flagged
     from .components import component_ksb_codes

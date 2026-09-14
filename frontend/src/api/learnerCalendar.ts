@@ -36,6 +36,10 @@ export interface LearnerCalendarEvent {
   /** False when the Microsoft Graph sync failed: saved locally, but no invite sent. */
   invited?: boolean;
   syncError?: string;
+  syncState?: 'pending' | 'syncing' | 'synced' | 'failed' | 'reconciliation' | 'cancelled';
+  syncWarning?: string;
+  reviewId?: string;
+  assignmentMonth?: string;
   programme?: string;
   cohort?: string;
   group?: string;

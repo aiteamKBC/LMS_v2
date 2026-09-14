@@ -54,6 +54,7 @@ export function AssignmentSubmissionWizard({
   moduleTitle,
   weekTitle,
   plannedOtjh,
+  initialMonth,
   questionHtml,
   questionText,
   ksbMappings,
@@ -82,6 +83,7 @@ export function AssignmentSubmissionWizard({
   moduleTitle: string;
   weekTitle: string;
   plannedOtjh: number | null;
+  initialMonth?: string | null;
   questionHtml?: string | null;
   questionText?: string | null;
   ksbMappings: ComponentKsbMapping[];
@@ -103,7 +105,9 @@ export function AssignmentSubmissionWizard({
 }) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<AssignmentAnswers>(EMPTY_ANSWERS);
-  const [monthly, setMonthly] = useState<MonthlyAssignment>(() => emptyMonthlyAssignment(ksbMappings.map(m => m.code), londonDate().slice(0, 7)));
+  // The Training Plan month seeds a new assignment; a saved draft always wins.
+  const [defaultMonth] = useState(() => initialMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(initialMonth) ? initialMonth : londonDate().slice(0, 7));
+  const [monthly, setMonthly] = useState<MonthlyAssignment>(() => emptyMonthlyAssignment(ksbMappings.map(m => m.code), defaultMonth));
   const [checks, setChecks] = useState<AssignmentQualityCheck[]>([]);
   const [checking, setChecking] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -243,7 +247,7 @@ export function AssignmentSubmissionWizard({
         setStatus(submission.status || '');
         setImported(['imported_legacy', 'classified_legacy'].includes(submission.submissionOrigin || ''));
         if (submission.monthlyAssignment) {
-          const restored = { ...emptyMonthlyAssignment(ksbMappings.map(m => m.code), londonDate().slice(0, 7)), ...submission.monthlyAssignment };
+          const restored = { ...emptyMonthlyAssignment(ksbMappings.map(m => m.code), defaultMonth), ...submission.monthlyAssignment };
           setMonthly(restored);
           setStep(Math.max(0, Math.min(7, Number(restored.step) || 0)));
         }
@@ -266,7 +270,7 @@ export function AssignmentSubmissionWizard({
         }
       });
     return () => { active = false; };
-  }, [kind, learnerId, componentId]);
+  }, [kind, learnerId, componentId, defaultMonth]);
 
   const saveDraft = async (_showSaved = true): Promise<boolean> => {
     if (locked || !loadedRef.current || submittingRef.current) return false;

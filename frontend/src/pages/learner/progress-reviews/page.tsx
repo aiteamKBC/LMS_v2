@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { bookLearnerCalendarSession, rescheduleLearnerCalendarSession, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchEvidence } from '@/api/evidence';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
-import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate } from '@/pages/learner/reviews/bookingDates';
+import { isoDate } from '@/pages/learner/reviews/bookingDates';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import ProgressReviewSlidesModal, { type ProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/components/ProgressReviewSlidesModal';
@@ -16,6 +16,15 @@ import { buildProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/pa
 import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 import ProgressReviewSignModal from './components/ProgressReviewSignModal';
 import styles from './progressReviews.module.css';
+import FeaturedMeeting from '../reviews/FeaturedMeeting';
+import MeetingAttendanceActions from '../reviews/MeetingAttendanceActions';
+import { useMeetingAttendance } from '../reviews/useMeetingAttendance';
+import type { MeetingAttendance } from '@/api/meetingAttendance';
+import AbsenceReportDialog from '../attendance/components/AbsenceReportDialog';
+import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
+import { meetingCalendarHref } from '../reviews/meetingBooking';
+import { useMeetingBooking } from '../reviews/useMeetingBooking';
+import MeetingSchedulingAction from '../reviews/MeetingSchedulingAction';
 
 const learnerNav = roleNavMap.learner;
 
@@ -39,13 +48,6 @@ function formatTime(value?: string | null): string {
   return new Date(2000, 0, 1, hour, minute).toLocaleTimeString('en-GB', {
     hour: '2-digit', minute: '2-digit',
   });
-}
-
-function calendarEventHref(review: LearnerCalendarEvent, learner: { kind: string; id: string }): string {
-  const eventKey = review?.eventKey || review?.id;
-  const query = `kind=${encodeURIComponent(learner.kind)}&learner=${encodeURIComponent(learner.id)}`;
-  const date = reviewDate(review);
-  return `/learner/calendar?${query}${eventKey ? `&event=${encodeURIComponent(eventKey)}` : ''}${date ? `&date=${encodeURIComponent(date)}` : ''}`;
 }
 
 function reviewDate(review?: LearnerCalendarEvent | null): string | null {
@@ -221,58 +223,16 @@ export function ProgressReviewsListPage() {
 
 function ProgressReviewsList() {
   const { myLearner, learner, sessions: reviews, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('progress-review');
+  const attendance = useMeetingAttendance(myLearner);
+  const [absence, setAbsence] = useState<MeetingAttendance | null>(null);
   const [page, setPage] = useState(1);
   const [view, setView] = useState<'planned' | 'finished'>('planned');
-  const [bookingReview, setBookingReview] = useState<LearnerCalendarEvent | null>(null);
-  const [bookingDate, setBookingDate] = useState('');
-  const [bookingTime, setBookingTime] = useState('09:00');
-  const [bookingSubmitting, setBookingSubmitting] = useState(false);
-  const [bookingError, setBookingError] = useState('');
-  const dateRestriction = bookingDateRestrictionMessage(bookingDate, bookingCalendar);
 
-  function openBooking(review: LearnerCalendarEvent) {
-    setBookingReview(review);
-    setBookingDate(firstAvailableBookingDate(reviewDate(review), bookingCalendar));
-    setBookingTime(review.scheduledTime || '09:00');
-    setBookingError('');
-  }
-
-  async function submitBooking(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!bookingReview || bookingSubmitting || !bookingDate || !bookingTime || dateRestriction) return;
-    setBookingSubmitting(true);
-    setBookingError('');
-    try {
-      const imported = bookingReview.importedReview;
-      const slot = { scheduledDate: bookingDate, scheduledTime: bookingTime, durationMinutes: 60 };
-      const response = !imported && bookingReview.status === 'scheduled'
-        ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, { ...slot, eventKey: bookingReview.eventKey })
-        : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
-            ...slot,
-            sessionType: 'progress-review',
-            reviewId: imported?.id,
-            assignmentMonth: imported ? (reviewDate(bookingReview) || bookingDate).slice(0, 7) : undefined,
-            eventKey: imported ? undefined : bookingReview.eventKey,
-          });
-      const updated = imported ? {
-        ...response.event,
-        id: bookingReview.id,
-        sequence: bookingReview.sequence,
-        title: bookingReview.title,
-        importedReview: { ...imported, status: 'scheduled', plannedDate: bookingDate, plannedTime: bookingTime },
-        date: bookingDate,
-        scheduledDate: bookingDate,
-        scheduledTime: bookingTime,
-      } : response.event;
-      setEvents(current => current.map(review => review.id === bookingReview.id ? updated : review));
-      setBookingReview(null);
-      refresh();
-    } catch (reason) {
-      setBookingError(reason instanceof Error ? reason.message : 'Could not book this review.');
-    } finally {
-      setBookingSubmitting(false);
-    }
-  }
+  const booking = useMeetingBooking({
+    learner: myLearner, rules: bookingCalendar, attendance: attendance.data?.sessions || [],
+    titleOf: progressReviewTitle, setEvents, refresh: () => { refresh(); attendance.refresh(); },
+  });
+  const { openBooking } = booking;
 
   const pageSize = 10;
   const finishedReviews = reviews.filter((review) => review.status.toLowerCase() === 'completed');
@@ -322,6 +282,13 @@ function ProgressReviewsList() {
           </div>
         </section>
 
+        {booking.notice}
+        <FeaturedMeeting sessions={reviews} source="progress-review" learner={learner} learnerQuery={`kind=${myLearner.kind}&learner=${myLearner.id}`}
+          today={attendance.data?.today || bookingCalendar?.today || isoDate(new Date())} loading={loading} error={error}
+          onSchedule={openBooking} titleOf={progressReviewTitle} attendance={attendance.data?.sessions || []}
+          timeZone={attendance.data?.timeZone} busy={attendance.busy} canAct={attendance.canAct} onAttend={attendance.attend} onReport={setAbsence} />
+        {attendance.error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{attendance.error}<button type="button" onClick={attendance.refresh} className="ml-2 underline">Retry attendance</button></p>}
+        {attendance.notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">{attendance.notice}</p>}
         <section aria-label="Reviews sessions" className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Reviews sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full review record.</p></div></div>
@@ -379,7 +346,11 @@ function ProgressReviewsList() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
-                        <Link to={calendarEventHref(review, myLearner)} onClick={(event) => { if (!['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status)) { event.preventDefault(); openBooking(review); } }} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />{['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status) ? 'View in calendar' : isBooked ? 'Reschedule' : 'Schedule'}</Link>
+                        <div className="col-span-2"><MeetingAttendanceActions session={attendance.data?.sessions.find(item => item.id === review.id)} busy={Boolean(attendance.busy)} canAct={attendance.canAct}
+                          onAttend={() => attendance.attend(review.id)} onReport={() => { const item = attendance.data?.sessions.find(item => item.id === review.id); if (item) setAbsence(item); }} onReschedule={() => openBooking(review)} /></div>
+                        <MeetingSchedulingAction label={['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status) ? 'View in calendar' : isBooked ? 'Reschedule' : 'Schedule'}
+                          calendarHref={meetingCalendarHref(review, myLearner, undefined, attendance.data?.sessions.find(item => item.id === review.id))}
+                          onSchedule={() => openBooking(review)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100" />
                         <Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700">View review <AppIcon className="ri-arrow-right-line" /></Link>
                       </div>
                     </article>
@@ -389,7 +360,7 @@ function ProgressReviewsList() {
               <div className={`${styles.tableWrap} hidden md:block`}>
                 <table className="w-full min-w-[980px] text-left">
                   <thead className="border-b border-primary-100 bg-primary-50/70 text-[10px] font-bold uppercase tracking-wide text-primary-900/60">
-                    <tr><th className="px-5 py-3.5">Review Name / Review Type</th><th className="px-5 py-3.5">Reviewer</th><th className="px-5 py-3.5">Planned / Scheduled Date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Scheduling Assistant</th><th className="px-5 py-3.5 text-right">Review Actions</th></tr>
+                    <tr><th className="px-5 py-3.5">Review Name / Review Type</th><th className="px-5 py-3.5">Reviewer</th><th className="px-5 py-3.5">Planned / Scheduled Date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Attendance action</th><th className="px-5 py-3.5">Scheduling Assistant</th><th className="px-5 py-3.5 text-right">Review Actions</th></tr>
                   </thead>
                   <tbody className="divide-y divide-background-200">
                   {visibleReviews.map((review) => {
@@ -400,7 +371,11 @@ function ProgressReviewsList() {
                         <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(review.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{review.coachName || '-'}</span></div></td>
                         <td className="px-5 py-4"><div className="flex items-center gap-2"><AppIcon className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(review.scheduledTime)}</p>}</div></div></td>
                         <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}><AppIcon className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}</span></td>
-                        <td className="px-5 py-4"><Link to={calendarEventHref(review, myLearner)} onClick={(event) => { if (!['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status)) { event.preventDefault(); openBooking(review); } }} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><AppIcon className="ri-calendar-2-line" />{['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status) ? 'View in calendar' : isBooked ? 'Reschedule' : 'Schedule'}</Link></td>
+                          <td className="px-5 py-4"><MeetingAttendanceActions session={attendance.data?.sessions.find(item => item.id === review.id)} busy={Boolean(attendance.busy)} canAct={attendance.canAct}
+                            onAttend={() => attendance.attend(review.id)} onReport={() => { const item = attendance.data?.sessions.find(item => item.id === review.id); if (item) setAbsence(item); }} onReschedule={() => openBooking(review)} /></td>
+                        <td className="px-5 py-4"><MeetingSchedulingAction label={['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status) ? 'View in calendar' : isBooked ? 'Reschedule' : 'Schedule'}
+                          calendarHref={meetingCalendarHref(review, myLearner, undefined, attendance.data?.sessions.find(item => item.id === review.id))}
+                          onSchedule={() => openBooking(review)} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700" /></td>
                         <td className="px-5 py-4"><div className="flex items-center justify-end"><Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 hover:shadow-md">View <AppIcon className="ri-arrow-right-line" /></Link></div></td>
                       </tr>
                     );
@@ -422,29 +397,12 @@ function ProgressReviewsList() {
             </>
           )}
         </section>
-        {bookingReview && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target && !bookingSubmitting) setBookingReview(null); }}>
-            <form onSubmit={submitBooking} role="dialog" aria-modal="true" aria-labelledby="review-booking-title" className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Scheduling assistant</p>
-                  <h2 id="review-booking-title" className="mt-1 text-lg font-bold text-foreground-900">{bookingReview.status === 'scheduled' ? 'Reschedule review' : 'Schedule review'}</h2>
-                  <p className="mt-1 text-xs text-foreground-500">Choose the day and time for {progressReviewTitle(bookingReview)}.</p>
-                </div>
-                <button type="button" disabled={bookingSubmitting} aria-label="Close booking dialog" onClick={() => setBookingReview(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100"><AppIcon className="ri-close-line" /></button>
-              </div>
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                <label className="text-xs font-semibold text-foreground-600">Day<input type="date" required min={isoDate(new Date())} value={bookingDate} onChange={event => { setBookingDate(event.target.value); setBookingError(''); }} className="mt-1.5 h-10 w-full rounded-xl border border-background-300 bg-background-50 px-3 text-sm font-normal text-foreground-800 outline-none focus:border-primary-400" /></label>
-                <label className="text-xs font-semibold text-foreground-600">Time<input type="time" required value={bookingTime} onChange={event => setBookingTime(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-background-300 bg-background-50 px-3 text-sm font-normal text-foreground-800 outline-none focus:border-primary-400" /></label>
-              </div>
-              {(dateRestriction || bookingError) && <p role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700"><AppIcon className="ri-error-warning-line mr-1" />{dateRestriction || bookingError}</p>}
-              <div className="mt-5 flex gap-2">
-                <button type="button" disabled={bookingSubmitting} onClick={() => setBookingReview(null)} className="flex-1 rounded-xl border border-background-300 px-4 py-2.5 text-sm font-semibold text-foreground-600 hover:bg-background-100">Cancel</button>
-                <button type="submit" disabled={bookingSubmitting || !bookingDate || !bookingTime || Boolean(dateRestriction)} className="flex-1 rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">{bookingSubmitting ? 'Saving…' : bookingReview.status === 'scheduled' ? 'Save new time' : 'Book meeting'}</button>
-              </div>
-            </form>
-          </div>
-        )}
+        {booking.dialog}
+        {absence?.absenceSessionId && absence.date && <AbsenceReportDialog onClose={() => setAbsence(null)}>
+          <AbsenceReportForm key={absence.id} scope="meetings" compact showHistory={false}
+            preselectMatch={{ id: absence.absenceSessionId, dateIso: absence.date, title: absence.title }}
+            onSubmitted={() => attendance.refresh()} onCancel={() => setAbsence(null)} />
+        </AbsenceReportDialog>}
       </main>
     </WorkspaceShell>
   );

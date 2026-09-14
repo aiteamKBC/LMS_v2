@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import styles from '../attendance.module.css';
 
-export default function AbsenceReportDialog({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+export default function AbsenceReportDialog({ children, onClose, title = 'Report Absence' }: { children: ReactNode; onClose: () => void; title?: string }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -23,8 +23,8 @@ export default function AbsenceReportDialog({ children, onClose }: { children: R
   return createPortal(<dialog ref={dialog} aria-labelledby={titleId} className={`${styles.page} ${styles.absenceDialog}`}
     onCancel={event => { event.preventDefault(); onClose(); }}>
     <div className={styles.dialogHeading}>
-      <h2 id={titleId}><AppIcon className="ri-error-warning-line" />Report Absence</h2>
-      <button type="button" aria-label="Close absence report" onClick={onClose}><AppIcon className="ri-close-line" /></button>
+      <h2 id={titleId}><AppIcon className="ri-calendar-event-line" />{title}</h2>
+      <button type="button" aria-label={title === 'Report Absence' ? 'Close absence report' : 'Close catch-up booking'} onClick={onClose}><AppIcon className="ri-close-line" /></button>
     </div>
     {children}
   </dialog>, document.body);

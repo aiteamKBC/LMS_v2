@@ -24,6 +24,10 @@ import {
 } from '@/api/learnerCalendar';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
+import { meetingBookingWarning } from '../reviews/meetingBooking';
+import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
+import { importedReviewsToEvents } from '../reviews/useReviewSessions';
+import { firstAvailableBookingDate } from '../reviews/bookingDates';
 
 /** The header's secondary-actions menu — everything that isn't booking a
  * coach session (the primary action) moves in here so the toolbar stays a
@@ -211,6 +215,9 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
     timeToBeConfirmed: !ev.scheduledTime,
+    syncWarning: meetingBookingWarning(ev),
+    bookingReviewId: ev.reviewId,
+    assignmentMonth: ev.assignmentMonth,
   };
 }
 
@@ -569,6 +576,8 @@ function LearnerCalendarBody() {
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [calendarRevision, setCalendarRevision] = useState(0);
+  const importedBooking = useImportedMeetingBooking(myLearner, location.search);
+  const [schedulingError, setSchedulingError] = useState('');
   const calendarWriteVersionRef = useRef(0);
   const refreshCalendar = useCallback(() => setCalendarRevision(value => value + 1), []);
   useLiveRefresh(refreshCalendar);
@@ -639,8 +648,13 @@ function LearnerCalendarBody() {
   const focusedEventKey = useMemo(() => new URLSearchParams(location.search).get('event') || '', [location.search]);
 
   useEffect(() => {
-    if (new URLSearchParams(location.search).get('book') === 'student-support') {
+    const params = new URLSearchParams(location.search);
+    if (params.get('book') === 'student-support') {
+      setRescheduleEvent(null);
+      setBookingSourceEvent(null);
       setBookType('student-support');
+      setBookNotes((params.get('notes') || '').slice(0, 500));
+      setBookError(null);
       setShowBookModal(true);
     }
   }, [location.search]);
@@ -654,8 +668,9 @@ function LearnerCalendarBody() {
     setViewYear(focusDate.year ?? viewYear);
     setViewMonth(focusDate.month);
     setSelectedDay(focusDate.day);
-    setShowEventDetails(focusEvent);
-  }, [displayedEvents, focusedEventKey, viewYear]);
+    const params = new URLSearchParams(location.search);
+    if (!['schedule', 'reschedule'].includes(params.get('action') || '') && !params.get('reviewId')) setShowEventDetails(focusEvent);
+  }, [displayedEvents, focusedEventKey, viewYear, location.search]);
   const visibleRangeEvents = useMemo(() => (
     displayedEvents.filter((event) => {
       const eventDate = parseEventDate(event);
@@ -819,46 +834,15 @@ function LearnerCalendarBody() {
     setRescheduleEvent(null);
     setBookingSourceEvent(sourceEvent || null);
     setBookType(sourceEvent?.bookingSessionType || 'catch-up');
-    setBookDate(date || bookingToday);
+    setBookDate(firstAvailableBookingDate(date || bookingToday, bookingCalendar));
+    setBookTime('09:00');
+    setBookDuration(String(sourceEvent?.durationMinutes || 60));
+    setBookNotes('');
     setBookError(null);
     setShowDayDrawer(false);
     setShowEventDetails(null);
     setShowBookModal(true);
-  }, [bookingToday]);
-  const handledScheduleRef = useRef('');
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    let storedRequest: { eventKey?: string; source?: string; date?: string } | null = null;
-    if (!params.get('event') && !params.get('source')) {
-      try {
-        const raw = window.sessionStorage.getItem('learner-calendar-schedule');
-        storedRequest = raw ? JSON.parse(raw) as typeof storedRequest : null;
-      } catch { storedRequest = null; }
-    }
-    const eventKey = params.get('event') || storedRequest?.eventKey || null;
-    const source = params.get('source') || storedRequest?.source || null;
-    const targetDate = params.get('date') || storedRequest?.date || null;
-    if (params.get('action') !== 'schedule' || (!eventKey && !source)) {
-      handledScheduleRef.current = '';
-      return;
-    }
-    const requestKey = eventKey || `${source}:${targetDate || ''}`;
-    if (handledScheduleRef.current === requestKey) return;
-    // Imported Aptem rows do not carry a coach-calendar event key. Resolve
-    // their planned date to the generated programme slot returned by the
-    // learner calendar, then open the same booking dialog.
-    const event = (eventKey ? myEvents.find(item => item.eventKey === eventKey || item.id === eventKey) : undefined)
-      || myEvents.find(item => item.source === source && item.isoDate === targetDate && item.timeToBeConfirmed);
-    if (!event || !event.bookingSessionType) return;
-    handledScheduleRef.current = requestKey;
-    if (storedRequest) window.sessionStorage.removeItem('learner-calendar-schedule');
-    if (event.bookingStatus === 'not-scheduled' && event.timeToBeConfirmed) {
-      openBookSession(event.isoDate && event.isoDate >= bookingToday ? event.isoDate : bookingToday, event);
-    } else {
-      // A booking may have changed since the dashboard was displayed.
-      setShowEventDetails(event);
-    }
-  }, [location.search, myEvents, bookingToday, openBookSession]);
+  }, [bookingToday, bookingCalendar]);
   const openRescheduleSession = useCallback((event: CalendarEvent) => {
     if (!event.bookingSessionType || !event.isoDate || event.timeToBeConfirmed) return;
     const range = getEventTimeRange(event.time);
@@ -877,6 +861,56 @@ function LearnerCalendarBody() {
     setShowEventDetails(null);
     setShowBookModal(true);
   }, []);
+  const handledScheduleRef = useRef('');
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const action = params.get('action');
+    const reviewId = params.get('reviewId');
+    if (!['schedule', 'reschedule'].includes(action || '') && !reviewId) {
+      handledScheduleRef.current = '';
+      setSchedulingError('');
+      return;
+    }
+    const requestKey = location.search;
+    if (handledScheduleRef.current === requestKey || calendarLoading || calendarError) return;
+    let event: CalendarEvent | undefined;
+    if (reviewId) {
+      if (!importedBooking.target) return;
+      const { review, eventKey, source } = importedBooking.target;
+      if (eventKey) {
+        event = myEvents.find(item => item.eventKey === eventKey);
+        if (!event) {
+          setSchedulingError('The saved appointment could not be loaded. Refresh the calendar and try again.');
+          return;
+        }
+      } else if (['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status)) {
+        setSchedulingError('This review is no longer available for scheduling.');
+        return;
+      } else {
+        event = mapCoachEvent({ ...importedReviewsToEvents([review], source)[0], status: 'not-scheduled', scheduledDate: null, scheduledTime: null }) || undefined;
+      }
+      if (event) event = { ...event, title: review.name || event.title, bookingReviewId: review.id, assignmentMonth: review.plannedDate?.slice(0, 7) };
+    } else {
+      const eventKey = params.get('event');
+      // Older source/date links are accepted only when they identify one slot.
+      const matches = myEvents.filter(item => eventKey ? item.eventKey === eventKey || item.id === eventKey
+        : item.source === params.get('source') && item.isoDate === params.get('date') && item.timeToBeConfirmed);
+      if (matches.length === 1) event = matches[0];
+    }
+    if (!event || !event.bookingSessionType) {
+      setSchedulingError('This meeting is no longer available. Return to your meetings and refresh the list.');
+      return;
+    }
+    handledScheduleRef.current = requestKey;
+    setSchedulingError('');
+    if (action === 'reschedule' && event.bookingStatus === 'scheduled' && !event.timeToBeConfirmed) {
+      openRescheduleSession(event);
+    } else if (['schedule', 'reschedule'].includes(action || '') && event.bookingStatus === 'not-scheduled') {
+      openBookSession(event.isoDate, event);
+    } else {
+      setShowEventDetails(event);
+    }
+  }, [location.search, myEvents, calendarLoading, calendarError, importedBooking.target, openBookSession, openRescheduleSession]);
   const confirmedCount = myEvents.filter((ev) => ev.status === 'confirmed').length;
   const pendingCount = myEvents.filter((ev) => ev.status === 'pending').length;
   const totalPoints = myEvents.filter((ev) => ev.status === 'confirmed').reduce((s, ev) => s + ev.points, 0);
@@ -995,6 +1029,7 @@ function LearnerCalendarBody() {
     return myEvents.find((event) => (
       event.id !== rescheduleEvent?.id
       && event.id !== bookingSourceEvent?.id
+      && !event.timeToBeConfirmed
       && (event.bookingStatus === 'scheduled' || event.bookingStatus === 'not-scheduled')
       && event.bookingSessionType === bookType
       && Boolean(event.isoDate)
@@ -1069,6 +1104,7 @@ function LearnerCalendarBody() {
       const res = rescheduleEvent
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
             eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
+            reviewId: rescheduleEvent.bookingReviewId,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
@@ -1076,7 +1112,9 @@ function LearnerCalendarBody() {
           })
         : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
             sessionType: bookType,
-            eventKey: bookingSourceEvent?.eventKey,
+            eventKey: bookingSourceEvent?.bookingReviewId ? undefined : bookingSourceEvent?.eventKey,
+            reviewId: bookingSourceEvent?.bookingReviewId,
+            assignmentMonth: bookingSourceEvent?.bookingReviewId ? bookingSourceEvent.assignmentMonth || bookDate.slice(0, 7) : undefined,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
@@ -1087,6 +1125,8 @@ function LearnerCalendarBody() {
       calendarWriteVersionRef.current += 1;
       const mapped = mapCoachEvent(res.event);
       if (mapped) {
+        mapped.bookingReviewId = (rescheduleEvent || bookingSourceEvent)?.bookingReviewId;
+        mapped.assignmentMonth = (rescheduleEvent || bookingSourceEvent)?.assignmentMonth;
         setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id), mapped]);
         const date = parseEventDate(mapped);
         if (date) {
@@ -1277,10 +1317,10 @@ function LearnerCalendarBody() {
 
       {showBookModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowBookModal(false)}>
-          <div className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="calendar-booking-title" className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className={`${rescheduleEvent || bookingSourceEvent ? 'ri-calendar-schedule-line' : 'ri-user-star-line'} text-primary-500`}></AppIcon>{rescheduleEvent ? 'Reschedule Session' : bookingSourceEvent ? `Schedule ${sessionTypeLabel(bookingSourceEvent.bookingSessionType)}` : 'Book a Coach Session'}</h3>
-              <button onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
+              <h3 id="calendar-booking-title" className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className={`${rescheduleEvent || bookingSourceEvent ? 'ri-calendar-schedule-line' : 'ri-user-star-line'} text-primary-500`}></AppIcon>{rescheduleEvent ? 'Reschedule Session' : bookingSourceEvent ? `Schedule ${sessionTypeLabel(bookingSourceEvent.bookingSessionType)}` : 'Book a Coach Session'}</h3>
+              <button aria-label="Close booking dialog" onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
             </div>
             <p className="text-sm text-foreground-500 mb-5">
               {rescheduleEvent
@@ -1319,8 +1359,8 @@ function LearnerCalendarBody() {
                 </div>
               </div>}
               <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input type="date" value={bookDate} min={bookingToday} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
+                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input aria-label="Date" type="date" value={bookDate} min={bookingToday} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
+                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input aria-label="Time" type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
               </div>
               {bookDateRestriction && (
                 <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
@@ -1389,7 +1429,7 @@ function LearnerCalendarBody() {
               )}
               <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Duration</label>
-                <select value={bookDuration} onChange={(e) => setBookDuration(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
+                <select aria-label="Duration" value={bookDuration} disabled={Boolean(bookingSourceEvent?.bookingReviewId && bookType === 'mcr')} onChange={(e) => setBookDuration(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
                   {![30, 45, 60].includes(Number(bookDuration)) && <option value={bookDuration}>{bookDuration} minutes</option>}
                   <option value="30">30 minutes</option>
                   <option value="45">45 minutes</option>
@@ -1491,6 +1531,7 @@ function LearnerCalendarBody() {
             <div><dt className="mb-1 flex items-center gap-2 text-xs text-foreground-500"><AppIcon className="ri-map-pin-line" />Location</dt><dd className="font-semibold">{showEventDetails.location}</dd><dd className="mt-1 text-xs text-foreground-500">{showEventDetails.format}</dd></div>
           </dl>
           {showEventDetails.description && <div className="mb-5 border-t border-foreground-100 pt-4"><h3 className="mb-2 text-xs font-semibold text-foreground-500">About this event</h3><p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground-700">{showEventDetails.description}</p></div>}
+            {showEventDetails.syncWarning && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">{showEventDetails.syncWarning}</p>}
             {shouldShowMeetingArtifacts(showEventDetails) ? (
               <CoachMeetingArtifactsPanel event={{ id: showEventDetails.id, eventKey: showEventDetails.eventKey, source: showEventDetails.source, meetingLink: showEventDetails.meetingLink }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="mb-5 border-primary-100 bg-primary-50/30" />
             ) : null}
@@ -1500,7 +1541,7 @@ function LearnerCalendarBody() {
                 <p className="text-xs font-semibold">This is your official {sessionTypeLabel(showEventDetails.bookingSessionType)} session. Choose a date and time here, and the Microsoft Teams meeting link will be created when it is confirmed.</p>
               </div>
             )}
-            {!showEventDetails.timeToBeConfirmed && !showEventDetails.meetingLink && showEventDetails.club !== 'Personal' && (
+            {!showEventDetails.timeToBeConfirmed && !showEventDetails.meetingLink && !showEventDetails.syncWarning && showEventDetails.club !== 'Personal' && (
               <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
                 <AppIcon className="ri-error-warning-line mt-0.5 shrink-0" />
                 <p className="text-xs font-semibold">{showEventDetails.bookingStatus === 'not-scheduled' ? 'Your preferred time has been sent to your coach. A Teams link will be created after coach approval.' : 'The meeting time is scheduled, but the Teams link is not available yet. Please contact your coach.'}</p>
@@ -1610,6 +1651,7 @@ function LearnerCalendarBody() {
 
       <PageContainer className="learner-calendar-page">
 
+        {(schedulingError || importedBooking.error) && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{schedulingError || importedBooking.error}</p>}
         {calendarError && (
           <div className="rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 flex items-center gap-3 shadow-sm">
             <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>

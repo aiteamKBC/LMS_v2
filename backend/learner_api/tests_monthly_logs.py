@@ -120,21 +120,52 @@ class MonthlyLogsTests(SimpleTestCase):
             activities.assert_not_called()
             query.assert_not_called()
 
-    def test_learner_preview_is_read_only_and_ignores_a_stale_coach_selection(self):
+    def test_admin_learner_workspace_allows_actions_and_ignores_a_stale_coach_selection(self):
         self.account.role = 'admin'
         with patch.object(logs.old, 'coach_actor', return_value={'role': 'admin', 'email': 'admin@example.test'}), \
              patch.object(logs.old, 'resolve_record', return_value=self.learner), \
              patch.object(sources, 'profile', return_value=None), \
              patch('coach_api.auth._requested_view_as_email', return_value='other@example.test') as view_as:
             learner, role = logs.scope(self.request(perspective='learner'), 7)
-            self.assertTrue(learner['_view_as'])
-            self.assertEqual(role, 'admin')
+            self.assertFalse(learner['_view_as'])
+            self.assertEqual(role, 'learner')
             view_as.assert_not_called()
             request = self.request('post')
             request.GET = {'perspective': 'learner'}
+            learner, role = logs.scope(request, 7)
+            self.assertFalse(learner['_view_as'])
+            self.assertEqual(role, 'learner')
+            self.assertIs(request.login_account, self.account)
+            self.assertEqual(request.login_account.role, 'admin')
+            self.assertTrue(request.admin_learner_action)
+            self.assertEqual(request.admin_learner_id, 7)
+
+    def test_admin_completion_uses_the_selected_record_and_real_actor(self):
+        self.account.role = 'admin'
+        request = self.request('post')
+        report = {'month': '2026-08', 'status': 'complete', 'rows': []}
+        with patch.object(logs, 'scope', return_value=(self.learner, 'learner')), \
+             patch.object(logs.old, 'complete', return_value=report) as complete:
+            response = unwrap(logs.complete)(request, 7, '2026-08')
+        self.assertEqual(response.status_code, 200)
+        complete.assert_called_once_with(self.learner, '2026-08', self.account, 'learner')
+
+    def test_coach_cannot_complete_a_month_as_the_learner(self):
+        with patch.object(logs, 'scope', return_value=(self.learner, 'coach')), \
+             patch.object(logs.old, 'complete') as complete:
             with self.assertRaises(ServiceError) as result:
-                logs.scope(request, 7)
+                unwrap(logs.complete)(self.request('post'), 7, '2026-08')
             self.assertEqual(result.exception.status, 403)
+            complete.assert_not_called()
+
+    def test_admin_completion_requires_csrf_before_writing(self):
+        self.account.role = 'admin'
+        request = self.request('post')
+        request.GET = {'perspective': 'learner'}
+        with patch('login.permissions.authenticate_request', return_value=self.account), \
+             patch.object(logs.old, 'complete') as complete:
+            self.assertEqual(logs.complete(request, 7, '2026-08').status_code, 403)
+            complete.assert_not_called()
 
     def test_coach_preview_cannot_read_an_unassigned_learner(self):
         self.account.role = 'staff'

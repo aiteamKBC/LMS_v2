@@ -729,9 +729,11 @@ class TeamsAttendanceEligibilityTests(SimpleTestCase):
 
 
 class LearnerAttendanceEndpointTests(SimpleTestCase):
+    @patch('learner_api.attendance_confirmation.read_confirmations', return_value={})
+    @patch('learner_api.attendance_lectures.read_native_occurrences', return_value=[])
     @patch('learner_api.attendance.fetch_verified_teams_attendance_rows', return_value=[])
     @patch('learner_api.attendance.fetch_kbc_attendance_rows', return_value=[])
-    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams):
+    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams, scheduled, confirmations):
         source = SimpleNamespace(
             id=19,
             username='Test Learner',

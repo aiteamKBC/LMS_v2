@@ -184,7 +184,7 @@ const LEARNER_UNAVAILABLE_MESSAGE = 'This learner is busy at that time. Choose a
 const TEAMS_SYNC_PERMISSION_MESSAGE = 'Saved locally. Microsoft Calendar needs updated permissions before this can sync to Teams.';
 const TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = 'Saved locally. Microsoft Calendar sync is not configured yet.';
 const TEAMS_SYNC_TEMPORARY_MESSAGE = 'Saved locally. Microsoft Calendar sync is temporarily unavailable; try again later or ask an admin to check Microsoft permissions.';
-const TEAMS_SYNC_LINK_MISSING_MESSAGE = 'Teams did not return a meeting link, so this event was moved back to Needs Schedule. Try scheduling again after Microsoft sync is available.';
+const TEAMS_SYNC_LINK_MISSING_MESSAGE = 'The meeting time is saved, but Teams did not return a meeting link. Retry calendar sync after Microsoft access is available.';
 
 async function readApiJson<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({})) as { detail?: unknown };

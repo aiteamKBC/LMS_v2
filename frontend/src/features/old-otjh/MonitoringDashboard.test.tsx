@@ -48,6 +48,7 @@ function page(path = '/old-otjh/monitor') {
   return render(<OldOtjhProvider><MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/old-otjh/monitor" element={<OldOtjhPage />} />
     <Route path="/old-otjh/coach/:aptemId" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/coach/:aptemId/months" element={<OldOtjhPage />} />
     <Route path="/old-otjh/coach/:aptemId/months/:month" element={<OldOtjhPage />} />
   </Routes></MemoryRouter></OldOtjhProvider>);
 }

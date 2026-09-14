@@ -89,7 +89,7 @@ describe('learner subject cards', () => {
       .mockResolvedValueOnce({ ...data, learner_name: 'Amy-Marie Field' });
     const real = { studentActivityAvailable: true } as LearnerDetail;
     const { rerender } = render(<ModulesTab key="132" real={real} loading={false} loadError={null} kind="commercial" id="132" />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith('commercial', '132', expect.any(AbortSignal)));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('commercial', '132', expect.any(AbortSignal), false));
     rerender(<ModulesTab key="133" real={real} loading={false} loadError={null} kind="commercial" id="133" />);
     expect(await screen.findByText('Amy-Marie Field')).toBeInTheDocument();
     await act(async () => { resolveAnna(data); });
@@ -183,7 +183,7 @@ describe('subjects shared with Module Builder', () => {
     expect(screen.getByText('2 of 3 completed')).toBeVisible();
   });
 
-  it('opens a native activity through the router without reloading the document', async () => {
+  it('opens a native module directly in its activity player without month or week clicks', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
     const real = { modules: ['Native module'], components: [
       { componentId: 'COMP-1', moduleId: 'MOD-1', module: 'Native module', week: 'Week 1',
@@ -192,8 +192,6 @@ describe('subjects shared with Module Builder', () => {
     function Location() { return <output data-testid="path">{useLocation().pathname}</output>; }
     render(<><Location /><StudentActivityPanel real={real} data={null} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} /></>);
     fireEvent.click(await screen.findByRole('button', { name: /Native module/ }));
-    expandMonthAndWeek('Undated activities');
-    fireEvent.click(screen.getByRole('link', { name: 'Open activity' }));
     expect(screen.getByTestId('path')).toHaveTextContent('/learner/component/commercial/132/COMP-1');
   });
 

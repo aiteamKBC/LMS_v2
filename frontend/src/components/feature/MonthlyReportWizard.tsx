@@ -17,6 +17,7 @@
 // stores and renders them identically.
 // ============================================================================
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useAuth } from '@/hooks/useAuth';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { uploadEvidence } from '@/api/evidence';
 import {
@@ -101,7 +102,7 @@ export function MonthlyReportWizard({
   metrics,
   existing,
   programmeKsbs,
-  savedSignature,
+  savedSignature: learnerSavedSignature,
   savedSignatureName,
 }: {
   open: boolean;
@@ -128,6 +129,10 @@ export function MonthlyReportWizard({
   savedSignature: string;
   savedSignatureName: string;
 }) {
+  const { auth } = useAuth();
+  const isAdmin = auth.account?.role === 'admin';
+  const signerName = isAdmin ? auth.account?.displayName || auth.account?.email || '' : learnerName;
+  const savedSignature = isAdmin ? '' : learnerSavedSignature;
   const [step, setStep] = useState<Step>('review');
   const [learned, setLearned] = useState('');
   const [pending, setPending] = useState<PendingFile[]>([]);
@@ -345,13 +350,13 @@ export function MonthlyReportWizard({
         attachments: [...keptAttachments, ...uploaded],
         selectedKsbs,
         signature,
-        signedName: learnerName,
+        signedName: signerName,
         // A saved signature is already on the record; only re-save when the
         // learner produced a new one and asked to keep it.
-        saveSignature: saveSignature && signatureMode !== 'saved',
+        saveSignature: !isAdmin && saveSignature && signatureMode !== 'saved',
       });
       setPending([]);
-      onSubmitted(report, saveSignature && signatureMode !== 'saved');
+      onSubmitted(report, !isAdmin && saveSignature && signatureMode !== 'saved');
     } catch (submitError) {
       // The files are stored, so keep them on the row for a retry rather than
       // making the learner pick them again.
@@ -808,7 +813,7 @@ export function MonthlyReportWizard({
                 <div className="mt-3">
                   {signatureMode === 'typed' && !signature && (
                     <SignaturePad
-                      signatoryName={learnerName}
+                      signatoryName={signerName}
                       onCommit={(dataUrl) => { setSignature(dataUrl); setError(''); }}
                       onCancel={() => setSignature('')}
                     />
@@ -856,17 +861,17 @@ export function MonthlyReportWizard({
                       </div>
                       <img
                         src={signature}
-                        alt={`Signature of ${savedSignatureName || learnerName}`}
+                        alt={`Signature of ${signatureMode === 'saved' ? savedSignatureName || signerName : signerName}`}
                         className="mt-2 max-h-20 w-auto max-w-full object-contain"
                       />
                       <p className="mt-1.5 border-t border-background-200 pt-1.5 text-[11px] text-foreground-500">
-                        {learnerName} · {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+                        {signerName} · {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
                       </p>
                     </div>
                   )}
                 </div>
 
-                {signature && signatureMode !== 'saved' && (
+                {!isAdmin && signature && signatureMode !== 'saved' && (
                   <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-foreground-700">
                     <input
                       type="checkbox"

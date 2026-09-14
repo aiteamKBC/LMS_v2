@@ -33,7 +33,7 @@ from .evidence_storage import (
     azure_configured, upload_to_quarantine, move_blob, blob_url, get_download_sas,
     delete_blob,
 )
-from login.permissions import learner_self_only, learner_self_or_staff
+from login.permissions import learner_self_or_admin, learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 
@@ -173,9 +173,8 @@ def _evidence_lineage(kind, learner_id, section_ref):
 
 
 @csrf_exempt
-# Evidence is the learner's own portfolio: staff assess what is uploaded, they
-# do not upload on the learner's behalf from the learner's own page.
-@learner_self_only(kwarg="pk")
+# Learners and admins can upload to the selected learner's portfolio.
+@learner_self_or_admin(kwarg="pk")
 def upload_evidence(request, kind, pk):
     """Multipart upload -> quarantine -> (scan) -> promote to approved.
     On approval the blob is recorded in "Learner"."Evidence"."""
@@ -441,9 +440,8 @@ def _is_submitted_for_marking(kind, learner_id, section_ref):
 
 
 @csrf_exempt
-# Same rule as upload: a learner curates their own portfolio. Staff assess what
-# is there, they do not remove a learner's file from the learner's own page.
-@learner_self_only(kwarg="pk")
+# Portfolio removal uses the same owner/admin permission as uploads.
+@learner_self_or_admin(kwarg="pk")
 def delete_evidence(request, kind, pk, file_id):
     """Remove one of the learner's own evidence files.
 

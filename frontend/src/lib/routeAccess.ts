@@ -164,10 +164,10 @@ export function isBareLearnerWorkspacePath(path: string | null | undefined): boo
 /**
  * Where LoginPage should send a successfully authenticated account.
  *
- * Learners default to their Dashboard, including learners with imported records.
- * Explicit deep links still work; enrolment and previous-record prerequisites
- * are enforced by the existing page/access gates. Record monitors always start
- * at their monitoring dashboard.
+ * Learners always start at Student Home, including when signing in from an old
+ * Dashboard or activity link. The entry gate verifies previous-record signing
+ * before the page is shown. Navigation after sign-in still uses the normal
+ * routes. Record monitors always start at their monitoring dashboard.
  *
  * `from` is helpful for pasted deep links, but `/workspace/learner` without a
  * learner id is the learner self-workspace. Staff can open learner pages for
@@ -180,12 +180,12 @@ export function postLoginRouteFor(
   account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>,
   requestedPath?: string | null,
 ): string {
-  if (account.access === 'record-monitor') {
+  if (account.access === 'record-monitor' || account.role === 'learner') {
     return homeRouteFor(account);
   }
   const requested = String(requestedPath || '').trim();
   if (!requested) return homeRouteFor(account);
-  if (account.role !== 'learner' && isBareLearnerWorkspacePath(requested)) {
+  if (isBareLearnerWorkspacePath(requested)) {
     return homeRouteFor(account);
   }
   return requested;
@@ -195,5 +195,5 @@ const HOME_BY_ROLE: Record<Role, string> = {
   admin: '/workspace/admin',
   staff: '/users',
   employer: '/workspace/employer',
-  learner: '/workspace/learner',
+  learner: '/learner/home',
 };

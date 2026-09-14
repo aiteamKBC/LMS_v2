@@ -1,0 +1,29 @@
+{
+  "canvas": [
+    1000,
+    1270
+  ],
+  "circle_diameter": 380.0,
+  "circle_centre": [
+    500,
+    605.7900000000001
+  ],
+  "stroke_width": 15.0,
+  "panel_boxes": {
+    "upper": [
+      63.0,
+      163.83,
+      420.0,
+      419.1
+    ],
+    "lower": [
+      63.0,
+      607.06,
+      420.0,
+      414.02000000000004
+    ]
+  },
+  "reference_contour_mean_abs_error_px": 0.698219178082189,
+  "reference_contour_95th_error_px": 2.4700000000000273,
+  "max_symmetry_error_at_1000px": 0.5
+}

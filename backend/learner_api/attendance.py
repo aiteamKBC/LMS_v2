@@ -206,8 +206,8 @@ def _summarize_attendance(rows, *, now=None):
     counted_rows = [row for row in rows
                     if status(row) in {'present', 'late', 'absent'}
                     and row.get('session_date') is not None
-                    and (row['session_date'], row.get('session_start_time') or time.min)
-                    <= (cutoff_date, cutoff_time)]
+                    and (row['session_date'], time.min if row.get('attendance_confirmed') else
+                         row.get('session_start_time') or time.min) <= (cutoff_date, cutoff_time)]
     if not counted_rows:
         return None
 
@@ -318,7 +318,8 @@ def learner_attendance(request, kind, learner_id):
         return _error(f'Database error: {exc}', 502)
 
     try:
-        rows = combined_attendance_rows(source)
+        from .attendance_lectures import lecture_register
+        rows = lecture_register(source)
     except Exception:
         return _error('Unable to load attendance. Please try again.', 502)
 
