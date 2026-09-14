@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
 import { fetchLearnerEventReviewInstance, type LearnerReviewDefinition } from '@/api/learnerCalendar';
@@ -31,6 +31,7 @@ export interface LearnerReviewInstanceState {
   definition: LearnerReviewDefinition | null;
   loading: boolean;
   error: string;
+  refresh: () => void;
 }
 
 /**
@@ -45,6 +46,8 @@ export function useLearnerReviewInstance(
   const [definition, setDefinition] = useState<LearnerReviewDefinition | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [revision, setRevision] = useState(0);
+  const refresh = useCallback(() => setRevision(value => value + 1), []);
 
   useEffect(() => {
     if (!eventKey) {
@@ -69,13 +72,31 @@ export function useLearnerReviewInstance(
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [kind, learnerId, eventKey]);
+  }, [kind, learnerId, eventKey, revision]);
 
-  return { definition, loading, error };
+  return { definition, loading, error, refresh };
 }
 
 export function LearnerReviewInstanceForm({ definition, onSign, signatoryName = 'Learner' }: { definition: LearnerReviewDefinition; onSign?: (signature: string) => Promise<void>; signatoryName?: string }) {
   const [openSectionId, setOpenSectionId] = useState('');
+  const [signing, setSigning] = useState(false);
+  const [signatureError, setSignatureError] = useState('');
+  const signingInFlight = useRef(false);
+
+  async function saveSignature(signature: string) {
+    if (!onSign || signingInFlight.current) return;
+    signingInFlight.current = true;
+    setSigning(true);
+    setSignatureError('');
+    try {
+      await onSign(signature);
+    } catch (reason) {
+      setSignatureError(reason instanceof Error ? reason.message : 'Could not save your signature. Please try again.');
+    } finally {
+      signingInFlight.current = false;
+      setSigning(false);
+    }
+  }
 
   useEffect(() => {
     setOpenSectionId(definition.sections.find((section) => section.enabled)?.id || '');
@@ -108,7 +129,7 @@ export function LearnerReviewInstanceForm({ definition, onSign, signatoryName = 
         </h2>
         <p className="mt-1 text-xs text-primary-800">
           <AppIcon className="ri-information-line mr-1.5" />
-          These sections and questions come from Curriculum.
+          Review your coach's notes and the agreed next steps.
         </p>
       </div>
 
@@ -147,9 +168,13 @@ export function LearnerReviewInstanceForm({ definition, onSign, signatoryName = 
       ) : null}
       {onSign && definition.signatures.participant?.required && !definition.signatures.participant.signed &&
         ['awaiting-signature', 'completed'].includes(definition.instance?.status || '') ? (
-        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4" aria-busy={signing}>
           <p className="mb-3 text-sm font-bold text-violet-950">Your signature is required</p>
-          <SignaturePad signatoryName={signatoryName} onCommit={(signature) => { void onSign(signature); }} onCancel={() => undefined} />
+          {signatureError && <p role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{signatureError} You can try signing again.</p>}
+          {signing && <p role="status" className="mb-3 text-sm text-violet-900">Saving your signature…</p>}
+          <fieldset disabled={signing} className="min-w-0 border-0 p-0">
+            <SignaturePad signatoryName={signatoryName} onCommit={(signature) => { void saveSignature(signature); }} onCancel={() => undefined} />
+          </fieldset>
         </div>
       ) : null}
     </section>

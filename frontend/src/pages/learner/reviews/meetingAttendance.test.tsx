@@ -1,3 +1,4 @@
+/* global RequestInfo, RequestInit */
 import * as React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -64,32 +65,49 @@ describe.each(types)('$path meeting attendance', item => {
   it('shows real details and credits the full meeting once, surviving reload', async () => {
     populate(item.source);
     const page = mount();
-    const attend = await screen.findByRole('button', { name: 'Attend' });
+    const action = item.source === 'mcr' ? 'Confirm attendance' : 'Attend';
+    const attend = await screen.findByRole('button', { name: action });
     await waitFor(() => expect(attend).toBeEnabled());
-    expect(screen.getByText('10:00 – 11:30')).toBeInTheDocument();
+    if (item.source === 'mcr') {
+      expect(screen.getByText('10:00')).toBeInTheDocument();
+      expect(screen.getByText(/Europe\/London.*90 minutes/)).toBeInTheDocument();
+    } else expect(screen.getByText('10:00 – 11:30')).toBeInTheDocument();
     if (item.source === 'progress-review') expect(screen.getByText('Manager Jane')).toBeInTheDocument();
     fireEvent.click(attend); fireEvent.click(attend);
     await screen.findByRole('status');
     expect(posts).toHaveLength(1);
     expect(events[0].status).toBe('scheduled');
     page.unmount(); mount();
-    await waitFor(() => expect(screen.getAllByText('Attended · 90 min').length).toBeGreaterThan(0));
-    expect(screen.queryByRole('button', { name: 'Attend' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText(item.source === 'mcr' ? 'Attended' : 'Attended · 90 min').length).toBeGreaterThan(0));
+    expect(screen.queryByRole('button', { name: action })).not.toBeInTheDocument();
   });
-  it('keeps Attend disabled before the scheduled date', async () => {
+  it('does not allow attendance before the scheduled date', async () => {
     populate(item.source, '2026-10-01'); mount();
-    expect(await screen.findByRole('button', { name: 'Attend' })).toBeDisabled();
-    expect(screen.getByText('Attend will be available on the meeting date.')).toBeInTheDocument();
+    if (item.source === 'mcr') {
+      expect(await screen.findByRole('link', { name: 'Prepare for meeting' })).toBeVisible();
+      expect(screen.queryByRole('button', { name: 'Confirm attendance' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Join meeting' })).not.toBeInTheDocument();
+    } else {
+      expect(await screen.findByRole('button', { name: 'Attend' })).toBeDisabled();
+      expect(screen.getByText('Attend will be available on the meeting date.')).toBeInTheDocument();
+    }
     expect(posts).toHaveLength(0);
   });
-  it('opens the same absence form from the card and table with the exact meeting selected', async () => {
+  it('opens the same absence form from the current card and meeting list with the exact meeting selected', async () => {
     populate(item.source); mount();
-    const buttons = await screen.findAllByRole('button', { name: 'Report Absence' });
+    if (item.source === 'mcr') fireEvent.click(await screen.findByText('More options', { selector: 'summary' }));
+    const buttons = await screen.findAllByRole('button', { name: item.source === 'mcr' ? 'Report absence' : 'Report Absence' });
     fireEvent.click(buttons[0]);
     let dialog = await screen.findByRole('dialog', { name: 'Report Absence' });
     await waitFor(() => expect(within(dialog).getByRole('combobox', { name: 'Meeting *' })).toHaveValue(state[0].absenceSessionId));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close absence report' }));
-    fireEvent.click(buttons.at(-1)!);
+    if (item.source === 'mcr') {
+      fireEvent.click(screen.getByRole('link', { name: 'View all meetings' }));
+      await screen.findByRole('tab', { name: /Upcoming/ });
+      const summary = screen.getByText('More options', { selector: 'summary' });
+      if (!summary.parentElement?.hasAttribute('open')) fireEvent.click(summary);
+      fireEvent.click(screen.getByRole('button', { name: 'Report absence' }));
+    } else fireEvent.click(buttons.at(-1)!);
     dialog = await screen.findByRole('dialog', { name: 'Report Absence' });
     await waitFor(() => expect(within(dialog).getByRole('combobox', { name: 'Meeting *' })).toHaveValue(state[0].absenceSessionId));
     expect(within(dialog).queryByText('Watch the recording')).not.toBeInTheDocument();
