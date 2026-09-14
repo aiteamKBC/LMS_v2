@@ -7,6 +7,7 @@ import { monthName, statusLabels, type AssignmentMonth, type MonthlyAssignmentRo
 import styles from './monthlySubmission.module.css';
 import { AssignmentFeedback } from './AssignmentFeedback';
 import { AssignmentAttachment } from './AssignmentAttachment';
+import { AssignmentDownload } from './AssignmentDownload';
 
 export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
   assignment: MonthlyAssignmentRow; group: AssignmentMonth; kind: LearnerKind; learnerId: string;
@@ -40,6 +41,8 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
             : 'Your tutor has not added the assignment question yet. Use the support button if you need help getting started.')}</p>}
         {attachmentUrl && <AssignmentAttachment key={`${kind}:${learnerId}:${assignment.id}:${attachmentUrl}`} url={attachmentUrl} fileName={assignment.fileName} title={assignment.component} />}
         <AssignmentFeedback key={`${kind}:${learnerId}:${assignment.id}`} marking={assignment.marking} status={assignment.status} />
+        {['accepted', 'partial', 'referred', 'returned', 'rejected', 'completed'].includes(assignment.status) &&
+          <AssignmentDownload key={`download:${kind}:${learnerId}:${assignment.id}`} kind={kind} learnerId={learnerId} activityId={assignment.id} month={group.month} />}
         {ksbs.length > 0 && <div className={styles.ksbs}><p className={styles.eyebrow}>Knowledge, skills & behaviours</p><div>
           {ksbs.map(mapping => <span key={mapping.code} title={mapping.description || undefined}>{mapping.code}</span>)}
         </div></div>}

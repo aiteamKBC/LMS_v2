@@ -11,7 +11,7 @@ vi.mock('@/api/reflectionSubmission', () => ({
 }));
 vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: () => <div>Evidence uploader</div> }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn().mockResolvedValue({ ksbs: [], activityFeed: [] }) }));
-vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [] }), bookLearnerCalendarSession: vi.fn() }));
+vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [], bookingCalendar: { coveredYears: [2026], bankHolidays: [] } }), bookLearnerCalendarSession: vi.fn() }));
 vi.mock('@/api/monthlyAssignment', async importOriginal => ({ ...await importOriginal<typeof import('@/api/monthlyAssignment')>(), checkMonthlyAssignment: vi.fn() }));
 
 const props = {
@@ -34,6 +34,16 @@ afterEach(async () => {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
   vi.clearAllMocks();
 });
+
+async function enterTopicTime() {
+  fireEvent.click(await screen.findByRole('button', { name: /KSBs & hours claimed/ }));
+  fireEvent.change(screen.getByLabelText('Topic 1'), { target: { value: 'Research' } });
+  fireEvent.change(screen.getByLabelText('Hours 1'), { target: { value: '3.5' } });
+  const month = (screen.getByLabelText('Submission month') as HTMLInputElement).value;
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1', exact: true })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Date 1', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: `${month}-15` }));
+}
 
 describe('monthly assignment drafts', () => {
   it('seeds a new submission with its Training Plan month', async () => {
@@ -100,7 +110,8 @@ describe('monthly assignment drafts', () => {
     expect(saved.submissionMode).toBe('draft');
     expect(saved.monthlyAssignment?.version).toBe(2);
     expect(saved.assignmentAnswer).toBe('');
-    expect(saved.actualTimeHours).toBe('8');
+    expect(saved.actualTimeHours).toBe('');
+    expect(saved.monthlyAssignment?.timeEntries).toEqual([]);
     expect(props.onSubmitProgress).not.toHaveBeenCalled();
   });
 
@@ -163,6 +174,7 @@ describe('monthly assignment drafts', () => {
 
   it('keeps submit locked until checking, then uses the atomic completion endpoint only', async () => {
     render(<AssignmentSubmissionWizard {...props} />);
+    await enterTopicTime();
     fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
     expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
@@ -170,12 +182,15 @@ describe('monthly assignment drafts', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
     await screen.findByText('Submission preview');
     expect(props.onSubmitProgress).toHaveBeenCalledOnce();
+    expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.at(-1)?.[0].actualTimeHours).toBe('3.5');
+    expect(props.onRestoreTime).toHaveBeenCalledWith(12600, 'input');
     expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.every(([payload]) => payload.submissionMode === 'draft')).toBe(true);
     expect(sessionStorage.getItem('monthly-assignment-draft:commercial:1:COMP-1')).toBeNull();
   });
 
   it('does not submit when the final validation returns an incomplete check set', async () => {
     render(<AssignmentSubmissionWizard {...props} />);
+    await enterTopicTime();
     fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
@@ -188,6 +203,7 @@ describe('monthly assignment drafts', () => {
 
   it('discards previously passed checks when revalidation fails, and can retry', async () => {
     render(<AssignmentSubmissionWizard {...props} />);
+    await enterTopicTime();
     fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());

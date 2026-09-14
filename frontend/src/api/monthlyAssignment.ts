@@ -2,6 +2,7 @@
 export interface MonthlyAssignment {
   version: 2;
   month: string;
+  timeEntries?: Array<{ topic: string; hours: string; date: string }>;
   step: number;
   understood: string;
   gainedSkills: string;
@@ -32,7 +33,7 @@ export const MONTHLY_STEPS = ['Assignment answer', 'Evidence & cross-referencing
 
 export function emptyMonthlyAssignment(codes: string[], month: string): MonthlyAssignment {
   return {
-    version: 2, month, step: 0, understood: '', gainedSkills: '', evidence: [],
+    version: 2, month, timeEntries: [], step: 0, understood: '', gainedSkills: '', evidence: [],
     claims: codes.map(code => ({ code, explanation: '', evidenceIds: [] })),
     plannedReviewed: false, newKnowledge: false, newSkills: false, sharingConsent: false, paidHours: false,
     lmsReflection: '', extraActivities: '', integratedReflection: '', careerImpact: '', jobImpact: '',
