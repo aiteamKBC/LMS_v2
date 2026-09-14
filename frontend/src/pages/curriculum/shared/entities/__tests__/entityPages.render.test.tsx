@@ -37,6 +37,9 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   fetchCurriculumModuleKsbCoverage: (...args: unknown[]) => fetchCurriculumModuleKsbCoverage(...(args as [])),
   previewModuleSessionPlan: vi.fn(async () => ({ sessions: [], finalEndDate: '', warnings: [] })),
+  fetchCurriculumHolidays: vi.fn(async () => [
+    { id: 'england-and-wales:2026-12-25', label: 'Christmas Day', startDate: '2026-12-25', endDate: '2026-12-25', type: 'Bank holiday', color: '#91d64c', source: 'gov.uk' },
+  ]),
   // The Holidays page reads the same table in its own raw shape. Inlined
   // because vi.mock is hoisted above every const in this file.
   fetchEnglandHolidays: vi.fn(async () => [
@@ -176,12 +179,12 @@ describe('entity pages render', () => {
     expect(within(table).getByText('Sept 2026')).toBeInTheDocument();
   });
 
-  it('Holidays lists the bank holidays the calendar is built on', async () => {
-    await renderAt(() => import('../../../england-holidays/page'), '/curriculum/holidays', '/curriculum/holidays');
+  it('Bank Holidays lists the holidays the calendar is built on', async () => {
+    await renderAt(() => import('../../../england-holidays/page'), '/curriculum/england-holidays', '/curriculum/england-holidays');
     // Twice over: the table row, and the "next holiday" stat above it.
     expect(await screen.findAllByText('Christmas Day')).not.toHaveLength(0);
-    expect(screen.getByText('Friday')).toBeInTheDocument();
-    expect(screen.getByText(/Showing 1 of 1 bank holidays/)).toBeInTheDocument();
+    expect(screen.getByText('GOV.UK')).toBeInTheDocument();
+    expect(screen.getByText(/Showing 1 of 1 holidays/)).toBeInTheDocument();
   });
 
   it('Cohort workspace shows the cohort and its context', async () => {

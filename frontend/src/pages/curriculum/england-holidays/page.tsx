@@ -1,74 +1,88 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { DatePickerField } from '@/components/feature/DatePickerField';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
+import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {
+  createCurriculumHoliday,
+  fetchCurriculumHolidays,
   fetchEnglandHolidaySyncs,
-  fetchEnglandHolidays,
   refreshEnglandHolidays,
-  type EnglandHoliday,
+  type CurriculumHoliday,
   type EnglandHolidayChange,
   type EnglandHolidaySync,
   type EnglandHolidaySyncStatus,
 } from '@/lib/curriculumApi';
 import { cleanText, formatDateLabel, matchesSearch } from '../shared/entities/model';
 import {
+  EntityDrawer,
   EntityEmptyState,
   EntityFilterBar,
   EntityHero,
   EntityTable,
+  FormField,
   HeroSecondaryButton,
   InlineError,
   PlainCell,
   StackedCell,
+  TextControl,
   WorkspacePanel,
 } from '../shared/entities/ui';
+import { useDrawerState } from '../shared/entities/useDrawerState';
 
-// GOV.UK's published bank holidays, read straight from curriculum.england_holidays.
-//
-// A mirror, not an authored list: nobody here edits what GOV.UK publishes. What
-// this page has to answer, then, is not "what can I change?" but "is this still
-// what GOV.UK says, and what did they change?" — because a bank holiday moving
-// reschedules every cohort running across it.
-//
-// So the mirror checks itself against https://www.gov.uk/bank-holidays.json on
-// an interval, records every check, and this page shows the result: when it was
-// last looked at, and exactly which holidays were added, moved, retitled or
-// withdrawn. "Check GOV.UK now" is the same check on demand.
-//
-// The college's own closure periods are the other half of the calendar and live
-// on the Holidays page, where they are authored with their own date ranges.
+const MANUAL_TYPE = 'Manual holiday';
+const MANUAL_COLOR = '#7c3aed';
 
-const GRID = 'grid grid-cols-[minmax(200px,1.6fr)_140px_120px_minmax(120px,0.9fr)_110px]';
+const GRID = 'grid grid-cols-[minmax(220px,1.6fr)_128px_128px_80px_120px_minmax(150px,1fr)]';
 
 const COLUMNS = [
-  { label: 'Bank holiday' },
-  { label: 'Date' },
-  { label: 'Day' },
+  { label: 'Holiday' },
+  { label: 'Start' },
+  { label: 'End' },
+  { label: 'Days', align: 'center' as const },
+  { label: 'Source' },
   { label: 'Notes' },
-  { label: 'Bunting', align: 'center' as const },
 ];
 
-function holidayYear(holiday: EnglandHoliday): string {
-  return cleanText(holiday.date).slice(0, 4);
+interface ManualHolidayForm {
+  label: string;
+  startDate: string;
+  endDate: string;
 }
 
-function weekdayLabel(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return '—';
-  return parsed.toLocaleDateString('en-GB', { weekday: 'long' });
+const EMPTY_FORM: ManualHolidayForm = {
+  label: '',
+  startDate: '',
+  endDate: '',
+};
+
+function isBankHoliday(holiday: CurriculumHoliday): boolean {
+  return holiday.source === 'gov.uk';
 }
 
-/** A recorded check's timestamp, as a person reads it. */
+function holidayYear(holiday: CurriculumHoliday): string {
+  return cleanText(holiday.startDate).slice(0, 4);
+}
+
+function inclusiveDays(holiday: CurriculumHoliday): number {
+  const start = new Date(holiday.startDate);
+  const end = new Date(holiday.endDate || holiday.startDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+  return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+}
+
 function stampLabel(value: string): string {
   const parsed = new Date(cleanText(value));
-  if (Number.isNaN(parsed.getTime())) return '—';
+  if (Number.isNaN(parsed.getTime())) return 'Never';
   return parsed.toLocaleString('en-GB', {
-    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   });
 }
 
-/** How many holidays a check actually moved, in any direction. */
 function changeCount(sync: Pick<EnglandHolidaySync, 'added' | 'changed' | 'moved' | 'withdrawn'>): number {
   return (sync.added?.length || 0) + (sync.changed?.length || 0)
     + (sync.moved?.length || 0) + (sync.withdrawn?.length || 0);
@@ -80,13 +94,6 @@ const SOURCE_LABELS: Record<string, string> = {
   command: 'Checked from the command line',
 };
 
-/**
- * One holiday a check found, in the words that say what happened to it.
- *
- * The four kinds read differently on purpose: an added holiday is a date; a
- * moved one is two dates and the arrow between them; a changed one is the old
- * title beside the new; a withdrawn one is a date that is no longer a holiday.
- */
 function ChangeRow({ kind, change }: { kind: 'added' | 'moved' | 'changed' | 'withdrawn'; change: EnglandHolidayChange }) {
   const tone = {
     added: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -104,13 +111,13 @@ function ChangeRow({ kind, change }: { kind: 'added' | 'moved' | 'changed' | 'wi
       <span className="font-semibold text-foreground-900">{change.title}</span>
       {kind === 'moved' ? (
         <span className="tabular-nums text-foreground-600">
-          {formatDateLabel(change.previousDate || '')} → {formatDateLabel(change.date)}
+          {formatDateLabel(change.previousDate || '')} to {formatDateLabel(change.date)}
         </span>
       ) : (
         <span className="tabular-nums text-foreground-600">{formatDateLabel(change.date)}</span>
       )}
       {kind === 'changed' && change.previous?.title && change.previous.title !== change.title && (
-        <span className="text-foreground-500">was “{change.previous.title}”</span>
+        <span className="text-foreground-500">was "{change.previous.title}"</span>
       )}
       {cleanText(change.notes) && <span className="text-foreground-500">({change.notes})</span>}
     </li>
@@ -118,7 +125,7 @@ function ChangeRow({ kind, change }: { kind: 'added' | 'moved' | 'changed' | 'wi
 }
 
 export default function CurriculumEnglandHolidaysPage() {
-  const [holidays, setHolidays] = useState<EnglandHoliday[]>([]);
+  const [holidays, setHolidays] = useState<CurriculumHoliday[]>([]);
   const [syncs, setSyncs] = useState<EnglandHolidaySync[]>([]);
   const [syncStatus, setSyncStatus] = useState<EnglandHolidaySyncStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,26 +135,25 @@ export default function CurriculumEnglandHolidaysPage() {
   const [logError, setLogError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [yearFilter, setYearFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
+  const drawer = useDrawerState<ManualHolidayForm>(EMPTY_FORM);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     setLogError(null);
     try {
-      // The dates and the record of what changed are read together but fail
-      // apart: the holidays are the page, and a check log that cannot be read
-      // should cost the reader that one panel, not the calendar.
-      const [rows, log] = await Promise.all([
-        fetchEnglandHolidays(signal, { skipCache: true }),
+      const [calendarRows, log] = await Promise.all([
+        fetchCurriculumHolidays(signal, { skipCache: true }),
         fetchEnglandHolidaySyncs(signal).catch(err => {
           if (!signal?.aborted) {
-            setLogError(err instanceof Error ? err.message : 'The check log could not be read.');
+            setLogError(err instanceof Error ? err.message : 'The GOV.UK check log could not be read.');
           }
           return { status: null as EnglandHolidaySyncStatus | null, results: [] as EnglandHolidaySync[] };
         }),
       ]);
       if (signal?.aborted) return;
-      setHolidays(rows);
+      setHolidays(calendarRows);
       setSyncs(log.results || []);
       setSyncStatus(log.status || null);
       setLoaded(true);
@@ -165,6 +171,40 @@ export default function CurriculumEnglandHolidaysPage() {
     return () => controller.abort();
   }, [load]);
 
+  const bankHolidays = useMemo(() => holidays.filter(isBankHoliday), [holidays]);
+  const manualHolidays = useMemo(() => holidays.filter(holiday => !isBankHoliday(holiday)), [holidays]);
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const thisYear = today.slice(0, 4);
+
+  const nextHoliday = useMemo(
+    () => [...holidays]
+      .filter(holiday => cleanText(holiday.startDate) >= today)
+      .sort((a, b) => cleanText(a.startDate).localeCompare(cleanText(b.startDate)))[0],
+    [holidays, today],
+  );
+
+  const years = useMemo(
+    () => Array.from(new Set(holidays.map(holidayYear).filter(Boolean))).sort(),
+    [holidays],
+  );
+
+  const lastChecked = useMemo(() => cleanText(syncStatus?.lastSuccessAt), [syncStatus]);
+
+  const notableSyncs = useMemo(
+    () => syncs.filter(sync => sync.status !== 'ok' || changeCount(sync) > 0),
+    [syncs],
+  );
+
+  const visibleHolidays = useMemo(() => {
+    const sorted = [...holidays].sort((a, b) => cleanText(a.startDate).localeCompare(cleanText(b.startDate)));
+    return sorted.filter(holiday => {
+      if (yearFilter && holidayYear(holiday) !== yearFilter) return false;
+      if (sourceFilter === 'gov.uk' && !isBankHoliday(holiday)) return false;
+      if (sourceFilter === 'manual' && isBankHoliday(holiday)) return false;
+      return matchesSearch(search, [holiday.label, holiday.startDate, holiday.endDate, holiday.notes, holiday.type]);
+    });
+  }, [holidays, search, sourceFilter, yearFilter]);
+
   const checkNow = useCallback(async () => {
     setChecking(true);
     try {
@@ -174,7 +214,7 @@ export default function CurriculumEnglandHolidaysPage() {
       await showCurriculumAlert({
         title: moved ? 'GOV.UK has changed' : 'Nothing has changed',
         text: moved
-          ? `${moved} bank holiday${moved === 1 ? '' : 's'} updated from GOV.UK. Cohorts running across ${moved === 1 ? 'it' : 'them'} pick the new dates up straight away.`
+          ? `${moved} bank holiday${moved === 1 ? '' : 's'} updated from GOV.UK.`
           : `All ${summary.feedCount} bank holidays match what GOV.UK is publishing.`,
         timer: moved ? undefined : 2200,
       });
@@ -189,46 +229,39 @@ export default function CurriculumEnglandHolidaysPage() {
     }
   }, [load]);
 
-  const years = useMemo(
-    () => Array.from(new Set(holidays.map(holidayYear).filter(Boolean))).sort(),
-    [holidays],
-  );
+  const saveManualHoliday = async () => {
+    const form = drawer.form;
+    if (!form.label.trim()) { drawer.setError('Give the holiday a name.'); return; }
+    if (!form.startDate) { drawer.setError('Set the start date.'); return; }
+    if (form.endDate && form.endDate < form.startDate) {
+      drawer.setError('The end date cannot be before the start date.');
+      return;
+    }
 
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const thisYear = today.slice(0, 4);
-
-  const nextHoliday = useMemo(
-    () => holidays.find(holiday => cleanText(holiday.date) >= today),
-    [holidays, today],
-  );
-
-  const visibleHolidays = useMemo(() => {
-    const sorted = [...holidays].sort((a, b) => cleanText(a.date).localeCompare(cleanText(b.date)));
-    return sorted.filter(holiday => {
-      if (yearFilter && holidayYear(holiday) !== yearFilter) return false;
-      return matchesSearch(search, [holiday.title, holiday.date, holiday.notes]);
-    });
-  }, [holidays, search, yearFilter]);
-
-  // When the mirror was last known to match GOV.UK. The sync log is the better
-  // answer; fetched_at on the rows is the fallback for a database that has the
-  // holidays but has not recorded a check yet.
-  const lastChecked = useMemo(() => {
-    const recorded = cleanText(syncStatus?.lastSuccessAt);
-    if (recorded) return recorded;
-    return holidays.reduce((latest, holiday) => {
-      const value = cleanText(holiday.fetchedAt);
-      return value > latest ? value : latest;
-    }, '');
-  }, [holidays, syncStatus]);
-
-  // A check that found nothing is worth recording and not worth reading, so the
-  // panel lists the ones that found something — plus any that failed, because
-  // "we have not reached GOV.UK since Tuesday" is the thing worth seeing.
-  const notableSyncs = useMemo(
-    () => syncs.filter(sync => sync.status !== 'ok' || changeCount(sync) > 0),
-    [syncs],
-  );
+    drawer.setSaving(true);
+    drawer.setError(null);
+    try {
+      const payload = {
+        label: form.label.trim(),
+        startDate: form.startDate,
+        endDate: form.endDate || form.startDate,
+        type: MANUAL_TYPE,
+        color: MANUAL_COLOR,
+      };
+      await createCurriculumHoliday(payload);
+      drawer.close();
+      await load();
+      await showCurriculumAlert({
+        title: 'Manual holiday added',
+        text: `${payload.label} has been added to the bank holiday calendar.`,
+        timer: 1800,
+      });
+    } catch (err) {
+      drawer.setError(err instanceof Error ? err.message : 'The manual holiday could not be saved.');
+    } finally {
+      drawer.setSaving(false);
+    }
+  };
 
   return (
     <WorkspaceShell
@@ -236,39 +269,33 @@ export default function CurriculumEnglandHolidaysPage() {
       roleLabel="Curriculum Designer"
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
-      pageTitle="England Holidays"
-      pageSubtitle="The national bank holidays published by GOV.UK, kept in step automatically"
+      pageTitle="Bank Holidays"
+      pageSubtitle="GOV.UK bank holidays plus manually added dates"
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
       <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         <EntityHero
           eyebrow="Curriculum Studio"
-          title="England Holidays"
-          description="England and Wales bank holidays exactly as GOV.UK publishes them. They refresh themselves against gov.uk, and every change — a new holiday, one moved off a weekend, one withdrawn — is listed below. A cohort takes every bank holiday inside its own dates, and its module sessions skip them."
+          title="Bank Holidays"
+          description="England and Wales bank holidays stay synced from GOV.UK. Add a manual holiday here when you need an extra non-delivery date in the same calendar."
           loading={loading && !loaded}
           stats={[
-            { icon: 'ri-flag-line', label: 'Bank holidays', value: holidays.length },
+            { icon: 'ri-flag-line', label: 'GOV.UK holidays', value: bankHolidays.length },
+            { icon: 'ri-edit-line', label: 'Manual holidays', value: manualHolidays.length },
             { icon: 'ri-calendar-event-line', label: `In ${thisYear}`, value: holidays.filter(holiday => holidayYear(holiday) === thisYear).length },
             {
               icon: 'ri-calendar-check-line',
               label: 'Next holiday',
-              value: nextHoliday ? formatDateLabel(nextHoliday.date) : '—',
-              detail: nextHoliday?.title,
-            },
-            {
-              icon: 'ri-refresh-line',
-              label: 'Last checked',
-              value: lastChecked ? formatDateLabel(lastChecked) : 'Never',
-              detail: syncStatus?.autoSync
-                ? `Checks itself every ${syncStatus.intervalHours} hours`
-                : 'Automatic checks are off',
+              value: nextHoliday ? formatDateLabel(nextHoliday.startDate) : '-',
+              detail: nextHoliday?.label,
             },
           ]}
+          primaryAction={{ label: 'Add manual holiday', onClick: () => drawer.openWith(EMPTY_FORM) }}
           secondaryActions={(
             <HeroSecondaryButton
               icon="ri-refresh-line"
-              label={checking ? 'Checking GOV.UK…' : 'Check GOV.UK now'}
+              label={checking ? 'Checking GOV.UK...' : 'Check GOV.UK now'}
               onClick={() => void checkNow()}
               disabled={checking}
             />
@@ -278,18 +305,18 @@ export default function CurriculumEnglandHolidaysPage() {
         {error && <InlineError message={error} onRetry={() => void load()} />}
 
         <WorkspacePanel
-          title="What GOV.UK has changed"
+          title="GOV.UK updates"
           description={lastChecked
-            ? `Last checked ${stampLabel(lastChecked)}. Every check is recorded; the ones that found something are listed here.`
-            : 'The feed has not been checked yet. Use “Check GOV.UK now”, or run python manage.py fetch_england_holidays --apply.'}
+            ? `Last checked ${stampLabel(lastChecked)}. Manual holidays are kept separately and are not overwritten by GOV.UK.`
+            : 'The GOV.UK feed has not recorded a successful check yet.'}
         >
           {logError ? (
             <p className="py-2 text-[13px] text-rose-700">{logError}</p>
           ) : notableSyncs.length === 0 ? (
             <p className="py-2 text-[13px] text-foreground-500">
               {loading && !loaded
-                ? 'Reading the check log…'
-                : 'No changes recorded. Every bank holiday stored here matches what GOV.UK is publishing.'}
+                ? 'Reading the check log...'
+                : 'No GOV.UK changes recorded. Stored bank holidays match the published feed.'}
             </p>
           ) : (
             <ol className="divide-y divide-background-200">
@@ -308,7 +335,7 @@ export default function CurriculumEnglandHolidaysPage() {
                   </div>
                   {sync.status !== 'ok' ? (
                     <p className="mt-1 text-[12px] text-rose-700">
-                      {sync.message || 'GOV.UK could not be reached. The stored dates were left as they were.'}
+                      {sync.message || 'GOV.UK could not be reached. The stored dates were left unchanged.'}
                     </p>
                   ) : (
                     <ul className="mt-1">
@@ -330,15 +357,25 @@ export default function CurriculumEnglandHolidaysPage() {
           placeholder="Search bank holidays..."
           selects={[
             {
+              label: 'Source',
+              value: sourceFilter,
+              onChange: setSourceFilter,
+              options: [
+                { value: '', label: 'All holidays' },
+                { value: 'gov.uk', label: 'GOV.UK' },
+                { value: 'manual', label: 'Manual' },
+              ],
+            },
+            {
               label: 'Year',
               value: yearFilter,
               onChange: setYearFilter,
               options: [{ value: '', label: 'All years' }, ...years.map(year => ({ value: year, label: year }))],
             },
           ]}
-          onReset={() => { setSearch(''); setYearFilter(''); }}
+          onReset={() => { setSearch(''); setSourceFilter(''); setYearFilter(''); }}
           summary={loaded
-            ? `Showing ${visibleHolidays.length} of ${holidays.length} bank holidays${lastChecked ? ` — last checked ${formatDateLabel(lastChecked)}` : ''}`
+            ? `Showing ${visibleHolidays.length} of ${holidays.length} holidays${lastChecked ? ` - GOV.UK checked ${formatDateLabel(lastChecked)}` : ''}`
             : undefined}
         />
 
@@ -346,42 +383,80 @@ export default function CurriculumEnglandHolidaysPage() {
           columns={COLUMNS}
           gridClass={GRID}
           rows={visibleHolidays}
-          rowKey={holiday => holiday.id}
+          rowKey={holiday => String(holiday.id)}
           loading={loading && !loaded}
           empty={(
             <EntityEmptyState
               icon="ri-flag-line"
-              title={holidays.length ? 'No bank holidays match these filters' : 'No bank holidays stored yet'}
+              title={holidays.length ? 'No holidays match these filters' : 'No bank holidays stored yet'}
               message={holidays.length
                 ? 'Clear a filter, or search for a different holiday.'
-                : 'Apply sql/2026-09-13_curriculum_england_holidays.sql, then press “Check GOV.UK now” to load them.'}
+                : 'Use Check GOV.UK now to sync the official feed, or add a manual holiday.'}
+              action={holidays.length ? undefined : { label: 'Add manual holiday', onClick: () => drawer.openWith(EMPTY_FORM) }}
             />
           )}
-          renderRow={holiday => (
-            <>
-              <StackedCell
-                primary={(
-                  <span className="flex items-center gap-2">
-                    <span
-                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${cleanText(holiday.date) < today ? 'bg-foreground-300' : 'bg-primary-500'}`}
-                    />
-                    {holiday.title}
-                  </span>
-                )}
-                secondary={holiday.division}
-              />
-              <PlainCell>{formatDateLabel(holiday.date)}</PlainCell>
-              <PlainCell>{weekdayLabel(holiday.date)}</PlainCell>
-              <PlainCell>{cleanText(holiday.notes, '—')}</PlainCell>
-              <PlainCell align="center">
-                {holiday.bunting
-                  ? <span className="text-emerald-600" title="GOV.UK marks this as a flag-flying day">Yes</span>
-                  : <span className="text-foreground-400">No</span>}
-              </PlainCell>
-            </>
-          )}
+          renderRow={holiday => {
+            const bankHoliday = isBankHoliday(holiday);
+            return (
+              <>
+                <StackedCell
+                  primary={(
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: holiday.color || (bankHoliday ? '#dc2626' : MANUAL_COLOR) }}
+                      />
+                      {holiday.label}
+                    </span>
+                  )}
+                  secondary={bankHoliday ? 'England and Wales' : MANUAL_TYPE}
+                />
+                <PlainCell>{formatDateLabel(holiday.startDate)}</PlainCell>
+                <PlainCell>{formatDateLabel(holiday.endDate || holiday.startDate)}</PlainCell>
+                <PlainCell align="center">{inclusiveDays(holiday)}</PlainCell>
+                <PlainCell>{bankHoliday ? 'GOV.UK' : 'Manual'}</PlainCell>
+                <PlainCell>{cleanText(holiday.notes, '-')}</PlainCell>
+              </>
+            );
+          }}
         />
       </div>
+
+      <EntityDrawer
+        open={drawer.open}
+        title="Add manual holiday"
+        subtitle="Manual holidays sit beside GOV.UK bank holidays and are not overwritten by GOV.UK sync."
+        onClose={drawer.close}
+        onSubmit={saveManualHoliday}
+        submitLabel="Add holiday"
+        saving={drawer.saving}
+        error={drawer.error}
+        dirty={drawer.dirty}
+        width="w-[440px]"
+      >
+        <FormField label="Name" required>
+          <TextControl
+            value={drawer.form.label}
+            onChange={value => drawer.patch({ label: value })}
+            placeholder="e.g. College closure"
+          />
+        </FormField>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <DatePickerField
+            label="Start date"
+            required
+            value={drawer.form.startDate}
+            onChange={value => drawer.patch({ startDate: value })}
+          />
+          <DatePickerField
+            label="End date"
+            value={drawer.form.endDate}
+            onChange={value => drawer.patch({ endDate: value })}
+            min={drawer.form.startDate || undefined}
+            helper="Leave blank for one day."
+          />
+        </div>
+      </EntityDrawer>
     </WorkspaceShell>
   );
 }
