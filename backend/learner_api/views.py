@@ -43,6 +43,7 @@ from .active_users import (
 from .identity import learner_profile_for_source
 from .account_deletion import delete_learner_account
 from .learner_dates import save_enrolment_fields
+from .coach_assignment import case_owner_coach, current_coach
 from .directory import learner_directory_queryset
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
@@ -623,21 +624,15 @@ def _create_profile_from_delivery_payload(payload, *, apprenticeship):
 # left the GET open to any authenticated caller (coach name/email of any learner).
 @learner_self_or_staff(kwarg="pk")
 def learner_coach(request, pk):
-    """Read/update a learner's coach contact, stored on "Learner"."learners"
-    (LearnerProfile, columns coach_name / coach_email), resolved from the
-    enrolment row by ``learner_profile_for_source``. Set from the Owner cell in
-    the learner header (BoardPage's HeroCoach), which picks a Caseowner/Admin out
-    of Staff_users and writes both columns together. The learner must be Active —
-    they only have a profile row then — so this 404s otherwise and the UI treats
-    that as "no coach yet" rather than an error.
+    """Read/update the coach on the enrolment record and its linked profile.
+
+    The Owner picker and the edit form's Case owner represent one assignment.
+    Persist both name and email on the source so reactivation preserves them.
+    This picker is available only while the learner is Active.
 
         GET   /learner_api/learners/<id>/coach/   -> {coachName, coachEmail}
         PATCH /learner_api/learners/<id>/coach/   -> {coachName?, coachEmail?} -> same
 
-    Written straight to the mirror (not the source tables), so a status toggle to
-    non-Active deletes the row and the coach data with it — re-entered on
-    reactivation. An Active->Active re-save preserves it (sync_active_user's UPDATE
-    excludes these columns).
     """
     try:
         source = EnrolmentUser.all_learners.filter(pk=pk).first()
@@ -652,7 +647,11 @@ def learner_coach(request, pk):
         return _error("No active learner record. Coach can be set once the learner is Active.", 404)
 
     if request.method == "GET":
-        return JsonResponse({"coachName": active.coach_name or "", "coachEmail": active.coach_email or ""})
+        try:
+            contact = current_coach(source, active)
+        except DatabaseError as exc:
+            return _error(f"Database error: {exc}", 502)
+        return JsonResponse({"coachName": contact["coach_name"], "coachEmail": contact["coach_email"]})
 
     if request.method in ("PATCH", "PUT"):
         # A coach is assigned by staff from the learner's board, never by the
@@ -679,13 +678,24 @@ def learner_coach(request, pk):
         if not update:
             return _error("Provide coachName and/or coachEmail.", 400)
 
-        for attr, value in update.items():
-            setattr(active, attr, value)
         try:
-            active.save(update_fields=list(update.keys()))
+            if "coach_email" not in update:
+                update = case_owner_coach(update["coach_name"], source)
+            elif "coach_name" not in update:
+                if not update["coach_email"]:
+                    update["coach_name"] = ""
+                else:
+                    staff = list(StaffUser.objects.filter(email__iexact=update["coach_email"]).only("username")[:2])
+                    if len(staff) != 1:
+                        return _error("Provide coachName with this coachEmail.", 400)
+                    update["coach_name"] = staff[0].username or ""
+            update["case_owner"] = update["coach_name"]
+            for attr, value in update.items():
+                setattr(source, attr, value)
+            save_enrolment_fields(source, update)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse({"coachName": active.coach_name or "", "coachEmail": active.coach_email or ""})
+        return JsonResponse({"coachName": update["coach_name"], "coachEmail": update["coach_email"]})
 
     return _error("Method not allowed.", 405)
 
@@ -768,6 +778,8 @@ def enrolment_users(request):
         try:
             # all_learners: the default manager is scoped to apprenticeship, so
             # creating through it would fight the learnerType we just set.
+            if "case_owner" in fields:
+                fields.update(case_owner_coach(fields["case_owner"]))
             user = EnrolmentUser.all_learners.create(**fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)

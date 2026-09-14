@@ -13,6 +13,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.coach_booking import booking_url
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile
+from .coach_assignment import current_coach, source_coach
 from .student_activity import CURRENT_SUBJECTS_SQL, _builder_subject_metadata
 from .subject_content import as_list, clean_text, safe_url
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
@@ -251,9 +252,10 @@ def read_dashboard(source, section=None):
     # still receive the complete response when no section was requested.
     contract_data = ({'months': {}, 'contractStatus': 'loading'} if section == 'overview'
                      else contract_plan(source, contract))
-    coach_name = ((getattr(profile, 'coach_name', '') if profile else '')
-                  or (historical or {}).get('coach_name') or assigned_group_coach(source, modules))
-    coach_email = (getattr(profile, 'coach_email', '') if profile else '') or (historical or {}).get('coach_email') or ''
+    contact = current_coach(source, profile, historical)
+    coach_name, coach_email = contact['coach_name'], contact['coach_email']
+    if not coach_name and not coach_email and source_coach(source) is None:
+        coach_name = assigned_group_coach(source, modules)
     from .calendar import coaching_events_for_learner
     # Use the same active programme cycle as the calendar booking destination.
     active_profile = profile if profile and profile.lifecycle_status == 'active' else None
