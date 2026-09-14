@@ -253,16 +253,16 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     </div></section>}
     {step === 1 && <>
       <h3 className="text-lg font-semibold">Evidence & cross-referencing</h3>
-      <p className="text-sm text-slate-600">Put each answer point on a separate line. Attach evidence. You can optionally link it to the numbered answer points below. Files remain securely stored in Azure.</p>
+      <p className="text-sm text-slate-600">Uploading files, reusing evidence and adding links are optional. You can continue and submit without evidence. If you attach any, linking it to numbered answer points is also optional.</p>
       <ol className="list-inside list-decimal rounded-xl bg-blue-50 p-4 text-sm">{answers.assignmentAnswer.split('\n').filter(line => line.trim()).map((line, i) => <li className="mb-2" key={i}>{line}</li>)}</ol>
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
-        <div><h4 className="text-base font-semibold text-slate-900">Upload or reuse a file</h4><p className="mt-1 text-sm text-slate-600">Upload supporting work, or choose a file already in your evidence library.</p></div>
+        <div><h4 className="text-base font-semibold text-slate-900">Upload or reuse a file (optional)</h4><p className="mt-1 text-sm text-slate-600">Upload supporting work, or choose a file already in your evidence library.</p></div>
         <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">{evidenceUploader}</div>
       <div className="flex flex-wrap gap-2">{evidenceFiles.filter(f => f.status === 'approved' && !data.evidence.some(e => e.id === f.id)).map(file => <button key={file.id} type="button" disabled={disabled} className={buttonClass} onClick={() => addFile(file)}>Attach {file.filename}</button>)}<button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => void openLibrary()}>Pull from evidence library</button></div>
       {showLibrary && <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><h5 className="font-semibold">Evidence library</h5><button type="button" className={buttonClass} onClick={() => setShowLibrary(false)}>Close library</button></div>{library.length === 0 && <p className="mt-3 text-sm text-slate-600">No uploaded evidence available yet.</p>}<div className="mt-3 max-h-72 space-y-2 overflow-y-auto">{library.map(file => <div key={file.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3 text-sm"><span className="min-w-0 break-words">{file.filename}</span><button type="button" className={buttonClass + ' shrink-0'} disabled={disabled || data.evidence.some(e => e.id === file.id)} onClick={() => addFile(file)}>{data.evidence.some(e => e.id === file.id) ? 'Attached' : 'Attach'}</button></div>)}</div></div>}
       </section>
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
-        <div><h4 className="text-base font-semibold text-slate-900">Add a link</h4><p className="mt-1 text-sm text-slate-600">Link to online work, a video or a document that supports your answer.</p></div>
+        <div><h4 className="text-base font-semibold text-slate-900">Add a link (optional)</h4><p className="mt-1 text-sm text-slate-600">Link to online work, a video or a document that supports your answer.</p></div>
       <fieldset disabled={disabled || busy} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1.5fr_auto] lg:items-end">
         <label className="min-w-0 text-sm font-medium text-slate-700">Link title<input aria-label="Evidence link name" placeholder="e.g. Project demonstration" value={linkName} onChange={e => setLinkName(e.target.value)} className={inputClass} /></label>
         <label className="min-w-0 text-sm font-medium text-slate-700">Web address<input type="url" aria-label="Evidence URL" placeholder="https://example.com" value={linkUrl} onChange={e => setLinkUrl(e.target.value)} className={inputClass} /></label>
@@ -273,7 +273,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       </section>
       <section className="space-y-4 border-t border-slate-200 pt-6">
         <div><h4 className="text-base font-semibold text-slate-900">Attached evidence ({data.evidence.length})</h4><p className="mt-1 text-sm text-slate-600">These items are included in your submission. Linking them to answer points is optional.</p></div>
-        {data.evidence.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">No evidence attached yet. Upload a file, choose from your library or add a link above.</p>}
+        {data.evidence.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">No evidence attached. This is optional; you can continue without adding files or links.</p>}
         {data.evidence.map(entry => <article key={entry.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 p-4 sm:px-5">
             <div className="min-w-0 flex-1"><span className="text-xs font-semibold uppercase tracking-wide text-primary-700">{entry.url ? 'Link' : 'File'}</span><h5 className="mt-1 break-words text-sm font-semibold text-slate-900">{entry.name}</h5>{entry.url && /^https?:\/\//i.test(entry.url) && <a href={entry.url} target="_blank" rel="noopener noreferrer" className="mt-1 block break-all text-sm text-primary-700 underline">Open link (new tab)</a>}</div>
@@ -287,7 +287,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       </section>
     </>}
     {step === 2 && <section className="mx-auto w-full max-w-6xl space-y-6">
-      <header><h3 className="text-xl font-semibold text-slate-900">KSBs & hours claimed</h3><p className="mt-2 text-sm leading-6 text-slate-600">Record your learning time, review each KSB explanation and select the evidence that supports it.</p></header>
+      <header><h3 className="text-xl font-semibold text-slate-900">KSBs & hours claimed</h3><p className="mt-2 text-sm leading-6 text-slate-600">Record your learning time and review each KSB explanation. Selecting supporting evidence is optional.</p></header>
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time">
         <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-slate-900">Your learning time</h4><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm">Planned: {plannedOtjh == null ? 'Not set' : `${plannedOtjh} hours`}</span></div>
         <fieldset disabled={disabled}>{timeControl}</fieldset>
@@ -296,7 +296,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       </section>
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:p-5">
         <h4 className="font-semibold text-blue-950">Review your KSB explanations</h4>
-        <p className="mt-2 text-sm leading-6 text-blue-900">Assigned KSBs are drafted from your answer and readable evidence. Review the drafts and complete any blank fields. Write your own explanation for KSBs you add yourself. Existing explanations are preserved.</p>
+        <p className="mt-2 text-sm leading-6 text-blue-900">Assigned KSBs are drafted from your answer. Evidence is optional; readable attachments are considered when available. Review the drafts and complete any blank fields. Write your own explanation for KSBs you add yourself. Existing explanations are preserved.</p>
         {ksbGenerationStatus && <p role="status" className="mt-3 border-t border-blue-200 pt-3 text-sm leading-6 text-blue-900">{ksbGenerationStatus}</p>}
       </section>
       <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-lg font-semibold text-slate-900">Your KSB claims</h4><span className="text-sm text-slate-600">{data.claims.length} claims</span></div>
@@ -320,10 +320,10 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
               <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs"><span className="text-slate-500">At least 20 words</span><span className={words >= 20 ? 'font-medium text-emerald-700' : 'font-medium text-amber-800'}>{words} words{words < 20 ? ' ? Needs more detail' : ''}</span></div>
             </div>
             <fieldset className="min-w-0 border-t border-slate-100 pt-4">
-              <legend className="pr-2 text-sm font-semibold text-slate-900">Supporting evidence</legend>
-              <p className="mb-3 text-xs leading-5 text-slate-500">Select the files or links that support this explanation.</p>
+              <legend className="pr-2 text-sm font-semibold text-slate-900">Supporting evidence (optional)</legend>
+              <p className="mb-3 text-xs leading-5 text-slate-500">You may select files or links that support this explanation, or leave this blank.</p>
               <div className="space-y-2">{data.evidence.map(e => <label className={`flex min-h-14 cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm ${claim.evidenceIds.includes(e.id) ? 'border-blue-200 bg-blue-50 text-blue-950' : 'border-slate-200 text-slate-700'}`} key={e.id}><input className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" type="checkbox" disabled={disabled} checked={claim.evidenceIds.includes(e.id)} onChange={event => patch({ claims: data.claims.map((c, i) => i === index ? { ...c, evidenceIds: event.target.checked ? [...c.evidenceIds, e.id] : c.evidenceIds.filter(id => id !== e.id) } : c) })} /><span className="min-w-0 break-words text-sm font-medium leading-6 tracking-normal">{e.name}</span></label>)}</div>
-              {!data.evidence.length && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Add evidence in Step 2, then select it here.</p>}
+              {!data.evidence.length && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">No evidence attached. You can complete this KSB explanation without files or links.</p>}
             </fieldset>
           </div>
         </article>;
@@ -356,7 +356,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       {check('plannedReviewed', 'I have reviewed the planned hours and KSBs against my actual learning.')}
       {check('newKnowledge', 'This activity developed new knowledge.')}
       {check('newSkills', 'This activity developed new skills or behaviours.')}
-      {check('sharingConsent', 'My employer accepts sharing this evidence, and it contains no confidential information.')}
+      {check('sharingConsent', 'If I include evidence, my employer accepts sharing it and it contains no confidential information.')}
       </section>
     </section>}
     {step === 3 && <>

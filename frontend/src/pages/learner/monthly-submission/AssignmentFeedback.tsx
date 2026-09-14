@@ -34,9 +34,11 @@ export function AssignmentFeedback({ marking, status }: { marking?: ComponentMar
     return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
   }, [feedback]);
 
-  const label = reviewed ? statusLabels[result] : pending ? 'Awaiting coach review' : 'Not marked yet';
+  const label = reviewed ? statusLabels[result] : pending ? 'Awaiting coach review' : result === 'draft' ? 'Draft ? not submitted for review' : 'Not marked yet';
   const emptyMessage = pending ? 'Your assignment is awaiting review. Your coach’s feedback will appear here once it is available.'
-    : reviewed ? 'No written feedback was added to this result.' : 'No marking result is available yet.';
+    : reviewed ? 'No written feedback was added to this result.' : result === 'draft'
+      ? 'Your assignment is still a draft. Submit it when you are ready for your coach to review it.'
+      : 'No marking result is available yet.';
   return <section className={styles.feedback} aria-label="Assignment marking result">
     <div className={styles.feedbackHeading}>
       <h4><ClipboardCheck size={17} aria-hidden="true" />Marking result</h4>

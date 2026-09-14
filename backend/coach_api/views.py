@@ -4757,6 +4757,7 @@ def fetch_standalone_event_records(owner_email: str) -> list[CoachCalendarEvent]
                 | Q(event_type__in=["mcr", "progress-review"], idempotency_key__startswith="learner-book:")
                 | ~Q(review_template_id="")
                 | Q(event_type__in=["mcr", "progress-review"], status__in=["scheduled", "in-progress", "awaiting-signature", "completed", "cancelled"])
+                | Q(event_type__in=["mcr", "progress-review"], scheduled_date__isnull=False, scheduled_time__isnull=False)
             )
             .order_by("scheduled_date", "target_date", "scheduled_time", "learner_name")
         )
@@ -7201,6 +7202,7 @@ def collect_live_session_events(
     end_date: date | None = None,
     require_coach_access: bool = True,
     learner_scope: dict | None = None,
+    learner_module_ids: list[str] | None = None,
     include_past: bool = False,
 ) -> list[dict]:
     if require_coach_access and not coach_has_live_session_access(owner_email):
@@ -7279,7 +7281,10 @@ def collect_live_session_events(
         group = actual_group_identity(row, cohort["id"])
         if not group:
             continue
-        if learner_scope is not None:
+        if learner_module_ids is not None:
+            if clean_text(row.get("_meta", {}).get("module_catalogue_id")) not in learner_module_ids:
+                continue
+        elif learner_scope is not None:
             if not live_session_matches_curriculum_scope(
                 programme=programme,
                 cohort=cohort["name"],
@@ -7596,19 +7601,37 @@ def collect_generated_timetable(
             else:
                 source_counts["reviewRows"] += 1
 
-    persisted_standalone_records = fetch_standalone_event_records(owner_email)
+    # Saved appointments survive changes to programme templates and event keys.
+    # Reconcile legacy keys with generated items so a booked event appears once.
+    generated_keys = {event["eventKey"] for event in generated_events}
+    persisted_standalone_records = [
+        record for record in fetch_standalone_event_records(owner_email)
+        if record.event_key not in generated_keys
+    ]
     legacy_keys = [
-        build_timetable_event_key(int(event['learnerId']), event['source'], event['sequence'], parse_schedule_date(event['targetDate']))
+        build_timetable_event_key(
+            int(event["learnerId"]),
+            event["source"],
+            event["sequence"],
+            parse_schedule_date(event["targetDate"]),
+        )
         for event in generated_events
     ]
     legacy_records = fetch_calendar_event_records(owner_email, legacy_keys)
     stored_records = {record.event_key: record for record in persisted_standalone_records}
     stored_records.update(legacy_records)
-    record_map = curriculum_review_instances.reconcile_review_event_keys(generated_events, list(stored_records.values()))
+    record_map = curriculum_review_instances.reconcile_review_event_keys(
+        generated_events,
+        list(stored_records.values()),
+    )
     persisted_standalone_records = [
-        record for record in persisted_standalone_records
+        record
+        for record in persisted_standalone_records
         if record.event_key not in record_map
-        and not (getattr(record, 'review_template_id', '') and record.status == CoachCalendarEvent.STATUS_NOT_SCHEDULED)
+        and not (
+            getattr(record, "review_template_id", "")
+            and record.status == CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        )
     ]
     # One resolution pass for the whole list -- a booked Review keeps its
     # template's Review Type, and this is the only place these rows are shaped.

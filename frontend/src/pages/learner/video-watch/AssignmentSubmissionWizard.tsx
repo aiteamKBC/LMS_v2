@@ -16,6 +16,7 @@ import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { checkMonthlyAssignment, emptyMonthlyAssignment, MONTHLY_STEPS, type MonthlyAssignment, type AssignmentQualityCheck } from '@/api/monthlyAssignment';
 import { MonthlyAnswerField, MonthlyAssignmentSteps } from './MonthlyAssignmentSteps';
+import { AssignmentAttachment } from '../monthly-submission/AssignmentAttachment';
 import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
 
@@ -57,6 +58,8 @@ export function AssignmentSubmissionWizard({
   initialMonth,
   questionHtml,
   questionText,
+  questionFileUrl,
+  questionFileName,
   ksbMappings,
   evidenceFiles,
   evidenceDetails,
@@ -86,6 +89,8 @@ export function AssignmentSubmissionWizard({
   initialMonth?: string | null;
   questionHtml?: string | null;
   questionText?: string | null;
+  questionFileUrl?: string | null;
+  questionFileName?: string | null;
   ksbMappings: ComponentKsbMapping[];
   evidenceFiles: EvidenceRecord[];
   evidenceDetails: EvidenceTrainingPlanDetails;
@@ -491,10 +496,11 @@ export function AssignmentSubmissionWizard({
                   {cleanQuestionHtml ? (
                     <div className="max-w-none [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={{ __html: cleanQuestionHtml }} />
                   ) : (
-                    <p className="whitespace-pre-line">{questionText || 'Your tutor has not added the assignment question yet.'}</p>
+                    <p className="whitespace-pre-line">{questionText || (questionFileUrl ? 'Preview the attached file for your assignment question.' : 'Your tutor has not added the assignment question yet.')}</p>
                   )}
                 </div>
               </div>
+              {questionFileUrl && <AssignmentAttachment key={questionFileUrl} url={questionFileUrl} fileName={questionFileName} title={title} />}
               <MonthlyAnswerField title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
               <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">Write at least 120 words, then click Generate learning statements to draft the three fields below. Review and edit the generated text before submitting.</p>
               {learningGeneration.status && <div

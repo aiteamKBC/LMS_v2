@@ -17,7 +17,7 @@ export function useAssignedKsbExplanations(enabled: boolean, context: {
     if (!targets.length) return;
     if (!input.answer.trim()) { setStatus('Write your assignment answer first to draft assigned KSB explanations.'); return; }
     const controller = new AbortController();
-    setStatus('Drafting your assigned KSB explanations from your answer and readable evidence…');
+    setStatus('Drafting your assigned KSB explanations from your answer, with any available readable evidence…');
     void (async () => {
       try {
         const response = await fetch('/learner_api/reflection/ksb-explanations/', {

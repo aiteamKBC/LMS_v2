@@ -128,3 +128,58 @@ class CalendarSyncVisibilityTests(SimpleTestCase):
         self.assertEqual({event['eventKey'] for event in result['events']}, {record.event_key for record in records})
         self.assertTrue(all(event['date'] == '2026-10-02' for event in result['events']))
         self.assertEqual(next(event['type'] for event in result['events'] if event['source'] == 'progress-review'), 'review')
+
+    def test_saved_cycle_query_includes_scheduled_rows_without_learner_booking_prefix(self):
+        from unittest.mock import MagicMock
+        manager = MagicMock()
+        record = self.record(idempotency_key='', meeting_link='https://teams.example/meeting')
+        manager.filter.return_value.filter.return_value.order_by.return_value = [record]
+        with patch.object(CoachCalendarEvent, 'objects', manager):
+            self.assertEqual(views.fetch_standalone_event_records(record.owner_email), [record])
+        manager.filter.assert_called_once_with(owner_email__iexact=record.owner_email)
+        condition = manager.filter.return_value.filter.call_args.args[0]
+        self.assertIn('scheduled_date__isnull', str(condition))
+        self.assertIn('scheduled_time__isnull', str(condition))
+
+    def test_saved_learner_cycle_link_is_shown_when_coach_generates_different_keys(self):
+        record = self.record(idempotency_key='', meeting_link='https://teams.example/booked',
+                             meeting_provider='Microsoft Teams', graph_event_id='remote-event',
+                             sync_state='synced', last_graph_sync_error='')
+        with ExitStack() as stack:
+            for name, result in {
+                'fetch_owner_active_learner_profiles': [], 'coach_staff_display_name': 'Coach',
+                'fetch_source_schedule_rows': ({}, {}), 'fetch_standalone_event_records': [record],
+                'fetch_calendar_event_records': {},
+            }.items():
+                stack.enter_context(patch.object(views, name, return_value=result))
+            with patch.object(record, 'save') as save:
+                result = views.collect_generated_timetable(record.owner_email,
+                    start_date=date(2026, 10, 1), end_date=date(2026, 10, 3),
+                    include_live_sessions=False, include_scheduler_queues=False)
+            save.assert_not_called()
+        self.assertEqual(len(result['events']), 1)
+        self.assertEqual(result['events'][0]['meetingLink'], record.meeting_link)
+        self.assertEqual(result['events'][0]['date'], '2026-10-02')
+
+    def test_saved_booking_is_not_duplicated_when_generated_key_matches(self):
+        record = self.record(meeting_link='https://teams.example/booked', sync_state='synced', last_graph_sync_error='')
+        learner = SimpleNamespace(id=211, username='Learner', email='learner@example.test', programme='Programme')
+        event = {'eventKey': record.event_key, 'source': 'mcr', 'status': 'scheduled', 'date': '2026-10-02',
+                 'meetingLink': record.meeting_link, 'learner': 'Learner', 'startHour': 9, 'endHour': 10, 'type': 'coaching', 'isTimeEstimated': False}
+        with ExitStack() as stack:
+            for name, result in {
+                'fetch_owner_active_learner_profiles': [learner], 'coach_staff_display_name': 'Coach',
+                'fetch_source_schedule_rows': ({}, {}), 'resolve_curriculum_programme_id': 'P1',
+                'resolve_review_anchor_date': (date(2026, 1, 1), ''),
+                'resolve_schedule_window': (date(2026, 1, 1), date(2027, 1, 1)),
+                'resolve_caseload_source_row': None, 'learner_employer_attendee': None,
+                'resolve_curriculum_review_occurrences': [{'reviewTypeCode': 'mcr', 'occurrenceNumber': 1,
+                    'targetDate': record.target_date, 'reviewTemplateId': 'T1', 'reviewName': 'MCM'}],
+                'review_event_type_for_type_code': 'mcr', 'build_generated_calendar_event': event,
+                'fetch_standalone_event_records': [record], 'fetch_calendar_event_records': {record.event_key: record},
+                'overlay_calendar_record': event, 'build_timetable_summary': {},
+            }.items():
+                stack.enter_context(patch.object(views, name, return_value=result))
+            result = views.collect_generated_timetable(record.owner_email,
+                include_live_sessions=False, include_scheduler_queues=False)
+        self.assertEqual([e['eventKey'] for e in result['events']], [record.event_key])

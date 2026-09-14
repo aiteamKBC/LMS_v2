@@ -22,7 +22,7 @@ import logging
 import hashlib
 from datetime import datetime
 
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, connections
 from django.db.models import Q
 from django.http import JsonResponse
 from django.utils import timezone
@@ -851,25 +851,21 @@ def learner_calendar(request, kind, pk):
     try:
         events = coaching_events_for_learner(learner, mirror)
 
-        # Live curriculum sessions belong to the learner's placement, not to
-        # their assigned coach. Use the same module/week/holiday planner as the
-        # coach calendar, but scope it directly to programme/cohort/group.
-        if mirror is not None and (_s(getattr(mirror, "group_id", "")) or _s(mirror.group_name)):
-            from coach_api.views import collect_live_session_events
+        # The saved learning plan can assign modules from several groups.
+        # Resolve its module IDs rather than limiting sessions to the profile group.
+        from .student_activity import CURRENT_SUBJECTS_SQL
+        from coach_api.views import collect_live_session_events
 
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute(CURRENT_SUBJECTS_SQL, [pk])
+            assigned_module_ids = [row[0] for row in cursor.fetchall()]
+        if assigned_module_ids:
             live_events = collect_live_session_events(
                 "",
                 "",
                 require_coach_access=False,
                 include_past=True,
-                learner_scope={
-                    "programme": _s(mirror.programme),
-                    "programme_id": _s(getattr(mirror, "programme_id", "")),
-                    "cohort": _s(mirror.cohort),
-                    "cohort_id": _s(getattr(mirror, "cohort_id", "")),
-                    "group": _s(mirror.group_name),
-                    "group_id": _s(getattr(mirror, "group_id", "")),
-                },
+                learner_module_ids=assigned_module_ids,
             )
             for event in live_events:
                 events.append(_serialize_live_session_event(event))
@@ -925,7 +921,6 @@ def learner_calendar_book(request, kind, pk):
         booking_request_matches_record,
         calendar_idempotency_key,
         CalendarSyncInProgress,
-        find_generated_timetable_event,
         LearnerCalendarConflict,
         normalize_duration_minutes,
         parse_date_value,
@@ -1018,13 +1013,23 @@ def learner_calendar_book(request, kind, pk):
     calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk
 
     if assignment_month:
-        if not imported_review_id:
-            return _error("reviewId is required when scheduling an imported monthly coaching review.", 400)
+        if session_type != "mcr" and not imported_review_id:
+            return _error("reviewId is required when scheduling an imported review.", 400)
         if session_type == "mcr":
             from .monthly_assignment import coaching_booking_bounds
             window_start, window_end = coaching_booking_bounds(assignment_month)
             if not window_start or not window_start <= scheduled_date <= window_end or duration_minutes != 60:
                 return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
+
+    if assignment_month and session_type == "mcr":
+        from .coach_availability import free_slots, AvailabilityUnavailable
+        try:
+            available = free_slots(owner_email, scheduled_date, timezone_offset_minutes,
+                                   exclude_event_key=_s(payload.get("eventKey")))
+        except AvailabilityUnavailable as exc:
+            return _error(str(exc), 503)
+        if scheduled_time.strftime("%H:%M") not in available:
+            return _error("This time is no longer available in your coach's calendar. Please choose another time.", 409)
 
     # A supplied event key means the learner opened an official generated
     # programme slot. Without one, MCM/PR requests from the general picker use
@@ -1043,13 +1048,20 @@ def learner_calendar_book(request, kind, pk):
         if mirror is None:
             return _error("Only Active learners can schedule programme-cycle sessions.", 400)
 
-        base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
+        # Validate against the same learner-scoped source used by the picker.
+        # The coach's full caseload may resolve a different legacy schedule window.
+        selected_event = next((event for event in coaching_events_for_learner(learner, mirror)
+                               if event.get("eventKey") == event_key), None)
         if (
-            not base_event
-            or _s(base_event.get("source")) != session_type
-            or str(base_event.get("learnerId") or "") != str(mirror.id)
+            not selected_event
+            or _s(selected_event.get("source")) != session_type
+            or _s(selected_event.get("coachEmail")).strip().casefold() != owner_email.strip().casefold()
         ):
-            return _error("Programme-cycle calendar event not found for this learner.", 404)
+            return _error("Programme-cycle calendar event not found for this learner. Refresh meetings and select a current session.", 404)
+        owner_name = _s(mirror.coach_name) or "Coach"
+        base_event = {**selected_event, "learnerId": int(mirror.id),
+                      "learner": learner_name, "email": learner_email,
+                      "ownerEmail": owner_email, "ownerName": owner_name}
 
         if _s(base_event.get("status")) in {
             CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
