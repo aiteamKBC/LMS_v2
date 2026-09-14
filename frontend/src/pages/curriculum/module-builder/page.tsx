@@ -2944,7 +2944,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   />
                 </div>
               )}
-            </div>
+            </div>}
             </Fragment>
           );
           })}
