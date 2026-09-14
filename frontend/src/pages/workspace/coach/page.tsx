@@ -24,6 +24,7 @@ import { ActionRow } from '@/components/ui/ActionRow';
 import { Panel } from '@/components/ui/Panel';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { FilterChip } from '@/components/ui/FilterToolbar';
+import type { ImportedReview } from '@/api/reviewHistory';
 import { LearnerAvatar, ReasonLine } from '@/pages/coach/shared/LearnerIdentity';
 import {
   type CoachCalendarEvent,
@@ -70,6 +71,7 @@ interface CoachLearner {
   initials: string;
   /** 'commercial' | 'apprenticeship' — which learner_detail table this id resolves against. */
   learnerType?: 'commercial' | 'apprenticeship';
+  aptemId?: string | null;
   /** enrolment."Created_users".id -- a different, disjoint pk space from `id`
    *  above. /learner-detail/ needs this one, not the LearnerProfile id. */
   enrolmentId?: string | null;
@@ -108,6 +110,8 @@ interface CoachLearner {
   recentFlag: string | null;
   email?: string | null;
   rawProgramStatus?: string | null;
+  mcmReviews: ImportedReview[];
+  reviews: ImportedReview[];
 }
 
 interface CaseloadApiLearner extends Partial<CoachLearner> {
@@ -138,6 +142,9 @@ interface CoachAssignedGroup {
 
 interface CoachDashboardApiResponse extends CaseloadApiResponse {
   attendance?: AttendanceApiResponse;
+  reviewHistory?: {
+    learners?: ReviewHistoryApiLearner[];
+  };
   timetable?: {
     events?: CoachCalendarEvent[];
   };
@@ -156,6 +163,13 @@ interface AttendanceApiLearner {
 
 interface AttendanceApiResponse {
   learners?: AttendanceApiLearner[];
+}
+
+interface ReviewHistoryApiLearner {
+  id: string;
+  aptemId?: string | null;
+  mcm?: ImportedReview[];
+  reviews?: ImportedReview[];
 }
 
 function displayValue(value?: string | number | null): string {
@@ -325,6 +339,8 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     recentFlag,
     email: learner.email || null,
     rawProgramStatus: learner.rawProgramStatus || null,
+    mcmReviews: [],
+    reviews: [],
   };
 }
 
@@ -369,6 +385,25 @@ function mergeAttendanceRates(learners: CoachLearner[], attendanceLearners: Atte
       ...learner,
       attendanceRate: hasAttendance ? clampPercent(attendance?.attendance) : 0,
       attendanceRateAvailable: hasAttendance,
+    };
+  });
+}
+
+function mergeReviewHistory(learners: CoachLearner[], historyLearners: ReviewHistoryApiLearner[]): CoachLearner[] {
+  const byId = new Map(
+    historyLearners
+      .map((item) => [normalizeIdentity(item.id), item] as const)
+      .filter(([id]) => Boolean(id)),
+  );
+
+  return learners.map((learner) => {
+    const history = byId.get(normalizeIdentity(learner.id));
+    if (!history) return learner;
+    return {
+      ...learner,
+      aptemId: history.aptemId || null,
+      mcmReviews: Array.isArray(history.mcm) ? history.mcm : [],
+      reviews: Array.isArray(history.reviews) ? history.reviews : [],
     };
   });
 }
@@ -1095,12 +1130,16 @@ export default function CoachDashboard() {
         const queueItems = (dashboard.evidence?.items || []).map(normalizeEvidenceQueueLearner);
         const normalizedLearners = (dashboard.learners || []).map(normalizeLearner);
         const attendanceLearners = dashboard.attendance?.learners || [];
+        const reviewHistoryLearners = dashboard.reviewHistory?.learners || [];
         const events = sortEvents(dashboard.timetable?.events || []);
         const nonLiveEvents = events.filter(event => event.source !== 'live-session');
 
         setOwnerName(displayValue(dashboard.owner?.name) === EMPTY_VALUE ? authenticatedCoachName : String(dashboard.owner?.name));
         setLearners(mergeEvidenceQueueIntoLearners(
-          mergeAttendanceRates(normalizedLearners, attendanceLearners),
+          mergeReviewHistory(
+            mergeAttendanceRates(normalizedLearners, attendanceLearners),
+            reviewHistoryLearners,
+          ),
           queueItems,
         ));
         setAssignedGroups(dashboard.assignedGroups || []);

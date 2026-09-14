@@ -74,6 +74,7 @@ from audit_api.last_audit_ledger_views import _connection as audit_connection
 from learner_api.student_activity_access import student_activity_available
 from learner_api.student_activity_data import read_audit_hour_totals_bulk, read_evidenced_ksb_counts_bulk
 from learner_api.attendance import fetch_kbc_attendance_rates
+from learner_api.review_history import REVIEW_TYPES, _serialize_review
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
     slugify as curriculum_slugify,
@@ -8899,7 +8900,12 @@ def coach_timetable_event_action(request):
     return JsonResponse({"event": updated_event, "warning": warning})
 
 
-def dashboard_attendance_rows(rows, learners: list[dict]) -> list[dict]:
+def dashboard_attendance_rows(
+    rows,
+    learners: list[dict],
+    *,
+    aptem_by_profile: dict[int, int] | None = None,
+) -> list[dict]:
     """Real attendance rates for the dashboard's caseload modal.
 
     The dashboard used to send `attendance: {learners: []}` because its compact
@@ -8922,7 +8928,9 @@ def dashboard_attendance_rows(rows, learners: list[dict]) -> list[dict]:
     # and falls back to the lean id-only query where it did not.
     aptem_by_profile = {
         profile_id: str(aptem_id)
-        for profile_id, aptem_id in caseload_aptem_ids(rows).items()
+        for profile_id, aptem_id in (
+            aptem_by_profile if aptem_by_profile is not None else caseload_aptem_ids(rows)
+        ).items()
     }
     try:
         rates = fetch_kbc_attendance_rates(aptem_by_profile.values())
@@ -8953,6 +8961,84 @@ def dashboard_attendance_rows(rows, learners: list[dict]) -> list[dict]:
             "absent": metrics["absent"],
         })
     return payload
+
+
+def dashboard_review_history(
+    rows,
+    *,
+    aptem_by_profile: dict[int, int] | None = None,
+) -> dict[int, dict]:
+    """Read imported Aptem reviews for the dashboard caseload in one query.
+
+    The learner workspace uses ``Learner.reviews`` for imported history. Keep
+    that same source here, while preserving the dashboard's existing
+    Curriculum/timetable data for future scheduled reviews. Learners without a
+    valid Aptem id are deliberately omitted.
+    """
+    aptem_by_profile = aptem_by_profile if aptem_by_profile is not None else caseload_aptem_ids(rows)
+    if not aptem_by_profile:
+        return {}
+
+    profile_ids = sorted(aptem_by_profile)
+    placeholders = ", ".join(["%s"] * len(profile_ids))
+    query = f"""
+        SELECT learner_id, id, aptem_review_id, review_name, review_type,
+               reviewer_name, learner_name, planned_scheduled_date,
+               completed_date, status, review_data, extraction_status, last_error
+        FROM "Learner".reviews
+        WHERE learner_id IN ({placeholders})
+          AND NULLIF(BTRIM(review_type), '') IS NOT NULL
+        ORDER BY COALESCE(completed_date, planned_scheduled_date) DESC NULLS LAST,
+                 id DESC
+    """
+
+    try:
+        connection = connections[get_learner_db_alias()]
+        with connection.cursor() as cursor:
+            cursor.execute(query, profile_ids)
+            columns = [column[0] for column in cursor.description]
+            raw_rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    except Exception as exc:
+        # Review history is an optional enrichment. A missing or unavailable
+        # import table must not take the whole coach dashboard down.
+        logger.warning("Could not load dashboard review history: %s", exc)
+        return {}
+
+    monthly_coaching_types = {
+        clean_text(review_type).casefold()
+        for review_type in REVIEW_TYPES["monthly-coaching"]
+    }
+    grouped = {
+        profile_id: {
+            "id": str(profile_id),
+            "aptemId": str(aptem_by_profile[profile_id]),
+            "mcm": [],
+            "reviews": [],
+        }
+        for profile_id in profile_ids
+    }
+    for row in raw_rows:
+        try:
+            profile_id = int(row.get("learner_id"))
+        except (TypeError, ValueError):
+            continue
+        learner_history = grouped.get(profile_id)
+        if learner_history is None:
+            continue
+
+        review = _serialize_review(row, {})
+        category = (
+            "mcm"
+            if clean_text(review.get("type")).casefold() in monthly_coaching_types
+            else "reviews"
+        )
+        learner_history[category].append(review)
+
+    return {
+        profile_id: history
+        for profile_id, history in grouped.items()
+        if history["mcm"] or history["reviews"]
+    }
 
 
 def serialize_attendance_learner(
@@ -9324,10 +9410,19 @@ def coach_dashboard(request):
             timetable_payload = timetable_future.result()
             assigned_groups = groups_future.result()
         # Depends on the learner list, so it follows the pool rather than
-        # joining it. One batched query, unlike the per-learner KSB work the
-        # dashboard still leaves to the caseload page.
+        # joining it. Resolve the Aptem bridge once and share it between the
+        # KBC attendance and imported review-history enrichments.
         try:
-            attendance_rows = dashboard_attendance_rows(dashboard_rows, learners)
+            aptem_by_profile = caseload_aptem_ids(dashboard_rows)
+            attendance_rows = dashboard_attendance_rows(
+                dashboard_rows,
+                learners,
+                aptem_by_profile=aptem_by_profile,
+            )
+            review_history = dashboard_review_history(
+                dashboard_rows,
+                aptem_by_profile=aptem_by_profile,
+            )
         finally:
             close_old_connections()
         owner_name = coach_staff_display_name(owner_email) or next(
@@ -9355,6 +9450,12 @@ def coach_dashboard(request):
             # page renders it, so it ships here. Evidence stays empty: its
             # dedicated page loads that expensive dataset on demand.
             "attendance": {"learners": attendance_rows},
+            "reviewHistory": {
+                "learners": [
+                    review_history[profile_id]
+                    for profile_id in sorted(review_history)
+                ],
+            },
             "timetable": {
                 "summary": timetable_payload.get("summary", {}),
                 "events": timetable_payload.get("events", []),

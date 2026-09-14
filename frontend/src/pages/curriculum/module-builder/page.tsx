@@ -7,6 +7,7 @@ import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
 import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
+import { formatHoursMinutes } from '@/lib/format';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {
   fetchModuleLearners,
@@ -105,9 +106,6 @@ import {
   // Read from the weeks in the editor, so the timeline names a session the way
   // the rail behind it does.
   liveSessionNamesByNumber,
-  // The same weeks-vs-sessions ratio the plan dates weeks by, so "Generate live
-  // sessions" tops a week up to exactly the number of dates it was given.
-  moduleDeliveryDaysPerWeek,
   // The one walk that pairs weeks with planned dates. A week owns a RUN of
   // dates, not one date, the moment a group delivers more than once a week.
   moduleWeekSessionDates,
@@ -134,6 +132,7 @@ import {
   type ModuleComponent,
   type ModuleComponentType,
   type ModuleWeek,
+  type ModuleWeekSessionPlan,
 } from './moduleAuthoringData';
 // The shared week-authoring UI arrives through curriculum/shared/components rather
 // than from week-builder/page directly: these three components only render once a
@@ -291,8 +290,14 @@ async function showBuilderDeleteSwal({
 
 export default function ModuleBuilder() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const requestedCreateScopeRef = useRef({
+    programmeId: (searchParams.get('programme') || searchParams.get('programmeId') || '').trim(),
+    programmeName: (searchParams.get('programmeName') || '').trim(),
+    cohortId: (searchParams.get('cohort') || '').trim(),
+    groupId: (searchParams.get('group') || '').trim(),
+  });
   const [search, setSearch] = useState('');
-  const [programmeFilter, setProgrammeFilter] = useState<string>('All');
+  const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
   // cascade can never offer a cohort or group no module is actually delivered to.
@@ -310,7 +315,7 @@ export default function ModuleBuilder() {
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(() => searchParams.get('create') === '1');
   // Programme -> cohort -> group tree plus the holiday list: read only by the
   // module form, so it is fetched the first time that drawer opens rather than
   // on every Module Builder load.
@@ -1624,6 +1629,13 @@ export default function ModuleBuilder() {
   const plannedWeekCountRef = useRef<{ catalogueId: string; weeks: number } | null>(null);
   const workingModuleCatalogueId = workingModule?.catalogueId || '';
   const workingModuleWeekCount = workingModule?.weekStructure.length || 0;
+  // Keep the fetched plan alongside the module it belongs to. The plan drives
+  // both holiday-clash messaging and the dated session preview.
+  const [weekSessionPlanState, setWeekSessionPlanState] = useState<{ catalogueId: string; plan: ModuleWeekSessionPlan } | null>(null);
+  const workingModuleSessionPlan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId
+    ? weekSessionPlanState.plan
+    : null;
+  const [sessionPreviewOpen, setSessionPreviewOpen] = useState(false);
   useEffect(() => {
     if (!workingModuleCatalogueId || !workingModuleWeekCount) {
       plannedWeekCountRef.current = null;
@@ -1636,6 +1648,7 @@ export default function ModuleBuilder() {
     let active = true;
     void loadModuleWeekSessionPlan(workingModuleCatalogueId, workingModuleWeekCount).then(plan => {
       if (!active || !plan) return;
+      setWeekSessionPlanState({ catalogueId: workingModuleCatalogueId, plan });
       setWorkingModule(current => (
         current && current.catalogueId === workingModuleCatalogueId && current.weekStructure.length === workingModuleWeekCount
           ? applyModuleWeekSessionPlan(current, plan, { followEndDate: countChanged })
@@ -1867,7 +1880,6 @@ export default function ModuleBuilder() {
               }))}
               pointsByType={componentPointsByType}
               clashingSessions={clashingLiveSessions}
-              onViewSessions={workingModuleSessionPlan ? () => setSessionPreviewOpen(true) : undefined}
               plannedSessions={workingModuleSessionPlan?.sessions}
               plannedSlots={workingModuleSessionPlan?.slots}
               expandedWeekIds={expandedWeekIds}
@@ -2527,7 +2539,6 @@ function WorkspaceActionFooter({ saving, saved, locked = false, onEditModule, on
           {stateText}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <IconButton label="Preview" icon="ri-eye-line" onClick={onPreview} />
           <IconButton label="Edit module" icon="ri-edit-line" onClick={onEditModule} />
           <IconButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
           <button
@@ -2549,7 +2560,7 @@ function WorkspaceActionFooter({ saving, saved, locked = false, onEditModule, on
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onViewSessions, onCreateAllTeamsMeetings, onRestoreAllTeamsMeetings, hasTrackedTeamsMeeting, restoringTeamsMeeting, onDuplicateWeek, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, clashingSessions, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, clashingSessions, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -2629,11 +2640,12 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     // four Mon+Fri weeks runs eight sessions, and saying "4 weeks" alone was the
     // gap between this rail and the twenty rows in the sessions drawer.
     const sessionDates = group.weeks.flatMap(week => sessionDatesOf(week));
-    const mondayKeys = new Set(sessionDates.map(mondayKeyOf).filter(Boolean));
-    const calendarWeeks = [...mondayKeys].filter(mondayKey => {
-      const owner = owningMonthKeyOf(mondayKey);
-      return owner === group.key || !monthKeysByCalendarWeek.get(mondayKey)?.has(owner);
-    }).length;
+    const calendarWeeks = new Set(sessionDates.map(value => {
+      const date = new Date(`${value.slice(0, 10)}T12:00:00`);
+      const day = date.getDay();
+      date.setDate(date.getDate() - (day === 0 ? 6 : day - 1));
+      return date.toISOString().slice(0, 10);
+    })).size;
     // How many days a week the module runs on, to explain why the row numbers
     // outrun the week count.
     const daysPerWeek = new Set(
@@ -2831,13 +2843,16 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           const expanded = expandedWeekIds.has(week.id);
           const totalOtjh = weekExpectedOtjhTotal(week);
           const monthHeading = monthHeadings.get(week.id);
+          const monthId = monthGroupIdByWeekId.get(week.id);
+          const monthCollapsed = Boolean(monthId && collapsedMonthIds.has(monthId));
+          const weekClashes = clashesByWeekId.get(week.id) || [];
           return (
             <Fragment key={week.id}>
             {monthHeading && (
               <div className="flex items-baseline justify-between gap-2 px-1 pb-0.5 pt-2 first:pt-0">
                 <p className="text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">{monthHeading.label}</p>
                 <p className="text-[10px] font-semibold text-foreground-400">
-                  {monthHeading.weeks} {monthHeading.weeks === 1 ? 'week' : 'weeks'} · {monthHeading.otjh.toFixed(1)}h
+                  {monthHeading.rows} {monthHeading.rows === 1 ? 'week' : 'weeks'} · {monthHeading.otjh.toFixed(1)}h
                 </p>
               </div>
             )}
@@ -2922,7 +2937,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       <Fragment key={`${closure.label}-${closure.startDate}`}>
                         {closureIndex > 0 && ', '}
                         {closure.label}
-                        <span className="font-medium text-foreground-500"> ({formatSessionRunLabel([closure.startDate, closure.endDate])})</span>
+                        <span className="font-medium text-foreground-500"> ({formatDateLabel(closure.startDate)} - {formatDateLabel(closure.endDate)})</span>
                       </Fragment>
                     )) : clash.blockedBy}
                   </span>
@@ -4876,7 +4891,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     ],
     ...sourceOptions.flatMap(source => ksbSourceIdAliases(source.id).map(alias => [alias, source.label])),
   ]);
-  const sourceKsbOptions = resolvedSelectedSource?.options || [];
+  const sourceKsbOptions = useMemo(() => resolvedSelectedSource?.options || [], [resolvedSelectedSource]);
   const filteredKsbOptions = useMemo(() => {
     const query = ksbSearch.trim().toLowerCase();
     return sourceKsbOptions.filter(option => {
