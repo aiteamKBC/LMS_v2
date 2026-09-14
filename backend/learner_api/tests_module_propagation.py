@@ -71,6 +71,7 @@ class ModuleAssignmentTests(SimpleTestCase):
         with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')), \
                 patch('learner_api.learning_plan._all_modules', return_value=[MODULE]), \
                 patch('learner_api.learning_plan._picker_learners', return_value=[source, other]), \
+                patch('learner_api.learning_plan._group_module_ids', return_value=[]), \
                 patch('learner_api.learning_plan.advance_learner'), \
                 patch('learner_api.learning_plan.sync_learning_plan_mirror') as sync_mirror:
             response = module_learners(request, 'MOD-NEW')

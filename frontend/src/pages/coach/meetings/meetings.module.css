@@ -1,0 +1,119 @@
+.meetingGrid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.meetingCard {
+  container-name: coachingMeetingCard;
+  container-type: inline-size;
+  min-width: 0;
+  height: 100%;
+}
+
+/*
+ * A half-width card does not have room for the shared queue row's single-line
+ * desktop layout. Base card geometry therefore uses three deliberate bands:
+ * identity, facts, then actions. The card's own width, rather than the viewport,
+ * decides when all three can safely return to one row.
+ */
+.meetingCard :global(.ui-action-row__summary) {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: 0.75rem;
+  row-gap: 0.875rem;
+}
+
+.meetingCard :global(.ui-action-row__leading) {
+  grid-column: 1;
+}
+
+.meetingCard :global(.ui-action-row__identity) {
+  grid-column: 2;
+}
+
+.meetingCard :global(.ui-action-row__heading) {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.meetingCard :global(.ui-action-row__title) {
+  width: 100%;
+}
+
+.meetingCard :global(.ui-action-row__meta) {
+  display: grid;
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 1rem;
+}
+
+.meetingCard :global(.ui-calendar-event-meta) {
+  max-width: 100%;
+}
+
+.meetingCard :global(.ui-action-row__actions) {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
+
+.meetingCard :global(.ui-calendar-event-actions) {
+  width: 100%;
+}
+
+.meetingCard :global(.ui-calendar-event-action-group) {
+  min-width: 0;
+}
+
+@container coachingMeetingCard (max-width: 24rem) {
+  .meetingCard :global(.ui-action-row__meta) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A genuinely wide card can support the intended left / middle / right row. */
+@container coachingMeetingCard (min-width: 56rem) {
+  .meetingCard :global(.ui-action-row__summary) {
+    grid-template-columns:
+      auto
+      minmax(11rem, 1fr)
+      minmax(14rem, 0.9fr)
+      minmax(20rem, auto);
+    align-items: center;
+  }
+
+  .meetingCard :global(.ui-action-row__leading) {
+    grid-column: 1;
+  }
+
+  .meetingCard :global(.ui-action-row__identity) {
+    grid-column: 2;
+  }
+
+  .meetingCard :global(.ui-action-row__meta) {
+    grid-column: 3;
+  }
+
+  .meetingCard :global(.ui-action-row__actions) {
+    grid-column: 4;
+    width: auto;
+  }
+}
+
+@media (min-width: 1280px) {
+  .meetingGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .meetingGrid > .meetingCard:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}

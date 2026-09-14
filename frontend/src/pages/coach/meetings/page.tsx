@@ -15,6 +15,7 @@ import { cn } from '@/lib/cn';
 import { roleNavMap } from '@/mocks/navigation';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { MonthlyCoachingCompletionModal } from './MonthlyCoachingCompletionModal';
+import styles from './meetings.module.css';
 import { CalendarEventMeta, CalendarEventRow } from '../shared/CalendarEventRow';
 import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
 import { InfoTile, ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
@@ -422,9 +423,9 @@ export default function CoachMeetings() {
             <PageTabs items={filterTabs} value={filter} onChange={(next) => changeFilter(next as MeetingFilter)} label="Filter coaching meetings by status" />
           </div>
 
-          <div className="grid gap-3 bg-background-100/55 p-3 sm:p-5 xl:grid-cols-2">
+          <div className="space-y-3 bg-background-100/55 p-3 sm:p-5">
             {!loading && !error && filtered.length === 0 ? (
-              <div className="xl:col-span-2">
+              <div>
                 <EmptyState
                   variant={tabFiltered.length === 0 ? 'empty' : 'no-matches'}
                   icon={tabFiltered.length === 0 ? 'ri-calendar-check-line' : 'ri-user-search-line'}
@@ -433,49 +434,52 @@ export default function CoachMeetings() {
               </div>
             ) : null}
 
-            {!loading && paginatedEvents.map(event => {
-              const isOpen = expanded === eventIdentity(event);
-              const isBusy = busyEventId === eventIdentity(event);
-              const url = meetingUrl(event);
-              return (
-                <CalendarEventRow
-                  key={eventIdentity(event)}
-                  event={event}
-                  isOpen={isOpen}
-                  onToggle={() => toggleExpanded(event)}
-                  meta={(
-                    <>
-                      <CalendarEventMeta icon="ri-calendar-line">{formatDateLabel(eventDisplayDate(event))}</CalendarEventMeta>
-                      <CalendarEventMeta icon="ri-time-line">{formatTimeLabel(event)}</CalendarEventMeta>
-                      <CalendarEventMeta icon="ri-video-chat-line">{event.platform || 'Microsoft Teams'}</CalendarEventMeta>
-                      {event.cohort ? (
-                        <span className="hidden lg:inline">
-                          <CalendarEventMeta icon="ri-group-line">{event.cohort}</CalendarEventMeta>
-                        </span>
-                      ) : null}
-                    </>
-                  )}
-                  actions={(
-                    <div className="hidden shrink-0 items-center gap-2 lg:flex">
-                      <RowAction label="Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(event)} />
-                      {url ? (
-                        <RowAction
-                          label="Join Meeting"
-                          icon="ri-video-on-line"
-                          emphasis="meeting"
-                          disabled={isBusy}
-                          onClick={() => { handleJoin(event); }}
-                        />
-                      ) : null}
-                      <RowAction
-                        label={needsScheduling(event) ? 'Schedule' : 'Manage'}
-                        icon={needsScheduling(event) ? 'ri-calendar-check-line' : 'ri-settings-3-line'}
-                        emphasis="primary"
-                        onClick={() => toggleExpanded(event)}
-                      />
-                    </div>
-                  )}
-                >
+            {!loading && paginatedEvents.length > 0 ? (
+              <div className={styles.meetingGrid} data-testid="coaching-meeting-grid">
+                {paginatedEvents.map(event => {
+                  const isOpen = expanded === eventIdentity(event);
+                  const isBusy = busyEventId === eventIdentity(event);
+                  const url = meetingUrl(event);
+                  const groupOrCohort = event.group || event.cohort;
+                  return (
+                    <CalendarEventRow
+                      key={eventIdentity(event)}
+                      event={event}
+                      isOpen={isOpen}
+                      onToggle={() => toggleExpanded(event)}
+                      className={styles.meetingCard}
+                      layout="card"
+                      meta={(
+                        <>
+                          <CalendarEventMeta icon="ri-calendar-line">{formatDateLabel(eventDisplayDate(event))}</CalendarEventMeta>
+                          <CalendarEventMeta icon="ri-time-line">{formatTimeLabel(event)}</CalendarEventMeta>
+                          <CalendarEventMeta icon="ri-video-chat-line">{event.platform || 'Microsoft Teams'}</CalendarEventMeta>
+                          {groupOrCohort ? (
+                            <CalendarEventMeta icon="ri-group-line">{groupOrCohort}</CalendarEventMeta>
+                          ) : null}
+                        </>
+                      )}
+                      actions={(
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <RowAction label="Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(event)} />
+                          {url ? (
+                            <RowAction
+                              label="Join Meeting"
+                              icon="ri-video-on-line"
+                              emphasis="meeting"
+                              disabled={isBusy}
+                              onClick={() => { handleJoin(event); }}
+                            />
+                          ) : null}
+                          <RowAction
+                            label={needsScheduling(event) ? 'Schedule' : 'Manage'}
+                            icon={needsScheduling(event) ? 'ri-calendar-check-line' : 'ri-settings-3-line'}
+                            emphasis="primary"
+                            onClick={() => toggleExpanded(event)}
+                          />
+                        </div>
+                      )}
+                    >
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                       <InfoTile label="Target date" value={formatDateLabel(event.targetDate)} />
@@ -544,12 +548,14 @@ export default function CoachMeetings() {
                       </div>
                     ) : null}
                   </div>
-                </CalendarEventRow>
-              );
-            })}
+                    </CalendarEventRow>
+                  );
+                })}
+              </div>
+            ) : null}
 
             {!loading && pageCount > 1 ? (
-              <div className="xl:col-span-2">
+              <div>
                 <Pagination
                   page={activePage}
                   totalPages={pageCount}
