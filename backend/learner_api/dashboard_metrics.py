@@ -2,6 +2,7 @@
 import json
 import logging
 
+import psycopg
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
@@ -14,6 +15,7 @@ from .progress_rules import progress_counts_as_achieved
 from .student_activity_access import student_activity_available
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
 from .training_plan_dashboard import find_contract, number, rows
+from .otjh_totals import completed_otjh
 
 log = logging.getLogger(__name__)
 
@@ -153,14 +155,14 @@ def activity_planned_hours(historical, native, links):
 
 def read_metrics(source, kind):
     migrated = student_activity_available(source.aptem_id)
-    progress = _direct_progress_records(source.pk)
-    direct_hours = _direct_progress_otjh(progress)
+    direct_progress = _direct_progress_records(source.pk)
+    direct_hours = _direct_progress_otjh(direct_progress)
     historical, attempts, links = [], set(), {}
     history_ready, old_hours = not migrated, 0 if not migrated else None
     with connections['enrolment'].cursor() as cursor:
         cursor.execute(CURRENT_SUBJECTS_SQL, [source.pk])
         module_ids = [row[0] for row in cursor.fetchall()]
-        cursor.execute('''SELECT c.id,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
+        cursor.execute('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
                  FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
                    AND (k.deleted_at IS NULL OR k.deleted_via_parent IS NOT NULL)), '[]'::jsonb) AS ksb_mappings,
@@ -235,14 +237,28 @@ def read_metrics(source, kind):
                     if component and activity:
                         candidates.setdefault(str(component), set()).add((str(group), str(activity)))
                 links = {component: next(iter(keys)) for component, keys in candidates.items() if len(keys) == 1}
+    try:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute('''SELECT activity_id, component_ref, status, actual_time_hours,
+                    full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
+                FROM "Learner".learning_reflection_submissions
+                WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment'
+                ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
+            submissions = rows(cursor)
+    except (DatabaseError, psycopg.Error, StopIteration):
+        # Older installations may not have reflection submissions yet.
+        submissions = []
     if planned is None and history_ready:
         planned = activity_planned_hours(historical, native, links)
+    actual_hours = completed_otjh(native, direct_progress, submissions, old_hours)
+    new_hours = (round(actual_hours - old_hours, 4)
+                 if actual_hours is not None and old_hours is not None else round(direct_hours, 4))
     return {
         'migrated': migrated,
         'programme': programme_totals(historical, native, progress, attempts, links) if history_ready
                      else unavailable('historical_activities_missing'),
-        'otjh': {'historical': old_hours, 'new': round(direct_hours, 4),
-                 'actual': round(old_hours + direct_hours, 4) if old_hours is not None else None,
+        'otjh': {'historical': old_hours, 'new': new_hours,
+                 'actual': actual_hours,
                  'planned': planned},
         'ksb': ksb_totals(native, progress, historical, attempts, links) if history_ready
                else unavailable('historical_activities_missing'),
