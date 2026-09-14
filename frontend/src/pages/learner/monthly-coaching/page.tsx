@@ -1,24 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { useLinkedLearner } from '@/hooks/useMyLearner';
+import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
+import { fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, bookLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { useMyLearner } from '@/hooks/useMyLearner';
 import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
-import { useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
-import type { ImportedReview } from '@/api/reviewHistory';
-import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate } from '@/pages/learner/reviews/bookingDates';
+import { ImportedReviewHistory } from '@/pages/learner/reviews/ImportedReviewHistory';
+import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '@/pages/learner/reviews/LearnerReviewInstanceForm';
 import {
   activityTimeLabel,
   learningKsbCodes,
   learningMinutesForRecord,
   uniqueLearningProgress,
 } from '@/lib/reviewLearningProgress';
-import reviewStyles from '../progress-reviews/progressReviews.module.css';
 
 const learnerNav = roleNavMap.learner;
 
@@ -40,12 +39,18 @@ function monthLabel(value?: string | null): string {
   return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
 }
 
+/** The Review Template's own live name (the backend titles every Curriculum
+ *  Review occurrence with it), month-stamped. The fixed wording is only the
+ *  fallback for a row that predates the Curriculum Review architecture. */
 function monthlyCoachingTitle(session?: LearnerCalendarEvent | null): string {
-  if (session?.importedReview) {
-    return session.importedReview.name || session.title || 'Monthly Coaching Meeting';
-  }
   const month = monthLabel(dateOf(session));
-  return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${session?.sequence ? ` #${session.sequence}` : ''}`;
+  const name = session?.title || 'Monthly Coaching Meeting';
+  return `${name}${month ? ` — ${month}` : ''}${session?.sequence ? ` #${session.sequence}` : ''}`;
+}
+
+/** The Review Type's label -- classification only, never the title. */
+function reviewTypeLabel(session?: LearnerCalendarEvent | null): string {
+  return session?.reviewTypeName || 'Coaching meeting';
 }
 
 function shouldShowLearnerMeetingRecording(session?: LearnerCalendarEvent | null): boolean {
@@ -62,39 +67,16 @@ function formatTime(value?: string | null): string {
   return new Date(2000, 0, 1, hour, minute).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-function calendarEventHref(session: LearnerCalendarEvent | null, learner: { kind: string; id: string }): string {
+function calendarEventHref(session?: LearnerCalendarEvent | null): string {
   const eventKey = session?.eventKey || session?.id;
-  const query = `kind=${encodeURIComponent(learner.kind)}&learner=${encodeURIComponent(learner.id)}`;
-  const date = dateOf(session);
-  return `/learner/calendar?${query}${eventKey ? `&event=${encodeURIComponent(eventKey)}` : ''}${date ? `&date=${encodeURIComponent(date)}` : ''}`;
+  return eventKey ? `/learner/calendar?event=${encodeURIComponent(eventKey)}` : '/learner/calendar';
 }
-
-function scheduleHref(session: LearnerCalendarEvent, learner: { kind: string; id: string }): string {
-  return calendarEventHref(session, learner);
-}
-
 
 function statusLabel(status?: string): string {
   const labels: Record<string, string> = {
     'not-scheduled': 'Not Scheduled', scheduled: 'Scheduled', 'in-progress': 'In Progress', completed: 'Completed', cancelled: 'Cancelled',
   };
   return status ? labels[status] || status : '-';
-}
-
-function normalizedSessionStatus(session: LearnerCalendarEvent): string {
-  return (session.status || '').toLowerCase().replace(/_/g, '-');
-}
-
-function sessionIsBooked(session: LearnerCalendarEvent): boolean {
-  return Boolean(session.scheduledDate)
-    && !['not-scheduled', 'planned', 'cancelled', 'unknown'].includes(normalizedSessionStatus(session));
-}
-
-function sessionSchedulingLabel(session: LearnerCalendarEvent): string {
-  if (['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(normalizedSessionStatus(session))) {
-    return 'View in calendar';
-  }
-  return sessionIsBooked(session) ? 'Reschedule' : 'Schedule';
 }
 
 function initials(name?: string): string {
@@ -114,119 +96,6 @@ function hoursLabel(minutes: number): string {
 
 function Empty({ children }: { children: ReactNode }) {
   return <div className="rounded-xl border border-dashed border-background-300 bg-background-100/50 px-5 py-7 text-center"><p className="text-xl font-bold text-foreground-300">-</p><p className="mt-1 text-xs text-foreground-400">{children}</p></div>;
-}
-
-function importedValue(value: unknown): string {
-  if (value === null || value === undefined || value === '') return '-';
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) return value.map(importedValue).join(', ');
-  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
-}
-
-function rawTextFields(rawText: string): Array<{ label: string; value: string }> {
-  const blocks = rawText.split(/\r?\n\s*\r?\n+/).map((block) => block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)).filter((lines) => lines.length);
-  return blocks.flatMap((lines) => {
-    if (lines.length === 1) {
-      const separator = lines[0].indexOf(':');
-      return separator > 0 && separator < lines[0].length - 1
-        ? [{ label: lines[0].slice(0, separator).trim(), value: lines[0].slice(separator + 1).trim() }]
-        : [{ label: lines[0], value: '-' }];
-    }
-    const separator = lines[0].indexOf(':');
-    return [{
-      label: separator > 0 ? lines[0].slice(0, separator).trim() : lines[0],
-      value: (separator > 0 ? [lines[0].slice(separator + 1).trim(), ...lines.slice(1)] : lines.slice(1)).filter(Boolean).join('\n') || '-',
-    }];
-  });
-}
-
-function importedFieldValue(review: ImportedReview, labels: string[]): unknown {
-  const wanted = labels.map((label) => label.toLowerCase());
-  for (const section of review.sections) {
-    for (const field of section.fields) {
-      const label = String(field.label || '').toLowerCase();
-      if (wanted.some((value) => label === value || label.includes(value))) return field.value;
-    }
-  }
-  return undefined;
-}
-
-function importedDate(value?: unknown): string {
-  const text = importedValue(value);
-  if (text === '-') return '-';
-  const iso = /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : '';
-  if (iso) return new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB');
-  return text;
-}
-
-function ImportedSectionBody({ section }: { section: ImportedReview['sections'][number] }) {
-  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
-  return <div className="space-y-3">
-    {(section.fields.length ? section.fields : rawTextFields(section.rawText)).map((field, index) => <div key={`${field.label || 'field'}:${index}`} className="rounded-lg border border-slate-200 bg-white p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{field.label || 'Response'}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{importedValue(field.value)}</p>{'links' in field && Array.isArray(field.links) && field.links.length > 0 && <div className="mt-2 space-y-1">{field.links.map((link, linkIndex) => { const url = link.azure_url || link.url || link.href; const name = link.text || link.title || `Attachment ${linkIndex + 1}`; return <button key={linkIndex} type="button" onClick={() => url && setPreview({ url, name })} className="block max-w-full truncate text-left text-xs font-semibold text-primary-600 underline hover:text-primary-800">{name}</button>; })}</div>}</div>)}
-    {section.tables.map((table, index) => <div key={index} className="overflow-x-auto rounded-lg border border-slate-200 bg-white"><table className="min-w-full text-left text-xs"><tbody className="divide-y divide-slate-200">{(table.rows || []).map((row, rowIndex) => <tr key={rowIndex} className={rowIndex === 0 ? 'bg-slate-100 font-bold text-slate-800' : 'text-slate-700'}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-3 py-2.5 align-top">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>)}
-    {!section.fields.length && !rawTextFields(section.rawText).length && section.rawText && section.rawText !== 'EMPTY_STRING' && <p className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-700">{section.rawText}</p>}
-    {!section.fields.length && !section.tables.length && (!section.rawText || section.rawText === 'EMPTY_STRING') && <Empty>No response was recorded for this section.</Empty>}
-    {preview && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}><div role="dialog" aria-modal="true" aria-label={preview.name} className="flex h-[min(88vh,900px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3"><p className="truncate text-sm font-bold text-slate-900">{preview.name}</p><button type="button" aria-label="Close attachment preview" onClick={() => setPreview(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><AppIcon className="ri-close-line" /></button></div><iframe title={preview.name} src={preview.url} className="min-h-0 flex-1 bg-slate-100" /></div></div>}
-  </div>;
-}
-
-function ImportedMcmSections({ review }: { review: ImportedReview }) {
-  if (!review.sections.length) return <Empty>No section details were imported for this Aptem review.</Empty>;
-  return <div className="space-y-3">
-    {review.sections.map((section) => <section key={section.id} className="rounded-xl border border-background-200 bg-background-100/45 p-4">
-      <h2 className="text-sm font-bold text-foreground-900">{section.name}</h2>
-      <div className="mt-3"><ImportedSectionBody section={section} /></div>
-    </section>)}
-  </div>;
-}
-
-function ImportedMcmAccordion({ id, title, open, onToggle, children }: { id: string; title: string; open: boolean; onToggle: (id: string) => void; children: ReactNode }) {
-  return <section className="overflow-hidden border border-slate-300 bg-white shadow-[0_1px_4px_rgba(15,39,68,0.12)]">
-    <button type="button" onClick={() => onToggle(id)} aria-expanded={open} className="flex w-full items-center gap-3 bg-slate-50 px-4 py-3.5 text-left text-sm font-semibold text-slate-600 transition hover:bg-slate-100">
-      <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg text-slate-700`} />
-      <span className="min-w-0 flex-1">{title}</span>
-    </button>
-    {open && <div className="border-t border-slate-200 bg-white p-4 sm:p-6">{children}</div>}
-  </section>;
-}
-
-function ImportedMcmView({ selected, learner, openSections, toggle, onBack }: { selected: LearnerCalendarEvent; learner: ReturnType<typeof useReviewSessions>['learner']; openSections: string[]; toggle: (id: string) => void; onBack: () => void }) {
-  const review = selected.importedReview;
-  if (!review) return null;
-  const programmeStart = learner?.programmeStartDate || importedFieldValue(review, ['programme start date']);
-  const practicalEnd = learner?.gatewayStartDate || importedFieldValue(review, ['planned practical period end date']);
-  const gatewayDate = learner?.gatewayStartDate || importedFieldValue(review, ['planned gateway date']);
-  const apprenticeshipEnd = learner?.epaEndDate || learner?.programmeEndDate || importedFieldValue(review, ['planned apprenticeship end date']);
-  const mentor = importedFieldValue(review, ['mentor']) || '-';
-  const infoRows: [string, unknown][] = [
-    ['Programme Name', learner?.programme || importedFieldValue(review, ['programme name', 'programme'])],
-    ['Programme Start Date', programmeStart],
-    ['Planned Practical Period End Date', practicalEnd],
-    ['Planned Gateway Date', gatewayDate],
-    ['Planned Apprenticeship End Date', apprenticeshipEnd],
-    ['Programme Status', learner?.programmeStatus || importedFieldValue(review, ['programme status', 'status'])],
-    ['Employer', learner?.employer || importedFieldValue(review, ['employer'])],
-    ['Manager', learner?.lineManager || importedFieldValue(review, ['manager', 'line manager'])],
-    ['Mentor', mentor],
-  ];
-  const detailSections = review.sections.filter((section) => !section.name.toLowerCase().includes('learner information'));
-  const date = selected.scheduledDate || selected.targetDate || selected.date;
-  return <div className="space-y-3">
-    <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 pb-3">
-      <button type="button" onClick={onBack} aria-label="Back to coaching meetings" className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"><AppIcon className="ri-arrow-left-line" /></button>
-      <h1 className="text-xl font-bold text-slate-800 sm:text-2xl">Monthly Coaching Meeting <span className="font-normal text-slate-600">- {importedDate(date)}</span></h1>
-      <p className="ml-auto text-xs text-slate-500">Reviewed by: <span className="font-semibold text-slate-600">{review.reviewerName || selected.coachName || '-'}</span></p>
-    </header>
-
-    <ImportedMcmAccordion id="learner-information" title="Learner Information" open={openSections.includes('learner-information')} onToggle={toggle}>
-      <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-        <div className="flex flex-col items-center justify-center border-b border-slate-200 pb-6 md:border-b-0 md:border-r md:pb-0 md:pr-8"><span className="flex h-20 w-20 items-center justify-center rounded-full bg-slate-400 text-xl font-bold text-white">{initials(learner?.name)}</span><p className="mt-3 text-xl font-bold text-slate-800">{learner?.name || '-'}</p></div>
-        <div className="grid gap-x-8 gap-y-4 sm:grid-cols-[minmax(210px,1fr)_minmax(260px,2fr)]">{infoRows.map(([label, value]) => <div key={label} className="contents"><p className="text-xs font-semibold text-slate-600">{label}:</p><p className="text-sm text-slate-500">{label.toLowerCase().includes('date') ? importedDate(value) : importedValue(value)}</p></div>)}</div>
-      </div>
-    </ImportedMcmAccordion>
-
-    {detailSections.length ? detailSections.map((section, index) => <ImportedMcmAccordion key={section.id} id={`imported-section:${section.id}`} title={section.name} open={openSections.includes(`imported-section:${section.id}`) || (openSections.includes('imported-review') && index === 0)} onToggle={toggle}><ImportedSectionBody section={section} /></ImportedMcmAccordion>) : <ImportedMcmAccordion id="imported-review" title="Review Details" open={openSections.includes('imported-review')} onToggle={toggle}><ImportedMcmSections review={review} /></ImportedMcmAccordion>}
-  </div>;
 }
 
 function SavedMcmAnswers({ sectionId, responses, emptyMessage }: { sectionId: string; responses?: ProgressReviewResponses; emptyMessage: string }) {
@@ -287,235 +156,108 @@ function Accordion({ id, title, icon, status, open, onToggle, children }: { id: 
   );
 }
 
-function MonthlyCoachingSessionPicker({
-  sessions,
-  value,
-  onChange,
-}: {
-  sessions: LearnerCalendarEvent[];
-  value: string;
-  onChange: (session: LearnerCalendarEvent) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const pickerRef = useRef<HTMLDivElement>(null);
-  const selected = sessions.find((session) => session.id === value) || sessions[0];
+function useMonthlyCoachingData() {
+  const myLearner = useMyLearner();
+  const [learner, setLearner] = useState<LearnerDetail | null>(null);
+  const [sessions, setSessions] = useState<LearnerCalendarEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!open) return undefined;
-    const handlePointerDown = (event: PointerEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(event.target as Node)) setOpen(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [open]);
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    Promise.all([
+      fetchLearnerDetail(myLearner.kind, myLearner.id),
+      fetchLearnerCalendarEvents(myLearner.kind, myLearner.id),
+    ])
+      .then(([detail, calendar]) => {
+        if (cancelled) return;
+        setLearner(detail);
+        setSessions(calendar.events.filter((event) => event.source === 'mcr').sort((a, b) => a.sequence - b.sequence));
+      })
+      .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load monthly coaching sessions.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [myLearner.kind, myLearner.id]);
 
-  return <div ref={pickerRef} className="relative mt-1.5">
-    <button
-      type="button"
-      role="combobox"
-      aria-label="Select monthly coaching session"
-      aria-expanded={open}
-      aria-controls="monthly-coaching-session-options"
-      onClick={() => setOpen((current) => !current)}
-      className={`flex h-11 w-full items-center justify-between gap-3 rounded-2xl border bg-white px-3.5 text-left text-base font-normal text-foreground-800 outline-none transition ${open ? 'border-primary-500 ring-2 ring-primary-100' : 'border-background-300 hover:border-primary-300'}`}
-    >
-      <span className="min-w-0 truncate">{selected ? `Monthly Coaching Meeting · ${formatDate(selected.targetDate || selected.date)}` : 'Choose a session'}</span>
-      <AppIcon className={`shrink-0 text-lg text-foreground-500 transition-transform ${open ? 'rotate-180' : ''}`} />
-    </button>
-    {open && <div id="monthly-coaching-session-options" role="listbox" aria-label="Monthly coaching sessions" className="absolute left-0 right-0 z-[70] mt-1 max-h-64 overflow-y-auto rounded-xl border border-background-300 bg-white p-1 shadow-xl">
-      {sessions.map((session) => {
-        const isSelected = session.id === selected?.id;
-        return <button
-          key={session.id}
-          type="button"
-          role="option"
-          aria-selected={isSelected}
-          onClick={() => { onChange(session); setOpen(false); }}
-          className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm transition ${isSelected ? 'bg-primary-600 font-semibold text-white' : 'text-foreground-800 hover:bg-primary-50 hover:text-primary-800'}`}
-        >
-          <span className="truncate">Monthly Coaching Meeting · {formatDate(session.targetDate || session.date)}</span>
-          {isSelected && <AppIcon className="ml-2 shrink-0" />}
-        </button>;
-      })}
-    </div>}
-  </div>;
+  return { learner, sessions, setSessions, loading, error };
 }
 
 export function MonthlyCoachingListPage() {
-  const learner = useLinkedLearner();
-  return <MonthlyCoachingList key={`${learner.kind}:${learner.id}`} />;
-}
-
-function MonthlyCoachingList() {
-  const { myLearner, learner, sessions, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('mcr');
+  const myLearner = useMyLearner();
+  const { learner, sessions, setSessions, loading, error } = useMonthlyCoachingData();
   const [page, setPage] = useState(1);
-  const [view, setView] = useState<'planned' | 'finished'>('planned');
-  const [bookingSession, setBookingSession] = useState<LearnerCalendarEvent | null>(null);
-  const [bookingDate, setBookingDate] = useState('');
-  const [bookingTime, setBookingTime] = useState('09:00');
-  const [bookingSubmitting, setBookingSubmitting] = useState(false);
-  const [bookingError, setBookingError] = useState('');
-  const [bookingAllowsSessionSelection, setBookingAllowsSessionSelection] = useState(false);
+  const [scheduleSession, setScheduleSession] = useState<LearnerCalendarEvent | null>(null);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('09:00');
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const openSchedule = (session: LearnerCalendarEvent) => { setScheduleSession(session); setScheduleDate(session.scheduledDate || session.targetDate || new Date().toISOString().slice(0, 10)); setScheduleTime(session.scheduledTime?.slice(0, 5) || '09:00'); };
+  const saveSchedule = async () => { if (!scheduleSession || !scheduleDate) return; setScheduleBusy(true); try { const result = await bookLearnerCalendarSession(myLearner.kind, myLearner.id, { sessionType: 'mcr', eventKey: scheduleSession.eventKey || scheduleSession.id, scheduledDate: scheduleDate, scheduledTime: scheduleTime, durationMinutes: scheduleSession.durationMinutes || 60, timezoneOffsetMinutes: new Date(`${scheduleDate}T${scheduleTime}:00`).getTimezoneOffset() }); setSessions(current => current.map(item => item.id === scheduleSession.id ? { ...item, ...result.event } : item)); setScheduleSession(null); } catch (reason) { /* the page-level data hook will show the next load error */ } finally { setScheduleBusy(false); } };
   const pageSize = 10;
-  const finishedSessions = sessions.filter((session) => session.status.toLowerCase() === 'completed');
-  const plannedSessions = sessions.filter((session) => session.status.toLowerCase() !== 'completed');
-  const tabSessions = view === 'finished' ? finishedSessions : plannedSessions;
-  const totalPages = Math.max(1, Math.ceil(tabSessions.length / pageSize));
-  const currentPage = Math.min(page, totalPages);
-  const visibleSessions = tabSessions.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const completedCount = sessions.filter((review) => review.status.toLowerCase() === 'completed').length;
-  const scheduledCount = sessions.filter((review) => review.status.toLowerCase() === 'scheduled').length;
-  const inProgressCount = sessions.filter((review) => review.status.toLowerCase() === 'in-progress').length;
-  const notScheduledCount = sessions.filter((review) => ['not-scheduled', 'not scheduled', 'not_scheduled'].includes(review.status.toLowerCase())).length;
+  const totalPages = Math.max(1, Math.ceil(sessions.length / pageSize));
+  const visibleSessions = sessions.slice((page - 1) * pageSize, page * pageSize);
+  const completedCount = sessions.filter((session) => session.status === 'completed').length;
+  const scheduledCount = sessions.filter((session) => ['scheduled', 'in-progress'].includes(session.status)).length;
+  const cancelledCount = sessions.filter((session) => session.status === 'cancelled').length;
+  const coachName = sessions.find((session) => session.coachName)?.coachName || 'Your coach';
   const summaryMetrics = [
     { label: 'Total', value: sessions.length, icon: 'ri-stack-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
     { label: 'Scheduled', value: scheduledCount, icon: 'ri-calendar-check-line', tone: 'info' as const, iconClassName: 'bg-blue-100 text-blue-700' },
-    { label: 'In progress', value: inProgressCount, icon: 'ri-time-line', tone: 'caution' as const, iconClassName: 'bg-amber-100 text-amber-700' },
     { label: 'Completed', value: completedCount, icon: 'ri-checkbox-circle-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
-    { label: 'Not Scheduled', value: notScheduledCount, icon: 'ri-time-line', tone: 'critical' as const, iconClassName: 'bg-red-100 text-red-700' },
+    { label: 'Cancelled', value: cancelledCount, icon: 'ri-close-circle-line', tone: 'neutral' as const, iconClassName: 'bg-rose-100 text-rose-700' },
   ];
-  const pageRows = visibleSessions;
-  const bookableSessions = sessions.filter((session) => normalizedSessionStatus(session) === 'not-scheduled');
-  const firstBookableSession = sessions.find((session) => normalizedSessionStatus(session) === 'not-scheduled');
-
-  function openBooking(session: LearnerCalendarEvent, allowSessionSelection = false) {
-    setBookingSession(session);
-    setBookingAllowsSessionSelection(allowSessionSelection);
-    setBookingDate(firstAvailableBookingDate(session.scheduledDate || session.targetDate || session.date, bookingCalendar));
-    setBookingTime(session.scheduledTime || '09:00');
-    setBookingError('');
-  }
-
-  async function submitBooking(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!bookingSession || bookingSubmitting || !bookingDate || !bookingTime) return;
-    const dateRestriction = bookingDateRestrictionMessage(bookingDate, bookingCalendar);
-    if (dateRestriction) {
-      setBookingError(dateRestriction);
-      return;
-    }
-    setBookingSubmitting(true);
-    setBookingError('');
-    try {
-      const imported = Boolean(bookingSession.importedReview);
-      // Imported reviews use the review-id booking identity for both the first
-      // booking and a date change. Their display event key is synthetic and is
-      // not a Coach calendar event key, so sending it to /reschedule/ causes
-      // "Booking not found".
-      const rescheduling = sessionIsBooked(bookingSession) && !imported;
-      // Generated programme rows are booked against their event key. Imported
-      // Aptem rows have no matching key, so use the MCR assignment month path.
-      const calendar = imported || rescheduling ? null : await fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true });
-      const generated = calendar?.events.find((item) => item.source === 'mcr' && (item.targetDate || item.date) === (bookingSession.targetDate || bookingSession.date));
-      const assignmentMonth = imported
-        ? (bookingSession.targetDate || bookingSession.date || bookingDate).slice(0, 7)
-        : undefined;
-      const response = rescheduling
-        ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
-            eventKey: bookingSession.eventKey,
-            scheduledDate: bookingDate,
-            scheduledTime: bookingTime,
-            durationMinutes: 60,
-          })
-        : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
-            assignmentMonth,
-            reviewId: imported ? bookingSession.importedReview?.id : undefined,
-            sessionType: 'mcr',
-            eventKey: imported ? undefined : generated?.eventKey || bookingSession.eventKey,
-            scheduledDate: bookingDate,
-            scheduledTime: bookingTime,
-            durationMinutes: 60,
-          });
-      const updatedImportedReview = bookingSession.importedReview
-        ? {
-            ...bookingSession.importedReview,
-            status: 'scheduled',
-            plannedDate: bookingDate,
-            plannedTime: bookingTime,
-          }
-        : undefined;
-      const updatedEvent = updatedImportedReview
-        ? {
-            ...response.event,
-            id: bookingSession.id,
-            sequence: bookingSession.sequence,
-            importedReview: updatedImportedReview,
-            date: bookingDate,
-            scheduledDate: bookingDate,
-            scheduledTime: bookingTime,
-          }
-        : response.event;
-      setEvents((current) => [
-        ...current.filter((item) => item.id !== bookingSession.id && item.eventKey !== response.event.eventKey),
-        updatedEvent,
-      ]);
-      setBookingSession(null);
-      // Re-read Reviews after the POST. The refreshed row (and its persisted
-      // status/date) is what the list displays after a booking or reschedule.
-      refresh();
-    } catch (reason) {
-      setBookingError(reason instanceof Error ? reason.message : 'Could not book this coaching meeting.');
-    } finally {
-      setBookingSubmitting(false);
-    }
-  }
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="30-day coaching meetings with your coach" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
-      <main className={`page-container ${reviewStyles.page} min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6`}>
-        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
-        <section className="learner-super-admin-hero workspace-page-hero relative overflow-hidden rounded-2xl p-4 sm:rounded-3xl sm:p-6 md:p-6">
-          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+      <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
+        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
+          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
+          <div className="relative">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600"><AppIcon className="ri-calendar-event-line" />Monthly coaching</span>
-              <h1 className="mt-3 text-[22px] font-bold leading-tight text-primary-800 sm:text-2xl md:text-3xl">Monthly Coaching Meetings</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-foreground-500">Review your learning, progress and next actions with your coach and line manager.</p>
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><AppIcon className="ri-user-voice-line text-secondary-300" />One-to-one support</span>
+              <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Monthly Coaching Meeting</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Your 30-day coaching meetings with {coachName}. Review progress, learning evidence and agreed next steps.</p>
             </div>
-            <div className="grid grid-cols-2 gap-2 lg:min-w-[650px] lg:grid-cols-5">
-              {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} value={loading ? '-' : metric.value} className="progress-review-hero-metric bg-white" valuePosition="stacked" />)}
-            </div>
+          </div>
+          <div className="relative z-0 mt-5 grid grid-cols-2 gap-2 border-t border-white/10 pt-4 sm:mt-6 sm:grid-cols-2 sm:pt-5 md:gap-3 lg:grid-cols-4">
+            {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" />)}
           </div>
         </section>
 
-        <section aria-label="Monthly Coaching Meetings" className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Monthly Coaching Meetings</h2><p className="mt-0.5 text-xs text-foreground-500">Check each meeting status and open the full coaching record.</p></div></div><div className="flex flex-wrap items-center gap-2"><button type="button" disabled={!firstBookableSession} onClick={() => firstBookableSession && openBooking(firstBookableSession, true)} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className="ri-calendar-check-line" />Book session</button><Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link></div></div>
-          <div role="tablist" aria-label="Monthly coaching meeting status" className="flex overflow-x-auto border-b border-background-200 bg-white px-4 pt-3 sm:px-5">
-              {(['planned', 'finished'] as const).map((tab) => {
-                const count = tab === 'planned' ? plannedSessions.length : finishedSessions.length;
-                return <button key={tab} type="button" role="tab" aria-selected={view === tab} onClick={() => { setView(tab); setPage(1); }} className={`-mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-xs font-bold transition ${view === tab ? 'border-primary-600 text-primary-700' : 'border-transparent text-foreground-500 hover:border-primary-200 hover:text-primary-700'}`}><AppIcon className={tab === 'planned' ? 'ri-calendar-event-line' : 'ri-checkbox-circle-line'} />{tab === 'planned' ? 'Planned' : 'Finished'}<span className={`rounded-full px-2 py-0.5 text-[10px] ${view === tab ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}>{count}</span></button>;
-              })}
+        <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_8px_30px_rgba(27,12,52,0.06)]">
+          <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-calendar-event-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Monthly Coaching Meetings</h2><p className="mt-0.5 text-xs text-foreground-500">Open a meeting to review its 30-day learning summary.</p></div></div>
+            <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link>
           </div>
-          {loading ? <div className="p-5"><RowsSkeleton rows={8} className="divide-y divide-background-100 [&>div]:py-3" /></div> : error && sessions.length === 0 ? null : tabSessions.length === 0 ? <div className="p-5"><Empty>{view === 'finished' ? 'No finished monthly coaching reviews were found.' : 'No planned monthly coaching sessions were found.'}</Empty></div> : (
+          {loading ? <div className="p-5"><RowsSkeleton rows={4} /></div> : sessions.length === 0 ? <div className="p-5"><Empty>No monthly coaching sessions were found.</Empty></div> : (
             <>
               <div className="divide-y divide-background-200 md:hidden">
-                {pageRows.map((session) => {
-                  const booked = sessionIsBooked(session);
-                  const normalizedStatus = normalizedSessionStatus(session);
-                  const detailHref = `/learner/monthly-coaching/${encodeURIComponent(session.id)}?kind=${myLearner.kind}&learner=${myLearner.id}`;
+                {visibleSessions.map((session) => {
+                  const booked = Boolean(session.scheduledDate && session.scheduledTime) && !['not-scheduled', 'cancelled'].includes(session.status);
                   return (
                     <article key={session.id} className="space-y-4 p-4">
                       <div className="flex items-start gap-3">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-xs font-extrabold text-primary-700">#{session.sequence}</span>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
                               <h3 className="text-sm font-bold text-foreground-900">{monthlyCoachingTitle(session)}</h3>
-                              <p className="mt-1 text-[11px] text-foreground-500">Monthly Coaching Review</p>
+                              <p className="mt-1 text-[11px] text-foreground-500">{reviewTypeLabel(session)}</p>
                             </div>
-                            <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${normalizedStatus === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : normalizedStatus === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : normalizedStatus === 'not-scheduled' ? 'bg-red-50 text-red-700 ring-red-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}>
-                              <AppIcon className={normalizedStatus === 'completed' ? 'ri-checkbox-circle-line' : normalizedStatus === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(normalizedStatus)}
+                            <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${session.status === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : session.status === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}>
+                              <AppIcon className={session.status === 'completed' ? 'ri-checkbox-circle-line' : session.status === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(session.status)}
                             </span>
                           </div>
                         </div>
                       </div>
 
-                      <div>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div className="flex min-w-0 items-center gap-2 rounded-xl bg-background-100/70 p-2.5">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(session.coachName)}</span>
+                          <div className="min-w-0"><p className="text-[9px] uppercase text-foreground-400">Coach</p><p className="truncate text-xs font-semibold text-foreground-800">{session.coachName || '-'}</p></div>
+                        </div>
                         <div className="flex min-w-0 items-center gap-2 rounded-xl bg-background-100/70 p-2.5">
                           <AppIcon className="ri-calendar-line shrink-0 text-primary-500" />
                           <div className="min-w-0"><p className="text-[9px] uppercase text-foreground-400">{booked ? 'Scheduled' : 'Planned'}</p><p className="truncate text-xs font-semibold text-foreground-800">{formatDate(booked ? session.scheduledDate : session.targetDate)}</p>{booked && <p className="text-[10px] text-foreground-400">{formatTime(session.scheduledTime)}</p>}</div>
@@ -523,43 +265,27 @@ function MonthlyCoachingList() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
-                        <Link
-                          to={sessionSchedulingLabel(session) === 'Schedule' ? scheduleHref(session, myLearner) : calendarEventHref(session, myLearner)}
-                          onClick={(event) => { if (['Schedule', 'Reschedule'].includes(sessionSchedulingLabel(session))) { event.preventDefault(); openBooking(session); } }}
-                          className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"
-                        >
-                          <AppIcon className="ri-calendar-2-line" />{sessionSchedulingLabel(session)}
-                        </Link>
-                        <Link to={detailHref} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-background-300 bg-white px-3 text-xs font-bold text-foreground-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">View session <AppIcon className="ri-arrow-right-line" /></Link>
+                        <button type="button" onClick={() => openSchedule(session)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />{booked ? 'Reschedule' : 'Schedule'}</button>
+                        <Link to={`/learner/monthly-coaching/${encodeURIComponent(session.id)}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700">View session <AppIcon className="ri-arrow-right-line" /></Link>
                       </div>
                     </article>
                   );
                 })}
               </div>
-              <div className={`${reviewStyles.tableWrap} hidden md:block`}>
-                <table className="w-full text-left">
-                  <thead><tr><th className="px-5 py-3.5">Meeting name / type</th><th className="px-5 py-3.5">Coach</th><th className="px-5 py-3.5">Planned / scheduled date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Scheduling assistant</th><th className="px-5 py-3.5 text-right">Review actions</th></tr></thead>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full min-w-[980px] text-left">
+                  <thead className="border-b border-primary-100 bg-primary-50/70 text-[10px] font-bold uppercase tracking-wide text-primary-900/60"><tr><th className="px-5 py-3.5">Session Name / Session Type</th><th className="px-5 py-3.5">Coach</th><th className="px-5 py-3.5">Planned / Scheduled Date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Scheduling Assistant</th><th className="px-5 py-3.5 text-right">Session Actions</th></tr></thead>
                   <tbody className="divide-y divide-background-200">
-                    {pageRows.map((session) => {
-                      const booked = sessionIsBooked(session);
-                      const normalizedStatus = normalizedSessionStatus(session);
-                      const detailHref = `/learner/monthly-coaching/${encodeURIComponent(session.id)}?kind=${myLearner.kind}&learner=${myLearner.id}`;
+                    {visibleSessions.map((session) => {
+                      const booked = Boolean(session.scheduledDate && session.scheduledTime) && !['not-scheduled', 'cancelled'].includes(session.status);
                       return (
                         <tr key={session.id} className="group transition-colors hover:bg-primary-50/35">
-                          <td className="px-5 py-4"><p className="text-xs font-bold text-foreground-900">{monthlyCoachingTitle(session)}</p><p className="mt-1 text-[10px] text-foreground-500">Monthly Coaching Review</p></td>
-                          <td className="px-5 py-4"><div className="flex items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-[10px] font-bold text-primary-700">{initials(session.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{session.coachName || '-'}</span></div></td>
+                          <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{session.sequence}</span><div><p className="text-xs font-bold text-foreground-900">{monthlyCoachingTitle(session)}</p><p className="mt-1 text-[10px] text-foreground-400">{reviewTypeLabel(session)}</p></div></div></td>
+                          <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(session.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{session.coachName || '-'}</span></div></td>
                           <td className="px-5 py-4"><div className="flex items-center gap-2"><AppIcon className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(booked ? session.scheduledDate : session.targetDate)}</p>{booked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(session.scheduledTime)}</p>}</div></div></td>
-                          <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${normalizedStatus === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : normalizedStatus === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : normalizedStatus === 'not-scheduled' ? 'bg-red-50 text-red-700 ring-red-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}><AppIcon className={normalizedStatus === 'completed' ? 'ri-checkbox-circle-line' : normalizedStatus === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(normalizedStatus)}</span></td>
-                          <td className="px-5 py-4">
-                            <Link
-                              to={sessionSchedulingLabel(session) === 'Schedule' ? scheduleHref(session, myLearner) : calendarEventHref(session, myLearner)}
-                              onClick={(event) => { if (['Schedule', 'Reschedule'].includes(sessionSchedulingLabel(session))) { event.preventDefault(); openBooking(session); } }}
-                              className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"
-                            >
-                              <AppIcon className="ri-calendar-2-line" />{sessionSchedulingLabel(session)}
-                            </Link>
-                          </td>
-                          <td className="px-5 py-4 text-right"><Link to={detailHref} className={`${reviewStyles.primaryButton} inline-flex h-9 items-center gap-2 rounded-xl px-4 text-xs font-bold transition focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2`}>View <AppIcon className="ri-arrow-right-line" /></Link></td>
+                          <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${session.status === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : session.status === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}><AppIcon className={session.status === 'completed' ? 'ri-checkbox-circle-line' : session.status === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(session.status)}</span></td>
+                          <td className="px-5 py-4"><button type="button" onClick={() => openSchedule(session)} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><AppIcon className="ri-calendar-2-line" />{booked ? 'Reschedule' : 'Schedule'}</button></td>
+                          <td className="px-5 py-4"><div className="flex items-center justify-end"><Link to={`/learner/monthly-coaching/${encodeURIComponent(session.id)}`} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 hover:shadow-md">View <AppIcon className="ri-arrow-right-line" /></Link></div></td>
                         </tr>
                       );
                     })}
@@ -567,29 +293,14 @@ function MonthlyCoachingList() {
                 </table>
               </div>
               <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-                <div className="flex items-center gap-1.5"><button type="button" onClick={() => setPage(1)} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-left-line" /></button><button type="button" onClick={() => setPage((value) => Math.max(1, Math.min(value, totalPages) - 1))} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line" /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} aria-current={currentPage === number ? 'page' : undefined} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${currentPage === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}<button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line" /></button><button type="button" onClick={() => setPage(totalPages)} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button><span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span></div>
-                <p className="text-[10px] text-foreground-500">{tabSessions.length === 0 ? 0 : (currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, tabSessions.length)} of {tabSessions.length} items</p>
+                <div className="flex items-center gap-1.5"><button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-left-line" /></button><button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line" /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} aria-current={page === number ? 'page' : undefined} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}<button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line" /></button><button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button><span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span></div>
+                <p className="text-[10px] text-foreground-500">{(page - 1) * pageSize + 1} - {Math.min(page * pageSize, sessions.length)} of {sessions.length} items</p>
               </div>
             </>
           )}
         </section>
-        {bookingSession && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setBookingSession(null); }}>
-            <form onSubmit={submitBooking} role="dialog" aria-modal="true" aria-labelledby="monthly-coaching-booking-title" className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">{bookingAllowsSessionSelection ? 'Monthly coaching booking' : 'Scheduling assistant'}</p><h2 id="monthly-coaching-booking-title" className="mt-1 text-lg font-bold text-foreground-900">{sessionIsBooked(bookingSession) ? 'Reschedule monthly coaching' : bookingAllowsSessionSelection ? 'Book monthly coaching' : 'Schedule monthly coaching'}</h2><p className="mt-1 text-xs text-foreground-500">Choose the day and time for {monthlyCoachingTitle(bookingSession)}.</p></div>
-                <button type="button" aria-label="Close booking dialog" onClick={() => setBookingSession(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100"><AppIcon className="ri-close-line" /></button>
-              </div>
-              {bookingAllowsSessionSelection && !sessionIsBooked(bookingSession) && bookableSessions.length > 1 && <label className="mt-5 block text-xs font-semibold text-foreground-600">Session<MonthlyCoachingSessionPicker sessions={bookableSessions} value={bookingSession.id} onChange={(next) => openBooking(next, true)} /></label>}
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                <label className="text-xs font-semibold text-foreground-600">Day<input type="date" required min={isoDate(new Date())} value={bookingDate} onChange={(event) => { const value = event.target.value; setBookingDate(value); setBookingError(bookingDateRestrictionMessage(value, bookingCalendar)); }} className="mt-1.5 h-10 w-full rounded-xl border border-background-300 bg-background-50 px-3 text-sm font-normal text-foreground-800 outline-none focus:border-primary-400" /></label>
-                <label className="text-xs font-semibold text-foreground-600">Time<input type="time" required value={bookingTime} onChange={(event) => setBookingTime(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-background-300 bg-background-50 px-3 text-sm font-normal text-foreground-800 outline-none focus:border-primary-400" /></label>
-              </div>
-              {bookingError && <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700"><AppIcon className="ri-error-warning-line mr-1" />{bookingError}</p>}
-              <div className="mt-5 flex gap-2"><button type="button" onClick={() => setBookingSession(null)} className="flex-1 rounded-xl border border-background-300 px-4 py-2.5 text-sm font-semibold text-foreground-600 hover:bg-background-100">Cancel</button><button type="submit" disabled={bookingSubmitting || !bookingDate || !bookingTime || Boolean(bookingDateRestrictionMessage(bookingDate, bookingCalendar))} className="flex-1 rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">{bookingSubmitting ? 'Saving…' : sessionIsBooked(bookingSession) ? 'Save new time' : bookingAllowsSessionSelection ? 'Book session' : 'Book meeting'}</button></div>
-            </form>
-          </div>
-        )}
+        <ImportedReviewHistory kind={myLearner.kind} learnerId={myLearner.id} category="monthly-coaching" />
+        {scheduleSession && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><div className="flex items-center justify-between"><h2 className="text-lg font-bold">Schedule coaching meeting</h2><button type="button" onClick={() => setScheduleSession(null)} aria-label="Close">×</button></div><p className="mt-1 text-sm text-foreground-500">Choose the date and time.</p><div className="mt-5 grid grid-cols-2 gap-3"><label className="text-xs font-semibold">Date<input type="date" value={scheduleDate} onChange={event => setScheduleDate(event.target.value)} className="mt-1 w-full rounded-lg border p-2 text-sm" /></label><label className="text-xs font-semibold">Time<input type="time" value={scheduleTime} onChange={event => setScheduleTime(event.target.value)} className="mt-1 w-full rounded-lg border p-2 text-sm" /></label></div><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setScheduleSession(null)} className="rounded-lg bg-background-100 px-4 py-2 text-xs font-semibold">Cancel</button><button type="button" disabled={scheduleBusy} onClick={() => void saveSchedule()} className="rounded-lg bg-primary-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{scheduleBusy ? 'Scheduling…' : 'Confirm schedule'}</button></div></div></div>}
       </main>
     </WorkspaceShell>
   );
@@ -598,10 +309,9 @@ function MonthlyCoachingList() {
 export default function MonthlyCoachingPage() {
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId: string }>();
-  const { myLearner, learner, sessions, loading, error, refresh } = useReviewSessions('mcr');
-  // Keep the data-driven Aptem review details visible on first open while
-  // preserving the existing learning-summary default for legacy meetings.
-  const [openSections, setOpenSections] = useState<string[]>(['learning', 'imported-review']);
+  const { learner, sessions, loading, error } = useMonthlyCoachingData();
+  const myLearner = useMyLearner();
+  const [openSections, setOpenSections] = useState<string[]>(['learning']);
   const selected = sessions.find((session) => session.id === sessionId) || null;
   const index = selected ? sessions.findIndex((session) => session.id === selected.id) : -1;
   const previous = index > 0 ? sessions[index - 1] : null;
@@ -640,54 +350,72 @@ export default function MonthlyCoachingPage() {
     0,
   );
   const toggle = (id: string) => setOpenSections((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]);
+  // Only ever a GET, and only for an occurrence that already HAS an instance:
+  // viewing an unscheduled slot must not create a durable review_instance.
+  const reviewInstance = useLearnerReviewInstance(
+    myLearner.kind,
+    myLearner.id,
+    selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
+  );
   const loadArtifacts = useCallback((eventKey: string, signal?: AbortSignal) => fetchLearnerMeetingArtifacts(myLearner.kind, myLearner.id, eventKey, signal), [myLearner.id, myLearner.kind]);
   const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options), [myLearner.id, myLearner.kind]);
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Your 30-day coaching meeting with your coach" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
-      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
-        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
-        <button type="button" onClick={() => navigate(`/learner/monthly-coaching?kind=${myLearner.kind}&learner=${myLearner.id}`)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
-        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(`/learner/monthly-coaching?kind=${myLearner.kind}&learner=${myLearner.id}`)} /> : (
+      <div className="space-y-4 p-4 md:p-6">
+        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
+        <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
+        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
-              <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${normalizedSessionStatus(selected) === 'not-scheduled' ? 'border-red-200 bg-red-50 text-red-700' : 'border-primary-200/60 bg-primary-100/60 text-foreground-500'}`}>{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
+              <div className="learner-super-admin-hero bg-gradient-to-r from-primary-950 to-primary-800 p-5 text-white sm:p-6"><span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">{reviewTypeLabel(selected)}</p><h1 className="mt-1 text-xl font-bold text-white">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-white/60">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
               <div className="space-y-5 p-5 sm:p-6">
                 {shouldShowLearnerMeetingRecording(selected) ? (
                   <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                 ) : null}
                 <div><p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Session participants</p><div className="grid gap-3 sm:grid-cols-2"><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700">{initials(learner?.name)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Learner</p><p className="text-sm font-bold text-foreground-900">{learner?.name || '-'}</p></div></div><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-100 text-xs font-bold text-accent-700">{initials(selected.coachName)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Coach</p><p className="text-sm font-bold text-foreground-900">{selected.coachName || '-'}</p></div></div></div></div>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Duration', `${selected.durationMinutes || 60} minutes`], ['Meeting type', selected.meetingProvider || '-'], ['Scheduled time', formatTime(selected.scheduledTime)], ['Learning window', previous ? `Since session #${previous.sequence}` : 'First 30-day period']].map(([label, value]) => <div key={label} className="rounded-xl bg-background-100 p-3.5"><p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-bold text-foreground-800">{value}</p></div>)}</div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Duration', `${selected.durationMinutes || 60} minutes`], ['Meeting type', selected.meetingProvider || '-'], ['Scheduled time', formatTime(selected.scheduledTime)], ['Learning window', previous ? `Since session #${previous.sequence}` : 'Since the start of the programme']].map(([label, value]) => <div key={label} className="rounded-xl bg-background-100 p-3.5"><p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-bold text-foreground-800">{value}</p></div>)}</div>
               </div>
             </section>
 
-            {!selected.importedReview && <Accordion id="learning" title="30-Day Learning Progress & Summary" icon="ri-graduation-cap-line" open={openSections.includes('learning')} onToggle={toggle}>
+            <Accordion id="learning" title="30-Day Learning Progress & Summary" icon="ri-graduation-cap-line" open={openSections.includes('learning')} onToggle={toggle}>
               <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-primary-50 p-4"><p className="text-[10px] font-semibold uppercase text-primary-500">Completed activities</p><p className="mt-1 text-2xl font-bold text-primary-800">{uniqueProgress.length}</p></div><div className="rounded-xl bg-accent-50 p-4"><p className="text-[10px] font-semibold uppercase text-accent-600">Completed activity time</p><p className="mt-1 text-2xl font-bold text-accent-800">{hoursLabel(learningMinutes)}</p></div><div className="rounded-xl bg-emerald-50 p-4"><p className="text-[10px] font-semibold uppercase text-emerald-600">KSBs evidenced</p><p className="mt-1 text-2xl font-bold text-emerald-800">{ksbCodes.length}</p></div></div>
               <div className="mt-4"><div className="mb-2 flex items-center justify-between"><h2 className="text-xs font-bold text-foreground-800">What the learner completed</h2><span className="text-[10px] text-foreground-400">{learningItems.length} {learningItems.length === 1 ? 'record' : 'records'}</span></div>{learningItems.length === 0 ? <Empty>No completed learning was recorded in this 30-day period.</Empty> : <div className="divide-y divide-background-200 rounded-xl border border-background-200">{learningItems.map((item) => <div key={item.key} className="flex items-start gap-3 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><AppIcon className="ri-checkbox-circle-line" /></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground-800">{item.title}</p><p className="text-xs text-foreground-400">{item.detail}</p></div><span className="text-[10px] text-foreground-400">{new Date(item.at).toLocaleDateString('en-GB')}</span></div>)}</div>}</div>
-            </Accordion>}
-            {selected.importedReview && <Accordion id="imported-review" title="Review Details" icon="ri-file-list-3-line" open={openSections.includes('imported-review')} onToggle={toggle}><ImportedMcmSections review={selected.importedReview} /></Accordion>}
-            {!selected.importedReview && <>
-            <Accordion id="previous-summary" title="Previous Meeting Summary" icon="ri-history-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'previous-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('previous-summary')} onToggle={toggle}>
-              <SavedMcmAnswers sectionId="previous-summary" responses={selected.reviewResponses} emptyMessage="No previous meeting summary has been recorded." />
             </Accordion>
-            <Accordion id="opening" title="Opening the Meeting (5 minutes)" icon="ri-play-circle-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'opening').length ? 'Complete' : 'Incomplete'} open={openSections.includes('opening')} onToggle={toggle}>
-              <SavedMcmAnswers sectionId="opening" responses={selected.reviewResponses} emptyMessage="The opening check-in has not been recorded." />
-            </Accordion>
-            <Accordion id="presentation" title="Learner Presentation & Review (15 minutes)" icon="ri-presentation-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'presentation').length ? 'Complete' : 'Incomplete'} open={openSections.includes('presentation')} onToggle={toggle}>
-              <SavedMcmAnswers sectionId="presentation" responses={selected.reviewResponses} emptyMessage="No learner presentation information has been recorded for this session." />
-            </Accordion>
-            <Accordion id="ksb-reflection" title="Reflection on Knowledge, Skills, and Behaviours (10 minutes)" icon="ri-lightbulb-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'ksb-reflection').length ? 'Complete' : 'Incomplete'} open={openSections.includes('ksb-reflection')} onToggle={toggle}>
-              <SavedMcmAnswers sectionId="ksb-reflection" responses={selected.reviewResponses} emptyMessage="No KSB reflection has been recorded for this session." />
-            </Accordion>
-            <Accordion id="next-month" title="Preparing for Next Month (10 minutes)" icon="ri-calendar-todo-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'next-month').length ? 'Complete' : 'Incomplete'} open={openSections.includes('next-month')} onToggle={toggle}><SavedMcmAnswers sectionId="next-month" responses={selected.reviewResponses} emptyMessage="No targets or actions for next month have been recorded." /></Accordion>
-            <Accordion id="resources" title="Learning Resources – Coach Guidance (5 minutes)" icon="ri-book-open-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'resources').length ? 'Complete' : 'Incomplete'} open={openSections.includes('resources')} onToggle={toggle}><SavedMcmAnswers sectionId="resources" responses={selected.reviewResponses} emptyMessage="No coach learning resources or guidance have been recorded." /></Accordion>
-            <Accordion id="wellbeing" title="Wellbeing & Safeguarding Check (5 minutes)" icon="ri-shield-check-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'wellbeing').length ? 'Complete' : 'Incomplete'} open={openSections.includes('wellbeing')} onToggle={toggle}><SavedMcmAnswers sectionId="wellbeing" responses={selected.reviewResponses} emptyMessage="No wellbeing or safeguarding response has been recorded." /></Accordion>
-            <Accordion id="feedback" title="Learner Feedback on Teaching & Curriculum (5 minutes)" icon="ri-feedback-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'feedback').length ? 'Complete' : 'Incomplete'} open={openSections.includes('feedback')} onToggle={toggle}><SavedMcmAnswers sectionId="feedback" responses={selected.reviewResponses} emptyMessage="No learner feedback has been recorded." /></Accordion>
-            <Accordion id="confirm-next" title="Confirm Next Meeting & Close (5 minutes)" icon="ri-calendar-check-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'confirm-next').length ? 'Complete' : 'Incomplete'} open={openSections.includes('confirm-next')} onToggle={toggle}>
-              <SavedMcmAnswers sectionId="confirm-next" responses={selected.reviewResponses} emptyMessage="The next meeting confirmation has not been recorded." />
-            </Accordion>
-            <Accordion id="meeting-summary" title="Meeting Summary" icon="ri-file-text-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'meeting-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('meeting-summary')} onToggle={toggle}><SavedMcmAnswers sectionId="meeting-summary" responses={selected.reviewResponses} emptyMessage="No meeting summary has been recorded." /></Accordion>
-            </>}
+            {/* The Review itself: one Curriculum-authored form, rendered by the
+                same ReviewFormRenderer the coach's ReviewInstanceModal uses. The
+                legacy accordions below stay only as the fallback for occurrences
+                with no Review instance (never scheduled, or rows that predate the
+                Curriculum Review architecture), so nothing already recorded on
+                coach_calendar_event.review_responses is lost. */}
+            {reviewInstance.loading ? (
+              <div className="rounded-2xl border border-background-200 bg-white p-5"><RowsSkeleton rows={3} /></div>
+            ) : reviewInstance.definition ? (
+              <LearnerReviewInstanceForm definition={reviewInstance.definition} />
+            ) : (
+              <>
+              <Accordion id="previous-summary" title="Previous Meeting Summary" icon="ri-history-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'previous-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('previous-summary')} onToggle={toggle}>
+                <SavedMcmAnswers sectionId="previous-summary" responses={selected.reviewResponses} emptyMessage="No previous meeting summary has been recorded." />
+              </Accordion>
+              <Accordion id="opening" title="Opening the Meeting (5 minutes)" icon="ri-play-circle-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'opening').length ? 'Complete' : 'Incomplete'} open={openSections.includes('opening')} onToggle={toggle}>
+                <SavedMcmAnswers sectionId="opening" responses={selected.reviewResponses} emptyMessage="The opening check-in has not been recorded." />
+              </Accordion>
+              <Accordion id="presentation" title="Learner Presentation & Review (15 minutes)" icon="ri-presentation-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'presentation').length ? 'Complete' : 'Incomplete'} open={openSections.includes('presentation')} onToggle={toggle}>
+                <SavedMcmAnswers sectionId="presentation" responses={selected.reviewResponses} emptyMessage="No learner presentation information has been recorded for this session." />
+              </Accordion>
+              <Accordion id="ksb-reflection" title="Reflection on Knowledge, Skills, and Behaviours (10 minutes)" icon="ri-lightbulb-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'ksb-reflection').length ? 'Complete' : 'Incomplete'} open={openSections.includes('ksb-reflection')} onToggle={toggle}>
+                <SavedMcmAnswers sectionId="ksb-reflection" responses={selected.reviewResponses} emptyMessage="No KSB reflection has been recorded for this session." />
+              </Accordion>
+              <Accordion id="next-month" title="Preparing for Next Month (10 minutes)" icon="ri-calendar-todo-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'next-month').length ? 'Complete' : 'Incomplete'} open={openSections.includes('next-month')} onToggle={toggle}><SavedMcmAnswers sectionId="next-month" responses={selected.reviewResponses} emptyMessage="No targets or actions for next month have been recorded." /></Accordion>
+              <Accordion id="resources" title="Learning Resources – Coach Guidance (5 minutes)" icon="ri-book-open-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'resources').length ? 'Complete' : 'Incomplete'} open={openSections.includes('resources')} onToggle={toggle}><SavedMcmAnswers sectionId="resources" responses={selected.reviewResponses} emptyMessage="No coach learning resources or guidance have been recorded." /></Accordion>
+              <Accordion id="wellbeing" title="Wellbeing & Safeguarding Check (5 minutes)" icon="ri-shield-check-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'wellbeing').length ? 'Complete' : 'Incomplete'} open={openSections.includes('wellbeing')} onToggle={toggle}><SavedMcmAnswers sectionId="wellbeing" responses={selected.reviewResponses} emptyMessage="No wellbeing or safeguarding response has been recorded." /></Accordion>
+              <Accordion id="feedback" title="Learner Feedback on Teaching & Curriculum (5 minutes)" icon="ri-feedback-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'feedback').length ? 'Complete' : 'Incomplete'} open={openSections.includes('feedback')} onToggle={toggle}><SavedMcmAnswers sectionId="feedback" responses={selected.reviewResponses} emptyMessage="No learner feedback has been recorded." /></Accordion>
+              <Accordion id="confirm-next" title="Confirm Next Meeting & Close (5 minutes)" icon="ri-calendar-check-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'confirm-next').length ? 'Complete' : 'Incomplete'} open={openSections.includes('confirm-next')} onToggle={toggle}>
+                <SavedMcmAnswers sectionId="confirm-next" responses={selected.reviewResponses} emptyMessage="The next meeting confirmation has not been recorded." />
+              </Accordion>
+              <Accordion id="meeting-summary" title="Meeting Summary" icon="ri-file-text-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'meeting-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('meeting-summary')} onToggle={toggle}><SavedMcmAnswers sectionId="meeting-summary" responses={selected.reviewResponses} emptyMessage="No meeting summary has been recorded." /></Accordion>
+              </>
+            )}
           </>
         )}
       </div>

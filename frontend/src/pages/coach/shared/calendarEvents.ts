@@ -82,6 +82,13 @@ export interface CoachCalendarEvent {
   reviewCompletedAt?: string | null;
   managerSignedAt?: string | null;
   managerSignedBy?: string;
+  /** The Curriculum review_templates.id this occurrence was generated from. */
+  reviewTemplateId?: string | null;
+  /** Set once this occurrence has been scheduled at least once -- its
+   *  presence is what routes "open review" to the dynamic Curriculum-driven
+   *  form (see reviewInstances.ts) instead of any hard-coded one. */
+  reviewInstanceId?: string | null;
+  occurrenceNumber?: number | null;
 }
 
 interface CoachTimetableResponse {

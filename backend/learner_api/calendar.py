@@ -1,4 +1,4 @@
-"""Learner-facing calendar: coaching sessions from "Coach".coach_calendar_event.
+﻿"""Learner-facing calendar: coaching sessions from "Coach".coach_calendar_event.
 
     GET /learner_api/calendar/<kind>/<int:pk>/
 

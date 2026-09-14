@@ -23,8 +23,34 @@ from datetime import date, timedelta
 from typing import Iterator, Optional
 
 
-def _interval() -> timedelta:
-    from coach_api.views import TIMETABLE_PROGRESS_REVIEW_INTERVAL
+def _interval(programme_id: Optional[str] = None) -> timedelta:
+    """The Progress Review recurrence interval.
+
+    When ``programme_id`` is given and that programme has an enabled
+    Curriculum Review template classified with the 'progress_review' Review
+    Type, its recurrence is used -- keeping this in step with
+    coach_api.resolve_curriculum_review_occurrences, which is what actually
+    drives the coach calendar now. Falls back to the legacy fixed 12-week
+    constant when no programme_id is supplied or no such template exists yet,
+    so every existing caller of generated_review_dates (none of which pass a
+    programme_id today) keeps its exact current behaviour unchanged.
+    """
+    from coach_api.views import TIMETABLE_PROGRESS_REVIEW_INTERVAL, REVIEW_TYPE_CODE_PROGRESS_REVIEW
+    if programme_id:
+        from curriculum_api.review_instances import get_review_type_template, template_recurrence_config
+        template_row = get_review_type_template(programme_id, REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        if template_row:
+            recurrence = template_recurrence_config(template_row)
+            unit = recurrence['unit']
+            if unit == 'weeks':
+                return timedelta(weeks=recurrence['interval'])
+            if unit == 'days':
+                return timedelta(days=recurrence['interval'])
+            # 'months' has no fixed timedelta equivalent (calendar-month
+            # arithmetic) -- generated_review_dates/iterate_generated_schedule_dates
+            # only understand a fixed timedelta step, so a months-based
+            # Progress Review template falls back to the legacy constant
+            # here rather than silently mis-stepping in fixed-day chunks.
     return TIMETABLE_PROGRESS_REVIEW_INTERVAL
 
 
@@ -47,16 +73,19 @@ def generated_review_dates(
     *,
     range_start: Optional[date] = None,
     range_end: Optional[date] = None,
+    programme_id: Optional[str] = None,
 ) -> Iterator[tuple]:
     """Yield (review_number, review_date) for every review this programme
     generates, in the same order and values the coach calendar generates them.
 
     `start_date`/`end_date` are the learner's programme start/planned-end
-    dates; the first review always falls 12 weeks after `start_date`.
+    dates; the first review falls one Curriculum-configured interval after
+    `start_date` (12 weeks, unless `programme_id`'s Progress Review template
+    says otherwise -- see `_interval`).
     """
     from coach_api.views import iterate_generated_schedule_dates
     yield from iterate_generated_schedule_dates(
-        start_date, end_date, _interval(), range_start=range_start, range_end=range_end,
+        start_date, end_date, _interval(programme_id), range_start=range_start, range_end=range_end,
     )
 
 
@@ -93,6 +122,7 @@ def iter_review_periods(
     programme_end: Optional[date],
     *,
     today: Optional[date] = None,
+    programme_id: Optional[str] = None,
 ) -> Iterator[ReviewPeriod]:
     """Every review period this programme generates, past and future.
 
@@ -100,9 +130,13 @@ def iter_review_periods(
     falling back to `today` (or one full interval past start, whichever is
     later) means a learner with no planned end date still gets at least their
     next upcoming review listed.
+
+    ``programme_id`` is what makes the cadence Curriculum's: without it these
+    periods step on the legacy 12-week constant while the coach calendar steps
+    on the programme's Progress Review template, and the two disagree.
     """
-    horizon = programme_end or max(today or programme_start, programme_start + _interval())
-    for number, review_date in generated_review_dates(programme_start, horizon):
+    horizon = programme_end or max(today or programme_start, programme_start + _interval(programme_id))
+    for number, review_date in generated_review_dates(programme_start, horizon, programme_id=programme_id):
         yield build_review_period(review_date, review_number=number)
 
 
@@ -115,6 +149,7 @@ def resolve_review_period(
     last_completed_review_date: Optional[date] = None,
     window_start: Optional[date] = None,
     window_end: Optional[date] = None,
+    programme_id: Optional[str] = None,
 ) -> ReviewPeriod:
     """Pick the review period automatically when the caller does not name one.
 
@@ -137,25 +172,25 @@ def resolve_review_period(
         target = review_date or (window_end or today)
         return build_review_period(target, window_start=window_start, window_end=window_end)
 
-    horizon = programme_end or max(today, programme_start + _interval())
+    horizon = programme_end or max(today, programme_start + _interval(programme_id))
 
     if last_completed_review_date is not None:
-        for number, target_date in generated_review_dates(programme_start, horizon):
+        for number, target_date in generated_review_dates(programme_start, horizon, programme_id=programme_id):
             if target_date > last_completed_review_date:
                 return build_review_period(target_date, review_number=number)
         # Every generated date is already accounted for; nothing new is due
         # yet. Preview the next one anyway, computed on the same cadence.
-        next_number, next_date = None, last_completed_review_date + _interval()
+        next_number, next_date = None, last_completed_review_date + _interval(programme_id)
         return build_review_period(next_date, review_number=next_number)
 
     chosen = None
     first = None
-    for number, target_date in generated_review_dates(programme_start, horizon):
+    for number, target_date in generated_review_dates(programme_start, horizon, programme_id=programme_id):
         if first is None:
             first = (number, target_date)
         if target_date <= today:
             chosen = (number, target_date)
         else:
             break
-    number, target_date = chosen or first or (1, programme_start + _interval())
+    number, target_date = chosen or first or (1, programme_start + _interval(programme_id))
     return build_review_period(target_date, review_number=number)

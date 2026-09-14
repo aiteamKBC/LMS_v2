@@ -49,6 +49,7 @@ from django.db import connection, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from . import review_types
 from . import schema_gate
 from . import views as curriculum_views
 
@@ -83,6 +84,12 @@ CONDITION_VALUES = ('yes', 'no')
 
 PARTICIPANT_ROLES = ('advisor', 'employer', 'participant', 'referrer')
 
+# Every Review carries a Review Type -- its classification, chosen in the
+# General tab next to the Review's name. The catalogue of types lives in
+# review_types.py; this module only stores which one a template points at.
+# Type never implies recurrence, questions, signatures or eligibility: a
+# "Monthly Coaching Meeting" scheduled every 6 weeks is valid and supported.
+
 _REVIEW_TABLES_READY = False
 
 
@@ -92,7 +99,10 @@ def ensure_review_tables():
     if _REVIEW_TABLES_READY:
         return
     if not schema_gate.runtime_bootstrap_allowed():
-        schema_gate.require_tables(REVIEW_TEMPLATES_TABLE, REVIEW_SECTIONS_TABLE, REVIEW_FIELDS_TABLE)
+        schema_gate.require_tables(
+            REVIEW_TEMPLATES_TABLE, REVIEW_SECTIONS_TABLE, REVIEW_FIELDS_TABLE,
+            review_types.REVIEW_TYPES_TABLE,
+        )
         _REVIEW_TABLES_READY = True
         return
     provision_review_template_tables()
@@ -121,6 +131,7 @@ def provision_review_template_tables():
                 recurrence_unit varchar(16) not null default 'weeks',
                 schedule_anchor_date date not null default current_date,
                 occurrence_count integer,
+                review_type_id varchar(128),
                 applicable_statuses {json_type},
                 signature_advisor boolean not null default false,
                 signature_employer boolean not null default false,
@@ -180,6 +191,9 @@ def provision_review_template_tables():
                 updated_at timestamp not null default current_timestamp
             )
         ''')
+    # A Review cannot be saved without a Review Type, so the type catalogue is
+    # part of the same provisioning step rather than a separate opt-in.
+    review_types.provision_review_types_table()
     _REVIEW_TABLES_READY = True
 
 
@@ -302,7 +316,11 @@ def flatten_fields(sections):
     return flattened
 
 
-def review_template_summary_payload(row):
+def review_template_summary_payload(row, *, type_index=None):
+    """``type_index`` is review_types.review_type_index()'s {id: row} map --
+    pass it when serialising a list so the type catalogue is read once for the
+    whole response instead of once per Review."""
+    type_row = _resolve_review_type(row.get('review_type_id'), type_index)
     return {
         'id': row.get('id'),
         'programmeId': row.get('programme_id') or '',
@@ -317,6 +335,14 @@ def review_template_summary_payload(row):
         'scheduleAnchorDate': curriculum_views.format_date(row.get('schedule_anchor_date')),
         # None/unset means unlimited -- the review keeps recurring indefinitely.
         'occurrenceCount': row.get('occurrence_count'),
+        # The Review's classification. ``reviewTypeId`` is the stable
+        # identity everything downstream keys on; the code/name are echoed
+        # for display and for Coach's calendar routing. Nothing anywhere
+        # classifies a Review by ``name`` -- "Monthly Learner Catch-up" of
+        # type Monthly Coaching Meeting still routes as MCM.
+        'reviewTypeId': row.get('review_type_id') or '',
+        'reviewTypeCode': (type_row or {}).get('code') or '',
+        'reviewTypeName': (type_row or {}).get('name') or '',
         'applicableStatuses': curriculum_views.as_json_value(row.get('applicable_statuses'), []),
         'fieldCount': curriculum_views.parse_int(row.get('field_count'), 0),
         'createdAt': row.get('created_at'),
@@ -324,10 +350,10 @@ def review_template_summary_payload(row):
     }
 
 
-def review_template_detail_payload(row, sections=None):
+def review_template_detail_payload(row, sections=None, *, type_index=None):
     sections = assemble_review_sections(row.get('id')) if sections is None else sections
     return {
-        **review_template_summary_payload(row),
+        **review_template_summary_payload(row, type_index=type_index),
         'signatures': {
             'advisor': bool(row.get('signature_advisor')),
             'employer': bool(row.get('signature_employer')),
@@ -413,6 +439,33 @@ def validate_schedule_anchor_date(payload, errors, *, required=True):
         errors['scheduleAnchorDate'] = 'Schedule anchor date must be a valid date.'
         return None
     return parsed
+
+
+def _resolve_review_type(review_type_id, type_index=None):
+    review_type_id = curriculum_views.clean_str(review_type_id)
+    if not review_type_id:
+        return None
+    if type_index is not None:
+        return type_index.get(review_type_id)
+    return review_types.get_review_type(review_type_id)
+
+
+def validate_review_type_id(payload, errors):
+    """The Review's classification -- required, and always a review_types.id.
+
+    Never a name: the type is what Coach routes on, so it has to survive the
+    Review being renamed. An archived (inactive) type is still accepted on an
+    existing Review so that deactivating a type never blocks editing the
+    Reviews already classified with it.
+    """
+    raw = curriculum_views.clean_str(payload.get('reviewTypeId'))
+    if not raw:
+        errors['reviewTypeId'] = 'Review type is required.'
+        return None
+    if not review_types.get_review_type(raw):
+        errors['reviewTypeId'] = 'Choose a valid review type.'
+        return None
+    return raw
 
 
 def validate_occurrence_count(payload, errors):
@@ -636,6 +689,11 @@ def validate_review_payload(payload, *, partial=False):
         if anchor is not None:
             cleaned['schedule_anchor_date'] = anchor
 
+    if not partial or 'reviewTypeId' in payload:
+        review_type_id = validate_review_type_id(payload, errors)
+        if review_type_id is not None:
+            cleaned['review_type_id'] = review_type_id
+
     if not partial or 'occurrenceCount' in payload:
         cleaned['occurrence_count'] = validate_occurrence_count(payload, errors)
 
@@ -842,6 +900,7 @@ def clone_review(source_row, destination_programme_id, *, actor='review-clone'):
     new_id = curriculum_views.unique_prefixed_id('REV', '', existing_review_ids)
     copy_columns = (
         'name', 'enabled', 'recurrence_interval', 'recurrence_unit', 'schedule_anchor_date', 'occurrence_count', 'applicable_statuses',
+        'review_type_id',
         'signature_advisor', 'signature_employer', 'signature_participant', 'signature_referrer',
         'visible_advisor', 'visible_employer', 'visible_participant', 'visible_referrer',
         'record_time_spent', 'expected_otjh', 'counts_towards_otjh', 'allow_editing_prior_days', 'notify_employer', 'notify_participant',
@@ -929,7 +988,10 @@ def curriculum_programme_review_collection(request, programme_id):
         if not _programme_exists(programme_id):
             return curriculum_views.json_error('Programme not found.', status=404)
         rows = get_review_template_rows('programme_id = %s', [programme_id])
-        return curriculum_views.curriculum_results_response([review_template_summary_payload(row) for row in rows])
+        type_index = review_types.review_type_index()
+        return curriculum_views.curriculum_results_response(
+            [review_template_summary_payload(row, type_index=type_index) for row in rows]
+        )
 
     if request.method != 'POST':
         return curriculum_views.json_error('Method not allowed.', status=405)
@@ -1037,10 +1099,11 @@ def curriculum_review_clone(request, programme_id):
     )
 
     rows = get_review_template_rows('programme_id = %s', [destination_programme_id])
+    type_index = review_types.review_type_index()
     return JsonResponse({
         'cloned': True,
         'sourceProgrammeId': source_programme_id,
         'programmeId': destination_programme_id,
         'reviewIds': new_ids,
-        'reviews': [review_template_summary_payload(row) for row in rows],
+        'reviews': [review_template_summary_payload(row, type_index=type_index) for row in rows],
     })
