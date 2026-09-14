@@ -61,6 +61,14 @@ const MAX_BACKGROUND_WIDTH = 1400;
 const MAX_BACKGROUND_HEIGHT = 990;
 const MAX_BACKGROUND_DATA_URL_LENGTH = 1_800_000;
 
+function hydrateTemplate(template: CertificateTemplate): CertificateTemplate {
+  return {
+    ...initial,
+    ...template,
+    layoutConfig: { ...initial.layoutConfig, ...template.layoutConfig },
+  };
+}
+
 function compressBackgroundDataUrl(dataUrl: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -145,6 +153,7 @@ function SelectField({
 
 export default function CertificateBuilderPage() {
   const [form, setForm] = useState<CertificateTemplate>(initial);
+  const [templates, setTemplates] = useState<CertificateTemplate[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [selectedElement, setSelectedElement] = useState<CertificateElementId | null>('title');
@@ -152,12 +161,9 @@ export default function CertificateBuilderPage() {
   useEffect(() => {
     fetchCertificateTemplate()
       .then((response) => {
+        setTemplates(response.templates || []);
         if (response.template) {
-          setForm({
-            ...initial,
-            ...response.template,
-            layoutConfig: { ...initial.layoutConfig, ...response.template.layoutConfig },
-          });
+          setForm(hydrateTemplate(response.template));
         }
       })
       .catch((error) => setNotice(error.message));
@@ -435,12 +441,11 @@ export default function CertificateBuilderPage() {
       }
       const response = await saveCertificateTemplate(templateToSave, publish);
       if (response.template) {
-        setForm({
-          ...initial,
-          ...response.template,
-          layoutConfig: { ...initial.layoutConfig, ...response.template.layoutConfig },
-        });
+        setForm(hydrateTemplate(response.template));
       }
+      const refreshed = await fetchCertificateTemplate();
+      setTemplates(refreshed.templates || []);
+      if (refreshed.template) setForm(hydrateTemplate(refreshed.template));
       setNotice(publish ? 'Certificate template published.' : 'Draft saved.');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not save template.');
@@ -484,6 +489,28 @@ export default function CertificateBuilderPage() {
           </span>
           <span>Version {form.version ?? 'new'}</span>
           {form.publishedAt ? <span>Published {new Date(form.publishedAt).toLocaleDateString('en-GB')}</span> : null}
+          {templates.length ? (
+            <label className="ml-auto flex min-w-[260px] items-center gap-2 text-xs font-bold text-foreground-600">
+              <span className="shrink-0">Load version</span>
+              <select
+                value={form.id ?? ''}
+                onChange={(event) => {
+                  const selected = templates.find((template) => String(template.id) === event.target.value);
+                  if (selected) {
+                    setForm(hydrateTemplate(selected));
+                    setNotice(`Loaded version ${selected.version}. Publish to make it the active template again.`);
+                  }
+                }}
+                className="h-9 min-w-0 flex-1 rounded-lg border border-foreground-200 bg-white px-2 text-xs font-semibold text-foreground-700 outline-none focus:ring-2 focus:ring-primary-200"
+              >
+                {templates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    Version {template.version} - {template.status}{template.publishedAt ? ` - ${new Date(template.publishedAt).toLocaleDateString('en-GB')}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
 
         <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">

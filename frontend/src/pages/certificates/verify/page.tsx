@@ -185,21 +185,36 @@ export default function CertificateVerificationPage() {
 
           @media screen {
             #certificate-print-area {
-              position: fixed !important;
-              left: -200vw !important;
-              top: 0 !important;
-              width: 1123px !important;
-              height: 794px !important;
-              overflow: hidden !important;
-              pointer-events: none !important;
+              display: none !important;
+            }
+          }
+
+          @media screen and (max-width: 640px) {
+            .certificate-verify-page {
+              padding: 1rem 0.75rem !important;
             }
 
-            #certificate-print-area .certificate-print-document {
-              width: 1123px !important;
-              max-width: 1123px !important;
-              border: 0 !important;
-              border-radius: 0 !important;
-              box-shadow: none !important;
+            .certificate-screen-content {
+              max-width: 100% !important;
+            }
+
+            .certificate-verify-panel {
+              border-radius: 1.25rem !important;
+            }
+
+            .certificate-verify-hero,
+            .certificate-verify-body {
+              padding: 1rem !important;
+            }
+
+            .certificate-preview-card {
+              padding: 0.75rem !important;
+              border-radius: 1.25rem !important;
+            }
+
+            .certificate-preview-shell {
+              margin-inline: -0.25rem;
+              overflow: hidden;
             }
           }
         `}
@@ -215,16 +230,16 @@ export default function CertificateVerificationPage() {
           </span>
         </div>
 
-        <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl">
-          <div className="bg-gradient-to-r from-primary-900 via-primary-700 to-primary-300 p-8 text-white">
+        <section className="certificate-verify-panel overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl">
+          <div className="certificate-verify-hero bg-gradient-to-r from-primary-900 via-primary-700 to-primary-300 p-8 text-white">
             <p className="text-xs font-black uppercase tracking-[0.24em] text-white/70">Verification result</p>
-            <h1 className="mt-3 text-4xl font-black text-white">{loading ? 'Checking certificate...' : error ? 'Certificate not verified' : 'Certificate verified'}</h1>
+            <h1 className="mt-3 text-3xl font-black text-white sm:text-4xl">{loading ? 'Checking certificate...' : error ? 'Certificate not verified' : 'Certificate verified'}</h1>
             <p className="mt-3 max-w-2xl text-sm font-semibold text-white/80">
               This page confirms whether a certificate was issued by Kent Business College through the LMS certificate system.
             </p>
           </div>
 
-          <div className="p-8">
+          <div className="certificate-verify-body p-8">
             {loading ? (
               <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-10 text-center">
                 <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-primary-100 border-t-primary-700" />
@@ -259,7 +274,7 @@ export default function CertificateVerificationPage() {
                   <FieldCard label="Progress" value={`${certificate.progressPercent}%`} />
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 shadow-inner">
+                <div className="certificate-preview-card rounded-3xl border border-slate-200 bg-slate-50 p-5 shadow-inner">
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Official certificate</p>
@@ -275,7 +290,7 @@ export default function CertificateVerificationPage() {
                     </button>
                   </div>
                   {pdfError ? <p className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{pdfError}</p> : null}
-                  <div ref={pdfSourceRef}>
+                  <div ref={pdfSourceRef} className="certificate-preview-shell">
                     <CertificateDocument
                       title={title}
                       bodyText={bodyText}

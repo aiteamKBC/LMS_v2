@@ -119,7 +119,7 @@ export interface CertificateTemplate {
 }
 
 export function fetchCertificateTemplate() {
-  return request<{ template: CertificateTemplate | null }>(`${BASE}/certificate-template/`);
+  return request<{ template: CertificateTemplate | null; templates?: CertificateTemplate[] }>(`${BASE}/certificate-template/`);
 }
 
 export function saveCertificateTemplate(template: CertificateTemplate, publish = false) {
