@@ -126,18 +126,18 @@ describe('homeRouteFor', () => {
 });
 
 describe('postLoginRouteFor', () => {
-  it('defaults both new and imported learners to Dashboard even with an old home value', () => {
+  it('defaults both new and imported learners to Student Home even with an old home value', () => {
     for (const hasLegacyRecord of [false, true]) {
       const account = { role: 'learner' as const, subjectId: 42, hasLegacyRecord, accessHome: '/old-otjh' };
-      expect(homeRouteFor(account)).toBe('/workspace/learner');
-      expect(postLoginRouteFor(account)).toBe('/workspace/learner');
-      expect(postLoginRouteFor(account, '/workspace/learner')).toBe('/workspace/learner');
+      expect(homeRouteFor(account)).toBe('/learner/home');
+      expect(postLoginRouteFor(account)).toBe('/learner/home');
+      expect(postLoginRouteFor(account, '/workspace/learner')).toBe('/learner/home');
     }
   });
 
-  it('preserves explicit activity and previous-record links for imported learners', () => {
-    for (const requested of ['/learner/attendance', '/old-otjh/months/2026-07']) {
-      expect(postLoginRouteFor({ role: 'learner', subjectId: 42, hasLegacyRecord: true }, requested)).toBe(requested);
+  it('starts imported learners at Student Home before following learning or signing links', () => {
+    for (const requested of ['/learner/attendance', '/old-otjh/months/2026-07', '/workspace/learner?tab=attendance']) {
+      expect(postLoginRouteFor({ role: 'learner', subjectId: 42, hasLegacyRecord: true }, requested)).toBe('/learner/home');
     }
   });
 
@@ -147,10 +147,10 @@ describe('postLoginRouteFor', () => {
     }
   });
 
-  it('keeps a learner on their own bare learner workspace', () => {
+  it('replaces a remembered learner Dashboard with Student Home after login', () => {
     expect(
       postLoginRouteFor({ role: 'learner', accessHome: null, subjectId: 42 }, '/workspace/learner'),
-    ).toBe('/workspace/learner');
+    ).toBe('/learner/home');
   });
 
   it('sends staff away from a stale bare learner workspace return target', () => {

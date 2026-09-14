@@ -26,7 +26,7 @@ from .time_tracking import (
     tracking_session_already_used,
     verify_tracking_session,
 )
-from login.permissions import learner_self_only
+from login.permissions import learner_self_or_admin
 
 SOURCE_MODELS = {
     "commercial": CommercialUser,
@@ -67,9 +67,8 @@ def _video_title(component_id):
 
 
 @csrf_exempt
-# Only the learner may mark their own video watched: a staff viewer opening
-# this learner's plan reads it, they do not complete it as them.
-@learner_self_only(query_param="learnerId")
+# Owners and admins can record video progress for the selected learner.
+@learner_self_or_admin(query_param="learnerId")
 def submit_video_progress(request, component_id):
     if request.method != "POST":
         return _error("Method not allowed.", 405)

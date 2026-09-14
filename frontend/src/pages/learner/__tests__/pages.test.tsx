@@ -24,11 +24,12 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ child
 
 const modules = import.meta.glob<{ default: ComponentType }>('/src/pages/learner/**/page.tsx');
 Object.assign(modules, import.meta.glob<{ default: ComponentType }>('/src/pages/workspace/learner/page.tsx'));
-const config = readFileSync(resolve('src/router/config.tsx'), 'utf8');
-const components = new Map([...config.matchAll(/const (\w+) = lazyRoute\(\(\) => import\("(\.\.\/pages\/(?:learner|workspace\/learner)\/[^"\n]+)"\)\)/g)]
+const config = ['src/router/config.tsx', 'src/router/studentWorkspaceRoutes.tsx']
+  .map(path => readFileSync(resolve(path), 'utf8')).join('\n');
+const components = new Map([...config.matchAll(/const (\w+) = lazyRoute\(\(\) => import\(["'](\.\.\/pages\/(?:learner|workspace\/learner)\/[^"'\n]+)["']\)\)/g)]
   .map(match => [match[1], match[2].replace('../pages/', '/src/pages/') + '.tsx']));
 const routes = new Map<string, string>();
-for (const match of config.matchAll(/path:\s*"([^"]+)"\s*,\s*element:\s*<(\w+)/g)) {
+for (const match of config.matchAll(/path:\s*["']([^"']+)["']\s*,\s*element:\s*<(\w+)/g)) {
   const file = components.get(match[2]);
   if (file && (!routes.has(file) || match[1].includes(':kind'))) routes.set(file, match[1]);
 }
@@ -229,7 +230,7 @@ describe('learner loading and recovery', () => {
     expect(hero.getByText('Current module')).toBeVisible();
     fireEvent.click(hero.getByRole('button',{name:'Continue learning'}));
     expect(screen.getByTestId('navigation-destination')).toHaveTextContent(
-      `/learner/modules/commercial/125?subject=${imported?'legacy%3A77':'current%3Amarketing'}`);
+      `/learner/my-learning/commercial/125?subject=${imported?'legacy%3A77':'current%3Amarketing'}&week=current`);
     fireEvent.click(screen.getByRole('button',{name:'Return to dashboard'}));
     const returnedHero=within(await screen.findByLabelText('Learner programme'));
     fireEvent.click(returnedHero.getByRole('button',{name:"Learner's Map"}));

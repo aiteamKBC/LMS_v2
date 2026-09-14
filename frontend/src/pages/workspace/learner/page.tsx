@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { BookOpen, CalendarCheck, Clock3, BarChart3, type LucideIcon } from 'lucide-react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -39,8 +39,6 @@ function formatProgrammeStartDate(value?: string | null): string {
     : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
 }
 
-const learnerNav = roleNavMap.learner;
-
 export default function LearnerOverview() {
   const p = LEARNER_PROFILE;
   const navigate = useNavigate();
@@ -48,6 +46,10 @@ export default function LearnerOverview() {
   /* ── Real-learner mode: /workspace/learner/:kind/:id ── */
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
+  const workspaceHome = urlKind && urlId ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
+  const learnerNav = useMemo(() => ({ ...roleNavMap.learner, items: roleNavMap.learner.items.map(item => item.id === 'learner-home'
+    ? { ...item, href: workspaceHome } : item.id === 'learner-overview'
+      ? { ...item, href: `${workspaceHome}/dashboard` } : item) }), [workspaceHome]);
   const { isRealMode, real, loading, loadError, refresh } = useLearnerSummaryParam(kind, id);
   const { auth, canSeeNavItem } = useAuth();
   // "Reviewing" means somebody else's record, opened by staff from the

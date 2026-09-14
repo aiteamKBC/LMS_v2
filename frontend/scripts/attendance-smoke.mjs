@@ -12,12 +12,14 @@ const row = {
   id: 'lecture-1', sessionId: 'legacy-1', reportId: '8000000000000000001', title: 'Introduction to Business Strategy',
   date: '2026-09-01', moduleId: 'legacy:business', module: 'Business Strategy and Innovation', source: 'kbc-attendance',
   startTime: '10:00', endTime: '11:00', durationMinutes: 60, contentSummary: 'Key strategic models and the business environment.',
+  tutor: 'Alex Morgan', coach: 'Sam Taylor',
   ksbs: ['K1', 'S1', 'B1', 'K18', 'S14', 'K25', 'K99'], status: 'completed', catchupStatus: null, updatedAt: null,
   canReportAbsence: false, absenceReport: null,
   monthlyLog: { month: '2026-08', sourceRef: 'att:legacy-1' },
   activities: [{ id: 'activity-1', title: 'Lecture recording', type: 'video', completed: true, href: '/learner/component/apprenticeship/12/comp-1' }],
 };
 const payload = {
+  timeZone: 'Europe/London', csrfToken: 'fixture-csrf',
   lectures: [row,
     { ...row, id: 'lecture-2', title: 'Innovation and Change Management', status: 'absent', catchupStatus: 'pending', canReportAbsence: true },
     { ...row, id: 'lecture-3', title: 'Leadership in a Digital Era', date: '2026-10-01', status: 'upcoming', canReportAbsence: true },
@@ -52,6 +54,7 @@ while ([0, 6].includes(bookingDay.getDay())) bookingDay.setDate(bookingDay.getDa
 const bookingDate = `${bookingDay.getFullYear()}-${String(bookingDay.getMonth() + 1).padStart(2, '0')}-${String(bookingDay.getDate()).padStart(2, '0')}`;
 let bookedCatchup = null;
 const absencePosts = [];
+const attendancePosts = [];
 
 await page.route('**/*', async route => {
   const url = new URL(route.request().url());
@@ -59,7 +62,18 @@ await page.route('**/*', async route => {
   if (!url.pathname.includes('_api/') && !url.pathname.startsWith('/api/')) return route.continue();
   let body = { results: [], count: 0 };
   if (url.pathname === '/login_api/me/') body = { user: { id: 1, email: 'learner@example.test', displayName: 'Alex Smith', role: 'learner', subjectType: 'learner', subjectId: 12, learnerType: 'apprenticeship', hasPassword: true, lastLoginAt: null, permissions: [], hasLegacyRecord: false } };
+  else if (url.pathname === '/login_api/learner-entry/') body = { classification: 'new', required: false, canAccess: true };
   else if (url.pathname.endsWith('/lectures/')) body = payload;
+  else if (url.pathname.endsWith('/attend/')) {
+    const input = route.request().postDataJSON();
+    assert.equal(route.request().headers()['x-csrftoken'], 'fixture-csrf');
+    attendancePosts.push(input);
+    const lecture = payload.lectures.find(item => item.id === input.lectureId);
+    lecture.status = 'completed'; lecture.attendanceConfirmed = true;
+    lecture.creditedMinutes = lecture.durationMinutes; lecture.canReportAbsence = false;
+    body = { lectureId: lecture.id, status: 'completed', creditedMinutes: lecture.durationMinutes,
+      creditedHours: lecture.durationMinutes / 60, alreadyRecorded: false };
+  }
   else if (url.pathname === '/learner_api/monthly-logs/12/') body = {
     learner: { id: 12, name: 'Alex Smith', programme: 'Business', coach_name: 'Coach' },
     months: [log], total_months: 1, completed_months: 1, read_only: true, csrf_token: 'fixture',
@@ -93,6 +107,16 @@ try {
   await page.goto(process.env.ATTENDANCE_SMOKE_URL || 'http://127.0.0.1:5184/learner/attendance');
   await page.getByRole('article').first().waitFor({ timeout: 60000 });
   assert.equal(await page.getByRole('article').count(), 62);
+  const nextCard = page.getByRole('region', { name: 'Leadership in a Digital Era', exact: true });
+  assert.equal(await nextCard.getByRole('button', { name: 'Attend', exact: true }).isDisabled(), true);
+  await nextCard.getByRole('button', { name: 'Report Absence', exact: true }).click();
+  await page.getByLabel('Lecture *').waitFor();
+  assert.equal(await page.getByLabel('Lecture *').inputValue(), 'lecture-3');
+  await page.getByRole('button', { name: 'Close absence report' }).click();
+  await page.getByRole('article', { name: 'Innovation and Change Management', exact: true }).getByRole('button', { name: 'Book Catchup Session' }).click();
+  await page.getByRole('dialog', { name: 'Book Catchup Session' }).waitFor();
+  await page.getByLabel('Catch-up date').waitFor();
+  await page.getByRole('button', { name: 'Close catch-up booking' }).click();
   assert.equal(await page.getByText('Historical attendance recorded', { exact: true }).count(), 0);
   await page.getByRole('button', { name: 'View all', exact: false }).click();
   await page.getByText('Historical attendance recorded', { exact: true }).waitFor();
@@ -121,10 +145,10 @@ try {
   const refresh = page.waitForResponse(response => response.url().endsWith('/lectures/'));
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await refresh;
-  await upcoming.getByRole('link', { name: 'Attend', exact: true }).waitFor({ timeout: 10000 });
-  assert.equal(await upcoming.getByRole('link', { name: 'Attend' }).getAttribute('href'), 'https://teams.microsoft.com/l/meetup-join/attendance-fixture');
+  await upcoming.getByRole('link', { name: 'Join session', exact: true }).waitFor({ timeout: 10000 });
+  assert.equal(await upcoming.getByRole('link', { name: 'Join session' }).getAttribute('href'), 'https://teams.microsoft.com/l/meetup-join/attendance-fixture');
   await upcoming.getByRole('button', { name: 'Open Activities', exact: true }).waitFor({ timeout: 10000 });
-  await upcoming.getByRole('button', { name: 'Report absence' }).click();
+  await upcoming.getByRole('button', { name: 'Report Absence' }).click();
   await page.getByLabel('Lecture *').waitFor();
   assert.equal(await page.getByLabel('Lecture *').inputValue(), 'lecture-3');
   const dialog = page.getByRole('dialog', { name: 'Report Absence', exact: true });
@@ -136,8 +160,8 @@ try {
   await page.screenshot({ path: join(tmpdir(), 'lms-attendance-absence.png'), fullPage: true, animations: 'disabled' });
   await page.keyboard.press('Escape');
   assert.equal(await dialog.count(), 0);
-  assert.equal(await upcoming.getByRole('button', { name: 'Report absence' }).evaluate(element => element === document.activeElement), true);
-  await upcoming.getByRole('button', { name: 'Report absence' }).click();
+  assert.equal(await upcoming.getByRole('button', { name: 'Report Absence' }).evaluate(element => element === document.activeElement), true);
+  await upcoming.getByRole('button', { name: 'Report Absence' }).click();
   await page.getByLabel('Main reason', { exact: true }).selectOption('illness');
   await page.getByRole('radio', { name: 'Book a Catch-up session', exact: true }).check();
   await page.getByRole('checkbox').check();
@@ -205,9 +229,29 @@ try {
   await page.keyboard.press('Space');
   assert.equal(await monthToggle.getAttribute('aria-expanded'), 'false');
   await page.setViewportSize({ width: 1440, height: 1000 });
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  Object.assign(payload.lectures.find(item => item.id === 'lecture-3'), {
+    date: today, startTime: '10:00', endTime: '12:00', startsAt: null, endsAt: null, durationMinutes: 120,
+    joinUrl: '', status: 'upcoming', canReportAbsence: true,
+  });
+  await page.reload();
+  const todayCard = page.getByRole('region', { name: 'Leadership in a Digital Era', exact: true });
+  await todayCard.getByRole('button', { name: 'Attend', exact: true }).waitFor();
+  await page.screenshot({ path: join(tmpdir(), 'lms-attendance-today.png'), fullPage: true });
+  await todayCard.getByRole('button', { name: 'Attend', exact: true }).click();
+  await todayCard.getByText(/2 hours credited/).first().waitFor();
+  assert.equal(await todayCard.getByRole('button', { name: 'Attended', exact: true }).isDisabled(), true);
+  assert.equal(attendancePosts.length, 1);
+  await page.reload();
+  await todayCard.getByRole('button', { name: 'Attended', exact: true }).waitFor();
+  assert.equal(attendancePosts.length, 1);
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
   await page.getByRole('heading', { name: 'Attendance', exact: true }).last().scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(tmpdir(), 'lms-attendance-dark.png'), animations: 'disabled' });
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ passed: true, screenshots: ['desktop', 'laptop', 'absence', 'mobile', 'mobile-list', 'dark'].map(name => join(tmpdir(), `lms-attendance-${name}.png`)) }));
+} catch (error) {
+  console.error(JSON.stringify({ url: page.url(), errors, body: (await page.locator('body').innerText()).slice(0, 2500) }));
+  await page.screenshot({ path: join(tmpdir(), 'lms-attendance-failure.png'), fullPage: true });
+  throw error;
 } finally { await browser.close(); }

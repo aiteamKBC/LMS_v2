@@ -428,8 +428,28 @@ def _target_learner_id(request, kwargs, *, kwarg, query_param, body_field):
         return None
 
 
-def _learner_progress_gate(view, *, kwarg, query_param, body_field, allow_staff):
-    """Shared body for ``learner_self_only`` / ``learner_self_or_staff``."""
+def audit_admin_learner_action(request, learner_id, response):
+    """Keep the real administrator on the audit trail for learner-side writes."""
+    account = getattr(request, "login_account", None)
+    if getattr(account, "role", None) != "admin" or request.method in _SAFE_METHODS:
+        return
+    import json
+    from .invitations import record
+    from .security import client_ip, user_agent
+
+    record(
+        "admin_learner_action",
+        email=account.email,
+        account_id=account.id,
+        succeeded=200 <= response.status_code < 400,
+        reason=json.dumps({"learnerId": learner_id, "method": request.method,
+                           "path": request.path, "status": response.status_code}),
+        ip=client_ip(request), user_agent=user_agent(request),
+    )
+
+
+def _learner_progress_gate(view, *, kwarg, query_param, body_field, allow_staff, allow_admin=False):
+    """Enforce ownership and each learner endpoint's allowed privileged roles."""
 
     @functools.wraps(view)
     def wrapped(request, *args, **kwargs):
@@ -452,6 +472,19 @@ def _learner_progress_gate(view, *, kwarg, query_param, body_field, allow_staff)
         account = authenticate_request(request)
         if account is None:
             return _unauthenticated(request)
+
+        if allow_admin and account.role == "admin":
+            target_id = _target_learner_id(
+                request, kwargs, kwarg=kwarg, query_param=query_param, body_field=body_field
+            )
+            if target_id is None or target_id <= 0:
+                return _error_bad_target()
+            # Preserve the administrator's session; never impersonate the target
+            # by replacing login_account or changing its role/subject_id.
+            request.login_account = account
+            response = view(request, *args, **kwargs)
+            audit_admin_learner_action(request, target_id, response)
+            return response
 
         if account.role == "learner":
             target_id = _target_learner_id(
@@ -484,38 +517,12 @@ def _error_bad_target():
 
 
 def learner_self_only(*, kwarg=None, query_param=None, body_field=None):
-    """Only the learner themselves may write this learner's training-plan progress.
+    """Owner-only access to private learner resources such as calendar connections.
 
-    The progress endpoints (quiz attempts, video and component completion,
-    reflection submissions, evidence uploads) were ``@csrf_exempt`` with no
-    authentication of any kind: the learner id travelled in the URL or the body
-    and was the only thing deciding whose plan got marked off. Every staff page
-    that drills into a learner — the workspace overview, the coach case file, the
-    employer portal — renders that learner's own plan pages, so a caseowner
-    opening a learner to *look* at their week could complete components as them,
-    and the progress log would record it as the learner's own work.
-
-    That matters beyond tidiness: these records are the audit trail for
-    off-the-job hours and KSB coverage. A component ticked off by staff is a
-    false claim about what the apprentice did, and neither the learner nor an
-    auditor could tell it apart from the real thing.
-
-    So: **staff and admin get 403 here, deliberately**, unlike every other gate
-    in this module where they are the privileged case — for BOTH writes and reads.
-    A ``learner_self_only`` endpoint is the owner's alone: its GET is scoped to the
-    learner too (private data such as calendar credentials), so staff do not read
-    it here. Staff still review a learner's plan and evidence, but through the
-    endpoints that use ``learner_self_or_staff`` (which admits them on read).
-    Booking a coaching session is the one write staff keep, and it uses
-    ``learner_self_or_staff`` instead. Only ``OPTIONS`` (CORS preflight) is exempt.
-
-    ``kwarg`` / ``query_param`` / ``body_field`` name where the learner id is
-    found; exactly one applies per endpoint. A learner naming somebody else's id
-    gets **404**, matching ``staff_only(allow_own_learner=...)``.
-
-    Honours ``LEARNER_API_REQUIRE_AUTH=0`` like the rest of this module, which
-    turns the gate off for local development. It must never be set in a
-    deployment — with it set, any caller can write any learner's progress again.
+    Learning actions use ``learner_self_or_admin`` so administrators can operate
+    the selected learner workspace. This stricter gate keeps private connections
+    restricted to their owner for both reads and writes. Other learners get 404;
+    staff/admin get 403, and unauthenticated callers get 401.
     """
 
     def decorator(view):
@@ -542,6 +549,22 @@ def learner_self_or_staff(*, kwarg=None, query_param=None, body_field=None):
     def decorator(view):
         return _learner_progress_gate(
             view, kwarg=kwarg, query_param=query_param, body_field=body_field, allow_staff=True
+        )
+
+    return decorator
+
+
+def learner_self_or_admin(*, kwarg=None, query_param=None, body_field=None):
+    """Learner actions available to their owner or an authenticated administrator.
+
+    Staff previews remain read-only. Administrators may submit, edit and complete
+    activities for the selected learner; their own account is retained and each
+    write is audited. Private account connections continue to use self_only.
+    """
+    def decorator(view):
+        return _learner_progress_gate(
+            view, kwarg=kwarg, query_param=query_param, body_field=body_field,
+            allow_staff=False, allow_admin=True,
         )
 
     return decorator

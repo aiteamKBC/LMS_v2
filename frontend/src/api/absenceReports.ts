@@ -29,7 +29,7 @@ export interface LearnerAbsenceReport {
 export interface MissedAttendanceSession {
   id: string;
   reportId?: string;
-  status?: 'absent' | 'upcoming' | 'in_progress';
+  status?: 'absent' | 'upcoming' | 'in_progress' | 'pending';
   sessionId: string;
   title: string;
   sessionType: string;
@@ -63,8 +63,8 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-export async function fetchAbsenceReports(kind: LearnerKind, learnerId: string): Promise<AbsenceReportData> {
-  return readLearnerJson<AbsenceReportData>(`${BASE}/${kind}/${learnerId}/`);
+export async function fetchAbsenceReports(kind: LearnerKind, learnerId: string, scope?: 'meetings'): Promise<AbsenceReportData> {
+  return readLearnerJson<AbsenceReportData>(`${BASE}/${kind}/${learnerId}/${scope ? '?scope=meetings' : ''}`);
 }
 
 export async function submitAbsenceReport(

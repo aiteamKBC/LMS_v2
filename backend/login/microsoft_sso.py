@@ -394,7 +394,9 @@ def callback(request):
         succeeded=True, reason="microsoft_sso", ip=ip, user_agent=ua,
     )
 
-    destination = payload.get("next") or "/"
+    # Student Home verifies the previous-record signature before showing the
+    # landing page, even when sign-in started from a saved Dashboard link.
+    destination = "/learner/home" if account.role == "learner" else payload.get("next") or "/"
     response = HttpResponseRedirect(f"{frontend_base_url()}{destination}")
     # Deliberately not remembered. There is no checkbox on this route to read a
     # preference from, and inventing one in the person's favour is the wrong

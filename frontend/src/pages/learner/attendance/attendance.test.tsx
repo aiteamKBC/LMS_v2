@@ -9,6 +9,7 @@ import type { AttendanceLecture, AttendanceWorkspace } from '@/api/attendanceLec
 import { clearAllCachedResources } from '@/api/cachedRequest';
 
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '12' }) }));
+vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
 
 const lecture = (overrides: Partial<AttendanceLecture> = {}): AttendanceLecture => ({
@@ -21,8 +22,13 @@ let payload: AttendanceWorkspace;
 let posts: { url: string; body: unknown }[];
 beforeEach(() => {
   clearAllCachedResources(); posts = [];
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: { configurable: true, value: function(this: HTMLDialogElement) { this.setAttribute('open', ''); } },
+    close: { configurable: true, value: function(this: HTMLDialogElement) { this.removeAttribute('open'); } },
+  });
   vi.stubGlobal('React', React); vi.stubGlobal('AppIcon', AppIcon);
   payload = {
+    csrfToken: 'test-csrf', timeZone: 'Europe/London',
     lectures: [lecture(), lecture({ id: 'missed', title: 'Missed lecture', status: 'absent', catchupStatus: 'completed',
       activities: [{ id: 'a', title: 'Recording', type: 'video', completed: true, groupId: 20, activityId: 4 }], canReportAbsence: true }),
       lecture({ id: 'future', title: 'Future lecture', status: 'upcoming', moduleId: 'native:new', module: 'New module', canReportAbsence: true })],
@@ -35,12 +41,18 @@ beforeEach(() => {
     const url = String(input);
     if (init?.method === 'POST') {
       posts.push({ url, body: init.body });
+      if (url.endsWith('/attend/')) {
+        const { lectureId } = JSON.parse(String(init.body));
+        expect(new Headers(init.headers).get('X-CSRFToken')).toBe('test-csrf');
+        return new Response(JSON.stringify({ lectureId, status: 'completed', creditedMinutes: 120, creditedHours: 2, alreadyRecorded: false }));
+      }
       if (url.endsWith('/mode/')) {
         payload = { ...payload, mode: { ...payload.mode, requestedMode: 'lazy', status: 'pending', emailSent: true, remindersEnabled: false } };
         return new Response(JSON.stringify(payload.mode));
       }
       return new Response(JSON.stringify({ id: 1, sessionTitle: 'Future lecture', sessionDate: '2026-10-01', reference: 'AR-0001', status: 'pending' }), { status: 201 });
     }
+    if (url.includes('/calendar/')) return new Response(JSON.stringify({ events: [] }));
     if (url.includes('/absence-reports/')) return new Response(JSON.stringify({ results: [], missedSessions: [
       { id: 'future', sessionId: 'teams:future', reportId: '8000000000000000013', title: 'Future lecture', dateIso: '2026-10-01',
         startTime: '10:00', endTime: '11:00', module: 'New module', sessionType: 'live_session', coach: '', status: 'upcoming' },
@@ -48,7 +60,11 @@ beforeEach(() => {
     return new Response(JSON.stringify(payload));
   }));
 });
-afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals();
+  Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
+  Reflect.deleteProperty(HTMLDialogElement.prototype, 'close');
+});
 function CurrentLocation() {
   const location = useLocation();
   return <span data-testid="location">{location.pathname}{location.search}</span>;
@@ -56,6 +72,69 @@ function CurrentLocation() {
 const mount = () => render(<MemoryRouter><AttendancePage /><CurrentLocation /></MemoryRouter>);
 
 describe('Attendance lecture workspace', () => {
+  it('features today ahead of future lectures and credits its full hours once', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
+    payload.lectures = [lecture({ id: 'later', date: '2026-10-01', status: 'upcoming' }),
+      lecture({ id: 'today', title: 'Today lecture', date: '2026-09-14', status: 'upcoming', durationMinutes: 120,
+        tutor: 'Tutor Alex', coach: 'Coach Sam', canReportAbsence: true })];
+    mount();
+    const card = await screen.findByRole('region', { name: 'Today lecture' });
+    expect(within(card).getByText('Tutor Alex')).toBeInTheDocument();
+    expect(within(card).getByText('Coach Sam')).toBeInTheDocument();
+    const attend = within(card).getByRole('button', { name: 'Attend' });
+    expect(attend).toBeEnabled();
+    fireEvent.click(attend);
+    fireEvent.click(attend);
+    expect(await within(card).findByRole('button', { name: 'Attended' })).toBeDisabled();
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String(posts[0].body))).toEqual({ lectureId: 'today' });
+    expect(within(card).getByRole('status')).toHaveTextContent('2 hours credited');
+    expect(within(screen.getByRole('article', { name: 'Today lecture' })).getByText('Attended')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Report Absence' })).toBeDisabled();
+  });
+
+  it('opens the same preselected absence popup from the future card and the table', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
+    payload.lectures = [lecture({ id: 'future', title: 'Future lecture', date: '2026-10-01', status: 'upcoming', canReportAbsence: true }),
+      lecture({ id: 'distant', title: 'Distant lecture', date: '2026-12-01', status: 'upcoming', canReportAbsence: true })];
+    mount();
+    const card = await screen.findByRole('region', { name: 'Future lecture' });
+    expect(within(card).getByRole('button', { name: 'Attend' })).toBeDisabled();
+    fireEvent.click(within(card).getByRole('button', { name: 'Report Absence' }));
+    expect(await screen.findByRole('dialog', { name: 'Report Absence' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText('Lecture *')).toHaveValue('future'));
+    fireEvent.click(screen.getByRole('button', { name: 'Close absence report' }));
+    fireEvent.click(within(screen.getByRole('article', { name: 'Future lecture' })).getByRole('button', { name: 'Report Absence' }));
+    await waitFor(() => expect(screen.getByLabelText('Lecture *')).toHaveValue('future'));
+  });
+
+  it('opens catch-up booking for a missed lecture even after absence was reported', async () => {
+    payload.lectures = [lecture({ id: 'missed', title: 'Missed lecture', status: 'absent',
+      canReportAbsence: false, absenceReport: { id: 1, status: 'pending' } })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'Missed lecture' });
+    expect(within(row).getByText('Missed', { exact: true })).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book Catchup Session' });
+    expect(within(dialog).getByText(/Missed lecture/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Catch-up date')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Main reason')).not.toBeInTheDocument();
+  });
+
+  it('keeps Attend retryable when saving fails and does not display credited hours', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
+    payload.lectures = [lecture({ title: 'Today lecture', date: '2026-09-14', status: 'upcoming' })];
+    mount();
+    const card = await screen.findByRole('region', { name: 'Today lecture' });
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST'
+      ? new Response(JSON.stringify({ error: 'Attendance could not be saved.' }), { status: 503 }) : originalFetch(input, init));
+    fireEvent.click(within(card).getByRole('button', { name: 'Attend' }));
+    expect(await within(card).findByRole('alert')).toHaveTextContent('Attendance could not be saved.');
+    expect(within(card).getByRole('button', { name: 'Attend' })).toBeEnabled();
+    expect(within(card).queryByText(/hours credited/)).not.toBeInTheDocument();
+  });
+
   it('filters by module and keeps future/catch-up separate from attendance rate', async () => {
     expect(lectureCounts(payload.lectures)).toEqual({ all: 3, attended: 1, absent: 1, covered: 1, upcoming: 1, rate: 50 });
     mount();

@@ -13,6 +13,7 @@ import MonthlyCoachingPage, { MonthlyCoachingListPage } from '../monthly-coachin
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/pages/coach/progress-reviews/page', () => ({ buildProgressReviewSlidesDeck: vi.fn() }));
+vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
 
 const detail = { id: '125', name: 'New learner', programme: 'Assigned programme',
   components: [], componentProgress: [], videoProgress: [], quizAttempts: [] };
@@ -27,6 +28,10 @@ let archiveFails: boolean;
 let detailActivityAvailable: boolean;
 let historyReviews: ImportedReview[];
 let requests: string[];
+let bookingWarning: string;
+let bookings: Record<string, unknown>[];
+let reschedules: Record<string, unknown>[];
+let bookingError: string;
 
 function session(source: string, sequence = 1, status = 'not-scheduled'): LearnerCalendarEvent {
   const id = `${source}:211:${sequence}:2026-10-31`;
@@ -41,6 +46,11 @@ beforeEach(() => {
   localStorage.clear(); rememberLearner('commercial', '19');
   vi.stubGlobal('React', React); vi.stubGlobal('AppIcon', AppIcon);
   events = []; historyReviews = []; requests = []; calendarFails = detailFails = archiveFails = detailActivityAvailable = false;
+  bookingWarning = ''; bookings = []; reschedules = []; bookingError = '';
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: { configurable: true, value: function(this: HTMLDialogElement) { this.setAttribute('open', ''); } },
+    close: { configurable: true, value: function(this: HTMLDialogElement) { this.removeAttribute('open'); } },
+  });
   // jsdom does not load Tailwind. Apply its visibility utilities so the
   // regression fails for a populated but CSS-hidden list, as in the report.
   const style = document.createElement('style'); style.id = 'review-test-style';
@@ -48,12 +58,26 @@ beforeEach(() => {
   document.head.append(style);
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input); requests.push(url);
+    if ((init?.method === 'POST' && url.endsWith('/book/')) || (init?.method === 'PATCH' && url.endsWith('/reschedule/'))) {
+      const payload = JSON.parse(String(init.body));
+      (init.method === 'POST' ? bookings : reschedules).push(payload);
+      if (bookingError) return new Response(JSON.stringify({ error: bookingError }), { status: 409 });
+      const existing = events.find(event => event.eventKey === payload.eventKey || (payload.reviewId && event.reviewId === payload.reviewId))
+        || session(payload.sessionType);
+      const saved = { ...existing, status: 'scheduled', date: payload.scheduledDate,
+        scheduledDate: payload.scheduledDate, scheduledTime: payload.scheduledTime, durationMinutes: payload.durationMinutes,
+        reviewId: payload.reviewId, invited: !bookingWarning, syncWarning: bookingWarning, syncState: bookingWarning ? 'failed' : 'synced' } as LearnerCalendarEvent;
+      events = [...events.filter(event => event.id !== saved.id), saved];
+      historyReviews = historyReviews.map(review => review.id === payload.reviewId ? { ...review, status: 'scheduled', plannedDate: payload.scheduledDate, plannedTime: payload.scheduledTime } : review);
+      return new Response(JSON.stringify({ event: saved, warning: bookingWarning }), { status: 201 });
+    }
     if (init?.method && init.method !== 'GET') throw new Error('Unexpected write');
     let body: unknown; let failed = false;
     if (url.includes('/curriculum/cache-epoch/')) body = { epoch: 0, changes: [] };
     else if (url.includes('/learner-detail/')) { body = { ...detail, studentActivityAvailable: detailActivityAvailable }; failed = detailFails; }
     else if (url.includes('/review-history/')) { body = { reviews: historyReviews }; failed = archiveFails; }
     else if (url.includes('/calendar/')) { body = { events }; failed = calendarFails; }
+    else if (url.includes('/meeting-attendance/')) body = { sessions: [], today: '2026-09-14', timeZone: 'Europe/London', csrfToken: 'test' };
     else throw new Error(`Unexpected read: ${url}`);
     return new Response(JSON.stringify(failed ? { error: 'Temporarily unavailable' } : body), { status: failed ? 503 : 200 });
   }));
@@ -67,7 +91,7 @@ it('falls back to generated sessions when an Aptem learner has no imported MCM r
   const region = await screen.findByRole('region', { name: 'Monthly Coaching Meetings' });
   await waitFor(() => expect(within(region).getAllByRole('link', { name: 'View' })[0]).toBeVisible());
   expect(metric('Total')).toHaveTextContent('2');
-  expect(within(region).getByRole('link', { name: 'Schedule' })).toBeVisible();
+  expect(within(region).getByRole('button', { name: 'Schedule' })).toBeVisible();
   expect(within(region).getByRole('tablist')).toBeVisible();
 });
 
@@ -86,6 +110,7 @@ it('shows all imported review types in the Reviews table', async () => {
   expect(metric('Total')).toHaveTextContent('1');
 });
 afterEach(() => {
+  vi.useRealTimers();
   cleanup(); clearAllCachedResources(); rememberSignedInLearner(undefined, undefined);
   document.getElementById('review-test-style')?.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
@@ -108,6 +133,118 @@ function mount(item: typeof cases[number], suffix = '?kind=apprenticeship&learne
 function metric(label: string) { return screen.getByText(label, { selector: '.ui-metric-card *' }).closest('.ui-metric-card')!; }
 
 describe.each(cases)('$path programme sessions', item => {
+  it.each([false, true])('books imported reviews using their own identity (existing booking: %s)', async existing => {
+    detailActivityAvailable = true;
+    historyReviews = [{ id: '908', aptemReviewId: 'A-908', name: 'Selected imported meeting',
+      type: item.source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review', reviewerName: 'Assigned coach',
+      plannedDate: '2026-10-02', plannedTime: existing ? '11:30' : null, completedDate: null,
+      status: existing ? 'scheduled' : 'not-scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [] }];
+    events = [{ ...session(item.source), date: '2026-10-02', targetDate: '2026-10-02' }];
+    if (existing) events.push({ ...session(item.source, 2, 'scheduled'), eventKey: 'owned-imported-booking',
+      reviewId: '908', scheduledDate: '2026-10-02', scheduledTime: '11:30', durationMinutes: 75 });
+    mount(item);
+    const region = screen.getByRole('region', { name: item.region });
+    fireEvent.click(await within(region).findByRole('button', { name: existing ? 'Reschedule' : 'Schedule' }));
+    const dialog = await screen.findByRole('dialog');
+    const submit = within(dialog).getByRole('button', { name: existing ? 'Save new time' : 'Book session' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    expect(within(dialog).getByLabelText('Session')).toHaveValue('imported-review:908');
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-05' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    if (existing) {
+      expect(reschedules).toEqual([expect.objectContaining({ eventKey: 'owned-imported-booking', reviewId: '908', durationMinutes: 75, scheduledTime: '11:30' })]);
+      expect(bookings).toHaveLength(0);
+    } else {
+      expect(bookings).toEqual([expect.objectContaining({ reviewId: '908', assignmentMonth: '2026-10', sessionType: item.source })]);
+      expect(bookings[0]).not.toHaveProperty('eventKey');
+      expect(reschedules).toHaveLength(0);
+    }
+    expect(within(region).getByRole('table')).toHaveTextContent('05 Oct 2026');
+  });
+
+  it('keeps the dialog and entered values when a booking conflicts, and allows retry', async () => {
+    events = [session(item.source)];
+    mount(item);
+    fireEvent.click(await within(screen.getByRole('region', { name: item.region })).findByRole('button', { name: 'Schedule' }));
+    const dialog = await screen.findByRole('dialog');
+    const submit = within(dialog).getByRole('button', { name: 'Book session' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-11-07' } });
+    expect(submit).toBeDisabled();
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Saturdays or Sundays');
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-11-09' } });
+    const readCount = requests.length;
+    fireEvent.focus(window);
+    await waitFor(() => expect(requests.length).toBeGreaterThan(readCount));
+    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-11-09');
+    bookingError = 'That time overlaps another calendar event. Please choose another time.';
+    fireEvent.click(submit);
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(bookingError);
+    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-11-09');
+    bookingError = '';
+    fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '13:30' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(bookings.at(-1)).toMatchObject({ scheduledDate: '2026-11-09', scheduledTime: '13:30' });
+  });
+
+  it('does not substitute another event when the selected meeting disappears', async () => {
+    events = [session(item.source), session(item.source, 2)];
+    mount(item);
+    const buttons = await within(screen.getByRole('region', { name: item.region })).findAllByRole('button', { name: 'Schedule' });
+    events = [events[1]];
+    fireEvent.click(buttons[0]);
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('This meeting is no longer available');
+    expect(within(dialog).getByRole('button', { name: 'Book session' })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(bookings).toHaveLength(0);
+  });
+
+  it.each(['card', 'table'] as const)('opens the compact booking dialog in place from the %s and books the exact meeting', async entry => {
+    events = [session(item.source), { ...session(item.source, 2), targetDate: '2026-10-31' }];
+    mount(item);
+    await screen.findByRole('button', { name: 'Schedule meeting' });
+    if (entry === 'card') fireEvent.click(screen.getByRole('button', { name: 'Schedule meeting' }));
+    else fireEvent.click(within(screen.getByRole('region', { name: item.region })).getAllByRole('button', { name: 'Schedule' })[1]);
+    const target = entry === 'card' ? events[0] : events[1];
+    const dialog = await screen.findByRole('dialog', { name: item.source === 'mcr' ? 'Book monthly coaching' : 'Book progress review' });
+    expect(within(dialog).getByLabelText('Session')).toHaveValue(target.id);
+    const submit = within(dialog).getByRole('button', { name: 'Book session' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-11-02' } });
+    fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '14:30' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(bookings).toEqual([expect.objectContaining({ eventKey: target.eventKey, sessionType: item.source,
+      scheduledDate: '2026-11-02', scheduledTime: '14:30', durationMinutes: 60,
+      timezoneOffsetMinutes: new Date('2026-11-02T14:30:00').getTimezoneOffset() })]);
+    expect(reschedules).toHaveLength(0);
+    expect(screen.getByRole('region', { name: item.region })).toBeVisible();
+  });
+
+  it('opens rescheduling for the existing appointment and retains its sync warning on reload', async () => {
+    const warning = 'Your slot is saved, but Microsoft calendar access needs administrator approval.';
+    events = [{ ...session(item.source), status: 'scheduled', date: '2026-10-02', scheduledDate: '2026-10-02', scheduledTime: '09:00', durationMinutes: 90, invited: false, syncWarning: warning }];
+    const page = mount(item);
+    expect(await screen.findByText('Calendar sync pending')).toBeVisible();
+    page.unmount(); mount(item);
+    expect(await screen.findByRole('status')).toHaveTextContent(warning);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reschedule' })[0]);
+    const dialog = await screen.findByRole('dialog', { name: /Reschedule (monthly coaching|progress review)/ });
+    const submit = within(dialog).getByRole('button', { name: 'Save new time' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-10-02');
+    expect(within(dialog).getByLabelText('Time')).toHaveValue('09:00');
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-05' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(reschedules).toEqual([expect.objectContaining({ eventKey: events[0].eventKey, durationMinutes: 90, scheduledDate: '2026-10-05' })]);
+    expect(bookings).toHaveLength(0);
+  });
+
   it('shows newly assigned sessions without imported history and counts the visible programme', async () => {
     events = [session(item.source), session(item.source, 2, 'completed'), session(item.source === 'mcr' ? 'progress-review' : 'mcr')];
     mount(item);
@@ -120,12 +257,8 @@ describe.each(cases)('$path programme sessions', item => {
     expect(requests.filter(url => url.includes('/calendar/'))).toHaveLength(1);
     expect(requests.filter(url => url.startsWith('/learner_api/')).every(url => url.includes('/apprenticeship/125/'))).toBe(true);
     fireEvent.click(within(region).getByRole('tab', { name: /Planned/ }));
-    fireEvent.click(within(region).getByRole('link', { name: 'Schedule' }));
-    if (item.source === 'mcr') {
-      expect(await screen.findByRole('dialog', { name: 'Schedule monthly coaching' })).toBeVisible();
-    } else {
-      expect(await screen.findByRole('dialog', { name: 'Schedule review' })).toBeVisible();
-    }
+    fireEvent.click(within(region).getByRole('button', { name: 'Schedule' }));
+    expect(await screen.findByRole('dialog', { name: /Book (monthly coaching|progress review)/ })).toBeVisible();
   });
 
   it.each(['summary', 'archive'])('keeps current sessions visible when the %s fails', async dependency => {

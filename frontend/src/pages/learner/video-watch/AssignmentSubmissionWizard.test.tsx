@@ -34,6 +34,25 @@ afterEach(async () => {
 });
 
 describe('monthly assignment drafts', () => {
+  it('seeds a new submission with its Training Plan month', async () => {
+    render(<AssignmentSubmissionWizard {...props} initialMonth="2026-03" />);
+    await screen.findByText('Step 1 of 8 — Assignment answer');
+    expect(screen.getByLabelText('Submission month')).toHaveValue('2026-03');
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({
+      monthlyAssignment: expect.objectContaining({ month: '2026-03' }),
+    })));
+  });
+
+  it('preserves the saved month when opened from a different Training Plan month', async () => {
+    vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ status: 'draft',
+      monthlyAssignment: emptyMonthlyAssignment([], '2026-04'),
+    } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+    render(<AssignmentSubmissionWizard {...props} initialMonth="2026-03" />);
+    await screen.findByText('Step 1 of 8 — Assignment answer');
+    expect(screen.getByLabelText('Submission month')).toHaveValue('2026-04');
+  });
+
   it('renders HTML stored in a legacy question field and removes unsafe markup', async () => {
     render(<AssignmentSubmissionWizard {...props} questionText={'<span style="font-size:14px" onclick="alert(1)">What have you learned this month?</span><script>alert(1)</script>'} />);
     const question = await screen.findByText('What have you learned this month?');

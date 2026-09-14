@@ -13,6 +13,7 @@ import {
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import type { LearnerDetail } from '@/api/learnerDetail';
+import { dateKey } from '@/pages/learner/training-plan-timeline/model';
 
 /** One week as the sidebar lists it. */
 export interface SidebarWeek {
@@ -80,6 +81,34 @@ export function weekDisplayLabel(weeks: { week: string }[], index: number): stri
   return weeks.filter((week) => week.week === title).length > 1
     ? `Week ${index + 1} · ${title}`
     : title;
+}
+
+/** Name each four-week block from the module's training-plan start month. */
+export function weekMonthHeadings(weeks: { week: string }[], moduleStartDate?: string | null): (string | null)[] {
+  const start = dateKey(moduleStartDate);
+  let teachingWeeks = 0;
+  let previousMonth = 0;
+  return weeks.map(({ week }) => {
+    if (/^(?:introduction|induction|extra\b|additional\b|undated\b|module assessments?\b|assessments?\b)/i.test(week.trim())) {
+      previousMonth = 0;
+      return null;
+    }
+    teachingWeeks += 1;
+    const month = Math.ceil(teachingWeeks / 4);
+    let heading: string | null = null;
+    if (month !== previousMonth) {
+      if (start) {
+        // Anchor to day 1 so starts on the 29th–31st cannot skip February.
+        const date = new Date(`${start.slice(0, 7)}-01T12:00:00Z`);
+        date.setUTCMonth(date.getUTCMonth() + month - 1);
+        heading = date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+      } else {
+        heading = `Month ${month}`;
+      }
+    }
+    previousMonth = month;
+    return heading;
+  });
 }
 
 /**

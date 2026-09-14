@@ -36,13 +36,15 @@ class AssignmentMcmTests(SimpleTestCase):
             stack.enter_context(patch.object(coach, "build_booked_calendar_event", return_value={"source": "mcr"}))
             stack.enter_context(patch.object(module, "_serialize_event", return_value={"eventKey": record.event_key}))
             stack.enter_context(patch.object(module, "_record_enrolment_review"))
-            request = RequestFactory().post("/book/", data=json.dumps({"sessionType": "mcr", "assignmentMonth": "2026-09", "scheduledDate": "2026-10-05", "scheduledTime": "09:00", "durationMinutes": 60}), content_type="application/json")
+            mark_review = stack.enter_context(patch.object(module, "_mark_imported_review_scheduled"))
+            request = RequestFactory().post("/book/", data=json.dumps({"sessionType": "mcr", "assignmentMonth": "2026-09", "reviewId": "9", "scheduledDate": "2026-10-05", "scheduledTime": "09:00", "durationMinutes": 60}), content_type="application/json")
             response = inspect.unwrap(module.learner_calendar_book)(request, "commercial", 1)
         self.assertEqual(response.status_code, 201)
         self.assertEqual(reserve.call_args.kwargs["owner_email"], "coach@example.com")
-        self.assertEqual(reserve.call_args.kwargs["idempotency_key"], "learner-book:mcm:commercial:1:2026-09")
+        self.assertEqual(reserve.call_args.kwargs["idempotency_key"], "learner-book:mcm:commercial:1:2026-09:9")
         self.assertEqual(reserve.call_args.kwargs["initial_status"], "scheduled")
         sync.assert_called_once_with(8, {"source": "mcr"})
+        self.assertEqual(mark_review.call_args.args[:2], ("9", 42))
 
     def test_transcript_content_is_allowed_only_for_own_mcm(self):
         from coach_api import views as coach

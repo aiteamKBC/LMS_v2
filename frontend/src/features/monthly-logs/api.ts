@@ -28,6 +28,16 @@ export async function getLogContent(id: string, month: string, rowId: number, pe
 }
 export const getLogLearners = () => read<{ learners: LogLearner[] }>('learners/');
 
+export async function completeLogMonth(id: string, month: string, csrfToken: string, perspective: LogPerspective = 'learner') {
+  const response = await fetch(url(`${id}/${month}/complete/`, perspective), {
+    method: 'POST', credentials: 'include', headers: { 'X-CSRFToken': csrfToken },
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) throw new Error(data?.error || 'Could not complete this month. Please try again.');
+  invalidateLearnerReads();
+  return data as LogDetail;
+}
+
 export async function signLogMonth(id: string, month: string, digest: string, blob: Blob, capture: SignatureCaptureMethod, csrfToken: string, perspective: LogPerspective = 'coach') {
   const form = new FormData();
   form.set('signature', blob, 'signature.png');

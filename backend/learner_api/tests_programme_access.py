@@ -83,3 +83,11 @@ class ProgrammeAccessTests(SimpleTestCase):
             response = refusal('/learner_api/time-tracking/start/', self.account, 'POST')
         self.assertEqual(response.status_code, 503)
         self.assertEqual(json.loads(response.content)['code'], 'programme_access_unavailable')
+
+    def test_admin_learner_actions_do_not_wait_for_the_programme_start_date(self):
+        with patch('learner_api.programme_access.EnrolmentUser.all_learners') as manager:
+            for path in ['/learner_api/time-tracking/start/', '/learner_api/quizzes/1/submit/',
+                         '/learner_api/components/reading-1/complete/',
+                         '/learner_api/student-activity/commercial/499/1/2/attempts/']:
+                self.assertIsNone(refusal(path, SimpleNamespace(role='admin'), 'POST'))
+            manager.only.assert_not_called()

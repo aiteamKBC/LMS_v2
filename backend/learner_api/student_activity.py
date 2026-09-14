@@ -11,7 +11,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from audit_api.last_audit_ledger_views import _connection, _is_completed
 from audit_api.learner_exclusions import is_excluded_learner
-from login.permissions import learner_self_or_staff, learner_self_only, staff_only
+from login.permissions import learner_self_or_staff, learner_self_or_admin, staff_only
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
@@ -292,7 +292,10 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
                               'passed': row.get('quiz_passed'), 'attempt_number': row.get('quiz_attempt_number'),
                               'answers': historical_answers, 'status': row.get('status')},
                'persistence_ready': saved['ready'],
-               'can_attempt': bool(account and account.role == 'learner' and int(account.subject_id) == pk and saved['ready']),
+               'can_attempt': bool(account and saved['ready'] and (
+                   account.role == 'admin'
+                   or (account.role == 'learner' and int(account.subject_id) == pk)
+               )),
                'csrf_token': get_token(request)}
     return _private(payload)
 
@@ -345,7 +348,7 @@ def subject_file(request, kind, pk, group_id, activity_id, attachment_id):
 
 
 @require_POST
-@learner_self_only(kwarg='pk')
+@learner_self_or_admin(kwarg='pk')
 def start_subject_attempt(request, kind, pk, group_id, activity_id):
     try:
         aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
@@ -366,7 +369,7 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
 
 
 @require_POST
-@learner_self_only(kwarg='pk')
+@learner_self_or_admin(kwarg='pk')
 def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id):
     try:
         if len(request.body) > 256 * 1024:

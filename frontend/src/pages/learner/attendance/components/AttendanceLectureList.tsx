@@ -13,19 +13,20 @@ import { isLectureLive, lectureJoinUrl, useLectureClock } from '../liveLecture';
 export type AttendanceFilter = 'all' | 'attended' | 'absent' | 'covered' | 'upcoming';
 const STATUS: Record<AttendanceLecture['status'], { label: string; tone: StatusTone }> = {
   completed: { label: 'Attended', tone: 'positive' }, late: { label: 'Late', tone: 'caution' },
-  absent: { label: 'Absent', tone: 'critical' }, upcoming: { label: 'Upcoming', tone: 'info' },
+  absent: { label: 'Missed', tone: 'critical' }, upcoming: { label: 'Upcoming', tone: 'info' },
   in_progress: { label: 'In progress', tone: 'info' }, pending: { label: 'Awaiting attendance', tone: 'neutral' },
 };
 const monthKey = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(new Date(`${date}T00:00:00`).getTime()) ? date.slice(0, 7) : 'undated';
 const monthLabel = (month: string) => month === 'undated' ? 'Date not recorded' : new Date(`${month}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 
-export default function AttendanceLectureList({ lectures, moduleId, onModuleChange, filter, onFilterChange, tabs, onOpen, onReport }: {
+export default function AttendanceLectureList({ lectures, moduleId, onModuleChange, filter, onFilterChange, tabs, onOpen, onReport, onCatchup }: {
   lectures: AttendanceLecture[];
   moduleId: string; onModuleChange: (id: string) => void;
   filter: AttendanceFilter; onFilterChange: (filter: AttendanceFilter) => void;
   tabs: PageTabItem[];
   onOpen: (lecture: AttendanceLecture) => void;
   onReport: (lecture: AttendanceLecture) => void;
+  onCatchup: (lecture: AttendanceLecture) => void;
 }) {
   const now = useLectureClock(lectures);
   const [search, setSearch] = useState('');
@@ -111,20 +112,20 @@ export default function AttendanceLectureList({ lectures, moduleId, onModuleChan
       {hasFilters && <button type="button" className={styles.clearFilters} onClick={clearFilters}>Show all lectures</button>}
     </div> : <div className={styles.lectureTable} role="region" aria-label="Lecture register" tabIndex={0}>
       <div className={styles.tableHeading} aria-hidden="true">
-        <span>Lecture</span><span>Date &amp; Time</span><span>Hours</span><span>Key Content</span><span>KSBs</span><span>Status</span><span>Actions</span>
+        <span>Lecture</span><span>Date &amp; Time</span><span>Hours</span><span>Key Content</span><span>KSBs</span><span>Status</span><span>Attendance action</span><span>Activities</span>
       </div>
       {groupByMonth ? <ol className={styles.monthList} aria-label="Lectures by month">
       {groups.map(([key, rows]) => <li key={key}><MonthGroup now={now} month={key} rows={rows} expanded={isExpanded(key)}
-        onToggle={() => setMonthExpansion(previous => ({ ...previous, [key]: !isExpanded(key) }))} onOpen={onOpen} onReport={onReport} /></li>)}
-    </ol> : <ol className={styles.flatList} aria-label="Lectures">{filtered.map(row => <li key={row.id}><LectureRow now={now} row={row} onOpen={onOpen} onReport={onReport} /></li>)}</ol>}
+        onToggle={() => setMonthExpansion(previous => ({ ...previous, [key]: !isExpanded(key) }))} onOpen={onOpen} onReport={onReport} onCatchup={onCatchup} /></li>)}
+    </ol> : <ol className={styles.flatList} aria-label="Lectures">{filtered.map(row => <li key={row.id}><LectureRow now={now} row={row} onOpen={onOpen} onReport={onReport} onCatchup={onCatchup} /></li>)}</ol>}
     </div>}
   </Panel>;
 }
 
-function MonthGroup({ now, month, rows, expanded, onToggle, onOpen, onReport }: {
+function MonthGroup({ now, month, rows, expanded, onToggle, onOpen, onReport, onCatchup }: {
   now: number;
   month: string; rows: AttendanceLecture[]; expanded: boolean; onToggle: () => void;
-  onOpen: (row: AttendanceLecture) => void; onReport: (row: AttendanceLecture) => void;
+  onOpen: (row: AttendanceLecture) => void; onReport: (row: AttendanceLecture) => void; onCatchup: (row: AttendanceLecture) => void;
 }) {
   const contentId = useId();
   const label = monthLabel(month);
@@ -143,12 +144,12 @@ function MonthGroup({ now, month, rows, expanded, onToggle, onOpen, onReport }: 
       <AppIcon className={`ri-arrow-down-s-line ${styles.monthChevron}`} />
     </button></h3>
     <div id={contentId} hidden={!expanded}>
-      {expanded && <ol aria-label={`${label} lectures`}>{rows.map(row => <li key={row.id}><LectureRow now={now} row={row} onOpen={onOpen} onReport={onReport} /></li>)}</ol>}
+      {expanded && <ol aria-label={`${label} lectures`}>{rows.map(row => <li key={row.id}><LectureRow now={now} row={row} onOpen={onOpen} onReport={onReport} onCatchup={onCatchup} /></li>)}</ol>}
     </div>
   </div>;
 }
 
-function LectureRow({ now, row, onOpen, onReport }: { now: number; row: AttendanceLecture; onOpen: (row: AttendanceLecture) => void; onReport: (row: AttendanceLecture) => void }) {
+function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; row: AttendanceLecture; onOpen: (row: AttendanceLecture) => void; onReport: (row: AttendanceLecture) => void; onCatchup: (row: AttendanceLecture) => void }) {
   const titleId = useId();
   const live = isLectureLive(row, now);
   const joinUrl = lectureJoinUrl(row);
@@ -169,12 +170,16 @@ function LectureRow({ now, row, onOpen, onReport }: { now: number; row: Attendan
       {row.catchupStatus && <StatusBadge tone={row.catchupStatus === 'completed' ? 'positive' : 'caution'} label={row.catchupStatus === 'completed' ? 'Catch-up completed' : 'Catch-up pending'} />}
       {row.absenceReport && <StatusBadge tone="neutral" label={`Absence ${row.absenceReport.status}`} />}
     </div>
+    <div className={styles.lectureAttendanceAction} data-label="Attendance action">
+      {row.status === 'absent' ? <button type="button" className={styles.catchupButton} onClick={() => onCatchup(row)}><AppIcon className="ri-calendar-event-line" />Book Catchup Session</button>
+        : row.canReportAbsence ? <button type="button" className={styles.reportButton} onClick={() => onReport(row)}><AppIcon className="ri-calendar-close-line" />Report Absence</button>
+        : <span className={styles.unmapped}>{row.absenceReport ? 'Absence reported' : '—'}</span>}
+    </div>
     <div className={styles.lectureActions}>
-      {live ? joinUrl ? <a className={`primary-action ${styles.activityButton}`} href={joinUrl} target="_blank" rel="noopener noreferrer">Attend<AppIcon className="ri-video-chat-line" /></a>
-        : <button type="button" className={`primary-action ${styles.activityButton}`} disabled title="The joining link is not available yet.">Attend</button>
+      {live ? joinUrl ? <a className={`primary-action ${styles.activityButton}`} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-video-chat-line" /></a>
+        : <button type="button" className={`primary-action ${styles.activityButton}`} disabled title="The joining link is not available yet.">Join session</button>
         : <button type="button" className={`primary-action ${styles.activityButton}`} onClick={() => onOpen(row)}>Open Activities<AppIcon className="ri-arrow-right-s-line" /></button>}
       {live && !joinUrl && <span className={styles.unmapped}>Joining link not available yet</span>}
-      {row.canReportAbsence && <button type="button" className={styles.absenceLink} onClick={() => onReport(row)}>Report absence</button>}
     </div>
   </article>;
 }

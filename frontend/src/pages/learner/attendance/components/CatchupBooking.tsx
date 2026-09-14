@@ -4,12 +4,13 @@ import type { MissedAttendanceSession } from '@/api/absenceReports';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import styles from '../attendance.module.css';
 
-export default function CatchupBooking({ lecture, selectedKey, onSelect, onBusyChange, disabled = false }: {
+export default function CatchupBooking({ lecture, selectedKey, onSelect, onBusyChange, disabled = false, standalone = false }: {
   lecture: MissedAttendanceSession;
   selectedKey: string;
   onSelect: (event: LearnerCalendarEvent | null) => void;
   onBusyChange: (busy: boolean) => void;
   disabled?: boolean;
+  standalone?: boolean;
 }) {
   const learner = useMyLearner();
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
@@ -74,8 +75,8 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBusyC
       setEvents(current => [...current.filter(event => event.eventKey !== result.event.eventKey), result.event]);
       onSelect(result.event);
       setNotice(result.warning || (result.approvalRequired || result.event.status === 'not-scheduled'
-        ? 'Catch-up request saved. Awaiting coach approval. You can now submit your absence report.'
-        : 'Catch-up session booked. You can now submit your absence report.'));
+        ? `Catch-up request saved. Awaiting coach approval.${standalone ? '' : ' You can now submit your absence report.'}`
+        : `Catch-up session booked.${standalone ? '' : ' You can now submit your absence report.'}`));
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not book the catch-up session.'); }
     finally { setBusy(false); onBusyChange(false); }
   };
@@ -91,7 +92,7 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBusyC
       </select>
     </label>}
     {selected ? <p className={styles.bookingConfirmation}>{selected.scheduledDate} at {selected.scheduledTime} · {selected.durationMinutes} minutes{selected.status === 'not-scheduled' ? ' · Awaiting coach approval' : ' · Booked'}</p> : <>
-      <p>Book a session before submitting. Your coach will review the booking request.</p>
+      <p>{standalone ? 'Choose a date and time to catch up on this lecture.' : 'Book a session before submitting.'} Your coach will review the booking request.</p>
       <div className={styles.bookingFields}>
         <label>Date<input aria-label="Catch-up date" type="date" min={earliestDate} value={date} disabled={busy || disabled} onChange={event => setDate(event.target.value)} /></label>
         <label>Time<input aria-label="Catch-up time" type="time" value={time} disabled={busy || disabled} onChange={event => setTime(event.target.value)} /></label>

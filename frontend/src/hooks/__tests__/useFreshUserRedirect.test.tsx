@@ -24,13 +24,13 @@ describe('useFreshUserRedirect', () => {
   it('does not redirect away from the record it was opened at', () => {
     const { result } = renderHook(
       () => ({ fresh: useFreshUserRedirect('Fresh user'), location: useLocation() }),
-      { wrapper: wrapperAt('/workspace/learner/commercial/513') },
+      { wrapper: wrapperAt('/workspace/learner/commercial/513/dashboard') },
     );
 
     expect(result.current.fresh).toBe(true);
     // Still on the explicit address -- not bounced to the bare route, which
     // would have resolved a different learner from the signed-in session.
-    expect(result.current.location.pathname).toBe('/workspace/learner/commercial/513');
+    expect(result.current.location.pathname).toBe('/workspace/learner/commercial/513/dashboard');
   });
 
   it('still redirects a bookmark to some OTHER page to the bare overview', () => {
