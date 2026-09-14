@@ -78,6 +78,45 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
             self.assertEqual(structure.get('weeks'), 5)
             self.assertEqual(structure.get('sessionsNumber'), 10)
 
+    def test_a_smaller_weeks_count_never_deletes_authored_weeks(self):
+        """The reported data loss: an edit in the drawer wiped the built weeks.
+
+        The Weeks box is seeded from the module's stored week count and falls
+        back to 1 when there is none, which is the state an imported module
+        arrives in. Sending that 1 used to shrink the week list straight to it,
+        deleting eleven weeks and every component in them -- and still answering
+        ``updated: True``. A trailing shell may go; an authored week may not.
+        """
+        catalogue_id = self.create_module(weeks=12, sessions=12, week_days='Monday')
+        structure = views.get_authoring_structure_payload(catalogue_id)
+        weeks = structure['weekStructure']
+        self.assertEqual(len(weeks), 12)
+        # Build something into the first six, leaving six untouched shells.
+        for index, week in enumerate(weeks[:6]):
+            week['components'] = [{
+                'id': f'COMP-KEEP-{index}',
+                'type': 'reading',
+                'title': f'Reading {index}',
+                'expectedOtjh': 1,
+            }]
+        views.save_module_authoring_structure(catalogue_id, {**structure, 'weekStructure': weeks})
+
+        response = self.client.patch(
+            f'/curriculum_api/curriculum/modules/{catalogue_id}/',
+            data=json.dumps({'weeks': 1, 'sessionsNumber': 1}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+        after = views.get_authoring_structure_payload(catalogue_id)
+        # The six shells are dropped, the six authored weeks stay, and the
+        # stored count agrees with the rows that survived.
+        self.assertEqual(len(after['weekStructure']), 6)
+        self.assertEqual(
+            sum(len(week.get('components') or []) for week in after['weekStructure']), 6,
+        )
+        self.assertEqual(views.parse_int(self.stored_row(catalogue_id).get('weeks_number'), 0), 6)
+
     def test_a_patch_that_only_renames_leaves_both_counts_alone(self):
         catalogue_id = self.create_module(weeks=6, sessions=12)
 

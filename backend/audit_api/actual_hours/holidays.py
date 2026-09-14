@@ -1,10 +1,12 @@
 """England and Wales bank-holiday calendar.
 
-`curriculum.holidays` is a cohort-break authoring table ("Summer Break 26"),
-not an authoritative calendar, so this feature keeps its own cached dataset in
+This feature keeps its own cached dataset in
 ``Last_audit.bank_holidays_england_wales``, seeded from the official gov.uk
 ``bank-bank-holidays.json`` division ``england-and-wales`` by the
-``setup_actual_hours_review`` management command.
+``setup_actual_hours_review`` management command. Curriculum now mirrors the
+same feed into ``curriculum.england_holidays`` (see
+``curriculum_api.management.commands.fetch_england_holidays``); the two are
+separate copies of one source, and merging them is a job nobody has done yet.
 
 Two rules from the contract shape this module:
 

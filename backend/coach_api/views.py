@@ -89,6 +89,7 @@ from curriculum_api.views import (
     authoring_modules_as_training_rows,
     build_module_session_plan,
     COHORT_AUTHORING_DETAILS_TABLE,
+    cohort_selected_holidays_by_cohort,
     delivery_days_per_week,
     get_program_config_rows,
     get_training_rows,
@@ -6789,20 +6790,15 @@ def live_session_matches_curriculum_scope(
 
 
 def fetch_cohort_selected_holidays(cohort_id: str) -> list[dict]:
-    """The holidays actually ticked on a cohort, not every one in its period.
+    """The holidays that apply to a cohort: the bank holidays inside its dates.
 
-    Curriculum's own generator plans sessions around this same selection, and a
-    cohort's end date is extended by it, so reading the wider in-range list here
-    would put the coach's calendar on dates the cohort itself never planned.
+    Curriculum owns the rule (``cohort_selected_holidays_by_cohort``) and this
+    calls it rather than restating it, because the coach's calendar has to land
+    on the same dates the cohort's own generator planned. It used to read the
+    cohort's ``selected_holidays`` column instead -- a cache of what a ticked
+    selection resolved to, against a holiday table curriculum no longer reads.
     """
-    for cohort in authoring_fetch_all(
-        COHORT_AUTHORING_DETAILS_TABLE,
-        'cohort_id = %s',
-        [cohort_id],
-        ensure_tables=False,
-    ):
-        return parse_json_value(cohort.get("selected_holidays"), [])
-    return []
+    return cohort_selected_holidays_by_cohort([cohort_id]).get(clean_text(cohort_id)) or []
 
 
 def collect_live_session_events(

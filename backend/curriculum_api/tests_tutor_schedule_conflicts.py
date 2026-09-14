@@ -678,32 +678,41 @@ class CrossGroupConflictTests(TutorConflictHarness):
 class HolidayShiftConflictTests(TutorConflictHarness):
     """A clash is about the day a session actually runs on.
 
-    A cohort's ticked holidays move the sessions that land on them onto the next
-    delivery day -- what the session list, the Teams series and the module form's
-    own preview all show. Dating a schedule without them left the conflict check
-    answering about a timetable nobody runs: it reported a clash on a closed day,
-    and passed the real collision on the day the session had moved to.
+    England's bank holidays move the sessions that land on them onto the next
+    delivery day -- what the session list, the Teams series and the module
+    form's own preview all show. Dating a schedule without them left the
+    conflict check answering about a timetable nobody runs: it reported a clash
+    on a closed day, and passed the real collision on the day the session had
+    moved to.
+
+    Nothing is ticked to make that happen any more. A cohort's holidays are the
+    bank holidays its own dates contain, so the closed day is closed for every
+    cohort alike and both sides of a clash check shift together.
     """
 
-    #: One closed Wednesday, so a weekly Wednesday module runs a week longer.
+    #: Boxing Day 2026 falls on a Saturday, so GOV.UK moves it to Monday the
+    #: 28th -- a real bank holiday on the delivery day these tests use.
     HOLIDAY_ROWS = [{
-        'id': 2001,
-        'label': 'Autumn close',
-        'start_date': date(2026, 9, 23),
-        'end_date': date(2026, 9, 23),
-        'type': 'closure',
-        'color': '',
+        'id': 'england-and-wales:2026-12-28',
+        'division': 'england-and-wales',
+        'title': 'Boxing Day',
+        'holiday_date': date(2026, 12, 28),
+        'notes': 'Substitute day',
+        'bunting': True,
     }]
 
-    def tick_the_closed_wednesday(self, cohort_id='COHORT-DATA-1'):
-        """Tick the holiday on the cohort the tree save has already written."""
-        views.authoring_upsert(views.COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], {
-            'cohort_id': cohort_id,
-            'holiday_ids': views.json_db_value(['2001']),
-        })
+    #: Four Mondays from 7 December, stepping over the closed 28th, so the last
+    #: session runs on 4 January rather than 28 December.
+    MONDAY_SLOT = {
+        'startDate': '2026-12-07',
+        'sessionsNumber': 4,
+        'weekDays': 'Monday',
+        'startTime': '10:00',
+        'endTime': '12:00',
+    }
 
     def seed_open_group(self):
-        """A group in another programme, whose cohort ticks nothing."""
+        """A group in another programme, under a cohort of its own."""
         payload = self.tree_payload(
             programme_id='PROG-OPEN',
             cohort_id='COHORT-OPEN-1',
@@ -724,16 +733,16 @@ class HolidayShiftConflictTests(TutorConflictHarness):
         """The clash the old dating passed as free."""
         holidays.return_value = self.HOLIDAY_ROWS
         self.seed_group()
-        self.tick_the_closed_wednesday()
-        # Four Wednesdays from 16 September, stepping over the closed 23rd, so the
-        # last session runs on 14 October rather than 7 October.
-        self.add_module('Module Alpha', tutor='Tutor Solo')
+        self.add_module('Module Alpha', tutor='Tutor Solo', **self.MONDAY_SLOT)
 
         self.add_module(
             'Module Beta',
             expect=409,
-            startDate='2026-10-14',
+            startDate='2027-01-04',
             sessionsNumber=1,
+            weekDays='Monday',
+            startTime='10:00',
+            endTime='12:00',
             tutor='Tutor Solo',
         )
 
@@ -741,40 +750,59 @@ class HolidayShiftConflictTests(TutorConflictHarness):
     def test_the_closed_day_itself_is_free(self, holidays):
         """The clash the old dating invented.
 
-        The second module sits in a cohort that ticked nothing, so it really does
-        run on the 23rd -- the day the first module now does not.
+        Module Alpha no longer occupies 28 December, so the days around it are
+        not a collision for anyone else.
         """
         holidays.return_value = self.HOLIDAY_ROWS
         self.seed_group()
-        self.tick_the_closed_wednesday()
-        self.add_module('Module Alpha', tutor='Tutor Solo')
+        self.add_module('Module Alpha', tutor='Tutor Solo', **self.MONDAY_SLOT)
         self.seed_open_group()
 
         response = self.post_json('/curriculum_api/curriculum/groups/GROUP-OPEN-1/modules/', {
             'moduleName': 'Open Module',
-            'startDate': '2026-09-23',
+            'startDate': '2026-12-21',
             'sessionsNumber': 1,
-            'weekDays': 'Wednesday',
+            'weekDays': 'Monday',
+            'startTime': '10:00',
+            'endTime': '12:00',
+            'tutor': 'Tutor Free',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+
+    @patch('curriculum_api.views.get_holiday_rows')
+    def test_a_cohort_nobody_configured_still_steps_over_the_holiday(self, holidays):
+        """The point of dropping the tick: no cohort can be left running on it.
+
+        This group's cohort was never given holidays of any kind. Its module is
+        asked to start on the closed Monday and is planned onto the next one
+        instead -- which is where Module Alpha also ended up, so the tutor the
+        two share is refused.
+        """
+        holidays.return_value = self.HOLIDAY_ROWS
+        self.seed_group()
+        self.add_module('Module Alpha', tutor='Tutor Solo', **self.MONDAY_SLOT)
+        self.seed_open_group()
+
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-OPEN-1/modules/', {
+            'moduleName': 'Open Module',
+            'startDate': '2026-12-28',
+            'sessionsNumber': 1,
+            'weekDays': 'Monday',
             'startTime': '10:00',
             'endTime': '12:00',
             'tutor': 'Tutor Solo',
         })
-        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.status_code, 409, response.content)
 
     @patch('curriculum_api.views.get_holiday_rows')
     def test_the_preview_dates_the_slot_the_way_the_save_will(self, holidays):
         """Otherwise the warning names dates the save would never have named."""
         holidays.return_value = self.HOLIDAY_ROWS
         self.seed_group()
-        self.tick_the_closed_wednesday()
-        self.add_module('Module Alpha', tutor='Tutor Solo')
+        self.add_module('Module Alpha', tutor='Tutor Solo', **self.MONDAY_SLOT)
 
         response = self.post_json('/curriculum_api/curriculum/preview/tutor-availability/', {
-            'startDate': '2026-09-16',
-            'sessionsNumber': 4,
-            'weekDays': 'Wednesday',
-            'startTime': '10:00',
-            'endTime': '12:00',
+            **self.MONDAY_SLOT,
             'cohortId': 'COHORT-DATA-1',
             'tutor': 'Tutor Solo',
         })
@@ -782,31 +810,28 @@ class HolidayShiftConflictTests(TutorConflictHarness):
         result = response.json()
         self.assertEqual(
             result['sessionDates'],
-            ['2026-09-16', '2026-09-30', '2026-10-07', '2026-10-14'],
+            ['2026-12-07', '2026-12-14', '2026-12-21', '2027-01-04'],
         )
         self.assertFalse(result['available'])
         self.assertEqual(
             result['conflicts'][0]['dates'],
-            ['2026-09-16', '2026-09-30', '2026-10-07', '2026-10-14'],
+            ['2026-12-07', '2026-12-14', '2026-12-21', '2027-01-04'],
         )
 
     @patch('curriculum_api.views.get_holiday_rows')
     def test_holidays_the_caller_sends_are_used(self, holidays):
-        """A form previewing a selection that is not stored yet still gets it right."""
-        holidays.return_value = self.HOLIDAY_ROWS
+        """A form previewing dates that are not stored yet still gets it right."""
+        # Nothing stored, so only what the caller sent can move these dates.
+        holidays.return_value = []
         self.seed_group()
 
         response = self.post_json('/curriculum_api/curriculum/preview/tutor-availability/', {
-            'startDate': '2026-09-16',
-            'sessionsNumber': 4,
-            'weekDays': 'Wednesday',
-            'startTime': '10:00',
-            'endTime': '12:00',
-            'holidays': [{'label': 'Autumn close', 'startDate': '2026-09-23', 'endDate': '2026-09-23'}],
+            **self.MONDAY_SLOT,
+            'holidays': [{'label': 'Boxing Day', 'startDate': '2026-12-28', 'endDate': '2026-12-28'}],
             'tutor': 'Tutor Solo',
         })
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(
             response.json()['sessionDates'],
-            ['2026-09-16', '2026-09-30', '2026-10-07', '2026-10-14'],
+            ['2026-12-07', '2026-12-14', '2026-12-21', '2027-01-04'],
         )

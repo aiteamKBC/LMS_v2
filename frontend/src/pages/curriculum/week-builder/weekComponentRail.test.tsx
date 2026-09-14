@@ -5,6 +5,37 @@ import { describe, expect, it, vi } from 'vitest';
 import { WeekComponentRail } from './page';
 
 describe('WeekComponentRail add flow', () => {
+  it('shows component hours from Expected OTJH as hours and minutes', () => {
+    render(
+      <WeekComponentRail
+        weekId="WEEK-1"
+        components={[{
+          id: 'COMP-1',
+          weekId: 'WEEK-1',
+          type: 'video',
+          title: 'P2-Student Support',
+          description: '',
+          expectedOtjh: 0.55,
+          points: 0,
+          reflectionRequired: false,
+          reflectionQuestion: '',
+          workplaceEvidenceRequired: false,
+          tutorValidationRequired: false,
+          coachValidationRequired: true,
+          ksbMappings: [],
+          settings: {},
+        }]}
+        selectedId={null}
+        onSelectId={vi.fn()}
+        onChange={vi.fn()}
+        pointsByType={{}}
+      />,
+    );
+
+    expect(screen.getByText('33m')).toBeInTheDocument();
+    expect(screen.queryByText('0.55h')).not.toBeInTheDocument();
+  });
+
   it('opens a roomy picker, creates the chosen component and selects it for editing', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

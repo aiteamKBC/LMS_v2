@@ -30,6 +30,35 @@ export function cleanText(value: unknown, fallback = ''): string {
 }
 
 /**
+ * Resolve the one record an identifier names, spending every id before any name.
+ *
+ * Names are not unique in this data -- the same module title is authored in two
+ * programmes, two cohorts are both called "October 2026" -- so a lookup that
+ * tests `id === key || name === key` inside a single `find` returns whichever
+ * record happens to sit earlier in the list, and list order is a sort concern
+ * (the module catalogue sorts drafts first), not an identity one. That is how a
+ * programme row reading 240h30m opened a namesake module totalling 24h32m.
+ *
+ * An id pass over the whole collection therefore has to fail completely before
+ * the name pass starts. Matching by name at all stays deliberate: ids disagree
+ * across the delivery and authoring sides, and older records reference their
+ * parent by name, so the fallback is what keeps those resolvable.
+ */
+export function findByIdentifierThenName<T>(
+  items: T[],
+  identifier: unknown,
+  identityValues: (item: T) => unknown[],
+  nameValues: (item: T) => unknown[],
+  normalise: (value: unknown) => string = normaliseKey,
+): T | undefined {
+  const key = normalise(identifier);
+  if (!key) return undefined;
+  const matches = (values: unknown[]) => values.map(normalise).filter(Boolean).includes(key);
+  return items.find(item => matches(identityValues(item)))
+    || items.find(item => matches(nameValues(item)));
+}
+
+/**
  * Link to an entity workspace with its readable name alongside the canonical id.
  * The id remains the API identity; the name lets the destination render useful
  * headings and breadcrumbs immediately while the entity collection is loading.
@@ -145,9 +174,12 @@ export function findProgramme(
   programmes: CurriculumProgramme[],
   identifier: unknown,
 ): CurriculumProgramme | undefined {
-  const key = normaliseKey(identifier);
-  if (!key) return undefined;
-  return programmes.find(programme => programmeKeys(programme).includes(key));
+  return findByIdentifierThenName(
+    programmes,
+    identifier,
+    programme => [programme.sourceId, programme.id],
+    programme => [programme.name],
+  );
 }
 
 /**
@@ -178,17 +210,11 @@ export function programmeSelectValue(
 }
 
 export function findCohort(cohorts: CurriculumCohort[], identifier: unknown): CurriculumCohort | undefined {
-  const key = normaliseKey(identifier);
-  if (!key) return undefined;
-  return cohorts.find(cohort => normaliseKey(cohort.id) === key)
-    || cohorts.find(cohort => normaliseKey(cohort.name) === key);
+  return findByIdentifierThenName(cohorts, identifier, cohort => [cohort.id], cohort => [cohort.name]);
 }
 
 export function findGroup(groups: CurriculumGroup[], identifier: unknown): CurriculumGroup | undefined {
-  const key = normaliseKey(identifier);
-  if (!key) return undefined;
-  return groups.find(group => normaliseKey(group.id) === key)
-    || groups.find(group => normaliseKey(group.name) === key);
+  return findByIdentifierThenName(groups, identifier, group => [group.id], group => [group.name]);
 }
 
 export function findModule(modules: CurriculumModule[], identifier: unknown): CurriculumModule | undefined {
@@ -447,6 +473,23 @@ function dateKey(value: unknown): string {
   return cleanText(value).slice(0, 10);
 }
 
+function shiftDateByMonths(value: unknown, deltaMonths: number): string {
+  const key = dateKey(value);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (!match) return '';
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1 + deltaMonths;
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || !Number.isFinite(day)) return '';
+  const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+  const shifted = new Date(Date.UTC(year, monthIndex, Math.min(day, lastDay)));
+  return Number.isNaN(shifted.getTime()) ? '' : shifted.toISOString().slice(0, 10);
+}
+
+export function moduleSoftStartDate(cohortStart: unknown): string {
+  return shiftDateByMonths(cohortStart, -1);
+}
+
 const DAY_MS = 86_400_000;
 
 /** A date as a whole number of days since the epoch, or null when unparseable. */
@@ -479,29 +522,28 @@ export function weekendDateNotice(value: unknown): string {
 }
 
 export interface CohortWeekCapacity {
-  /** Weeks the cohort period holds if nothing is ticked -- the minimum a module needs. */
+  /** Weeks the cohort period holds before any holiday -- the minimum a module needs. */
   totalWeeks: number;
-  /** Days the ticked holidays cover inside the period, deduplicated across overlaps -- e.g. a 3-day and a 5-day holiday is 8, not two separate weeks. */
+  /** Days the period's holidays cover inside it, deduplicated across overlaps -- e.g. a 3-day and a 5-day holiday is 8, not two separate weeks. */
   holidayDays: number;
   /** holidayDays rounded up to whole weeks -- what actually gets added to the maximum. */
   holidayWeeks: number;
-  /** totalWeeks + holidayWeeks -- the ceiling once every ticked holiday has pushed the plan out. */
+  /** totalWeeks + holidayWeeks -- the ceiling once every holiday has pushed the plan out. */
   maxWeeks: number;
 }
 
 /**
  * How many weeks a cohort has to deliver in, before and after its holidays.
  *
- * The contracted period is fixed -- ticked holidays never move a cohort's start
- * or practical end date -- so `totalWeeks` (the minimum) is what the period
- * holds with nothing ticked. Each ticked holiday pushes a module's own plan
- * past the period rather than shrinking it: a session that lands on a holiday
- * is skipped and delivered afterwards, so the days a holiday covers are
- * additional weeks on top, not weeks subtracted -- `maxWeeks` is the minimum
- * plus that extension.
+ * The contracted period is fixed -- holidays never move a cohort's start or
+ * practical end date -- so `totalWeeks` (the minimum) is what the period holds
+ * before any of them. Each holiday pushes a module's own plan past the period
+ * rather than shrinking it: a session that lands on a holiday is skipped and
+ * delivered afterwards, so the days a holiday covers are additional weeks on
+ * top, not weeks subtracted -- `maxWeeks` is the minimum plus that extension.
  *
  * Holiday days are deduplicated across overlapping holidays and rounded up to
- * whole weeks as a single count (7 days of ticked holiday is one extra week,
+ * whole weeks as a single count (7 days of holiday is one extra week,
  * however those days happen to fall against the cohort's own week
  * boundaries) rather than counting how many of the period's own weeks the
  * holiday's date range touches, which over- or under-counts short holidays
@@ -540,11 +582,49 @@ export function cohortWeekCapacity(
 }
 
 /**
+ * The bank holidays a module under this cohort has to step over.
+ *
+ * Every one from the cohort's start date onwards, with no end bound -- the same
+ * rule the backend applies in `scheduling_holidays_from`. Bounding it at the
+ * cohort's practical end date would let the sessions that overshoot it land
+ * straight back on a bank holiday, and overshooting is precisely what a holiday
+ * does to a plan: each one it steps over pushes the plan a delivery slot later.
+ *
+ * A holiday after the last session is inert -- the set is only ever tested for
+ * membership against a session date -- so a cohort with no start date yet gets
+ * the whole calendar rather than none of it.
+ *
+ * `excludedIds` narrows the set further: the holidays a human unticked in the
+ * cohort drawer. A holiday outside the cohort's own period was never offered
+ * as a checkbox, so it cannot appear here, and stays skipped either way.
+ *
+ * This is NOT the cohort's own holiday list. That one is bounded to the
+ * cohort's period, is what the cohort drawer shows and the cohort row records,
+ * and is what `cohortWeekCapacity` above measures.
+ */
+export function holidaysForScheduling<H extends { id?: string | number; startDate?: string; endDate?: string }>(
+  holidays: H[],
+  cohortStart?: string,
+  excludedIds?: Array<string | number>,
+): H[] {
+  const start = cleanText(cohortStart);
+  let result = holidays;
+  if (start) {
+    result = result.filter(holiday => (cleanText(holiday.endDate) || cleanText(holiday.startDate)) >= start);
+  }
+  const excluded = new Set((excludedIds || []).map(normaliseKey).filter(Boolean));
+  if (excluded.size) {
+    result = result.filter(holiday => !excluded.has(normaliseKey(holiday.id)));
+  }
+  return result;
+}
+
+/**
  * The delivery window a module placed in a cohort has to fit inside.
  *
  * The practical end date is the boundary, not the apprenticeship end: the EPA
- * period after it carries no delivery. It already has the ticked holidays folded
- * in, so a session plan that skips them still lands inside the window.
+ * period after it carries no delivery. The cohort's holidays are drawn from
+ * this same window, so a session plan that skips them still lands inside it.
  */
 export function cohortDeliveryWindow(
   cohort: Partial<Pick<CurriculumCohort, 'startDate' | 'endDate' | 'practicalEndDate'>> | null | undefined,
@@ -559,9 +639,10 @@ export function cohortDeliveryWindow(
  * Why a module's dates are outside its cohort, or null when they are inside.
  *
  * The same three refusals the backend enforces, worded the same way, so the
- * drawer can say it before the save is attempted: a module cannot start before
- * the cohort opens, cannot start after it has finished, and cannot run past the
- * end -- which is the one a generated session plan reaches on its own.
+ * drawer can say it before the save is attempted: a module can soft-start up
+ * to one calendar month before the cohort opens, cannot start after it has
+ * finished, and cannot run past the end -- which is the one a generated
+ * session plan reaches on its own.
  */
 export function moduleCohortDateError(
   cohort: Partial<Pick<CurriculumCohort, 'startDate' | 'endDate' | 'practicalEndDate'>> | null | undefined,
@@ -569,11 +650,12 @@ export function moduleCohortDateError(
   endDate: unknown,
 ): string | null {
   const { start: cohortStart, end: cohortEnd } = cohortDeliveryWindow(cohort);
+  const softStart = moduleSoftStartDate(cohortStart) || cohortStart;
   const moduleStart = dateKey(startDate);
   const moduleEnd = dateKey(endDate);
 
-  if (moduleStart && cohortStart && moduleStart < cohortStart) {
-    return `The module cannot start before the cohort start date (${formatDateLabel(cohortStart)}).`;
+  if (moduleStart && softStart && moduleStart < softStart) {
+    return `The module cannot start more than one month before the cohort start date (${formatDateLabel(cohortStart)}).`;
   }
   if (moduleStart && cohortEnd && moduleStart > cohortEnd) {
     return `The module cannot start after the cohort end date (${formatDateLabel(cohortEnd)}).`;

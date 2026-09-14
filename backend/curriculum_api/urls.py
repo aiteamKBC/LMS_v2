@@ -121,6 +121,16 @@ urlpatterns = [
     path('curriculum/staffing/<str:identifier>/', views.curriculum_staffing_detail, name='curriculum-staffing-detail'),
     path('curriculum/holidays/', views.curriculum_holiday_collection, name='curriculum-holidays'),
     path('curriculum/holidays/<str:identifier>/', views.curriculum_holiday_detail, name='curriculum-holiday-detail'),
+    # The GOV.UK half of the calendar on its own, in the feed's own shape
+    # (title, notes, bunting) rather than the label/start/end one the rest of
+    # the curriculum reads holidays through. Read-only: these are not authored
+    # here, they are mirrored, and the two routes below are how the mirror is
+    # kept current and how it reports what GOV.UK changed.
+    path('curriculum/england-holidays/', views.curriculum_england_holidays, name='curriculum-england-holidays'),
+    # Declared before nothing in particular -- there is no <identifier> route on
+    # england-holidays -- but kept adjacent so the three read as one feature.
+    path('curriculum/england-holidays/syncs/', views.curriculum_england_holiday_syncs, name='curriculum-england-holiday-syncs'),
+    path('curriculum/england-holidays/refresh/', views.curriculum_england_holidays_refresh, name='curriculum-england-holidays-refresh'),
     # The tutor workspace's own read: assigned modules + the next live session.
     # Declared before the <identifier> route below, which would otherwise
     # capture 'tutor-workspace' as a tutor id.

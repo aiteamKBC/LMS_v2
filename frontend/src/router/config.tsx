@@ -76,6 +76,7 @@ const CurriculumCohortWorkspace = lazyRoute(() => import("../pages/curriculum/co
 const CurriculumGroups = lazyRoute(() => import("../pages/curriculum/groups/page"));
 const CurriculumGroupWorkspace = lazyRoute(() => import("../pages/curriculum/group-workspace/page"));
 const CurriculumHolidays = lazyRoute(() => import("../pages/curriculum/holidays/page"));
+const CurriculumEnglandHolidays = lazyRoute(() => import("../pages/curriculum/england-holidays/page"));
 const CurriculumModuleWorkspace = lazyRoute(() => import("../pages/curriculum/module-workspace/page"));
 const CurriculumTeamsMeetings = lazyRoute(() => import("../pages/curriculum/teams-meetings/page"));
 const CurriculumProgrammes = lazyRoute(() => import("../pages/curriculum/programmes/page"));
@@ -941,8 +942,17 @@ const routes: RouteObject[] = [
     element: <CurriculumTeamsMeetings />,
   },
   {
+    // The whole calendar: GOV.UK's bank holidays and this college's own closure
+    // periods, in one list. The closures are authored here; the bank holidays
+    // are read-only and are managed on the page below.
     path: "/curriculum/holidays",
     element: <CurriculumHolidays />,
+  },
+  {
+    // The GOV.UK half on its own, with what the site has changed and when it was
+    // last checked.
+    path: "/curriculum/england-holidays",
+    element: <CurriculumEnglandHolidays />,
   },
   {
     path: "/curriculum/session-calendar",

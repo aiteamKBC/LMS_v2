@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -19,6 +19,7 @@ import {
   type ModuleLearnerRow,
 } from '@/api/learningPlan';
 import {
+  curriculumErrorMessage,
   fetchCurriculumHolidays,
   fetchCurriculumOverview,
   fetchCurriculumStandards,
@@ -41,6 +42,7 @@ import {
 // module workspace where that delivery (tutor included) is edited.
 import {
   cleanText,
+  findByIdentifierThenName,
   formatDateLabel,
   moduleIdentity,
   namedCurriculumWorkspacePath,
@@ -53,15 +55,15 @@ import {
 /**
  * One live session a holiday closed the day for.
  *
- * `slotDate` is its week's own day -- the one the holiday shut -- and
- * `blockedBy` names the holiday. Where the plan moves the session to is
- * deliberately not here: the rail states what was closed and leaves the new
- * date to the session itself, which is where it can be acted on.
- * The rail only states these; it does not act on them.
+ * `slotDate` is the planned day the holiday shut, and `actualDate` is where
+ * that session finally runs after every closed replacement date is skipped.
+ * The rail states both so the week row reads with the same shifted date as the
+ * module sessions preview.
  */
 interface ClashingLiveSession {
   sessionNumber: number;
   slotDate: string;
+  actualDate: string;
   blockedBy: string;
   /**
    * The closures behind `blockedBy`, each with the whole period it covers.
@@ -80,6 +82,9 @@ import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
 import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
+// The holiday reading-week card, shared with the module workspace so a closed
+// delivery slot reads the same wherever the curriculum is shown.
+import { HolidayReadingWeekCard } from '../shared/entities/sessionShiftPreview';
 import { permanentlyDeleteModuleWithConfirm, restoreModuleWithConfirm } from '../shared/entities/archive';
 import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
@@ -113,6 +118,9 @@ import {
   // dates, not one date, the moment a group delivers more than once a week.
   moduleWeekSessionDates,
   moduleWeekLiveSessionDates,
+  // Where the holiday reading weeks sit among the authored weeks: a closed
+  // delivery slot keeps its curriculum position and holds no live session.
+  holidayReadingWeeksByWeekId,
   resequenceWeekSessionDates,
   makeAuthoringId,
   recalculateModule,
@@ -120,6 +128,7 @@ import {
   saveModuleStructure,
   uploadComponentResource,
   utcIsoToCalendarParts,
+  weekExpectedOtjhTotal,
   weekPlacementLabel,
   type AdvancedModuleDetails,
   type CompletionCriteria,
@@ -150,7 +159,7 @@ import { exportModuleTemplate, importModuleTemplate } from './moduleExcel';
 // Shared labelled form atoms and the Teams meeting modal live in their own files
 // so the modal (rendered by the shared week editor, which the Week Builder also
 // uses) can reuse them without importing this page.
-import { Checkbox, HoursMinutesInput, NumberInput, ReadOnlyInput, SelectInput, TextArea, TextInput } from './formInputs';
+import { Checkbox, DurationInput, NumberInput, ReadOnlyInput, SelectInput, TextArea, TextInput } from './formInputs';
 import { TeamsMeetingModal } from './TeamsMeetingModal';
 import { KsbExcelPanel } from './KsbExcelPanel';
 import {
@@ -351,8 +360,8 @@ async function showBuilderDeleteSwal({
   warning?: string;
   confirmButtonText: string;
   processingText: string;
-  successTitle: string;
-  successText: string;
+  successTitle?: string;
+  successText?: string;
   onConfirm: () => Promise<void>;
 }) {
   return showCurriculumConfirm({
@@ -485,13 +494,13 @@ export default function ModuleBuilder() {
   const programmeDesignUrl = useMemo(() => {
     const requested = (searchParams.get('programme') || searchParams.get('programmeId') || '').trim();
     if (!requested) return '';
-    const requestedKey = normaliseDeepLinkValue(requested);
-    const programme = curriculumProgrammes.find(item => (
-      [item.id, item.sourceId, item.name, item.standard]
-        .map(normaliseDeepLinkValue)
-        .filter(Boolean)
-        .includes(requestedKey)
-    ));
+    const programme = findByIdentifierThenName(
+      curriculumProgrammes,
+      requested,
+      item => [item.id, item.sourceId, item.standard],
+      item => [item.name],
+      normaliseDeepLinkValue,
+    );
     const programmeId = String(programme?.sourceId || programme?.id || requested).trim();
     return programmeId ? `/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=modules` : '';
   }, [curriculumProgrammes, searchParams]);
@@ -699,6 +708,33 @@ export default function ModuleBuilder() {
     [resolveModuleScopeLock, workingModule],
   );
 
+  /**
+   * The module sits under an archived programme and is still visible, so the
+   * backend refuses its structure save.
+   *
+   * Same rule as `archived_programme_module_edit_error` on the server, which is
+   * what actually enforces it -- this only stops someone authoring a whole
+   * module before the Save tells them. Saving would re-derive
+   * `is_programme_deleted` from the archived programme and withdraw the module
+   * from every list, which is the "I edited it and it vanished" report.
+   *
+   * A module that is ALREADY withdrawn is deliberately left editable: moving it
+   * onto a live programme is how it is brought back, and locking it would
+   * strand it. `useCurriculumProgrammes` is read with `visibility: 'all'` here,
+   * so the archived programme is in the list to be recognised at all.
+   */
+  const workingModuleProgrammeArchived = useMemo(() => {
+    if (!workingModule) return false;
+    if (workingModule.isProgrammeDeleted) return false;
+    const programme = programmeForScope(curriculumProgrammes, [
+      workingModule.programmeId,
+      workingModule.programmeName,
+      workingModule.sourceModule?.programmeId,
+      workingModule.sourceModule?.programme,
+    ]);
+    return Boolean(programme) && programmeRecordArchived(programme);
+  }, [curriculumProgrammes, workingModule]);
+
   // "Module settings" used to reopen the structure wizard on its Modules step
   // just to move a module between programmes, cohorts and groups. That is the
   // same job the Add-module drawer does, so it opens that instead.
@@ -779,32 +815,47 @@ export default function ModuleBuilder() {
 
   const requestedHierarchy = requestedCreateScopeRef.current;
   const hierarchyProgramme = useMemo(() => {
-    const keys = [
+    // Tried in this order, and each candidate is spent against every programme's
+    // ids before any programme's name is considered. Collapsing all three into
+    // one key set let the weakest candidate (the name-shaped filter) claim a
+    // programme that the stronger one (the id) named outright.
+    const candidates = [
       requestedHierarchy.programmeId,
       requestedHierarchy.programmeName,
       programmeFilter === 'All' ? '' : programmeFilter,
-    ].map(normaliseDeepLinkValue).filter(Boolean);
-    if (!keys.length) return null;
-    return curriculumProgrammes.find(programme => (
-      [programme.id, programme.sourceId, programme.name, programme.standard]
-        .map(normaliseDeepLinkValue)
-        .filter(Boolean)
-        .some(key => keys.includes(key))
-    )) || null;
+    ];
+    for (const candidate of candidates) {
+      const match = findByIdentifierThenName(
+        curriculumProgrammes,
+        candidate,
+        programme => [programme.id, programme.sourceId, programme.standard],
+        programme => [programme.name],
+        normaliseDeepLinkValue,
+      );
+      if (match) return match;
+    }
+    return null;
   }, [curriculumProgrammes, programmeFilter, requestedHierarchy.programmeId, requestedHierarchy.programmeName]);
   const hierarchyCohort = useMemo(() => {
-    const key = normaliseDeepLinkValue(requestedHierarchy.cohortId || cohortFilter);
-    if (!key) return null;
-    return moduleFormScope.cohorts.find(cohort => (
-      [cohort.id, cohort.name].map(normaliseDeepLinkValue).includes(key)
-    )) || null;
+    // Cohort names repeat across programmes ("October 2026"), so the id has to
+    // be spent across every cohort before any name is tried.
+    return findByIdentifierThenName(
+      moduleFormScope.cohorts,
+      requestedHierarchy.cohortId || cohortFilter,
+      cohort => [cohort.id],
+      cohort => [cohort.name],
+      normaliseDeepLinkValue,
+    ) || null;
   }, [cohortFilter, moduleFormScope.cohorts, requestedHierarchy.cohortId]);
   const hierarchyGroup = useMemo(() => {
-    const key = normaliseDeepLinkValue(requestedHierarchy.groupId || groupFilter);
-    if (!key) return null;
-    return moduleFormScope.groups.find(group => (
-      [group.id, group.name].map(normaliseDeepLinkValue).includes(key)
-    )) || null;
+    // Group names repeat harder than cohort names do ("G1", "Group A").
+    return findByIdentifierThenName(
+      moduleFormScope.groups,
+      requestedHierarchy.groupId || groupFilter,
+      group => [group.id],
+      group => [group.name],
+      normaliseDeepLinkValue,
+    ) || null;
   }, [groupFilter, moduleFormScope.groups, requestedHierarchy.groupId]);
 
   const catalogueHierarchy = useMemo(() => {
@@ -1116,7 +1167,22 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     setNoticeAlert(null);
     try {
-      const remote = await loadModuleStructure(structureId);
+      // Read fresh, never from the two-minute cache: the workspace saves the
+      // WHOLE structure back, so anything it opens stale it later writes over.
+      const remote = structureId ? await loadModuleStructure(structureId, { skipCache: true }) : null;
+      // A stored module whose structure could not be read must not be opened.
+      // `getDefaultStructure` below fabricates empty week shells for a module
+      // that arrives without weeks -- right for a brand new draft, catastrophic
+      // here, because the catalogue row is compact (it carries no weeks at all)
+      // and the first save would replace every authored week and component with
+      // the fabricated blanks while reporting itself as saved.
+      if (structureId && !remote) {
+        setActionMessage(
+          `${module.title} could not be opened: its saved weeks and components could not be read. `
+          + 'Reload the page and try again - do not rebuild it here, or the save would overwrite what is stored.',
+        );
+        return;
+      }
       const loadedBase = remote
         ? {
             ...module,
@@ -1337,12 +1403,13 @@ export default function ModuleBuilder() {
     const requestedNormalised = normaliseDeepLinkValue(requestedProgramme);
     // The Programme workspace links with a canonical id, not a name, so resolve
     // the id back to its programme before matching the (name-based) options.
-    const byIdentifier = curriculumProgrammes.find(programme => (
-      [programme.id, programme.sourceId, programme.name, programme.standard]
-        .map(normaliseDeepLinkValue)
-        .filter(Boolean)
-        .includes(requestedNormalised)
-    ));
+    const byIdentifier = findByIdentifierThenName(
+      curriculumProgrammes,
+      requestedProgramme,
+      programme => [programme.id, programme.sourceId, programme.standard],
+      programme => [programme.name],
+      normaliseDeepLinkValue,
+    );
     const resolvedName = normaliseDeepLinkValue(byIdentifier?.name);
     const match = programmeOptions.find(option => (
       option !== 'All' && (
@@ -1358,25 +1425,21 @@ export default function ModuleBuilder() {
     const params = new URLSearchParams(window.location.search);
     const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || '';
     const requestedKey = requestedModule.trim();
-    // Read separately from the id, rather than only as the last resort when no
-    // id-shaped param is present: the delivery side and the catalogue
-    // sometimes disagree on which id is canonical for the same module, so a
-    // guessed id that matches nothing here still deserves a second try by name
-    // before the link is declared dead.
+    // Carried only so the not-found message can name the module the way the
+    // reader saw it. It is NOT a lookup key: titles are not unique (the same
+    // title is authored in more than one programme), so resolving by name can
+    // only ever guess, and a guess here opens a different module's weeks and
+    // OTJH under the name the reader clicked.
     const requestedTitle = (params.get('moduleTitle') || '').trim();
     const dedupeKey = requestedKey || requestedTitle;
     if (!dedupeKey || loading || error || workingModule || deepLinkedModuleRef.current === dedupeKey) return;
 
-    const requestedNormalised = normaliseDeepLinkValue(requestedKey);
-    const requestedTitleNormalised = normaliseDeepLinkValue(requestedTitle);
-    const target = catalogueModules.find(module => {
-      const identifiers = moduleDeepLinkIdentifiers(module);
-      const titles = [module.title, module.sourceModule?.name];
-      return (!!requestedKey && (
-        identifiers.some(value => value === requestedKey)
-        || titles.some(value => normaliseDeepLinkValue(value) === requestedNormalised)
-      )) || (!!requestedTitleNormalised && titles.some(value => normaliseDeepLinkValue(value) === requestedTitleNormalised));
-    });
+    // The id, and nothing else. An id that matches no catalogue module is a
+    // dead link, and saying so is the honest answer -- falling back to the
+    // title produced a module that looked right and was not.
+    const target = requestedKey
+      ? catalogueModules.find(module => moduleDeepLinkIdentifiers(module).some(value => value === requestedKey))
+      : undefined;
 
     // A deep link only ever *opens* a module. It used to fall through to creating
     // one from the rest of the query string, which meant a link naming a module
@@ -1384,7 +1447,11 @@ export default function ModuleBuilder() {
     if (!target) {
       if (catalogueModules.length) {
         deepLinkedModuleRef.current = dedupeKey;
-        setActionMessage(`Unable to find module "${requestedKey || requestedTitle}" in Module Builder.`);
+        // Named the way the reader saw it, with the id that failed alongside --
+        // that id is the whole diagnosis when a link goes dead.
+        const label = requestedTitle || requestedKey;
+        const identifier = requestedTitle && requestedKey ? ` (${requestedKey})` : '';
+        setActionMessage(`Unable to find module "${label}"${identifier} in Module Builder.`);
       }
       return;
     }
@@ -1394,9 +1461,17 @@ export default function ModuleBuilder() {
   }, [catalogueModules, error, loading, openModule, workingModule]);
 
   const updateWorkingModule = useCallback((updater: (module: ModuleCatalogueItem) => ModuleCatalogueItem) => {
+    // One chokepoint for every authoring edit in the workspace, so the
+    // archived-programme lock is a single guard rather than a second read-only
+    // editing path bolted alongside this one. The structure stays on screen and
+    // fully readable -- only writing to it is refused.
+    if (workingModuleProgrammeArchived) {
+      setActionMessage(ARCHIVED_PROGRAMME_BUILDER_NOTICE);
+      return;
+    }
     setActionMessage(null);
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
-  }, []);
+  }, [workingModuleProgrammeArchived]);
 
   const openAddedComponent = useCallback((weekId: string, componentId: string) => {
     setExpandedWeekIds(current => {
@@ -1567,8 +1642,6 @@ export default function ModuleBuilder() {
       warning: 'This removes the week, its components, KSB mappings, OTJH and points from the module totals.',
       confirmButtonText: 'Delete week',
       processingText: 'Deleting week...',
-      successTitle: 'Week deleted',
-      successText: `${title} was removed and the remaining weeks were renumbered.`,
       onConfirm: async () => {
         const deletedIndex = workingModule.weekStructure.findIndex(item => item.id === weekId);
         const remainingWeeks = workingModule.weekStructure.filter(item => item.id !== weekId);
@@ -1594,6 +1667,12 @@ export default function ModuleBuilder() {
   // workspace. Leaving is what the guarded Back button is for.
   const persistWorkingModule = useCallback(async () => {
     if (!workingModule) return null;
+    // The backend refuses this with a 400 anyway; saying so here keeps the
+    // reader's unsaved work in the workspace instead of round-tripping it.
+    if (workingModuleProgrammeArchived) {
+      setActionMessage(ARCHIVED_PROGRAMME_BUILDER_NOTICE);
+      return null;
+    }
     const scopedWorkingModule = workingModuleScopeLock?.locked ? {
       ...workingModule,
       programmeId: workingModuleScopeLock.programmeId || workingModule.programmeId,
@@ -1639,7 +1718,16 @@ export default function ModuleBuilder() {
       reload();
       return saved;
     } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : 'Unable to save module structure.');
+      // `curriculumErrorMessage` unwraps the handler's own sentence -- the
+      // archived-programme refusal among them -- from the "Curriculum API
+      // returned 400 for /path:" diagnostic CurriculumApiError carries.
+      //
+      // Nothing else happens here on purpose: no reset, no reload, no refetch.
+      // A programme archived while the Builder was open rejects the save, and
+      // the weeks, components, OTJH and KSB mappings the reader has authored
+      // since have to still be there afterwards -- `savedModuleSnapshotRef` is
+      // left alone too, so the workspace still reads "Unsaved changes".
+      setActionMessage(curriculumErrorMessage(err, err instanceof Error ? err.message : 'Unable to save module structure.'));
       return null;
     } finally {
       if (saveRequestRef.current === requestId) {
@@ -1647,7 +1735,7 @@ export default function ModuleBuilder() {
         setSaveStartedAt(null);
       }
     }
-  }, [curriculumProgrammes, ksbSets, reload, standards, workingModule, workingModuleScopeLock]);
+  }, [curriculumProgrammes, ksbSets, reload, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
 
   // Export every component to an Excel sheet, one row each, for a curriculum
   // worker to have ChatGPT fill the KSBs against each title/description.
@@ -2026,6 +2114,7 @@ export default function ModuleBuilder() {
       return [{
         sessionNumber: Number(session.sessionNumber) || index + 1,
         slotDate,
+        actualDate,
         blockedBy: holidays.map(holiday => holiday.label).join(', ') || 'a holiday',
         closures: holidays,
       }];
@@ -2033,13 +2122,9 @@ export default function ModuleBuilder() {
   }, [weekSessionPlanState, workingModuleCatalogueId, holidayClosureFor]);
 
   /**
-   * The day each week's live session runs on, keyed by week.
-   *
-   * A live-session component with no date of its own falls back to its week's,
-   * and after a closure the two are different: the week keeps its own slot while
-   * the session it lost runs later. Falling back to the week's date there would
-   * date a new live session onto a day the room is shut, so the fallback reads
-   * the plan's session date rather than the week's.
+   * The day each week's live session runs on, keyed by week. This is the same
+   * delivered date the week now shows after holiday shifts, so a new live
+   * session never lands on the closed slot the plan skipped.
    */
   const liveSessionDateByWeekId = useMemo(() => {
     const plan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId ? weekSessionPlanState.plan : null;
@@ -2135,6 +2220,20 @@ export default function ModuleBuilder() {
             />
           )}
 
+          {workingModuleProgrammeArchived && (
+            <ArchivedProgrammeBuilderNotice programmeName={workingModule.programmeName} />
+          )}
+
+          {/* One `fieldset` rather than a read-only prop threaded through every
+              panel: it disables every control inside it natively, so the weeks,
+              components, OTJH, KSB mappings and notes stay on screen and
+              readable while none of them can be changed. */}
+          <fieldset
+            disabled={workingModuleProgrammeArchived}
+            aria-disabled={workingModuleProgrammeArchived || undefined}
+            data-testid="module-builder-structure"
+            className="m-0 min-w-0 border-0 p-0"
+          >
           <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)_290px] 2xl:grid-cols-[420px_minmax(560px,1fr)_310px]">
             <CourseStructure
               module={workingModule}
@@ -2164,13 +2263,14 @@ export default function ModuleBuilder() {
                 setSelection({ kind: 'week', weekId: week.id });
               }}
               onGenerateLiveSessions={() => {
-                const weekCount = weeksMissingLiveSession(workingModule).length;
                 const addedCount = countAddedLiveSessions(workingModule);
+                const actualWeekCount = workingModule.weekStructure.length;
+                const requiredCount = countRequiredLiveSessions(workingModule);
                 if (!addedCount) return;
                 updateWorkingModule(generateMissingLiveSessions);
                 void showCurriculumAlert({
                   title: 'Live sessions added',
-                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added across ${weekCount} week${weekCount === 1 ? '' : 's'}. Use "Create all Teams meetings" once to create the module calendar and link every session.`,
+                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added. This module is planned for ${requiredCount} live session${requiredCount === 1 ? '' : 's'} across ${actualWeekCount} week${actualWeekCount === 1 ? '' : 's'}. Use "Create all Teams meetings" once to create the module calendar and link every session.`,
                   timer: 3200,
                 });
               }}
@@ -2204,6 +2304,7 @@ export default function ModuleBuilder() {
               clashingSessions={clashingLiveSessions}
               onViewSessions={workingModuleSessionPlan ? () => setSessionPreviewOpen(true) : undefined}
               plannedSessions={workingModuleSessionPlan?.sessions}
+              plannedSlots={workingModuleSessionPlan?.slots}
               expandedWeekIds={expandedWeekIds}
               onExpandedWeekIdsChange={setExpandedWeekIds}
               allowMultipleExpanded={ALLOW_MULTIPLE_EXPANDED_WEEKS}
@@ -2211,42 +2312,44 @@ export default function ModuleBuilder() {
 
             <div className="min-w-0">
               {selectedComponent && selectedWeek ? (
-                <WeekComponentEditor
-                  component={selectedComponent}
-                  onChange={updates => updateWorkingModule(module => {
-                    const updatedSettings = updates.settings as ModuleComponent['settings'] | undefined;
-                    const sharesTeamsLink = selectedComponent.type === 'live-session'
-                      && updatedSettings
-                      && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
-                    const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
-                    return {
-                      ...module,
-                      weekStructure: module.weekStructure.map(week => ({
-                        ...week,
-                        components: week.components.map(component => {
-                          if (component.id === selectedComponent.id) return { ...component, ...updates };
-                          if (sharesTeamsLink && component.type === 'live-session') {
-                            return {
-                              ...component,
-                              settings: { ...component.settings, liveSessionUrl: sharedTeamsUrl },
-                            };
-                          }
-                          return component;
-                        }),
-                      })),
-                    };
-                  })}
-                  onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
-                  groupOptions={componentGroupOptions}
-                  rulePoints={componentPointsByType[selectedComponent.type]}
-                  weekScope={weekScopeForModule}
-                  weekSessionDate={liveSessionDateByWeekId.get(selectedWeek.id) || selectedWeek.sessionDate}
-                  weekSessionTime={selectedWeek.sessionStartTime}
-                  uploadResource={uploadComponentForModule}
-                  restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
-                  restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
-                  liveSessionModule={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
-                />
+                <ModuleBuilderScrollArea className="h-[calc(100vh-140px)] min-h-[420px]" contentClassName="pr-2.5">
+                  <WeekComponentEditor
+                    component={selectedComponent}
+                    onChange={updates => updateWorkingModule(module => {
+                      const updatedSettings = updates.settings as ModuleComponent['settings'] | undefined;
+                      const sharesTeamsLink = selectedComponent.type === 'live-session'
+                        && updatedSettings
+                        && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
+                      const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
+                      return {
+                        ...module,
+                        weekStructure: module.weekStructure.map(week => ({
+                          ...week,
+                          components: week.components.map(component => {
+                            if (component.id === selectedComponent.id) return { ...component, ...updates };
+                            if (sharesTeamsLink && component.type === 'live-session') {
+                              return {
+                                ...component,
+                                settings: { ...component.settings, liveSessionUrl: sharedTeamsUrl },
+                              };
+                            }
+                            return component;
+                          }),
+                        })),
+                      };
+                    })}
+                    onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
+                    groupOptions={componentGroupOptions}
+                    rulePoints={componentPointsByType[selectedComponent.type]}
+                    weekScope={weekScopeForModule}
+                    weekSessionDate={liveSessionDateByWeekId.get(selectedWeek.id) || selectedWeek.sessionDate}
+                    weekSessionTime={selectedWeek.sessionStartTime}
+                    uploadResource={uploadComponentForModule}
+                    restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
+                    restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
+                    liveSessionModule={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
+                  />
+                </ModuleBuilderScrollArea>
               ) : selectedWeek ? (
                 <ModuleWeekPanel
                   week={selectedWeek}
@@ -2285,9 +2388,11 @@ export default function ModuleBuilder() {
               onUpdateKsbWeightClass={(target, mappingId, weightClass) => updateWorkingModule(module => updateKsbMappingWeightClass(module, target, mappingId, weightClass))}
             />
           </div>
+          </fieldset>
           <WorkspaceActionFooter
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
+            locked={workingModuleProgrammeArchived}
             onEditModule={() => openPlacementForm(workingModule)}
             onDelete={() => confirmDeleteModule(workingModule)}
             onSave={() => { void persistWorkingModule(); }}
@@ -3020,9 +3125,42 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   );
 }
 
-function WorkspaceActionFooter({ saving, saved, onEditModule, onDelete, onSave }: {
+/**
+ * What the Builder says, and the backend's refusal says, about an archived
+ * programme. One sentence pair so the two never drift apart.
+ */
+const ARCHIVED_PROGRAMME_BUILDER_NOTICE = 'This module belongs to an archived programme. Restore the programme, or move the module to a live programme, before editing its structure.';
+
+function ArchivedProgrammeBuilderNotice({ programmeName }: { programmeName?: string }) {
+  return (
+    <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-900">
+      <div className="flex items-start gap-2">
+        <AppIcon className="ri-archive-line mt-0.5 text-base"></AppIcon>
+        <div className="min-w-0">
+          <p>{ARCHIVED_PROGRAMME_BUILDER_NOTICE}</p>
+          <p className="mt-1 font-medium text-amber-800">
+            {programmeName ? `${programmeName} is archived. ` : ''}
+            Everything below stays exactly as it was authored — it is read-only until the module has a live
+            programme to belong to.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Is this programme record archived, however the row spells it? */
+function programmeRecordArchived(programme: CurriculumProgramme | null): boolean {
+  if (!programme) return false;
+  if (programme.isArchived) return true;
+  return String(programme.status || '').trim().toLowerCase() === 'archived';
+}
+
+function WorkspaceActionFooter({ saving, saved, locked = false, onEditModule, onDelete, onSave }: {
   saving: boolean;
   saved: boolean;
+  /** The programme is archived, so the structure is read-only and Save is off. */
+  locked?: boolean;
   /** Name, placement, dates and tutor — the shared module form. */
   onEditModule: () => void;
   onDelete: () => void;
@@ -3030,8 +3168,12 @@ function WorkspaceActionFooter({ saving, saved, onEditModule, onDelete, onSave }
 }) {
   const saveButtonIcon = saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-check-line' : 'ri-save-3-line';
   const saveButtonLabel = saving ? 'Saving...' : saved ? 'Saved' : 'Save';
-  const stateText = saving ? 'Saving module structure...' : saved ? 'All changes saved' : 'Unsaved changes';
-  const stateTone = saving ? 'text-amber-700' : saved ? 'text-emerald-700' : 'text-foreground-600';
+  const stateText = locked
+    ? 'Read-only — archived programme'
+    : saving ? 'Saving module structure...' : saved ? 'All changes saved' : 'Unsaved changes';
+  const stateTone = locked
+    ? 'text-amber-700'
+    : saving ? 'text-amber-700' : saved ? 'text-emerald-700' : 'text-foreground-600';
 
   return (
     <div className="sticky bottom-0 z-20 -mx-3 mt-2 border-t border-background-200/80 bg-background-50/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-6 lg:px-6">
@@ -3043,7 +3185,13 @@ function WorkspaceActionFooter({ saving, saved, onEditModule, onDelete, onSave }
         <div className="flex flex-wrap items-center justify-end gap-2">
           <IconButton label="Edit module" icon="ri-edit-line" onClick={onEditModule} />
           <IconButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
-          <button onClick={onSave} disabled={saving} className={`inline-flex h-10 min-w-[120px] items-center justify-center gap-1.5 rounded-lg px-4 text-[12px] font-semibold text-white shadow-sm transition-smooth disabled:opacity-70 whitespace-nowrap ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}>
+          <button
+            onClick={onSave}
+            data-testid="module-builder-save"
+            disabled={saving || locked}
+            title={locked ? ARCHIVED_PROGRAMME_BUILDER_NOTICE : undefined}
+            className={`inline-flex h-10 min-w-[120px] items-center justify-center gap-1.5 rounded-lg px-4 text-[12px] font-semibold text-white shadow-sm transition-smooth disabled:cursor-not-allowed disabled:opacity-70 whitespace-nowrap ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}
+          >
             <AppIcon className={saveButtonIcon}></AppIcon>{saveButtonLabel}
           </button>
         </div>
@@ -3084,7 +3232,7 @@ function owningMonthKeyOf(mondayKey: string): string {
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onViewSessions, onCreateAllTeamsMeetings, onRestoreAllTeamsMeetings, hasTrackedTeamsMeeting, restoringTeamsMeeting, onDuplicateWeek, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, clashingSessions, plannedSessions, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onViewSessions, onCreateAllTeamsMeetings, onRestoreAllTeamsMeetings, hasTrackedTeamsMeeting, restoringTeamsMeeting, onDuplicateWeek, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, clashingSessions, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -3121,13 +3269,20 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
    * `week.sessionDate` is only the first of them.
    */
   plannedSessions?: ModuleWeekSessionPlan['sessions'];
+  /**
+   * The curriculum spine, including the delivery slots a holiday closed. Those
+   * slots hold no live session and no authored week, so they are rendered as
+   * their own reading-week rows between the week cards they fall between.
+   */
+  plannedSlots?: ModuleWeekSessionPlan['slots'];
   expandedWeekIds: Set<string>;
   onExpandedWeekIdsChange: (next: Set<string>) => void;
   allowMultipleExpanded?: boolean;
 }) {
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
-  const missingLiveSessionWeekCount = weeksMissingLiveSession(module).length;
+  const actualWeekCount = module.weekStructure.length;
   const missingLiveSessionCount = countAddedLiveSessions(module);
+  const requiredLiveSessionCount = countRequiredLiveSessions(module);
   const hasLiveSessions = module.weekStructure.some(week => week.components.some(component => component.type === 'live-session'));
 
   // The dates each week delivers on, keyed by week. A ten-week module running
@@ -3180,10 +3335,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   const monthHeadings = new Map(monthGroups.flatMap(group => {
     const first = group.weeks[0];
     if (!first) return [];
-    const otjh = group.weeks.reduce(
-      (total, week) => total + week.components.reduce((sum, component) => sum + Number(component.expectedOtjh || 0), 0),
-      0,
-    );
+    const otjh = group.weeks.reduce((total, week) => total + weekExpectedOtjhTotal(week), 0);
     const components = group.weeks.reduce((total, week) => total + week.components.length, 0);
     // Every date these weeks deliver on, not just the first of each. A month of
     // four Mon+Fri weeks runs eight sessions, and saying "4 weeks" alone was the
@@ -3210,17 +3362,25 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     return group.weeks.map(week => [week.id, first.id] as const);
   }));
   // Which week each clash belongs to -- the week whose own run of days contains
-  // the day the holiday closed. Matched on that day rather than on where the
-  // session is due to move to, because the week that eventually receives it is
-  // not the week it clashed in: it has its own session on its own day, and
-  // reporting the clash there read as the receiving week being the one closed.
+  // the session number the backend planned. Weeks now show the delivered date,
+  // so matching only on the original closed slot would miss the moved week.
   const clashesByWeekId = new Map<string, ClashingLiveSession[]>();
+  const weekIdBySessionNumber = new Map<number, string>();
+  let sessionNumberCursor = 1;
+  moduleWeekLiveSessionDates(module, plannedSessions).forEach((dates, index) => {
+    const week = module.weekStructure[index];
+    if (!week) return;
+    dates.forEach(() => {
+      weekIdBySessionNumber.set(sessionNumberCursor, week.id);
+      sessionNumberCursor += 1;
+    });
+  });
   const datedWeeks = module.weekStructure.filter(week => sessionDatesOf(week).length);
   (clashingSessions || []).forEach(clash => {
-    let ownerId = '';
+    let ownerId = weekIdBySessionNumber.get(clash.sessionNumber) || '';
     datedWeeks.forEach(week => {
       const run = sessionDatesOf(week);
-      if (run.includes(clash.slotDate)) ownerId = week.id;
+      if (!ownerId && (run.includes(clash.actualDate) || run.includes(clash.slotDate))) ownerId = week.id;
     });
     // No run to match against (the plan has not loaded): fall back to the week
     // that starts last on or before the closed day.
@@ -3232,6 +3392,12 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     if (!ownerId) return;
     clashesByWeekId.set(ownerId, [...(clashesByWeekId.get(ownerId) || []), clash]);
   });
+
+  // The delivery slots a holiday closed, keyed by the authored week that now
+  // delivers the session each closure displaced. They are curriculum positions
+  // in their own right -- reading weeks with no live session -- so they render
+  // as their own rows immediately above that week rather than as a note on it.
+  const readingWeeks = holidayReadingWeeksByWeekId(module, { sessions: plannedSessions, slots: plannedSlots });
 
   const [collapsedMonthIds, setCollapsedMonthIds] = useState<Set<string>>(new Set());
   const toggleMonthCollapsed = (monthId: string) => {
@@ -3259,9 +3425,67 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     onExpandedWeekIdsChange(next);
   };
 
+  const structureScrollRef = useRef<HTMLDivElement | null>(null);
+  const [structureScrollbar, setStructureScrollbar] = useState({ visible: false, top: 0, height: 0 });
+  const updateStructureScrollbar = useCallback(() => {
+    const node = structureScrollRef.current;
+    if (!node) return;
+    const visible = node.scrollHeight > node.clientHeight + 1;
+    if (!visible) {
+      setStructureScrollbar({ visible: false, top: 0, height: 0 });
+      return;
+    }
+    const trackHeight = Math.max(1, node.clientHeight - 20);
+    const height = Math.max(44, Math.round((node.clientHeight / node.scrollHeight) * trackHeight));
+    const maxTop = Math.max(0, trackHeight - height);
+    const maxScroll = Math.max(1, node.scrollHeight - node.clientHeight);
+    const top = Math.round((node.scrollTop / maxScroll) * maxTop);
+    setStructureScrollbar({ visible: true, top, height });
+  }, []);
+  const moveStructureScrollbar = useCallback((clientY: number, track: DOMRect) => {
+    const node = structureScrollRef.current;
+    if (!node) return;
+    const trackHeight = Math.max(1, track.height);
+    const maxTop = Math.max(0, trackHeight - structureScrollbar.height);
+    const nextTop = Math.min(maxTop, Math.max(0, clientY - track.top - structureScrollbar.height / 2));
+    const maxScroll = Math.max(1, node.scrollHeight - node.clientHeight);
+    node.scrollTop = maxTop ? (nextTop / maxTop) * maxScroll : 0;
+    updateStructureScrollbar();
+  }, [structureScrollbar.height, updateStructureScrollbar]);
+  const startStructureScrollbarDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!structureScrollbar.visible) return;
+    event.preventDefault();
+    const track = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    moveStructureScrollbar(event.clientY, track);
+    const handlePointerMove = (moveEvent: PointerEvent) => moveStructureScrollbar(moveEvent.clientY, track);
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  }, [moveStructureScrollbar, structureScrollbar.visible]);
+
+  useEffect(() => {
+    updateStructureScrollbar();
+    const timer = window.setTimeout(updateStructureScrollbar, 0);
+    window.addEventListener('resize', updateStructureScrollbar);
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && structureScrollRef.current) {
+      observer = new ResizeObserver(updateStructureScrollbar);
+      observer.observe(structureScrollRef.current);
+    }
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('resize', updateStructureScrollbar);
+      observer?.disconnect();
+    };
+  }, [expandedWeekIds.size, module.weekStructure.length, updateStructureScrollbar]);
+
   return (
-    <aside className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm xl:sticky xl:top-4">
-      <div className="border-b border-background-200 bg-background-50 p-3">
+    <aside className="flex h-[calc(100vh-140px)] min-h-0 flex-col overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm xl:sticky xl:top-4">
+      <div className="shrink-0 border-b border-background-200 bg-background-50 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-[13px] font-heading font-bold text-foreground-950">Course structure</h3>
@@ -3302,7 +3526,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 text-[11px] font-bold text-violet-700 transition-smooth hover:bg-violet-100"
           >
             <AppIcon className="ri-group-line"></AppIcon>
-            Generate live sessions ({missingLiveSessionCount} across {missingLiveSessionWeekCount} week{missingLiveSessionWeekCount === 1 ? '' : 's'})
+            Generate live sessions ({missingLiveSessionCount} missing / {requiredLiveSessionCount} live sessions across {actualWeekCount} week{actualWeekCount === 1 ? '' : 's'})
           </button>
         )}
         {/* One whole-module Teams action, on the module's saved session dates,
@@ -3338,18 +3562,29 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           <MiniStructureMetric label="OTJH" value={formatHoursMinutes(module.totalOtjh)} />
           <MiniStructureMetric label="KSBs" value={String(module.ksbCount)} />
         </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
-          <div className="h-full rounded-full bg-primary-500" style={{ width: `${Math.min(100, Math.max(0, module.qualityScore))}%` }} />
-        </div>
       </div>
-      <div className="space-y-2 max-h-[calc(100vh-220px)] overflow-y-auto p-2.5">
-        {module.weekStructure.map((week, index) => {
+      <div className="relative min-h-0 flex-1">
+        {structureScrollbar.visible && (
+          <div
+            aria-hidden
+            onPointerDown={startStructureScrollbarDrag}
+            className="absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full bg-background-200 shadow-inner"
+          >
+            <div
+              className="absolute left-0 right-0 rounded-full bg-foreground-500 shadow-sm"
+              style={{ height: `${structureScrollbar.height}px`, transform: `translateY(${structureScrollbar.top}px)` }}
+            />
+          </div>
+        )}
+        <div ref={structureScrollRef} onScroll={updateStructureScrollbar} className="module-course-structure-scroll min-h-0 h-full overflow-y-scroll py-2.5 pl-4 pr-2.5">
+          <div className="module-course-structure-scroll-content space-y-2">
+          {module.weekStructure.map((week, index) => {
           const selected = selection?.kind === 'week' && selection.weekId === week.id;
           const selectedChild = selection?.kind === 'component' && selection.weekId === week.id;
           const active = selected || selectedChild;
           const dragging = dragState?.type === 'week' && dragState.weekId === week.id;
           const expanded = expandedWeekIds.has(week.id);
-          const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
+          const totalOtjh = weekExpectedOtjhTotal(week);
           const monthHeading = monthHeadings.get(week.id);
           const monthGroupId = monthGroupIdByWeekId.get(week.id);
           const monthCollapsed = monthGroupId ? collapsedMonthIds.has(monthGroupId) : false;
@@ -3401,6 +3636,12 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 )}
               </button>
             )}
+            {/* The closed delivery slots this week sits behind. Each keeps its
+                own curriculum position and its own date; the week below it is
+                where the session that could not run in it has moved to. */}
+            {monthCollapsed ? null : (readingWeeks.before.get(week.id) || []).map(slot => (
+              <HolidayReadingWeekCard key={`reading-week-${slot.date}`} slot={slot} compact />
+            ))}
             {monthCollapsed ? null : <div
               className={`relative overflow-visible rounded-xl border transition-smooth ${dragging ? 'border-primary-300 bg-background-50 shadow-lg ring-2 ring-primary-200' : active ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
             >
@@ -3515,7 +3756,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       </Fragment>
                     )) : clash.blockedBy}
                   </span>
-                  <span>on {formatDateLabel(clash.slotDate)}</span>
+                  <span>on {formatDateLabel(clash.slotDate)}; week now runs {formatDateLabel(clash.actualDate)}</span>
                 </p>
               ))}
               {expanded && (
@@ -3536,7 +3777,9 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             </div>}
             </Fragment>
           );
-        })}
+          })}
+          </div>
+        </div>
       </div>
     </aside>
   );
@@ -3547,6 +3790,85 @@ function MiniStructureMetric({ label, value }: { label: string; value: string })
     <div className="rounded-lg border border-background-200 bg-background-50 px-2 py-1">
       <p className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
       <p className="text-[12px] font-heading font-bold text-foreground-950">{value}</p>
+    </div>
+  );
+}
+
+function ModuleBuilderScrollArea({ children, className = '', contentClassName = '' }: { children: ReactNode; className?: string; contentClassName?: string }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [scrollbar, setScrollbar] = useState({ visible: false, top: 0, height: 0 });
+  const updateScrollbar = useCallback(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const visible = node.scrollHeight > node.clientHeight + 1;
+    if (!visible) {
+      setScrollbar({ visible: false, top: 0, height: 0 });
+      return;
+    }
+    const trackHeight = Math.max(1, node.clientHeight - 20);
+    const height = Math.max(44, Math.round((node.clientHeight / node.scrollHeight) * trackHeight));
+    const maxTop = Math.max(0, trackHeight - height);
+    const maxScroll = Math.max(1, node.scrollHeight - node.clientHeight);
+    const top = Math.round((node.scrollTop / maxScroll) * maxTop);
+    setScrollbar({ visible: true, top, height });
+  }, []);
+  const moveScrollbar = useCallback((clientY: number, track: DOMRect) => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const maxTop = Math.max(0, track.height - scrollbar.height);
+    const nextTop = Math.min(maxTop, Math.max(0, clientY - track.top - scrollbar.height / 2));
+    const maxScroll = Math.max(1, node.scrollHeight - node.clientHeight);
+    node.scrollTop = maxTop ? (nextTop / maxTop) * maxScroll : 0;
+    updateScrollbar();
+  }, [scrollbar.height, updateScrollbar]);
+  const startScrollbarDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!scrollbar.visible) return;
+    event.preventDefault();
+    const track = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    moveScrollbar(event.clientY, track);
+    const handlePointerMove = (moveEvent: PointerEvent) => moveScrollbar(moveEvent.clientY, track);
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  }, [moveScrollbar, scrollbar.visible]);
+
+  useEffect(() => {
+    updateScrollbar();
+    const timer = window.setTimeout(updateScrollbar, 0);
+    window.addEventListener('resize', updateScrollbar);
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && scrollRef.current) {
+      observer = new ResizeObserver(updateScrollbar);
+      observer.observe(scrollRef.current);
+    }
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('resize', updateScrollbar);
+      observer?.disconnect();
+    };
+  }, [children, updateScrollbar]);
+
+  return (
+    <div className={`relative min-h-0 overflow-hidden ${className}`}>
+      {scrollbar.visible && (
+        <div
+          aria-hidden
+          onPointerDown={startScrollbarDrag}
+          className="absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full bg-background-200 shadow-inner"
+        >
+          <div
+            className="absolute left-0 right-0 rounded-full bg-foreground-500 shadow-sm"
+            style={{ height: `${scrollbar.height}px`, transform: `translateY(${scrollbar.top}px)` }}
+          />
+        </div>
+      )}
+      <div ref={scrollRef} onScroll={updateScrollbar} className="module-course-structure-scroll h-full min-h-0 overflow-y-scroll py-2.5 pl-4">
+        <div className={contentClassName}>{children}</div>
+      </div>
     </div>
   );
 }
@@ -3788,7 +4110,7 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
   onReuseComponents: () => void;
   onAddFromTemplate: () => void;
 }) {
-  const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
+  const totalOtjh = weekExpectedOtjhTotal(week);
 
   return (
     <section className="space-y-4">
@@ -4771,7 +5093,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
   }
 
   if (!component) {
-    const totalOtjh = week.components.reduce((total, item) => total + Number(item.expectedOtjh || 0), 0);
+    const totalOtjh = weekExpectedOtjhTotal(week);
     const totalPoints = week.components.reduce((total, item) => total + Number(item.points || 0), 0);
     const mappedKsbs = uniqueMappings([...week.ksbMappings, ...week.components.flatMap(item => item.ksbMappings)]);
     const weekWeightSummary = ksbWeightSummary(mappedKsbs);
@@ -4849,9 +5171,6 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
           <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${componentReadyPercent === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
             {componentReadyPercent}%
           </span>
-        </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
-          <div className={`h-full rounded-full ${componentReadyPercent === 100 ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${componentReadyPercent}%` }} />
         </div>
       </div>
       <div className="space-y-4 p-4">
@@ -7320,6 +7639,7 @@ function ModuleCatalogueCard({
   // fetched from the catalogue it stays empty, so fall back to lessonCount,
   // which the backend sets to the real authored component count.
   const componentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0) || module.lessonCount || 0;
+  const componentOtjh = module.weekStructure.reduce((total, week) => total + weekExpectedOtjhTotal(week), 0) || Number(module.totalOtjh || 0);
   // The authored week count. `sessionsNumber` is no longer a fallback for it: a
   // module delivered twice a week has twice as many sessions as weeks, so
   // borrowing that number here overstated the card.
@@ -7369,6 +7689,7 @@ function ModuleCatalogueCard({
                 </span>
                 <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} weeks`} />
                 <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} components`} tone={hasContent ? 'default' : 'muted'} />
+                <ModuleMetricPill icon="ri-time-line" label={`${formatHoursMinutes(componentOtjh)} OTJH`} tone={componentOtjh ? 'default' : 'muted'} />
               </div>
               <ModuleDeliveryRows module={module} teamsSummary={teamsSummary} expectedSessions={module.sessionsNumber || weekCount} />
             </div>
@@ -8063,12 +8384,14 @@ function moduleBelongsToVisibleProgramme(module: ModuleBuilderListItem, programm
 function programmeForScope(programmes: CurriculumProgramme[], values: unknown[]) {
   const wanted = new Set(values.map(normaliseDeepLinkValue).filter(Boolean));
   if (!wanted.size) return null;
-  return programmes.find(programme => (
-    [programme.id, programme.sourceId, programme.name]
-      .map(normaliseDeepLinkValue)
-      .filter(Boolean)
-      .some(key => wanted.has(key))
-  )) || null;
+  const matches = (candidates: unknown[]) => candidates
+    .map(normaliseDeepLinkValue)
+    .filter(Boolean)
+    .some(key => wanted.has(key));
+  // Ids first across the whole list, names only once none matched.
+  return programmes.find(programme => matches([programme.id, programme.sourceId]))
+    || programmes.find(programme => matches([programme.name]))
+    || null;
 }
 
 function deliveryUsageForModuleScope(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
@@ -8648,7 +8971,7 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
     const weekPlacement = {
       label: weekLabel,
       scope: 'Week' as const,
-      otjh: week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0),
+      otjh: weekExpectedOtjhTotal(week),
       points: week.components.reduce((total, component) => total + Number(component.points || 0), 0),
     };
     week.ksbMappings.forEach(mapping => addMapping(mapping, weekPlacement));
@@ -8715,7 +9038,7 @@ function programmeKsbMapRows(modules: ModuleCatalogueItem[], sourceLabels: Recor
       const weekPlacement = {
         label: `${moduleLabel} / ${weekLabel}`,
         scope: 'Week' as const,
-        otjh: week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0),
+        otjh: weekExpectedOtjhTotal(week),
         points: week.components.reduce((total, component) => total + Number(component.points || 0), 0),
       };
       week.ksbMappings.forEach(mapping => addMapping(mapping, weekPlacement));
@@ -8841,10 +9164,6 @@ function liveSessionShortfallByWeek(module: ModuleCatalogueItem) {
     .filter(entry => entry.shortfall > 0);
 }
 
-function weeksMissingLiveSession(module: ModuleCatalogueItem) {
-  return liveSessionShortfallByWeek(module).map(entry => entry.week);
-}
-
 /**
  * Give every week its full set of live-session components — one per delivery
  * day — unattached to any Teams meeting yet. This is the explicit, opt-in
@@ -8874,6 +9193,11 @@ function generateMissingLiveSessions(module: ModuleCatalogueItem): ModuleCatalog
 
 function countAddedLiveSessions(module: ModuleCatalogueItem) {
   return liveSessionShortfallByWeek(module).reduce((total, entry) => total + entry.shortfall, 0);
+}
+
+function countRequiredLiveSessions(module: ModuleCatalogueItem) {
+  const weekCount = module.weekStructure.length;
+  return weekCount * moduleDeliveryDaysPerWeek(module);
 }
 
 function createNamedComponent(week: ModuleWeek, type: ModuleComponentType, index = week.components.length + 1) {

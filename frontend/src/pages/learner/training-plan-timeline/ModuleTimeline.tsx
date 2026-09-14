@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, CheckCircle2, LocateFixed, Maximize2, Minimize2 } from 'lucide-react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { Modal } from '@/pages/users/components/Modal';
-import { barPosition, dateKey, reviewDate, timelineMonthKeys, timelinePeriodYear, timelineYears, type TimelineModule } from './model';
+import { barPosition, dateKey, moduleVisualEnd, reviewDate, timelineMonthKeys, timelinePeriodYear, timelineYears, type TimelineModule } from './model';
 import { dateLabel, moduleStatus, monthLabel } from './presentation';
 import { TimelineInspector } from './TimelineInspector';
 import styles from './trainingPlan.module.css';
@@ -34,12 +34,16 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
   const months = timelineMonthKeys(year, startMonth);
   const periodLabel = startMonth ? `${monthLabel(months[0])} – ${monthLabel(months[11])}` : String(year);
   const positionFor = (start: string, end: string) => barPosition(start, end, year, startMonth);
-  const sourceDates = [...Object.keys(data.months), ...data.actual.map(row => row.month), ...data.reviews.map(reviewDate), ...modules.flatMap(m => [m.start, m.end])];
+  const sourceDates = [...Object.keys(data.months), ...data.actual.map(row => row.month), ...data.reviews.map(reviewDate), ...modules.flatMap(m => [m.start, moduleVisualEnd(m)])];
   const years = timelineYears(sourceDates.filter(date => dateKey(date.length === 7 ? `${date}-01` : date))
     .map(date => `${timelinePeriodYear(date, startMonth)}-01-01`), timelinePeriodYear(today, startMonth), year)
     .filter(value => !programmeStart || value >= Number(programmeStart.slice(0, 4)));
-  const scheduledInYear = modules.filter(module => positionFor(module.start, module.end));
-  const currentModules = modules.filter(module => module.start && module.start <= today && module.end >= today && moduleStatus(module) !== 'Completed');
+  const scheduledInYear = modules.filter(module => positionFor(module.start, moduleVisualEnd(module)));
+  // "Current" means still being delivered, so it reads the same range the bar is
+  // drawn to: a closure that moved the last session past the stored end date keeps
+  // the module in progress until that session is taught. Same helper as the bar --
+  // one decision about where a module ends, not two that can disagree.
+  const currentModules = modules.filter(module => module.start && module.start <= today && moduleVisualEnd(module) >= today && moduleStatus(module) !== 'Completed');
   const current = currentModules.find(module => module.id === selectedId) || currentModules[0];
   const inspected = detailsMode === 'inspector' || fullscreen ? modules.find(module => module.id === inspectedId) : undefined;
   const inspectorOpen = !!inspected;
@@ -127,7 +131,12 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
               aria-label={`${monthLabel(key)}${data.months[key]?.topics[0] ? ` — ${data.months[key].topics[0]}` : ''}`} aria-pressed={key === selectedMonth} title={data.months[key]?.topics.join(' · ')}><strong>{name}</strong>{startMonth > 0 && <small>{key.slice(0, 4)}</small>}<span>{data.months[key]?.topics[0] || ''}</span></button>;
           })}</div></div>
           {modules.map(module => {
-            const position = positionFor(module.start, module.end);
+            // The bar spans the delivery, not the authoring: a holiday closure can
+            // move the last session past the stored end date, and a bar that stops
+            // at the stored date reads as a module that ended before it finished
+            // teaching. Nothing is written back -- `module.end` stays the stored one.
+            const visualEnd = moduleVisualEnd(module);
+            const position = positionFor(module.start, visualEnd);
             const status = moduleStatus(module);
             const tone = status === 'Completed' ? layout.completed : status === 'In progress' ? layout.inProgress : layout.notStarted;
             return <div key={module.id} data-module-id={module.id} className={`${layout.row} ${selectedId === module.id ? layout.selectedRow : ''}`}>
@@ -138,12 +147,12 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
                 {months.map(key => <span key={key} className={`${layout.monthCell} ${selectedMonth === key ? layout.selectedCell : ''}`} />)}
                 {position ? <button type="button" className={`${layout.bar} ${tone}`} style={{ left: `${position.left}%`, width: `${position.width}%` }}
                   onClick={event => inspect(module, event.currentTarget)} aria-label={`Show ${module.title} overview`} aria-pressed={module.id === selectedId} data-inspected={module.id === selectedId}
-                  title={`${module.title} · ${dateLabel(module.start)} – ${dateLabel(module.end)} · ${status} · ${module.progress}% completed`}>
-                  <span className={layout.barFill} style={{ width: `${module.progress}%` }} /><span className={layout.barCaption}>{dateLabel(module.start)} – {dateLabel(module.end)}</span>{status === 'Completed' && <CheckCircle2 size={12} />}
-                </button> : module.start && module.end ? <button type="button" className={layout.noDates}
+                  title={`${module.title} · ${dateLabel(module.start)} – ${dateLabel(visualEnd)} · ${status} · ${module.progress}% completed`}>
+                  <span className={layout.barFill} style={{ width: `${module.progress}%` }} /><span className={layout.barCaption}>{dateLabel(module.start)} – {dateLabel(visualEnd)}</span>{status === 'Completed' && <CheckCircle2 size={12} />}
+                </button> : module.start && visualEnd ? <button type="button" className={layout.noDates}
                   onClick={event => { onMonthChange(module.start.slice(0, 7)); inspect(module, event.currentTarget); }}
                   aria-label={`Show ${module.title} schedule in ${module.start.slice(0, 4)}`}>
-                  {dateLabel(module.start)} – {dateLabel(module.end)} · View {module.start.slice(0, 4)}<ArrowRight size={12} />
+                  {dateLabel(module.start)} – {dateLabel(visualEnd)} · View {module.start.slice(0, 4)}<ArrowRight size={12} />
                 </button> : <button type="button" className={layout.noDates} onClick={event => inspect(module, event.currentTarget)} aria-label={`Show ${module.title} overview`} data-inspected={module.id === selectedId}>Dates to be confirmed<ArrowRight size={12} /></button>}
                 {positionFor(today, today) && <span className={layout.todayLine} style={{ left: `${positionFor(today, today)?.left || 0}%` }} />}
               </div>

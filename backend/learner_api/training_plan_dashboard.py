@@ -1,4 +1,5 @@
 """Learner-scoped, read-only sources for the Training Plan dashboard."""
+from collections import defaultdict
 from datetime import datetime, timezone
 import logging
 import math
@@ -58,6 +59,64 @@ def plan_module(row):
             **{key: row[key].isoformat() if row.get(key) else None for key in ('start_date', 'end_date')},
             **{key: number(row.get(key)) for key in ('total_otjh', 'weeks_number', 'sessions_number')},
             'learning_outcomes': []}
+
+
+def attach_curriculum_slots(module_rows, by_id, week_counts):
+    """Give every learner module the curriculum slot spine the Builder shows.
+
+    This is a READ of the curriculum scheduler, not a second one. The holidays
+    come from ``cohort_selected_holidays_by_cohort`` -- the same resolution the
+    Module Builder, the Teams series and the tutor conflict check use, with the
+    cohort's own ``excluded_holiday_ids`` deny-list already applied upstream --
+    and the spine comes from ``module_session_plan_for_count``, which is the
+    single door onto ``build_module_session_plan``. Nothing about holidays or
+    Reading Weeks is decided here, so the learner cannot be shown a timeline the
+    curriculum does not itself hold.
+
+    ``slots`` is what makes a holiday visible to a learner at all: a closed
+    delivery slot delivers no session, so a learner reading only session dates
+    sees an unexplained gap. Reading Weeks must come from this spine and never
+    be inferred from gaps between session dates -- a gap is also what a term
+    break, an unauthored week or a module that simply does not deliver that week
+    looks like.
+
+    Holidays are resolved once for every cohort on the page rather than per
+    module, because every module of a cohort shares that cohort's holidays.
+    """
+    from curriculum_api.views import (
+        cohort_selected_holidays_by_cohort, module_session_plan_for_count,
+        module_stored_session_count,
+    )
+
+    try:
+        holidays = cohort_selected_holidays_by_cohort(
+            [row.get('cohort_id') for row in module_rows]
+        )
+    except Exception:
+        log.warning('Could not resolve cohort holidays for the training plan.', exc_info=True)
+        holidays = {}
+
+    for row in module_rows:
+        module = by_id.get(row['id'])
+        if module is None:
+            continue
+        week_count = week_counts.get(row['id'], 0)
+        try:
+            plan = module_session_plan_for_count(
+                row,
+                module_stored_session_count(row, week_count),
+                holidays=holidays.get(str(row.get('cohort_id') or ''), []),
+            )
+        except Exception:
+            log.warning('Could not plan curriculum slots for module %s.', row['id'], exc_info=True)
+            plan = {}
+        module['curriculumSlots'] = plan.get('slots') or []
+        # The effective delivery end is the scheduler's own -- the last
+        # DELIVERED session, holiday shifts included. Deliberately separate from
+        # the stored `end_date` the module row carries, which a human may have
+        # typed and which no longer describes the run once a closure moves it.
+        module['effectiveEndDate'] = plan.get('finalEndDate') or ''
+        module['originalEndDate'] = plan.get('originalEndDate') or ''
 
 
 def assigned_group_coach(source, modules):
@@ -142,26 +201,34 @@ def read_dashboard(source, section=None):
         _, links = _builder_subject_metadata(cur, refs)
         ids = sorted({item['id'] for item in links.values()})
         if ids:
+            # cohort_id is read so the curriculum scheduler can resolve this
+            # module's cohort holidays -- including the ones a delivery team
+            # unticked. It is not published to the learner.
             cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.description,m.start_date,m.end_date,m.tutor_name,
                 coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name,
                 m.programme_name,m.cohort_name,m.group_name,m.total_otjh,m.weeks_number,m.sessions_number,
+                m.cohort_id,
                 coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
                 coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
                 coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time
                 FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
                 WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [ids])
-            modules = [plan_module(row) for row in rows(cur)]
+            module_rows = rows(cur)
+            modules = [plan_module(row) for row in module_rows]
             by_id = {module['id']: module for module in modules}
+            week_counts = defaultdict(int)
             cur.execute('''SELECT module_catalogue_id,learning_outcomes FROM curriculum.weeks
                 WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)
                 ORDER BY display_order,week_number,id''', [ids])
             for row in rows(cur):
+                week_counts[row['module_catalogue_id']] += 1
                 module = by_id.get(row['module_catalogue_id'])
                 if module is not None:
                     for outcome in as_list(row['learning_outcomes']):
                         text = clean_text(outcome) if isinstance(outcome, str) else ''
                         if text and text not in module['learning_outcomes']:
                             module['learning_outcomes'].append(text)
+            attach_curriculum_slots(module_rows, by_id, week_counts)
             cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
                 s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.repeat_pattern,s.status AS series_status,
                 o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url,o.status,
