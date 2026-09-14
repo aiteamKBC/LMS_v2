@@ -1,7 +1,12 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CurriculumProgramme, ReviewDetail, ReviewSummary } from '@/lib/curriculumApi';
+import type { CurriculumProgramme, ReviewDetail, ReviewSummary, ReviewType } from '@/lib/curriculumApi';
+
+const reviewTypes: ReviewType[] = [
+  { id: 'REVT-MCM', name: 'Monthly Coaching Meeting', code: 'mcm', isSystem: true, isActive: true },
+  { id: 'REVT-PROGRESS_REVIEW', name: 'Progress Review', code: 'progress_review', isSystem: true, isActive: true },
+];
 
 const summary: ReviewSummary = {
   id: 'REV-20260910120000000001',
@@ -10,6 +15,10 @@ const summary: ReviewSummary = {
   enabled: true,
   recurrence: { interval: 12, unit: 'weeks' },
   scheduleAnchorDate: '2026-09-10',
+  occurrenceCount: null,
+  reviewTypeId: 'REVT-PROGRESS_REVIEW',
+  reviewTypeCode: 'progress_review',
+  reviewTypeName: 'Progress Review',
   applicableStatuses: ['Active'],
   fieldCount: 1,
   createdAt: '2026-09-10T00:00:00Z',
@@ -65,6 +74,8 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
 
 const api = vi.hoisted(() => ({
   fetchProgrammeReviews: vi.fn(),
+  fetchReviewTypes: vi.fn(),
+  createReviewType: vi.fn(),
   fetchReviewDetail: vi.fn(),
   createReviewTemplate: vi.fn(),
   updateReviewTemplate: vi.fn(),
@@ -80,6 +91,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...api,
 }));
 
+import { CurriculumApiError } from '@/lib/curriculumApi';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { ReviewsTab } from '../ReviewsTab';
 import { ReviewFormModal } from '../ReviewForm';
@@ -88,6 +100,7 @@ import { CloneReviewsModal } from '../CloneReviewsModal';
 beforeEach(() => {
   vi.clearAllMocks();
   api.fetchProgrammeReviews.mockResolvedValue([]);
+  api.fetchReviewTypes.mockResolvedValue(reviewTypes);
   api.fetchCurriculumProgrammes.mockResolvedValue(programmes);
   api.fetchReviewSchedule.mockResolvedValue({
     programmeId: 'PROG-DATA', windowStart: '2026-09-01', windowEnd: '2027-08-31', monthsPreviewed: 12, months: [],
@@ -295,6 +308,73 @@ describe('ReviewFormModal', () => {
     await userEvent.click(screen.getByRole('button', { name: /Create review/ }));
 
     expect(await vi.waitUntil(() => (showCurriculumAlert as ReturnType<typeof vi.fn>).mock.calls.length > 0)).toBeTruthy();
+  });
+});
+
+describe('ReviewFormModal review type', () => {
+  it('loads the active review types into the General tab dropdown', async () => {
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+    await userEvent.click(await screen.findByRole('combobox', { name: /Review type/ }));
+
+    expect(await screen.findByRole('option', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Progress Review' })).toBeInTheDocument();
+  });
+
+  it('blocks moving past General until a review type is chosen', async () => {
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+
+    await userEvent.type(screen.getByLabelText(/Review name/), 'Monthly Learner Catch-up');
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+    expect(await screen.findByText('Review type is required.')).toBeInTheDocument();
+    // Still on General -- the Schedule step never unlocked.
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('adds a new type from the name alone and selects it automatically', async () => {
+    api.createReviewType.mockResolvedValue({
+      id: 'REVT-20260913120000000001', name: 'Career Review', code: 'career_review', isSystem: false, isActive: true,
+    });
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole('button', { name: /Add new type/ }));
+    const dialog = await screen.findByRole('dialog', { name: /Add Review Type/ });
+    await userEvent.type(within(dialog).getByLabelText(/Type name/), 'Career Review');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add' }));
+
+    // The name is the only thing sent: id/code/is_system/is_active are the
+    // backend's to generate.
+    await vi.waitFor(() => expect(api.createReviewType).toHaveBeenCalledWith('Career Review'));
+    expect(await screen.findByRole('combobox', { name: /Review type/ })).toHaveTextContent('Career Review');
+  });
+
+  it('shows the duplicate-name error against the Add Review Type field', async () => {
+    api.createReviewType.mockRejectedValue(
+      new CurriculumApiError('Please fix the highlighted fields.', 400, '/curriculum/review-types/', { fields: { name: 'A review type with this name already exists.' } }),
+    );
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole('button', { name: /Add new type/ }));
+    const dialog = await screen.findByRole('dialog', { name: /Add Review Type/ });
+    await userEvent.type(within(dialog).getByLabelText(/Type name/), 'Progress Review');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText('A review type with this name already exists.')).toBeInTheDocument();
+  });
+
+  it('edit preselects the review stored type, and a renamed review keeps it', async () => {
+    api.fetchReviewDetail.mockResolvedValue({ ...detail, name: 'Monthly Learner Catch-up', reviewTypeId: 'REVT-MCM', reviewTypeCode: 'mcm', reviewTypeName: 'Monthly Coaching Meeting' });
+    render(<ReviewFormModal programmeId="PROG-DATA" review={{ ...summary, name: 'Monthly Learner Catch-up' }} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    // Name and type are independent: the review is called something else
+    // entirely and is still typed as a Monthly Coaching Meeting.
+    expect(await screen.findByDisplayValue('Monthly Learner Catch-up')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /Review type/ })).toHaveTextContent('Monthly Coaching Meeting');
   });
 });
 

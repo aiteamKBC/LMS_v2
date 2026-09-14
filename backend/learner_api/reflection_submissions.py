@@ -9,7 +9,7 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import learner_self_only, learner_self_or_staff
+from login.permissions import learner_self_or_admin, learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ def create_reflection_submission(request):
     return _submit_reflection(request)
 
 
-@learner_self_only(body_field="learnerId")
+@learner_self_or_admin(body_field="learnerId")
 def _submit_reflection(request):
     if request.method != "POST":
         return _error("Method not allowed.", 405)

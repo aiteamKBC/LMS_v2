@@ -26382,6 +26382,10 @@ def reset_schema_ready_flags():
     _reviews._REVIEW_TABLES_READY = False
     from . import review_schedule as _review_schedule
     _review_schedule._REVIEW_SCHEDULE_TABLES_READY = False
+    from . import review_types as _review_types
+    _review_types.reset_ready_flag()
+    from . import review_instances as _review_instances
+    _review_instances._TABLES_READY = False
     _TABLE_COLUMNS_CACHE.clear()
     _TABLE_EXISTS_CACHE.clear()
     schema_gate.reset_verification_cache()

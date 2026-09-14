@@ -15,6 +15,17 @@ import { coachFetch } from '@/lib/coachFetch';
 import { initialsFor } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
+import { ReviewInstanceModal } from '@/pages/coach/shared/ReviewInstanceModal';
+import { openReviewInstanceForEvent } from '@/api/reviewInstances';
+import {
+  buildCoachSourceOptions,
+  eventMatchesSourceFilter,
+  eventSourceLabel,
+  filterForScheduleIntent,
+  isSourceFilterValue,
+  NON_REVIEW_SOURCE_FILTER_LABELS,
+  type SourceFilter,
+} from './sourceFilters';
 import {
   bookCoachCalendarEvent,
   statusLabel,
@@ -88,6 +99,21 @@ interface TimetableEvent {
   syncWarning?: string;
   reviewResponses?: Record<string, string>;
   reviewCompletedAt?: string | null;
+  /** Set on every occurrence produced by a Curriculum Review template --
+   *  the stable identity of the Review, never its display name. */
+  reviewTemplateId?: string | null;
+  /** The Review's CLASSIFICATION, from curriculum.review_types. `source`
+   *  above stays the routing bucket (mcr / progress-review / review) that
+   *  scheduling, Teams, artifacts and theming key on; these decide which
+   *  Review filter the event appears under. Null on non-review events and on
+   *  a Review whose template has no type yet. */
+  reviewTypeId?: string | null;
+  reviewTypeCode?: string | null;
+  /** The FILTER label -- never the card title, which is `title` above. */
+  reviewTypeName?: string | null;
+  reviewTypeIsSystem?: boolean;
+  reviewInstanceId?: string | null;
+  occurrenceNumber?: number | null;
   managerSignedAt?: string | null;
   managerSignedBy?: string;
   schedulerOnly?: boolean;
@@ -184,7 +210,7 @@ const LEARNER_UNAVAILABLE_MESSAGE = 'This learner is busy at that time. Choose a
 const TEAMS_SYNC_PERMISSION_MESSAGE = 'Saved locally. Microsoft Calendar needs updated permissions before this can sync to Teams.';
 const TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = 'Saved locally. Microsoft Calendar sync is not configured yet.';
 const TEAMS_SYNC_TEMPORARY_MESSAGE = 'Saved locally. Microsoft Calendar sync is temporarily unavailable; try again later or ask an admin to check Microsoft permissions.';
-const TEAMS_SYNC_LINK_MISSING_MESSAGE = 'Teams did not return a meeting link, so this event was moved back to Needs Schedule. Try scheduling again after Microsoft sync is available.';
+const TEAMS_SYNC_LINK_MISSING_MESSAGE = 'The meeting time is saved, but Teams did not return a meeting link. Retry calendar sync after Microsoft access is available.';
 
 async function readApiJson<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({})) as { detail?: unknown };
@@ -334,6 +360,15 @@ function eventConfig(event: TimetableEvent) {
     dot: 'bg-red-500',
     barBg: 'bg-red-500',
   };
+  const otherTheme = {
+    label: 'Other',
+    bg: 'bg-slate-50',
+    border: 'border-slate-300',
+    text: 'text-slate-800',
+    icon: 'ri-more-line',
+    dot: 'bg-slate-500',
+    barBg: 'bg-slate-500',
+  };
   const sourceTheme = event.source === 'mcr'
     ? mcrTheme
     : event.source === 'progress-review'
@@ -341,7 +376,9 @@ function eventConfig(event: TimetableEvent) {
       : event.source === 'catch-up'
         ? catchUpTheme
         : event.source === 'student-support' || event.type === 'welfare'
-          ? supportTheme
+        ? supportTheme
+        : event.source === 'other'
+          ? otherTheme
           : null;
   return sourceTheme || typeConfig(event.type);
 }
@@ -470,7 +507,8 @@ function statusDot(status: TimetableEvent['status']) {
   if (status === 'in-progress') return 'bg-primary-500';
   if (status === 'awaiting-signature') return 'bg-violet-500';
   if (status === 'cancelled') return 'bg-red-500';
-  return 'bg-rose-500'; // pending / not-scheduled
+  if (status === 'not-scheduled') return 'bg-red-500';
+  return 'bg-rose-500'; // pending
 }
 
 function buildSummaryMetrics(events: TimetableEvent[], referenceDate = new Date()): TimetableSummaryMetrics {
@@ -562,17 +600,20 @@ function formatDateInputValue(year: number, month: number, day: number) {
 /* â”€â”€â”€ Donut Ring â”€â”€â”€ */
 type ViewMode = 'month' | 'week' | 'day';
 type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'completed' | 'cancelled';
-type SourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
-type SchedulableSource = 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
-
-const SOURCE_FILTER_ORDER: SourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support'];
+// Source filters (fixed non-review chips + dynamic Review Type buckets) live
+// in ./sourceFilters, which shares its Review bucketing with the learner
+// calendar via @/lib/reviewTypeFilters.
+//
+// Unchanged: these are SCHEDULING buckets, not filters. The schedule modal,
+// its copy and its icons are keyed on the routing `source`.
+type SchedulableSource = 'mcr' | 'progress-review' | 'review' | 'catch-up' | 'student-support';
 const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'awaiting-signature', 'completed'];
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All',
   overdue: 'Overdue',
   'due-soon': 'Due Soon',
-  'needs-schedule': 'Needs Schedule',
+  'needs-schedule': 'Not Scheduled',
   scheduled: 'Scheduled',
   'in-progress': 'In Progress',
   'awaiting-signature': 'Awaiting Signature',
@@ -584,7 +625,7 @@ const STATUS_FILTER_DOTS: Record<StatusFilter, string> = {
   all: 'bg-foreground-400',
   overdue: 'bg-red-500',
   'due-soon': 'bg-rose-500',
-  'needs-schedule': 'bg-rose-500',
+  'needs-schedule': 'bg-red-500',
   scheduled: 'bg-primary-500',
   'in-progress': 'bg-secondary-500',
   'awaiting-signature': 'bg-violet-500',
@@ -592,30 +633,7 @@ const STATUS_FILTER_DOTS: Record<StatusFilter, string> = {
   cancelled: 'bg-red-500',
 };
 
-const SOURCE_FILTER_LABELS: Record<SourceFilter, string> = {
-  all: 'All Sources',
-  'live-session': 'Live Sessions',
-  mcr: 'MCR',
-  'progress-review': 'Progress Reviews',
-  'catch-up': 'Catch-up',
-  'student-support': 'Support',
-};
-
-const SOURCE_FILTER_CHIP_LABELS: Record<SourceFilter, string> = {
-  ...SOURCE_FILTER_LABELS,
-  'progress-review': 'PR',
-};
-
-const SOURCE_FILTER_DOTS: Record<SourceFilter, string> = {
-  all: 'bg-foreground-400',
-  'live-session': 'bg-violet-500',
-  mcr: 'bg-orange-500',
-  'progress-review': 'bg-teal-500',
-  'catch-up': 'bg-red-500',
-  'student-support': 'bg-blue-500',
-};
-
-const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'catch-up', 'student-support'];
+const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'review', 'catch-up', 'student-support'];
 const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; icon: string; accent: string; surface: string }> = {
   mcr: {
     description: 'Monthly coaching reviews waiting for a slot.',
@@ -628,6 +646,12 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
     icon: 'ri-file-chart-line',
     accent: 'text-teal-700',
     surface: 'from-teal-500/10 via-teal-400/5 to-transparent',
+  },
+  review: {
+    description: 'Curriculum reviews that still need a date.',
+    icon: 'ri-survey-line',
+    accent: 'text-secondary-700',
+    surface: 'from-secondary-500/10 via-secondary-400/5 to-transparent',
   },
   'catch-up': {
     description: 'Learner catch-up bookings waiting for placement.',
@@ -644,16 +668,7 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
 };
 
 function isSchedulableSource(value?: string): value is SchedulableSource {
-  return value === 'mcr' || value === 'progress-review' || value === 'catch-up' || value === 'student-support';
-}
-
-function isSourceFilterValue(value?: string): value is SourceFilter {
-  return value === 'all'
-    || value === 'live-session'
-    || value === 'mcr'
-    || value === 'progress-review'
-    || value === 'catch-up'
-    || value === 'student-support';
+  return value === 'mcr' || value === 'progress-review' || value === 'review' || value === 'catch-up' || value === 'student-support';
 }
 
 function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent | null {
@@ -706,13 +721,6 @@ function parseTimetableFocusIntent(value: unknown): TimetableFocusIntent | null 
   };
 }
 
-function eventMatchesSourceFilter(event: TimetableEvent, source: SourceFilter) {
-  if (source === 'all') return true;
-  if (source === 'live-session') return event.source === 'live-session' || event.type === 'live-session';
-  if (source === 'student-support') return event.source === 'student-support' || event.type === 'welfare';
-  return event.source === source;
-}
-
 function eventIdentity(event: TimetableEvent) {
   return event.eventKey || event.id;
 }
@@ -760,7 +768,7 @@ function formatCompactDate(value?: string | null) {
 
 function sourceSessionLabel(event: TimetableEvent) {
   if (!isSchedulableSource(event.source)) return event.title;
-  const baseLabel = SOURCE_FILTER_LABELS[event.source];
+  const baseLabel = eventSourceLabel(event.source);
   if (event.source === 'catch-up') return event.schedulerOnly ? 'New Catch-up Session' : baseLabel;
   return event.sequence ? `${baseLabel} ${event.sequence}` : baseLabel;
 }
@@ -889,6 +897,11 @@ export default function CoachTimetablePage() {
   const [eventActionError, setEventActionError] = useState<string | null>(null);
   const [eventActionNotice, setEventActionNotice] = useState<string | null>(null);
   const [progressReviewCompletionEvent, setProgressReviewCompletionEvent] = useState<TimetableEvent | null>(null);
+  // The Curriculum review form opened from an event, and its instance id. Any
+  // Review template's occurrence can open one; nothing here is per-review-type.
+  const [reviewFormEvent, setReviewFormEvent] = useState<TimetableEvent | null>(null);
+  const [reviewFormInstanceId, setReviewFormInstanceId] = useState('');
+  const [reviewFormBusy, setReviewFormBusy] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleModalType, setScheduleModalType] = useState<SchedulableSource>('mcr');
   const [scheduleModalLearnerKey, setScheduleModalLearnerKey] = useState('');
@@ -1274,16 +1287,13 @@ export default function CoachTimetablePage() {
     return visibleRangeEvents.filter(event => matchesSearchTerm(event, normalizedSearchTerm));
   }, [normalizedSearchTerm, visibleRangeEvents]);
 
-  const sourceFilterOptions = useMemo(() => {
-    return SOURCE_FILTER_ORDER.map(source => ({
-      value: source,
-      label: SOURCE_FILTER_CHIP_LABELS[source],
-      dot: SOURCE_FILTER_DOTS[source],
-      count: source === 'all'
-        ? searchedVisibleRangeEvents.length
-        : searchedVisibleRangeEvents.filter(event => eventMatchesSourceFilter(event, source)).length,
-    }));
-  }, [searchedVisibleRangeEvents]);
+  // Chips come from every loaded event so a Review Type's chip stays put
+  // (reading 0) as the coach pages between months -- the same way the fixed
+  // chips have always behaved. Counts are over the searched visible range.
+  const sourceFilterOptions = useMemo(
+    () => buildCoachSourceOptions(calendarEvents, searchedVisibleRangeEvents),
+    [calendarEvents, searchedVisibleRangeEvents],
+  );
 
   const sourceFilteredVisibleRangeEvents = useMemo(() => {
     if (filterSource === 'all') return searchedVisibleRangeEvents;
@@ -1339,9 +1349,11 @@ export default function CoachTimetablePage() {
     cancelled: sourceFilteredVisibleRangeEvents.filter(event => event.status === 'cancelled').length,
   };
   const selectedDayLabel = `${DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, ${selectedDay} ${MONTH_NAMES[viewMonth]}`;
+  const activeSourceLabel = sourceFilterOptions.find(option => option.value === filterSource)?.longLabel
+    ?? NON_REVIEW_SOURCE_FILTER_LABELS.all;
   const activeFilterLabel = filterSource === 'all'
     ? STATUS_FILTER_LABELS[filterStatus]
-    : `${SOURCE_FILTER_CHIP_LABELS[filterSource]} / ${STATUS_FILTER_LABELS[filterStatus]}`;
+    : `${activeSourceLabel} / ${STATUS_FILTER_LABELS[filterStatus]}`;
 
   const datePickerValue = formatDateInputValue(viewYear, viewMonth, selectedDay);
 
@@ -1467,7 +1479,9 @@ export default function CoachTimetablePage() {
 
     setViewMode('month');
     setFilterStatus('needs-schedule');
-    setFilterSource(pendingScheduleIntent.source);
+    // A legacy `?source=mcr` deep-link now resolves to whichever Review Type
+    // bucket those events landed in -- see filterForScheduleIntent.
+    setFilterSource(filterForScheduleIntent(pendingScheduleIntent.source, calendarEvents));
     setSearchTerm('');
     setScheduleModalOpen(false);
     setScheduleModalError(null);
@@ -1625,12 +1639,43 @@ export default function CoachTimetablePage() {
     updateSingleEvent,
   ]);
 
+  const openReviewForm = useCallback(async (event: TimetableEvent) => {
+    if (!event.eventKey) return;
+    setEventActionError(null);
+    setEventActionNotice(null);
+    setReviewFormBusy(true);
+    try {
+      const { instanceId } = await openReviewInstanceForEvent(event.eventKey);
+      setReviewFormInstanceId(instanceId);
+      setReviewFormEvent(event);
+    } catch (err) {
+      setEventActionError(err instanceof Error ? err.message : 'Unable to open this review form.');
+    } finally {
+      setReviewFormBusy(false);
+    }
+  }, []);
+
   const openSelectedProgressReviewForm = useCallback(() => {
     if (!selectedEvent || selectedEvent.source !== 'progress-review') return;
     setEventActionError(null);
     setEventActionNotice(null);
+    // A Progress Review's questions come from Curriculum like every other
+    // Review, so this opens the same ReviewInstanceModal the Progress Reviews
+    // and Meetings pages open -- one review_instance, one form definition, one
+    // answer store, whichever screen the coach started from. The legacy
+    // hard-coded PR form is only for an old occurrence that carries neither a
+    // review instance nor the Curriculum template that would create one.
+    if (selectedEvent.reviewInstanceId) {
+      setReviewFormInstanceId(selectedEvent.reviewInstanceId);
+      setReviewFormEvent(selectedEvent);
+      return;
+    }
+    if (selectedEvent.reviewTemplateId) {
+      void openReviewForm(selectedEvent);
+      return;
+    }
     setProgressReviewCompletionEvent(selectedEvent);
-  }, [selectedEvent]);
+  }, [openReviewForm, selectedEvent]);
 
   const handleProgressReviewSubmit = useCallback(async (responses: ProgressReviewResponses) => {
     if (!progressReviewCompletionEvent?.eventKey) return;
@@ -1976,7 +2021,7 @@ export default function CoachTimetablePage() {
                       key={option.value}
                       type="button"
                       onClick={() => setFilterSource(isActive ? 'all' : option.value)}
-                      title={`${option.label} (${option.count})`}
+                      title={`${option.longLabel} (${option.count})`}
                       className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-bold transition-smooth cursor-pointer whitespace-nowrap ${
                         isActive
                           ? 'border-primary-300 bg-primary-500 text-white shadow-sm'
@@ -2491,6 +2536,25 @@ export default function CoachTimetablePage() {
                       )}
                     </div>
                   )}
+                  {selectedEvent.reviewTemplateId && (
+                    <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-secondary-200 bg-secondary-50 p-4 sm:flex-row sm:items-center">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary-100 text-secondary-700">
+                        <AppIcon className="ri-survey-line"></AppIcon>
+                      </span>
+                      <div className="flex-1">
+                        <p className="text-xs font-bold text-secondary-900">{selectedEvent.title} form</p>
+                        <p className="mt-1 text-[12px] text-secondary-700">The questions for this review come from Curriculum. Answers save as you go and can be finished later.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openReviewForm(selectedEvent)}
+                        disabled={eventActionBusy || reviewFormBusy}
+                        className="whitespace-nowrap rounded-lg bg-secondary-600 px-4 py-2.5 text-[12px] font-bold text-white transition hover:bg-secondary-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <AppIcon className={`${reviewFormBusy ? 'ri-loader-4-line animate-spin' : 'ri-file-edit-line'} mr-1.5`}></AppIcon>Open form
+                      </button>
+                    </div>
+                  )}
                   {!isLiveSessionEvent(selectedEvent) && canEditScheduleEvent(selectedEvent) && (
                     <div className="mt-4 rounded-2xl border border-background-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-3">
@@ -2501,7 +2565,7 @@ export default function CoachTimetablePage() {
                           {selectedEvent.status === 'not-scheduled' && (selectedEvent.source === 'catch-up' || selectedEvent.source === 'student-support') ? 'Approve & Schedule' : 'Schedule Meeting'}
                         </h4>
                         {selectedEvent.status === 'not-scheduled' && (
-                          <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[12px] font-bold text-rose-700">Needs scheduling</span>
+                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-[12px] font-bold text-red-700">Needs scheduling</span>
                         )}
                       </div>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -2606,7 +2670,7 @@ export default function CoachTimetablePage() {
                   .map(ev => {
                     const tc = eventConfig(ev);
                     const sourceLabel = ev.source && isSchedulableSource(ev.source)
-                      ? SOURCE_FILTER_CHIP_LABELS[ev.source]
+                      ? eventSourceLabel(ev.source)
                       : tc.label;
                     return (
                       <button
@@ -2978,7 +3042,7 @@ export default function CoachTimetablePage() {
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex flex-wrap items-center gap-1.5">
                         <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[11px] font-bold text-primary-700">
-                          {SOURCE_FILTER_LABELS[scheduleModalType]}
+                          {eventSourceLabel(scheduleModalType)}
                         </span>
                         <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusPillClass(selectedScheduleEvent.status)}`}>
                           {statusLabel(selectedScheduleEvent.status)}
@@ -3025,7 +3089,7 @@ export default function CoachTimetablePage() {
                             {scheduleSourceCounts[source]}
                           </span>
                         </div>
-                        <p className="mt-2 text-[15px] font-heading font-semibold text-foreground-950">{SOURCE_FILTER_LABELS[source]}</p>
+                        <p className="mt-2 text-[15px] font-heading font-semibold text-foreground-950">{eventSourceLabel(source)}</p>
                         <p className="mt-0.5 text-[12px] leading-5 text-foreground-500">{meta.description}</p>
                       </button>
                     );
@@ -3039,7 +3103,7 @@ export default function CoachTimetablePage() {
                   <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-background-50 text-foreground-300">
                     <AppIcon className="ri-inbox-archive-line text-lg"></AppIcon>
                   </span>
-                  <p className="text-sm font-semibold text-foreground-800">No {SOURCE_FILTER_LABELS[scheduleModalType].toLowerCase()} items are available right now.</p>
+                  <p className="text-sm font-semibold text-foreground-800">No {eventSourceLabel(scheduleModalType).toLowerCase()} items are available right now.</p>
                   <p className="mt-1 text-[12px] text-foreground-500">
                     Switch source or come back when a learner item is ready to be placed on the calendar.
                   </p>
@@ -3148,7 +3212,7 @@ export default function CoachTimetablePage() {
                   {selectedScheduleEvent && !scheduleModalCompact && (
                     <section className="rounded-lg border border-primary-200/70 bg-primary-50/60 px-3.5 py-3">
                       <div className="flex flex-wrap items-center gap-1.5 text-[12px] text-foreground-700">
-                        <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-foreground-900">{SOURCE_FILTER_LABELS[scheduleModalType]}</span>
+                        <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-foreground-900">{eventSourceLabel(scheduleModalType)}</span>
                         <span className="rounded-full bg-white px-2.5 py-1">{selectedScheduleEvent.learner || 'Learner'}</span>
                         <span className="rounded-full bg-white px-2.5 py-1">{scheduleModalDate || 'Choose date'}</span>
                         <span className="rounded-full bg-white px-2.5 py-1">{scheduleModalTime || '09:00'}</span>
@@ -3200,6 +3264,19 @@ export default function CoachTimetablePage() {
             </div>
           </div>
         </div>
+      )}
+      {reviewFormEvent && reviewFormInstanceId && (
+        <ReviewInstanceModal
+          key={reviewFormInstanceId}
+          event={reviewFormEvent}
+          instanceId={reviewFormInstanceId}
+          onClose={() => { setReviewFormEvent(null); setReviewFormInstanceId(''); }}
+          onCompleted={(status) => {
+            updateSingleEvent({ ...reviewFormEvent, status: status as TimetableEvent['status'] });
+            setReviewFormEvent(null);
+            setReviewFormInstanceId('');
+          }}
+        />
       )}
       {progressReviewCompletionEvent && (
         <ProgressReviewCompletionModal

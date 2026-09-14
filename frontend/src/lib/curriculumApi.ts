@@ -3920,6 +3920,23 @@ export interface ReviewNotificationFlags {
   participant: boolean;
 }
 
+/** A Review's classification, chosen in the Review editor's General tab.
+ *
+ *  Type is NOT name and NOT schedule: a Review named "Monthly Learner
+ *  Catch-up" of type Monthly Coaching Meeting still filters as MCM on the
+ *  coach calendar, and it may recur every 6 weeks -- the type never implies a
+ *  recurrence. `code` is generated once from the name and frozen, so routing
+ *  survives a rename; `id` is the only thing a Review ever stores. */
+export interface ReviewType {
+  id: string;
+  name: string;
+  /** Stable routing code. 'mcm' and 'progress_review' are the system types. */
+  code: string;
+  /** System types can never be renamed or deleted. */
+  isSystem: boolean;
+  isActive: boolean;
+}
+
 export interface ReviewSummary {
   id: string;
   programmeId: string;
@@ -3930,6 +3947,12 @@ export interface ReviewSummary {
   scheduleAnchorDate: string;
   /** How many times this review recurs before it stops; null/undefined means unlimited. */
   occurrenceCount: number | null;
+  /** The Review Type this review is classified as -- a review_types.id, the
+   *  stable identity every downstream consumer keys on. */
+  reviewTypeId: string;
+  /** Echoed for display and calendar routing; never written by a client. */
+  reviewTypeCode: string;
+  reviewTypeName: string;
   applicableStatuses: string[];
   fieldCount: number;
   createdAt: string;
@@ -3963,6 +3986,8 @@ export interface CreateReviewInput {
   scheduleAnchorDate?: string;
   /** Optional -- omit or leave null for a review that recurs indefinitely. */
   occurrenceCount?: number | null;
+  /** Required -- a Review cannot be saved without a Review Type. */
+  reviewTypeId: string;
   applicableStatuses: string[];
   signatures: ReviewRoleFlags;
   visibleTo: ReviewRoleFlags;
@@ -3994,6 +4019,34 @@ export interface FetchReviewsOptions {
   signal?: AbortSignal;
   skipCache?: boolean;
   revalidate?: boolean;
+}
+
+/** Every active Review Type, system types first. */
+export function fetchReviewTypes(options: FetchReviewsOptions = {}) {
+  return fetchCollection<ReviewType>('/curriculum/review-types/', {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
+  });
+}
+
+/** Create a custom Review Type. The name is the ONLY thing a user supplies:
+ *  the backend generates the id, the stable code, and the system/active
+ *  flags, so none of them appear in the create UI. */
+export async function createReviewType(name: string) {
+  const payload = await postJson<{ created: boolean; reviewType: ReviewType }>(
+    '/curriculum/review-types/', { name },
+  );
+  return payload.reviewType;
+}
+
+/** Deactivate a custom Review Type. Never a hard delete -- Reviews already
+ *  classified with it keep working and keep classifying. System types are
+ *  refused by the backend. */
+export function archiveReviewType(reviewTypeId: string) {
+  return deleteJson<{ deleted: boolean; archived: boolean; id: string; reviewType: ReviewType }>(
+    `/curriculum/review-types/${encodeURIComponent(reviewTypeId)}/`,
+  );
 }
 
 export function fetchProgrammeReviews(programmeId: string, options: FetchReviewsOptions = {}) {

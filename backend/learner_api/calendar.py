@@ -1,4 +1,4 @@
-"""Learner-facing calendar: coaching sessions from "Coach".coach_calendar_event.
+﻿"""Learner-facing calendar: coaching sessions from "Coach".coach_calendar_event.
 
     GET /learner_api/calendar/<kind>/<int:pk>/
 
@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 EVENT_TITLES = {
     "mcr": "Monthly Coaching",
     "progress-review": "Progress Review",
+    "gateway": "Gateway",
+    "other": "Other",
     "catch-up": "Catch-up Session",
     "student-support": "Student Support",
     # Onboarding reviews (see ONBOARDING_REVIEW_LABELS below).
@@ -54,6 +56,8 @@ EVENT_TITLES = {
 EVENT_JSON_TYPES = {
     "mcr": "coaching",
     "progress-review": "review",
+    "gateway": "review",
+    "other": "coaching",
     "catch-up": "coaching",
     "student-support": "welfare",
     "eligibility-review": "review",
@@ -64,7 +68,7 @@ EVENT_JSON_TYPES = {
 # What a learner can book for themselves. Monthly coaching and progress reviews
 # must be booked against a generated programme-cycle eventKey so the learner and
 # coach see the same official calendar row.
-BOOKABLE_TYPES = ("catch-up", "student-support", "mcr", "progress-review")
+BOOKABLE_TYPES = ("catch-up", "student-support", "mcr", "progress-review", "gateway", "other")
 
 # The Microsoft Graph invite subject uses the same wording as the page — see
 # coach_api.BOOKED_EVENT_TITLES, which mirrors EVENT_TITLES above.
@@ -244,13 +248,10 @@ def _belongs_to_current_cycle(record, mirror):
 def _generated_cycle_events(learner, mirror, stored_by_key):
     """The learner's monthly-coaching and progress-review slots for the cycle.
 
-    Delegates to the coach timetable's own generator so there is one definition
-    of when these fall — every 30 days for monthly coaching, every 12 weeks for
-    a progress review, counted from the learner's start date and stopping at
-    their end date. Importing it rather than restating it is the point: two
-    implementations of the same cycle would drift apart the first time either
-    was tuned, and the learner and their coach would then be told different
-    dates for the same meeting.
+    Uses the Curriculum review occurrence engine for configured programmes so
+    the learner and coach share one definition of recurrence, eligibility and
+    occurrence numbering. Older rows without a programme still use the legacy
+    fixed-interval fallback below.
 
     A slot that has been scheduled already appears in `stored_by_key` and is
     skipped here, because the stored row carries the real date, time and status.
@@ -263,6 +264,8 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
         TIMETABLE_PROGRESS_REVIEW_INTERVAL,
         build_timetable_event_key,
         iterate_generated_schedule_dates,
+        resolve_curriculum_programme_id,
+        review_event_type_for_type_code,
         resolve_schedule_window,
     )
 
@@ -271,6 +274,89 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
         # without one there is nothing to generate from. A learner reaches that
         # state before their first activation.
         return []
+
+    # The coach timetable is driven by Curriculum review templates.  Resolve
+    # those same occurrences here so event keys and recurrence dates stay
+    # identical when a learner books a programme-cycle slot.  The legacy
+    # interval generator below remains for profiles without a programme (the
+    # local/dev fixtures and pre-Curriculum learner rows).
+    if _s(getattr(mirror, "programme", "")):
+        try:
+            from curriculum_api.review_instances import resolve_programme_review_occurrences
+
+            programme_id = resolve_curriculum_programme_id(getattr(mirror, "programme", None))
+            profile_start, profile_end = resolve_schedule_window(mirror.id, {}, {}, mirror)
+            # Coach recurrence anchors to the learner's source enrolment row;
+            # the mirror's dates can be a cohort delivery window after a
+            # placement edit. Prefer the source row here for the same reason.
+            start_date = _as_date(getattr(learner, "start_date", None)) or profile_start
+            end_date = _as_date(
+                getattr(learner, "end_date", None)
+                or getattr(learner, "practical_period_end_date", None)
+                or getattr(learner, "apprenticeship_end_date", None)
+            ) or profile_end
+            if not programme_id or not start_date or not end_date or end_date <= start_date:
+                return []
+            learner_status = _s(
+                getattr(mirror, "programme_status", None)
+                or getattr(mirror, "status", None)
+                or getattr(learner, "programme_status", None)
+                or getattr(learner, "status", None)
+            )
+            occurrences = resolve_programme_review_occurrences(
+                programme_id,
+                mirror.id,
+                learner_status,
+                start_date,
+                start_date,
+                end_date,
+                template_cache={},
+            )
+            events = []
+            for occurrence in occurrences:
+                source = review_event_type_for_type_code(occurrence.get("reviewTypeCode"))
+                if source not in {"mcr", "progress-review"}:
+                    continue
+                target = occurrence.get("targetDate")
+                if not target:
+                    continue
+                event_key = build_timetable_event_key(
+                    mirror.id, source, occurrence.get("occurrenceNumber") or 1, target,
+                )
+                if event_key in stored_by_key:
+                    continue
+                events.append({
+                    "id": event_key,
+                    "eventKey": event_key,
+                    "title": _s(occurrence.get("reviewName")) or EVENT_TITLES.get(source, "Coaching Session"),
+                    "source": source,
+                    "type": EVENT_JSON_TYPES.get(source, "coaching"),
+                    "sequence": occurrence.get("occurrenceNumber") or 1,
+                    "status": CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+                    "date": target.isoformat(),
+                    "targetDate": target.isoformat(),
+                    "scheduledDate": None,
+                    "scheduledTime": None,
+                    "durationMinutes": 60,
+                    "coachName": _s(getattr(mirror, "coach_name", "")),
+                    "coachEmail": _s(getattr(mirror, "coach_email", "")),
+                    "meetingProvider": "",
+                    "meetingLink": "",
+                    "notes": f"Generated from the Curriculum review schedule. Target date: {target.isoformat()}.",
+                    "reviewResponses": {},
+                    "reviewCompletedAt": None,
+                    "invited": False,
+                    "syncError": "",
+                    "isTimeEstimated": True,
+                    "generated": True,
+                })
+            return events
+        except Exception:
+            # A Curriculum read failure must not surface unbookable generated
+            # cards. The coach timetable is the source used for booking, so
+            # return no authoritative cycle slots until it is available again.
+            logger.warning("Could not resolve Curriculum cycle for learner calendar.", exc_info=True)
+            return []
 
     start_date, end_date = resolve_schedule_window(mirror.id, {}, {}, mirror)
     # Falling back to the enrolment row: the coach passes prefetched maps of
@@ -346,6 +432,15 @@ def _serialize_event(record):
     event_type = _s(record.event_type) or "mcr"
     display_date = record.scheduled_date or record.target_date
     meeting_link = _s(record.meeting_link) or _s(record.graph_web_link)
+    from coach_api.views import public_graph_sync_warning
+    sync_warning = public_graph_sync_warning(_s(record.last_graph_sync_error))
+    booking_parts = _s(getattr(record, "idempotency_key", "")).split(":")
+    imported_booking = (
+        len(booking_parts) == 6 and booking_parts[0] == "learner-book"
+        and booking_parts[1] == ("mcm" if event_type == "mcr" else "progress-review")
+        and event_type in {"mcr", "progress-review"}
+        and booking_parts[2] in SOURCE_MODELS and booking_parts[5].isdigit()
+    )
     return {
         "id": record.event_key,
         "eventKey": record.event_key,
@@ -372,7 +467,11 @@ def _serialize_event(record):
         # mailbox, ...). Without this the UI shows a confident "Booked" for a
         # meeting that reached nobody's calendar or inbox.
         "invited": bool(_s(record.graph_event_id)),
-        "syncError": _s(record.last_graph_sync_error),
+        "syncError": sync_warning,
+        "syncState": getattr(record, "sync_state", ""),
+        "syncWarning": _friendly_sync_warning(sync_warning) if sync_warning else "",
+        "reviewId": booking_parts[5] if imported_booking else "",
+        "assignmentMonth": booking_parts[4] if imported_booking else "",
     }
 
 
@@ -459,6 +558,29 @@ def _learner_booking_record(kind, pk, event_key):
     if not record or _s(record.event_type) not in CANCELLABLE_TYPES:
         return None
     return record
+
+
+@learner_self_or_staff(kwarg="pk")
+def learner_calendar_event_review(request, kind, pk, event_key):
+    """Return the read-only Curriculum form for a learner calendar event.
+
+    The endpoint never creates a review instance. Scheduling (or the coach's
+    first open) owns that lifecycle; an event without a linked instance simply
+    returns ``instance: null``.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    record = _learner_calendar_record(kind, pk, event_key)
+    if not record:
+        return _error("Calendar event not found for this learner.", 404)
+    instance_id = _s(getattr(record, "review_instance_id", ""))
+    if not instance_id:
+        return JsonResponse({"instance": None})
+    from curriculum_api import review_instances
+    instance = review_instances.get_review_instance(instance_id)
+    if not instance:
+        return _error("Review instance not found.", 404)
+    return JsonResponse(review_instances.review_instance_form_definition(instance))
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -773,11 +895,18 @@ def learner_calendar_book(request, kind, pk):
     # (LearnerProfile's name column is full_name, not username.)
     learner_name = _s(getattr(mirror, "full_name", "")) or _s(learner.username)
     learner_email = _s(getattr(mirror, "email", "")) or _s(learner.email)
-    requires_coach_approval = session_type in {"catch-up", "student-support"} and not is_onboarding_review
-    calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk
-
     assignment_month = _s(payload.get("assignmentMonth")) if session_type in {"mcr", "progress-review"} else ""
     imported_review_id = _s(payload.get("reviewId")) if assignment_month else ""
+    # Requests opened from the generic learner modal go to the coach for
+    # approval. Programme-cycle rows opened from an official calendar card
+    # retain their existing direct scheduling flow.
+    direct_cycle_request = session_type in {"mcr", "progress-review"} and not _s(payload.get("eventKey")) and not assignment_month
+    requires_coach_approval = (
+        session_type in {"catch-up", "student-support", "gateway", "other"}
+        or direct_cycle_request
+    ) and not is_onboarding_review
+    calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk
+
     if assignment_month:
         if not imported_review_id:
             return _error("reviewId is required when scheduling an imported monthly coaching review.", 400)
@@ -787,7 +916,10 @@ def learner_calendar_book(request, kind, pk):
             if not window_start or not window_start <= scheduled_date <= window_end or duration_minutes != 60:
                 return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
 
-    if session_type in {"mcr", "progress-review"} and not (assignment_month and not _s(payload.get("eventKey"))):
+    # A supplied event key means the learner opened an official generated
+    # programme slot. Without one, MCM/PR requests from the general picker use
+    # the normal coach-approval path (including imported-review bookings).
+    if session_type in {"mcr", "progress-review"} and _s(payload.get("eventKey")):
         event_key = _s(payload.get("eventKey"))
         if not event_key:
             return _error(
@@ -927,7 +1059,11 @@ def learner_calendar_book(request, kind, pk):
                     ]
                 )
             digest = hashlib.sha256("\x1f".join(logical_parts).encode("utf-8")).hexdigest()
-            idempotency_key = f"learner-book:{digest}"
+            idempotency_key = (
+                f"learner-book:request:{session_type}:{digest}"
+                if session_type in {"mcr", "progress-review"}
+                else f"learner-book:{digest}"
+            )
 
         replay = CoachCalendarEvent.objects.filter(
             owner_email=owner_email.strip().lower(),
@@ -1113,6 +1249,7 @@ def learner_calendar_reschedule(request, kind, pk):
             record.scheduled_date == scheduled_date
             and record.scheduled_time == scheduled_time
             and record.duration_minutes == duration_minutes
+            and record.sync_state == CoachCalendarEvent.SYNC_SYNCED
         ):
             _mark_imported_review_scheduled(
                 payload.get("reviewId"), record.learner_id, scheduled_date, scheduled_time,

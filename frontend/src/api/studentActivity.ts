@@ -114,7 +114,7 @@ export interface SubjectMaterial {
     answers: { question_id: number; question_body: string; learner_answer: unknown; is_correct: boolean }[] };
 }
 
-export async function subjectRequest<T>(url: string, options: RequestInit = {}): Promise<T> {
+export async function subjectRequest<T>(url: string, options: RequestInit & { revalidate?: boolean } = {}): Promise<T> {
   if (!options.method || options.method.toUpperCase() === 'GET') {
     const cacheable = url.includes('/subject-covers/');
     return readLearnerJson<T>(url, { ...options, ttlMs: cacheable ? 30_000 : 0 });

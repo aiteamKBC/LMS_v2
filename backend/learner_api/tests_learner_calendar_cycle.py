@@ -77,7 +77,7 @@ class GeneratedCycleTests(SimpleTestCase):
         wrong_blank=_record(learner_id=101,event_key='ambiguous-source-id');wrong_blank.learner_email=''
         queryset=Mock();queryset.order_by.return_value=[mine,foreign,blank,wrong_blank]
         with patch('learner_api.calendar.CoachCalendarEvent.objects.filter',return_value=queryset), \
-             patch('learner_api.calendar._serialize_event',side_effect=lambda record:{'eventKey':record.event_key}), \
+             patch('learner_api.calendar._serialize_event',side_effect=lambda record,**_:{'eventKey':record.event_key}), \
              patch('learner_api.calendar._generated_cycle_events',return_value=[]) as generate:
             events=coaching_events_for_learner(_learner(),_mirror())
         self.assertEqual([row['eventKey'] for row in events],[mine.event_key,blank.event_key])

@@ -15,7 +15,7 @@ from django.core import signing
 from django.db import connections, DatabaseError, transaction
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from login.permissions import learner_self_only
+from login.permissions import learner_self_or_admin
 
 
 def text(value):
@@ -162,7 +162,7 @@ def parse_request(request):
 
 
 @csrf_exempt
-@learner_self_only(body_field="learnerId")
+@learner_self_or_admin(body_field="learnerId")
 def check_assignment(request):
     try:
         payload = parse_request(request)
@@ -174,7 +174,7 @@ def check_assignment(request):
 
 
 @csrf_exempt
-@learner_self_only(body_field="learnerId")
+@learner_self_or_admin(body_field="learnerId")
 def export_presentation(request):
     try:
         payload = parse_request(request)

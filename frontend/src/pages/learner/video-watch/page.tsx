@@ -363,7 +363,7 @@ export default function ComponentViewPage() {
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
   const weekLabel = ctx?.weekLabel ?? weekTitle;
-  const backHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
+  const backHref = kind && id ? `/workspace/learner/${kind}/${id}/dashboard` : '/workspace/learner/dashboard';
 
 
   // A quiz component has nowhere to show its questions — the quiz page owns
@@ -943,6 +943,7 @@ export default function ComponentViewPage() {
                     moduleTitle={moduleTitle}
                     weekTitle={weekTitle}
                     plannedOtjh={component.expectedOtjh ?? null}
+                    initialMonth={searchParams.get('month')}
                     questionHtml={component.assignmentBriefHtml}
                     questionText={component.assignmentBrief}
                     ksbMappings={component.ksbMappings || []}

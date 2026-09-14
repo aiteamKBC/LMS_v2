@@ -3,11 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import { componentTypeMeta, gradePercent, hasComponentContent, isComponentComplete } from '@/utils/learnerJourney';
+import { overviewSchedule } from '@/api/learnerOverview';
+import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import {
   isNavigableComponent,
   toggleExpandedWeek,
   weekComponentRows,
   weekDisplayLabel,
+  weekMonthHeadings,
   type SidebarWeek,
 } from './weekPreview';
 
@@ -52,6 +55,8 @@ export function ActivitySidebar({
   moduleTitle,
   weeks,
   completedIds,
+  kind,
+  id,
   currentComponentId,
   currentQuizId,
   completionTimeFor,
@@ -61,6 +66,12 @@ export function ActivitySidebar({
   onAccessBlocked,
 }: ActivitySidebarProps) {
   const navigate = useNavigate();
+  const learnerKind = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
+  const schedule = useLiveLearnerRead(learnerKind, id, weeks.length > 1, overviewSchedule.read, overviewSchedule.peek);
+  const moduleIds = new Set(weeks.flatMap(week => week.components.flatMap(component => component.moduleId ? [component.moduleId] : [])));
+  const matchingModules = (schedule.data?.modules || []).filter(module => moduleIds.size
+    ? moduleIds.has(module.id) : module.title.trim().toLowerCase() === moduleTitle.trim().toLowerCase());
+  const plannedModule = matchingModules.length === 1 ? matchingModules[0] : undefined;
   // Which week of the plan is expanded, if any. Picking a week used to navigate
   // straight into one of its activities; it now opens under the row it belongs
   // to and whatever is on screen stays there.
@@ -76,6 +87,7 @@ export function ActivitySidebar({
   const activeWeekIndex = weeks.findIndex((w) => w.active);
   const currentWeekLabel = activeWeekIndex < 0 ? weekTitle : weekDisplayLabel(weeks, activeWeekIndex);
   const hasUnavailableContent = weekComponents.some((c) => !hasComponentContent(c));
+  const monthHeadings = weekMonthHeadings(weeks, plannedModule?.start_date);
 
   /** Whether this row is the activity the host page is showing. */
   const isCurrentRow = (c: JourneyComponent) => (
@@ -85,9 +97,10 @@ export function ActivitySidebar({
   );
 
   return (
-    <aside className="space-y-4 lg:sticky lg:top-4">
+    <aside aria-label="Module activities" className="min-w-0 space-y-4 lg:sticky lg:top-4">
       <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
         <div className="px-4 py-3 border-b border-background-300">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">Current week</p>
           <h2 className="text-sm font-heading font-bold text-foreground-800">{currentWeekLabel || 'This week'}</h2>
           <p className="text-[11px] text-foreground-400 mt-0.5">
             {weekComponents.length} components{' '}
@@ -182,8 +195,10 @@ export function ActivitySidebar({
               const expanded = viewable && weekKey === expandedWeek;
               return (
                 <li key={weekKey}>
+                  {monthHeadings[index] && <h3 className="border-b border-background-300 bg-background-100 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-foreground-600">{monthHeadings[index]}</h3>}
                   <button
                     disabled={!viewable}
+                    aria-label={`${weekDisplayLabel(weeks, index)}, ${w.count} components${w.active ? ', Current' : weekComplete ? ', Done' : ''}`}
                     aria-expanded={viewable ? expanded : undefined}
                     onClick={() => setExpandedWeek(toggleExpandedWeek(expandedWeek, weekKey))}
                     className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${

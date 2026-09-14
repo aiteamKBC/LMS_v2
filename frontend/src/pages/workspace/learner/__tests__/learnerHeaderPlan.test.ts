@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PlanModule } from '@/api/trainingPlanDashboard';
-import { learnerHeaderPlan } from '../learnerHeaderPlan';
+import { learnerHeaderPlan, learnerModuleHref } from '../learnerHeaderPlan';
 
 const placement = { programme: 'Marketing Level 4', cohort: 'October 2026', group: 'G1' };
 const module = (id: string, start_date: string | null, end_date: string | null, overrides: Partial<PlanModule> = {}): PlanModule => ({
@@ -12,6 +12,14 @@ const future = module('Social Media', '2027-02-15', '2027-05-20');
 const oldPlacement = module('Aya Modual', '2026-08-03', '2026-10-23', { cohort_name: 'Final Cohort', group_name: 'Aya Group' });
 
 describe('learner header programme facts', () => {
+  it('continues the current week for either a Builder module or its linked imported subject', () => {
+    expect(learnerModuleHref('commercial', '125', 'M1'))
+      .toBe('/learner/my-learning/commercial/125?subject=current%3AM1&week=current');
+    expect(learnerModuleHref('apprenticeship', '126', 'M1', { 'legacy:77': { id: 'M1', title: 'Module' } }))
+      .toBe('/learner/my-learning/apprenticeship/126?subject=legacy%3A77&week=current');
+    expect(learnerModuleHref('commercial', '125'))
+      .toBe('/learner/my-learning/commercial/125?week=current');
+  });
   it('uses the next teaching date in the current placement instead of the last-created module', () => {
     expect(learnerHeaderPlan([future, oldPlacement, next], placement, '2026-09-12')).toEqual({ label: 'Next module', modules: [next] });
   });

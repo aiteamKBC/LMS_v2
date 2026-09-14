@@ -54,6 +54,16 @@ CREATE TABLE IF NOT EXISTS "Learner".learner_certificates (
     UNIQUE (learner_kind, learner_id, template_id, template_version)
 );
 
+ALTER TABLE "Learner".learner_certificates
+ADD COLUMN IF NOT EXISTS module_ref varchar(180) NOT NULL DEFAULT '',
+ADD COLUMN IF NOT EXISTS module_title varchar(255) NOT NULL DEFAULT '';
+
+ALTER TABLE "Learner".learner_certificates
+DROP CONSTRAINT IF EXISTS learner_certificates_learner_kind_learner_id_template_id_template_version_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS learner_certificates_scope_unique
+ON "Learner".learner_certificates (learner_kind, learner_id, template_id, template_version, module_ref);
+
 CREATE INDEX IF NOT EXISTS learner_certificates_learner_idx
 ON "Learner".learner_certificates (learner_kind, learner_id, issued_at DESC);
 

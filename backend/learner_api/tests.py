@@ -1,6 +1,6 @@
 import json
 from contextlib import nullcontext
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
@@ -554,6 +554,28 @@ class AttendanceSummaryTests(SimpleTestCase):
     def test_returns_none_without_session_rows(self):
         self.assertIsNone(_summarize_attendance([]))
 
+    @override_settings(TIME_ZONE='Europe/London')
+    def test_only_counts_sessions_up_to_now_in_the_business_timezone(self):
+        common = {
+            'learner_id': 2, 'learner_name': 'Test Learner',
+            'learner_email': 'learner@example.com', 'minutes_late': 0,
+            'catchup_completed': False, 'updated_at': None,
+        }
+        now = datetime(2026, 9, 13, 12, tzinfo=timezone.utc)  # 13:00 UK
+        rows = [
+            {**common, 'session_date': date(2026, 9, 12), 'attendance_status': 'present'},
+            {**common, 'session_date': date(2026, 9, 13), 'session_start_time': time(12, 30), 'attendance_status': 'late'},
+            {**common, 'session_date': date(2026, 9, 13), 'session_start_time': time(13), 'attendance_status': 'absent'},
+            {**common, 'session_date': date(2026, 9, 13), 'session_start_time': time(14), 'attendance_status': 'absent'},
+            {**common, 'session_date': date(2026, 9, 14), 'attendance_status': 'present', 'source': 'microsoft-teams'},
+        ]
+        summary = _summarize_attendance(rows, now=now)
+        self.assertEqual((summary['present'], summary['sessions'], summary['attendanceRate']), (2, 3, 67))
+        self.assertEqual(len(summary['sessionHistory']), 3)
+        self.assertEqual(summary['lastSessionDate'], '2026-09-13')
+        self.assertEqual(summary['source'], 'kbc-attendance')
+        self.assertIsNone(_summarize_attendance(rows[3:], now=now))
+
     def test_late_status_counts_as_attended(self):
         rows = [
             {
@@ -707,9 +729,11 @@ class TeamsAttendanceEligibilityTests(SimpleTestCase):
 
 
 class LearnerAttendanceEndpointTests(SimpleTestCase):
+    @patch('learner_api.attendance_confirmation.read_confirmations', return_value={})
+    @patch('learner_api.attendance_lectures.read_native_occurrences', return_value=[])
     @patch('learner_api.attendance.fetch_verified_teams_attendance_rows', return_value=[])
     @patch('learner_api.attendance.fetch_kbc_attendance_rows', return_value=[])
-    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams):
+    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams, scheduled, confirmations):
         source = SimpleNamespace(
             id=19,
             username='Test Learner',

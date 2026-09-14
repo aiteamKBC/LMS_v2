@@ -703,6 +703,7 @@ export function SelectControl({
   options,
   disabled,
   placeholder,
+  ariaLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -714,6 +715,13 @@ export function SelectControl({
   options: SelectOption[];
   disabled?: boolean;
   placeholder?: string;
+  /**
+   * Only needed inside a `FormField as="group"`: a `<label>` names the control
+   * it wraps, but a `role="group"` does not name the controls inside it, so a
+   * select sharing its field with another control has no accessible name
+   * unless it is given one here.
+   */
+  ariaLabel?: string;
 }) {
   return (
     <SelectMenu
@@ -723,6 +731,7 @@ export function SelectControl({
       disabled={disabled}
       placeholder={placeholder || 'Select'}
       clearable={Boolean(placeholder)}
+      ariaLabel={ariaLabel}
     />
   );
 }

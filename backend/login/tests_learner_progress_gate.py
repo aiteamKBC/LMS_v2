@@ -104,7 +104,7 @@ class LearnerProgressGateTests(SimpleTestCase):
 
     def test_staff_may_still_read(self):
         """Staff review a learner's plan constantly; only writing is gated."""
-        gated = permissions.learner_self_only(query_param="learnerId")(_view)
+        gated = permissions.learner_self_or_staff(query_param="learnerId")(_view)
         request = self.factory.get("/learner_api/reflection/submissions/?learnerId=56")
         response = self._call(gated, request, STAFF)
         self.assertEqual(response.status_code, 200)

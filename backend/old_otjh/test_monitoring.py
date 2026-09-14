@@ -122,7 +122,8 @@ class MonitoringAccessTests(SimpleTestCase):
         self.addCleanup(self.staff.stop)
 
     def test_account_lands_on_monitor_with_view_permission_only(self):
-        payload = account_payload(self.account, subject=SimpleNamespace(access='record-monitor', position='Admin'))
+        with patch('login.learner_enrolment.existing_learner_record', return_value=None):
+            payload = account_payload(self.account, subject=SimpleNamespace(access='record-monitor', position='Admin'))
         self.assertEqual(payload['accessHome'], '/old-otjh/monitor')
         self.assertEqual(payload['permissions'], ['previous_records.view'])
 

@@ -16,7 +16,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import learner_self_only
+from login.permissions import learner_self_or_admin
 
 
 TRACKING_SALT = "learner-api.activity-time.v1"
@@ -162,7 +162,7 @@ def verify_tracking_session(
 
 
 @csrf_exempt
-@learner_self_only(query_param="learnerId")
+@learner_self_or_admin(query_param="learnerId")
 def start_time_tracking(request):
     if request.method != "POST":
         return _error("Method not allowed.", 405)

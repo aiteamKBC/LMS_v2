@@ -1,3 +1,5 @@
+import type { ImportedReview } from '@/api/reviewHistory';
+
 export interface EventSpeaker {
   name: string;
   role: string;
@@ -717,12 +719,21 @@ export interface CalendarEvent {
   meetingLink?: string;
   eventKey?: string;
   source?: string;
+  /** Curriculum Review Type classification, carried through from the API so
+   *  the calendar can bucket review events by type. See
+   *  pages/learner/calendar/reviewTypeFilters.ts. */
+  reviewTypeId?: string | null;
+  reviewTypeCode?: string | null;
+  reviewTypeName?: string | null;
+  reviewTypeIsSystem?: boolean;
   /** Stored duration used when an existing booking is rescheduled. */
   durationMinutes?: number;
   /** Backend booking lifecycle status; kept separate from the display badge. */
   bookingStatus?: string;
+  /** Full imported Aptem review record, when this event came from review history. */
+  importedReview?: ImportedReview;
   /** Session type used to turn an unscheduled coaching-cycle item into a real booking. */
-  bookingSessionType?: 'catch-up' | 'student-support' | 'mcr' | 'progress-review';
+  bookingSessionType?: 'catch-up' | 'student-support' | 'mcr' | 'progress-review' | 'gateway' | 'other';
   /**
    * True when `time` is a placeholder rather than an agreed time — a coaching
    * slot the cycle says is due but nobody has booked yet. The grid still needs
@@ -730,6 +741,10 @@ export interface CalendarEvent {
    * an hour that was never arranged.
    */
   timeToBeConfirmed?: boolean;
+  syncWarning?: string;
+  /** Imported review identity carried through the same Calendar booking form. */
+  bookingReviewId?: string;
+  assignmentMonth?: string;
 }
 
 export interface ClubResource {

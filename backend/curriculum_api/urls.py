@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import programme_audit, quality, review_schedule, reviews, views
+from . import programme_audit, quality, review_schedule, review_types, reviews, views
 
 
 urlpatterns = [
@@ -8,6 +8,9 @@ urlpatterns = [
     path('curriculum/programmes/<str:programme_id>/reviews/clone/', reviews.curriculum_review_clone, name='curriculum-programme-reviews-clone'),
     path('curriculum/programmes/<str:programme_id>/reviews/schedule/', review_schedule.curriculum_programme_review_schedule, name='curriculum-programme-reviews-schedule'),
     path('curriculum/programmes/<str:programme_id>/reviews/clashes/resolve/', review_schedule.curriculum_programme_review_clash_resolve, name='curriculum-programme-reviews-clash-resolve'),
+    # Before the '<str:review_id>' route below, or 'types' is read as a review id.
+    path('curriculum/review-types/', review_types.curriculum_review_type_collection, name='curriculum-review-types'),
+    path('curriculum/review-types/<str:review_type_id>/', review_types.curriculum_review_type_detail, name='curriculum-review-type-detail'),
     path('curriculum/reviews/<str:review_id>/', reviews.curriculum_review_detail, name='curriculum-review-detail'),
     path('curriculum/overview/', views.curriculum_overview, name='curriculum-overview'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),

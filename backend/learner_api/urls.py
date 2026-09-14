@@ -8,6 +8,8 @@ from .overview_week import overview_week
 from .rewards_summary import learner_rewards_summary
 from .profile_photo import learner_profile_photo
 from .attendance_lectures import attendance_lectures
+from .attendance_confirmation import confirm_attendance
+from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, review_attendance_mode
 
 from . import certificates, monthly_assignment, legacy_assignments, review_history
@@ -20,8 +22,12 @@ urlpatterns = [
     path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),
     path('monthly-logs/<int:learner_id>/<str:month>/', monthly_logs.detail, name='monthly-log-detail'),
     path('monthly-logs/<int:learner_id>/<str:month>/sign/', monthly_logs.sign, name='monthly-log-sign'),
+    path('monthly-logs/<int:learner_id>/<str:month>/complete/', monthly_logs.complete, name='monthly-log-complete'),
     path('monthly-logs/<int:learner_id>/<str:month>/activities/<int:row_id>/', monthly_logs.content, name='monthly-log-content'),
     path('attendance/<str:kind>/<int:learner_id>/lectures/', attendance_lectures, name='attendance-lectures'),
+    path('attendance/<str:kind>/<int:learner_id>/attend/', confirm_attendance, name='confirm-attendance'),
+    path('meeting-attendance/<str:kind>/<int:learner_id>/', meeting_attendance, name='meeting-attendance'),
+    path('meeting-attendance/<str:kind>/<int:learner_id>/attend/', confirm_meeting_attendance, name='confirm-meeting-attendance'),
     path('attendance/<str:kind>/<int:learner_id>/mode/', attendance_mode, name='attendance-mode'),
     path('attendance-mode/review/', review_attendance_mode, name='attendance-mode-review'),
     path('profile-photo/<str:kind>/<int:pk>/', learner_profile_photo, name='learner-profile-photo'),
@@ -120,6 +126,8 @@ urlpatterns = [
     path("training-plan/<str:kind>/<int:pk>/", training_plan_view.training_plan, name="training-plan"),
     path("training-plan-dashboard/<str:kind>/<int:pk>/", training_plan_dashboard.training_plan_dashboard, name="training-plan-dashboard"),
     path("certificates/verify/<uuid:token>/", certificates.verify_certificate, name="learner-certificate-verify"),
+    path("certificates/<str:kind>/<int:pk>/modules/<str:module_ref>/", certificates.learner_module_certificate_status, name="learner-module-certificate-status"),
+    path("certificates/<str:kind>/<int:pk>/modules/<str:module_ref>/issue/", certificates.issue_learner_module_certificate, name="learner-module-certificate-issue"),
     path("certificates/<str:kind>/<int:pk>/template/", certificates.learner_certificate_template, name="learner-certificate-template"),
     path("certificates/<str:kind>/<int:pk>/", certificates.learner_certificate_status, name="learner-certificate-status"),
     path("certificates/<str:kind>/<int:pk>/issue/", certificates.issue_learner_certificate, name="learner-certificate-issue"),
@@ -177,6 +185,8 @@ urlpatterns = [
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/artifacts/", calendar.learner_calendar_event_artifacts, name="learner-calendar-event-artifacts"),
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content/", calendar.learner_calendar_event_artifact_content, name="learner-calendar-event-artifact-content"),
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/sign/", calendar.learner_progress_review_sign, name="learner-progress-review-sign"),
+    # Read-only: the Curriculum Review form behind a scheduled occurrence.
+    path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/review/", calendar.learner_calendar_event_review, name="learner-calendar-event-review"),
     # Declared before the <path:event_key> route below, which would otherwise
     # never be reached for the bare list URL.
     path("reviews/<str:kind>/<int:pk>/", review_form.enrolment_review_documents, name="enrolment-review-documents"),

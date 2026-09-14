@@ -7,11 +7,16 @@ import { submitComponentProgress, type ComponentProgressResponse } from '@/api/c
 import { startTimeTracking } from '@/api/timeTracking';
 import ComponentViewPage from './page';
 
+const session = vi.hoisted(() => ({
+  account: { role: 'learner' as 'learner' | 'admin' | 'staff', subjectType: 'learner', subjectId: 1 },
+  isInitialized: true,
+}));
+
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
 vi.mock('@/api/components', () => ({ submitComponentProgress: vi.fn() }));
 vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn() }));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
-vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: true, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
 vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: () => null }));
@@ -48,6 +53,8 @@ async function finish() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  Object.assign(session.account, { role: 'learner', subjectType: 'learner', subjectId: 1 });
+  session.isInitialized = true;
   localStorage.clear();
   vi.mocked(fetchLearnerDetail).mockResolvedValue(detail());
   vi.mocked(startTimeTracking).mockResolvedValue({
@@ -56,6 +63,26 @@ beforeEach(() => {
   vi.mocked(submitComponentProgress).mockResolvedValue({ record: progress } as unknown as ComponentProgressResponse);
 });
 afterEach(cleanup);
+
+it('opens and completes the selected learner activity for an admin using the real permission hook', async () => {
+  Object.assign(session.account, { role: 'admin', subjectType: 'staff', subjectId: 999 });
+  mount();
+  await finish();
+  expect(await screen.findByRole('status')).toHaveTextContent('Completed');
+  expect(screen.queryByText('You are viewing this learner read-only')).not.toBeInTheDocument();
+  expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({ timeTakenSeconds: 1200 }));
+  expect(session.account.role).toBe('admin');
+  expect(session.account.subjectId).toBe(999);
+});
+
+it('keeps an ordinary staff preview read-only without starting or saving learner progress', async () => {
+  Object.assign(session.account, { role: 'staff', subjectType: 'staff', subjectId: 999 });
+  mount();
+  expect(await screen.findByText('You are viewing this learner read-only')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Finish' })).not.toBeInTheDocument();
+  expect(startTimeTracking).not.toHaveBeenCalled();
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
 
 it('keeps the saved completion visible and asks before moving to the next same-named activity', async () => {
   vi.mocked(fetchLearnerDetail).mockResolvedValueOnce(detail()).mockResolvedValue(detail(true));

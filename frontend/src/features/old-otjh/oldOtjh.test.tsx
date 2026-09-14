@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import OldOtjhPage from './page';
 import { OldOtjhGate, OldOtjhProvider } from './hooks';
-import { completeMonth, getActivityContent, getContentReview, getMonth, getSummary, startReview, type MonthDetail, type Summary } from './api';
+import { completeMonth, getActivityContent, getContentReview, getLearners, getMonth, getSummary, startReview, type MonthDetail, type Summary } from './api';
 import { homeRouteFor } from '@/lib/routeAccess';
+import { fetchLearnerEntry } from './entry';
+vi.mock('./entry', () => ({ fetchLearnerEntry: vi.fn() }));
 
 const signedIn = { id: 1, role: 'learner' as 'learner' | 'staff', access: 'learner', subjectId: 7, subjectType: 'learner',
   hasLegacyRecord: true, displayName: 'Test student', email: 'student@example.org' };
@@ -13,7 +15,7 @@ vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: signedIn,
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
 vi.mock('./SignatureCapture', () => ({ SignatureCapture: ({ busy }: { busy: boolean }) => <fieldset disabled={busy}><legend>Signature capture</legend></fieldset> }));
 vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof import('./api')>(),
-  getSummary: vi.fn(), getMonth: vi.fn(), getActivityContent: vi.fn(), getContentReview: vi.fn(), startReview: vi.fn(), completeMonth: vi.fn() }));
+  getSummary: vi.fn(), getMonth: vi.fn(), getLearners: vi.fn(), getActivityContent: vi.fn(), getContentReview: vi.fn(), startReview: vi.fn(), completeMonth: vi.fn() }));
 
 const month: MonthDetail = {
   month: '2026-08', status: 'needs_review', row_count: 1, planned_hours: 2, actual_hours: 1,
@@ -33,9 +35,13 @@ function page(path = '/old-otjh') {
     <Route path="/old-otjh" element={<OldOtjhPage />} />
     <Route path="/old-otjh/months" element={<OldOtjhPage />} />
     <Route path="/old-otjh/months/:month" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/monitor" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/coach" element={<OldOtjhPage />} />
     <Route path="/old-otjh/coach/:aptemId" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/coach/:aptemId/months" element={<OldOtjhPage />} />
     <Route path="/old-otjh/coach/:aptemId/months/:month" element={<OldOtjhPage />} />
     <Route path="/workspace/learner" element={<div>New LMS content</div>} />
+    <Route path="/learner/home" element={<div>New LMS content</div>} />
   </Routes></MemoryRouter></OldOtjhProvider>);
 }
 
@@ -45,6 +51,47 @@ beforeEach(() => { signedIn.role = 'learner'; signedIn.access = 'learner'; vi.mo
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe('previous learning portal', () => {
+  it.each(['/old-otjh', '/old-otjh/months', '/old-otjh/months/2026-08',
+    '/old-otjh/coach', '/old-otjh/coach/999', '/old-otjh/coach/999/months',
+    '/old-otjh/coach/999/months/2026-08', '/old-otjh/monitor'])(
+    'returns a new learner home without loading records or a directory at %s', async path => {
+      vi.mocked(getSummary).mockResolvedValue({ is_legacy: false, state: 'not_required', can_access_lms: true, months: [] });
+      page(path);
+      expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+      expect(getSummary).toHaveBeenCalledWith(undefined);
+      expect(getMonth).not.toHaveBeenCalled();
+      expect(getLearners).not.toHaveBeenCalled();
+      expect(startReview).not.toHaveBeenCalled();
+    },
+  );
+  it.each(['/old-otjh/coach', '/old-otjh/coach/999/months/2026-08', '/old-otjh/monitor'])(
+    'keeps an existing learner on their own months when opening %s', async path => {
+      page(path);
+      expect(await screen.findByRole('heading', { name: 'Monthly learning records' })).toBeInTheDocument();
+      expect(getSummary).toHaveBeenCalledWith(undefined);
+      expect(getSummary).not.toHaveBeenCalledWith(999);
+      expect(getLearners).not.toHaveBeenCalled();
+      expect(screen.queryByText('All learners')).not.toBeInTheDocument();
+      expect(screen.getAllByRole('link', { name: 'Review month' })[0]).toHaveAttribute('href', '/old-otjh/months/2026-07');
+    },
+  );
+  it('keeps an admin learner preview inside the selected months without the staff directory', async () => {
+    signedIn.role = 'staff'; signedIn.access = 'super-admin';
+    page('/old-otjh/coach/42/months?workspace=learner');
+    const review = (await screen.findAllByRole('link', { name: 'Review month' }))[0];
+    expect(review).toHaveAttribute('href', '/old-otjh/coach/42/months/2026-07?workspace=learner');
+    expect(screen.getByRole('link', { name: 'My learning' })).toHaveAttribute('href', '/workspace/learner');
+    expect(screen.queryByText('All learners')).not.toBeInTheDocument();
+    expect(getLearners).not.toHaveBeenCalled();
+    fireEvent.click(review);
+    const allMonths = await screen.findByRole('link', { name: 'All months' });
+    expect(allMonths).toHaveAttribute('href', '/old-otjh/coach/42/months?workspace=learner');
+    fireEvent.click(allMonths);
+    await screen.findAllByRole('link', { name: 'Review month' });
+    expect(getLearners).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+  });
   it('enables individual signing and completion without requesting a material check', async () => {
     vi.mocked(getContentReview).mockResolvedValue({ ready: false, snapshot_digest: 'digest', issues: [
       { id: 4, title: 'Missing source video', category: 'video', reason: 'Original material is unavailable.' },
@@ -60,7 +107,7 @@ describe('previous learning portal', () => {
     expect(screen.getByRole('button', { name: 'Sign all months' })).toBeEnabled();
   });
   it('keeps the two-card portal reachable while Dashboard is the learner home', async () => {
-    expect(homeRouteFor(signedIn)).toBe('/workspace/learner');
+    expect(homeRouteFor(signedIn)).toBe('/learner/home');
     page();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Open LMS' })).toBeEnabled());
     expect(screen.getByRole('link', { name: 'Review previous record' })).toHaveAttribute('href', '/old-otjh/months');
@@ -257,11 +304,12 @@ describe('previous learning portal', () => {
   });
   it.each([false, true])('checks previous monthly signatures on Dashboard entry (complete: %s)', async complete => {
     vi.mocked(getSummary).mockResolvedValue({ ...initial, can_access_lms: complete });
+    vi.mocked(fetchLearnerEntry).mockResolvedValue({ classification: 'existing', required: !complete, canAccess: complete });
     render(<OldOtjhProvider><MemoryRouter initialEntries={['/workspace/learner']}><Routes>
       <Route path="/workspace/learner" element={<OldOtjhGate><div>New LMS content</div></OldOtjhGate>} />
       <Route path="/old-otjh" element={<div>Choose a workspace</div>} />
     </Routes></MemoryRouter></OldOtjhProvider>);
-    expect(await screen.findByText(complete ? 'New LMS content' : 'Choose a workspace')).toBeInTheDocument();
+    expect(await screen.findByText(complete ? 'New LMS content' : 'Review and sign your previous learning record')).toBeInTheDocument();
     expect(screen.queryByText(complete ? 'Choose a workspace' : 'New LMS content')).not.toBeInTheDocument();
   });
   it('refetches on a new visit instead of serving a stored activity copy', async () => {

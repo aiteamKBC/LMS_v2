@@ -1,11 +1,13 @@
 import hashlib
 import os
+from datetime import time
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from django.db import DatabaseError
 from django.http import JsonResponse
+from django.utils import timezone
 
 from login.permissions import learner_self_or_staff
 
@@ -190,15 +192,22 @@ def fetch_kbc_attendance_rates(aptem_ids):
     return totals
 
 
-def _summarize_attendance(rows):
-    """Convert the KBC register's session-per-row data into the learner summary."""
+def _summarize_attendance(rows, *, now=None):
+    """Summarize recorded attendance for sessions that have happened so far."""
+    cutoff = timezone.localtime(now)
+    cutoff_date, cutoff_time = cutoff.date(), cutoff.time().replace(tzinfo=None)
+
     def status(row):
         return (row['attendance_status'] or '').strip().lower()
 
     # Late is a display distinction only: it counts as attended in both the
     # numerator and denominator. Non-attendance workflow states (for example a
     # legacy ``catchup`` row) do not silently dilute the attendance rate.
-    counted_rows = [row for row in rows if status(row) in {'present', 'late', 'absent'}]
+    counted_rows = [row for row in rows
+                    if status(row) in {'present', 'late', 'absent'}
+                    and row.get('session_date') is not None
+                    and (row['session_date'], time.min if row.get('attendance_confirmed') else
+                         row.get('session_start_time') or time.min) <= (cutoff_date, cutoff_time)]
     if not counted_rows:
         return None
 
@@ -220,7 +229,7 @@ def _summarize_attendance(rows):
         consecutive_missed += 1
 
     latest = latest_first[0]
-    updated_values = [row['updated_at'] for row in rows if row['updated_at']]
+    updated_values = [row['updated_at'] for row in counted_rows if row['updated_at']]
     updated_at = max(updated_values) if updated_values else None
 
     def row_status(row):
@@ -260,8 +269,8 @@ def _summarize_attendance(rows):
         'consecutiveMissed': consecutive_missed,
         'updatedAt': updated_at.isoformat() if updated_at else None,
         'attendanceRate': attendance_rate,
-        'source': 'combined' if len({row.get('source', 'kbc-attendance') for row in rows}) > 1
-                  else rows[0].get('source', 'kbc-attendance'),
+        'source': 'combined' if len({row.get('source', 'kbc-attendance') for row in counted_rows}) > 1
+                  else counted_rows[0].get('source', 'kbc-attendance'),
         'sessionHistory': session_history,
     }
 
@@ -309,7 +318,8 @@ def learner_attendance(request, kind, learner_id):
         return _error(f'Database error: {exc}', 502)
 
     try:
-        rows = combined_attendance_rows(source)
+        from .attendance_lectures import lecture_register
+        rows = lecture_register(source)
     except Exception:
         return _error('Unable to load attendance. Please try again.', 502)
 

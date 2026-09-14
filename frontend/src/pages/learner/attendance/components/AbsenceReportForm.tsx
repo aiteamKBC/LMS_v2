@@ -40,6 +40,7 @@ interface EvidencePreview {
 }
 
 export interface AbsenceReportFormProps {
+  scope?: 'meetings';
   /** Preselect the missed session that matches this date + title, once loaded. */
   preselectMatch?: { id?: string; dateIso: string; title: string } | null;
   /** Called once a report has been saved, in addition to the inline confirmation. */
@@ -60,6 +61,7 @@ export default function AbsenceReportForm({
   showGuidance = false,
   showHistory = true,
   compact = false,
+  scope,
 }: AbsenceReportFormProps) {
   const myLearner = useMyLearner();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -107,23 +109,23 @@ export default function AbsenceReportForm({
   const hasReason = Boolean(reasonType && (reasonType !== 'other' || otherReason.trim()));
   const canUploadEvidence = Boolean(sessionId && hasReason);
   const canSubmit = Boolean(sessionId && hasReason && confirmed && !bookingBusy
-    && (recoveryMethod === 'recorded' || (recoveryMethod === 'catch-up' && selectedBooking)));
+    && (scope === 'meetings' || recoveryMethod === 'recorded' || (recoveryMethod === 'catch-up' && selectedBooking)));
   const resolvedCount = reports.filter((report) => report.status !== 'Pending').length;
 
   useEffect(() => {
     let cancelled = false;
     setReportsLoading(true);
-    fetchAbsenceReports(myLearner.kind, myLearner.id)
+    fetchAbsenceReports(myLearner.kind, myLearner.id, scope)
       .then((data) => {
         if (!cancelled) {
           setReports(data.results);
-          setMissedSessions(data.missedSessions);
+          setMissedSessions(scope && preselectMatch?.id ? data.missedSessions.filter(session => session.id === preselectMatch.id) : data.missedSessions);
         }
       })
       .catch((error: unknown) => { if (!cancelled) setRequestError(error instanceof Error ? error.message : 'Could not load reports.'); })
       .finally(() => { if (!cancelled) setReportsLoading(false); });
     return () => { cancelled = true; };
-  }, [myLearner.kind, myLearner.id]);
+  }, [myLearner.kind, myLearner.id, scope, preselectMatch?.id]);
 
   // Preselect the missed session a caller opened this form for (e.g. from a
   // row in the attendance history) once the real session list has loaded.
@@ -275,9 +277,9 @@ export default function AbsenceReportForm({
             {!compact && <SectionHeader title="Absence details" description="Fields marked with * are required" icon="ri-edit-box-line" />}
 
             <div>
-              <label htmlFor="missed-session" className="mb-2 block text-[13px] font-semibold text-foreground-700">Lecture *</label>
+              <label htmlFor="missed-session" className="mb-2 block text-[13px] font-semibold text-foreground-700">{scope === 'meetings' ? 'Meeting *' : 'Lecture *'}</label>
               <select id="missed-session" value={sessionId} onChange={(event) => { setSessionId(event.target.value); setRecoveryMethod(''); setCatchupBooking(null); setConfirmed(false); }} required disabled={reportsLoading || availableSessions.length === 0 || bookingBusy || submitting} className="w-full rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-3 text-[13px] text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400">
-                <option value="">{reportsLoading ? 'Loading lectures...' : availableSessions.length === 0 ? 'No unreported absent or upcoming lectures' : 'Choose an absent or upcoming lecture'}</option>
+                <option value="">{scope === 'meetings' ? reportsLoading ? 'Loading meeting...' : availableSessions.length ? 'Choose a meeting' : 'No unreported meetings available' : reportsLoading ? 'Loading lectures...' : availableSessions.length === 0 ? 'No unreported absent or upcoming lectures' : 'Choose an absent or upcoming lecture'}</option>
                 {availableSessions.map((session) => <option key={session.id} value={session.id}>{displayDate(session.dateIso)} - {session.title}{session.status === 'upcoming' ? ' (Upcoming)' : ''}</option>)}
               </select>
               {selectedSession && (compact ? <p className={styles.absenceDate}>Date: {displayDate(selectedSession.dateIso)}{selectedSession.startTime && `, ${selectedSession.startTime}`}{selectedSession.endTime && ` – ${selectedSession.endTime}`}</p> : (
@@ -370,13 +372,13 @@ export default function AbsenceReportForm({
             </div>
 
             </OptionalDetails>
-            <fieldset className={styles.recoveryPlan} disabled={!selectedSession || bookingBusy || submitting}>
+            {scope === 'meetings' ? <p className={styles.recoveryHint}>Your coach will review your absence report. Use Reschedule on the meeting page to arrange another time.</p> : <fieldset className={styles.recoveryPlan} disabled={!selectedSession || bookingBusy || submitting}>
               <legend>How will you catch up? *</legend>
               <div className={styles.recoveryOptions}>
                 <label><input type="radio" name="recovery-method" value="recorded" required checked={recoveryMethod === 'recorded'} onChange={() => { setRecoveryMethod('recorded'); setConfirmed(false); }} /><span>Watch the recording</span></label>
                 <label><input type="radio" name="recovery-method" value="catch-up" required checked={recoveryMethod === 'catch-up'} onChange={() => { setRecoveryMethod('catch-up'); setConfirmed(false); }} /><span>Book a Catch-up session</span></label>
               </div>
-            </fieldset>
+            </fieldset>}
             {recoveryMethod === 'recorded' && <p className={styles.recoveryHint}>Complete the lecture's recorded activities to catch up.{selectedBooking && ' Your existing catch-up booking remains in your calendar.'}</p>}
             {recoveryMethod === 'catch-up' && selectedSession && <CatchupBooking key={selectedSession.id} lecture={selectedSession} selectedKey={selectedBooking?.eventKey || ''} onSelect={selectBooking} onBusyChange={setBookingBusy} disabled={submitting} />}
             <label className={`flex cursor-pointer items-start gap-3 rounded-xl bg-background-100/60 p-3.5 ${compact ? styles.absenceConfirmation : ''}`}>

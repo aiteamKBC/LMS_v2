@@ -56,6 +56,7 @@ def merged_activities(historical, native, progress, attempts, links):
         done = str(row['id']) in component_ids or bool(row.get('quiz_id') and str(row['quiz_id']) in quiz_ids)
         if previous:
             previous['completed'] |= done
+            previous.setdefault('component_ids', []).append(str(row['id']))
             # A mapped Builder activity can be rescheduled after the export.
             if row.get('date') and not row.get('date_needs_review'):
                 for field in ('date', 'week_start', 'week_end', 'section_title', 'date_needs_review'):
@@ -184,7 +185,7 @@ def summarise_week(historical, native, progress, attempts, links, start, end):
             'missingExpectedHours': sum(value is None for value in expected.values())}
 
 
-def read_week(source, now=None):
+def read_week(source, now=None, *, home_kind=None):
     start, end = week_bounds(now)
     migrated = student_activity_available(source.aptem_id)
     historical, attempts, links = [], set(), {}
@@ -218,6 +219,7 @@ def read_week(source, now=None):
             if len(identities) != 1 or not source.email or str(identities[0][0] or '').strip().casefold() != source.email.strip().casefold():
                 raise LookupError('Previous learning could not be linked to this learner.')
             cur.execute('''SELECT gl.group_id,ga.activity_id,g.group_name AS module_title,a.title,
+                coalesce(a.activity_type,r.activity_type) AS type,
                 r.status,r.video_completed,r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
                 CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
                 CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
@@ -267,12 +269,17 @@ def read_week(source, now=None):
             old_hours = number(raw_hours)
     weekly_progress = [row for row in progress if (day := progress_day(row.get('submittedAt'))) and start <= day <= end]
     new_hours = _direct_progress_otjh(weekly_progress)
-    return {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(), 'timezone': 'Europe/London',
+    result = {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(), 'timezone': 'Europe/London',
             **summarise_week(historical, native, progress, attempts, links, start, end),
             'planSubjects': summarise_plan(merged_activities(historical, native, progress, attempts, links), assigned,
                                           direct_hours_by_subject(native, progress, links)),
             'otjh': {'actual': round(old_hours + new_hours, 4) if old_hours is not None and not undated_hours else None,
                      'historical': old_hours, 'new': round(new_hours, 4), 'undatedHistoricalRows': undated_hours}}
+    if home_kind:
+        from .home_progress import read_home_progress
+        result['homeProgress'] = read_home_progress(source, home_kind,
+            merged_activities(historical, native, progress, attempts, links), native, progress, assigned, end)
+    return result
 
 
 
@@ -283,8 +290,12 @@ def overview_week(request, kind, pk):
     if model is None:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     try:
-        source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
-        payload = read_week(source)
+        home = request.GET.get('section') == 'home'
+        fields = ['id', 'aptem_id', 'email']
+        if home:
+            fields.extend(['username', 'employer_id', 'start_date', 'end_date', 'programme', 'cohort'])
+        source = model.all_learners.only(*fields).get(pk=pk)
+        payload = read_week(source, home_kind=kind) if home else read_week(source)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except LookupError as error:

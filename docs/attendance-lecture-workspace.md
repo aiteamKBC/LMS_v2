@@ -11,21 +11,55 @@ The learner Attendance page keeps the LMS theme and now provides module selectio
 - The desktop workspace uses a 74:26 split. The left column begins with module selection, a compact module overview and four circular metrics in a 31:17:52 strip. The right column starts at the same height and contains Attendance Mode, support booking and Recent Activity with dates aligned on the right. Existing learner colours and dark-mode surfaces are retained.
 - Lectures appear in a continuous register, newest first, with columns for lecture, date/time, hours, key content, KSBs, status and actions. The register scrolls independently with a sticky desktop heading; rows become labelled cards on smaller screens. Search, month, status and sorting controls are available under **Search & filters**. **Group by month** switches to complete expandable months, with the first month open initially and attendance counts on every month header. Months can be opened individually or all together; closed months defer rendering their rows. KSBs show the first three codes with an accessible disclosure; module fallbacks retain their label.
 - Historical activities must belong to the learner's Last_audit group, match the lecture's group/module, and match its date or exact title. Missing or ambiguous mappings remain unmapped. Catch-up completion reads both historical results and current saved subject attempts.
-- Native lectures come from the current Teams invite list and non-cancelled `curriculum.live_session_occurrences`. Only synced attendance reports count as attended/absent. Future sessions, sessions in progress and completed sessions awaiting a report have separate states.
+- Native lectures require both the learner's current saved module assignment (the same source as My Learning/Training Plan) and their email on the Teams invite list. The module must still exist and not be deleted, including deletion with its programme. Cancelled, deleted, failed and superseded series/occurrences are excluded. Module names come from the current curriculum module, so a renamed module cannot leave a stale filter label. Synced reports supply attendance states; a saved same-day Attend confirmation also counts as attended. Future sessions, sessions in progress and completed sessions awaiting a report have separate states.
 - Native KSBs and activities come from the learner's assigned curriculum. A live component must match the exact occurrence, or the meeting and authored date, so completing one occurrence cannot cover an entire recurring series. Its authored week supplies the activity bundle.
 - Native `timestamp` columns are interpreted as UTC before conversion to the system business timezone. This matches the existing Django connection's storage convention.
 - Late attendance counts as attended. Upcoming and unsynced lectures do not reduce the attendance rate. A covered absence remains an absence in the live register; it is also counted under covered missed lectures. All linked activities must be complete before catch-up is covered.
 - Counters follow the selected module. Search, month and status filters affect the visible sessions; sorting and month expansion run locally on the cached response without more API requests. Search includes content, collapsed months and collapsed KSBs, and matching months open automatically for search/status/month filters. Changing filters resets manual expansion choices. The page refreshes every 30 seconds while visible, on return/focus, reconnection, and after mutations. A failed refresh retains the previous result with a warning.
 - Recent activity uses source attendance, absence reports, current learner progress/events, support bookings and attendance preference state. No sample activity is displayed in the product.
 
+## Featured lecture and same-day attendance
+
+A full-width card above the workspace selects today's lecture first (live and
+unattended sessions take priority), otherwise the nearest upcoming lecture across
+all modules. It shows module, content, tutor, assigned coach, date, timing,
+duration and the system timezone. The tutor comes from the assigned module,
+falling back to the meeting organizer. Missing details are labelled explicitly.
+The card remains independent of the table's filters.
+
+The register has a separate **Attendance action** column beside Status.
+**Report Absence** is a prominent button for Upcoming lectures. **Missed** lectures
+show **Book Catchup Session**, opening the existing booking form with that lecture's
+title and date, including when an absence report already exists.
+
+**Attend** is enabled on the lecture's calendar date in `SYSTEM_TIME_ZONE`, when
+the saved duration is known. The owner or an administrator can submit; staff
+previews cannot. The CSRF-protected endpoint resolves the lecture and duration
+from the current learner's register and rejects unrelated, cancelled, ambiguous,
+past or future sessions. Selecting Attend credits the full scheduled duration,
+even before the scheduled start. Existing source attendance cannot be credited
+again. Refreshing preserves the confirmation.
+
+Confirmations are saved as `activity_event` entries with
+`feed_kind=attendance_confirmation` in the existing learner progress ledger.
+A learner row lock makes repeat/concurrent submissions idempotent. No database
+schema change is required. Monthly Logs uses the exact lecture source reference
+and replaces any later Teams duration with the confirmed full duration, so the
+same lecture is counted once. Monthly Logs retains its normal closed-month rule.
+Teams source records are not overwritten.
+
+The card's **Report Absence** opens the same dialog as the table with the lecture
+preselected. A same-day lecture awaiting a Teams report can also be reported.
+Selecting Attend makes that lecture ineligible for another absence report.
+
 ## Opening attendance in Monthly Logs
 
 During a native lecture's scheduled interval, its action changes automatically
-to **Attend**, opening the occurrence's joining URL (or its parent session URL)
+to **Join session**, opening the occurrence's joining URL (or its parent session URL)
 in a new tab. Absolute timestamps preserve the scheduled timezone. The page
 updates at start/end boundaries and when focus returns; it does not require a
 reload. A live lecture without a valid HTTP(S) joining URL shows a disabled
-Attend button with an explanation. Outside that interval the action returns to
+Join session button with an explanation. Outside that interval the action returns to
 Open Activities. Historical records do not receive invented schedule times or URLs.
 
 `Open Activities` navigates to the same learner's Monthly Logs, opens the recorded
@@ -177,3 +211,19 @@ its temporary files to E:; no unrelated files were removed.
 - Read-only source samples: the historical sample returned 62 lectures, 59 attended, 3 absent, 95% attendance and 1 covered absence. All 62 rows now display sourced KSBs: 30 exact attendance mappings, 28 linked-material mappings and 4 labelled module fallbacks. A native-only sample returned 65 occurrences, 2 attended and 22 upcoming; unsynced occurrences remained pending.
 - Full TypeScript checking still reports pre-existing errors in `AccessPanel.test.tsx`, `SessionsTree.tsx`, curriculum `teams-meetings/page.tsx`, `CreateEmployerModal.tsx` and `CreateUserModal.tsx`; no Attendance file errors were reported.
 - The broader pre-existing API gate suite is not green under the direct offline runner: its legacy learner mock lacks `is_active`, and its client smoke expects `testserver` in `ALLOWED_HOSTS`. The new exact-path gate and signed approval checks pass independently.
+
+
+## Verification: featured lecture and attendance credit (14 September 2026)
+
+- 94 focused offline backend tests pass, including date/ownership/CSRF checks,
+  full duration, repeat submissions, source refresh and Monthly Logs deduplication.
+- 121 frontend tests pass across Attendance and the learner-page matrix.
+- Production build succeeds. Targeted ESLint reports no errors and the existing
+  Fast Refresh warning for the `lectureCounts` export.
+- The browser smoke uses intercepted APIs and tests the featured card, both
+  absence entry points, catch-up booking, attendance submission and refresh,
+  keyboard controls, dark mode, and widths from 320 to 1920 pixels.
+- Full-project TypeScript checking has unrelated existing errors in admin,
+  curriculum, user directory and video-watch test files.
+- No real attendance, booking, absence report, email or database schema change
+  was made during verification.

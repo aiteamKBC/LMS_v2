@@ -64,6 +64,6 @@ export const COACHING_DELIVERY_STATUS_LABEL: Record<CoachingDeliveryStatus, stri
   booked: 'Booked',
   completed: 'Completed',
   cancelled: 'Cancelled',
-  'needs-schedule': 'Needs schedule',
+  'needs-schedule': 'Not Scheduled',
 };
 export const COACHING_DELIVERY_STATUS_ORDER: CoachingDeliveryStatus[] = ['booked', 'completed', 'cancelled', 'needs-schedule'];

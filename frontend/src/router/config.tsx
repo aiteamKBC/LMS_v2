@@ -4,6 +4,7 @@ import { CHAT_ENABLED } from "@/lib/featureFlags";
 import { RequireAuth } from "@/components/feature/RequireAuth";
 import { lazyRoute } from "./lazyRoute";
 import { LearnerDashboardRedirect } from "./LearnerDashboardRedirect";
+import { studentWorkspaceRoutes } from "./studentWorkspaceRoutes";
 
 // Route components are code-split: each page becomes its own chunk, fetched on
 // first navigation instead of shipping in the entry bundle. router/index.ts
@@ -159,7 +160,6 @@ const LearnerOnboardingPage = lazyRoute(() => import("../pages/learner/onboardin
 const LearnerCompliancePage = lazyRoute(() => import("../pages/learner/compliance/page"));
 const LearnerOnboardingReviewsPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/page"));
 const LearnerReviewFormPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/form"));
-const LearnerOverview = lazyRoute(() => import("../pages/workspace/learner/page"));
 const LearnerProfilePage = lazyRoute(() => import("../pages/learner/profile/page"));
 const MISDashboard = lazyRoute(() => import("../pages/workspace/mis/page"));
 // These two exports live in the same module; map the named list export for lazy routing.
@@ -275,6 +275,7 @@ const routes: RouteObject[] = [
   { path: '/old-otjh/coach', element: <OldOtjhPage /> },
   { path: '/old-otjh/monitor', element: <OldOtjhPage /> },
   { path: '/old-otjh/coach/:aptemId', element: <OldOtjhPage /> },
+  { path: '/old-otjh/coach/:aptemId/months', element: <OldOtjhPage /> },
   { path: '/old-otjh/coach/:aptemId/months/:month', element: <OldOtjhPage /> },
   {
     // Sign-in is the front door. LoginPage bounces an already-signed-in visitor
@@ -352,16 +353,9 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner",
-    element: <Navigate to="/workspace/learner" replace />,
+    element: <Navigate to="/learner/home" replace />,
   },
-  {
-    path: "/workspace/learner",
-    element: <LearnerOverview />,
-  },
-  {
-    path: "/workspace/learner/:kind/:id",
-    element: <LearnerOverview />,
-  },
+  ...studentWorkspaceRoutes,
   {
     path: "/workspace/coach",
     element: <CoachDashboard />,

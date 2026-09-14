@@ -9,6 +9,7 @@ import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
+import { useAuth } from '@/hooks/useAuth';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
 
@@ -20,6 +21,7 @@ function numberValue(value?: string) {
 }
 
 export default function LearnerProfilePage() {
+  const { auth } = useAuth();
   const navigate = useNavigate();
   const myLearner = useMyLearner();
   const { real: learner, loading, loadError: error, refresh } = useLearnerDetailParam(myLearner.kind, myLearner.id);
@@ -30,7 +32,7 @@ export default function LearnerProfilePage() {
   // Still enrolling? The wizard is the only thing this learner can act on. The
   // profile body is held back while the redirect is in flight, so an onboarding
   // learner never sees a frame of the delivery profile before the wizard opens.
-  const redirectingToOnboarding = useOnboardingRedirect(learner?.programmeStatus, !loading);
+  const redirectingToOnboarding = useOnboardingRedirect(learner?.programmeStatus, !loading && auth.account?.role !== 'admin', myLearner.kind);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,7 +60,7 @@ export default function LearnerProfilePage() {
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle={learner?.name || 'Profile'} pageSubtitle="Learner profile" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Apprentice` : 'Apprentice'}>
       <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
-        <button type="button" onClick={() => navigate(`/workspace/learner/${myLearner.kind}/${myLearner.id}`)} className="inline-flex items-center gap-2 text-xs font-semibold text-foreground-500 transition hover:text-primary-700"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white shadow-sm"><AppIcon className="ri-arrow-left-line"></AppIcon></span>Back to Dashboard</button>
+        <button type="button" onClick={() => navigate(`/workspace/learner/${myLearner.kind}/${myLearner.id}/dashboard`)} className="inline-flex items-center gap-2 text-xs font-semibold text-foreground-500 transition hover:text-primary-700"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white shadow-sm"><AppIcon className="ri-arrow-left-line"></AppIcon></span>Back to Dashboard</button>
 
         {loading ? <Loading /> : error ? <LearnerLoadError error={error} onRetry={refresh} /> : learner && <>
         <section className="learner-super-admin-hero relative overflow-hidden rounded-3xl p-6 text-primary-800 md:p-6 workspace-page-hero">

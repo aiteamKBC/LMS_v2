@@ -279,6 +279,7 @@ function QrMark({ value, color }: { value?: string | null; color: string }) {
           <img
             src={source}
             alt="Certificate verification QR code"
+            crossOrigin="anonymous"
             className="h-full w-full object-contain"
             loading="eager"
             onError={() => setImageFailed(true)}
@@ -316,6 +317,7 @@ function QrPreview({ value, color, onClose }: { value?: string | null; color: st
             <img
               src={source}
               alt="Certificate verification QR code"
+              crossOrigin="anonymous"
               className="h-full w-full object-contain"
               onError={() => setImageFailed(true)}
             />
@@ -620,7 +622,7 @@ export function CertificateDocument({
           onClick={(event) => selectElement('learnerName', event)}
           className={`${editorClass('learnerName')} font-sans text-[calc(3.35cqw*var(--certificate-name-scale))] font-black italic leading-none text-black`}
         >
-          -{learnerName}-
+          {learnerName}
         </p>
         <div className="mx-auto mt-[2cqw] flex w-full items-center">
           <span className="h-px flex-1" style={{ backgroundColor: accent }} />
@@ -631,9 +633,9 @@ export function CertificateDocument({
 
       <div className="absolute left-[17%] right-[17%] top-[43%] max-h-[24%] overflow-hidden font-serif text-[calc(1.66cqw*var(--certificate-body-scale))] leading-[1.45] text-slate-700">
         <p onClick={(event) => selectElement('bodyText', event)} className={editorClass('bodyText')}>{bodyText || 'has successfully completed the requirements and passed the LMS final examination for'}</p>
-        <p onClick={(event) => selectElement('programmeName', event)} className={`${editorClass('programmeName')} mt-[0.55cqw] font-sans text-[calc(1.45cqw*var(--certificate-body-scale))] font-black italic leading-[1.18] text-black`}>-{programmeName}-</p>
+        <p onClick={(event) => selectElement('programmeName', event)} className={`${editorClass('programmeName')} mt-[0.55cqw] font-sans text-[calc(1.45cqw*var(--certificate-body-scale))] font-black italic leading-[1.18] text-black`}>{programmeName}</p>
         <p onClick={(event) => selectElement('recognitionText', event)} className={editorClass('recognitionText')}>{recognitionText}</p>
-        {showProgress ? <p onClick={(event) => selectElement('progress', event)} className={editorClass('progress')}>{progressPrefix} <span className="font-sans font-black italic text-black">-{progressLabel}-</span></p> : null}
+        {showProgress ? <p onClick={(event) => selectElement('progress', event)} className={editorClass('progress')}>{progressPrefix} <span className="font-sans font-black italic text-black">{progressLabel}</span></p> : null}
       </div>
 
       {showQr ? (
@@ -653,7 +655,7 @@ export function CertificateDocument({
               onClick={(event) => selectElement(item.id, event)}
               className={editorClass(item.id)}
             >
-              <p className="truncate border-b border-slate-300 pb-[0.45cqw] text-[calc(1.55cqw*var(--certificate-signature-scale))] font-black italic leading-tight text-black">-{item.value}-</p>
+              <p className="truncate border-b border-slate-300 pb-[0.45cqw] text-[calc(1.55cqw*var(--certificate-signature-scale))] font-black italic leading-tight text-black">{item.value}</p>
               <p className="mt-[0.75cqw] font-serif text-[calc(1.65cqw*var(--certificate-signature-scale))]" style={{ color: accent }}>{item.label}</p>
             </div>
           ))}
