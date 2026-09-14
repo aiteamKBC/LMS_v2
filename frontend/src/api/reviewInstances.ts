@@ -7,6 +7,7 @@
  * coach form is never hard-coded per Review type.
  */
 import { coachFetch } from '@/lib/coachFetch';
+import { saveReviewPdfResponse } from './reviewPdf';
 
 export type ReviewFieldType =
   | 'text'
@@ -60,6 +61,7 @@ export interface ReviewSignatureState {
 }
 
 export interface ReviewInstanceFormDefinition {
+  pdf?: { available: boolean; reason: string } | null;
   instance: {
     id: string;
     reviewTemplateId: string;
@@ -74,6 +76,7 @@ export interface ReviewInstanceFormDefinition {
   template: {
     id: string;
     name: string;
+    reviewTypeCode?: string;
     signatures: Record<ReviewParticipantRole, boolean>;
     visibleTo: Record<ReviewParticipantRole, boolean>;
     recurrence: { interval: number; unit: string };
@@ -98,6 +101,10 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
 }
 
 const instanceUrl = (instanceId: string) => `/coach_api/coach/reviews/${encodeURIComponent(instanceId)}`;
+
+export async function downloadMcmReviewPdf(instanceId: string): Promise<void> {
+  await saveReviewPdfResponse(await coachFetch(`${instanceUrl(instanceId)}/pdf`));
+}
 
 /**
  * The review instance behind one calendar event, created on first open if the

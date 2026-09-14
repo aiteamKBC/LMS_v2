@@ -27,11 +27,9 @@ This seeds, per programme lacking one:
     progress_reviews_api), so there is nothing existing to port. A
     Curriculum admin adds fields for it when ready.
 
-Both match today's Coach defaults exactly (interval, eligibility open to any
-status, a single sign-off comparable to the existing manager_signed_at
-flow), so this is a pure like-for-like migration of the *data*, not a
-behaviour change -- the behaviour change is Coach reading it from here
-instead of from a constant.
+Both retain the Coach interval and eligibility defaults. New MCM templates
+require coach and learner signatures so the completed meeting can be exported
+as a signed PDF. Progress Review retains its existing coach sign-off default.
 
 Idempotent: a programme that already has an enabled template for a surface
 (created by this command or by a curriculum admin by hand) is left alone.
@@ -265,6 +263,8 @@ class Command(BaseCommand):
                     continue
 
                 payload = _template_payload(name, interval=interval, unit=unit, sections=sections, review_type_id=type_id)
+                if code == review_types.REVIEW_TYPE_CODE_MCM:
+                    payload['signatures']['participant'] = True
                 review_id, errors = reviews.create_review(programme_id, payload, actor="backfill_mcm_pr_review_templates")
                 if errors:
                     self.stderr.write(f"  FAILED for programme {programme_id} ({code}): {errors}")

@@ -3,6 +3,7 @@ from django.urls import path
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
+from .review_pdf import coach_mcm_pdf
 from .views import (
     coach_attendance,
     coach_attendance_details,
@@ -63,4 +64,5 @@ urlpatterns = [
     path('coach/reviews/<str:instance_id>/answers', coach_review_instance_answers, name='coach-review-instance-answers'),
     path('coach/reviews/<str:instance_id>/complete', coach_review_instance_complete, name='coach-review-instance-complete'),
     path('coach/reviews/<str:instance_id>/signatures', coach_review_instance_signature, name='coach-review-instance-signature'),
+    path('coach/reviews/<str:instance_id>/pdf', coach_mcm_pdf, name='coach-mcm-pdf'),
 ]

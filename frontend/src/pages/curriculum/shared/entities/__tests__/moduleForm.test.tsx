@@ -640,6 +640,34 @@ describe('ModuleFormDrawer', () => {
     }));
   });
 
+  it('shows the validation remedy when group module creation fails', async () => {
+    const message = 'Apply curriculum migration 0063 before saving per-day times.';
+    createGroupModuleMock.mockRejectedValueOnce(new CurriculumApiError(
+      'Curriculum API returned 400 for /curriculum/groups/GROUP-1/modules/',
+      400,
+      '/curriculum/groups/GROUP-1/modules/',
+      {
+        error: 'Module authoring payload is invalid.',
+        validationErrors: [{ path: 'weeklySchedule', message }],
+        fields: ['weeklySchedule'],
+      },
+    ));
+    const { onSaved, onClose } = renderDrawer({
+      lockGroup: true,
+      defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' },
+    });
+
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await choose('Tutor', 'Tutor One');
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+
+    expect(await screen.findByText(`Module authoring payload is invalid. - ${message}`)).toBeInTheDocument();
+    expect(screen.queryByText(/Curriculum API returned/)).not.toBeInTheDocument();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText('e.g. Data Modelling')).toHaveValue('Data Modelling');
+  });
+
   it('shows a tutor double-booking refusal verbatim', async () => {
     // A real CurriculumApiError: `tutorConflictMessage` only unwraps that shape,
     // which is what keeps a generic 409 from being shown as a booking clash.

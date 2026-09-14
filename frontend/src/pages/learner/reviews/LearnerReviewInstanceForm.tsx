@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { fetchLearnerEventReviewInstance, type LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { flattenReviewFields } from '@/api/reviewInstances';
@@ -71,7 +72,7 @@ export function useLearnerReviewInstance(
   return { definition, loading, error, refresh };
 }
 
-export function LearnerReviewInstanceForm({ definition, onSign, signatoryName = 'Learner' }: { definition: LearnerReviewDefinition; onSign?: (signature: string) => Promise<void>; signatoryName?: string }) {
+export function LearnerReviewInstanceForm({ definition, onSign, onDownload, signatoryName = 'Learner' }: { definition: LearnerReviewDefinition; onSign?: (signature: string) => Promise<void>; onDownload?: () => Promise<void>; signatoryName?: string }) {
   const [openSectionId, setOpenSectionId] = useState('');
   const [signing, setSigning] = useState(false);
   const [signatureError, setSignatureError] = useState('');
@@ -163,6 +164,7 @@ export function LearnerReviewInstanceForm({ definition, onSign, signatoryName = 
 
       <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
         <ReviewSignatures signatures={definition.signatures} />
+        <ReviewPdfDownload availability={definition.pdf} onDownload={onDownload} />
       {canSign && signatureOpen ? (
         <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4" aria-busy={signing}>
           <p className="mb-3 text-sm font-bold text-violet-950">Your signature is required</p>

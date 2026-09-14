@@ -25626,7 +25626,11 @@ def curriculum_group_modules(request, identifier):
                 'skippedDuplicates': skipped,
             })
     except ModuleAuthoringValidationError as exc:
-        return json_error(str(exc), fields=['weeklySchedule'])
+        return json_error(
+            str(exc),
+            fields=list(dict.fromkeys(error['path'] for error in exc.errors)),
+            validationErrors=exc.errors,
+        )
     except TutorScheduleConflictError as exc:
         # Raised mid-loop, so the attachments already written in this
         # request roll back with it and the group is left as it was.

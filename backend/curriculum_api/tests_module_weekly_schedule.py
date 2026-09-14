@@ -124,6 +124,56 @@ class ModuleWeeklyScheduleTests(CurriculumPersistenceHarness):
             response = self.post_json('/curriculum_api/curriculum/modules/', {'moduleType': 'authoring', 'title': 'Invalid', 'weeklySchedule': slots})
             self.assertEqual(response.status_code, 400, response.content)
 
+    def test_group_attachment_reports_missing_schedule_migration_and_rolls_back_batch(self):
+        tree = self.tree_payload()
+        tree['cohorts'][0]['groups'][0]['modules'] = []
+        self.assertEqual(self.post_json('/curriculum_api/curriculum/programmes/tree/', tree).status_code, 200)
+        group_before = self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')
+        has_column = views.has_column
+
+        def column_available(table, column):
+            if table == views.AUTHORING_MODULES_TABLE and column == 'weekly_schedule':
+                return False
+            return has_column(table, column)
+
+        with patch.object(views, 'has_column', side_effect=column_available):
+            response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
+                'modules': [
+                    {'moduleName': 'Earlier batch attachment', 'startDate': '2026-10-07', 'weeks': 1},
+                    {
+                        'moduleName': 'Advanced Project and Logistics Management',
+                        'startDate': '2026-09-07', 'weeks': 2,
+                        'weeklySchedule': [SLOTS[0], {**SLOTS[1], 'day': 'Wednesday'}],
+                    },
+                ],
+            })
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()['fields'], ['weeklySchedule'])
+        self.assertEqual(response.json().get('validationErrors'), [{
+            'path': 'weeklySchedule',
+            'message': 'Apply curriculum migration 0063 before saving per-day times.',
+        }])
+        self.assertEqual(views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE), [])
+        self.assertEqual(views.authoring_fetch_all(views.AUTHORING_WEEKS_TABLE), [])
+        self.assertEqual(self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1'), group_before)
+
+    def test_group_attachment_reports_the_actual_authoring_field(self):
+        tree = self.tree_payload()
+        tree['cohorts'][0]['groups'][0]['modules'] = []
+        self.assertEqual(self.post_json('/curriculum_api/curriculum/programmes/tree/', tree).status_code, 200)
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
+            'moduleName': 'Incomplete authored week', 'startDate': '2026-09-07',
+            'weeks': 1, 'weekStructure': [{'weekNumber': 1, 'title': '', 'components': []}],
+        })
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()['fields'], ['weekStructure.0.title'])
+        self.assertEqual(response.json().get('validationErrors'), [{
+            'path': 'weekStructure.0.title', 'message': 'Week 1 needs a title.',
+        }])
+        self.assertEqual(views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE), [])
+
 
 class TeamsWeekdaySeriesTests(CurriculumPersistenceHarness):
     create_module = ModuleWeeklyScheduleTests.create_module
