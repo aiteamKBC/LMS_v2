@@ -418,7 +418,7 @@ def learner_certificate_status(request, kind, pk):
             template = _template_dict(_published_template(cursor))
             if not template:
                 return JsonResponse({"configured": True, "template": None, "certificate": None})
-            certificate = _certificate_dict(_issued_certificate(cursor, kind, pk))
+            certificate = _certificate_dict(_issued_certificate(cursor, kind, pk, template["id"], template["version"]))
         eligibility = _eligibility(kind, pk, template)
     except SOURCE_DOES_NOT_EXIST:
         return _error("Learner not found.", 404)
@@ -519,7 +519,7 @@ def learner_module_certificate_status(request, kind, pk, module_ref):
             template = _template_dict(_published_template(cursor))
             if not template:
                 return JsonResponse({"configured": True, "template": None, "certificate": None})
-            certificate = _certificate_dict(_issued_certificate(cursor, kind, pk, module_ref=module_ref))
+            certificate = _certificate_dict(_issued_certificate(cursor, kind, pk, template["id"], template["version"], module_ref))
         eligibility = _module_eligibility(kind, pk, module_ref, template)
     except SOURCE_DOES_NOT_EXIST:
         return _error("Learner not found.", 404)

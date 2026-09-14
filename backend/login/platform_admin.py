@@ -147,11 +147,21 @@ def certificate_template(request):
                 ORDER BY CASE status WHEN 'published' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END, version DESC
                 LIMIT 1''')
             row = cursor.fetchone()
+            cursor.execute('''SELECT id,name,version,status,title,body_text,minimum_progress,require_final_test,layout_config,published_at
+                FROM "Learner".certificate_templates
+                WHERE certificate_type=%s
+                ORDER BY version DESC
+                LIMIT 100''', ["progress-achievement"])
+            rows = cursor.fetchall()
     except DatabaseError:
         return _error("Certificate tables are not installed. Run learner_api/sql/certificate_management.sql in Neon.", 503)
+    templates = [
+        {"id": item[0], "name": item[1], "version": item[2], "status": item[3], "title": item[4], "bodyText": item[5], "minimumProgress": float(item[6]), "requireFinalTest": item[7], "layoutConfig": _json_dict(item[8]), "publishedAt": item[9].isoformat() if item[9] else None}
+        for item in rows
+    ]
     if not row:
-        return JsonResponse({"template": None})
-    return JsonResponse({"template": {"id": row[0], "name": row[1], "version": row[2], "status": row[3], "title": row[4], "bodyText": row[5], "minimumProgress": float(row[6]), "requireFinalTest": row[7], "layoutConfig": _json_dict(row[8]), "publishedAt": row[9].isoformat() if row[9] else None}})
+        return JsonResponse({"template": None, "templates": templates})
+    return JsonResponse({"template": {"id": row[0], "name": row[1], "version": row[2], "status": row[3], "title": row[4], "bodyText": row[5], "minimumProgress": float(row[6]), "requireFinalTest": row[7], "layoutConfig": _json_dict(row[8]), "publishedAt": row[9].isoformat() if row[9] else None}, "templates": templates})
 
 
 def _error(message, status, code=None):
