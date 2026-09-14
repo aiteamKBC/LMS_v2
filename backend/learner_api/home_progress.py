@@ -15,6 +15,7 @@ from .attendance_lectures import lecture_register
 from .subject_dates import as_date
 from .student_activity_access import student_activity_available
 from .training_plan_dashboard import rows
+from .otjh_totals import completed_otjh
 
 log = logging.getLogger(__name__)
 ACCEPTED = {'accepted', 'partial'}
@@ -72,10 +73,8 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
     # These records are already scoped to this learner. Retain earned time
     # when an activity is archived or replaced in the current curriculum, just
     # as the historical ledger retains previously completed learning.
-    ordinary_progress = [row for row in progress
-                         if str(row.get('componentId') or '') not in assignment_ids]
-    actual = float(historical_hours or 0) + completed_hours_value_from_progress(ordinary_progress)
-    submitted, missing_actual, missing_submitted = 0, 0, 0
+    actual = completed_otjh(native, progress, submissions, historical_hours)
+    submitted, missing_submitted = 0, 0
     for component, row in marking.items():
         if row.get('imported'):
             continue  # Already represented by the accepted historical ledger.
@@ -88,13 +87,9 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
             matching = [{key: value for key, value in item.items() if key not in {'expectedOtjh', 'expected_otjh'}}
                         for item in matching]
             value = completed_hours_value_from_progress(matching) if matching else None
-        if row['status'] in ACCEPTED:
-            missing_actual += value is None
-            actual += value or 0
-        elif row['status'] in SUBMITTED and component in assignment_ids:
+        if row['status'] in SUBMITTED and component in assignment_ids:
             missing_submitted += value is None
             submitted += value or 0
-    actual = None if missing_actual else round(actual, 4)
     submitted = None if missing_submitted else round(submitted, 4)
 
     undated = sum(not as_date(row.get('date')) or bool(row.get('date_needs_review')) for row in activities)
