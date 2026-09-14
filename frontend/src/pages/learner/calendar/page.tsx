@@ -8,6 +8,8 @@ import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
+import { fetchLearnerDetail } from '@/api/learnerDetail';
+import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 import { moveCalendarDate } from './navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -218,6 +220,46 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     syncWarning: meetingBookingWarning(ev),
     bookingReviewId: ev.reviewId,
     assignmentMonth: ev.assignmentMonth,
+  };
+}
+
+/** Map an Aptem review to the calendar shape without changing its identity. */
+function mapImportedReview(review: ImportedReview, source: 'mcr' | 'progress-review'): CalendarEvent | null {
+  const iso = review.plannedDate || review.completedDate;
+  if (!iso) return null;
+  const [year, month, day] = iso.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+  const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+  const status = review.status || 'unknown';
+  const hasTime = Boolean(review.plannedTime);
+  const start = review.plannedTime || '09:00';
+  const [hour, minute] = start.split(':').map(Number);
+  const end = new Date(year, month - 1, day, hour || 0, (minute || 0) + 60);
+  return {
+    id: `imported-review:${review.id}`,
+    eventKey: `imported-review:${review.id}`,
+    title: review.name || (source === 'mcr' ? 'Monthly Coaching Meeting' : 'Review'),
+    date: `${day} ${MONTH_NAMES[month - 1].slice(0, 3)}`,
+    dayName,
+    time: `${start}\u2013${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`,
+    club: source === 'mcr' ? 'Coaching' : 'Reviews',
+    clubId: '',
+    type: source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review',
+    format: 'Imported Aptem review',
+    location: hasTime ? 'Online' : 'To be confirmed',
+    host: review.reviewerName || 'Review team',
+    points: 0,
+    status: ['scheduled', 'in-progress', 'awaiting-signature', 'completed'].includes(status) ? 'confirmed' : 'pending',
+    description: `${review.type || 'Review'} imported from Aptem.`,
+    isoDate: iso,
+    source,
+    durationMinutes: 60,
+    bookingStatus: status,
+    bookingSessionType: source,
+    timeToBeConfirmed: !hasTime && status === 'not-scheduled',
+    importedReview: review,
   };
 }
 
@@ -978,22 +1020,59 @@ function LearnerCalendarBody() {
     return () => { cancelled = true; };
   }, [showBookModal, calendarConnections.length, bookDate, myLearner.kind, myLearner.id]);
 
-  // Load the learner's coaching sessions from Coach.coach_calendar_event.
+  // Non-Aptem learners use the Review-Coach generated/calendar flow. Aptem
+  // learners keep their imported review rows as the source of truth for MCM
+  // and Progress Review bookings.
   useEffect(() => {
     let cancelled = false;
     const writeVersion = calendarWriteVersionRef.current;
-    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
-      .then((res) => {
+    const calendarPromise = fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true });
+    // Keep the calendar load independent of the optional Aptem identity
+    // lookup. A failed detail request falls back to the review endpoint,
+    // whose empty result is the normal response for learners without Aptem.
+    const detailPromise = fetchLearnerDetail(myLearner.kind, myLearner.id, { revalidate: true }).catch(() => null);
+    calendarPromise
+      .then(async (res) => {
         if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
         const coachEvents = res.events
           .map(mapCoachEvent)
           .filter((ev): ev is CalendarEvent => ev !== null);
+        let events = coachEvents;
+        // Calendar data remains usable if the detail endpoint is unavailable;
+        // the flag only determines whether Aptem review rows should replace
+        // the generated MCM/Progress Review cards.
+        const detail = await detailPromise;
+        if (detail?.studentActivityAvailable || detail === null) {
+          const histories = await Promise.allSettled([
+            fetchReviewHistory(myLearner.kind, myLearner.id, 'monthly-coaching'),
+            fetchReviewHistory(myLearner.kind, myLearner.id, 'reviews'),
+          ]);
+          if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
+          const monthly = histories[0].status === 'fulfilled' ? histories[0].value.reviews : [];
+          const progress = histories[1].status === 'fulfilled' ? histories[1].value.reviews : [];
+          const importedMonthly = monthly
+            .map((review) => mapImportedReview(review, 'mcr'))
+            .filter((ev): ev is CalendarEvent => ev !== null);
+          const importedProgress = progress
+            .map((review) => mapImportedReview(review, 'progress-review'))
+            .filter((ev): ev is CalendarEvent => ev !== null);
+          const importedSources = new Set<LearnerSourceFilter>();
+          if (importedMonthly.length) importedSources.add('mcr');
+          if (importedProgress.length) importedSources.add('progress-review');
+          events = [
+            ...coachEvents.filter((event) => !importedSources.has(learnerEventSource(event))),
+            ...importedMonthly,
+            ...importedProgress,
+          ];
+        }
         setBookingCalendar(res.bookingCalendar || null);
         // Keep locally-created personal events; replace the DB-backed ones.
-        setMyEvents((prev) => [...coachEvents, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
+        setMyEvents((prev) => [...events, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
         setCalendarError(null);
       })
-      .catch((err: Error) => { if (!cancelled && writeVersion === calendarWriteVersionRef.current) setCalendarError(err.message); })
+      .catch((err: Error) => {
+        if (!cancelled && writeVersion === calendarWriteVersionRef.current) setCalendarError(err.message);
+      })
       .finally(() => { if (!cancelled) setCalendarLoading(false); });
     // The assigned coach (Active_users mirror) — powers the "Book a session" panel.
     fetchLearnerCoach(myLearner.id)
@@ -1116,7 +1195,16 @@ function LearnerCalendarBody() {
     setBookSubmitting(true);
     setBookError(null);
     try {
-      const res = rescheduleEvent
+      const sourceEvent = rescheduleEvent || bookingSourceEvent;
+      const importedReview = sourceEvent?.importedReview;
+      const importedReviewId = importedReview?.id || sourceEvent?.bookingReviewId;
+      const importedReviewDate = sourceEvent?.isoDate || importedReview?.plannedDate || importedReview?.completedDate || bookDate;
+      const importedReviewBooking = Boolean(importedReviewId);
+      const requestNotes = [
+        bookType === 'other' ? `Requested session type: ${otherSessionType.trim()}` : '',
+        bookNotes.trim(),
+      ].filter(Boolean).join('\n');
+      const res = rescheduleEvent && !importedReviewBooking
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
             eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
             reviewId: rescheduleEvent.bookingReviewId,
@@ -1126,30 +1214,40 @@ function LearnerCalendarBody() {
             timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           })
         : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
+            assignmentMonth: importedReviewBooking ? importedReviewDate.slice(0, 7) : undefined,
+            reviewId: importedReviewId,
             sessionType: bookType,
-            eventKey: bookingSourceEvent?.bookingReviewId ? undefined : bookingSourceEvent?.eventKey,
-            reviewId: bookingSourceEvent?.bookingReviewId,
-            assignmentMonth: bookingSourceEvent?.bookingReviewId ? bookingSourceEvent.assignmentMonth || bookDate.slice(0, 7) : undefined,
+            // An imported Aptem key identifies the history row, not the
+            // CoachCalendarEvent row created by the booking.
+            eventKey: importedReviewBooking ? undefined : bookingSourceEvent?.eventKey,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
-            notes: [bookType === 'other' ? `Requested session type: ${otherSessionType.trim()}` : '', bookNotes.trim()].filter(Boolean).join('\n') || undefined,
+            notes: requestNotes || undefined,
             timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           });
       // A read started before this save must not restore the old appointment.
       calendarWriteVersionRef.current += 1;
       const mapped = mapCoachEvent(res.event);
       if (mapped) {
-        mapped.bookingReviewId = (rescheduleEvent || bookingSourceEvent)?.bookingReviewId;
-        mapped.assignmentMonth = (rescheduleEvent || bookingSourceEvent)?.assignmentMonth;
-        setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id), mapped]);
-        const date = parseEventDate(mapped);
+        const updatedImportedReview = importedReview
+          ? { ...importedReview, status: 'scheduled', plannedDate: bookDate, plannedTime: bookTime }
+          : undefined;
+        const updatedEvent = updatedImportedReview
+          ? { ...mapped, id: sourceEvent?.id || mapped.id, importedReview: updatedImportedReview }
+          : {
+              ...mapped,
+              bookingReviewId: sourceEvent?.bookingReviewId,
+              assignmentMonth: sourceEvent?.assignmentMonth,
+            };
+        setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id && ev.id !== sourceEvent?.id), updatedEvent]);
+        const date = parseEventDate(updatedEvent);
         if (date) {
           setViewYear(date.year ?? viewYear);
           setViewMonth(date.month);
           setSelectedDay(date.day);
         }
-        setShowEventDetails(mapped);
+        setShowEventDetails(updatedEvent);
       }
       setShowBookModal(false);
       setBookNotes('');
