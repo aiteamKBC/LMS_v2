@@ -1,9 +1,10 @@
 // ============================================================================
 // Learner coach-contact API client.
-// Reads/writes coach_name + coach_email on "Learner"."learners" (LearnerProfile,
-// resolved from the enrolment row by learner_profile_for_source).
-// Only Active learners have a profile row, so GET 404s for non-Active learners.
+// Keeps the enrolment case owner and linked learner coach contact in sync.
+// This picker is available for Active learners; GET 404s otherwise.
 // ============================================================================
+import { invalidateLearnerDetailCache } from './learnerDetail';
+import { invalidateWizardCacheById } from './extendedIlr';
 
 const BASE = '/learner_api/learners';
 
@@ -47,6 +48,9 @@ export function fetchLearnerCoach(id: string): Promise<CoachContact> {
 }
 
 /** Update coach contact. Pass only the field(s) you want to change. */
-export function updateLearnerCoach(id: string, patch: Partial<CoachContact>): Promise<CoachContact> {
-  return request<CoachContact>(`${BASE}/${id}/coach/`, { method: 'PATCH', body: JSON.stringify(patch) });
+export async function updateLearnerCoach(id: string, patch: Partial<CoachContact>): Promise<CoachContact> {
+  const contact = await request<CoachContact>(`${BASE}/${id}/coach/`, { method: 'PATCH', body: JSON.stringify(patch) });
+  invalidateWizardCacheById(id);
+  invalidateLearnerDetailCache();
+  return contact;
 }

@@ -1855,6 +1855,7 @@ def sync_active_user(source):
     """Upsert one permanent learner and refresh authored plan/KSB child rows."""
     from .apprenticeship_agreement import _group_dates
     from .learner_dates import learner_date_values
+    from .coach_assignment import source_coach
 
     status = _s(getattr(source, "programme_status", ""))
     start_date, end_date, _ = _group_dates(source)
@@ -1882,6 +1883,9 @@ def sync_active_user(source):
     }
     try:
         with transaction.atomic(using="enrolment"):
+            # Preserve legacy profile-only assignments, but copy an explicit
+            # assignment (including an unassignment) on activation and rebuild.
+            defaults.update(source_coach(source) or {})
             # Prefer the explicit link; fall back to email for profiles created
             # before enrolment_id existed (see identity.learner_profile_for_source).
             learner = learner_profile_for_source(source, source.id)
