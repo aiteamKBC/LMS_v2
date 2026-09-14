@@ -15,6 +15,9 @@ export type MonthState = {
   training_plan_target?: number | string | null;
   student_signature: Signature | null;
   coach_signature: Signature | null;
+  locked?: boolean;
+  locked_at?: string | null;
+  can_unlock?: boolean;
   pending_revisions: number;
   can_complete: boolean;
   source_finalization: { event_type: string; created_at: string } | null;
