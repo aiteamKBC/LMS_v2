@@ -984,8 +984,48 @@ def _cumulative_week_target(detail, learner_start_date=None, today=None):
     return round(total, 2)
 
 
+def _review_otjh_hours(learner_profile):
+    """(planned, completed) OTJ hours this learner's Reviews are worth.
+
+    Curriculum owns both numbers -- see curriculum_api.review_otjh. Planned
+    counts every occurrence the Review Engine projects across the learner's
+    whole programme; completed counts only instances actually signed off. Only
+    templates flagged counts_towards_otjh contribute to either.
+    """
+    if learner_profile is None:
+        return 0.0, 0.0
+
+    from curriculum_api import review_otjh
+
+    learner_id = getattr(learner_profile, "id", None)
+    start_date = getattr(learner_profile, "start_date", None)
+    # The forecast spans the learner's whole programme, not a month: this
+    # feeds the same "planned hours" figure totalExpectedOtjh does, which is
+    # the plan's lifetime total. Without an end date there is no window to
+    # project into, so reviews contribute nothing rather than an arbitrary
+    # horizon that would silently inflate the total.
+    end_date = getattr(learner_profile, "end_date", None)
+    if not learner_id or not start_date or not end_date:
+        return 0.0, review_otjh.completed_hours(learner_id) if learner_id else 0.0
+
+    planned = review_otjh.planned_hours(
+        _s(getattr(learner_profile, "programme_id", "")),
+        learner_id,
+        _s(getattr(learner_profile, "programme_status", "")),
+        start_date,
+        start_date,
+        end_date,
+    )
+    return planned, review_otjh.completed_hours(learner_id)
+
+
 def _live_otjh_snapshot(detail, learner_profile=None):
-    planned = fmt_hours(detail.get("totalExpectedOtjh") or 0)
+    # Reviews are off-the-job training in their own right when Curriculum says
+    # so, so they land in the same two totals as curriculum components rather
+    # than a figure of their own: planned grows when a review is scheduled,
+    # completed when it is signed off.
+    review_planned, review_completed = _review_otjh_hours(learner_profile)
+    planned = fmt_hours(float(detail.get("totalExpectedOtjh") or 0) + review_planned)
     completed = (
         completed_hours_from_progress(
             learner_profile.training_plan_progress,
@@ -994,6 +1034,8 @@ def _live_otjh_snapshot(detail, learner_profile=None):
         if learner_profile
         else "0"
     )
+    if review_completed:
+        completed = fmt_hours(float(completed or 0) + review_completed)
 
     learner_start_date = getattr(learner_profile, "start_date", None)
     target_num = _cumulative_week_target(detail, learner_start_date=learner_start_date)

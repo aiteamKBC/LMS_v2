@@ -13,6 +13,8 @@ export type LogPerspective = 'learner' | 'coach';
 function url(path: string, perspective: LogPerspective) {
   const params = new URLSearchParams();
   params.set('perspective', perspective);
+  const workflow = new URLSearchParams(window.location.search).get('workflow');
+  if (workflow) params.set('workflow', workflow);
   const selected = perspective === 'coach' ? coachViewAs() : null;
   if (selected) params.set('viewAsCoach', selected.email);
   return `/learner_api/monthly-logs/${path}${params.size ? `?${params}` : ''}`;
@@ -48,6 +50,16 @@ export async function signLogMonth(id: string, month: string, digest: string, bl
     headers: { 'X-CSRFToken': csrfToken }, body: form });
   const data = await response.json().catch(() => null);
   if (!response.ok || !data) throw new Error(data?.error || 'Could not save your signature. Please try again.');
+  invalidateLearnerReads();
+  return data as LogDetail;
+}
+
+export async function unlockLogMonth(id: string, month: string, csrfToken: string, perspective: LogPerspective = 'learner') {
+  const response = await fetch(url(`${id}/${month}/unlock/`, perspective), {
+    method: 'POST', credentials: 'include', headers: { 'X-CSRFToken': csrfToken },
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) throw new Error(data?.error || 'Could not unlock this monthly log.');
   invalidateLearnerReads();
   return data as LogDetail;
 }
