@@ -471,10 +471,16 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     await renderWorkspace();
     await openTab(/Modules/);
 
-    expect(screen.getByRole('link', { name: /^Data Foundations/ })).toHaveAttribute('href', '/curriculum/modules/MOD-1?moduleName=Data+Foundations');
+    // The row opens the Module Builder: authoring the weeks, components and
+    // material is what a reader comes to a module for from here.
+    expect(screen.getByRole('link', { name: /^Data Foundations/ })).toHaveAttribute(
+      'href',
+      '/curriculum/module-builder?module=MOD-1&moduleTitle=Data+Foundations&programme=PROG-DATA&programmeName=Data+Analyst',
+    );
     // Row actions say what they do rather than leaving the reader to decode a
-    // glyph, and there is one per module.
-    expect(screen.getAllByRole('button', { name: 'Builder' })).toHaveLength(2);
+    // glyph, and there is one per module. The module's read-only home stays one
+    // named action away.
+    expect(screen.getAllByRole('button', { name: 'Workspace' })).toHaveLength(2);
     // A module's Teams series, week timeline and KSB weights are its own page's
     // job. Repeating them here is what made this tab a second module workspace.
     expect(screen.queryByText(/Fetch attendance & recordings/)).not.toBeInTheDocument();
