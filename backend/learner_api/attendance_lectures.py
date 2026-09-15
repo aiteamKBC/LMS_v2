@@ -97,7 +97,13 @@ def report_id(row):
 
 
 def read_native_occurrences(source):
-    """Current, assigned-module occurrences for this learner's Teams invites."""
+    """Current assigned-module occurrences expected for, or attended by, the learner.
+
+    The saved Teams invite list remains authoritative for sessions with no
+    attendance evidence. A completed Teams report is stronger evidence for an
+    attendee, though, and must not be hidden merely because the series invite
+    list is stale (for example after a learner joined the cohort later).
+    """
     if not source.email:
         return []
     with connections['enrolment'].cursor() as cur:
@@ -112,7 +118,11 @@ def read_native_occurrences(source):
             s.id AS live_session_id,s.module_catalogue_id,m.title AS module_title,
             o.scheduled_start,o.scheduled_end,o.updated_at,o.session_number,
             COALESCE(NULLIF(o.join_url,''),s.join_url) AS join_url,
-            o.attendance_report_id,coalesce(nullif(m.tutor_name,''),s.organizer_email) AS tutor_name
+            o.attendance_report_id,coalesce(nullif(m.tutor_name,''),s.organizer_email) AS tutor_name,
+            CASE WHEN o.attendance_report_id IS NULL OR o.attendance_report_id='' THEN false
+                 ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
+                     WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s
+                       AND a.total_attendance_seconds>0) END AS attended
             FROM curriculum.live_session_occurrences o
             JOIN curriculum.live_sessions s ON s.id=o.live_session_id
             JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
@@ -120,10 +130,15 @@ def read_native_occurrences(source):
               AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
               AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
               AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
-              AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(
-                CASE WHEN jsonb_typeof(s.attendees)='array' THEN s.attendees ELSE '[]'::jsonb END) e
-                WHERE lower(btrim(e))=%s)
-            ORDER BY o.scheduled_start,o.id''', [module_ids, _key(source.email)])
+              AND (EXISTS (SELECT 1 FROM jsonb_array_elements_text(
+                    CASE WHEN jsonb_typeof(s.attendees)='array' THEN s.attendees ELSE '[]'::jsonb END) e
+                    WHERE lower(btrim(e))=%s)
+                   OR (o.attendance_report_id IS NOT NULL AND o.attendance_report_id<>''
+                       AND EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
+                           WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s
+                             AND a.total_attendance_seconds>0)))
+            ORDER BY o.scheduled_start,o.id''', [_key(source.email), module_ids,
+                                                _key(source.email), _key(source.email)])
         result = dict_rows(cur)
     now = timezone.now()
     for row in result:
@@ -137,7 +152,8 @@ def read_native_occurrences(source):
             source='microsoft-teams', session_type='live_session',
             session_title=f"{row['module_title'] or 'Live session'} — Session {row['session_number']}",
             session_date=start.date(), session_start_time=start.time(), session_end_time=end.time(),
-            attendance_status='upcoming' if row['scheduled_start'] > now else
+            attendance_status='present' if row.get('attended') else
+                              'upcoming' if row['scheduled_start'] > now else
                               'in_progress' if row['scheduled_end'] > now else 'pending',
             minutes_late=0, catchup_completed=False,
         )

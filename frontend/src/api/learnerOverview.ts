@@ -12,6 +12,7 @@ export type PlanSubjectSummary = {
 
 export type OverviewWeek = {
   planSubjects?: PlanSubjectSummary[];
+  monthlyOtjh?: Record<string, { planned: number | null; actual: number; missingPlannedActivities: number }>;
   weekStart: string; weekEnd: string; timezone: string;
   modules: { id: string; title: string; weekLabels: string[]; moduleIds?: string[]; completed: number; total: number;
     percent: number | null; ksbCodes: string[]; ksbMappingMissing: boolean }[];

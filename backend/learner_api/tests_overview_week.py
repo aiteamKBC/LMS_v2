@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from django.db import DatabaseError
 from django.test import SimpleTestCase, RequestFactory
-from .overview_week import summarise_week, week_bounds, progress_day, overview_week, read_week, merged_activities, summarise_plan, direct_hours_by_subject
+from .overview_week import (summarise_week, week_bounds, progress_day, overview_week, read_week,
+                            merged_activities, summarise_plan, direct_hours_by_subject,
+                            monthly_otjh_summary)
 from .subject_dates import activity_schedule
 
 START, END = date(2026, 9, 7), date(2026, 9, 13)
@@ -41,6 +43,29 @@ class OverviewWeekTests(SimpleTestCase):
             {'componentId': 'unknown', 'moduleTitle': 'Marketing', 'kind': 'component', 'claimedSeconds': 36000, 'timeTrackingSource': 'component:input'},
         ]
         self.assertEqual(direct_hours_by_subject(current, progress, {'linked': ('1', '2')}), {'legacy:1': 1, 'current:M2': 2})
+
+    def test_monthly_hours_use_activity_dates_and_real_progress_timestamps(self):
+        activities = list(merged_activities(
+            [old(expected_hours=2)],
+            [native(expected_hours=4), native(id='october', date='2026-10-02', expected_hours=3)],
+            [], set(), {'new': ('1', '2')},
+        ))
+        progress = [
+            {'componentId': 'new', 'kind': 'component', 'submittedAt': '2026-09-09T12:00:00Z',
+             'claimedSeconds': 5400, 'timeTrackingSource': 'component:input'},
+            {'componentId': 'october', 'kind': 'component', 'submittedAt': '2026-10-02T12:00:00Z',
+             'claimedSeconds': 3600, 'timeTrackingSource': 'component:input'},
+        ]
+        self.assertEqual(monthly_otjh_summary(activities, progress), {
+            '2026-09': {'planned': 4, 'actual': 1.5, 'missingPlannedActivities': 0},
+            '2026-10': {'planned': 3, 'actual': 1, 'missingPlannedActivities': 0},
+        })
+
+    def test_monthly_planned_hours_stay_unknown_when_an_activity_has_no_hours(self):
+        activities = list(merged_activities([], [native(expected_hours=2), native(id='missing')], [], set(), {}))
+        self.assertEqual(monthly_otjh_summary(activities, [])['2026-09'], {
+            'planned': None, 'actual': 0, 'missingPlannedActivities': 1,
+        })
 
     def test_plan_details_count_merged_activities_and_distinct_ksbs_across_all_dates(self):
         current = [native(id='linked', type='quiz', ksb_mappings=['K1', 'S2']),
@@ -186,6 +211,9 @@ class OverviewWeekTests(SimpleTestCase):
             result = read_week(SimpleNamespace(pk=125, aptem_id=None), datetime(2026, 9, 12, tzinfo=timezone.utc))
         self.assertEqual(result['otjh']['actual'], 1)
         self.assertEqual(result['expectedHours'], 2)
+        self.assertEqual(result['monthlyOtjh']['2026-09'], {
+            'planned': 2, 'actual': 3, 'missingPlannedActivities': 0,
+        })
         self.assertEqual(result['modules'][0]['completed'], 1)
         self.assertNotIn('latestModuleId', result)
         dates.assert_called_once_with(cursor, ['M1'])

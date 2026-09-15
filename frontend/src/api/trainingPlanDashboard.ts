@@ -41,6 +41,7 @@ export type PlanModule = { id: string; title: string; description: string; start
 export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'> & { meetingLink?: string | null };
 export type TrainingPlanDashboard = {
   months: Record<string, PlanMonth>;
+  monthlyOtjh?: Record<string, { planned: number | null; actual: number; missingPlannedActivities: number }>;
   actual: { month: string; groupId: string | null; hours: number; count: number }[];
   actualAvailable: boolean;
   modules: PlanModule[];

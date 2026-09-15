@@ -95,6 +95,46 @@ def direct_hours_by_subject(native, progress, links):
     return {subject: round(_direct_progress_otjh(entries), 4) for subject, entries in grouped.items()}
 
 
+def monthly_otjh_summary(activities, progress):
+    """Return real planned and recorded current-platform hours by UK month.
+
+    Planned time follows the authored activity delivery date and uses the same
+    explicit old/new identity and source-priority rules as the weekly card.
+    Recorded time follows the timestamp of the learner's actual progress entry.
+    """
+    planned, priorities = {}, {}
+    for row in activities:
+        day = as_date(row.get('date'))
+        if not day or row.get('date_needs_review'):
+            continue
+        month = day.strftime('%Y-%m')
+        hour_key = ('legacy', str(row['activity_id'])) if row.get('activity_id') is not None else row['key']
+        value = number(row.get('expected_hours'))
+        priority = int(row.get('expected_source') == 'native' or row['key'][0] == 'native')
+        key = (month, hour_key)
+        if key not in planned or value is not None and (planned[key] is None or priority >= priorities[key]):
+            planned[key] = value
+            priorities[key] = priority
+
+    progress_by_month = {}
+    for row in progress:
+        day = progress_day(row.get('submittedAt'))
+        if day:
+            progress_by_month.setdefault(day.strftime('%Y-%m'), []).append(row)
+
+    result = {}
+    months = {month for month, _ in planned} | set(progress_by_month)
+    for month in sorted(months):
+        values = [value for (key_month, _), value in planned.items() if key_month == month]
+        missing = sum(value is None for value in values)
+        result[month] = {
+            'planned': round(sum(value for value in values if value is not None), 4) if values and not missing else None,
+            'actual': round(_direct_progress_otjh(progress_by_month.get(month, [])), 4),
+            'missingPlannedActivities': missing,
+        }
+    return result
+
+
 def summarise_plan(activities, assigned, direct_hours=None):
     """Plan cards need counts, dates and mapped KSBs, never lesson bodies or attempts."""
     subjects = {}
@@ -269,10 +309,12 @@ def read_week(source, now=None, *, home_kind=None):
             old_hours = number(raw_hours)
     weekly_progress = [row for row in progress if (day := progress_day(row.get('submittedAt'))) and start <= day <= end]
     new_hours = _direct_progress_otjh(weekly_progress)
+    plan_activities = list(merged_activities(historical, native, progress, attempts, links))
     result = {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(), 'timezone': 'Europe/London',
             **summarise_week(historical, native, progress, attempts, links, start, end),
-            'planSubjects': summarise_plan(merged_activities(historical, native, progress, attempts, links), assigned,
+            'planSubjects': summarise_plan(plan_activities, assigned,
                                           direct_hours_by_subject(native, progress, links)),
+            'monthlyOtjh': monthly_otjh_summary(plan_activities, progress),
             'otjh': {'actual': round(old_hours + new_hours, 4) if old_hours is not None and not undated_hours else None,
                      'historical': old_hours, 'new': round(new_hours, 4), 'undatedHistoricalRows': undated_hours}}
     if home_kind:

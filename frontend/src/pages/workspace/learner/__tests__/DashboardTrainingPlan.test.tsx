@@ -20,12 +20,12 @@ const schedule = (): TrainingPlanDashboard => ({
     targetDate: '2026-09-25', scheduledDate: null, scheduledTime: null, durationMinutes: 60, status: 'not-scheduled', coachName: 'Assigned Coach', invited: false }],
   coach: { name: 'Assigned Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
 });
-function setup(calendar = schedule(), failed = '') {
+function setup(calendar = schedule(), failed = '', overview = week()) {
   const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
     const url = String(input);
     if (failed && url.includes(failed)) return new Response(JSON.stringify({ error: 'Offline' }), { status: 503 });
     if (url.includes('rewards-summary')) return new Response(JSON.stringify({ points: { learnerId: '125', earned: 350, committed: 100, balance: 250 }, rewards: [] }));
-    return new Response(JSON.stringify(url.includes('overview-week') ? week()
+    return new Response(JSON.stringify(url.includes('overview-week') ? overview
       : url.includes('section=contract') ? { months: calendar.months, contractStatus: calendar.contractStatus } : calendar));
   });
   vi.stubGlobal('fetch', fetch);
@@ -36,6 +36,18 @@ beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new 
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('dashboard learning layout', () => {
+  it('fills the monthly summary from authored hours and current learner progress without Aptem history', async () => {
+    const overview = { ...week(), monthlyOtjh: {
+      '2026-09': { planned: 5, actual: 2, missingPlannedActivities: 0 },
+    } };
+    const calendar = { ...schedule(), actualAvailable: false };
+    setup(calendar, '', overview);
+    const panel = await screen.findByRole('region', { name: 'Monthly study plan' });
+    for (const [label, value] of [['Planned', '5'], ['Completed', '2'], ['Remaining', '3'], ['Weekly target', '5']]) {
+      expect(within(panel).getByText(label).nextElementSibling).toHaveTextContent(`${value} hrs`);
+    }
+  });
+
   it('places the combined card next to weekly learning and keeps the timeline beside its overview', async () => {
     setup();
     const combined = await screen.findByRole('region', { name: 'Live sessions and programme reviews' });
