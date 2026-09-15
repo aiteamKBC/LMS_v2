@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+
 import sys
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse, unquote
@@ -53,6 +54,12 @@ def load_env_file(path):
 
 
 load_env_file(BASE_DIR / '.env')
+
+SAFEGUARDING_SSO_SECRET = os.environ.get("SAFEGUARDING_SSO_SECRET", "").strip()
+SAFEGUARDING_SSO_CALLBACK_URL = os.environ.get(
+    "SAFEGUARDING_SSO_CALLBACK_URL",
+    "https://safeguarding.kentbusinesscollege.net/auth/lms/callback",
+).strip()
 
 
 DB_CONN_MAX_AGE = int(os.environ.get('DB_CONN_MAX_AGE', '300'))
