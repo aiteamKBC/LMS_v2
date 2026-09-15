@@ -102,7 +102,10 @@ class EmailTests(unittest.TestCase):
         self.assertIn('29 Oct 2026', html)
         self.assertIn('cid:kbc-schedule-logo', html)
         self.assertNotIn('[[', html)
-        self.assertIn('Europe/London', text)
+        self.assertNotIn('Europe/London', html)
+        self.assertNotIn('Your own calendar may show', html)
+        self.assertNotIn('Europe/London', text)
+        self.assertIn('12:00 PM', text)
 
     def test_multiple_links_stay_with_their_sessions(self):
         _, html, _ = render_schedule_email('Module', [session(), session(2, '2026-09-18T11:00:00Z', 'https://teams.microsoft.com/meet/second')], 'Europe/London')
