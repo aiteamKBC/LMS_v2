@@ -22,9 +22,12 @@ the hash itself (an indexed equality), so the timing signal there is a b-tree
 probe, not a byte-by-byte compare of a secret.
 
 **Lockout** is per-account, with an exponential-ish backoff capped at
-``LOCKOUT_MAX_MINUTES``. **Throttling** is per-IP and per-email over a sliding
-window read from the audit table, which stops a spray across many accounts that
-per-account lockout alone would not.
+``LOCKOUT_MAX_MINUTES``. **Throttling** is per-email over a sliding window read
+from the audit table, and limits reset emails per address.
+
+The per-IP sign-in throttle is **disabled** -- see ``ip_is_throttled`` for why
+(shared office egress made it lock out the whole building) and for what a
+replacement would need to do differently.
 """
 from __future__ import annotations
 
@@ -328,10 +331,25 @@ def recent_failure_count(*, ip=None, email=None, event=None, window=THROTTLE_WIN
 
 
 def ip_is_throttled(ip):
-    """Whether this source has failed too often recently to be allowed another try."""
-    if not ip:
-        return False
-    return recent_failure_count(ip=ip) >= THROTTLE_MAX_FAILURES_PER_IP
+    """Whether this source has failed too often recently to be allowed another try.
+
+    Disabled: always False. The per-IP window counted failures by *source
+    address*, and the college reaches the platform through shared egress -- one
+    office, one NAT, one address for everybody. Twenty failed attempts anywhere
+    in the building refused sign-in for every colleague behind it for fifteen
+    minutes, including people typing their password correctly, which is how it
+    was found.
+
+    Per-ACCOUNT lockout is untouched and is the control that actually matters
+    here: `register_failure`/`is_locked` still lock an individual account after
+    LOCKOUT_THRESHOLD failures with escalating backoff, so guessing one person's
+    password is no easier than before. What is lost is the defence against an
+    attacker spreading attempts thinly across MANY accounts from one source --
+    worth restoring as a per-IP limit that counts distinct accounts tried, or
+    keyed on something narrower than a shared office address, rather than as a
+    flat failure count.
+    """
+    return False
 
 
 def reset_requests_exhausted(email):

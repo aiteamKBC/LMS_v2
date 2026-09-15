@@ -596,6 +596,58 @@ class RoleTests(LoginTestBase):
         self.assertFalse(created)
         self.assertEqual(refreshed.role, "staff")
 
+    def test_enrolling_existing_staff_as_a_learner_reuses_their_account(self):
+        """A staff member who also studies must keep exactly ONE account.
+
+        The unique index is per subject_type, so a `learner` row on an address a
+        `staff` row already uses is permitted by the schema -- and minting it
+        locked the person out of everything: account_for_email returns None once
+        an address has two active accounts, and password sign-in, Microsoft SSO
+        and forgot-password all go through it. Sign-in failed as "Incorrect email
+        or password" and forgot-password answered its uniform 200 without ever
+        sending anything.
+        """
+        from learner_api.models import EnrolmentUser
+
+        staff_account = self.make_account()
+
+        learner = EnrolmentUser.objects.create(
+            username="Test Person", email=self.email,
+            status="FullUser", type="User",
+        )
+        self.addCleanup(lambda: EnrolmentUser.all_learners.filter(pk=learner.pk).delete())
+
+        account, created = identity.ensure_account("learner", learner.pk, subject=learner)
+
+        self.assertFalse(created, "enrolment must not mint a second account")
+        self.assertEqual(account.id, staff_account.id)
+        # Still the staff identity, with their password intact.
+        self.assertEqual(account.subject_type, "staff")
+        self.assertTrue(account.has_password)
+
+        self.assertEqual(
+            LoginAccount.objects.filter(email=normalize_email(self.email), is_active=True).count(),
+            1,
+        )
+        # The thing that was actually broken: the address still resolves.
+        self.assertIsNotNone(identity.account_for_email(self.email))
+
+    def test_an_ambiguous_address_still_resolves_to_nothing(self):
+        """The guard above is what prevents this state; the rule itself stands.
+
+        Kept explicit so nobody "fixes" account_for_email by picking one of the
+        two -- guessing which identity a password belongs to is how somebody
+        signs in as the wrong person.
+        """
+        account = self.make_account()
+        shadow = LoginAccount.objects.create(
+            subject_type="learner", subject_id=999_999,
+            email=account.email, display_name="Shadow", role="learner",
+        )
+        self._accounts.append(shadow)
+
+        self.assertIsNone(identity.account_for_email(self.email))
+
 
 class InvitationTests(LoginTestBase):
     def test_invitation_token_is_stored_only_as_a_hash(self):
