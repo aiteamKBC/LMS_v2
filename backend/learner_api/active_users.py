@@ -112,6 +112,8 @@ def otjh_progress_dedupe_key(record, index=0):
 
     kind = _s(record.get("kind")).lower()
     quiz_id = _s(record.get("quizId"))
+    if quiz_id and kind == "quiz_reading":
+        return f"quiz-reading:{quiz_id}:{record.get('attempt') or index}"
     if quiz_id:
         return f"quiz:{quiz_id}"
 

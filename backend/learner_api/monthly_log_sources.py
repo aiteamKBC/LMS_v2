@@ -94,7 +94,8 @@ def _progress(learner):
         item = row(ref, p['submitted_at'], record.get('activity_title') or p.get('component_title') or 'Learning activity',
                    (p.get('component_type') or p['kind']).replace('_', ' ').title(),
                    hours=completed_hours_value_from_progress([p]), planned=p.get('expected_otjh'),
-                   note=p.get('feedback'), group=p.get('module_title'), ksbs=decoded(record['ksbs'], []), results=results)
+                   note=('AI-generated remedial reading' if p.get('kind') == 'quiz_reading' else p.get('feedback')),
+                   group=p.get('module_title'), ksbs=decoded(record['ksbs'], []), results=results)
         item['component_ref'] = p.get('component_ref')
         item['quiz_ref'] = p.get('quiz_ref')
         result.append(item)
