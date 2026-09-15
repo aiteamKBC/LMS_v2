@@ -2,8 +2,8 @@ import { readLearnerJson, invalidateLearnerReads } from '@/api/learnerRead';
 import { coachViewAs } from '@/lib/coachViewAs';
 import type { ActivityContent, JournalSummary, MonthDetail, MonthState, SignatureCaptureMethod } from '@/features/old-otjh/api';
 
-export type LogMonth = MonthState & { source: 'legacy' | 'lms' };
-export type LogDetail = MonthDetail & { source: 'legacy' | 'lms' };
+export type LogMonth = MonthState & { source: 'legacy' | 'lms'; is_open?: boolean };
+export type LogDetail = MonthDetail & { source: 'legacy' | 'lms'; is_open?: boolean };
 export type LogSummary = Omit<JournalSummary, 'months'> & {
   months: LogMonth[]; total_months: number; completed_months: number; read_only: boolean; csrf_token: string;
 };
