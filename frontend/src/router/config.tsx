@@ -118,6 +118,7 @@ const ForgotPasswordPage = lazyRoute(() => import("../pages/forgot-password/page
 const LoginPage = lazyRoute(() => import("../pages/login/page"));
 const OldOtjhPage = lazyRoute(() => import("../features/old-otjh/page"));
 const AccessRequiredPage = lazyRoute(() => import("../pages/access-required/page"));
+const ChooseWorkspacePage = lazyRoute(() => import("../pages/choose-workspace/page"));
 // Serves both emailed-token flows; `mode` picks which.
 const SetPasswordPage = lazyRoute(() => import("../pages/set-password/page"));
 const FundingOverviewPage = lazyRoute(() => import("../pages/finance/funding/page"));
@@ -306,6 +307,13 @@ const routes: RouteObject[] = [
     // outside any workspace shell — there is no workspace they can open yet.
     path: "/access-required",
     element: <AccessRequiredPage />,
+  },
+  {
+    // Where an account holding more than one access grant picks what to open.
+    // NOT public: it names the workspaces a specific account can reach, so it
+    // stays inside RequireAuth with everything else below.
+    path: "/choose-workspace",
+    element: <ChooseWorkspacePage />,
   },
   {
     path: "/forgot-password",
