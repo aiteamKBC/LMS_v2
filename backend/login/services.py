@@ -106,6 +106,9 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
         # the console can say "account created - send the invitation from
         # Accounts" rather than implying a mail failure.
         "awaitingInvitation": False,
+        # True when the address already belongs to somebody who has signed in,
+        # so their existing account was reused and no invitation applies.
+        "alreadyOnboarded": False,
     }
 
     # Resolve the role this invitation would confer *before* creating anything,
@@ -142,6 +145,17 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
         return result
 
     result["accountCreated"] = created
+
+    # The address already belongs to somebody who has signed in -- a staff
+    # member or admin now also being enrolled as a learner. `ensure_account`
+    # deliberately returned their existing account rather than minting a second
+    # one, so there is nothing to invite: they already have a password, and an
+    # invitation is a *set-password* link. Mailing one here would put a live
+    # credential for an admin account in an inbox on the say-so of an enrolment
+    # form, which is precisely the thing send_email=False exists to prevent.
+    if not created and account.has_password:
+        result["alreadyOnboarded"] = True
+        return result
 
     if not send_email:
         # Provisioned, not invited. No invitation row is written either: a token
