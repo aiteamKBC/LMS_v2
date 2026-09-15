@@ -49,21 +49,33 @@ beforeEach(() => {
 });
 
 describe('useLearnerNavGate', () => {
-  it('updates the menu on cohort start without needing a programme status change', async () => {
+  it('gives a learner their full menu before the cohort start date arrives', async () => {
     getRememberedLearner.mockReturnValue({ kind: 'commercial', id: 'cohort-start' });
+    // Waiting on nothing but the calendar: the programme is assigned and the
+    // plan is in place, the date is simply still ahead.
     const summary = { programmeStatus: 'Delivery', studentActivityAvailable: false,
       accessGate: { blocked: true, reasons: ['start-date-future'] as const, startDate: '2026-10-01', outstandingDocuments: [] },
       learningAccess: { blocked: true, startDate: '2026-10-01' } };
     fetchLearnerSummary.mockResolvedValue(summary);
     const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
-    await waitFor(() => expect(result.current.map(item => item.id)).toEqual(['learner-overview']));
-    act(() => syncLearnerStatus('commercial', 'cohort-start', 'Delivery', {
-      ...summary, accessGate: { ...summary.accessGate, blocked: false, reasons: [] },
-      learningAccess: { ...summary.learningAccess, blocked: false },
-    }));
-    expect(result.current.map(item => item.id)).toContain('learner-my-learning');
+    await waitFor(() => expect(result.current.map(item => item.id)).toContain('learner-my-learning'));
     expect(result.current.map(item => item.id)).toContain('learner-attendance');
     expect(result.current.map(item => item.id)).not.toContain('learner-onboarding');
+  });
+
+  it('still withholds the menu while the programme team has work outstanding', async () => {
+    getRememberedLearner.mockReturnValue({ kind: 'commercial', id: 'plan-pending' });
+    const summary = { programmeStatus: 'Delivery', studentActivityAvailable: false,
+      accessGate: { blocked: true, reasons: ['plan'] as const, startDate: '', outstandingDocuments: [] },
+      learningAccess: { blocked: true, startDate: '' } };
+    fetchLearnerSummary.mockResolvedValue(summary);
+    const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
+    await waitFor(() => expect(result.current.map(item => item.id)).toEqual(['learner-overview']));
+    // Once the plan lands the full menu follows, with no status change needed.
+    act(() => syncLearnerStatus('commercial', 'plan-pending', 'Delivery', {
+      ...summary, accessGate: { ...summary.accessGate, blocked: false, reasons: [] },
+    }));
+    expect(result.current.map(item => item.id)).toContain('learner-my-learning');
   });
 
   it('offers previous learning to migrated Delivery learners while retaining the programme menu restrictions', async () => {

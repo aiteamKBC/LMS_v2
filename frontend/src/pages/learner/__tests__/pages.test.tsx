@@ -294,7 +294,7 @@ describe('learner loading and recovery', () => {
     expect(vi.mocked(fetch).mock.calls.some(([,init])=>init?.method && init.method!=='GET')).toBe(false);
   });
 
-  it('shows an assigned programme and plan before cohort start while keeping study closed', async () => {
+  it('shows an assigned programme and plan before cohort start with study open', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       return new Response(JSON.stringify(url.includes('/learner-summary/')
@@ -308,10 +308,11 @@ describe('learner loading and recovery', () => {
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Ayman Learner' })).toBeVisible();
-    expect(screen.getByText('Learning starts on 1 October 2026')).toBeVisible();
+    expect(screen.getByText('Your programme starts on 1 October 2026')).toBeVisible();
     expect(screen.getByText('Marketing Executive Level 4', { exact: false })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Learning opens on your start date' })).toBeDisabled();
     expect(await screen.findByRole('region', { name: 'Monthly study plan' })).toBeVisible();
+    // The upcoming date is a notice, not a lock: the learner can study now.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Continue learning' })).toBeEnabled());
     expect(screen.queryByText('Your programme starts soon')).not.toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method && init.method !== 'GET')).toBe(false);
   });
@@ -385,7 +386,9 @@ describe('learner loading and recovery', () => {
     expect(screen.queryByText('Your start date has not been set yet')).not.toBeInTheDocument();
   });
 
-  it('keeps the waiting page for a commercial learner without previous learning before programme start', async () => {
+  it('gives a commercial learner their dashboard even with no start date confirmed', async () => {
+    // An unconfirmed start date is still only a date: it no longer replaces the
+    // workspace with a waiting page, just a notice that the date is pending.
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       return new Response(JSON.stringify(url.includes('/learner-summary/')
@@ -395,7 +398,22 @@ describe('learner loading and recovery', () => {
     }));
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
-    expect(await screen.findByRole('heading', { name: 'Your start date has not been set yet' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Your start date has not been set yet' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the waiting page for a commercial learner whose learning plan is not assigned yet', async () => {
+    // Not a date: there is genuinely no plan behind the workspace to open.
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(JSON.stringify(url.includes('/learner-summary/')
+        ? { ...detail(), programmeStatus: 'Delivery', programmeStartDate: null,
+          accessGate: { blocked: true, reasons: ['plan'], startDate: '', outstandingDocuments: [] } }
+        : payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Your learning plan is being prepared' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Dashboard' })).not.toBeInTheDocument();
     const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(requests.filter(url => /\/metrics\/|\/attendance\/|\/overview-week\//.test(url))).toEqual([]);

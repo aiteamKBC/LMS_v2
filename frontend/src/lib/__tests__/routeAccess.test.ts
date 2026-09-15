@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CHOOSE_WORKSPACE_ROUTE,
   homeRouteFor,
   isBareLearnerWorkspacePath,
   mayAccessRoute,
   postLoginRouteFor,
   rolesForRoute,
+  shouldChooseWorkspace,
+  workspacesFor,
 } from '../routeAccess';
 import type { Role } from '@/api/auth';
 
@@ -194,5 +197,70 @@ describe('postLoginRouteFor', () => {
     expect(isBareLearnerWorkspacePath('/workspace/learner/')).toBe(true);
     expect(isBareLearnerWorkspacePath('/workspace/learner/apprenticeship/82')).toBe(false);
     expect(isBareLearnerWorkspacePath('/learner/attendance')).toBe(false);
+  });
+});
+
+describe('choosing between several workspaces', () => {
+  const coach = { access: 'coach', home: '/workspace/coach', navRole: 'coach' };
+  const tutor = { access: 'tutor', home: '/workspace/tutor', navRole: 'tutor' };
+
+  it('asks an account holding two grants which one it wants', () => {
+    const account = {
+      role: 'staff' as const, subjectId: 1,
+      access: 'coach', accessHome: '/workspace/coach',
+      accessWorkspaces: [coach, tutor],
+    };
+    expect(shouldChooseWorkspace(account)).toBe(true);
+    expect(postLoginRouteFor(account)).toBe(CHOOSE_WORKSPACE_ROUTE);
+  });
+
+  it('does not interrupt an account with only one workspace', () => {
+    const account = {
+      role: 'staff' as const, subjectId: 1,
+      access: 'coach', accessHome: '/workspace/coach',
+      accessWorkspaces: [coach],
+    };
+    expect(shouldChooseWorkspace(account)).toBe(false);
+    expect(postLoginRouteFor(account)).toBe('/workspace/coach');
+  });
+
+  it('leaves accounts the server sent no workspaces for exactly as they were', () => {
+    // An older session, or a payload from before accessWorkspaces existed.
+    const account = {
+      role: 'staff' as const, subjectId: 1, accessHome: '/workspace/tutor',
+      accessWorkspaces: undefined,
+    };
+    expect(workspacesFor(account)).toEqual([]);
+    expect(shouldChooseWorkspace(account)).toBe(false);
+    expect(postLoginRouteFor(account)).toBe('/workspace/tutor');
+  });
+
+  it('offers a staff member who also studies their own learner record', () => {
+    const account = {
+      role: 'admin' as const, subjectId: 1,
+      access: 'super-admin', accessHome: '/workspace/admin',
+      accessWorkspaces: [
+        { access: 'super-admin', home: '/workspace/admin', navRole: 'admin' },
+        { access: 'learner', home: '/workspace/learner?kind=commercial&id=510', navRole: 'learner' },
+      ],
+    };
+    expect(postLoginRouteFor(account)).toBe(CHOOSE_WORKSPACE_ROUTE);
+    // The route carries the record id: the chooser must never rebuild it.
+    expect(workspacesFor(account)[1].home).toContain('id=510');
+  });
+
+  it('never offers a menu to a record monitor, who is pinned to /old-otjh', () => {
+    const account = {
+      role: 'staff' as const, subjectId: 86, access: 'record-monitor',
+      accessWorkspaces: [coach, tutor],
+    };
+    expect(shouldChooseWorkspace(account)).toBe(false);
+    expect(postLoginRouteFor(account)).toBe('/old-otjh/monitor');
+  });
+
+  it('lets every role reach the chooser itself', () => {
+    for (const role of ['admin', 'staff', 'employer', 'learner'] as Role[]) {
+      expect(mayAccessRoute(CHOOSE_WORKSPACE_ROUTE, { role })).toBe(true);
+    }
   });
 });
