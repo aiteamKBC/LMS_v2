@@ -1,3 +1,4 @@
+import { BookingDatePicker } from './BookingDatePicker';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -27,13 +28,30 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   const latest = useRef({ kind, learnerId, month, onSelect });
   latest.current = { kind, learnerId, month, onSelect };
   const [reload, setReload] = useState(0);
-  const endDay = new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0).getDate();
-  const minDate = `${month}-${String(endDay - 9).padStart(2, '0')}`;
-  const nextMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 5);
-  const maxDate = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-05`;
+  const windows = [0, 1].map(offset => {
+    const end = new Date(Number(month.slice(0, 4)), Number(month.slice(5)) + offset, 0);
+    const key = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}`;
+    const next = new Date(end.getFullYear(), end.getMonth() + 1, 5);
+    return { month: key, start: `${key}-${String(end.getDate() - 9).padStart(2, '0')}`,
+      end: `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-05` };
+  });
+  const inBookingWindow = (value: string) => windows.some(window => value >= window.start && value <= window.end);
+  const windowLabel = windows.map(window => `${window.start} to ${window.end}`).join(' or ');
+  const selectableDates = windows.flatMap(window => {
+    const dates: string[] = [];
+    const today = calendar?.bookingCalendar?.today || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/London' });
+    for (const day = new Date(`${window.start}T12:00:00Z`); day.toISOString().slice(0, 10) <= window.end; day.setUTCDate(day.getUTCDate() + 1)) {
+      const value = day.toISOString().slice(0, 10);
+      if (value < today || [0, 6].includes(day.getUTCDay())) continue;
+      if (calendar?.bookingCalendar?.bankHolidays.some(holiday => holiday.date === value)) continue;
+      if (calendar?.bookingCalendar && !calendar.bookingCalendar.coveredYears.includes(day.getUTCFullYear())) continue;
+      dates.push(value);
+    }
+    return dates;
+  });
   const events = calendar?.events || [];
-  const booked = events.filter(e => e.source === 'mcr' && ['scheduled', 'in-progress', 'completed', 'awaiting-signature'].includes(e.status) && (e.scheduledDate || '') >= minDate && (e.scheduledDate || '') <= maxDate);
-  const slots = events.filter(e => e.source === 'mcr' && e.status === 'not-scheduled' && (e.targetDate || e.date || '').slice(0, 7) === month);
+  const booked = events.filter(e => e.source === 'mcr' && ['scheduled', 'in-progress', 'completed', 'awaiting-signature'].includes(e.status) && inBookingWindow(e.scheduledDate || ''));
+  const slots = events.filter(e => e.source === 'mcr' && e.status === 'not-scheduled' && windows.some(window => window.month === (e.targetDate || e.date || '').slice(0, 7)));
   const slot = slots.find(e => e.eventKey === slotKey);
   const selected = booked.find(e => e.eventKey === meetingKey);
   useEffect(() => {
@@ -48,7 +66,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
     if (!date) return '';
     const parsed = new Date(`${date}T12:00:00`);
     if (!Number.isFinite(parsed.getTime())) return 'Choose a valid date.';
-    if (date < minDate || date > maxDate) return 'Choose a date from the last ten days of the submission month through the 5th of the following month.';
+    if (!inBookingWindow(date)) return `Choose a date within ${windowLabel}.`;
     const today = calendar?.bookingCalendar?.today || new Date().toLocaleDateString('sv-SE');
     if (date < today) return 'Sessions cannot be booked on a date that has already passed.';
     if ([0, 6].includes(parsed.getDay())) return 'Sessions cannot be booked on Saturdays or Sundays.';
@@ -99,7 +117,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
     {loading && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />Loading coaching meetings...</p>}
     {!loading && <>
       <label className="block">Use an existing coaching booking<select className={input} value={meetingKey} disabled={disabled || busy} onChange={e => onSelect(e.target.value)}><option value="">Select a booked meeting</option>{booked.map(e => <option key={e.eventKey} value={e.eventKey}>{e.scheduledDate} {e.scheduledTime} ? {e.coachName}</option>)}</select></label>
-      {!booked.length && <p className="text-sm text-slate-500">No booked MCM falls between {minDate} and {maxDate}.</p>}
+      {!booked.length && <p className="text-sm text-slate-500">No booked MCM falls within {windowLabel}.</p>}
       {selected && <div className="rounded-xl bg-blue-50 p-4 text-sm"><p>Linked meeting: {selected.scheduledDate} at {selected.scheduledTime} with {selected.coachName}.</p>{selected.invited === false && <p className="mt-2 text-amber-800">The meeting is saved, but the calendar invitation has not been sent. Contact your coach.</p>}</div>}
       {selected && <div className="space-y-3">
         <p className="text-sm leading-6 text-slate-600">Recording and transcription are enabled automatically using the live-session settings. The recording, transcript and attendance appear here once Teams has processed them after the meeting.</p>
@@ -108,9 +126,9 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
       <fieldset disabled={disabled || busy || !calendar} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
         <legend className="px-2 text-sm font-semibold">Schedule an official MCM</legend>
         <>
-          {slots.length > 0 && <label className="block">Monthly Coaching Meeting slot<select className={input} value={slotKey} onChange={e => setSlotKey(e.target.value)}><option value="">Select your programme MCM</option>{slots.map(e => <option key={e.eventKey} value={e.eventKey}>MCM {month} | Booking window: {minDate} to {maxDate} | {e.coachName}</option>)}</select></label>}
-          <p className="text-sm leading-6 text-slate-600">Choose a weekday between {minDate} and {maxDate}. Available times come from your coach's calendar and working hours, shown in UK time (Europe/London). Availability is checked again when you book.</p>
-          <div className="grid gap-4 sm:grid-cols-2"><label>Date<input type="date" className={input} min={minDate} max={maxDate} value={date} onChange={e => setDate(e.target.value)} /></label><label>Time<select className={input} value={time} disabled={availabilityLoading || !availableTimes.length} onChange={e => setTime(e.target.value)}><option value="">{availabilityLoading ? 'Loading available times...' : 'Select an available time'}</option>{availableTimes.map(value => <option key={value} value={value}>{value}</option>)}</select></label></div>
+          {slots.length > 0 && <label className="block">Monthly Coaching Meeting slot<select className={input} value={slotKey} onChange={e => setSlotKey(e.target.value)}><option value="">Select your programme MCM</option>{slots.map(e => <option key={e.eventKey} value={e.eventKey}>MCM {(e.targetDate || e.date || '').slice(0, 7)} | Booking windows: {windowLabel} | {e.coachName}</option>)}</select></label>}
+          <p className="text-sm leading-6 text-slate-600">Choose a weekday within {windowLabel}. Available times come from your coach's calendar and working hours, shown in UK time (Europe/London). Availability is checked again when you book.</p>
+          <div className="grid gap-4 sm:grid-cols-2"><BookingDatePicker value={date} onChange={setDate} dates={selectableDates} /><label>Time<select className={input} value={time} disabled={availabilityLoading || !availableTimes.length} onChange={e => setTime(e.target.value)}><option value="">{availabilityLoading ? 'Loading available times...' : 'Select an available time'}</option>{availableTimes.map(value => <option key={value} value={value}>{value}</option>)}</select></label></div>
           {availabilityError && <p role="alert" className="text-sm text-red-700">{availabilityError}</p>}
           {date && !dateError && !availabilityLoading && !availabilityError && !availableTimes.length && <p className="text-sm text-slate-600">Your coach has no available 60-minute appointments on this date. Choose another date.</p>}
           {dateError && <p role="alert" className="text-sm text-red-700">{dateError}</p>}

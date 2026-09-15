@@ -74,6 +74,14 @@ def coaching_booking_bounds(month):
     return end - timedelta(days=9), end + timedelta(days=5)
 
 
+def coaching_booking_windows(month):
+    first = coaching_booking_bounds(month)
+    if not first[0]:
+        return []
+    following_month = first[1].strftime('%Y-%m')
+    return [first, coaching_booking_bounds(following_month)]
+
+
 def presentation_fingerprint(payload):
     monthly = mapping(payload.get("monthlyAssignment"))
     contents = {key: payload.get(key) for key in ("learnerKind", "learnerId", "activityId")}
@@ -110,12 +118,12 @@ def approved_evidence_ids(payload):
 def booked_coaching(payload):
     from .calendar import _learner_calendar_record
     monthly = mapping(payload.get("monthlyAssignment"))
-    start, end = coaching_booking_bounds(monthly.get("month"))
-    if not start or not text(monthly.get("meetingKey")):
+    windows = coaching_booking_windows(monthly.get("month"))
+    if not windows or not text(monthly.get("meetingKey")):
         return False
     record = _learner_calendar_record(payload.get("learnerKind"), int(payload.get("learnerId")), monthly["meetingKey"])
     return bool(record and record.event_type == "mcr" and record.scheduled_date
-                and start <= record.scheduled_date <= end
+                and any(start <= record.scheduled_date <= end for start, end in windows)
                 and record.status in ("scheduled", "in-progress", "completed", "awaiting-signature"))
 
 
@@ -173,7 +181,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         ("benefit", "Employer benefit confirmed and measurable outcomes described (20 words)", monthly.get("employerBenefit") is True and words(payload.get("businessImpact")) >= 20),
         ("impact", "Career, job and employer impacts: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["careerImpact", "jobImpact", "employerImpact"])),
         ("action", "Action plan and EPA preparedness: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["actionPlan", "epaPreparedness"])),
-        ("meeting", "Coaching meeting booked from the last ten days of the submission month through the 5th of the following month", booked),
+        ("meeting", "Coaching meeting booked in the submission-month or next-month window (last ten days through the following 5th)", booked),
         ("presentation", "Presentation generated, exported and reviewed", valid_presentation(payload)),
     ]
     return [{"key": key, "label": label, "passed": bool(passed)} for key, label, passed in checks]

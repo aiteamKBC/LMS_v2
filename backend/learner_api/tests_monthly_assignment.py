@@ -289,3 +289,16 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
         with self.assertRaisesRegex(ValueError, "Progress failed"):
             complete_saved_assignment("commercial", "1", "C1", {}, MagicMock(side_effect=ValueError("Progress failed")))
         self.assertEqual(cursor.execute.call_count, 1)
+
+
+class ExtendedCoachingWindowTests(SimpleTestCase):
+    def test_next_month_window_and_year_rollover(self):
+        from datetime import date
+        from .monthly_assignment import coaching_booking_windows
+        self.assertEqual(coaching_booking_windows('2026-09'), [
+            (date(2026, 9, 21), date(2026, 10, 5)),
+            (date(2026, 10, 22), date(2026, 11, 5)),
+        ])
+        self.assertEqual(coaching_booking_windows('2026-12')[1],
+                         (date(2027, 1, 22), date(2027, 2, 5)))
+        self.assertEqual(coaching_booking_windows('invalid'), [])
