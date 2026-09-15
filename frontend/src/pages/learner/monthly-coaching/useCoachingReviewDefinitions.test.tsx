@@ -108,4 +108,15 @@ describe('coaching signature details loading', () => {
     rerender({ rows: [] });
     expect(result.current).toMatchObject({ definitions: {}, loading: false, error: '' });
   });
+
+  it('does not show a signature loading error for a completed legacy meeting with no form', async () => {
+    fetchDefinition.mockResolvedValue({ instance: null });
+    const sessions = [session('legacy-completed', { status: 'completed' })];
+
+    const { result } = renderHook(() => useCoachingReviewDefinitions('apprenticeship', '12', sessions));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.definitions).toEqual({});
+    expect(result.current.error).toBe('');
+  });
 });

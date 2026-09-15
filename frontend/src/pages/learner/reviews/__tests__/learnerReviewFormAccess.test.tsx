@@ -130,12 +130,14 @@ let events: LearnerCalendarEvent[];
 let reviewDefinition: LearnerReviewDefinition;
 let requested: string[];
 let definitionError: string;
+let blankDefinition: boolean;
 
 beforeEach(() => {
   clearAllCachedResources();
   requested = [];
   access.canProgress = true;
   definitionError = '';
+  blankDefinition = false;
   reviewDefinition = definition();
   events = [
     event({ id: SCHEDULED_MCM, reviewInstanceId: 'REVI-1' }),
@@ -159,7 +161,7 @@ beforeEach(() => {
     requested.push(url);
     if (url.includes('/review/')) return definitionError
       ? new Response(JSON.stringify({ error: definitionError }), { status: 503 })
-      : new Response(JSON.stringify(reviewDefinition));
+      : new Response(JSON.stringify(blankDefinition ? { instance: null } : reviewDefinition));
     if (url.includes('/learner_api/calendar/')) {
       return new Response(JSON.stringify({ learner: { kind: 'apprenticeship', id: 12 }, events }));
     }
@@ -297,6 +299,24 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     expect(screen.getByRole('complementary', { name: 'Monthly learning log' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'Open monthly log' })).toHaveAttribute('href', '/learner/monthly-logs/apprenticeship/12/2026-09?workflow=mcm&source=mcm');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the saved meeting summary when a legacy meeting has no Curriculum form', async () => {
+    blankDefinition = true;
+    events = [event({
+      id: SCHEDULED_MCM,
+      status: 'completed',
+      reviewInstanceId: null,
+      reviewResponses: { mcm_meeting_summary: 'Learner is progressing well.' },
+    })];
+
+    mountMcm(SCHEDULED_MCM);
+
+    const summary = (await screen.findByText('Meeting Summary', { exact: true })).closest('button');
+    expect(summary).toBeVisible();
+    fireEvent.click(summary!);
+    expect(screen.getByText('Learner is progressing well.')).toBeVisible();
+    expect(screen.queryByText('This review form is not available.')).not.toBeInTheDocument();
   });
 
   it('shows a signature save error, prevents duplicate submissions and allows retry', async () => {

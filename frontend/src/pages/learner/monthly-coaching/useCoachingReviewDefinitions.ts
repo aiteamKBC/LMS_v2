@@ -40,9 +40,19 @@ export function useCoachingReviewDefinitions(kind: LearnerKind, id: string, sess
       const key = session.eventKey || session.id;
       try {
         const definition = await fetchLearnerEventReviewInstance(kind, id, key, controller.signal);
-        return { key, definition: 'signatures' in definition ? definition as LearnerReviewDefinition : null };
+        const hasSignatureDefinition = 'signatures' in definition;
+        return {
+          key,
+          definition: hasSignatureDefinition ? definition as LearnerReviewDefinition : null,
+          // A successful blank response is valid for a completed legacy
+          // meeting: it predates Curriculum review forms, so there are no
+          // canonical signatures to load. An awaiting-signature row still
+          // needs resolving because the learner may have an action to take.
+          unresolved: !hasSignatureDefinition
+            && session.status.trim().toLowerCase().replace(/[ _]+/g, '-') === 'awaiting-signature',
+        };
       } catch {
-        return { key, definition: null };
+        return { key, definition: null, unresolved: true };
       }
     })).then(entries => {
       if (!active) return;
@@ -53,9 +63,7 @@ export function useCoachingReviewDefinitions(kind: LearnerKind, id: string, sess
           ...Object.fromEntries(entries.filter(entry => entry.definition).map(entry => [entry.key, entry.definition])),
         },
         loading: false,
-        // A missing definition is also unresolved: a completed calendar row
-        // alone cannot establish that every required signature is present.
-        error: entries.some(entry => !entry.definition) ? LOAD_ERROR : '',
+        error: entries.some(entry => entry.unresolved) ? LOAD_ERROR : '',
       }));
     });
     return () => { active = false; controller.abort(); };
