@@ -90,6 +90,31 @@ _CURRICULUM_BUILD_LOCKS = {}
 # stale rows. The Django-cache generation below provides the cross-worker layer.
 _CURRICULUM_CACHE_EPOCH = 0
 _CURRICULUM_SHARED_EPOCH_KEY = 'curriculum:cache-epoch'
+# The cross-worker generation counter, kept in the one store every worker really
+# shares: the database.
+#
+# It used to live in Django's cache alone. With a Redis CACHE_URL that is shared
+# and correct; without one Django falls back to LocMemCache, which is per
+# process -- and production runs nine services of two workers, so a write bumped
+# the epoch in exactly one of eighteen caches. The other seventeen kept serving
+# their pre-write payload for the whole 1800s TTL, which is a cohort, group,
+# module or authored week that saves successfully and then does not appear:
+# reload and you are talking to a different worker that never heard about it.
+# Reads still answer from the process-local cache; this is only what tells a
+# worker that its copy is out of date.
+CURRICULUM_EPOCH_TABLE = 'cache_epoch'
+# How long a worker may go on trusting the epoch it last read. It bounds both
+# the staleness a write in another worker can cause and the cost of asking: one
+# single-row read per worker per window, against the ~13s rebuild it protects.
+SHARED_EPOCH_POLL_SECONDS = 3.0
+_SHARED_EPOCH_STATE = {'value': None, 'checked_at': 0.0}
+_SHARED_EPOCH_LOCK = threading.Lock()
+_CURRICULUM_EPOCH_TABLE_READY = False
+# Per-thread: a write in this request has invalidated, and one shared bump is
+# owed once the request is through. Deduped because invalidate_curriculum_cache()
+# is called from inside write helpers, sometimes once per written row -- a tree
+# save would otherwise spend thousands of UPDATEs on one counter.
+_CURRICULUM_EPOCH_BUMP = threading.local()
 _TABLE_COLUMNS_CACHE = {}
 _TABLE_EXISTS_CACHE = {}
 _AUTHORING_TABLES_READY = False
@@ -119,14 +144,11 @@ def invalidate_curriculum_cache():
         # afterwards and repopulates the cache with pre-write rows, which would
         # then serve stale authoring data for the rest of the TTL.
         _CURRICULUM_CACHE_EPOCH += 1
-    # Generation-based invalidation works with Django's built-in Redis backend
-    # without relying on backend-specific delete-pattern APIs. Old generations
-    # expire naturally after the normal TTL.
-    try:
-        cache.add(_CURRICULUM_SHARED_EPOCH_KEY, 0, timeout=None)
-        cache.incr(_CURRICULUM_SHARED_EPOCH_KEY)
-    except Exception:
-        logger.warning('Unable to invalidate shared curriculum cache.', exc_info=True)
+    # Generation-based invalidation: every worker keys its cache entries on the
+    # counter, so moving it retires all of them at once without needing a
+    # backend-specific delete-pattern API. Old generations expire naturally
+    # after the normal TTL.
+    bump_shared_curriculum_epoch()
     # Only the negative answers are dropped. Whether a table exists changes on
     # DDL, never on a curriculum write, and the ensure_* helpers only ever add
     # tables -- so a cached True is still true, while a cached False may have
@@ -319,14 +341,170 @@ def scoped_curriculum_read(fn):
     return wrapped
 
 
-def shared_curriculum_epoch():
+def ensure_curriculum_epoch_table():
+    """Provision the one-row counter table, once per process.
+
+    Created here rather than in a migration for the same reason the other
+    ``ensure_*`` helpers do it: this app owns externally managed tables in the
+    ``curriculum`` schema and provisions them on first use. Returns False when
+    the table cannot be reached at all, which is the signal to fall back to the
+    process-local counter rather than fail a read.
+    """
+    global _CURRICULUM_EPOCH_TABLE_READY
+    if _CURRICULUM_EPOCH_TABLE_READY:
+        return True
+    try:
+        # Under a savepoint: this runs on a read path that a write request may
+        # already have inside an atomic block, and in PostgreSQL a failed
+        # statement poisons the whole transaction unless it can be rolled back
+        # to one. The same guard is on every other statement below.
+        with transaction.atomic(), connection.cursor() as cursor:
+            if connection.vendor == 'postgresql':
+                cursor.execute('create schema if not exists %s' % quote_ident(CURRICULUM_SCHEMA))
+            cursor.execute(
+                'create table if not exists %s ('
+                ' id integer primary key,'
+                ' epoch bigint not null default 0'
+                ')' % table_name(CURRICULUM_EPOCH_TABLE)
+            )
+            cursor.execute(
+                'insert into %s (id, epoch) values (1, 0) on conflict (id) do nothing'
+                % table_name(CURRICULUM_EPOCH_TABLE)
+            )
+    except Exception:
+        logger.warning('Unable to provision the shared curriculum epoch table.', exc_info=True)
+        return False
+    _CURRICULUM_EPOCH_TABLE_READY = True
+    return True
+
+
+def local_shared_curriculum_epoch():
+    """The pre-database behaviour: the counter in Django's own cache.
+
+    Correct when a Redis ``CACHE_URL`` is configured and harmless when it is
+    not, so it stays as the fallback for a database that cannot answer.
+    """
     try:
         cache.add(_CURRICULUM_SHARED_EPOCH_KEY, 0, timeout=None)
         return int(cache.get(_CURRICULUM_SHARED_EPOCH_KEY) or 0)
     except Exception:
-        # Redis must never turn a cacheable read into an application outage.
+        # A cache backend must never turn a cacheable read into an outage.
         logger.warning('Unable to read shared curriculum cache epoch.', exc_info=True)
         return 0
+
+
+def remember_shared_curriculum_epoch(value):
+    with _SHARED_EPOCH_LOCK:
+        _SHARED_EPOCH_STATE['value'] = int(value)
+        _SHARED_EPOCH_STATE['checked_at'] = time.monotonic()
+
+
+def read_shared_curriculum_epoch_row():
+    rows = fetch_all(
+        'select %s from %s where %s = 1'
+        % (quote_ident('epoch'), table_name(CURRICULUM_EPOCH_TABLE), quote_ident('id'))
+    )
+    return int((rows[0] if rows else {}).get('epoch') or 0)
+
+
+def shared_curriculum_epoch():
+    """The generation every worker's cache entries are keyed on.
+
+    Read from the database at most once per ``SHARED_EPOCH_POLL_SECONDS``; in
+    between, this process answers from what it last saw. A bump made *here*
+    writes straight through to that memory, so the change-log middleware still
+    sees the epoch move across its own request.
+    """
+    now = time.monotonic()
+    with _SHARED_EPOCH_LOCK:
+        value = _SHARED_EPOCH_STATE['value']
+        checked_at = _SHARED_EPOCH_STATE['checked_at']
+    if value is not None and now - checked_at < SHARED_EPOCH_POLL_SECONDS:
+        return value
+    if not ensure_curriculum_epoch_table():
+        return local_shared_curriculum_epoch()
+    try:
+        with transaction.atomic():
+            epoch = read_shared_curriculum_epoch_row()
+    except Exception:
+        logger.warning('Unable to read the shared curriculum epoch.', exc_info=True)
+        # The last value this process saw beats 0: answering 0 would read as
+        # "everybody rolled back", retiring every warm payload in the process
+        # over one unavailable read.
+        return value if value is not None else local_shared_curriculum_epoch()
+    remember_shared_curriculum_epoch(epoch)
+    return epoch
+
+
+def write_shared_curriculum_epoch_bump():
+    """Move the counter by one and record where it landed."""
+    if not ensure_curriculum_epoch_table():
+        try:
+            cache.add(_CURRICULUM_SHARED_EPOCH_KEY, 0, timeout=None)
+            cache.incr(_CURRICULUM_SHARED_EPOCH_KEY)
+        except Exception:
+            logger.warning('Unable to invalidate shared curriculum cache.', exc_info=True)
+        return
+    try:
+        with transaction.atomic():
+            if connection.vendor == 'postgresql':
+                rows = fetch_all(
+                    'update %s set %s = %s + 1 where %s = 1 returning %s'
+                    % (
+                        table_name(CURRICULUM_EPOCH_TABLE),
+                        quote_ident('epoch'),
+                        quote_ident('epoch'),
+                        quote_ident('id'),
+                        quote_ident('epoch'),
+                    )
+                )
+                epoch = int((rows[0] if rows else {}).get('epoch') or 0)
+            else:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        'update %s set %s = %s + 1 where %s = 1'
+                        % (
+                            table_name(CURRICULUM_EPOCH_TABLE),
+                            quote_ident('epoch'),
+                            quote_ident('epoch'),
+                            quote_ident('id'),
+                        )
+                    )
+                epoch = read_shared_curriculum_epoch_row()
+    except Exception:
+        logger.warning('Unable to bump the shared curriculum epoch.', exc_info=True)
+        return
+    remember_shared_curriculum_epoch(epoch)
+
+
+def bump_shared_curriculum_epoch():
+    """Retire every worker's cached payload, once per request that writes.
+
+    Inside a request the bump is owed rather than made: the change-log
+    middleware flushes it after the view, so one save costs one UPDATE however
+    many rows it wrote, and the new generation becomes visible to other workers
+    only once the data it describes has committed. Outside a request (a
+    management command, the warm loop) there is nobody to flush it, so it is
+    made straight away.
+    """
+    if getattr(_CURRICULUM_EPOCH_BUMP, 'scoped', False):
+        _CURRICULUM_EPOCH_BUMP.pending = True
+        return
+    write_shared_curriculum_epoch_bump()
+
+
+def begin_curriculum_write_scope():
+    _CURRICULUM_EPOCH_BUMP.scoped = True
+    _CURRICULUM_EPOCH_BUMP.pending = False
+
+
+def end_curriculum_write_scope():
+    """Make the request's one bump, if anything in it invalidated."""
+    pending = getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False)
+    _CURRICULUM_EPOCH_BUMP.scoped = False
+    _CURRICULUM_EPOCH_BUMP.pending = False
+    if pending:
+        write_shared_curriculum_epoch_bump()
 
 
 CURRICULUM_CHANGE_LOG_KEY = 'curriculum:changes'
@@ -18200,16 +18378,18 @@ def curriculum_cache_epoch(request):
     counter `invalidate_curriculum_cache()` bumps, so it moves on every write and
     on nothing else -- no timestamps, no per-record versions to keep in step.
 
-    Deliberately the cheapest read in this module: one Redis GET, no database, no
-    payload build. A tab open in another country polls it every few seconds, so
-    it has to stay that way. Reading it must never fail a page either --
-    `shared_curriculum_epoch()` already answers 0 when Redis is unreachable, and
-    a client that sees a frozen epoch simply keeps the data it has and falls back
-    on its own refresh-when-you-return.
+    Deliberately the cheapest read in this module: at most one single-row read
+    per worker per SHARED_EPOCH_POLL_SECONDS, no payload build. A tab open in
+    another country polls it every few seconds, so it has to stay that way.
+    Reading it must never fail a page either -- `shared_curriculum_epoch()`
+    answers with the last value this worker saw when the counter cannot be read,
+    and a client that sees a frozen epoch simply keeps the data it has and falls
+    back on its own refresh-when-you-return.
 
-    Only meaningful across workers when a shared cache is configured. On LocMem
-    (local development, single process) it still moves for that process, which is
-    all a single-process dev server needs.
+    Meaningful across workers because the counter lives in the database. It used
+    to live in Django's cache, which is per process without a Redis CACHE_URL,
+    so under nine two-worker services it told seventeen workers out of eighteen
+    nothing at all.
 
     `changes` says which paths moved the counter, so a client that is only a few
     epochs behind can refresh those and leave the rest of its cache alone. It is
@@ -26610,6 +26790,7 @@ _SCHEMA_READY_FLAGS = (
     '_LIVE_SESSIONS_TABLE_READY',
     '_LIVE_SESSION_TRACKING_TABLES_READY',
     '_WEEK_TEMPLATE_TABLES_READY',
+    '_CURRICULUM_EPOCH_TABLE_READY',
 )
 
 
@@ -26638,6 +26819,9 @@ def reset_schema_ready_flags():
     _review_types.reset_ready_flag()
     from . import review_instances as _review_instances
     _review_instances._TABLES_READY = False
+    with _SHARED_EPOCH_LOCK:
+        _SHARED_EPOCH_STATE['value'] = None
+        _SHARED_EPOCH_STATE['checked_at'] = 0.0
     _TABLE_COLUMNS_CACHE.clear()
     _TABLE_EXISTS_CACHE.clear()
     schema_gate.reset_verification_cache()

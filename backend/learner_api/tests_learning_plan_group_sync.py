@@ -103,6 +103,62 @@ class GroupSyncTests(SimpleTestCase):
         # Nothing is "inherited" here: none of it was ever agreed to begin with.
         self.assertEqual(body["inheritedCount"], 0)
 
+    def _save(self, learner, preset, module_ids):
+        """PATCH the plan with `module_ids`; returns (body, what was stored)."""
+        catalogue = [_module_payload(row) for row in MODULE_ROWS]
+        request = RequestFactory().patch(
+            "/learner_api/learning-plan/19/",
+            data=json.dumps({"modules": [{"moduleId": i} for i in module_ids]}),
+            content_type="application/json",
+        )
+        with patch("learner_api.learning_plan.EnrolmentUser") as model, \
+                patch("learner_api.learning_plan._programme_modules", return_value=catalogue), \
+                patch("learner_api.learning_plan._all_modules", return_value=catalogue), \
+                patch("learner_api.learning_plan._group_module_ids", return_value=preset), \
+                patch("learner_api.learning_plan.sync_learning_plan_mirror"), \
+                patch("learner_api.learning_plan.advance_learner"):
+            model.all_learners.get.return_value = learner
+            response = learning_plan(request, 19)
+        return json.loads(response.content), learner.learning_plan
+
+    def test_a_module_taken_off_a_learner_stays_off(self):
+        """Remove, save, and it used to come straight back as "New from group".
+
+        The plan is the only record, so the omission has to be the record: a
+        save that drops a module the group teaches freezes the set.
+        """
+        agreed = [_module_payload(row) for row in MODULE_ROWS]
+        preset = ["MOD-1", "MOD-2"]
+
+        body, stored = self._save(_learner(agreed), preset, ["MOD-1"])
+        self.assertEqual([m["moduleId"] for m in body["plan"]], ["MOD-1"])
+        self.assertEqual(body["inheritedCount"], 0)
+
+        # And still gone when the plan is read back afterwards.
+        reread = self._get(_learner(stored), preset)
+        self.assertEqual([m["moduleId"] for m in reread["plan"]], ["MOD-1"])
+        self.assertEqual(reread["inheritedCount"], 0)
+
+    def test_a_save_that_keeps_the_whole_group_still_inherits_later_additions(self):
+        """"Reset to group default" is the way back out of that freeze."""
+        _body, stored = self._save(_learner([_module_payload(MODULE_ROWS[0])]), ["MOD-1"], ["MOD-1"])
+
+        # The group has since gained MOD-2.
+        reread = self._get(_learner(stored), ["MOD-1", "MOD-2"])
+        self.assertEqual(reread["inheritedCount"], 1)
+        self.assertIs(reread["plan"][1]["inherited"], True)
+
+    def test_a_module_the_group_never_taught_does_not_freeze_the_plan(self):
+        """Adding a module from another programme is not a decision about this
+        learner's group, so the group's own modules keep flowing in."""
+        _body, stored = self._save(
+            _learner([_module_payload(MODULE_ROWS[0])]), ["MOD-1"], ["MOD-1", "MOD-2"],
+        )
+        reread = self._get(_learner(stored), ["MOD-1"])
+        self.assertEqual([m["moduleId"] for m in reread["plan"]], ["MOD-1", "MOD-2"])
+        self.assertTrue(all("inherited" not in m for m in reread["plan"]))
+
+
 
 class ModulePickerAgreesWithThePlanTests(SimpleTestCase):
     """The module-side reader has to apply the same rule, or the two disagree."""
