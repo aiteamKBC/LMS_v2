@@ -6795,6 +6795,14 @@ function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programme
   return moduleKeys.some(key => selectedKeys.includes(key));
 }
 
+/**
+ * The stand-ins `curriculumModuleToCatalogue` stamps on a module that carries no
+ * programme of its own: `programmeId: 'programme'`, `programmeName: 'Unassigned
+ * programme'`. They are label text for the row, never an identity, so the
+ * visibility check must not read them as a programme the module claims.
+ */
+const UNASSIGNED_PROGRAMME_KEYS = new Set(['programme', 'unassignedprogramme', 'unassigned']);
+
 function moduleBelongsToVisibleProgramme(module: ModuleBuilderListItem, programmes: CurriculumProgramme[]) {
   if (module.isProgrammeDeleted || module.sourceModule?.isProgrammeDeleted) return false;
   if (!programmes.length) return true;
@@ -6810,7 +6818,11 @@ function moduleBelongsToVisibleProgramme(module: ModuleBuilderListItem, programm
     module.sourceModule?.programme,
     module.sourceModule?.programmeId,
     ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
-  ].map(normaliseDeepLinkValue).filter(Boolean);
+  ].map(normaliseDeepLinkValue).filter(key => Boolean(key) && !UNASSIGNED_PROGRAMME_KEYS.has(key));
+  // No programme of its own means nothing to check it against -- the module
+  // stays listed, exactly as the backend keeps it in the operational payload.
+  // Counting the placeholder as a key instead made every unassigned module
+  // paint with the list and then vanish the moment the programmes arrived.
   if (!moduleKeys.length) return true;
   return moduleKeys.some(key => visibleKeys.has(key));
 }
