@@ -9,6 +9,7 @@
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { clockLabel } from '../../teams-meetings/calendarTime';
 import { useNavigate } from 'react-router-dom';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import {
@@ -1043,10 +1044,10 @@ export function GroupFormDrawer({
         <WeekdayControl value={weekDays} onChange={setWeekDays} />
       </FormField>
       <div className="grid gap-4 sm:grid-cols-2">
-        <FormField label="Start time">
+        <FormField label="Start time" hint={clockLabel(startTime)}>
           <TextControl type="time" value={startTime} onChange={setStartTime} />
         </FormField>
-        <FormField label="End time">
+        <FormField label="End time" hint={clockLabel(endTime)}>
           <TextControl type="time" value={endTime} onChange={setEndTime} />
         </FormField>
       </div>

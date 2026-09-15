@@ -10,6 +10,7 @@ import {
   uploadComponentFile,
 } from '@/pages/curriculum/shared/componentUploadPolicy';
 import { hoursToRoundedMinutes, roundedMinutesToHours } from '@/lib/format';
+import { reviewCalendar } from '../teams-meetings/calendarReview';
 import {
   componentTypeGroups,
   componentTypes,
@@ -1836,10 +1837,13 @@ export function fetchModuleMeetingInvitees(moduleCatalogueId: string) {
   return apiJson<ModuleMeetingInvitees>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/meeting-invitees/`);
 }
 
-export function createTeamsMeeting(input: TeamsMeetingInput) {
+export async function createTeamsMeeting(input: TeamsMeetingInput) {
+  // Review and send the same snapshot, even if a background refresh changes the form.
+  const reviewed: TeamsMeetingInput = JSON.parse(JSON.stringify({ ...input, hideAttendees: true }));
+  await reviewCalendar(reviewed, getCalendarTimeZone());
   return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify(reviewed),
     timeoutMs: 45000,
   }).then(result => {
     // This POST goes through this module's own client, so it never triggers the
@@ -1856,10 +1860,31 @@ export function createTeamsMeeting(input: TeamsMeetingInput) {
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[] }) {
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean }) {
+  const reviewed = JSON.parse(JSON.stringify(input)) as typeof input;
+  const { series: rawSeries, occurrences } = await loadTeamsMeetingArtifacts(liveSessionId);
+  const series = calendarSeriesForReview(rawSeries);
+  if (reviewed.peopleOnly) {
+    const held = occurrences.filter(item => item.status !== 'cancelled')
+      .sort((a, b) => parseUtcInstant(a.scheduled_start).getTime() - parseUtcInstant(b.scheduled_start).getTime());
+    if (!held.length) throw new Error('The saved session dates could not be loaded. Review the calendar dates before changing invitations.');
+    reviewed.scheduledOccurrences = held.map(item => ({ sessionNumber: item.session_number,
+      startDateTimeUtc: parseUtcInstant(item.scheduled_start).toISOString(),
+      durationMinutes: (parseUtcInstant(item.scheduled_end).getTime() - parseUtcInstant(item.scheduled_start).getTime()) / 60000,
+    }));
+    reviewed.startDateTimeUtc = reviewed.scheduledOccurrences[0].startDateTimeUtc;
+    reviewed.durationMinutes = reviewed.scheduledOccurrences[0].durationMinutes;
+  }
+  await reviewCalendar({ ...reviewed, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+    attendees: reviewed.attendees ?? series.attendees, presenters: reviewed.presenters ?? series.presenters,
+    coOrganizers: reviewed.coOrganizers ?? series.co_organizers,
+    recording: series.recording, lobbyBypass: series.lobby_bypass, spokenLanguage: series.spoken_language,
+    calendarSeries: series.calendar_series, previousOccurrences: occurrences,
+    seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
+  }, getCalendarTimeZone());
   return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
-    body: JSON.stringify(input),
+    body: JSON.stringify(reviewed),
     timeoutMs: 45000,
   }).then(result => {
     clearCurriculumGetCache();
@@ -1885,16 +1910,27 @@ export interface TeamsOccurrenceRescheduleResult {
  * every other session — and the module's default time — untouched. The tracked
  * occurrence keeps its own duration unless `durationMinutes` is passed.
  */
-export function rescheduleTeamsOccurrence(
+export async function rescheduleTeamsOccurrence(
   liveSessionId: string,
   sessionNumber: number,
   input: { startDateTimeUtc: string; durationMinutes?: number },
 ) {
+  const reviewed = { ...input };
+  const detail = await loadTeamsMeetingArtifacts(liveSessionId);
+  const series = calendarSeriesForReview(detail.series);
+  const occurrence = detail.occurrences.find(item => item.session_number === sessionNumber);
+  if (!occurrence) throw new Error('Load this session before reviewing a time change.');
+  const duration = reviewed.durationMinutes ?? (parseUtcInstant(occurrence.scheduled_end).getTime() - parseUtcInstant(occurrence.scheduled_start).getTime()) / 60000;
+  await reviewCalendar({ title: series.module_title, organizerEmail: series.organizer_email,
+    joinUrl: occurrence.join_url || series.join_url, attendees: series.attendees,
+    presenters: series.presenters, coOrganizers: series.co_organizers, previousOccurrences: [occurrence], seriesMode: 'shared',
+    scheduledOccurrences: [{ sessionNumber, startDateTimeUtc: reviewed.startDateTimeUtc, durationMinutes: duration }],
+  }, getCalendarTimeZone());
   return apiJson<TeamsOccurrenceRescheduleResult>(
     `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/occurrences/${sessionNumber}/schedule/`,
     {
       method: 'PATCH',
-      body: JSON.stringify(input),
+      body: JSON.stringify(reviewed),
       timeoutMs: 45000,
     },
   ).then(result => {
@@ -1961,6 +1997,13 @@ export interface TeamsMeetingArtifactsResult {
     organizer_email: string;
     join_url: string;
     online_meeting_id: string;
+    attendees?: string[];
+    presenters?: string[];
+    co_organizers?: string[];
+    recording?: string;
+    lobby_bypass?: string;
+    spoken_language?: string;
+    calendar_series?: Array<{ day: string; joinUrl: string; sessionNumbers: number[] }>;
   };
   occurrences: TeamsMeetingOccurrence[];
 }
@@ -1976,6 +2019,21 @@ export function loadTeamsMeetingArtifacts(liveSessionId: string) {
   return apiJson<TeamsMeetingArtifactsResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
     timeoutMs: 30000,
   });
+}
+
+function calendarSeriesForReview(series: TeamsMeetingArtifactsResult['series']) {
+  // Raw SQL JSON columns may arrive serialized, depending on the DB driver.
+  const list = <T,>(value: unknown): T[] => {
+    let decoded = value;
+    try { if (typeof value === 'string') decoded = JSON.parse(value); } catch { decoded = undefined; }
+    if (decoded === null) return [];
+    if (!Array.isArray(decoded)) throw new Error('The saved invitation details could not be loaded. Reload the calendar before saving.');
+    return decoded as T[];
+  };
+  return { ...series, attendees: list<string>(series.attendees), presenters: list<string>(series.presenters),
+    co_organizers: list<string>(series.co_organizers),
+    calendar_series: list<NonNullable<typeof series.calendar_series>[number]>(series.calendar_series ?? []),
+  };
 }
 
 export function teamsMeetingArtifactContentUrl(liveSessionId: string, artifactId: string) {

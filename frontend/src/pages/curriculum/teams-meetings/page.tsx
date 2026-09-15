@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { isTeamsReviewCancelled } from './calendarReview';
+import { calendarInputError } from './calendarTime';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -973,6 +975,8 @@ export default function CurriculumTeamsMeetingsPage() {
   const pushDates = async (row: MeetingRow) => {
     const summary = row.summary;
     if (!summary || !row.sessions.length) return;
+    const invalid = calendarInputError(row);
+    if (invalid) { setNotice({ tone: 'error', text: invalid }); return; }
     const occurrences = scheduledOccurrences(row);
     setBusy(`${row.catalogueId}:dates`);
     setNotice(null);
@@ -1010,6 +1014,7 @@ export default function CurriculumTeamsMeetingsPage() {
         timer: warnings.length ? undefined : 2000,
       });
     } catch (err) {
+      if (isTeamsReviewCancelled(err)) return;
       setNotice({ tone: 'error', text: err instanceof Error ? err.message : 'The session dates could not be sent to Teams.' });
     } finally {
       setBusy('');
@@ -1139,6 +1144,7 @@ export default function CurriculumTeamsMeetingsPage() {
         attendees,
         presenters,
         coOrganizers,
+        peopleOnly: true,
       });
       peopleDrawer.close();
       await loadTeamsState();
@@ -1151,6 +1157,7 @@ export default function CurriculumTeamsMeetingsPage() {
         timer: warning ? undefined : 2200,
       });
     } catch (err) {
+      if (isTeamsReviewCancelled(err)) return;
       peopleDrawer.setError(err instanceof Error ? err.message : 'The invitations could not be saved.');
     } finally {
       peopleDrawer.setSaving(false);
@@ -1195,11 +1202,11 @@ export default function CurriculumTeamsMeetingsPage() {
       return;
     }
     if (!row.sessions.length) { createDrawer.setError('This module has no stored session dates yet.'); return; }
-    const input = buildTeamsCalendarInput(row, form);
-    const occurrences = input.scheduledOccurrences || [];
     createDrawer.setSaving(true);
     createDrawer.setError(null);
     try {
+      const input = buildTeamsCalendarInput(row, form);
+      const occurrences = input.scheduledOccurrences || [];
       const result = await createTeamsMeeting(input);
       // Creating the series is only half of it: the module's live-session
       // components are where delivery reads the join link from, and the restore
@@ -1241,6 +1248,7 @@ export default function CurriculumTeamsMeetingsPage() {
         timer: optionsRefused || result.warnings.length ? undefined : 2400,
       });
     } catch (err) {
+      if (isTeamsReviewCancelled(err)) return;
       createDrawer.setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');
     } finally {
       createDrawer.setSaving(false);

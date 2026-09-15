@@ -35,6 +35,7 @@ from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
+from .teams_calendar_checks import CalendarMismatch, calendar_targets, graph_calendar_time, local_calendar_recurrence, verify_calendar, publish_attendees, safe_teams_join_url, utc_datetime
 
 from learner_api.progress_rules import (
     progress_achievement_status,
@@ -1497,7 +1498,7 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
             'scheduled_start': item['start'],
             'scheduled_end': item['end'],
             'join_url': clean_str(join_url),
-            'status': 'scheduled',
+            'status': 'completed' if existing.get('status') == 'completed' else 'scheduled',
             'created_at': existing.get('created_at') or now,
             'updated_at': now,
         })
@@ -1572,7 +1573,7 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
         'meeting_type': clean_str(payload.get('meetingType')) or 'live-session',
         'request_responses': bool(payload.get('requestResponses', True)),
         'allow_time_proposals': bool(payload.get('allowNewTimeProposals', True)),
-        'hide_attendees': bool(payload.get('hideAttendees', False)),
+        'hide_attendees': True,
         'status': 'active',
         'warnings': json_db_value(warnings),
         'created_at': now,
@@ -1830,7 +1831,7 @@ def teams_event_payload(payload, graph_settings):
     repeat = clean_str(payload.get('repeat')).lower() or 'none'
     if repeat not in TEAMS_REPEAT_VALUES:
         raise ValueError('Unsupported repeat option.')
-    occurrences = max(2, min(52, int(payload.get('repeatOccurrences') or 12)))
+    occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or 12)))
     co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
     co_organizer_set = set(co_organizers)
     presenters = [
@@ -1845,27 +1846,16 @@ def teams_event_payload(payload, graph_settings):
     invited_people = list(dict.fromkeys([*co_organizers, *presenters, *attendees]))
     details = clean_str(payload.get('details'))
 
-    # Anchor the series to the same UTC instant the per-session occurrences are
-    # derived from. The wizard computes those in the browser's timezone, so reading
-    # the naive local string in the organizer's Graph timezone can put the weekly
-    # grid hours away from every target: nothing matches, every occurrence has to be
-    # moved, and Graph rejects moves that cross a neighbour -- which shreds the
-    # series into standalone recreations. Same instant either way, minus the churn.
-    anchor = utc_start
-    if anchor.tzinfo is not None:
-        anchor = anchor.astimezone(timezone.utc).replace(tzinfo=None)
-    anchor = anchor.replace(second=0, microsecond=0)
+    # Convert each instant in the business zone. A fixed UTC offset changes
+    # midnight Thursday into two different weekdays across the autumn clock change.
+    zone_name = graph_timezone_iana(graph_settings)
+    graph_zone = graph_settings.get('timezone') or 'GMT Standard Time'
+    targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, zone_name)
     event = {
         'subject': title,
         'body': {'contentType': 'HTML', 'content': teams_event_body_html(title, details)},
-        'start': {
-            'dateTime': anchor.isoformat(timespec='seconds'),
-            'timeZone': 'UTC',
-        },
-        'end': {
-            'dateTime': (anchor + timedelta(minutes=duration)).isoformat(timespec='seconds'),
-            'timeZone': 'UTC',
-        },
+        'start': graph_calendar_time(targets[0]['start'], zone_name, graph_zone),
+        'end': graph_calendar_time(targets[0]['end'], zone_name, graph_zone),
         'attendees': [
             {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
             for email in invited_people
@@ -1874,7 +1864,7 @@ def teams_event_payload(payload, graph_settings):
         'onlineMeetingProvider': 'teamsForBusiness',
         'responseRequested': bool(payload.get('requestResponses', True)),
         'allowNewTimeProposals': bool(payload.get('allowNewTimeProposals', True)),
-        'hideAttendees': bool(payload.get('hideAttendees', False)),
+        'hideAttendees': True,
     }
     transaction_id = clean_str(payload.get('transactionId'))[:255]
     if transaction_id:
@@ -1882,9 +1872,7 @@ def teams_event_payload(payload, graph_settings):
     # Holiday shifts stretch the calendar span past the Nth weekly slot, so size the
     # recurrence by the span the wizard actually needs. Sizing it by session count
     # leaves the trailing shifted dates with no instance to move onto.
-    recurrence_days = teams_recurrence_weekdays(payload, anchor)
-    recurrence_slots = teams_recurrence_slot_count(payload, anchor, repeat, occurrences, recurrence_days)
-    recurrence = teams_event_recurrence(repeat, anchor, max(2, recurrence_slots), recurrence_days)
+    recurrence = local_calendar_recurrence(targets, repeat, zone_name, graph_zone)
     if recurrence:
         event['recurrence'] = recurrence
     # Return normalized timing too, for the component settings response.
@@ -2194,12 +2182,25 @@ def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc,
     patch_body = {
         'start': {'dateTime': new_start_utc.replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
         'end': {'dateTime': new_end_utc.replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+        'hideAttendees': True,
     }
+
+    def move_verified(instance_id):
+        path = f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}'
+        current = microsoft_graph_request('GET', path)
+        actual_link = clean_str((current.get('onlineMeeting') or {}).get('joinUrl'))
+        if current.get('isCancelled') or actual_link != join_url or not safe_teams_join_url(actual_link):
+            raise RuntimeError('The session join link or calendar identity could not be verified.')
+        microsoft_graph_request('PATCH', path, payload=patch_body)
+        verify_calendar(microsoft_graph_request, owner_key, instance_id, [
+            {'session_number': occurrence.get('session_number') or 1,
+             'start': utc_datetime(new_start_utc), 'end': utc_datetime(new_end_utc)},
+        ], join_url, False)
 
     # Already its own event: move it directly, no series instance to resolve.
     if occ_event_id and occ_event_id != series_event_id:
         try:
-            microsoft_graph_request('PATCH', f'users/{owner_key}/events/{urllib_parse.quote(occ_event_id, safe="")}', payload=patch_body)
+            move_verified(occ_event_id)
         except RuntimeError as exc:
             logger.warning('Unable to reschedule a standalone Teams occurrence: %s', exc)
             warnings.append({'code': 'teams_occurrence_not_moved', 'message': 'Microsoft Teams could not move this session.', 'detail': str(exc)})
@@ -2243,16 +2244,15 @@ def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc,
         warnings.append({'code': 'teams_occurrence_not_found', 'message': 'Microsoft Teams did not list this session, so it was not moved.', 'detail': ''})
         return join_url, online_meeting_id, result_event_id, warnings
 
-    instance_key = urllib_parse.quote(instance_id, safe='')
     try:
-        microsoft_graph_request('PATCH', f'users/{owner_key}/events/{instance_key}', payload=patch_body)
+        move_verified(instance_id)
     except RuntimeError as exc:
         warnings.append({
             'code': 'teams_occurrence_not_moved',
             'message': 'Microsoft Teams could not move this occurrence, so it was left in the recurring series to preserve the module\'s fixed join URL.',
             'detail': str(exc),
         })
-    return join_url, online_meeting_id, result_event_id, warnings
+    return join_url, online_meeting_id, instance_id, warnings
 
 
 def teams_meeting_base_path(organizer, meeting_id, join_url=''):
@@ -2593,7 +2593,12 @@ def curriculum_teams_meeting(request):
 
     try:
         event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
-    except (TypeError, ValueError) as exc:
+        targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
+        payload = {**payload, 'hideAttendees': True, 'scheduledOccurrences': [
+            {'sessionNumber': item['session_number'], 'startDateTimeUtc': item['start'].isoformat(),
+             'durationMinutes': int((item['end'] - item['start']).total_seconds() / 60)} for item in targets
+        ]}
+    except (TypeError, ValueError, KeyError) as exc:
         return json_error(str(exc), status=400)
     if co_organizers and not has_column(LIVE_SESSIONS_TABLE, 'co_organizers'):
         return json_error(
@@ -2604,12 +2609,16 @@ def curriculum_teams_meeting(request):
 
     owner_key = urllib_parse.quote(organizer, safe='')
     try:
-        event = microsoft_graph_request('POST', f'users/{owner_key}/events', payload=event_payload)
+        # Prepare the calendar without recipients. Holiday cleanup must not send
+        # provisional invitations or cancellation emails to the class.
+        event = microsoft_graph_request('POST', f'users/{owner_key}/events', payload={**event_payload, 'attendees': []})
     except RuntimeError as exc:
         logger.warning('Unable to create Module Builder Teams event: %s', exc)
         return json_error('Microsoft Teams could not create the meeting.', status=502, detail=str(exc))
 
     event_id = clean_str(event.get('id'))
+    if not event_id:
+        return json_error('Microsoft did not return a calendar identifier. No invitations were sent.', status=502)
     online_meeting = event.get('onlineMeeting') or {}
     join_url = clean_str(online_meeting.get('joinUrl'))
     if event_id and not join_url:
@@ -2620,6 +2629,18 @@ def curriculum_teams_meeting(request):
             join_url = clean_str(online_meeting.get('joinUrl'))
         except RuntimeError:
             pass
+
+    # Checkpoint the event before further Graph calls. A partial failure can be
+    # resumed through this calendar's update action without creating another one.
+    try:
+        live_session_id, _ = persist_live_session_series(
+            payload, event, ['Invitations pending calendar verification.'], graph_settings,
+            organizer, attendees, presenters, co_organizers=co_organizers, persist_occurrences=False,
+        )
+    except Exception:
+        logger.exception('The prepared Teams calendar could not be saved.')
+        return json_error('The calendar was prepared but could not be saved. No invitations were sent.',
+                          status=500, meetingCreated=True, eventId=event_id)
 
     warnings = []
     lobby_choice = clean_str(payload.get('lobbyBypass')).lower() or 'invited'
@@ -2639,7 +2660,7 @@ def curriculum_teams_meeting(request):
     # Graph has just built a plain weekly series. Move its occurrences onto the
     # wizard's holiday-shifted dates now, otherwise the calendar keeps sessions on
     # holidays the wizard already moved them off and the two disagree from day one.
-    if event_id:
+    if repeat != 'none':
         shift_warnings, recreated_details = apply_teams_occurrence_shifts(
             owner_key,
             urllib_parse.quote(event_id, safe=''),
@@ -2677,18 +2698,27 @@ def curriculum_teams_meeting(request):
 
     event['_meetingOptionsUrl'] = meeting_options_url
     try:
-        live_session_id, tracked_occurrences = persist_live_session_series(
-            payload,
-            event,
-            warnings,
-            graph_settings,
-            organizer,
-            attendees,
-            presenters,
-            clean_str(graph_meeting.get('id')),
-            co_organizers=co_organizers,
+        if warnings or not settings_applied:
+            raise RuntimeError('The calendar or meeting options could not be verified. Invitations remain pending.')
+        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+        publish_attendees(microsoft_graph_request, owner_key, event, event_payload['attendees'])
+        # Publishing must not resurrect deleted slots or change the shared link.
+        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+        occurrence_rows = replace_live_session_occurrences(
+            live_session_id, payload, utc_start, duration, repeat, occurrences,
+            event_id=event_id, join_url=join_url,
         )
-        persist_recreated_occurrence_details(live_session_id, recreated_details)
+        tracked_occurrences = len(occurrence_rows)
+        update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
+            'warnings': json_db_value([]), 'online_meeting_id': meeting_id,
+            'meeting_options_url': meeting_options_url, 'join_url': join_url, 'updated_at': datetime.utcnow(),
+        })
+    except RuntimeError as exc:
+        update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
+            'warnings': json_db_value([*warnings, str(exc)]), 'updated_at': datetime.utcnow(),
+        })
+        return json_error('The calendar is saved, but verification or invitation delivery is incomplete. Open its review to retry.',
+                          status=502, detail=str(exc), meetingCreated=True, liveSessionId=live_session_id)
     except Exception:
         logger.exception('Teams meeting was created, but its live_sessions record could not be saved.')
         return json_error(
@@ -2987,7 +3017,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         return json_error('A valid JSON body is required.')
     series = series_rows[0]
     try:
-        weekday_groups = calendar_groups(payload, get_graph_settings())
+        weekday_groups = [] if payload.get('peopleOnly') else calendar_groups(payload, get_graph_settings())
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
     if stored_calendar_series(series) or weekday_groups:
@@ -2998,7 +3028,9 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     # live series -- so pinning an organizer changes where *new* meetings are
     # created and leaves every series already running on its own calendar.
     organizer = clean_str(series.get('organizer_email')) or teams_meeting_default_organizer()
-    event_id = clean_str(payload.get('eventId') or series.get('graph_event_id'))
+    event_id = clean_str(series.get('graph_event_id'))
+    if payload.get('eventId') and clean_str(payload['eventId']) != event_id:
+        return json_error('The reviewed event does not belong to this calendar.', status=409)
     if not organizer or not event_id:
         return json_error('This Teams meeting is missing organizer or calendar event identifiers.', status=409)
 
@@ -3055,34 +3087,50 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if repeat not in TEAMS_REPEAT_VALUES:
         return json_error('Unsupported repeat option.', status=400)
     occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or series.get('repeat_occurrences') or 1)))
-    # Holiday shifts push later sessions beyond the Nth weekly slot, so the recurrence
-    # range must span the shifted end date instead of the plain session count. Sizing it
-    # by session count leaves the trailing shifted dates with no instance to move onto.
-    recurrence_days = teams_recurrence_weekdays(payload, local_start)
-    recurrence_slots = teams_recurrence_slot_count(payload, local_start, repeat, occurrences, recurrence_days)
+    try:
+        targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
+        recurrence = local_calendar_recurrence(targets, repeat, graph_timezone_iana(graph_settings),
+                                               graph_settings.get('timezone') or 'GMT Standard Time')
+    except (ValueError, TypeError, KeyError) as exc:
+        return json_error(str(exc), status=400)
+    payload = {**payload, 'scheduledOccurrences': [
+        {'sessionNumber': item['session_number'], 'startDateTimeUtc': item['start'].isoformat(),
+         'durationMinutes': int((item['end'] - item['start']).total_seconds() / 60)} for item in targets
+    ]}
     event_patch = {
         'subject': title,
-        'start': {
-            'dateTime': local_start.replace(second=0, microsecond=0).isoformat(timespec='seconds'),
-            'timeZone': graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time',
-        },
-        'end': {
-            'dateTime': (local_start + timedelta(minutes=duration)).replace(second=0, microsecond=0).isoformat(timespec='seconds'),
-            'timeZone': graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time',
-        },
+        'hideAttendees': True,
+        'start': graph_calendar_time(targets[0]['start'], graph_timezone_iana(graph_settings), graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time'),
+        'end': graph_calendar_time(targets[0]['end'], graph_timezone_iana(graph_settings), graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time'),
     }
-    if people_changed:
-        event_patch['attendees'] = [
-            {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
-            for email in invited_people
-        ]
-    recurrence = teams_event_recurrence(repeat, local_start, max(2, recurrence_slots), recurrence_days)
     event_patch['recurrence'] = recurrence if repeat != 'none' else None
 
     owner_key = urllib_parse.quote(organizer, safe='')
     event_key = urllib_parse.quote(event_id, safe='')
+    dates_already_verified = False
     try:
-        event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload=event_patch)
+        current = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
+        if current.get('isCancelled'):
+            return json_error('This Microsoft calendar has been cancelled. Review it before continuing.', status=409)
+        current_join = clean_str((current.get('onlineMeeting') or {}).get('joinUrl'))
+        if series.get('join_url') and current_join != series['join_url']:
+            return json_error('The Microsoft join link differs from the saved calendar. Review it before continuing.', status=409)
+        try:
+            current = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, current_join, repeat != 'none')
+            dates_already_verified = True
+        except CalendarMismatch:
+            pass  # A known difference is the reason to update. Read failures still abort.
+        if payload.get('peopleOnly'):
+            # Saving people must not reapply a series pattern and revive cancelled slots.
+            event = current
+            if current.get('hideAttendees') is not True:
+                microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload={'hideAttendees': True})
+        elif dates_already_verified:
+            event = current
+            if current.get('subject') != title:
+                event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload={'subject': title})
+        else:
+            event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload=event_patch)
         if not isinstance(event, dict):
             event = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
     except RuntimeError as exc:
@@ -3097,14 +3145,11 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'presenters': presenters,
         'co_organizers': co_organizers,
     }
-    warnings, recreated_details = apply_teams_occurrence_shifts(
-        owner_key,
-        event_key,
-        title,
-        teams_shifted_occurrence_targets(payload, duration),
-        invited_people,
-        meeting_options,
-    )
+    warnings, recreated_details = [], []
+    if not payload.get('peopleOnly') and not dates_already_verified and repeat != 'none':
+        warnings, recreated_details = apply_teams_occurrence_shifts(
+            owner_key, event_key, title, teams_shifted_occurrence_targets(payload, duration), invited_people, meeting_options,
+        )
 
     join_url = clean_str((event.get('onlineMeeting') or {}).get('joinUrl')) or clean_str(series.get('join_url'))
     # Re-applied on every save, not only when the people change. Graph resets an
@@ -3123,7 +3168,23 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         online_meeting_id=series.get('online_meeting_id'),
     )
     warnings.extend(option_warnings)
-    occurrence_rows = replace_live_session_occurrences(
+    try:
+        if warnings or not _applied:
+            raise RuntimeError('Microsoft did not accept every calendar or meeting option change.')
+        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+        publish_attendees(microsoft_graph_request, owner_key, event, [
+            {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
+            for email in invited_people
+        ])
+        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+    except RuntimeError as exc:
+        update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
+            'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
+            'updated_at': datetime.utcnow(),
+        })
+        return json_error('Microsoft did not confirm the reviewed calendar. Requested dates have not been marked as synchronized.',
+                          status=502, detail=str(exc), partial=True, liveSessionId=live_session_id)
+    occurrence_rows = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id]) if payload.get('peopleOnly') else replace_live_session_occurrences(
         live_session_id,
         payload,
         utc_start,
@@ -3135,6 +3196,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     )
     persist_recreated_occurrence_details(live_session_id, recreated_details)
     series_update = {
+        'hide_attendees': True,
+        'warnings': json_db_value([]),
         'online_meeting_id': clean_str(graph_meeting.get('id')) or clean_str(series.get('online_meeting_id')),
         'module_title': title,
         'start_datetime': utc_start,
@@ -3145,6 +3208,9 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'web_link': clean_str(event.get('webLink')) or clean_str(series.get('web_link')),
         'updated_at': datetime.utcnow(),
     }
+    if payload.get('peopleOnly'):
+        for field in ('module_title', 'start_datetime', 'duration_minutes', 'repeat_pattern', 'repeat_occurrences'):
+            series_update.pop(field, None)
     if people_changed:
         series_update['attendees'] = json_db_value(attendees)
         series_update['presenters'] = json_db_value(presenters)
@@ -15615,6 +15681,7 @@ def curriculum_teams_meeting_summary(request):
             'status': clean_str(row.get('status')) or 'active',
             'moduleTitle': clean_str(row.get('module_title')),
             'calendarSeries': stored_calendar_series(row),
+            'verificationPending': bool(parse_json_value(row.get('warnings'), [])),
             'joinUrl': clean_str(row.get('join_url')),
             'webLink': clean_str(row.get('web_link')),
             'meetingOptionsUrl': clean_str(row.get('meeting_options_url')),
@@ -15663,6 +15730,9 @@ def curriculum_teams_meeting_summary(request):
             if any(item.get('verified') is False for item in entry.get('calendarSeries') or []):
                 entry['syncState'] = 'unverified'
                 entry['syncReasons'] = [*entry['syncReasons'], 'weekday_series_unverified']
+            if entry.get('verificationPending'):
+                entry['syncState'] = 'unverified'
+                entry['syncReasons'] = [*entry['syncReasons'], 'calendar_verification_pending']
 
     return curriculum_results_response(results, request=request)
 

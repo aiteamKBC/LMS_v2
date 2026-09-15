@@ -21,6 +21,7 @@
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { clockLabel } from '../../teams-meetings/calendarTime';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
@@ -1353,8 +1354,8 @@ export function ModuleFormDrawer({
             <div key={slot.day} className="rounded-lg border border-background-200 p-3">
               <p className="mb-2 text-[12px] font-semibold">{slot.day}</p>
               <div className="grid gap-4 sm:grid-cols-2">
-                <FormField label={`${slot.day} start time`} required><TextControl type="time" value={slot.startTime} onChange={value => setWeeklyTimes(previous => ({ ...previous, [slot.day]: { startTime: value, endTime: slot.endTime } }))} /></FormField>
-                <FormField label={`${slot.day} end time`} required><TextControl type="time" value={slot.endTime} onChange={value => setWeeklyTimes(previous => ({ ...previous, [slot.day]: { startTime: slot.startTime, endTime: value } }))} /></FormField>
+                <FormField label={`${slot.day} start time`} required hint={clockLabel(slot.startTime)}><TextControl type="time" value={slot.startTime} onChange={value => setWeeklyTimes(previous => ({ ...previous, [slot.day]: { startTime: value, endTime: slot.endTime } }))} /></FormField>
+                <FormField label={`${slot.day} end time`} required hint={clockLabel(slot.endTime)}><TextControl type="time" value={slot.endTime} onChange={value => setWeeklyTimes(previous => ({ ...previous, [slot.day]: { startTime: slot.startTime, endTime: value } }))} /></FormField>
               </div>
             </div>
           ))}

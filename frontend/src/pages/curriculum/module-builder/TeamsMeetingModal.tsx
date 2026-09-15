@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { isTeamsReviewCancelled } from '../teams-meetings/calendarReview';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Modal } from '@/pages/users/components/Modal';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
@@ -207,9 +208,9 @@ export function TeamsMeetingModal({
       setError('This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.');
       return;
     }
-    const input = buildTeamsCalendarInput(row, form);
     setSaving(true);
     try {
+      const input = buildTeamsCalendarInput(row, form);
       const result = await createTeamsMeeting(input);
       try {
         await restoreModuleTeamsMeeting(row.catalogueId);
@@ -244,6 +245,7 @@ export function TeamsMeetingModal({
         timer: optionsRefused || result.warnings.length ? undefined : 2400,
       });
     } catch (err) {
+      if (isTeamsReviewCancelled(err)) return;
       setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');
     } finally {
       setSaving(false);
