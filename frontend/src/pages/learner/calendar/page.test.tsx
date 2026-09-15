@@ -45,6 +45,14 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
+  it('shows a written, colour-coded status on month cards', async () => {
+    setup();
+    const statusBadges = await screen.findAllByLabelText('Scheduled status');
+    expect(statusBadges[0]).toBeVisible();
+    expect(statusBadges[0]).toHaveTextContent('Scheduled');
+    expect(statusBadges[0]).toHaveClass('bg-primary-100', 'text-primary-800');
+  });
+
   it.each(['book', 'reschedule'] as const)('uses the appointment date timezone offset when a future session is %s', async action => {
     // A browser in London is UTC+1 in September, but UTC in November.
     vi.spyOn(Date.prototype, 'getTimezoneOffset').mockImplementation(function (this: Date) {
