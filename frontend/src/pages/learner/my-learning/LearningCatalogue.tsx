@@ -6,6 +6,17 @@ import type { OverviewWeek } from '@/api/learnerOverview';
 import { learningDate, learningHref, learningToday, subjectPercent } from './subjectLearning';
 import styles from './SubjectWorkspace.module.css';
 
+function assignmentsHref(kind?: string, learnerId?: string) {
+  return `${learningHref('catalogue', kind, learnerId)}?tab=assignments`;
+}
+
+function deadlineHref(item: OverviewWeek['deadlines'][number], kind?: string, learnerId?: string) {
+  const componentId = item.type === 'assignment' && item.id.startsWith('native:') ? item.id.slice('native:'.length) : '';
+  return componentId && kind && learnerId
+    ? `/learner/monthly-submission/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}/${encodeURIComponent(componentId)}`
+    : assignmentsHref(kind, learnerId);
+}
+
 export function LearningHero({ map = false }: { map?: boolean }) {
   return <header className={styles.hero}>
     <div><p className={styles.eyebrow}>{map ? 'Learning journey' : 'Your learner workspace'}</p>
@@ -33,7 +44,10 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   }).sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : sort === 'progress' ? subjectPercent(b) - subjectPercent(a) || a.title.localeCompare(b.title)
     : Number(b.id === current?.id) - Number(a.id === current?.id) || a.title.localeCompare(b.title));
   const upcoming = deadlines.filter(d => d.date >= learningToday()).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
-  const continueSubject = current || summary.subjects.find(s => s.activities.some(a => !a.completed));
+  const hasRemainingActivity = (subject: Subject) => subject.activities.some(activity => !activity.completed);
+  const continueSubject = current && hasRemainingActivity(current)
+    ? current
+    : summary.subjects.find(hasRemainingActivity);
 
   return <>
       <div className={styles.stats}>
@@ -51,16 +65,15 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
         <label className={styles.selectLabel}>Filter by progress<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All subjects</option><option value="started">In progress</option><option value="new">Not started</option><option value="complete">Completed</option></select></label>
         <div className={styles.viewToggle} role="group" aria-label="Subject layout"><button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')}><LayoutGrid size={16} />Grid</button><button type="button" aria-pressed={layout === 'list'} onClick={() => setLayout('list')}><List size={16} />List</button></div>
       </div>
-      <div className={styles.subjectHeading}><h2>Your subjects</h2><span>{summary.subjectCount} subjects · {summary.activityCount} activities{visible.length !== summary.subjectCount ? ` · ${visible.length} shown` : ''}</span></div>
+      <div className={styles.subjectHeading}><h2>Your subjects</h2><span>{summary.subjectCount} subjects · {total} activities{visible.length !== summary.subjectCount ? ` · ${visible.length} shown` : ''}</span></div>
       {visible.length ? <div className={layout === 'grid' ? styles.grid : styles.list}>{visible.map(renderCard)}</div>
         : <div className={styles.empty}><BookOpen size={30} /><p>{summary.subjectCount ? 'No subjects or activities match your filters.' : 'Your subjects will appear here when they are assigned.'}</p>{summary.subjectCount > 0 && <button onClick={() => { onSearch(''); setFilter('all'); }}>Clear filters</button>}</div>}
     </div>
     <aside className={styles.catalogueAside} aria-label="Learning shortcuts">
-      <section className={styles.asidePanel}><h2><BookOpen size={21} />Continue learning</h2>{continueSubject ? <><div className={styles.continueSubject}><span className={styles.statIcon} data-tone="purple"><BookOpen size={26} /></span><div><strong>{continueSubject.title}</strong><p>{subjectPercent(continueSubject)}% complete</p></div></div><div className={styles.miniTrack}><span style={{ width: `${subjectPercent(continueSubject)}%` }} /></div><button type="button" className={styles.primaryButton} onClick={() => onContinue(continueSubject)}>Continue learning<ArrowRight size={17} /></button></>
-        : <p className={styles.asideEmpty}>{summary.activityCount ? 'You’ve completed your available activities. Great work!' : 'Your next activity will appear here.'}</p>}</section>
-      <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><CalendarDays size={21} />Upcoming deadlines</h2><Link to="/learner/calendar" aria-label="View all deadlines">View all<ArrowRight size={14} /></Link></div>
+      {continueSubject && <section className={styles.asidePanel}><h2><BookOpen size={21} />Continue learning</h2><div className={styles.continueSubject}><span className={styles.statIcon} data-tone="purple"><BookOpen size={26} /></span><div><strong>{continueSubject.title}</strong><p>{subjectPercent(continueSubject)}% complete</p></div></div><div className={styles.miniTrack}><span style={{ width: `${subjectPercent(continueSubject)}%` }} /></div><button type="button" className={styles.primaryButton} onClick={() => onContinue(continueSubject)}>Continue learning<ArrowRight size={17} /></button></section>}
+      <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><CalendarDays size={21} />Upcoming deadlines</h2><Link to={assignmentsHref(kind, learnerId)} aria-label="View all assignments">View all<ArrowRight size={14} /></Link></div>
         {deadlinesLoading ? <p className={styles.asideEmpty}>Loading upcoming deadlines…</p> : deadlinesError ? <p className={styles.asideEmpty}>Deadlines could not be loaded. <button onClick={onRetryDeadlines} className="underline">Try again</button></p>
-          : upcoming.length ? upcoming.map(item => <Link className={styles.deadline} key={item.id} to={learningHref('catalogue', kind, learnerId, item.subjectId)}><ClipboardList size={19} /><div><strong>{item.title}</strong><small>{summary.subjects.find(s => s.id === item.subjectId)?.title || (item.type === 'assignment' ? 'Assignment' : 'Checkpoint')}</small></div><time dateTime={item.date}>{learningDate(item.date)}</time></Link>) : <p className={styles.asideEmpty}>No upcoming deadlines. Keep exploring your subjects at your own pace.</p>}
+          : upcoming.length ? upcoming.map(item => <Link className={styles.deadline} key={item.id} to={deadlineHref(item, kind, learnerId)}><ClipboardList size={19} /><div><strong>{item.title}</strong><small>{summary.subjects.find(s => s.id === item.subjectId)?.title || (item.type === 'assignment' ? 'Assignment' : 'Checkpoint')}</small></div><time dateTime={item.date}>{learningDate(item.date)}</time></Link>) : <p className={styles.asideEmpty}>No upcoming deadlines. Keep exploring your subjects at your own pace.</p>}
       </section>
       <Link className={styles.mapShortcut} to={learningHref('map', kind, learnerId)}><Map size={25} /><div><strong>Learner’s Map</strong><span>See your learning week by week</span></div><ArrowRight size={18} /></Link>
       <div className={styles.encouragement}><Sprout size={33} strokeWidth={1.6} /><div><strong>You’re doing great!</strong><p>Consistency leads to progress. Keep going.</p></div></div>
