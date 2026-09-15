@@ -103,6 +103,21 @@ class MonthlyLogsTests(SimpleTestCase):
                 self.assertEqual(logs.current_months(self.learner), {})
             self.assertEqual(logs.current_months(self.learner), {'2026-09': [self.row, last_day]})
 
+    def test_open_month_is_available_as_a_live_unsigned_log(self):
+        learner = {**self.learner, 'aptem_id': None}
+        with patch.object(logs.timezone, 'localdate', return_value=date(2026, 9, 15)), \
+             patch.object(sources, 'activity_rows', return_value=[self.row]), \
+             patch.object(logs, 'legacy_summary', return_value={'months': []}), \
+             patch.object(logs, 'signatures', return_value=[]), \
+             patch.object(logs, 'lock_state', return_value={'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}), \
+             patch.object(sources, 'first_evidence_date', return_value=None):
+            summary = logs.summary_data(learner, include_open=True)
+            detail = logs.detail_data(learner, '2026-09', include_open=True)
+        self.assertEqual([month['month'] for month in summary['months']], ['2026-09'])
+        self.assertTrue(summary['months'][0]['is_open'])
+        self.assertTrue(detail['is_open'])
+        self.assertEqual(detail['rows'], [self.row])
+
     def test_open_month_cannot_be_requested_or_signed_directly(self):
         with patch.object(logs.timezone, 'localdate', return_value=date(2026, 9, 30)), \
              patch.object(sources, 'activity_rows') as activities, \

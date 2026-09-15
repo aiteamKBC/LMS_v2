@@ -1,14 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import {
-  fetchQuiz, submitQuizAttempt,
-  type Quiz, type QuizQuestion, type QuizAnswerValue, type QuizAttemptResult,
+  completeQuizReading, fetchQuiz, generateQuizReading, submitQuizAttempt,
+  type Quiz, type QuizQuestion, type QuizAnswerValue, type QuizAttemptResult, type QuizReading,
 } from '@/api/quizzes';
-import { fetchLearnerDetail, type LearnerDetail, type LearnerKsbItem, type LearnerKind } from '@/api/learnerDetail';
+import {
+  fetchLearnerDetail,
+  type LearnerDetail,
+  type LearnerKsbItem,
+  type LearnerKind,
+  type LearnerQuizAttempt,
+  type LearnerQuizQuestionResult,
+} from '@/api/learnerDetail';
 import { completedComponentIds } from '@/utils/learnerJourney';
 import { placeActivity } from '@/pages/learner/video-watch/weekPreview';
 import { ActivitySidebar } from '@/pages/learner/video-watch/ActivitySidebar';
@@ -25,6 +33,99 @@ import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 const learnerNav = roleNavMap.learner;
 
 type Phase = 'intro' | 'quiz' | 'reflect' | 'results';
+
+function latestQuizAttempt(attempts: LearnerQuizAttempt[], quizId: string | undefined) {
+  return attempts
+    .filter((attempt) => String(attempt.quizId) === String(quizId))
+    .sort((left, right) => {
+      const submittedDifference = Date.parse(right.submittedAt || '') - Date.parse(left.submittedAt || '');
+      if (Number.isFinite(submittedDifference) && submittedDifference !== 0) return submittedDifference;
+      return Number(right.attempt || 0) - Number(left.attempt || 0);
+    })[0] || null;
+}
+
+function answerText(question: QuizQuestion, ids: number | number[] | null | undefined) {
+  if (ids == null) return null;
+  const answerIds = Array.isArray(ids) ? ids : [ids];
+  const labels = answerIds
+    .map((answerId) => question.answers.find((answer) => answer.id === answerId))
+    .map((answer) => answer?.text || answer?.left || answer?.label)
+    .filter((label): label is string => Boolean(label));
+  return labels.length ? labels.join(', ') : null;
+}
+
+function historicalCorrectAnswer(question: QuizQuestion, stored: LearnerQuizQuestionResult) {
+  const byId = answerText(question, stored.correctAnswerId);
+  if (byId) return byId;
+  if (question.type === 'fill_gap' || question.type === 'keywords') {
+    const labels = question.answers.map((answer) => answer.text).filter((label): label is string => Boolean(label));
+    return labels.length ? labels.join(' / ') : null;
+  }
+  if (question.type === 'matching' || question.type === 'image_matching') {
+    const pairs = question.answers.map((answer) => answer.text).filter((label): label is string => Boolean(label));
+    return pairs.length ? pairs.join('; ') : null;
+  }
+  return null;
+}
+
+function durationSeconds(value: string | null | undefined) {
+  const parts = String(value || '').split(':').map(Number);
+  if (!parts.length || parts.some(part => !Number.isFinite(part) || part < 0)) return 0;
+  if (parts.length === 3) return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+  if (parts.length === 2) return (parts[0] * 60) + parts[1];
+  return parts[0];
+}
+
+/** Rebuild the full result view from the slim attempt stored on the learner. */
+function resultFromStoredAttempt(quiz: Quiz, attempt: LearnerQuizAttempt): QuizAttemptResult {
+  const storedByQuestion = new Map((attempt.questions || []).map((question) => [String(question.questionId), question]));
+  const breakdown = quiz.questions.map((question) => {
+    const stored = storedByQuestion.get(String(question.id));
+    return {
+      questionId: question.id,
+      questionText: question.text,
+      type: question.type,
+      points: question.points,
+      earned: Number(stored?.earned || 0),
+      possible: question.points,
+      correct: Boolean(stored?.correct),
+      chosenAnswer: stored?.chosenText ?? answerText(question, stored?.chosenAnswerId),
+      correctAnswer: stored ? historicalCorrectAnswer(question, stored) : null,
+    };
+  });
+  const earned = breakdown.reduce((total, question) => total + question.earned, 0);
+  const possible = breakdown.reduce((total, question) => total + question.possible, 0);
+  const achievedScore = attempt.achievedScore ?? breakdown.filter((question) => question.correct).length;
+  const totalScore = attempt.totalScore ?? breakdown.length;
+  return {
+    attempt: {
+      kind: 'quiz',
+      attempt: attempt.attempt || 1,
+      grade: attempt.grade,
+      achievedScore,
+      totalScore,
+      passed: attempt.passed,
+      quizId: attempt.quizId,
+      questions: attempt.questions || [],
+      startedAt: attempt.startedAt,
+      submittedAt: attempt.submittedAt,
+      timeTaken: attempt.timeTaken || '00:00',
+      timeTrackingSource: attempt.timeTrackingSource || 'stored',
+      claimedSeconds: attempt.claimedSeconds || 0,
+      serverSessionSeconds: attempt.verifiedSeconds || 0,
+      verifiedSeconds: attempt.verifiedSeconds || 0,
+    },
+    breakdown,
+    earned,
+    possible,
+    grade: attempt.grade,
+    achievedScore,
+    totalScore,
+    passed: attempt.passed,
+    timeTaken: attempt.timeTaken || '00:00',
+    quizName: quiz.title,
+  };
+}
 
 export default function QuizTakePage() {
   const { kind, id, quizId } = useParams<{ kind: string; id: string; quizId: string }>();
@@ -117,7 +218,23 @@ export default function QuizTakePage() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [phase, componentAccess.open]);
 
+  useEffect(() => {
+    if (phase !== 'quiz') return;
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      // Browsers intentionally show their own message, but setting returnValue
+      // is still required by some engines to trigger the confirmation dialog.
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [phase]);
+
   const totalPoints = useMemo(() => (quiz ? quiz.questions.reduce((n, q) => n + q.points, 0) : 0), [quiz]);
+  const latestAttempt = useMemo(
+    () => latestQuizAttempt(detail?.quizAttempts || [], quizId),
+    [detail?.quizAttempts, quizId],
+  );
 
   // Where this quiz sits in the plan, for the list beside it. A quiz reached
   // from somewhere other than the plan (or one no longer in it) simply has no
@@ -145,7 +262,14 @@ export default function QuizTakePage() {
     setElapsedSeconds(0);
     setCurrent(0);
     setAnswers({});
+    setResult(null);
     setPhase('quiz');
+  };
+
+  const viewLatestResult = () => {
+    if (!quiz || !latestAttempt) return;
+    setResult(resultFromStoredAttempt(quiz, latestAttempt));
+    setPhase('results');
   };
 
   const setAnswer = (questionId: number, value: QuizAnswerValue) => {
@@ -224,7 +348,14 @@ export default function QuizTakePage() {
         ) : !componentAccess.open ? (
           <ComponentAccessNotice onBack={() => navigate(-1)} />
         ) : phase === 'intro' ? (
-          <IntroScreen quiz={quiz} totalPoints={totalPoints} onStart={startQuiz} onBack={() => navigate(-1)} />
+          <IntroScreen
+            quiz={quiz}
+            totalPoints={totalPoints}
+            latestAttempt={latestAttempt}
+            onStart={startQuiz}
+            onViewResult={viewLatestResult}
+            onBack={() => navigate(-1)}
+          />
         ) : phase === 'quiz' ? (
           <QuizScreen
             quiz={quiz}
@@ -265,7 +396,10 @@ export default function QuizTakePage() {
             <ResultsScreen
               quiz={quiz}
               result={result}
+              kind={kind as 'commercial' | 'apprenticeship'}
+              learnerId={id || ''}
               onBack={() => navigate(-1)}
+              onRetake={startQuiz}
             />
           )
         )}
@@ -296,8 +430,13 @@ export default function QuizTakePage() {
 /* ═══════════════════════════════════════════════════════
    INTRO
    ═══════════════════════════════════════════════════════ */
-function IntroScreen({ quiz, totalPoints, onStart, onBack }: {
-  quiz: Quiz; totalPoints: number; onStart: () => void; onBack: () => void;
+function IntroScreen({ quiz, totalPoints, latestAttempt, onStart, onViewResult, onBack }: {
+  quiz: Quiz;
+  totalPoints: number;
+  latestAttempt: LearnerQuizAttempt | null;
+  onStart: () => void;
+  onViewResult: () => void;
+  onBack: () => void;
 }) {
   return (
     <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6 md:p-8 card-premium">
@@ -318,17 +457,54 @@ function IntroScreen({ quiz, totalPoints, onStart, onBack }: {
         <StatTile icon="ri-medal-line" label="Total points" value={String(totalPoints)} />
       </div>
 
+      {latestAttempt ? (
+        <div className="grid gap-3 sm:grid-cols-2 mb-6">
+          <div className={`rounded-xl border p-4 ${latestAttempt.passed ? 'border-emerald-200 bg-emerald-50/60' : 'border-red-200 bg-red-50/60'}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500">Latest result</p>
+                <p className={`mt-1 text-lg font-heading font-bold ${latestAttempt.passed ? 'text-emerald-800' : 'text-red-800'}`}>
+                  {Math.round(latestAttempt.grade * 100)}% · {latestAttempt.passed ? 'Passed' : 'Not passed'}
+                </p>
+                <p className="mt-1 text-xs text-foreground-500">
+                  Attempt {latestAttempt.attempt || 1}
+                  {latestAttempt.achievedScore != null && latestAttempt.totalScore != null
+                    ? ` · ${latestAttempt.achievedScore}/${latestAttempt.totalScore} correct`
+                    : ''}
+                  {latestAttempt.timeTaken ? ` · ${latestAttempt.timeTaken}` : ''}
+                </p>
+              </div>
+              <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${latestAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                <AppIcon className={latestAttempt.passed ? 'ri-trophy-line' : 'ri-close-circle-line'} />
+              </span>
+            </div>
+            <button type="button" onClick={onViewResult} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-foreground-200 bg-background-50 px-4 py-2.5 text-sm font-semibold text-foreground-800 transition-colors hover:bg-background-100">
+              <AppIcon className="ri-file-list-3-line" /> View Result Details
+            </button>
+          </div>
+
+          <div className="rounded-xl border border-primary-200 bg-primary-50/60 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-primary-700">Another attempt</p>
+            <p className="mt-1 text-base font-heading font-bold text-foreground-900">Ready to try again?</p>
+            <p className="mt-1 text-xs leading-5 text-foreground-500">Your previous result will stay saved when you start a new attempt.</p>
+            <button type="button" onClick={onStart} disabled={quiz.questions.length === 0} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
+              <AppIcon className="ri-refresh-line" /> Retake Quiz
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex items-center gap-3">
         <button onClick={onBack} className="px-4 py-2.5 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer">
           Back
         </button>
-        <button
+        {!latestAttempt && <button
           onClick={onStart}
           disabled={quiz.questions.length === 0}
           className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
         >
           <AppIcon className="ri-play-fill" /> Start Quiz
-        </button>
+        </button>}
       </div>
       {quiz.questions.length === 0 && (
         <p className="text-xs text-foreground-400 mt-3">This quiz has no questions yet.</p>
@@ -380,6 +556,11 @@ function QuizScreen({
 
   return (
     <div className="space-y-4">
+      <div role="note" className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <AppIcon className="ri-error-warning-line mt-0.5 shrink-0" />
+        <span><strong>Do not refresh or close this page.</strong> Your current answers will be deleted and the quiz will restart.</span>
+      </div>
+
       {/* Timer + progress bar */}
       <div className="flex items-center justify-between bg-background-50 rounded-xl border border-foreground-200/60 px-4 py-3">
         <span className="text-sm font-semibold text-foreground-700">{answeredCount}/{quiz.questions.length} answered</span>
@@ -699,8 +880,13 @@ function MatchingInputRich({ question, value, onChange }: {
 /* ═══════════════════════════════════════════════════════
    RESULTS
    ═══════════════════════════════════════════════════════ */
-function ResultsScreen({ quiz, result, onBack }: {
-  quiz: Quiz; result: QuizAttemptResult; onBack: () => void;
+function ResultsScreen({ quiz, result, kind, learnerId, onBack, onRetake }: {
+  quiz: Quiz;
+  result: QuizAttemptResult;
+  kind: 'commercial' | 'apprenticeship';
+  learnerId: string;
+  onBack: () => void;
+  onRetake: () => void;
 }) {
   const { attempt } = result;
   return (
@@ -719,13 +905,29 @@ function ResultsScreen({ quiz, result, onBack }: {
           <StatTile icon="ri-timer-line" label="Time taken" value={attempt.timeTaken} />
         </div>
 
-        <button
-          onClick={onBack}
-          className="px-6 py-2.5 rounded-xl text-sm font-semibold bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
-        >
-          Back to Training Plan
-        </button>
+        <div className="flex flex-col justify-center gap-3 sm:flex-row">
+          <button
+            onClick={onBack}
+            className="px-6 py-2.5 rounded-xl text-sm font-semibold border border-foreground-200 bg-background-50 text-foreground-700 hover:bg-background-100 transition-colors cursor-pointer"
+          >
+            Back to Training Plan
+          </button>
+          <button
+            onClick={onRetake}
+            className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
+          >
+            <AppIcon className="ri-refresh-line" /> Retake Quiz
+          </button>
+        </div>
       </div>
+
+      <QuizReadingPanel
+        quizId={quiz.id}
+        attemptNumber={attempt.attempt}
+        kind={kind}
+        learnerId={learnerId}
+        quizTimeSeconds={attempt.verifiedSeconds || durationSeconds(attempt.timeTaken)}
+      />
 
       {/* Per-question breakdown */}
       <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 md:p-6 card-premium">
@@ -763,5 +965,269 @@ function ResultsScreen({ quiz, result, onBack }: {
         </div>
       </div>
     </div>
+  );
+}
+
+function QuizReadingPanel({ quizId, attemptNumber, kind, learnerId, quizTimeSeconds }: {
+  quizId: number;
+  attemptNumber: number;
+  kind: 'commercial' | 'apprenticeship';
+  learnerId: string;
+  quizTimeSeconds: number;
+}) {
+  const [reading, setReading] = useState<QuizReading | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [confirmationReadingSeconds, setConfirmationReadingSeconds] = useState(0);
+  const [showTimeConfirmation, setShowTimeConfirmation] = useState(false);
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
+  const [timeEntryMode, setTimeEntryMode] = useState<'timer' | 'manual'>('timer');
+  const [manualMinutes, setManualMinutes] = useState('');
+  const trackingRef = useRef<TimeTrackingSession | null>(null);
+
+  const cleanParagraph = (value: string) => value
+    .replace(/^#{1,6}\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const sectionParagraphs = (section: QuizReading['material']['sections'][number]) => {
+    if (section.paragraphs?.length) return section.paragraphs.map(cleanParagraph).filter(Boolean);
+    return String(section.body || '')
+      .split(/\n{2,}|(?=#{1,6}\s)/g)
+      .map(cleanParagraph)
+      .filter(Boolean);
+  };
+
+  const loadReading = () => {
+    setLoading(true);
+    setError(null);
+    generateQuizReading(quizId, kind, learnerId, attemptNumber)
+      .then(setReading)
+      .catch((cause) => setError(cause instanceof Error ? cause.message : 'Could not generate your reading.'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    generateQuizReading(quizId, kind, learnerId, attemptNumber)
+      .then((value) => { if (!cancelled) setReading(value); })
+      .catch((cause) => { if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not generate your reading.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [attemptNumber, kind, learnerId, quizId]);
+
+  useEffect(() => {
+    if (!open || reading?.completed || showTimeConfirmation) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') setElapsedSeconds((seconds) => seconds + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [open, reading?.completed, showTimeConfirmation]);
+
+  const openReading = async () => {
+    if (!reading) return;
+    if (reading.completed || trackingRef.current) {
+      setOpen(true);
+      return;
+    }
+    setError(null);
+    try {
+      trackingRef.current = await startTimeTracking(
+        'component', `quiz-reading:${quizId}:${attemptNumber}`, kind, learnerId, 'visible_page',
+      );
+      setElapsedSeconds(0);
+      setTimeEntryMode('timer');
+      setManualMinutes('');
+      setShowTimeConfirmation(false);
+      setOpen(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not start the reading timer.');
+    }
+  };
+
+  const openTimeConfirmation = () => {
+    setConfirmationReadingSeconds(elapsedSeconds);
+    setTimeEntryMode('timer');
+    setManualMinutes('');
+    setConfirmationError(null);
+    setShowTimeConfirmation(true);
+  };
+
+  const finishReading = async () => {
+    const tracking = trackingRef.current;
+    if (!tracking || finishing) return;
+    const enteredMinutes = Number(manualMinutes);
+    if (timeEntryMode === 'manual' && (!manualMinutes.trim() || !Number.isFinite(enteredMinutes) || enteredMinutes <= 0)) {
+      setConfirmationError('Enter a valid reading time greater than 0 minutes.');
+      return;
+    }
+    const claimedSeconds = timeEntryMode === 'manual'
+      ? Math.round(enteredMinutes * 60)
+      : elapsedSeconds;
+    setFinishing(true);
+    setConfirmationError(null);
+    try {
+      const completed = await completeQuizReading(
+        quizId, kind, learnerId, attemptNumber, tracking.trackingToken, claimedSeconds, timeEntryMode,
+      );
+      setReading(completed);
+      trackingRef.current = null;
+      setShowTimeConfirmation(false);
+      setOpen(false);
+    } catch (cause) {
+      setConfirmationError(cause instanceof Error ? cause.message : 'Could not save your reading time.');
+    } finally {
+      setFinishing(false);
+    }
+  };
+
+  const enteredMinutes = Number(manualMinutes);
+  const selectedReadingSeconds = timeEntryMode === 'manual' && Number.isFinite(enteredMinutes) && enteredMinutes > 0
+    ? Math.round(enteredMinutes * 60)
+    : timeEntryMode === 'timer' ? confirmationReadingSeconds : 0;
+  const totalTimeSeconds = Math.max(0, quizTimeSeconds) + selectedReadingSeconds;
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-primary-200 bg-background-50 card-premium">
+      <div className="flex flex-col gap-4 bg-gradient-to-r from-primary-50 to-violet-50 p-5 sm:flex-row sm:items-center sm:justify-between md:p-6">
+        <div className="flex items-start gap-3">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary-600 text-white shadow-sm">
+            <AppIcon className="ri-sparkling-2-line text-lg" />
+          </span>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-primary-700">AI personalised reading</p>
+            <h2 className="mt-1 text-base font-heading font-bold text-foreground-950">
+              {reading?.material.title || (loading ? 'Analysing your quiz answers…' : 'Revision reading')}
+            </h2>
+            <p className="mt-1 max-w-3xl text-xs leading-5 text-foreground-600">
+              {reading?.material.summary || 'We are turning the areas that need more practice into a focused reading for you.'}
+            </p>
+            {reading?.completed && (
+              <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                <AppIcon className="ri-checkbox-circle-line" /> Completed · {reading.timeTaken || '00:00'} added to actual time
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="shrink-0">
+          {loading ? (
+            <span className="inline-flex items-center gap-2 rounded-xl bg-background-50 px-4 py-2.5 text-sm font-semibold text-primary-700 shadow-sm">
+              <AppIcon className="ri-loader-4-line animate-spin" /> Generating reading
+            </span>
+          ) : reading ? (
+            <button type="button" onClick={() => void openReading()} className="inline-flex items-center gap-2 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-700">
+              <AppIcon className={reading.completed ? 'ri-book-open-line' : 'ri-timer-line'} />
+              {reading.completed ? 'Read Again' : 'Open Reading & Start Time'}
+            </button>
+          ) : (
+            <button type="button" onClick={loadReading} className="inline-flex items-center gap-2 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-700">
+              <AppIcon className="ri-refresh-line" /> Retry Generation
+            </button>
+          )}
+        </div>
+      </div>
+
+      {error && <p className="border-t border-red-100 bg-red-50 px-5 py-3 text-xs font-semibold text-red-700">{error}</p>}
+
+      {open && reading && (
+        <div className="border-t border-primary-100 p-5 md:p-7">
+          {!reading.completed && (
+            <div className="mb-5 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <span className="inline-flex items-center gap-2 text-sm font-semibold text-amber-900">
+                <AppIcon className="ri-time-line" /> Active reading time
+              </span>
+              <span className="font-mono text-base font-bold tabular-nums text-amber-900">{formatClock(quizTimeSeconds + elapsedSeconds)}</span>
+            </div>
+          )}
+          <article className="mx-auto max-w-4xl space-y-6">
+            {reading.material.sections.map((section, index) => (
+              <section key={`${section.heading}-${index}`}>
+                <h3 className="text-base font-heading font-bold text-foreground-950">{section.heading}</h3>
+                <div className="mt-2 space-y-3">
+                  {sectionParagraphs(section).map((paragraph, paragraphIndex) => (
+                    <p key={paragraphIndex} className="text-sm leading-7 text-foreground-700">{paragraph}</p>
+                  ))}
+                </div>
+              </section>
+            ))}
+            {!!reading.material.keyTakeaways.length && (
+              <section className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                <h3 className="text-sm font-heading font-bold text-emerald-900">Key takeaways</h3>
+                <ul className="mt-3 space-y-2">
+                  {reading.material.keyTakeaways.map((takeaway, index) => (
+                    <li key={index} className="flex items-start gap-2 text-sm leading-6 text-emerald-900">
+                      <AppIcon className="ri-check-line mt-1 shrink-0" /> {takeaway}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </article>
+          <div className={`${showTimeConfirmation ? 'hidden' : 'flex'} mt-7 flex-col justify-end gap-3 border-t border-background-200 pt-5 sm:flex-row`}>
+            <button type="button" onClick={() => setOpen(false)} className="rounded-xl border border-foreground-200 px-5 py-2.5 text-sm font-semibold text-foreground-700 hover:bg-background-100">
+              {reading.completed ? 'Close' : 'Continue Later'}
+            </button>
+            {!reading.completed && (
+              <button type="button" onClick={openTimeConfirmation} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">
+                <AppIcon className="ri-checkbox-circle-line" /> Finish Reading & Add Actual Time
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showTimeConfirmation && reading && !reading.completed && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-slate-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="reading-confirmation-title">
+          <div className="w-full max-w-md rounded-2xl border border-background-200 bg-background-50 p-6 shadow-2xl sm:p-7">
+            <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-primary-50 text-primary-700 shadow-sm">
+              <AppIcon className="ri-clipboard-line text-2xl" />
+            </div>
+            <h2 id="reading-confirmation-title" className="mt-5 text-center text-2xl font-heading font-bold leading-tight text-foreground-950">Confirm reading completion?</h2>
+            <p className="mt-2 text-center text-sm text-foreground-500">{reading.material.title}</p>
+
+            <div className="mt-6 rounded-xl border border-foreground-200 bg-background-50 p-4">
+              <div className="flex items-center justify-between gap-4 border-b border-foreground-200 pb-3">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-foreground-500">AI Assessted learning</p>
+                  <p className="mt-1 text-xs text-foreground-400">Quiz {formatClock(quizTimeSeconds)} + Reading {formatClock(selectedReadingSeconds)}</p>
+                </div>
+                <span className="shrink-0 font-mono text-lg font-bold tabular-nums text-foreground-900">{formatClock(totalTimeSeconds)}</span>
+              </div>
+
+              <div className="mt-3 space-y-2">
+                <button type="button" onClick={() => { setTimeEntryMode('timer'); setConfirmationError(null); }} aria-pressed={timeEntryMode === 'timer'} className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-sm font-semibold ${timeEntryMode === 'timer' ? 'border-primary-300 bg-primary-50 text-primary-950' : 'border-foreground-200 text-foreground-600'}`}>
+                  <span className="inline-flex items-center gap-2"><AppIcon className="ri-timer-line" /> Timer</span>
+                  <span className="font-mono tabular-nums">{formatClock(quizTimeSeconds + confirmationReadingSeconds)}</span>
+                </button>
+                <button type="button" onClick={() => { setTimeEntryMode('manual'); setConfirmationError(null); }} aria-pressed={timeEntryMode === 'manual'} className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-sm font-semibold ${timeEntryMode === 'manual' ? 'border-primary-300 bg-primary-50 text-primary-950' : 'border-foreground-200 text-foreground-500'}`}>
+                  <span className="inline-flex items-center gap-2"><AppIcon className="ri-edit-line" /> Input</span>
+                  <span>{timeEntryMode === 'manual' && manualMinutes ? `${manualMinutes} min` : '--:--'}</span>
+                </button>
+                {timeEntryMode === 'manual' && (
+                  <label className="block pt-1 text-xs font-semibold text-foreground-700">
+                    Reading time (minutes)
+                    <input autoFocus aria-label="Reading time (minutes)" type="number" min="0.1" step="0.1" inputMode="decimal" value={manualMinutes} onChange={event => setManualMinutes(event.target.value)} placeholder="e.g. 30" className="mt-1.5 w-full rounded-xl border border-foreground-200 bg-white px-3 py-2.5 text-sm font-normal text-foreground-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-200" />
+                  </label>
+                )}
+              </div>
+              {confirmationError && <p role="alert" className="mt-3 text-xs font-semibold text-red-700">{confirmationError}</p>}
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button type="button" onClick={() => setShowTimeConfirmation(false)} disabled={finishing} className="rounded-xl border border-foreground-200 px-4 py-3 text-sm font-semibold text-foreground-700 hover:bg-background-100 disabled:opacity-60">Cancel</button>
+              <button type="button" onClick={() => void finishReading()} disabled={finishing} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60">
+                <AppIcon className={finishing ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} /> {finishing ? 'Saving…' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </section>
   );
 }

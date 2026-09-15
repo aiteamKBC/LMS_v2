@@ -116,6 +116,30 @@ export interface QuizAttemptResult {
   quizName: string;
 }
 
+export interface QuizReadingMaterial {
+  title: string;
+  summary: string;
+  sections: Array<{ heading: string; body?: string; paragraphs?: string[] }>;
+  keyTakeaways: string[];
+}
+
+export interface QuizReading {
+  id: number;
+  quizId: number;
+  attempt: number;
+  material: QuizReadingMaterial;
+  completed: boolean;
+  startedAt: string | null;
+  completedAt: string | null;
+  timeTaken: string | null;
+  verifiedSeconds: number | null;
+}
+
+// POST generation is idempotent on the backend, but React StrictMode mounts
+// effects twice in development. Share the in-flight call so one page visit
+// never starts two expensive AI generations for the same attempt.
+const pendingReadingGenerations = new Map<string, Promise<QuizReading>>();
+
 async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
   if (!init?.method || init.method.toUpperCase() === 'GET') return readLearnerJson<T>(url, { ...init, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...init?.headers } });
   let res: Response;
@@ -148,5 +172,46 @@ export function submitQuizAttempt(
   }).then((result) => {
     invalidateLearnerDetailCache(kind, learnerId);
     return result;
+  });
+}
+
+function quizReadingUrl(quizId: number, kind: 'commercial' | 'apprenticeship', learnerId: string, attempt: number) {
+  return `${BASE}/${quizId}/reading/?kind=${kind}&learnerId=${encodeURIComponent(learnerId)}&attempt=${attempt}`;
+}
+
+export function generateQuizReading(
+  quizId: number,
+  kind: 'commercial' | 'apprenticeship',
+  learnerId: string,
+  attempt: number,
+): Promise<QuizReading> {
+  const url = quizReadingUrl(quizId, kind, learnerId, attempt);
+  const existing = pendingReadingGenerations.get(url);
+  if (existing) return existing;
+  const pending = request<QuizReading>(url, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'generate' }),
+  }).finally(() => {
+    if (pendingReadingGenerations.get(url) === pending) pendingReadingGenerations.delete(url);
+  });
+  pendingReadingGenerations.set(url, pending);
+  return pending;
+}
+
+export function completeQuizReading(
+  quizId: number,
+  kind: 'commercial' | 'apprenticeship',
+  learnerId: string,
+  attempt: number,
+  trackingToken: string,
+  timeTakenSeconds: number,
+  timeEntryMode: 'timer' | 'manual',
+): Promise<QuizReading> {
+  return request<QuizReading>(quizReadingUrl(quizId, kind, learnerId, attempt), {
+    method: 'POST',
+    body: JSON.stringify({ action: 'complete', trackingToken, timeTakenSeconds, timeEntryMode }),
+  }).then((reading) => {
+    invalidateLearnerDetailCache(kind, learnerId);
+    return reading;
   });
 }

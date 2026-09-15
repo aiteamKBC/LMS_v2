@@ -986,7 +986,11 @@ def to_learner_detail(source, learner_profile):
     video_progress = [r for r in progress if r.get("kind") == "video"]
     # Generic non-quiz component completions (podcast/reading/slides/reflection/…),
     # written by learner_api.components.submit_component_progress.
-    component_progress = [r for r in progress if r.get("kind") == "component"]
+    component_progress = [
+        r for r in progress
+        if r.get("kind") == "component"
+        or (r.get("kind") == "quiz_reading" and r.get("submittedAt"))
+    ]
     progress_ksb_codes = sorted({
         _s(code).upper()
         for row in progress
