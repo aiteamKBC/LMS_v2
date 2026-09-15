@@ -123,7 +123,7 @@ describe('learner data transport', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.each([401, 403, 500])('preserves HTTP %i and never caches a refusal or failure', async status => {
+  it.each([401, 403])('preserves HTTP %i and never caches a refusal or failure', async status => {
     vi.mocked(fetch).mockResolvedValueOnce(reply({ error: 'Cannot load this record', code: 'unavailable' }, status));
     await expect(readLearnerJson('/learner_api/example/', { ttlMs: 30_000 })).rejects.toMatchObject({ status, code: 'unavailable' });
     vi.mocked(fetch).mockResolvedValueOnce(reply({ ok: true }));
@@ -131,9 +131,25 @@ describe('learner data transport', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it('rejects HTML and retries instead of caching an invalid JSON response', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(new Response('<html>Error</html>', { status: 502 }));
-    await expect(readLearnerJson('/learner_api/example/')).rejects.toThrow(/invalid response/);
+  it('automatically retries a transient HTML 500 response once', async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response('<html>Error</html>', { status: 500 }))
+      .mockResolvedValueOnce(reply({ ok: true }));
+    const recovered = readLearnerJson('/learner_api/example/');
+    await vi.advanceTimersByTimeAsync(600);
+    await expect(recovered).resolves.toEqual({ ok: true });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces a repeated invalid server response and allows a later recovery', async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response('<html>Error</html>', { status: 502 }))
+      .mockResolvedValueOnce(new Response('<html>Error</html>', { status: 502 }));
+    const failed = expect(readLearnerJson('/learner_api/example/')).rejects.toThrow(/invalid response/);
+    await vi.advanceTimersByTimeAsync(600);
+    await failed;
     vi.mocked(fetch).mockResolvedValueOnce(reply({ ok: true }));
     await expect(readLearnerJson('/learner_api/example/')).resolves.toEqual({ ok: true });
   });

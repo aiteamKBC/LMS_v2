@@ -227,9 +227,10 @@ export interface LearnerComponentProgress {
    * records written before components carried hours.
    */
   expectedOtjh?: number | null;
-  kind: 'component';
+  kind: 'component' | 'quiz_reading';
   componentType: string;      // 'podcast' | 'reading' | 'powerpoint' | 'reflection' | …
   componentId: string;
+  componentTitle?: string;
   attempt?: number;
   ksbs?: string[];
   feedback?: string;

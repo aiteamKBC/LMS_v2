@@ -305,7 +305,7 @@ export function OtjhBody({
     const activities = (real?.componentProgress ?? []).map<LogRow>((c) => {
       const look = TYPE_ICONS[String(c.componentType || '').toLowerCase()];
       return {
-        title: titleFor(c.componentId, activityTypeLabel(c.componentType)),
+        title: c.componentTitle?.trim() || titleFor(c.componentId, activityTypeLabel(c.componentType)),
         type: activityTypeLabel(c.componentType),
         icon: look?.icon || 'ri-check-double-line',
         tint: look?.tint || 'bg-primary-100 text-primary-600',
