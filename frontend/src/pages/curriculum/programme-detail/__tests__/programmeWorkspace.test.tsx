@@ -144,6 +144,14 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumConfirm: vi.fn(async () => undefined),
 }));
 
+vi.mock('@/api/curriculumLearnerAssignments', () => ({
+  fetchLearnerAssignments: vi.fn(async (target: { id: string; name: string; scope: string }) => ({
+    target: { ...target, moduleCount: 1, programmeName: 'Data Analyst' },
+    learners: [], totals: { learnerCount: 0, assignedCount: 0 },
+  })),
+  assignCurriculumLearners: vi.fn(),
+}));
+
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   fetchCurriculumProgrammeDetail: vi.fn(async () => ({
@@ -192,6 +200,24 @@ async function openTab(name: RegExp) {
 }
 
 describe('Programme workspace', { timeout: 15000 }, () => {
+  it('opens cohort and module assignment with the correct independent scope', async () => {
+    const { fetchLearnerAssignments } = await import('@/api/curriculumLearnerAssignments');
+    await renderWorkspace();
+    await openTab(/Cohorts/);
+    await userEvent.click(screen.getByRole('button', { name: 'Assign learners' }));
+    await screen.findByText('Selected learners will join this cohort and receive all 1 modules in it.');
+    expect(fetchLearnerAssignments).toHaveBeenCalledWith(
+      { scope: 'cohort', id: 'COHORT-1', name: 'Sept 2026' }, expect.any(AbortSignal),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await openTab(/Modules/);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Assign learners' })[0]);
+    await screen.findByText(/Selected learners will receive this module only/);
+    expect(fetchLearnerAssignments).toHaveBeenCalledWith(
+      { scope: 'module', id: 'MOD-1', name: 'Data Foundations' }, expect.any(AbortSignal),
+    );
+  });
+
   it('opens with the programme in a header, not straight into a records table', async () => {
     await renderWorkspace();
 

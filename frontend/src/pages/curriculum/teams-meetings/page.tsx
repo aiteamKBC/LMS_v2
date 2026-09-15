@@ -618,7 +618,8 @@ export default function CurriculumTeamsMeetingsPage() {
     try {
       const [nextSummaries, nextSessions] = await Promise.all([
         fetchCurriculumTeamsMeetingSummaries(signal, { occurrenceDates: true, skipCache: true }),
-        fetchCurriculumSessions(signal),
+        // Create and sync must use the latest module dates, just like the summaries.
+        fetchCurriculumSessions(signal, { skipCache: true }),
       ]);
       if (signal?.aborted) return;
       setSummaries(nextSummaries);

@@ -1,5 +1,6 @@
 from .coach_availability import coach_available_slots
 from . import presentation_design
+from . import learner_import
 from . import monthly_reflection_ai
 from . import ksb_generation
 from django.urls import path
@@ -36,6 +37,8 @@ urlpatterns = [
     path('profile-photo/<str:kind>/<int:pk>/', learner_profile_photo, name='learner-profile-photo'),
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
+    path("enrolment-users/import-template/", learner_import.import_template, name="enrolment-users-import-template"),
+    path("enrolment-users/import/", learner_import.import_students, name="enrolment-users-import"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
     path("enrolment-users/<int:pk>/", views.enrolment_user_detail, name="enrolment-user-detail"),
     path("enrolment-users/<int:pk>/fields/", views.enrolment_user_fields, name="enrolment-user-fields"),

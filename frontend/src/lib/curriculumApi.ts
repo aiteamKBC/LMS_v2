@@ -56,6 +56,7 @@ export function isRetryableError(error: unknown): boolean {
 
 interface CurriculumRequestInit {
   method?: string;
+  credentials?: RequestCredentials;
   headers?: Record<string, string>;
   body?: string;
   signal?: AbortSignal;
@@ -263,6 +264,9 @@ export interface CurriculumModule {
    */
   sessionsNumber?: number;
   weeklySchedule?: CurriculumWeeklySession[];
+  sessionHolidays?: CurriculumHoliday[];
+  /** Teaching weeks, separate from imported content rows. */
+  deliveryWeeks?: number;
   weekDays?: string;
   startTime?: string;
   endTime?: string;

@@ -1,9 +1,11 @@
 from django.urls import path
 
-from . import programme_audit, quality, review_schedule, review_types, reviews, views
+from . import learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 
 
 urlpatterns = [
+    path('curriculum/cohorts/<str:identifier>/learner-assignments/', learner_assignments.cohort_learner_assignments, name='curriculum-cohort-learner-assignments'),
+    path('curriculum/modules/<str:identifier>/learner-assignments/', learner_assignments.module_learner_assignments, name='curriculum-module-learner-assignments'),
     path('curriculum/programmes/<str:programme_id>/reviews/', reviews.curriculum_programme_review_collection, name='curriculum-programme-reviews'),
     path('curriculum/programmes/<str:programme_id>/reviews/clone/', reviews.curriculum_review_clone, name='curriculum-programme-reviews-clone'),
     path('curriculum/programmes/<str:programme_id>/reviews/schedule/', review_schedule.curriculum_programme_review_schedule, name='curriculum-programme-reviews-schedule'),

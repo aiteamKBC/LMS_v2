@@ -605,7 +605,7 @@ def replace_training_plan(learner, plan):
             )
 
 
-def hydrate_training_plan(plan):
+def hydrate_training_plan(plan, *, strict=False):
     """Expand selected modules into their authored week/component tree.
 
     Enrolment's module picker stores a deliberately small selection payload.
@@ -649,6 +649,8 @@ def hydrate_training_plan(plan):
             )
             rows = cursor.fetchall()
     except DatabaseError:
+        if strict:
+            raise
         logger.exception("Could not expand training-plan modules from curriculum")
         return selected
 

@@ -115,6 +115,8 @@ export interface ModuleFormTarget {
   groupId?: string;
   sessionsNumber?: number;
   weeklySchedule?: CurriculumWeeklySession[];
+  sessionHolidays?: CurriculumModule['sessionHolidays'];
+  deliveryWeeks?: number;
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -151,6 +153,8 @@ export function moduleFormTarget(module: CurriculumModule | undefined | null): M
     groupId: module.groupId,
     sessionsNumber: module.sessionsNumber,
     weeklySchedule: module.weeklySchedule,
+    sessionHolidays: module.sessionHolidays,
+    deliveryWeeks: module.deliveryWeeks,
     weekDays: module.weekDays,
     startTime: module.startTime,
     endTime: module.endTime,
@@ -440,7 +444,7 @@ export function ModuleFormDrawer({
       // Seeded from the authored week count only. Seeding from `sessionsNumber`
       // (or the delivery's `sessions`) put a delivery-day-multiplied number in the
       // Weeks box, which then saved back multiplied again on every round-trip.
-      sessionsNumber: String(module?.weeks || module?.sessionsNumber || storedDelivery?.sessions || 1),
+      sessionsNumber: String(module?.deliveryWeeks || module?.weeks || module?.sessionsNumber || storedDelivery?.sessions || 1),
       sessionsPerWeek: String(Math.max(1, deliveryDayIndexes(initialDays).length)),
       weekDays: initialDays,
       weeklyTimes: Object.fromEntries((module?.weeklySchedule || storedDelivery?.weeklySchedule || []).map(slot => [slot.day, { startTime: slot.startTime, endTime: slot.endTime }])),
@@ -560,8 +564,8 @@ export function ModuleFormDrawer({
   // the cohort's practical end date, and the sessions that overshoot still have
   // to step over the bank holidays they land on.
   const cohortHolidays = useMemo(
-    () => holidaysForScheduling(holidays, selectedCohort?.startDate, selectedCohort?.excludedHolidayIds),
-    [holidays, selectedCohort],
+    () => [...holidaysForScheduling(holidays, selectedCohort?.startDate, selectedCohort?.excludedHolidayIds), ...(module?.sessionHolidays || [])],
+    [holidays, selectedCohort, module?.sessionHolidays],
   );
 
   // The end date is the backend's own session-plan calculation, so what the

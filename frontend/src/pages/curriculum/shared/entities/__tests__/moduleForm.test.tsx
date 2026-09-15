@@ -151,6 +151,20 @@ describe('ModuleFormDrawer', () => {
     createNewModuleMock.mockClear();
   });
 
+  it('reopens imported session rows as eight teaching weeks and keeps the module closure in its preview', async () => {
+    const closure = { id: 'saudi', label: 'Saudi National Day', startDate: '2026-09-23', endDate: '2026-09-23' };
+    renderDrawer({ module: {
+      id: 'MOD-IMPORTED', name: 'PCP', programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1',
+      weeks: 17, deliveryWeeks: 8, sessionsNumber: 16, startDate: '2026-09-16', endDate: '2026-11-18',
+      weeklySchedule: [{ day: 'Monday', startTime: '11:00', endTime: '14:00' }, { day: 'Wednesday', startTime: '11:30', endTime: '14:30' }],
+      weekDays: 'Monday, Wednesday', sessionHolidays: [closure],
+    } });
+    expect(screen.getByRole('spinbutton', { name: /weeks/i })).toHaveValue(8);
+    await waitFor(() => expect(previewModuleSessionPlanMock).toHaveBeenCalledWith(expect.objectContaining({
+      numberOfSessions: 16, holidays: expect.arrayContaining([closure]),
+    })));
+  });
+
   it('only offers active non-archived programmes in the module placement select', async () => {
     renderDrawer();
 

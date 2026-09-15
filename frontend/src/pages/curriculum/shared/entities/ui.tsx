@@ -1093,6 +1093,7 @@ export function EntityDrawer({
   onClose,
   onSubmit,
   submitLabel,
+  submitDisabled = false,
   cancelLabel = 'Cancel',
   extraAction,
   backAction,
@@ -1111,6 +1112,7 @@ export function EntityDrawer({
   onClose: () => void;
   onSubmit: () => void | Promise<void>;
   submitLabel: string;
+  submitDisabled?: boolean;
   cancelLabel?: string;
   extraAction?: DrawerExtraAction;
   /** A step back in a chain, e.g. "Back to Cohort" — placed before `extraAction`. */
@@ -1276,7 +1278,7 @@ export function EntityDrawer({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || submitDisabled}
               className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving && <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>}

@@ -239,6 +239,18 @@ export function moduleDeliveryDaysPerWeek(module: ModuleCatalogueItem): number {
   return Math.max(1, Math.round((module.sessionsNumber || weeks) / weeks));
 }
 
+/** Imported content may have one row per live session, plus reading-only rows. */
+export function moduleUsesSessionRows(module: ModuleCatalogueItem, plannedSessionCount = module.sessionsNumber || 0): boolean {
+  const counts = module.weekStructure.map(week => week.components.filter(component => component.type === 'live-session').length);
+  const days = module.weeklySchedule?.length
+    || String(module.deliveryMetadata?.weekDays || '').split(',').filter(day => day.trim()).length
+    || moduleDeliveryDaysPerWeek(module);
+  return plannedSessionCount > 0
+    && counts.reduce((sum, count) => sum + count, 0) === plannedSessionCount
+    && counts.every(count => count <= 1)
+    && counts.length > Math.ceil(plannedSessionCount / days);
+}
+
 /**
  * How many planned session dates each authored week consumes, in week order.
  *
@@ -280,6 +292,9 @@ export function moduleWeekSessionSlots(
   const total = Number.isFinite(planned) && planned > 0
     ? Math.floor(planned)
     : (module.sessionsNumber || weeks.length * perWeek);
+  if (moduleUsesSessionRows(module, total)) {
+    return weeks.map(week => week.components.filter(component => component.type === 'live-session').length);
+  }
   let spare = Math.max(0, total - weeks.length * perWeek);
   return weeks.map(week => {
     const authored = (week.components || []).filter(component => component.type === 'live-session').length;
@@ -331,7 +346,7 @@ function moduleWeekPlanDates(
   const slotCounts = moduleWeekSessionSlots(module, plan.length);
   let sessionIndex = 0;
   return module.weekStructure.map((_week, weekIndex) => {
-    const slotCount = slotCounts[weekIndex] || 1;
+    const slotCount = slotCounts[weekIndex] ?? 1;
     const dates = plan.slice(sessionIndex, sessionIndex + slotCount).map(session => dateOf(session) || '').filter(Boolean);
     sessionIndex += slotCount;
     return dates;
@@ -357,7 +372,7 @@ export function moduleWeekIdBySessionNumber(
   const slotCounts = moduleWeekSessionSlots(module, plan.length);
   let cursor = 0;
   module.weekStructure.forEach((week, weekIndex) => {
-    const slotCount = slotCounts[weekIndex] || 1;
+    const slotCount = slotCounts[weekIndex] ?? 1;
     for (let offset = 0; offset < slotCount; offset += 1) {
       const session = plan[cursor];
       cursor += 1;
@@ -450,7 +465,7 @@ export function applyModuleWeekSessionPlan(
   let sessionIndex = 0;
   const weekStructure = module.weekStructure.map((week, weekIndex) => {
     const liveComponents = week.components.filter(component => component.type === 'live-session');
-    const slotCount = slotCounts[weekIndex] || 1;
+    const slotCount = slotCounts[weekIndex] ?? 1;
     const slots = sessions.slice(sessionIndex, sessionIndex + slotCount);
     sessionIndex += slotCount;
     const firstSession: ModuleWeekSessionPlan['sessions'][number] | undefined = slots[0];
@@ -529,7 +544,7 @@ export function liveSessionNamesByNumber(module: ModuleCatalogueItem | null | un
   const slotCounts = moduleWeekSessionSlots(module);
   (module?.weekStructure || []).forEach((week, weekIndex) => {
     const liveComponents = (week.components || []).filter(component => component.type === 'live-session');
-    const slotCount = slotCounts[weekIndex] || 1;
+    const slotCount = slotCounts[weekIndex] ?? 1;
     // One entry per date the week consumes, not per live session it holds. A
     // Mon+Fri week carrying a single live session still delivers on both days,
     // and the second date is a real gap in the authoring -- reported as `null`,
@@ -572,6 +587,8 @@ export function resequenceWeekSessionDates(weeks: ModuleWeek[]): ModuleWeek[] {
 
 export interface ModuleCatalogueItem {
   weeklySchedule?: CurriculumModule['weeklySchedule'];
+  sessionHolidays?: CurriculumModule['sessionHolidays'];
+  deliveryWeeks?: number;
   id: string;
   catalogueId: string;
   programmeId: string;
@@ -1073,13 +1090,13 @@ export async function loadModuleStructure(
  * Returns null for a module the backend has never stored (a local draft), where
  * there is no schedule to plan from yet.
  */
-export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks: number): Promise<ModuleWeekSessionPlan | null> {
+export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks: number, sessions?: number): Promise<ModuleWeekSessionPlan | null> {
   const catalogueId = String(moduleCatalogueId || '').trim();
   const count = Math.max(0, Math.round(Number(weeks) || 0));
   if (!catalogueId || !count) return null;
   try {
     return await apiJson<ModuleWeekSessionPlan>(
-      `/curriculum/modules/${encodeURIComponent(catalogueId)}/session-plan/?weeks=${count}`,
+      `/curriculum/modules/${encodeURIComponent(catalogueId)}/session-plan/?${sessions ? `sessions=${Math.max(1, Math.round(sessions))}` : `weeks=${count}`}`,
     );
   } catch (err) {
     // A module with no stored schedule simply has no dates to show. Failing the
@@ -1247,6 +1264,8 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     tutor,
     coach,
     weeklySchedule: module.weeklySchedule || [],
+    sessionHolidays: module.sessionHolidays || [],
+    deliveryWeeks: module.deliveryWeeks,
     deliveryMetadata: {
       tutor,
       coach,
@@ -1354,12 +1373,10 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
     // week makes this a seven-week module, and a save has to carry that rather
     // than the stale stored number.
     weeks: hasStructure ? normalisedWeeks.length : (module.weeks || module.sessionsNumber || 0),
-    // NOT re-derived from the weeks. A module delivered twice a week runs two
-    // calendar sessions per authored week, so overwriting this with the week
-    // count silently halved the session plan and the Teams series. It belongs to
-    // the delivery slot, and only the module form (which knows the group's
-    // delivery days) recomputes it.
-    sessionsNumber: module.sessionsNumber,
+    // Keep planned dates for unfinished weeks, while imported live sessions
+    // cannot leave the calendar on the smaller count from the original draft.
+    // Reading-only rows add no calendar session.
+    sessionsNumber: Math.max(module.sessionsNumber || 0, allComponents.filter(component => component.type === 'live-session').length),
     totalOtjh,
     // The module's OTJH is the sum of every component's Expected OTJH, across
     // every week -- nothing else. `declaredTotalOtjh` is kept only because the

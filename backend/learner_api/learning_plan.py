@@ -356,7 +356,7 @@ def _plan_titles(plan):
     return ", ".join(modules), ", ".join(weeks), ", ".join(components)
 
 
-def sync_learning_plan_mirror(source):
+def sync_learning_plan_mirror(source, *, strict=False):
     """Write the learner's assigned plan to the two places that report on it.
 
     The plan staff edit lives on ``enrolment."Created_users"."Learning_plan"``.
@@ -411,6 +411,8 @@ def sync_learning_plan_mirror(source):
             components=components_csv,
         )
     except DatabaseError:
+        if strict:
+            raise
         logger.exception(
             "sync_learning_plan_mirror: could not mirror the plan for learner %s",
             getattr(source, "pk", None),
@@ -438,7 +440,8 @@ def _serialize(learner):
         # may have been retired) but normalised to the same shape — plans saved
         # by the older wizard carry weeks/components and no hours at all.
         plan = [
-            by_id.get(_s(m.get("moduleId"))) or _orphan_module(m)
+            {**(by_id.get(_s(m.get("moduleId"))) or _orphan_module(m)),
+             **({'assignmentMode': 'explicit'} if m.get('assignmentMode') == 'explicit' else {})}
             for m in saved
         ]
         # A module added to the group after this plan was agreed is still a
@@ -456,10 +459,12 @@ def _serialize(learner):
         # to survive: re-filling it from the group would overturn the decision
         # and there would be no way to express it. The two cases are
         # indistinguishable in the stored plan, so the deliberate one wins.
+        # Curriculum assignments also mark an explicit set, which must stay
+        # limited to those modules even if the group later acquires others.
         planned = {_s(m.get("moduleId")) for m in plan}
         inherited = (
             [i for i in preset_ids if i in by_id and i not in planned]
-            if plan else []
+            if plan and not any(m.get('assignmentMode') == 'explicit' for m in saved) else []
         )
         plan = plan + [dict(by_id[i], inherited=True) for i in inherited]
     else:
@@ -562,7 +567,10 @@ def learning_plan(request, pk):
         if module_id not in catalogue:
             return _error(f"Module '{module_id}' is not in the module catalogue.", 400)
         seen.add(module_id)
-        resolved.append(catalogue[module_id])
+        resolved.append(dict(catalogue[module_id], **(
+            {'assignmentMode': 'explicit'}
+            if any(m.get('assignmentMode') == 'explicit' for m in _plan_entries(learner)) else {}
+        )))
 
     field = training_plan_field(learner)
     setattr(learner, field, resolved)
@@ -654,9 +662,9 @@ def _effective_plan_ids(learner, preset_cache):
         return list(_preset_ids_for(learner, preset_cache))
     ids = [_s(entry.get("moduleId")) for entry in saved if _s(entry.get("moduleId"))]
     # An emptied plan stays empty, and is not re-filled from the group. Same
-    # rule as _serialize, and the reason the preset is not even looked up here.
-    if not ids:
-        return []
+    # rule as _serialize. Explicit curriculum selections also keep their scope.
+    if not ids or any(entry.get('assignmentMode') == 'explicit' for entry in saved):
+        return ids
     planned = set(ids)
     return ids + [i for i in _preset_ids_for(learner, preset_cache) if i not in planned]
 
@@ -803,10 +811,11 @@ def module_learners(request, module_id):
             if not plan_id or plan_id in seen:
                 continue
             seen.add(plan_id)
-            resolved.append(
+            resolved.append(dict(
                 catalogue.get(plan_id)
-                or _orphan_module(saved_by_id.get(plan_id) or {"moduleId": plan_id})
-            )
+                or _orphan_module(saved_by_id.get(plan_id) or {"moduleId": plan_id}),
+                **({'assignmentMode': 'explicit'} if any(entry.get('assignmentMode') == 'explicit' for entry in saved) else {}),
+            ))
 
         field = _plan_field(learner)
         setattr(learner, field, resolved)

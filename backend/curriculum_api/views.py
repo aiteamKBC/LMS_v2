@@ -8678,7 +8678,10 @@ def module_delivery_session_plan(module, session_count, start, holidays=None):
     """
     weekly = module_weekly_schedule(module)
     delivery_days = ', '.join(slot['day'] for slot in weekly) or module.get('session_week_day') or module.get('week_days') or module.get('delivery_days') or ''
-    plan = build_module_session_plan(start, session_count, delivery_days, holidays) if delivery_days else {}
+    # A module-specific closure must not change other modules in its cohort.
+    own_holidays = parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), [])
+    applied_holidays = [*(holidays or []), *(own_holidays if isinstance(own_holidays, list) else [])]
+    plan = build_module_session_plan(start, session_count, delivery_days, applied_holidays) if delivery_days else {}
     if plan.get('sessions'):
         for session in plan['sessions']:
             clock, end, duration = module_session_clock(module, session_date=session.get('date'))
@@ -9232,6 +9235,7 @@ def module_schedule_view(module, tutor_name=None):
         'start_date': first('start_date', 'startDate'),
         'session_week_day': ', '.join(slot['day'] for slot in weekly) or first('session_week_day', 'weekDays', 'week_days', 'delivery_days', 'deliveryDays'),
         'weekly_schedule': weekly,
+        'session_holidays': parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), []),
         'session_start_time': first('session_start_time', 'startTime', 'start_time'),
         'session_end_time': first('session_end_time', 'endTime', 'end_time'),
     }
@@ -14868,7 +14872,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     for row in component_rows:
         components_by_week[clean_str(row.get('week_id'))].append(row)
 
-    session_plan = module_week_session_plan(module_row, len(week_rows))
+    structure_rows = [{**week, 'components': components_by_week.get(clean_str(week.get('id')), [])} for week in week_rows]
+    session_rows = module_structure_uses_session_rows(structure_rows, module_stored_session_count(module_row), delivery_days_per_week(module_row))
+    session_plan = module_week_session_plan(module_row, 0 if session_rows else len(week_rows))
     session_start_time, _session_end_time, session_duration = module_session_clock(module_row, group_row)
     default_points = live_session_component_points() if create_missing else 0
     now = datetime.utcnow()
@@ -14931,12 +14937,12 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 })
             updated += 1
         if not create_missing:
-            if not live_rows:
+            if not live_rows and not session_rows:
                 # A content-only week still occupies one dated slot, matching the
                 # structure payload's backward-compatible week-header walk.
                 session_index += 1
             continue
-        missing_count = max(0, sessions_per_week - len(live_rows))
+        missing_count = 0 if session_rows else max(0, sessions_per_week - len(live_rows))
         for offset in range(missing_count):
             settings_for_week = settings_for_session(session_index)
             session_index += 1
@@ -15597,6 +15603,44 @@ def curriculum_live_session_occurrences(request):
     return JsonResponse({'series': series_payload, 'occurrences': occurrences_payload})
 
 
+def module_structure_live_session_counts(weeks):
+    """Count authored live sessions per row, excluding reading-only rows."""
+    return [
+        sum(
+            normalise_component_type(component.get('type')) == 'live_session'
+            for component in week.get('components') or []
+        )
+        for week in weeks or []
+    ]
+
+
+def module_structure_uses_session_rows(weeks, session_count, delivery_day_count):
+    """Recognise a complete imported structure with one row per session.
+
+    These rows can include a separate holiday/reading row. They must not each
+    consume every delivery day, as true calendar-week rows do. Requiring every
+    planned session to be authored leaves partial and empty week shells on the
+    existing calendar-week mapping.
+    """
+    counts = module_structure_live_session_counts(weeks)
+    count = max(0, parse_int(session_count, 0))
+    per_week = max(1, parse_int(delivery_day_count, 1))
+    return (
+        count > 0
+        and sum(counts) == count
+        and all(value <= 1 for value in counts)
+        and len(counts) > (count + per_week - 1) // per_week
+    )
+
+
+def module_delivery_week_count(module, weeks):
+    count = module_stored_session_count(module)
+    days = delivery_days_per_week(module)
+    if module_structure_uses_session_rows(weeks, count, days):
+        return (count + days - 1) // days
+    return module_stored_week_count(module, len(weeks))
+
+
 def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=None):
     """Stamp the module's planned session date/day/time onto its weeks in place.
 
@@ -15625,14 +15669,18 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
     sessions are the module's, not the authoring's.
     """
     per_week = module_week_delivery_days(module, len(weeks))
-    planned_count = module_stored_session_count(module, len(weeks))
-    spare = max(0, planned_count - len(weeks) * per_week)
-    week_slot_counts = []
-    for week in weeks:
-        authored = len([component for component in week.get('components') or [] if component.get('type') == 'live-session'])
-        extra = min(max(0, authored - per_week), spare)
-        spare -= extra
-        week_slot_counts.append(per_week + extra)
+    stored_count = module_stored_session_count(module)
+    if module_structure_uses_session_rows(weeks, stored_count, per_week):
+        planned_count = stored_count
+        week_slot_counts = module_structure_live_session_counts(weeks)
+    else:
+        planned_count = module_stored_session_count(module, len(weeks))
+        spare = max(0, planned_count - len(weeks) * per_week)
+        week_slot_counts = []
+        for authored in module_structure_live_session_counts(weeks):
+            extra = min(max(0, authored - per_week), spare)
+            spare -= extra
+            week_slot_counts.append(per_week + extra)
     session_plan = module_session_plan_for_count(
         module,
         max(planned_count, sum(week_slot_counts)),
@@ -15795,6 +15843,8 @@ def get_authoring_structure_payload(module_catalogue_id):
         'startDate': format_date(module.get('start_date')),
         'endDate': format_date(module.get('end_date')),
         'weeklySchedule': module_weekly_schedule(module),
+        'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
+        'deliveryWeeks': module_delivery_week_count(module, weeks),
         'weekDays': module.get('session_week_day') or group_row.get('session_week_day') or schedule_day_part(group_row.get('schedule')) or '',
         'startTime': module.get('session_start_time') or group_row.get('session_start_time') or schedule_time_parts(group_row.get('schedule'))[0],
         'endTime': module.get('session_end_time') or group_row.get('session_end_time') or schedule_time_parts(group_row.get('schedule'))[1],
@@ -16023,6 +16073,8 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             'startDate': format_date(module.get('start_date')),
             'endDate': format_date(module.get('end_date')),
             'weeklySchedule': module_weekly_schedule(module),
+            'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
+            'deliveryWeeks': module_delivery_week_count(module, weeks),
             'weekDays': module.get('session_week_day') or group_row.get('session_week_day') or schedule_day_part(group_row.get('schedule')) or '',
             'startTime': module.get('session_start_time') or group_row.get('session_start_time') or schedule_time_parts(group_row.get('schedule'))[0],
             'endTime': module.get('session_end_time') or group_row.get('session_end_time') or schedule_time_parts(group_row.get('schedule'))[1],
@@ -16151,6 +16203,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
             'coach': group_coach_name,
             'sessionsNumber': parse_int(row.get('sessions_number'), 0),
             'weeklySchedule': module_weekly_schedule(row),
+            'sessionHolidays': parse_json_value(row.get('session_holidays'), []),
             'weekDays': row.get('session_week_day') or '',
             'startTime': row.get('session_start_time') or '',
             'endTime': row.get('session_end_time') or '',
@@ -16251,6 +16304,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
         )
         summary['weeks'] = authored_week_count
         summary['weeksNumber'] = authored_week_count
+        summary['deliveryWeeks'] = module_delivery_week_count(module_rows_by_catalogue_id.get(catalogue_id, {}), summary['weekStructure'])
 
     # The tutor is already on the module row. The coach belongs to the group, so
     # it is read from the group rather than from the person: staff carry no
@@ -16309,6 +16363,8 @@ def authoring_summary_catalogue_item(summary):
         'endDate': summary['endDate'],
         'sessionsNumber': summary['sessionsNumber'],
         'weeklySchedule': summary.get('weeklySchedule') or [],
+        'sessionHolidays': summary.get('sessionHolidays') or [],
+        'deliveryWeeks': summary.get('deliveryWeeks'),
         'weekDays': summary.get('weekDays') or '',
         'startTime': summary.get('startTime') or '',
         'endTime': summary.get('endTime') or '',
@@ -16375,6 +16431,8 @@ def enrich_curriculum_modules_with_authoring_details(modules):
             'endDate': authoring.get('endDate') or module.get('endDate'),
             'sessionsNumber': authoring.get('sessionsNumber') or module.get('sessionsNumber'),
             'weeklySchedule': authoring.get('weeklySchedule') or [],
+            'sessionHolidays': authoring.get('sessionHolidays') or [],
+            'deliveryWeeks': authoring.get('deliveryWeeks'),
             'weekDays': authoring.get('weekDays') or module.get('weekDays') or '',
             'startTime': authoring.get('startTime') or module.get('startTime') or '',
             'endTime': authoring.get('endTime') or module.get('endTime') or '',
@@ -17206,10 +17264,17 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     requested_sessions = parse_int(payload.get('sessionsNumber'), 0) or parse_int(payload.get('sessions_number'), 0)
     if requested_sessions > 0:
         stored_sessions_number = requested_sessions
+    elif parse_int(existing_module_row.get('sessions_number'), 0) > 0:
+        stored_sessions_number = parse_int(existing_module_row.get('sessions_number'), 0)
     elif authored_week_count > 0:
         stored_sessions_number = authored_week_count * delivery_day_count
     else:
         stored_sessions_number = parse_int(existing_module_row.get('sessions_number'), 0)
+    # Imported/session-based structures can grow while carrying the original
+    # allocation's stale count. Every authored live component needs a calendar
+    # occurrence; a reading-only holiday row needs none. Keep the planned count
+    # as a floor for week shells that have not had their live sessions authored.
+    stored_sessions_number = max(stored_sessions_number, sum(module_structure_live_session_counts(weeks)))
 
     saved_module_row = None
     with transaction.atomic():
@@ -19932,6 +19997,10 @@ def curriculum_module_session_plan(request, module_catalogue_id):
         requested = requested_sessions or (
             requested_weeks * module_week_delivery_days(module_row, requested_weeks) if requested_weeks else 0
         )
+        if not requested_sessions and requested_weeks == module_stored_week_count(module_row):
+            structure = get_authoring_structure_payload(catalogue_id) or {}
+            if module_structure_uses_session_rows(structure.get('weekStructure') or [], module_stored_session_count(module_row), delivery_days_per_week(module_row)):
+                requested = module_stored_session_count(module_row)
         plan = module_session_plan_for_count(
             module_row,
             requested or module_stored_session_count(module_row),
@@ -21069,15 +21138,19 @@ def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=
     """
     lineage = lineage or scope_placement_lineage(scope, identifier)
     programme_ident = scope_programme_identifier(lineage)
-    if not programme_ident:
+    module_id = clean_str(lineage.get('moduleCatalogueId')) if scope in {'module', 'week', 'component'} else ''
+    if not programme_ident and not module_id:
         return []
-    learners = assigned_learners_for_programme(programme_ident, lifecycle_status)
+    learners = assigned_learners_for_programme(programme_ident, lifecycle_status) if programme_ident else []
     learners = narrow_learners_to_placement(
         learners, 'cohortId', lineage.get('cohortId'), 'cohort', lineage.get('cohortName'),
     )
     learners = narrow_learners_to_placement(
         learners, 'groupId', lineage.get('groupId'), 'group', lineage.get('groupName'),
     )
+    if module_id and connection.vendor == 'postgresql':
+        from .learner_assignments import module_assignment_roster
+        learners = module_assignment_roster(module_id, learners, lifecycle_status)
     return learners
 
 
@@ -22107,6 +22180,15 @@ def learner_authored_plan(plan, learner, unmatched='scope'):
     ``scope`` hands them the whole scope, ``none`` hands them nothing. Which is
     right is not a per-learner question — see ``learner_plans_for_scope``.
     """
+    # Direct module membership is independent of the learner's group. This
+    # marker is only supplied by module/week/component rosters, so the scope
+    # here is exactly the content they were assigned.
+    if learner.get('assignmentBasis') == 'module':
+        return {
+            'otjh': plan.get('scopeOtjh', 0),
+            'ksbWeights': dict(plan.get('scopeKsbWeights', {})),
+            'basis': 'module',
+        }
     key = learner_plan_group_key(plan, learner)
     if key and key in plan.get('groupKeys', set()):
         return {

@@ -1,6 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { LearnerAssignmentDrawer } from '@/pages/curriculum/shared/entities/LearnerAssignmentDrawer';
+import type { LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
@@ -2146,7 +2148,7 @@ type Tab = 'overview' | 'cohorts' | 'groups' | 'modules' | 'sessions' | 'coverag
 // Actions now carries the "Groups" jump plus Edit and Archive, so the fixed
 // 120px column that fit "Groups" alone is widened to a minmax that keeps room
 // for all three without squeezing them onto a second line.
-const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(200px,auto)]';
+const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(330px,auto)]';
 /**
  * The date window shown on a module row.
  *
@@ -2190,7 +2192,7 @@ function groupDatesLabel(cohort: { startDate: string; endDate: string; apprentic
 // this width EntityTable scrolls horizontally instead of squeezing the buttons
 // or turning a single row into an uneven two-line layout.
 const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_minmax(210px,auto)]';
-const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_minmax(210px,auto)]';
+const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_minmax(340px,auto)]';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: 'Overview',
@@ -2368,6 +2370,8 @@ export default function ProgrammeDetailPage() {
   const [componentPickerOpen, setComponentPickerOpen] = useState(false);
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [cohortDrawerOpen, setCohortDrawerOpen] = useState(false);
+  const [assignmentTarget, setAssignmentTarget] = useState<LearnerAssignmentTarget | null>(null);
+  const [assignmentNotice, setAssignmentNotice] = useState('');
   // Set only when the cohort drawer is editing an existing record rather than
   // creating one; the drawer reads it as its `cohort` prop.
   const [editingCohort, setEditingCohort] = useState<CurriculumCohort | null>(null);
@@ -3427,6 +3431,7 @@ export default function ProgrammeDetailPage() {
     >
       <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         {error && <InlineError message={error} onRetry={() => void reload()} />}
+        {assignmentNotice && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] font-semibold text-emerald-800">{assignmentNotice}</p>}
 
         <WorkspaceHeader
           breadcrumbs={[
@@ -3847,6 +3852,12 @@ export default function ProgrammeDetailPage() {
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
                         actions={[{
+                          icon: 'ri-user-add-line',
+                          label: 'Assign learners',
+                          title: `Assign learners to ${cohortItem.name} and all its modules`,
+                          disabled: cohortItem.archived,
+                          onClick: () => setAssignmentTarget({ scope: 'cohort', id: cohortItem.id, name: cohortItem.name }),
+                        }, {
                           icon: 'ri-team-line',
                           label: 'Groups',
                           title: `Open the groups in ${cohortItem.name}`,
@@ -4139,6 +4150,12 @@ export default function ProgrammeDetailPage() {
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
                         actions={[{
+                          icon: 'ri-user-add-line',
+                          label: 'Assign learners',
+                          title: `Assign learners to ${mod.name} only`,
+                          disabled: mod.archived,
+                          onClick: () => setAssignmentTarget({ scope: 'module', id: moduleBuilderIdentifier(mod), name: mod.name }),
+                        }, {
                           icon: 'ri-tools-line',
                           label: 'Builder',
                           title: mod.archived
@@ -4695,6 +4712,16 @@ export default function ProgrammeDetailPage() {
         )}
       </div>
 
+      <LearnerAssignmentDrawer
+        target={assignmentTarget}
+        onClose={() => setAssignmentTarget(null)}
+        onAssigned={result => {
+          setAssignmentNotice(`${result.assignedCount} learner${result.assignedCount === 1 ? '' : 's'} assigned to ${assignmentTarget?.name || 'the selected record'}.`);
+          void reload({ silent: true });
+          learnerOtjhRequestKeyRef.current = '';
+          if (programmeLearnersOpen) void loadProgrammeLearnerRoster(programmeLearnerScope.scope, programmeLearnerScope.identifier);
+        }}
+      />
       <ProgrammeFormDrawer
         open={programmeDrawerOpen}
         programme={drawerProgramme}

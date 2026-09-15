@@ -139,7 +139,7 @@ const alertMock = vi.mocked(showCurriculumAlert);
 // Every week already has its live session unless a test says otherwise.
 const probeModuleTeamsAttachment = vi.fn(async () => 0);
 const fetchCurriculumTeamsMeetingSummaries = vi.fn(async () => summaries);
-const fetchCurriculumSessions = vi.fn(async () => sessions);
+const fetchCurriculumSessions = vi.fn<typeof import('@/lib/curriculumApi').fetchCurriculumSessions>(async () => sessions);
 
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
@@ -228,6 +228,8 @@ describe('Teams Meetings page', () => {
     syncTeamsMeetingArtifacts.mockClear();
     fetchCurriculumTeamsMeetingSummaries.mockClear();
     fetchCurriculumTeamsMeetingSummaries.mockImplementation(async () => summaries);
+    fetchCurriculumSessions.mockReset();
+    fetchCurriculumSessions.mockResolvedValue(sessions);
     confirmMock.mockReset();
     confirmMock.mockResolvedValue(false);
     probeModuleTeamsAttachment.mockClear();
@@ -517,6 +519,58 @@ describe('Teams Meetings page', () => {
     const row = within(rowFor('Reporting Basics'));
     expect(row.getByText('Not created')).toBeInTheDocument();
     expect(row.getByRole('button', { name: 'Create Teams meetings calendar' })).toBeInTheDocument();
+  });
+
+  it('creates all 16 current session dates when the session cache still holds only three', async () => {
+    const dates = [
+      '2026-09-16', '2026-09-21', '2026-09-23', '2026-09-28',
+      '2026-09-30', '2026-10-05', '2026-10-07', '2026-10-12',
+      '2026-10-14', '2026-10-19', '2026-10-21', '2026-10-26',
+      '2026-10-28', '2026-11-02', '2026-11-04', '2026-11-09',
+    ];
+    const currentSessions = dates.map((date, index) => session('MOD-3', date, {
+      day: index % 2 === 0 ? 'Wednesday' : 'Monday',
+      startTime: index % 2 === 0 ? '11:30' : '11:00',
+      endTime: index % 2 === 0 ? '14:30' : '14:00',
+      week: Math.floor(index / 2) + 1,
+    }));
+    const otherSessions = sessions.filter(item => item.moduleCatalogueId !== 'MOD-3');
+    fetchCurriculumSessions.mockImplementation(async (_signal, options) => [
+      ...otherSessions,
+      ...(options?.skipCache ? currentSessions : currentSessions.slice(0, 3)),
+    ]);
+
+    await renderPage();
+    expect(await screen.findByText('Reporting Basics')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText('16 module sessions')).toBeInTheDocument();
+    expect(dialog.getAllByText(/^Session \d+$/)).toHaveLength(16);
+    expect(dialog.getByText('16 Sept 2026, 11:30')).toBeInTheDocument();
+    expect(dialog.getByText('21 Sept 2026, 11:00')).toBeInTheDocument();
+    expect(dialog.getByText('9 Nov 2026, 11:00')).toBeInTheDocument();
+    await userEvent.click(dialog.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(createTeamsMeeting).toHaveBeenCalledTimes(1));
+    // Keep each weekday's own time, including the October clock change in
+    // the configured Microsoft calendar's London timezone.
+    const expectedStarts = [
+      '2026-09-16T10:30:00.000Z', '2026-09-21T10:00:00.000Z',
+      '2026-09-23T10:30:00.000Z', '2026-09-28T10:00:00.000Z',
+      '2026-09-30T10:30:00.000Z', '2026-10-05T10:00:00.000Z',
+      '2026-10-07T10:30:00.000Z', '2026-10-12T10:00:00.000Z',
+      '2026-10-14T10:30:00.000Z', '2026-10-19T10:00:00.000Z',
+      '2026-10-21T10:30:00.000Z', '2026-10-26T11:00:00.000Z',
+      '2026-10-28T11:30:00.000Z', '2026-11-02T11:00:00.000Z',
+      '2026-11-04T11:30:00.000Z', '2026-11-09T11:00:00.000Z',
+    ];
+    expect(createTeamsMeeting).toHaveBeenCalledWith(expect.objectContaining({
+      repeatOccurrences: 16,
+      scheduledOccurrences: expectedStarts.map((startDateTimeUtc, index) => ({
+        sessionNumber: index + 1, startDateTimeUtc, durationMinutes: 180,
+      })),
+    }));
   });
 
   it('plays a recording in place and records how it was watched', async () => {

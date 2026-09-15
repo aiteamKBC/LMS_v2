@@ -110,6 +110,7 @@ import {
   // dates, not one date, the moment a group delivers more than once a week.
   moduleWeekSessionDates,
   moduleWeekLiveSessionDates,
+  moduleUsesSessionRows,
   // Where the holiday reading weeks sit among the authored weeks: a closed
   // delivery slot keeps its curriculum position and holds no live session.
   holidayReadingWeeksByWeekId,
@@ -142,7 +143,9 @@ import {
 // from the non-lazy barrel — type imports are erased and pull in no runtime code.
 import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel } from '@/pages/curriculum/shared/components/weekAuthoringLazy';
 import type { GroupOption, WeekComponentUploader, WeekScope } from '@/pages/curriculum/shared/components/weekAuthoring';
-import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDetail, filterWeekTemplatesForScope, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
+import { fetchComponentPointsDefaults, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
+import { WeekTemplateImportModal } from './WeekTemplateImportModal';
+import { appendWeekTemplateCopies } from './weekTemplateImport';
 // Round-trip the module's components to Excel so KSBs can be filled in ChatGPT
 // and imported back. xlsx is dynamically imported inside these helpers, so it
 // stays off this page's initial bundle.
@@ -1262,26 +1265,9 @@ export default function ModuleBuilder() {
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
   }, [workingModuleProgrammeArchived]);
 
-  // Import a saved week template as a NEW week in this module: copy the week's
-  // fields + components, regenerating ids so they're independent of the source.
-  const importWeekTemplateAsNewWeek = useCallback((template: WeekTemplate) => {
-    updateWorkingModule(module => {
-      const shell = createEmptyWeek(module.id, module.weekStructure.length + 1);
-      const newWeek: ModuleWeek = {
-        ...shell,
-        title: template.title || shell.title,
-        summary: template.summary || '',
-        learningOutcomes: template.learningOutcomes || [],
-        ksbMappings: (template.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-        components: (template.components || []).map(component => ({
-          ...component,
-          id: makeAuthoringId('component'),
-          weekId: shell.id,
-          ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-        })),
-      };
-      return { ...module, weekStructure: [...module.weekStructure, newWeek] };
-    });
+  // One state update appends the requested number of independent template copies.
+  const importWeekTemplateAsNewWeek = useCallback((template: WeekTemplate, count: number) => {
+    updateWorkingModule(module => appendWeekTemplateCopies(module, template, count));
     setWeekTemplateImportOpen(false);
   }, [updateWorkingModule]);
 
@@ -1630,9 +1616,11 @@ export default function ModuleBuilder() {
   // saved yet) the dates the rest of the module already runs to. Only a change
   // in the count moves the module's end date -- opening a module is not an edit
   // to when it finishes.
-  const plannedWeekCountRef = useRef<{ catalogueId: string; weeks: number } | null>(null);
+  const plannedWeekCountRef = useRef<{ catalogueId: string; weeks: number; sessions?: number } | null>(null);
   const workingModuleCatalogueId = workingModule?.catalogueId || '';
   const workingModuleWeekCount = workingModule?.weekStructure.length || 0;
+  const workingModuleFlatSessionCount = workingModule && moduleUsesSessionRows(workingModule)
+    ? workingModule.sessionsNumber : undefined;
   // Keep the fetched plan alongside the module it belongs to. The plan drives
   // both holiday-clash messaging and the dated session preview.
   const [weekSessionPlanState, setWeekSessionPlanState] = useState<{ catalogueId: string; plan: ModuleWeekSessionPlan } | null>(null);
@@ -1646,11 +1634,11 @@ export default function ModuleBuilder() {
       return undefined;
     }
     const planned = plannedWeekCountRef.current;
-    if (planned?.catalogueId === workingModuleCatalogueId && planned.weeks === workingModuleWeekCount) return undefined;
+    if (planned?.catalogueId === workingModuleCatalogueId && planned.weeks === workingModuleWeekCount && planned.sessions === workingModuleFlatSessionCount) return undefined;
     const countChanged = planned?.catalogueId === workingModuleCatalogueId;
-    plannedWeekCountRef.current = { catalogueId: workingModuleCatalogueId, weeks: workingModuleWeekCount };
+    plannedWeekCountRef.current = { catalogueId: workingModuleCatalogueId, weeks: workingModuleWeekCount, sessions: workingModuleFlatSessionCount };
     let active = true;
-    void loadModuleWeekSessionPlan(workingModuleCatalogueId, workingModuleWeekCount).then(plan => {
+    void loadModuleWeekSessionPlan(workingModuleCatalogueId, workingModuleWeekCount, workingModuleFlatSessionCount).then(plan => {
       if (!active || !plan) return;
       setWeekSessionPlanState({ catalogueId: workingModuleCatalogueId, plan });
       setWorkingModule(current => (
@@ -1660,7 +1648,7 @@ export default function ModuleBuilder() {
       ));
     });
     return () => { active = false; };
-  }, [workingModuleCatalogueId, workingModuleWeekCount]);
+  }, [workingModuleCatalogueId, workingModuleWeekCount, workingModuleFlatSessionCount]);
 
   /**
    * The holiday that closed one skipped date. A skipped date is a bare ISO day
@@ -5110,75 +5098,6 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   );
 }
 
-function WeekTemplateImportModal({ scope, onClose, onImport }: {
-  scope: { programmeId: string; programmeName: string };
-  onClose: () => void;
-  onImport: (template: WeekTemplate) => void;
-}) {
-  const [templates, setTemplates] = useState<WeekTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [importingId, setImportingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    fetchWeekTemplates({})
-      .then(rows => { if (active) { setTemplates(rows); setLoading(false); } })
-      .catch(err => { if (active) { setError(err instanceof Error ? err.message : 'Unable to load week templates.'); setLoading(false); } });
-    return () => { active = false; };
-  }, []);
-
-  const list = filterWeekTemplatesForScope(templates, scope);
-
-  const pick = async (template: WeekTemplate) => {
-    setImportingId(template.id);
-    setError('');
-    try {
-      const detail = await fetchWeekTemplateDetail(template.id);
-      onImport(detail);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load that template.');
-      setImportingId(null);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground-950/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between gap-4 border-b border-background-200 px-5 py-4">
-          <div>
-            <h3 className="font-heading text-[15px] font-bold text-foreground-950">Add a week from a template</h3>
-            <p className="mt-0.5 text-[11px] text-foreground-500">Copies the template's components into a new week in this module.</p>
-          </div>
-          <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
-        </div>
-        <div className="max-h-[60vh] overflow-y-auto p-4">
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-foreground-500"><span className="h-4 w-4 animate-spin rounded-full border-2 border-background-300 border-t-primary-500" />Loading templates…</div>
-          ) : list.length ? (
-            <div className="space-y-2">
-              {list.map(template => (
-                <button key={template.id} type="button" disabled={Boolean(importingId)} onClick={() => void pick(template)} className="flex w-full items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-300 hover:bg-primary-50 disabled:opacity-60">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-500 text-white"><AppIcon className="ri-calendar-todo-line"></AppIcon></span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-bold text-foreground-900">{template.title || 'Untitled week'}</span>
-                    <span className="block text-[11px] text-foreground-500">{template.componentCount || template.components.length} components{template.programmeName ? ` · ${template.programmeName}` : ''}</span>
-                  </span>
-                  {importingId === template.id ? <AppIcon className="ri-loader-4-line animate-spin text-foreground-400"></AppIcon> : <AppIcon className="ri-add-line text-primary-600"></AppIcon>}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p className="py-10 text-center text-[12px] text-foreground-400">No week templates found. Create one in the Week Builder first.</p>
-          )}
-          {error && <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeOptions: string[]; onClose: () => void; onCreate: (input: { programme: string; title: string; description: string; weeks: number; status: string }) => Promise<void> | void }) {
   const [programme, setProgramme] = useState(programmeOptions[0] || 'Unassigned programme');
   const [title, setTitle] = useState('');
@@ -7073,6 +6992,8 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     cohortId: usage?.cohortId || module.cohortId,
     groupId: usage?.groupId || module.groupId,
     sessionsNumber: module.sessionsNumber || usage?.sessions,
+    sessionHolidays: module.sessionHolidays || module.sourceModule?.sessionHolidays,
+    deliveryWeeks: module.deliveryWeeks || module.sourceModule?.deliveryWeeks,
     weeklySchedule: module.weeklySchedule || module.sourceModule?.weeklySchedule || [],
     weekDays: usage?.weekDays || String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
     startTime: usage?.startTime || String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
@@ -7724,7 +7645,9 @@ function removeWeekFromModule(module: ModuleCatalogueItem, weekId: string): Modu
     ...module,
     weekStructure,
     weeks: weekStructure.length,
-    sessionsNumber: weekStructure.length,
+    sessionsNumber: moduleUsesSessionRows(module)
+      ? weekStructure.reduce((total, week) => total + week.components.filter(component => component.type === 'live-session').length, 0)
+      : weekStructure.length * moduleDeliveryDaysPerWeek(module),
   };
 }
 
@@ -7742,6 +7665,7 @@ function moduleDeliveryDaysPerWeek(module: ModuleCatalogueItem) {
 // sessions it already has (created, linked to Teams, or not), so this only
 // ever adds the shortfall, never replaces or removes.
 function liveSessionShortfallByWeek(module: ModuleCatalogueItem) {
+  if (moduleUsesSessionRows(module)) return [];
   const perWeek = moduleDeliveryDaysPerWeek(module);
   return module.weekStructure
     .map(week => ({ week, shortfall: perWeek - week.components.filter(component => component.type === 'live-session').length }))
@@ -7780,6 +7704,7 @@ function countAddedLiveSessions(module: ModuleCatalogueItem) {
 }
 
 function countRequiredLiveSessions(module: ModuleCatalogueItem) {
+  if (moduleUsesSessionRows(module)) return module.sessionsNumber || 0;
   const weekCount = module.weekStructure.length;
   return weekCount * moduleDeliveryDaysPerWeek(module);
 }

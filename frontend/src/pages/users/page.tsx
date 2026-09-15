@@ -16,6 +16,8 @@ import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { SendInvitationButton } from './components/SendInvitationButton';
 import { CreateUserModal } from './components/CreateUserModal';
+import { DownloadLearnerTemplateButton } from './components/DownloadLearnerTemplateButton';
+import { ImportLearnersModal } from './components/ImportLearnersModal';
 import { CreateStaffModal } from './components/CreateStaffModal';
 import { CreateEmployerModal } from './components/CreateEmployerModal';
 import { CreateOrganisationModal } from './components/CreateOrganisationModal';
@@ -333,6 +335,7 @@ export default function UsersListPage() {
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [createAdminOpen, setCreateAdminOpen] = useState(false);
   const [createTutorOpen, setCreateTutorOpen] = useState(false);
   const [createEmployerOpen, setCreateEmployerOpen] = useState(false);
@@ -584,6 +587,13 @@ export default function UsersListPage() {
     load();
   };
 
+  const applyLearnerImport = (imported: UserListRow[]) => {
+    // Keep the saved rows in local state while refreshing server-derived fields.
+    setRows(previous => mergeDirectoryRows([...imported, ...previous]));
+    setPage(1);
+    load();
+  };
+
   // Employers have no profile page either, so the row's Edit action is their
   // only edit surface — same arrangement as staff.
   const applyEmployerUpdate = (updated: EmployerRow) => {
@@ -601,6 +611,11 @@ export default function UsersListPage() {
           icon="ri-group-line"
           eyebrow={isAdmin ? 'Administration' : 'Enrolment'}
           actions={
+            <div className="flex flex-wrap items-start gap-2">
+              <DownloadLearnerTemplateButton />
+              <button type="button" className={btnSecondary} onClick={() => setImportModalOpen(true)}>
+                <AppIcon className="ri-upload-2-line" />Upload learners
+              </button>
             <div ref={createRef} className="relative">
               <button
                 type="button"
@@ -624,6 +639,7 @@ export default function UsersListPage() {
                 </div>,
                 document.body,
               )}
+            </div>
             </div>
           }
         />
@@ -921,6 +937,7 @@ export default function UsersListPage() {
       </div>
 
       {createModalOpen && <CreateUserModal onClose={() => setCreateModalOpen(false)} onCreated={load} />}
+      {importModalOpen && <ImportLearnersModal onClose={() => setImportModalOpen(false)} onImported={applyLearnerImport} />}
       {createAdminOpen && <CreateStaffModal variant="admin" onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
       {createTutorOpen && <CreateStaffModal variant="tutor" onClose={() => setCreateTutorOpen(false)} onCreated={load} />}
       {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}
