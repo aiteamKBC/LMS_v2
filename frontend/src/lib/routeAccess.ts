@@ -1,4 +1,4 @@
-import type { AuthUser, Role } from '@/api/auth';
+import type { AccessWorkspace, AuthUser, Role } from '@/api/auth';
 
 /**
  * Which audience each area of the SPA is for, and where an account belongs.
@@ -97,6 +97,10 @@ const RULES: ReadonlyArray<readonly [string, readonly Role[]]> = [
 
   // Shared surfaces. Each renders against the viewer's own nav and reads only
   // their own records, so every signed-in account belongs on them.
+  // Signed in, but no workspace chosen yet. Open to every role: the whole point
+  // is that the account has several, and the page only ever offers what the
+  // server already granted it.
+  ['/choose-workspace', ANYONE],
   ['/communication', ANYONE],
   ['/home', ANYONE],
   ['/messages', ANYONE],
@@ -161,15 +165,57 @@ export function isBareLearnerWorkspacePath(path: string | null | undefined): boo
   return routePathname(path) === '/workspace/learner';
 }
 
+/** Where the workspace chooser lives. */
+export const CHOOSE_WORKSPACE_ROUTE = '/choose-workspace';
+
+/**
+ * The workspaces this account may open, as the server described them.
+ *
+ * Always an array, so callers need not repeat the null handling. The server is
+ * the authority on both the set and each landing route: anything derived here
+ * from `access` alone would miss the `learner` entry a staff member who also
+ * studies gets, whose route carries the id of their own record.
+ */
+export function workspacesFor(
+  account: Pick<AuthUser, 'accessWorkspaces'> | null | undefined,
+): AccessWorkspace[] {
+  return account?.accessWorkspaces ?? [];
+}
+
+/**
+ * Whether this account should be asked which workspace it wants.
+ *
+ * Only when there is a real choice — two or more. One workspace is not a
+ * choice, and showing a page with a single button on it would be a step in
+ * everybody's way for nothing.
+ *
+ * `record-monitor` is deliberately excluded: `homeRouteFor` and
+ * `mayAccessRoute` both pin that grant to /old-otjh, so offering it a menu
+ * would list workspaces it is then refused at the door.
+ */
+export function shouldChooseWorkspace(
+  account: Pick<AuthUser, 'access' | 'accessWorkspaces'> | null | undefined,
+): boolean {
+  if (!account) return false;
+  if (account.access === 'record-monitor') return false;
+  return workspacesFor(account).length > 1;
+}
+
 /**
  * Every successful sign-in starts at the account's own home. A route left in
  * browser history or old login state must never choose the new session's page.
  * Keep the optional legacy argument so older callers cannot restore that route.
+ *
+ * An account holding more than one access grant is asked which one it wants
+ * first — landing it on the primary silently would hide the others behind a
+ * menu nobody knows to look for. The chooser then navigates to the `home` the
+ * server gave for the workspace picked.
  */
 export function postLoginRouteFor(
-  account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>,
+  account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord' | 'accessWorkspaces'>,
   _requestedPath?: string | null,
 ): string {
+  if (shouldChooseWorkspace(account)) return CHOOSE_WORKSPACE_ROUTE;
   return homeRouteFor(account);
 }
 
