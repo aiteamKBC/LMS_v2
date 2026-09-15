@@ -4092,7 +4092,10 @@ export default function ProgrammeDetailPage() {
               gridClass={MODULE_GRID}
               rows={filteredModules}
               rowKey={mod => mod.id}
-              getRowHref={mod => moduleWorkspaceUrl(mod) || undefined}
+              // The row opens where the work is: authoring the module's weeks,
+              // components and material. Its read-only home (schedule, sessions,
+              // Teams series) stays one named action away.
+              getRowHref={mod => (mod.archived ? undefined : moduleBuilderUrl(mod, PROGRAMME))}
               loading={loading && !PROGRAMME.modules.length}
               refreshing={refreshing}
               empty={(
@@ -4102,18 +4105,19 @@ export default function ProgrammeDetailPage() {
                   message={PROGRAMME.modules.length
                     ? 'Clear a filter, or search for a different module.'
                     : 'Modules carry the weekly content, sessions and OTJH for this programme. Create and author the first one in Module Builder.'}
-                  action={PROGRAMME.modules.length ? undefined : { label: 'Open Module Builder', onClick: () => navigate(moduleBuilderProgrammeUrl) }}
+                  action={PROGRAMME.modules.length ? undefined : { label: 'Create module', onClick: () => navigate(`${moduleBuilderProgrammeUrl}&create=1`) }}
                 />
               )}
               renderRow={mod => {
                 const componentCount = mod.weeksData.reduce((total, wk) => total + (wk.components?.length || 0), 0);
                 const ksbCount = uniqueCleanValues([...mod.ksbTags, ...mod.ksbMapping.map(item => item.ksb)]).length;
                 const workspaceUrl = moduleWorkspaceUrl(mod);
+                const builderUrl = moduleBuilderUrl(mod, PROGRAMME);
                 const unlinked = unlinkedModules.some(item => item.id === mod.id);
                 return (
                   <>
                     <StackedCell
-                      href={mod.archived ? undefined : workspaceUrl || undefined}
+                      href={mod.archived ? undefined : builderUrl}
                       primary={(
                         <span className="flex items-center gap-2">
                           {mod.name}
@@ -4156,13 +4160,11 @@ export default function ProgrammeDetailPage() {
                           disabled: mod.archived,
                           onClick: () => setAssignmentTarget({ scope: 'module', id: moduleBuilderIdentifier(mod), name: mod.name }),
                         }, {
-                          icon: 'ri-tools-line',
-                          label: 'Builder',
-                          title: mod.archived
-                            ? 'Archived modules cannot be opened in Module Builder'
-                            : `Author ${mod.name}'s weeks and components in the Module Builder`,
-                          disabled: mod.archived,
-                          onClick: () => navigate(moduleBuilderUrl(mod, PROGRAMME)),
+                          icon: 'ri-layout-grid-line',
+                          label: 'Workspace',
+                          title: `${mod.name}'s schedule, sessions and Teams series`,
+                          disabled: !workspaceUrl,
+                          onClick: () => navigate(workspaceUrl),
                         }]}
                       />
                       <RowActions

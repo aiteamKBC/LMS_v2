@@ -553,10 +553,23 @@ def learning_plan(request, pk):
         logger.exception("learning_plan: catalogue lookup failed")
         return _error(f"Database error: {exc}", 502)
 
+    # A module already on this learner's plan that the catalogue no longer
+    # offers. `_serialize` serves those rows as orphans so the plan still says
+    # what was agreed; refusing to save them would mean the server rejecting its
+    # own response -- one retired module anywhere on the plan and the modal
+    # could not be saved at all, with nothing to do about it but remove a row
+    # recording real teaching.
+    retained = {
+        _s(m.get("moduleId")): m
+        for m in _plan_entries(learner)
+        if _s(m.get("moduleId"))
+    }
+
     # Rebuild each entry from the catalogue rather than trusting the client's
     # titles/hours/dates/programme, and reject anything that is not a live
-    # module. A module from another programme is allowed — it is recorded with
-    # its own programme, so the plan says plainly where each module came from.
+    # module and was not already on the plan. A module from another programme is
+    # allowed — it is recorded with its own programme, so the plan says plainly
+    # where each module came from.
     resolved, seen = [], set()
     for entry in modules:
         module_id = _s(entry.get("moduleId") if isinstance(entry, dict) else entry)
@@ -564,13 +577,41 @@ def learning_plan(request, pk):
             return _error("Every module needs a moduleId.", 400)
         if module_id in seen:
             continue
-        if module_id not in catalogue:
+        if module_id not in catalogue and module_id not in retained:
             return _error(f"Module '{module_id}' is not in the module catalogue.", 400)
         seen.add(module_id)
-        resolved.append(dict(catalogue[module_id], **(
-            {'assignmentMode': 'explicit'}
-            if any(m.get('assignmentMode') == 'explicit' for m in _plan_entries(learner)) else {}
-        )))
+        resolved.append(dict(catalogue.get(module_id) or retained[module_id]))
+
+    # Is this save agreeing to the learner's group, or overriding it?
+    #
+    # `_serialize` re-offers any group module missing from the stored plan as an
+    # inherited row, because a module added to the group after the plan was
+    # agreed is one the learner is now taught. The stored plan alone cannot tell
+    # that case apart from "staff took this module off this learner" -- so a
+    # removal saved, and then came straight back on the next read wearing a "New
+    # from group" badge, with nothing the officer could do to make it stick.
+    #
+    # The omission itself is the record. A save that drops a module the group
+    # teaches is a decision about this learner, and freezes the set the way a
+    # curriculum assignment does; a save that keeps every one of them is an
+    # agreement to the group, and lets later additions flow in again. That makes
+    # "Reset to group default" the way back: it puts the preset on screen, and
+    # saving it clears the freeze.
+    try:
+        programme_catalogue = {m["moduleId"] for m in _programme_modules(programme)}
+    except DatabaseError as exc:
+        logger.exception("learning_plan: programme catalogue lookup failed")
+        return _error(f"Database error: {exc}", 502)
+    # Only the preset modules `_serialize` could actually inherit count: an id
+    # left in groups.module_ids for a module that no longer exists would
+    # otherwise pin every plan to explicit forever.
+    inheritable = [
+        i for i in _group_module_ids(programme, _s(learner.group))
+        if i in programme_catalogue
+    ]
+    overrides_group = any(i not in seen for i in inheritable)
+    if overrides_group:
+        resolved = [dict(entry, assignmentMode='explicit') for entry in resolved]
 
     field = training_plan_field(learner)
     setattr(learner, field, resolved)
