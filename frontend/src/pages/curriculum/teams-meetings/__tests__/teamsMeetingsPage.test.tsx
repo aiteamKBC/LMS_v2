@@ -1,3 +1,4 @@
+import { finishTeamsCreation } from '../creationResult';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -135,6 +136,7 @@ import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature
 
 const confirmMock = vi.mocked(showCurriculumConfirm);
 const alertMock = vi.mocked(showCurriculumAlert);
+vi.mock('../creationResult', () => ({ finishTeamsCreation: vi.fn() }));
 
 // Every week already has its live session unless a test says otherwise.
 const probeModuleTeamsAttachment = vi.fn(async () => 0);
@@ -238,6 +240,7 @@ describe('Teams Meetings page', () => {
     // the file, so any test asserting on what a click confirmed counts every
     // earlier test's alerts too.
     alertMock.mockClear();
+    vi.mocked(finishTeamsCreation).mockClear();
     window.localStorage.removeItem('curriculumTeamsAutoSync');
   });
 
@@ -660,8 +663,12 @@ describe('Teams Meetings page', () => {
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
 
-    await waitFor(() => expect(alertMock).toHaveBeenCalledTimes(1));
-    expect(alertMock.mock.calls[0][0]).toMatchObject({ title: 'Session dates sent to Teams' });
+    await waitFor(() => expect(finishTeamsCreation).toHaveBeenCalledTimes(1));
+    expect(finishTeamsCreation).toHaveBeenCalledWith(
+      expect.objectContaining({ created: true, meeting: { settingsApplied: true } }),
+      expect.objectContaining({ scheduledOccurrences: expect.any(Array) }),
+      '',
+    );
 
     // The dialog is gone, not swapped for the summary view of the same module.
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

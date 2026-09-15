@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { isTeamsReviewCancelled } from '../teams-meetings/calendarReview';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Modal } from '@/pages/users/components/Modal';
-import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
+import { finishTeamsCreation } from '../teams-meetings/creationResult';
 import {
   fetchCurriculumHolidays,
   fetchCurriculumSessions,
@@ -212,10 +212,11 @@ export function TeamsMeetingModal({
     try {
       const input = buildTeamsCalendarInput(row, form);
       const result = await createTeamsMeeting(input);
+      let attachmentWarning = '';
       try {
         await restoreModuleTeamsMeeting(row.catalogueId);
       } catch {
-        result.warnings.push('The calendar was created, but its component links could not be refreshed. Use Restore Teams sessions & links.');
+        attachmentWarning = 'The calendar was created, but its component links could not be refreshed. Use Restore Teams sessions & links.';
       }
       const selectedIndex = sessions.findIndex(session => session.componentId === component.id || session.date === component.settings.sessionDate);
       const scheduled = input.scheduledOccurrences?.[Math.max(0, selectedIndex)];
@@ -228,22 +229,7 @@ export function TeamsMeetingModal({
         ...(scheduled ? { startDateTimeUtc: scheduled.startDateTimeUtc, durationMinutes: scheduled.durationMinutes } : {}),
       } }, input);
       onClose();
-      // `settingsApplied` false means the calendar is right and the recording is
-      // not: Graph refused the meeting options, so the session opens recording
-      // nothing. It reads as success otherwise, which is how it went unnoticed.
-      const optionsRefused = !result.meeting.settingsApplied;
-      const occurrences = input.scheduledOccurrences || [];
-      await showCurriculumAlert({
-        title: optionsRefused
-          ? 'Created, but NOT recording'
-          : result.warnings.length ? 'Created with warnings' : 'Session dates sent to Teams',
-        text: optionsRefused
-          ? `The invitations and join links are in place, but Microsoft Graph refused the recording, transcription and lobby options, so these sessions will record nothing. Organizer: ${result.meeting.organizerEmail || 'unknown'}. ${result.warnings[0] || 'Check the backend log for the exact Graph status, code and request-id.'}`
-          : result.warnings.length
-            ? result.warnings[0]
-            : `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to Teams.`,
-        timer: optionsRefused || result.warnings.length ? undefined : 2400,
-      });
+      await finishTeamsCreation(result, input, attachmentWarning);
     } catch (err) {
       if (isTeamsReviewCancelled(err)) return;
       setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');

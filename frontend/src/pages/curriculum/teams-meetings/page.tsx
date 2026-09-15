@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { isTeamsReviewCancelled } from './calendarReview';
+import { finishTeamsCreation } from './creationResult';
 import { calendarInputError } from './calendarTime';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
@@ -1206,19 +1207,18 @@ export default function CurriculumTeamsMeetingsPage() {
     createDrawer.setError(null);
     try {
       const input = buildTeamsCalendarInput(row, form);
-      const occurrences = input.scheduledOccurrences || [];
       const result = await createTeamsMeeting(input);
       // Creating the series is only half of it: the module's live-session
       // components are where delivery reads the join link from, and the restore
       // endpoint is the one place that writes it into all of them.
-      let attached = 0;
+      let attachmentWarning = '';
       try {
-        const attachment = await restoreModuleTeamsMeeting(
+        await restoreModuleTeamsMeeting(
           row.catalogueId,
           { createMissingComponents: true },
         );
-        attached = (attachment.updatedComponents || 0) + (attachment.createdComponents || 0);
       } catch {
+        attachmentWarning = 'The calendar is saved, but its links could not be attached to every module component. Use Re-attach meeting to components.';
         setNotice({
           tone: 'warning',
           text: `${row.name}: the Teams meeting was created, but its join link could not be written into the module's live-session components. Use "Re-attach meeting to components" to retry.`,
@@ -1232,21 +1232,7 @@ export default function CurriculumTeamsMeetingsPage() {
       // Not awaited. The refresh is a round trip and the confirmation must not
       // queue behind it -- the table catches up while the alert is on screen.
       void loadTeamsState();
-      // `settingsApplied` false means the calendar is right and the recording is
-      // not: Graph refused the meeting options, so the session opens recording
-      // nothing. It reads as success otherwise, which is how it went unnoticed.
-      const optionsRefused = !result.meeting.settingsApplied;
-      await showCurriculumAlert({
-        title: optionsRefused
-          ? 'Created, but NOT recording'
-          : result.warnings.length ? 'Created with warnings' : 'Session dates sent to Teams',
-        text: optionsRefused
-          ? `The invitations and join links are in place, but Microsoft Graph refused the recording, transcription and lobby options, so these sessions will record nothing. Organizer: ${result.meeting.organizerEmail || 'unknown'}. ${result.warnings[0] || 'Check the backend log for the exact Graph status, code and request-id.'}`
-          : result.warnings.length
-            ? result.warnings[0]
-            : `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to Teams${attached ? `, linked to ${attached} live-session component${attached === 1 ? '' : 's'}` : ''}.`,
-        timer: optionsRefused || result.warnings.length ? undefined : 2400,
-      });
+      await finishTeamsCreation(result, input, attachmentWarning);
     } catch (err) {
       if (isTeamsReviewCancelled(err)) return;
       createDrawer.setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');

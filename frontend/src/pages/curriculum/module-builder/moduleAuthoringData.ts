@@ -1840,7 +1840,7 @@ export function fetchModuleMeetingInvitees(moduleCatalogueId: string) {
 export async function createTeamsMeeting(input: TeamsMeetingInput) {
   // Review and send the same snapshot, even if a background refresh changes the form.
   const reviewed: TeamsMeetingInput = JSON.parse(JSON.stringify({ ...input, hideAttendees: true }));
-  await reviewCalendar(reviewed, getCalendarTimeZone());
+  await reviewCalendar({ ...reviewed, summaryEmail: true }, getCalendarTimeZone());
   return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
     method: 'POST',
     body: JSON.stringify(reviewed),
