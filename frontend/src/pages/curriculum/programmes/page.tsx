@@ -280,7 +280,8 @@ export default function CurriculumProgrammes() {
   // invalidate_curriculum_cache() server-side, so the reload has nothing stale to
   // hit. The explicit skipCache on the reload calls below is left as belt and
   // braces for the multi-worker case, where invalidation needs a shared cache.
-  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored, upsertProgramme } = useCurriculumProgrammes({ visibility: 'all', revalidate: true });
+  const programmeVisibility = showArchived ? 'all' : 'operational';
+  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored, upsertProgramme } = useCurriculumProgrammes({ visibility: programmeVisibility, revalidate: true });
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
 
