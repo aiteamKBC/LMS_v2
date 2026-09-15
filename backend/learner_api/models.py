@@ -792,6 +792,10 @@ class LearnerProfile(models.Model):
                     }
                     for answer in entry.quiz_answers.all()
                 ]
+            elif entry.kind == "quiz_reading":
+                # This reading belongs to a quiz rather than an authored
+                # component. Give Actual Time consumers a stable row identity.
+                record["componentId"] = f"quiz-reading:{entry.quiz_ref}:{entry.attempt or entry.pk}"
             records.append({key: value for key, value in record.items() if value not in (None, "")})
         return records
 

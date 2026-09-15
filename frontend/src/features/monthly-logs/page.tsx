@@ -87,7 +87,6 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
   const client = useQueryClient();
   const student = auth.account?.role === 'learner';
   const canActAsStudent = student || (perspective === 'learner' && auth.account?.role === 'admin');
-  const readOnly = summary.read_only || (perspective === 'learner' && !canActAsStudent);
   const key = ['monthly-logs', auth.account?.id, perspective, perspective === 'coach' ? coachViewAs()?.email : null, id, month];
   const query = useQuery({ queryKey: key, queryFn: ({ signal }) => getLogMonth(id, month, signal, perspective), refetchInterval: 7000 });
   const draftDigest = useRef<string | null>(null);
@@ -114,6 +113,7 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
   if (query.error && !query.data) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   if (!query.data) return null;
   const data = query.data;
+  const readOnly = !!data.is_open || summary.read_only || (perspective === 'learner' && !canActAsStudent);
   const index = summary.months.findIndex(m => m.month === month);
   const previous = summary.months[index - 1], next = summary.months[index + 1];
   const signatureRows = [{ role: 'Learner', signature: data.student_signature, own: canActAsStudent }, { role: 'Coach', signature: data.coach_signature, own: !canActAsStudent && perspective === 'coach' }];
@@ -124,7 +124,7 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
       <div className={journal.filterField}><span className={journal.label}>Learner</span><div className={journal.learnerField}><AppIcon className="ri-user-line" />{summary.learner?.name}</div></div>
       <div className={journal.filterField}><label htmlFor="monthly-log-month" className={journal.label}>Report month</label><div className={journal.monthControl}>
         <select id="monthly-log-month" className={journal.monthSelect} value={month} disabled={signing.isPending} onChange={e => navigate(`${base}/${e.target.value}`)}>
-          {summary.months.map(item => <option key={item.month} value={item.month}>{monthLabel(item.month)} · {monthStatus(item)}</option>)}</select>
+          {summary.months.map(item => <option key={item.month} value={item.month}>{monthLabel(item.month)} · {item.is_open ? 'In progress' : monthStatus(item)}</option>)}</select>
         <button className={journal.secondaryButton} disabled={!previous || signing.isPending} onClick={() => navigate(`${base}/${previous.month}`)} aria-label="Previous month"><AppIcon className="ri-arrow-left-s-line" /></button>
         <button className={journal.secondaryButton} disabled={!next || signing.isPending} onClick={() => navigate(`${base}/${next.month}`)} aria-label="Next month"><AppIcon className="ri-arrow-right-s-line" /></button>
         <Link className={journal.secondaryButton} to={base}><AppIcon className="ri-layout-grid-line" />All months</Link>
@@ -135,7 +135,7 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
     <ActivityLog key={sourceRef ?? 'all'} data={data} initialSourceRef={sourceRef}
       contentScope={`monthly-logs:${perspective}:${id}`} loadContent={rowId => getLogContent(id, month, rowId, perspective)} />
     <section className={`${journal.card} ${journal.signoff}`} aria-label="Monthly sign-off">
-      <div className={journal.sectionHeading}><div><h2 className="font-heading">Report sign-off</h2><p>Your learner and coach signatures for this month’s record.</p></div></div>
+      <div className={journal.sectionHeading}><div><h2 className="font-heading">Report sign-off</h2><p>{data.is_open ? 'This month is still updating. Signatures become available after month-end.' : 'Your learner and coach signatures for this month’s record.'}</p></div></div>
       <div className={journal.signoffBody}><div className={reportStyles.reportTableWrap}><table className={reportStyles.signTable} aria-label="Report sign-off">
         <thead><tr>{['Role', 'Signature', 'Print name', 'Date', 'Status'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead>
         <tbody>{signatureRows.map(item => <tr key={item.role}>
@@ -145,16 +145,16 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
               saveError={signing.error?.message} importSignature={canActAsStudent && !student ? undefined : previousMonthSignature(summary.months, month, student ? 'learner' : 'coach')}
               confirmationText="I have reviewed this month's activities and confirm this is my signature."
               onDraftStart={() => { draftDigest.current ??= data.snapshot_digest; }} onDraftReset={() => { draftDigest.current = null; signing.reset(); }}
-              onSave={(blob, capture) => signing.mutate({ blob, capture })} /> : <span>Awaiting signature</span>}</td>
+              onSave={(blob, capture) => signing.mutate({ blob, capture })} /> : <span>{data.is_open ? 'Available after month-end' : 'Awaiting signature'}</span>}</td>
           <td data-label="Print name">{item.signature?.signer_name || '—'}</td><td data-label="Date">{displayDate(item.signature?.signed_at)}</td>
-          <td data-label="Status"><RecordBadge tone={item.signature ? 'positive' : 'pending'}>{item.signature ? 'Signed' : 'Awaiting signature'}</RecordBadge></td>
+          <td data-label="Status"><RecordBadge tone={item.signature ? 'positive' : 'pending'}>{item.signature ? 'Signed' : data.is_open ? 'Month in progress' : 'Awaiting signature'}</RecordBadge></td>
         </tr>)}</tbody>
       </table></div></div>
       <div className={`${journal.signoffFooter} space-y-3`}>
         {data.locked && auth.account?.role === 'admin' && perspective === 'learner' && <button className={journal.secondaryButton} disabled={unlocking.isPending} onClick={() => unlocking.mutate()}><AppIcon className="ri-lock-unlock-line" />{unlocking.isPending ? 'Unlockingâ€¦' : 'Unlock monthly log'}</button>}
         {data.locked && <p className={journal.signingNote}><AppIcon className="ri-lock-line" /> This record is locked after both signatures were saved.</p>}
         {canActAsStudent && !readOnly && data.source === 'legacy' && data.can_complete && <button className={journal.primaryButton} disabled={completion.isPending} onClick={() => completion.mutate()}>Complete month</button>}
-        <p className={journal.signingNote}>{readOnly ? 'You are viewing this learner’s record. Each person signs from their own account.' : 'Each person signs from their own account. Saved signatures are retained.'}</p>
+        <p className={journal.signingNote}>{data.is_open ? 'Activities recorded this month appear here automatically. Signing opens after the month ends.' : readOnly ? 'You are viewing this learner’s record. Each person signs from their own account.' : 'Each person signs from their own account. Saved signatures are retained.'}</p>
         {signing.error && <p role="alert" className="text-red-700">{signing.error.message}</p>}
         {completion.error && <p role="alert" className="text-red-700">{completion.error.message}</p>}
         {unlocking.error && <p role="alert" className="text-red-700">{unlocking.error.message}</p>}

@@ -14,7 +14,7 @@ from .attendance_confirmation import confirm_attendance
 from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, review_attendance_mode
 
-from . import certificates, monthly_assignment, legacy_assignments, review_history
+from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
 from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
@@ -161,6 +161,7 @@ urlpatterns = [
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
     path("quizzes/<int:quiz_id>/submit/", quizzes.submit_quiz_attempt, name="quiz-submit"),
+    path("quizzes/<int:quiz_id>/reading/", quiz_reading.quiz_reading, name="quiz-reading"),
     # video-watching
     path("videos/<str:component_id>/complete/", videos.submit_video_progress, name="video-complete"),
     # generic component completion (podcast / reading / slides / reflection / …)

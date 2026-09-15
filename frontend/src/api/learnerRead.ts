@@ -2,6 +2,7 @@ import { createCachedResource } from './cachedRequest';
 
 export const LEARNER_READ_TIMEOUT_MS = 45_000;
 export const LEARNER_SOURCE_READ_TIMEOUT_MS = 180_000;
+const TRANSIENT_READ_RETRY_DELAY_MS = 600;
 
 export class LearnerReadError extends Error {
   status: number;
@@ -14,7 +15,7 @@ export class LearnerReadError extends Error {
   }
 }
 
-type ReadOptions = Pick<RequestInit, 'headers' | 'credentials' | 'cache' | 'signal'> & {
+type ReadOptions = Pick<globalThis.RequestInit, 'headers' | 'credentials' | 'cache' | 'signal'> & {
   force?: boolean;
   revalidate?: boolean;
   /** Default: zero (only share in-flight reads). Opt in to 30s snapshots. */
@@ -22,6 +23,23 @@ type ReadOptions = Pick<RequestInit, 'headers' | 'credentials' | 'cache' | 'sign
 };
 
 function aborted() { return new DOMException('The operation was aborted.', 'AbortError'); }
+
+function waitForRetry(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(aborted());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(done, TRANSIENT_READ_RETRY_DELAY_MS);
+    function done() {
+      signal.removeEventListener('abort', cancel);
+      resolve();
+    }
+    function cancel() {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', cancel);
+      reject(aborted());
+    }
+    signal.addEventListener('abort', cancel, { once: true });
+  });
+}
 
 export function withCallerSignal<T>(pending: Promise<T>, signal?: AbortSignal | null): Promise<T> {
   if (!signal) return pending;
@@ -34,7 +52,12 @@ export function withCallerSignal<T>(pending: Promise<T>, signal?: AbortSignal | 
 }
 
 async function fetchJson(key: string): Promise<unknown> {
-  const [url, headers, credentials, cache] = JSON.parse(key) as [string, [string, string][], RequestCredentials, RequestCache];
+  const [url, headers, credentials, cache] = JSON.parse(key) as [
+    string,
+    [string, string][],
+    NonNullable<globalThis.RequestInit['credentials']>,
+    NonNullable<globalThis.RequestInit['cache']>,
+  ];
   // Previous-learning reads can verify several original accounts and courses.
   // Keep their shared request alive while the bounded upstream reads finish.
   const timeoutMs = /^\/learner_api\/(student-activity|metrics)\//.test(url)
@@ -47,7 +70,7 @@ async function fetchJson(key: string): Promise<unknown> {
       controller.abort();
     }, timeoutMs);
   });
-  const load = async () => {
+  const loadOnce = async () => {
     let response: Response;
     try {
       response = await fetch(url, { headers: Object.fromEntries(headers), credentials, cache, signal: controller.signal });
@@ -63,6 +86,17 @@ async function fetchJson(key: string): Promise<unknown> {
     }
     if (data == null) throw new LearnerReadError('The server returned an empty response.', response.status);
     return data;
+  };
+  const load = async () => {
+    try {
+      return await loadOnce();
+    } catch (error) {
+      const transient = error instanceof LearnerReadError
+        && (error.status >= 500 || error.status === 429 || error.code === 'network');
+      if (!transient || controller.signal.aborted) throw error;
+      await waitForRetry(controller.signal);
+      return loadOnce();
+    }
   };
   try { return await Promise.race([load(), deadline]); }
   finally { clearTimeout(timer!); }
