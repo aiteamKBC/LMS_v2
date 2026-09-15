@@ -164,6 +164,7 @@ def month_state(month, rows, signs, training_plan_target=None, *, learner_id=Non
     student, coach = sign('learner'), sign('coach')
     lock = lock_state(learner_id, month) if learner_id is not None else {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
     return {'month': month, 'source': 'lms', 'is_required': False,
+            'is_open': month == timezone.localdate().strftime('%Y-%m'),
             'status': 'complete' if student else 'awaiting_signature',
             'student_signature': student, 'coach_signature': coach,
             'row_count': len(rows), 'planned_hours': sum(float(r['planned_hours'] or 0) for r in rows),
@@ -235,19 +236,21 @@ def detail_data(learner, month, *, include_open=False):
 @endpoint('GET')
 def summary(request, learner_id):
     learner, _ = scope(request, learner_id)
-    return JsonResponse({**summary_data(learner, include_open=request.GET.get('workflow') == 'mcm'), 'csrf_token': get_token(request)})
+    # The current month is useful as a live activity log even though its final
+    # signatures remain unavailable until month-end.
+    return JsonResponse({**summary_data(learner, include_open=True), 'csrf_token': get_token(request)})
 
 
 @endpoint('GET')
 def detail(request, learner_id, month):
     learner, _ = scope(request, learner_id)
-    return JsonResponse(detail_data(learner, month, include_open=request.GET.get('workflow') == 'mcm'))
+    return JsonResponse(detail_data(learner, month, include_open=True))
 
 
 @endpoint('GET')
 def content(request, learner_id, month, row_id):
     learner, _ = scope(request, learner_id)
-    report = detail_data(learner, month)
+    report = detail_data(learner, month, include_open=True)
     if report['source'] == 'legacy':
         return JsonResponse(old.activity_content({**learner, '_read_only': True}, month, row_id))
     row = next((r for r in report['rows'] if r['id'] == row_id), None)
