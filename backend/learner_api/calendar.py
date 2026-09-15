@@ -1052,10 +1052,10 @@ def learner_calendar_book(request, kind, pk):
         if session_type != "mcr" and not imported_review_id:
             return _error("reviewId is required when scheduling an imported review.", 400)
         if session_type == "mcr":
-            from .monthly_assignment import coaching_booking_bounds
-            window_start, window_end = coaching_booking_bounds(assignment_month)
-            if not window_start or not window_start <= scheduled_date <= window_end or duration_minutes != 60:
-                return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
+            from .monthly_assignment import coaching_booking_windows
+            windows = coaching_booking_windows(assignment_month)
+            if not any(start <= scheduled_date <= end for start, end in windows) or duration_minutes != 60:
+                return _error("Book a 60-minute MCM in the submission-month or next-month window: the last ten days through the following 5th.", 400)
 
     if assignment_month and session_type == "mcr":
         from .coach_availability import free_slots, AvailabilityUnavailable
