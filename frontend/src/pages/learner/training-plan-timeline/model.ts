@@ -178,8 +178,10 @@ export function uniquePlanSessions(modules: TimelineModule[]) {
 export function monthMetrics(month: string, modules: TimelineModule[], data: TrainingPlanDashboard) {
   const dates = modules.flatMap(module => module.dates).filter(date => date.startsWith(month));
   const weeks = new Set(dates.map(weekKey)).size;
-  const planned = data.months[month]?.planned ?? null;
-  const actual = data.actualAvailable === false ? null : data.actual.filter(row => row.month === month).reduce((sum, row) => sum + row.hours, 0);
+  const current = data.monthlyOtjh?.[month];
+  const planned = data.months[month]?.planned ?? current?.planned ?? null;
+  const historicalActual = data.actual.filter(row => row.month === month).reduce((sum, row) => sum + row.hours, 0);
+  const actual = data.actualAvailable === false && !data.monthlyOtjh ? null : historicalActual + (current?.actual || 0);
   const explicit = data.months[month]?.weeklyTarget;
   return { planned, actual, remaining: planned === null || actual === null ? null : Math.max(0, planned - actual), weeks,
     weekly: explicit ?? (planned !== null && weeks > 0 ? planned / weeks : null), progress: planned === null || actual === null ? null : percent(actual, planned) };

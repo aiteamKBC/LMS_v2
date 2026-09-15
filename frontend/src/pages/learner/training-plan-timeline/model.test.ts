@@ -102,4 +102,15 @@ describe('Training Plan calculations', () => {
     expect(monthMetrics('2026-09', [], { ...data, actualAvailable: false, actual: [] })).toMatchObject({ actual: null, remaining: null, progress: null });
     expect(monthMetrics('2026-09', [], { ...data, actual: [] }).actual).toBe(0);
   });
+  it('uses authored monthly hours and direct progress when no Aptem history exists', () => {
+    const current = { ...data, months: {}, actual: [], actualAvailable: false,
+      monthlyOtjh: { '2026-09': { planned: 12, actual: 7.5, missingPlannedActivities: 0 } } };
+    expect(monthMetrics('2026-09', buildPlanModules([subject], current), current)).toMatchObject({
+      planned: 12, actual: 7.5, remaining: 4.5, weekly: 3,
+    });
+  });
+  it('adds current-platform time to linked historical monthly hours', () => {
+    const combined = { ...data, monthlyOtjh: { '2026-09': { planned: 12, actual: 2.5, missingPlannedActivities: 0 } } };
+    expect(monthMetrics('2026-09', buildPlanModules([subject], combined), combined).actual).toBe(14);
+  });
 });
