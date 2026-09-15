@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { ArrowRight, CalendarCheck2, MapPin } from 'lucide-react';
+import { ArrowRight, CalendarCheck2, MapPin, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
@@ -59,6 +59,15 @@ function StaffStudentHome() {
 }
 
 function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: string; preview?: boolean }) {
+  useEffect(() => {
+    // A cross-site Back navigation can restore frozen fetches and expired
+    // timers from bfcache. Reinitialize the session and reads in a fresh document.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) window.location.reload();
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
   const { auth, retryInitialization } = useAuth();
   const now = new Date();
   const account = auth.account!;
@@ -98,7 +107,12 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
       </LearningShield>
       <ProgressCard data={week.data?.homeProgress} loading={week.loading} error={week.error} refresh={week.refresh} dashboardHref={dashboardHref}/>
       <div className={styles.kent} aria-hidden="true"><span>Kent</span><p>Always a step ahead</p></div>
-      <div className={styles.location}><p><MapPin aria-hidden="true"/>Canterbury, Kent</p><em>“History inspires progress.”</em></div>
+      <div className={styles.sideActions}>
+        <a className={styles.safeguarding} href={import.meta.env.VITE_SAFEGUARDING_URL || (import.meta.env.DEV ? 'http://127.0.0.1:5173/' : 'https://safeguarding.kentbusinesscollege.net/')}>
+          <ShieldCheck aria-hidden="true"/><span>Inclusion &amp; Safeguarding</span><ArrowRight aria-hidden="true"/>
+        </a>
+        <div className={styles.location}><p><MapPin aria-hidden="true"/>Canterbury, Kent</p><em>“History inspires progress.”</em></div>
+      </div>
       <aside className={`${styles.card} ${styles.upcoming}`} aria-labelledby="home-upcoming-heading">
         <div className={styles.cardHeading}><h2 id="home-upcoming-heading"><CalendarCheck2 aria-hidden="true"/>Upcoming</h2><Link to="/learner/calendar" aria-label="View all upcoming events">View all</Link></div>
         <ul>{events.map(event => {
