@@ -245,6 +245,7 @@ export interface CoachLearnerCaseFileData {
   monthlyCoachMeetings: CaseFileReviewMeeting[];
   reviewGroups: CaseFileReviewGroup[];
   reviewGenerationIssues: CoachReviewGenerationIssue[];
+  reviewsLoading: boolean;
 }
 
 export interface CaseFileTabProps {
@@ -340,6 +341,7 @@ export function useCoachLearnerCaseFileData(args: {
             caseload: [],
             timetableEvents: [],
             reviewGenerationIssues: [],
+            reviewsLoading: true,
             auditHours,
             liveAttendance,
           });
@@ -415,6 +417,7 @@ export function useCoachLearnerCaseFileData(args: {
         caseload,
         timetableEvents,
         reviewGenerationIssues: timetable.reviewGenerationIssues,
+        reviewsLoading: false,
         auditHours,
         liveAttendance,
       });
@@ -999,6 +1002,7 @@ function buildCaseFileData(args: {
   caseload: CoachCaseloadLearner[];
   timetableEvents: CoachCalendarEvent[];
   reviewGenerationIssues: CoachReviewGenerationIssue[];
+  reviewsLoading?: boolean;
   auditHours?: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null;
   liveAttendance?: LearnerAttendance | null;
 }): CoachLearnerCaseFileData | null {
@@ -1109,6 +1113,7 @@ function buildCaseFileData(args: {
     reviewGenerationIssues: args.reviewGenerationIssues.filter(
       issue => String(issue.learnerId) === String(args.learnerId),
     ),
+    reviewsLoading: Boolean(args.reviewsLoading),
   };
 }
 

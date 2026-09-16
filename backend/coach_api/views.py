@@ -112,7 +112,9 @@ from curriculum_api.views import (
     teams_online_meeting_from_join_url,
 )
 from curriculum_api import review_instances as curriculum_review_instances
+from curriculum_api import review_types as curriculum_review_types
 from curriculum_api import reviews as curriculum_reviews
+from learner_api.review_progress_snapshot import build_progress_snapshot
 
 
 logger = logging.getLogger(__name__)
@@ -11363,6 +11365,78 @@ def coach_review_instance_answers(request, instance_id):
     except ValueError as exc:
         return JsonResponse({'detail': str(exc)}, status=409)
     return JsonResponse(result)
+
+
+@coach_access_required
+def coach_review_instance_progress(request, instance_id):
+    """Calculate (or recalculate) and FREEZE this Progress Review's learner
+    progress figures.
+
+    Explicit action only. Nothing recalculates on open, reload, completion or
+    PDF download -- a stored snapshot is returned as it was stored, and only
+    this endpoint ever replaces it.
+
+    The calculation window is the individual learner's own programme start
+    date (resolve_review_anchor_date -- enrolment."Created_users".
+    "Learner_start_date", never Start_date, never the cohort-stamped profile
+    mirror, never a group/cohort/programme/module date) up to this server's own
+    clock right now. A timestamp sent by the browser is ignored.
+
+    Authorization is the same gate every other review-instance endpoint uses:
+    the assigned coach only, via _authorized_review_instance.
+    """
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+
+    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    if definition["template"].get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW:
+        # Identified by the Review Type's stable code, never by the template's
+        # name -- another Review Type simply has no progress snapshot.
+        return JsonResponse({"detail": "Calculating progress is only available on a Progress Review."}, status=404)
+
+    learner_profile = LearnerProfile.objects.filter(pk=instance_row.get("learner_id")).first()
+    if learner_profile is None:
+        return JsonResponse({"detail": "This review's learner record could not be found."}, status=404)
+
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows([learner_profile])
+    learner_start_date, anchor_reason = resolve_review_anchor_date(
+        int(learner_profile.id), commercial_rows, enrolment_rows,
+    )
+    if learner_start_date is None:
+        # Never fall back to a cohort/group/programme date: an absent
+        # learner-specific start date means this cannot be calculated at all.
+        return JsonResponse({
+            "detail": "This learner has no individual programme start date, so progress cannot be calculated.",
+            "errors": {"learnerStartDate": [anchor_reason or REVIEW_ANCHOR_MISSING_START]},
+        }, status=409)
+
+    source = commercial_rows.get(int(learner_profile.id)) or enrolment_rows.get(int(learner_profile.id))
+    owner_email = authenticated_coach_email(request)
+    try:
+        snapshot = build_progress_snapshot(
+            source or learner_profile, learner_profile,
+            learner_start_date=learner_start_date,
+            # The authoritative calculated_at: this server's clock, taken here.
+            calculated_at=datetime.utcnow(),
+            calculated_by=owner_email,
+        )
+        curriculum_review_instances.save_review_instance_progress_snapshot(
+            instance_row, snapshot, actor=owner_email,
+        )
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=409)
+    except DatabaseError:
+        logger.warning("Progress Review snapshot failed for instance %s", instance_id, exc_info=True)
+        return JsonResponse({"detail": "Progress could not be calculated. Please try again."}, status=503)
+
+    return JsonResponse(
+        curriculum_review_instances.review_instance_form_definition(
+            curriculum_review_instances.get_review_instance(instance_row["id"]),
+        )
+    )
 
 
 @coach_access_required

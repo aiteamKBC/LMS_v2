@@ -334,6 +334,16 @@ export default function CoachMeetingDetail() {
       await openReviewWorkflow(true);
       return;
     }
+    const confirmation = await Swal.fire({
+      icon: 'question',
+      title: 'Mark review in progress?',
+      text: 'Use this when the meeting has started but Teams attendance cannot confirm it automatically.',
+      showCancelButton: true,
+      confirmButtonText: 'OK',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#6d28d9',
+    });
+    if (!confirmation.isConfirmed) return;
     setBusy(true);
     setActionError(null);
     setActionNotice(null);
@@ -358,11 +368,14 @@ export default function CoachMeetingDetail() {
     : event?.status === 'in-progress'
       ? 'Meeting Actions'
       : `Manage ${isProgressReview ? 'Review' : 'Meeting'}`;
-  const canOpenReviewFormFromHeader = Boolean(
-    event?.reviewInstanceId
-    && ['awaiting-signature', 'completed'].includes(event.status),
-  );
-  const reviewFormHeaderLabel = event?.status === 'completed' ? 'View Form' : 'Sign Form';
+ const canOpenReviewFormFromHeader = Boolean(
+    event?.reviewTemplateId,
+ );
+  const reviewFormHeaderLabel = event?.status === 'completed'
+    ? 'View Form'
+    : event?.status === 'awaiting-signature'
+      ? 'Sign Form'
+      : 'Open Form';
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle={isProgressReview ? 'Review Details' : 'Meeting Details'} pageSubtitle={isProgressReview ? 'Progress review workspace' : 'Monthly coaching meeting workspace'} userName={ownerName} userRole="Progress Coach">
@@ -425,7 +438,7 @@ export default function CoachMeetingDetail() {
                 <div className={cn('flex flex-wrap items-center gap-2', canEditBooking && 'mt-5 border-t border-foreground-100 pt-4')}>
                   {canEditBooking ? <RowAction label={event.status === 'scheduled' ? 'Reschedule' : 'Schedule'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy} onClick={() => { void handleSchedule(); }} /> : null}
                   {(event.status === 'scheduled' || event.status === 'in-progress') && url ? <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={busy} onClick={() => { void handleJoin(); }} /> : null}
-                  {event.status === 'scheduled' ? <RowAction label="Mark In Progress" icon="ri-flashlight-line" disabled={busy} onClick={() => { void markReviewInProgress(); }} /> : null}
+                  {event.status === 'scheduled' && event.reviewTemplateId ? <RowAction label="Mark In Progress" icon="ri-play-circle-line" disabled={busy} onClick={() => { void markReviewInProgress(); }} /> : null}
                   {event.status === 'in-progress' ? <RowAction label="Form" icon="ri-file-list-3-line" disabled={busy} onClick={() => { void openReviewWorkflow(false); }} /> : null}
                 </div>
               </Panel>

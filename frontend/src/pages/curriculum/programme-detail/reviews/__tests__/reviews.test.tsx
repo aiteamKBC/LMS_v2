@@ -340,6 +340,31 @@ describe('ReviewFormModal', () => {
     expect(screen.getByLabelText('New list option')).toBeInTheDocument();
   });
 
+  it('a list item can be marked as the RAG status question, and only a list item offers it', async () => {
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await fillGeneralAndReachFormBuilder();
+    await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
+
+    const ragLabel = /This is the RAG status question/;
+    expect(screen.queryByLabelText(ragLabel)).not.toBeInTheDocument();
+
+    const typeCombobox = screen.getByRole('combobox', { name: /Field type/ });
+    await userEvent.click(typeCombobox);
+    await userEvent.click(await screen.findByRole('option', { name: 'List item' }));
+
+    const ragCheckbox = screen.getByLabelText(ragLabel);
+    expect(ragCheckbox).not.toBeChecked();
+    await userEvent.click(ragCheckbox);
+    expect(screen.getByLabelText(ragLabel)).toBeChecked();
+
+    // Changing the field type clears the marker along with the rest of the
+    // field's configuration, so a non-list question can never carry it.
+    await userEvent.click(screen.getByRole('combobox', { name: /Field type/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Text' }));
+    expect(screen.queryByLabelText(ragLabel)).not.toBeInTheDocument();
+  });
+
   it('deleting a section with fields asks for confirmation', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
     await fillGeneralAndReachFormBuilder();
