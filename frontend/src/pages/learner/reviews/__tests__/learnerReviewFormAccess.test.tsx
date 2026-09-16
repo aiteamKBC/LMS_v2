@@ -20,11 +20,18 @@ import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../LearnerReviewInstanceForm';
 import type { ReviewInstanceFormDefinition } from '@/api/reviewInstances';
-import * as typedSignature from '@/lib/typedSignature';
 
 const access = vi.hoisted(() => ({ canProgress: true }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => access }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: 'Aya Khater' } }, isInitialized: true }) }));
+vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
+  SignaturePad: ({ onCommit, onCancel }: { onCommit: (signature: string) => void; onCancel: () => void }) => (
+    <div>
+      <button type="button" onClick={() => onCommit('data:image/png;base64,c2F2ZWQ=')}>Sign</button>
+      <button type="button" onClick={onCancel}>Cancel</button>
+    </div>
+  ),
+}));
 
 vi.mock('@/hooks/useMyLearner', () => ({
   useMyLearner: () => ({ kind: 'apprenticeship', id: '12' }),
@@ -134,6 +141,7 @@ let blankDefinition: boolean;
 
 beforeEach(() => {
   clearAllCachedResources();
+  window.localStorage.clear();
   requested = [];
   access.canProgress = true;
   definitionError = '';
@@ -247,7 +255,6 @@ describe('Learner Review View opens the generic Curriculum form', () => {
   it('reloads the saved learner signature after signing a monthly coaching review and keeps the coach pending', async () => {
     reviewDefinition.instance!.status = 'awaiting-signature';
     const savedMark = 'data:image/png;base64,c2F2ZWQ=';
-    vi.spyOn(typedSignature, 'createTypedSignature').mockResolvedValue(savedMark);
     const originalFetch = vi.mocked(fetch).getMockImplementation()!;
     let signatureWrites = 0;
     vi.mocked(fetch).mockImplementation(async (input, init) => {
@@ -321,7 +328,6 @@ describe('Learner Review View opens the generic Curriculum form', () => {
 
   it('shows a signature save error, prevents duplicate submissions and allows retry', async () => {
     reviewDefinition.instance!.status = 'awaiting-signature';
-    vi.spyOn(typedSignature, 'createTypedSignature').mockResolvedValue('data:image/png;base64,test');
     let rejectSave!: (reason: Error) => void;
     const onSign = vi.fn().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectSave = reject; })).mockResolvedValue(undefined);
     render(<LearnerReviewInstanceForm definition={reviewDefinition} onSign={onSign} signatoryName="Aya Khater" />);

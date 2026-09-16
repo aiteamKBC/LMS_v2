@@ -127,7 +127,7 @@ export class AuthError extends Error {
 }
 
 const BASE = '/login_api';
-const SESSION_TIMEOUT_MS = 15_000;
+const SESSION_TIMEOUT_MS = 45_000;
 
 // Concurrent GETs of the same path share one request. React StrictMode runs
 // every effect twice in development, so the session lookup on mount left two

@@ -27125,9 +27125,8 @@ def reset_schema_ready_flags():
     _review_types.reset_ready_flag()
     from . import review_instances as _review_instances
     _review_instances._TABLES_READY = False
-    with _SHARED_EPOCH_LOCK:
-        _SHARED_EPOCH_STATE['value'] = None
-        _SHARED_EPOCH_STATE['checked_at'] = 0.0
+    _review_instances._MANUAL_OVERRIDES_TABLE_READY = False
+    _review_instances._LEARNER_REVIEW_ADDITIONS_TABLE_READY = False
     _TABLE_COLUMNS_CACHE.clear()
     _TABLE_EXISTS_CACHE.clear()
     schema_gate.reset_verification_cache()

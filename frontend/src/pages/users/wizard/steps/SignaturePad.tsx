@@ -1,29 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import SignaturePadLib from 'signature_pad';
 import { btnPrimary, btnSecondary } from '../../components/ui';
 import { useAuth } from '@/hooks/useAuth';
-import {
-  SIGNATURE_FONT_FAMILY,
-  createTypedSignature,
-  ensureSignatureFont,
-} from '@/lib/typedSignature';
 
 /**
- * Signature capture: the signatory's own name, set in a script face.
+ * Signature capture: the signatory draws their own signature.
  *
- * The name is NOT editable. It is whoever is actually signing — the signed-in
- * account by default, or the party named by `signatoryName` (the learner on
- * their own document, the employer in their portal). A signature that could be
- * typed as any name is not a signature; fixing it to the identity on record is
- * the whole point.
+ * The name is not editable. It is whoever is actually signing: the signed-in
+ * account by default, or the party named by `signatoryName`.
  *
- * There is no drawing and no stored "saved signature" to reuse: the same name
- * always produces the same mark, so reuse is automatic rather than something to
- * capture once and carry around.
- *
- * The committed value is a PNG data URL, exactly as the old drawn pad produced.
- * That is deliberate: every signature column, PDF signature block and
- * `startsWith('data:image/')` guard keeps working untouched, and signatures
- * captured before this change still render.
+ * The committed value remains a PNG data URL, so existing backend validation,
+ * PDF rendering, and historical signatures keep working.
  */
 export function SignaturePad({
   onCommit,
@@ -41,39 +28,81 @@ export function SignaturePad({
   const { auth } = useAuth();
   const name = (signatoryName || defaultName || auth.user?.fullName || '').trim();
 
-  const [fontReady, setFontReady] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const padRef = useRef<SignaturePadLib | null>(null);
+  const drawingRef = useRef<ReturnType<SignaturePadLib['toData']>>([]);
+  const drawingWidthRef = useRef(0);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [hasInk, setHasInk] = useState(false);
 
-  // The preview must not render in a fallback face before the script font
-  // loads, or it misrepresents what will be stored.
   useEffect(() => {
-    let cancelled = false;
-    void ensureSignatureFont().then(() => {
-      if (!cancelled) setFontReady(true);
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+
+    const ratio = Math.max(window.devicePixelRatio || 1, 1);
+    const width = canvas.getBoundingClientRect().width || 360;
+    const height = 160;
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      setErr('Signature capture is not available in this browser.');
+      return undefined;
+    }
+    context.scale(ratio, ratio);
+
+    const pad = new SignaturePadLib(canvas, {
+      backgroundColor: 'rgb(255,255,255)',
+      penColor: 'rgb(15,23,42)',
     });
+    if (drawingRef.current.length) {
+      const scale = drawingWidthRef.current ? width / drawingWidthRef.current : 1;
+      pad.fromData(drawingRef.current.map(group => ({
+        ...group,
+        points: group.points.map(point => ({ ...point, x: point.x * scale })),
+      })));
+    }
+    drawingWidthRef.current = width;
+    padRef.current = pad;
+    setHasInk(!pad.isEmpty());
+
+    const changed = () => {
+      setHasInk(!pad.isEmpty());
+      setErr(null);
+    };
+    pad.addEventListener('endStroke', changed);
     return () => {
-      cancelled = true;
+      drawingRef.current = pad.toData();
+      pad.removeEventListener('endStroke', changed);
+      pad.off();
+      padRef.current = null;
     };
   }, []);
 
-  const commit = async () => {
+  const commit = () => {
     if (!name) {
       setErr('No name is on record for the signatory, so this cannot be signed.');
+      return;
+    }
+    if (!padRef.current || padRef.current.isEmpty()) {
+      setErr('Please draw your signature before signing.');
       return;
     }
     setSaving(true);
     setErr(null);
     try {
-      const dataUrl = await createTypedSignature(name);
-      if (!dataUrl) {
-        setErr('Could not create the signature. Please try again.');
-        return;
-      }
-      onCommit(dataUrl);
+      onCommit(padRef.current.toDataURL('image/png'));
     } finally {
       setSaving(false);
     }
+  };
+
+  const clear = () => {
+    padRef.current?.clear();
+    drawingRef.current = [];
+    setHasInk(false);
+    setErr(null);
   };
 
   return (
@@ -85,31 +114,19 @@ export function SignaturePad({
         </p>
       </div>
 
-      {/* Exactly what will be stored. */}
-      <div className="rounded-lg border-2 border-dashed border-foreground-200 bg-background-50 px-3 py-4 min-h-[80px] flex items-center justify-center overflow-x-auto">
-        {name ? (
-          <span
-            className="text-foreground-900 whitespace-nowrap"
-            style={{
-              fontFamily: `"${SIGNATURE_FONT_FAMILY}", cursive`,
-              fontSize: '32px',
-              lineHeight: 1.4,
-              // Hide the fallback face until the real one is ready.
-              opacity: fontReady ? 1 : 0,
-              transition: 'opacity 120ms ease',
-            }}
-          >
-            {name}
-          </span>
-        ) : (
-          <span className="text-[12px] text-foreground-400">
-            A signature cannot be produced without a name on record.
-          </span>
-        )}
+      <div className="space-y-2">
+        <canvas
+          ref={canvasRef}
+          aria-label="Draw your signature"
+          className="h-40 w-full touch-none rounded-lg border border-foreground-200 bg-white shadow-sm"
+        />
+        <button type="button" className={btnSecondary} onClick={clear} disabled={saving || !hasInk}>
+          Clear
+        </button>
       </div>
 
       <p className="text-[11px] text-foreground-400">
-        Confirming below has the same effect as signing by hand.
+        Draw using your mouse, pen or finger. Confirming below has the same effect as signing by hand.
       </p>
 
       {err && <p className="text-[12px] text-red-600">{err}</p>}
@@ -118,11 +135,11 @@ export function SignaturePad({
         <button
           type="button"
           className={btnPrimary}
-          onClick={() => void commit()}
-          disabled={saving || !name}
+          onClick={commit}
+          disabled={saving || !name || !hasInk}
         >
           <i className="ri-check-line" />
-          {saving ? 'Signing…' : 'Sign'}
+          {saving ? 'Signing...' : 'Sign'}
         </button>
         <button type="button" className={btnSecondary} onClick={onCancel} disabled={saving}>
           Cancel

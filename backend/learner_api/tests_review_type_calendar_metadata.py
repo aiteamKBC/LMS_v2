@@ -110,7 +110,10 @@ class ReviewTypeCalendarMetadataTestCase(TestCase):
     def _enrolment_row(self):
         return SimpleNamespace(
             id=101, pk=101, email='learner@example.com', learner_type='commercial',
-            start_date=LEARNER_START, end_date='2027-08-09',
+            # learner_start_date is the Review recurrence anchor; start_date is
+            # kept in step too since resolve_schedule_window's WINDOW bound
+            # still reads it.
+            learner_start_date=LEARNER_START, start_date=LEARNER_START, end_date='2027-08-09',
             practical_period_end_date='', apprenticeship_end_date='',
         )
 

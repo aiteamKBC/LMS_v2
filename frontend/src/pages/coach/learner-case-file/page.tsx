@@ -5,6 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { fetchKsbProfile } from '@/api/curriculum';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import { cn } from '@/lib/cn';
 import { statusTone, toneStyle, type StatusTone } from '@/lib/statusTone';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -21,18 +22,29 @@ import NetworkTab from './components/NetworkTab';
 import LearningPlanTab from './components/OverviewTab';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import {
+  createLearnerReviewAddition,
+  fetchLearnerAdditionReviewTemplates,
+  type LearnerAdditionReasonCode,
+  type LearnerAdditionReviewTemplate,
+} from '@/api/reviewInstances';
+import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '@/pages/coach/shared/ScheduleControls';
+import { scheduleCoachCalendarEvent, type ScheduleFormState } from '@/pages/coach/shared/calendarEvents';
+import {
   formatFraction,
   formatHours,
   formatPercent,
-  formatDisplayDate,
   toneFromPercent,
   useCoachLearnerCaseFileData,
   type CaseFileActivityItem,
+  type CaseFileReviewGroup,
   type CaseFileReviewMeeting,
   type CoachLearnerCaseFileData,
 } from './data';
 
 const coachNav = roleNavMap.coach;
+const ATTENDANCE_DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
+const EMPTY_REVIEW_SCHEDULE: ScheduleFormState = { date: '', time: '09:00', durationMinutes: 60 };
+
 const CASE_FILE_TABS = [
   { id: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
   { id: 'programme', label: 'Programme & Employer', icon: 'ri-building-line' },
@@ -88,6 +100,15 @@ interface AttendanceDetailSession {
   catchupCompleted?: boolean;
 }
 
+interface AttendanceDetailsResponse {
+  sessions?: AttendanceDetailSession[];
+}
+
+interface AttendanceDetailsErrorResponse {
+  detail?: string;
+  error?: string;
+}
+
 export default function LearnerCaseFile() {
   const coach = useCoachIdentity();
   const [activeTab, setActiveTab] = useState<TabId>('overview');
@@ -102,7 +123,7 @@ export default function LearnerCaseFile() {
   const explicitKind = parseLearnerKind(searchParams.get('kind') || state.kind);
   const enrolmentId = searchParams.get('enrolmentId') || state.enrolmentId;
 
-  const { data, loading, error } = useCoachLearnerCaseFileData({
+  const { data, loading, error, refresh } = useCoachLearnerCaseFileData({
     learnerId,
     learnerName,
     kind: explicitKind,
@@ -128,6 +149,22 @@ export default function LearnerCaseFile() {
     navigate(`/learner/training-plan/${data.kind}/${data.learnerId}`);
   };
 
+  const handleOpenReviewMeeting = (item: CaseFileReviewMeeting) => {
+    const returnParams = new URLSearchParams(location.search);
+    returnParams.set('id', data?.learnerId || learnerId || '');
+    returnParams.set('tab', 'reviews');
+    if (data?.kind) returnParams.set('kind', data.kind);
+    const returnTo = `${location.pathname}?${returnParams.toString()}`;
+    const detailBase = item.source === 'mcr'
+      ? '/coach/meetings'
+      : '/coach/reviews';
+    const detailKey = item.eventKey;
+
+    navigate(`${detailBase}/${encodeURIComponent(detailKey)}`, {
+      state: { returnTo },
+    });
+  };
+
   const renderTab = () => {
     if (!data) {
       return (
@@ -149,7 +186,7 @@ export default function LearnerCaseFile() {
       case 'attendance':
         return <ReferenceAttendanceContent data={data} />;
       case 'reviews':
-        return <ReferenceReviewsContent data={data} />;
+        return <ReferenceReviewsContent data={data} onOpen={handleOpenReviewMeeting} onChanged={refresh} />;
       case 'coach-notes':
         return <DocumentsTab data={data} />;
       case 'support':
@@ -853,22 +890,66 @@ function KsbOverviewCard({
 
 function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }) {
   const attendance = data.attendance;
+  const [attendanceSessions, setAttendanceSessions] = useState<AttendanceDetailSession[]>([]);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAttendanceSessions() {
+      if (!attendance?.id || !attendance.hasAttendance) {
+        setAttendanceSessions([]);
+        setDetailsError(null);
+        setDetailsLoading(false);
+        return;
+      }
+
+      setDetailsLoading(true);
+      setDetailsError(null);
+      try {
+        const params = new URLSearchParams({ learner_id: String(attendance.id) });
+        const learnerEmail = attendance.email || data.email;
+        if (learnerEmail) {
+          params.set('learner_email', learnerEmail);
+        }
+
+        const response = await coachFetch(`${ATTENDANCE_DETAILS_ENDPOINT}?${params.toString()}`, {
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const payload = await response.json().catch(() => null) as unknown;
+        const parsedPayload = payload && typeof payload === 'object'
+          ? payload as AttendanceDetailsResponse & AttendanceDetailsErrorResponse
+          : null;
+        if (!response.ok) {
+          const message = parsedPayload
+            ? String(parsedPayload.error || parsedPayload.detail || 'Unable to load learner attendance sessions.')
+            : 'Unable to load learner attendance sessions.';
+          throw new Error(message);
+        }
+
+        if (!cancelled) {
+          setAttendanceSessions(Array.isArray(parsedPayload?.sessions) ? parsedPayload.sessions : []);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setAttendanceSessions([]);
+          setDetailsError(loadError instanceof Error ? loadError.message : 'Unable to load learner attendance sessions.');
+        }
+      } finally {
+        if (!cancelled) {
+          setDetailsLoading(false);
+        }
+      }
+    }
+
+    void loadAttendanceSessions();
+    return () => {
+      cancelled = true;
+    };
+  }, [attendance?.id, attendance?.email, attendance?.hasAttendance, data.email]);
+
   if (!attendance || !attendance.hasAttendance) return <ReferencePanel title="Attendance" icon="ri-calendar-check-line" tone="primary"><ProfileEmpty text="Live attendance data is not available for this learner." /></ReferencePanel>;
-  const attendanceSessions: AttendanceDetailSession[] = (attendance.sessionHistory || []).map((session) => ({
-    learnerId: attendance.id,
-    learnerName: attendance.learner,
-    learnerEmail: attendance.email || data.email,
-    sessionId: session.id,
-    sessionTitle: session.title,
-    sessionType: session.sessionType || 'KBC attendance',
-    sessionDate: session.date || null,
-    sessionDateLabel: session.date ? formatDisplayDate(session.date) : '--',
-    startTime: session.startTime,
-    endTime: session.endTime,
-    status: session.status === 'attended' ? 'present' : session.status === 'missed' ? 'absent' : 'late',
-    reason: '--',
-    catchupCompleted: false,
-  }));
   const sessions = attendance.sessions || 0;
   const percentage = (value: number | null) => sessions > 0 && value !== null ? Math.round((value / sessions) * 100) : 0;
   const missedSessions = attendanceSessions.filter((session) => session.status === 'absent');
@@ -889,7 +970,11 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
           <ProfileProgress label={`Catch-up (${attendance.catchup ?? 0})`} value={percentage(attendance.catchup)} color="bg-foreground-300" />
         </ReferencePanel>
         <ReferencePanel title="Missed Sessions" icon="ri-close-circle-line" tone="red">
-          {missedSessions.length > 0 ? (
+          {detailsLoading ? (
+            <div className="p-2"><RowsSkeleton rows={3} avatar={false} /></div>
+          ) : detailsError ? (
+            <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-[12px] text-red-700">{detailsError}</div>
+          ) : missedSessions.length > 0 ? (
             <div className="space-y-3">
               <div className="rounded-xl border border-red-100 bg-red-50 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -939,7 +1024,11 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
         </ReferencePanel>
       </div>
       <ReferencePanel title="Session History" icon="ri-table-line" tone="primary">
-        {recentSessions.length ? (
+        {detailsLoading ? (
+          <div className="p-2"><RowsSkeleton rows={3} avatar={false} /></div>
+        ) : detailsError ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-[12px] text-amber-800">{detailsError}</div>
+        ) : recentSessions.length ? (
           <div className="space-y-2">
             {recentSessions.map((session, index) => (
               <div key={`${session.sessionId}-${session.sessionDate || index}-history`} className="rounded-xl border border-foreground-100 bg-background-100/45 p-3">
@@ -973,28 +1062,302 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
   );
 }
 
-function ReferenceReviewsContent({ data }: { data: CoachLearnerCaseFileData }) {
+function ReferenceReviewsContent({
+  data,
+  onOpen,
+  onChanged,
+}: {
+  data: CoachLearnerCaseFileData;
+  onOpen: (item: CaseFileReviewMeeting) => void;
+  onChanged: () => void;
+}) {
+  const [addOpen, setAddOpen] = useState(false);
+
   return (
     <div className="space-y-5">
-      <ReferencePanel title="Progress Reviews" icon="ri-file-chart-line" tone="primary">
-        {data.progressReviews.length === 0
-          ? <ProfileEmpty text="No progress review records are available." />
-          : <ReviewMeetingList items={data.progressReviews} />}
-      </ReferencePanel>
-      <ReferencePanel title="Monthly Coaching Meetings" icon="ri-calendar-todo-line" tone="primary">
-        {data.monthlyCoachMeetings.length === 0
-          ? <ProfileEmpty text="No monthly coaching meeting data is available." />
-          : <ReviewMeetingList items={data.monthlyCoachMeetings} />}
-      </ReferencePanel>
+      <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/60 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[13px] font-bold text-foreground-900">Reviews & Meetings</p>
+          <p className="mt-1 text-[12px] text-foreground-500">Add a learner-specific review from this case file, then schedule it now or leave it as not scheduled.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAddOpen(true)}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-primary-700"
+        >
+          <AppIcon className="ri-file-add-line"></AppIcon>
+          Add Review
+        </button>
+      </div>
+      {data.reviewGenerationIssues.map(issue => (
+        <div key={issue.code} className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900" role="status">
+          <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-[18px]"></AppIcon>
+          <div>
+            <p className="text-[13px] font-semibold">Review schedule unavailable</p>
+            <p className="mt-1 text-[12px] leading-5">{reviewGenerationIssueMessage(issue.code)}</p>
+          </div>
+        </div>
+      ))}
+      {data.reviewGroups.length === 0 ? (
+        <ReferencePanel title="Reviews" icon="ri-file-chart-line" tone="primary">
+          <ProfileEmpty text="No review or coaching meeting records are available." />
+        </ReferencePanel>
+      ) : data.reviewGroups.map(group => (
+        <ReviewGroupPanel key={group.key} group={group} onOpen={onOpen} />
+      ))}
+      {addOpen ? (
+        <AddLearnerReviewModal
+          data={data}
+          onClose={() => setAddOpen(false)}
+          onChanged={onChanged}
+        />
+      ) : null}
     </div>
   );
 }
 
-function ReviewMeetingList({ items }: { items: CaseFileReviewMeeting[] }) {
+function ReviewGroupPanel({ group, onOpen }: { group: CaseFileReviewGroup; onOpen: (item: CaseFileReviewMeeting) => void }) {
+  const isMeeting = group.items.some(item => item.source === 'mcr');
+  return (
+    <ReferencePanel title={pluralReviewGroupTitle(group.title)} icon={isMeeting ? 'ri-calendar-todo-line' : 'ri-file-chart-line'} tone="primary">
+      <ReviewMeetingList items={group.items} itemLabel={isMeeting ? 'meeting' : 'review'} onOpen={onOpen} />
+    </ReferencePanel>
+  );
+}
+
+function pluralReviewGroupTitle(title: string) {
+  if (/meetings$/i.test(title) || /reviews$/i.test(title)) return title;
+  if (/meeting$/i.test(title)) return `${title}s`;
+  if (/review$/i.test(title)) return `${title}s`;
+  return title;
+}
+
+function AddLearnerReviewModal({
+  data,
+  onClose,
+  onChanged,
+}: {
+  data: CoachLearnerCaseFileData;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [templates, setTemplates] = useState<LearnerAdditionReviewTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templateId, setTemplateId] = useState('');
+  const [targetDate, setTargetDate] = useState('');
+  const [reasonCode, setReasonCode] = useState<LearnerAdditionReasonCode | ''>('');
+  const [reason, setReason] = useState('');
+  const [scheduleNow, setScheduleNow] = useState(false);
+  const [schedule, setSchedule] = useState<ScheduleFormState>(EMPTY_REVIEW_SCHEDULE);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setTemplatesLoading(true);
+    setError(null);
+    fetchLearnerAdditionReviewTemplates(data.learnerId, controller.signal)
+      .then(body => {
+        setTemplates(body.templates || []);
+      })
+      .catch(err => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setTemplates([]);
+        setError(err instanceof Error ? err.message : 'Unable to load Review templates for this learner.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setTemplatesLoading(false);
+      });
+    return () => controller.abort();
+  }, [data.learnerId]);
+
+  const canSubmit = Boolean(templateId && targetDate && (!scheduleNow || (schedule.date && schedule.time)));
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const addition = await createLearnerReviewAddition({
+        learnerId: data.learnerId,
+        reviewTemplateId: templateId,
+        targetDate,
+        reasonCode,
+        reason,
+      });
+      if (scheduleNow) {
+        await scheduleCoachCalendarEvent(
+          { id: addition.eventKey, eventKey: addition.eventKey, title: addition.reviewName, type: 'review', source: 'review', status: 'not-scheduled' },
+          schedule,
+        );
+      }
+      onChanged();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to add this Review.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[10050] flex items-center justify-center bg-foreground-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="add-review-title">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-foreground-100 px-5 py-4">
+          <div>
+            <p id="add-review-title" className="text-[15px] font-bold text-foreground-950">Add Review</p>
+            <p className="mt-1 text-[12px] text-foreground-500">{data.displayName} - {data.programme || 'No programme'}</p>
+          </div>
+          <button type="button" onClick={onClose} disabled={busy} className="flex h-9 w-9 items-center justify-center rounded-lg text-foreground-400 transition hover:bg-background-100 hover:text-foreground-800 disabled:opacity-50" aria-label="Close">
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
+          </button>
+        </div>
+
+        <div className="space-y-4 overflow-y-auto px-5 py-4">
+          <label className="block">
+            <ScheduleFieldLabel>Review template</ScheduleFieldLabel>
+            <select
+              value={templateId}
+              onChange={event => setTemplateId(event.target.value)}
+              disabled={busy || templatesLoading || templates.length === 0}
+              className="w-full rounded-lg border border-foreground-200 bg-background-50 px-3 py-2.5 text-[13px] font-semibold text-foreground-900 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+            >
+              <option value="">
+                {templatesLoading ? 'Loading templates...' : templates.length ? 'Select a Review template' : 'No enabled Review templates for this learner'}
+              </option>
+              {templates.map(template => (
+                <option key={template.id} value={template.id}>
+                  {template.name}{template.reviewTypeName ? ` (${template.reviewTypeName})` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <ScheduleFieldLabel>Target date</ScheduleFieldLabel>
+              <ModernDatePicker value={targetDate} onChange={setTargetDate} />
+            </label>
+            <label className="block">
+              <ScheduleFieldLabel>Reason</ScheduleFieldLabel>
+              <select
+                value={reasonCode}
+                onChange={event => setReasonCode(event.target.value as LearnerAdditionReasonCode | '')}
+                disabled={busy}
+                className="w-full rounded-lg border border-foreground-200 bg-background-50 px-3 py-2.5 text-[13px] font-semibold text-foreground-900 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+              >
+                <option value="">No reason selected</option>
+                <option value="additional-coaching">Additional coaching required</option>
+                <option value="learner-request">Learner request</option>
+                <option value="employer-request">Employer request</option>
+                <option value="performance-concern">Performance concern</option>
+                <option value="safeguarding-follow-up">Safeguarding follow-up</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+          </div>
+
+          <label className="block">
+            <ScheduleFieldLabel>Note</ScheduleFieldLabel>
+            <textarea
+              value={reason}
+              onChange={event => setReason(event.target.value.slice(0, 1000))}
+              disabled={busy}
+              rows={3}
+              placeholder="Add context for why this learner needs an additional Review..."
+              className="w-full resize-none rounded-lg border border-foreground-200 bg-background-50 px-3 py-2.5 text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+            />
+            <span className="mt-1 block text-right text-[11px] text-foreground-400">{reason.length}/1000</span>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-xl border border-foreground-200 bg-background-50 p-3">
+            <input
+              type="checkbox"
+              checked={scheduleNow}
+              onChange={event => setScheduleNow(event.target.checked)}
+              disabled={busy}
+              className="mt-1 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-200"
+            />
+            <span>
+              <span className="block text-[13px] font-bold text-foreground-900">Schedule a Teams meeting now</span>
+              <span className="mt-0.5 block text-[12px] text-foreground-500">Leave this off to add the Review as Not Scheduled.</span>
+            </span>
+          </label>
+
+          {scheduleNow ? (
+            <div className="grid gap-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3 sm:grid-cols-3">
+              <label className="block sm:col-span-1">
+                <ScheduleFieldLabel>Meeting date</ScheduleFieldLabel>
+                <ModernDatePicker value={schedule.date} onChange={value => setSchedule(current => ({ ...current, date: value }))} />
+              </label>
+              <label className="block">
+                <ScheduleFieldLabel>Time</ScheduleFieldLabel>
+                <ScheduleTimeInput value={schedule.time} onChange={value => setSchedule(current => ({ ...current, time: value }))} />
+              </label>
+              <label className="block">
+                <ScheduleFieldLabel>Duration</ScheduleFieldLabel>
+                <ModernDurationPicker value={schedule.durationMinutes} onChange={value => setSchedule(current => ({ ...current, durationMinutes: value }))} />
+              </label>
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">{error}</div>
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-foreground-100 px-5 py-4">
+          <button type="button" onClick={onClose} disabled={busy} className="rounded-lg border border-foreground-200 px-4 py-2.5 text-[13px] font-bold text-foreground-600 transition hover:bg-background-100 disabled:opacity-50">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => { void handleSubmit(); }}
+            disabled={busy || !canSubmit}
+            className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2.5 text-[13px] font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <AppIcon className={busy ? 'ri-loader-4-line animate-spin' : scheduleNow ? 'ri-calendar-check-line' : 'ri-file-add-line'}></AppIcon>
+            {busy ? 'Adding...' : scheduleNow ? 'Add & Schedule' : 'Add Review'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function reviewGenerationIssueMessage(code: string) {
+  if (code === 'missing_learner_start_date') {
+    return 'Future reviews and monthly coaching meetings cannot be generated because the learner start date is missing. Existing scheduled records may still appear below.';
+  }
+  if (code === 'invalid_learner_start_date') {
+    return 'Future reviews and monthly coaching meetings cannot be generated because the learner start date is invalid.';
+  }
+  if (code === 'missing_learner_enrolment') {
+    return 'Future reviews and monthly coaching meetings cannot be generated because this learner is not linked to an enrolment record.';
+  }
+  if (code === 'missing_curriculum_programme') {
+    return 'Review scheduling is unavailable because this learner is not linked to a Curriculum programme.';
+  }
+  if (code === 'no_enabled_review_templates') {
+    return 'No enabled Review templates are configured for this learner\'s Curriculum programme.';
+  }
+  return 'The review schedule could not be generated for this learner. Check their enrolment and Curriculum configuration.';
+}
+
+function ReviewMeetingList({ items, itemLabel, onOpen }: { items: CaseFileReviewMeeting[]; itemLabel: 'review' | 'meeting'; onOpen: (item: CaseFileReviewMeeting) => void }) {
+  const [showAll, setShowAll] = useState(false);
+  const visibleItems = showAll ? items : items.slice(0, 6);
+
   return (
     <div>
-      {items.map((item) => (
-        <div key={item.id} className="flex items-start gap-3 border-b border-foreground-100 py-4 last:border-0">
+      {visibleItems.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          className="flex w-full items-start gap-3 border-b border-foreground-100 py-4 text-left transition-colors last:border-0 hover:bg-background-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+          aria-label={`View ${itemLabel}: ${item.title}`}
+          onClick={() => onOpen(item)}
+        >
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
             <AppIcon className="ri-calendar-event-line"></AppIcon>
           </span>
@@ -1013,8 +1376,21 @@ function ReviewMeetingList({ items }: { items: CaseFileReviewMeeting[] }) {
             <p className="mt-1 text-[12px] font-medium text-foreground-500">{item.date} - {item.time}</p>
             <p className="mt-1 text-[12px] text-foreground-400">{item.detail}</p>
           </div>
-        </div>
+          <span className="mt-2 flex h-8 w-8 shrink-0 items-center justify-center text-foreground-400" title={`View ${itemLabel}`}>
+            <AppIcon className="ri-arrow-right-s-line text-lg"></AppIcon>
+          </span>
+        </button>
       ))}
+      {items.length > 6 ? (
+        <button
+          type="button"
+          className="mt-2 inline-flex items-center gap-1 text-[12px] font-semibold text-primary-700 hover:text-primary-800"
+          onClick={() => setShowAll(current => !current)}
+        >
+          <AppIcon className={showAll ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></AppIcon>
+          {showAll ? 'Show fewer' : `Show all (${items.length})`}
+        </button>
+      ) : null}
     </div>
   );
 }
