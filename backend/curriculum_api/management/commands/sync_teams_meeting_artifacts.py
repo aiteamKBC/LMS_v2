@@ -84,7 +84,7 @@ class Command(BaseCommand):
                     [series_id, bool(requested_ids)])
         try:
             call_command('process_session_results', limit=limit, scheduled=False,
-                         stdout=self.stdout, stderr=self.stderr)
+                         live_session_ids=requested_ids, stdout=self.stdout, stderr=self.stderr)
         finally:
             if should_sync_coach_meetings:
                 self._sync_coach_meeting_snapshots(lookback_hours, coach_limit)
