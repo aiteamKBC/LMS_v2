@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { isReviewSession, mergeCompletedReviewHistory } from './useReviewSessions';
+import { isReviewSession, isReviewSessionWrite, mergeCompletedReviewHistory } from './useReviewSessions';
 
 const event = (fields: Partial<LearnerCalendarEvent> = {}): LearnerCalendarEvent => ({
   id: 'review:1:REV-A:1', eventKey: 'review:1:REV-A:1', title: 'Renamed conversation',
@@ -29,5 +29,12 @@ describe('Review source ownership', () => {
     const pending = event({ id: 'imported:2', eventKey: 'imported:2' });
     expect(mergeCompletedReviewHistory([current], [complete, pending])).toEqual([current, complete]);
     expect(mergeCompletedReviewHistory([current, complete], [complete])).toEqual([current, complete]);
+  });
+
+  it('refreshes review pages only for Curriculum review writes', () => {
+    expect(isReviewSessionWrite('/curriculum/reviews/REV-A/')).toBe(true);
+    expect(isReviewSessionWrite('/curriculum/programmes/PROG-A/reviews/')).toBe(true);
+    expect(isReviewSessionWrite('/curriculum/modules/MOD-A/')).toBe(false);
+    expect(isReviewSessionWrite('/curriculum/groups/GROUP-A/')).toBe(false);
   });
 });

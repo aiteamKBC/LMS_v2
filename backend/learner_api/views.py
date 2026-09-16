@@ -43,6 +43,7 @@ from .active_users import (
 from .identity import learner_profile_for_source
 from .account_deletion import delete_learner_account
 from .learner_dates import save_enrolment_fields
+from .coach_assignment import case_owner_coach, current_coach
 from .directory import learner_directory_queryset
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
@@ -623,21 +624,15 @@ def _create_profile_from_delivery_payload(payload, *, apprenticeship):
 # left the GET open to any authenticated caller (coach name/email of any learner).
 @learner_self_or_staff(kwarg="pk")
 def learner_coach(request, pk):
-    """Read/update a learner's coach contact, stored on "Learner"."learners"
-    (LearnerProfile, columns coach_name / coach_email), resolved from the
-    enrolment row by ``learner_profile_for_source``. Set from the Owner cell in
-    the learner header (BoardPage's HeroCoach), which picks a Caseowner/Admin out
-    of Staff_users and writes both columns together. The learner must be Active —
-    they only have a profile row then — so this 404s otherwise and the UI treats
-    that as "no coach yet" rather than an error.
+    """Read/update the coach on the enrolment record and its linked profile.
+
+    The Owner picker and the edit form's Case owner represent one assignment.
+    Persist both name and email on the source so reactivation preserves them.
+    This picker is available only while the learner is Active.
 
         GET   /learner_api/learners/<id>/coach/   -> {coachName, coachEmail}
         PATCH /learner_api/learners/<id>/coach/   -> {coachName?, coachEmail?} -> same
 
-    Written straight to the mirror (not the source tables), so a status toggle to
-    non-Active deletes the row and the coach data with it — re-entered on
-    reactivation. An Active->Active re-save preserves it (sync_active_user's UPDATE
-    excludes these columns).
     """
     try:
         source = EnrolmentUser.all_learners.filter(pk=pk).first()
@@ -652,7 +647,11 @@ def learner_coach(request, pk):
         return _error("No active learner record. Coach can be set once the learner is Active.", 404)
 
     if request.method == "GET":
-        return JsonResponse({"coachName": active.coach_name or "", "coachEmail": active.coach_email or ""})
+        try:
+            contact = current_coach(source, active)
+        except DatabaseError as exc:
+            return _error(f"Database error: {exc}", 502)
+        return JsonResponse({"coachName": contact["coach_name"], "coachEmail": contact["coach_email"]})
 
     if request.method in ("PATCH", "PUT"):
         # A coach is assigned by staff from the learner's board, never by the
@@ -679,13 +678,24 @@ def learner_coach(request, pk):
         if not update:
             return _error("Provide coachName and/or coachEmail.", 400)
 
-        for attr, value in update.items():
-            setattr(active, attr, value)
         try:
-            active.save(update_fields=list(update.keys()))
+            if "coach_email" not in update:
+                update = case_owner_coach(update["coach_name"], source)
+            elif "coach_name" not in update:
+                if not update["coach_email"]:
+                    update["coach_name"] = ""
+                else:
+                    staff = list(StaffUser.objects.filter(email__iexact=update["coach_email"]).only("username")[:2])
+                    if len(staff) != 1:
+                        return _error("Provide coachName with this coachEmail.", 400)
+                    update["coach_name"] = staff[0].username or ""
+            update["case_owner"] = update["coach_name"]
+            for attr, value in update.items():
+                setattr(source, attr, value)
+            save_enrolment_fields(source, update)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse({"coachName": active.coach_name or "", "coachEmail": active.coach_email or ""})
+        return JsonResponse({"coachName": update["coach_name"], "coachEmail": update["coach_email"]})
 
     return _error("Method not allowed.", 405)
 
@@ -735,58 +745,75 @@ def enrolment_users(request):
         except ValidationError as exc:
             return _error(str(exc), 400)
 
-        # Stamp who/when enrolled, server-side.
-        stamp = timezone.now().strftime("%d/%m/%Y %H:%M:%S")
-        fields.setdefault("enrolled_time_and_user", f"{stamp} by Enrolment Officer")
-
-        # Every learner gets a platform account on enrolment — the form no
-        # longer asks, and a caller cannot opt out by sending the flag as false.
-        # Assignment rather than setdefault for exactly that reason: the column
-        # records what the platform does, not a choice somebody made on a form.
-        # The invitation *email* is a separate, deliberate step from the
-        # Accounts page; this flag is about entitlement, not delivery.
-        fields["invite_to_platform"] = True
-
-        # Stamp the cohort's delivery window from the authored cohort table. The
-        # cohort carries two end dates: end_date/practical_period_end_date close
-        # the practical period, and apprenticeship_end_date adds the cohort's EPA
-        # period on top. These columns are text on this table, so the dates are
-        # written as ISO strings.
-        start, practical_end, apprenticeship_end = cohort_delivery_window(
-            fields.get("programme"), fields.get("cohort")
-        )
-        if start is not None:
-            fields["start_date"] = start
-        if practical_end is not None:
-            fields["end_date"] = practical_end
-            fields.setdefault("practical_period_end_date", practical_end.isoformat())
-        if apprenticeship_end is not None:
-            # setdefault, not assignment: this column doubles as a per-learner
-            # override (see mappers.py), so an explicitly supplied one wins.
-            fields.setdefault("apprenticeship_end_date", apprenticeship_end.isoformat())
-
         try:
-            # all_learners: the default manager is scoped to apprenticeship, so
-            # creating through it would fight the learnerType we just set.
-            user = EnrolmentUser.all_learners.create(**fields)
+            row = _create_enrolment_user(request, fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-
-        # Commercial learners are date-driven from the moment they are
-        # created: before the start date they are Delivery, and on/after it
-        # they become Active. Apprenticeship learners keep the normal document
-        # and review progression.
-        advance_learner(user)
-        row = to_list_row(user)
-        # Provision the platform account without emailing. Enrolling somebody
-        # gives them an account; an administrator sends the invitation from the
-        # Accounts page when the record has been checked. Reported alongside the
-        # created learner so the console can say the account is awaiting one.
-        row["invitation"] = _send_platform_invitation(request, "learner", user.id, subject=user)
         return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)
 
+
+def _create_enrolment_user(request, fields, *, require_account=False):
+    """Shared single/bulk creation, including placement and account setup.
+
+    Bulk callers hold an enrolment transaction and require account failures
+    to abort that transaction rather than leave a partially imported file.
+    """
+    fields = dict(fields)
+    # Stamp who/when enrolled, server-side.
+    stamp = timezone.now().strftime("%d/%m/%Y %H:%M:%S")
+    fields.setdefault("enrolled_time_and_user", f"{stamp} by Enrolment Officer")
+
+    # Every learner gets a platform account on enrolment — the form no
+    # longer asks, and a caller cannot opt out by sending the flag as false.
+    # Assignment rather than setdefault for exactly that reason: the column
+    # records what the platform does, not a choice somebody made on a form.
+    # The invitation *email* is a separate, deliberate step from the
+    # Accounts page; this flag is about entitlement, not delivery.
+    fields["invite_to_platform"] = True
+
+    # Stamp the cohort's delivery window from the authored cohort table. The
+    # cohort carries two end dates: end_date/practical_period_end_date close
+    # the practical period, and apprenticeship_end_date adds the cohort's EPA
+    # period on top. These columns are text on this table, so the dates are
+    # written as ISO strings.
+    start, practical_end, apprenticeship_end = cohort_delivery_window(
+        fields.get("programme"), fields.get("cohort")
+    )
+    if start is not None:
+        fields["start_date"] = start
+    if practical_end is not None:
+        fields["end_date"] = practical_end
+        fields.setdefault("practical_period_end_date", practical_end.isoformat())
+    if apprenticeship_end is not None:
+        # setdefault, not assignment: this column doubles as a per-learner
+        # override (see mappers.py), so an explicitly supplied one wins.
+        fields.setdefault("apprenticeship_end_date", apprenticeship_end.isoformat())
+
+    # all_learners: the default manager is scoped to apprenticeship, so
+    # creating through it would fight the learnerType we just set.
+    if "case_owner" in fields:
+        fields.update(case_owner_coach(fields["case_owner"]))
+    user = EnrolmentUser.all_learners.create(**fields)
+
+    # Commercial learners are date-driven from the moment they are
+    # created: before the start date they are Delivery, and on/after it
+    # they become Active. Apprenticeship learners keep the normal document
+    # and review progression.
+    advance_learner(user)
+    row = to_list_row(user)
+    # Provision the platform account without emailing. Enrolling somebody
+    # gives them an account; an administrator sends the invitation from the
+    # Accounts page when the record has been checked. Reported alongside the
+    # created learner so the console can say the account is awaiting one.
+    row["invitation"] = _send_platform_invitation(request, "learner", user.id, subject=user)
+    if require_account and (
+        row["invitation"].get("error")
+        or not row["invitation"].get("awaitingInvitation")
+    ):
+        raise ValidationError("The learner's platform account could not be created. No students were imported.")
+    return row
 
 @csrf_exempt
 # Intentionally ungated (reviewed 2026-09-05): pure static enum lists (status,

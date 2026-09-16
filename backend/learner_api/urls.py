@@ -1,4 +1,6 @@
+from .coach_availability import coach_available_slots
 from . import presentation_design
+from . import learner_import
 from . import monthly_reflection_ai
 from . import ksb_generation
 from django.urls import path
@@ -12,11 +14,12 @@ from .attendance_confirmation import confirm_attendance
 from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, review_attendance_mode
 
-from . import certificates, monthly_assignment, legacy_assignments, review_history
+from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
 from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
 urlpatterns = [
+    path("calendar/<str:kind>/<int:pk>/coach-availability/", coach_available_slots, name="coach-available-slots"),
     path('monthly-logs/learners/', monthly_logs.learners, name='monthly-log-learners'),
     path('monthly-logs/<int:learner_id>/', monthly_logs.summary, name='monthly-log-summary'),
     path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),
@@ -34,6 +37,8 @@ urlpatterns = [
     path('profile-photo/<str:kind>/<int:pk>/', learner_profile_photo, name='learner-profile-photo'),
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
+    path("enrolment-users/import-template/", learner_import.import_template, name="enrolment-users-import-template"),
+    path("enrolment-users/import/", learner_import.import_students, name="enrolment-users-import"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
     path("enrolment-users/<int:pk>/", views.enrolment_user_detail, name="enrolment-user-detail"),
     path("enrolment-users/<int:pk>/fields/", views.enrolment_user_fields, name="enrolment-user-fields"),
@@ -156,6 +161,7 @@ urlpatterns = [
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
     path("quizzes/<int:quiz_id>/submit/", quizzes.submit_quiz_attempt, name="quiz-submit"),
+    path("quizzes/<int:quiz_id>/reading/", quiz_reading.quiz_reading, name="quiz-reading"),
     # video-watching
     path("videos/<str:component_id>/complete/", videos.submit_video_progress, name="video-complete"),
     # generic component completion (podcast / reading / slides / reflection / …)
@@ -193,6 +199,7 @@ urlpatterns = [
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/sign/", calendar.learner_progress_review_sign, name="learner-progress-review-sign"),
     # Read-only: the Curriculum Review form behind a scheduled occurrence.
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/review/", calendar.learner_calendar_event_review, name="learner-calendar-event-review"),
+    path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/review/pdf/", calendar.learner_calendar_event_review_pdf, name="learner-calendar-event-review-pdf"),
     # Declared before the <path:event_key> route below, which would otherwise
     # never be reached for the bare list URL.
     path("reviews/<str:kind>/<int:pk>/", review_form.enrolment_review_documents, name="enrolment-review-documents"),

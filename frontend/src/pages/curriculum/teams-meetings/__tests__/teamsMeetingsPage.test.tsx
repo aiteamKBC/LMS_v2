@@ -1,3 +1,4 @@
+import { finishTeamsCreation } from '../creationResult';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -135,11 +136,12 @@ import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature
 
 const confirmMock = vi.mocked(showCurriculumConfirm);
 const alertMock = vi.mocked(showCurriculumAlert);
+vi.mock('../creationResult', () => ({ finishTeamsCreation: vi.fn() }));
 
 // Every week already has its live session unless a test says otherwise.
 const probeModuleTeamsAttachment = vi.fn(async () => 0);
 const fetchCurriculumTeamsMeetingSummaries = vi.fn(async () => summaries);
-const fetchCurriculumSessions = vi.fn(async () => sessions);
+const fetchCurriculumSessions = vi.fn<typeof import('@/lib/curriculumApi').fetchCurriculumSessions>(async () => sessions);
 
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
@@ -228,6 +230,8 @@ describe('Teams Meetings page', () => {
     syncTeamsMeetingArtifacts.mockClear();
     fetchCurriculumTeamsMeetingSummaries.mockClear();
     fetchCurriculumTeamsMeetingSummaries.mockImplementation(async () => summaries);
+    fetchCurriculumSessions.mockReset();
+    fetchCurriculumSessions.mockResolvedValue(sessions);
     confirmMock.mockReset();
     confirmMock.mockResolvedValue(false);
     probeModuleTeamsAttachment.mockClear();
@@ -236,6 +240,7 @@ describe('Teams Meetings page', () => {
     // the file, so any test asserting on what a click confirmed counts every
     // earlier test's alerts too.
     alertMock.mockClear();
+    vi.mocked(finishTeamsCreation).mockClear();
     window.localStorage.removeItem('curriculumTeamsAutoSync');
   });
 
@@ -272,7 +277,7 @@ describe('Teams Meetings page', () => {
     expect(blocked).toHaveTextContent('Blocked by Autumn closure; replacement scheduled on 17 Sept 2026.');
     // …and the day it moved onto is marked as the replacement, not as a
     // second, unexplained session.
-    expect(within(dialog).getByText('17 Sept 2026, 09:30').closest('div'))
+    expect(within(dialog).getByText('17 Sept 2026, 9:30 AM').closest('div'))
       .toHaveTextContent('Replacement delivered');
     // The session numbers the holiday note talks about are findable in the list.
     expect(within(dialog).getByText('Session 1')).toBeInTheDocument();
@@ -302,7 +307,7 @@ describe('Teams Meetings page', () => {
     // calendar entry that is only an hour out says exactly that.
     const clinic = await screen.findByRole('dialog');
     expect(within(clinic).getByText(/Right day, wrong time/))
-      .toHaveTextContent('Teams still holds 08:30; sending moves it here.');
+      .toHaveTextContent('Teams still holds 8:30 AM; sending moves it here.');
     // …and the note is only worth reading next to what makes it happen.
     expect(within(clinic).getByText(/Nothing on the Teams calendar changes/))
       .toHaveTextContent('until you press Update Teams calendar');
@@ -315,7 +320,7 @@ describe('Teams Meetings page', () => {
     // "same as the module" line used to repeat that fact once per session and
     // buried the one row that had actually moved.
     expect(within(risk).queryByText(/nothing to change/)).not.toBeInTheDocument();
-    expect(within(risk).getByText('Teams still holds 10 Sept 2026, 09:30; sending moves it here.'))
+    expect(within(risk).getByText('Teams still holds 10 Sept 2026, 9:30 AM; sending moves it here.'))
       .toBeInTheDocument();
   });
 
@@ -519,6 +524,58 @@ describe('Teams Meetings page', () => {
     expect(row.getByRole('button', { name: 'Create Teams meetings calendar' })).toBeInTheDocument();
   });
 
+  it('creates all 16 current session dates when the session cache still holds only three', async () => {
+    const dates = [
+      '2026-09-16', '2026-09-21', '2026-09-23', '2026-09-28',
+      '2026-09-30', '2026-10-05', '2026-10-07', '2026-10-12',
+      '2026-10-14', '2026-10-19', '2026-10-21', '2026-10-26',
+      '2026-10-28', '2026-11-02', '2026-11-04', '2026-11-09',
+    ];
+    const currentSessions = dates.map((date, index) => session('MOD-3', date, {
+      day: index % 2 === 0 ? 'Wednesday' : 'Monday',
+      startTime: index % 2 === 0 ? '11:30' : '11:00',
+      endTime: index % 2 === 0 ? '14:30' : '14:00',
+      week: Math.floor(index / 2) + 1,
+    }));
+    const otherSessions = sessions.filter(item => item.moduleCatalogueId !== 'MOD-3');
+    fetchCurriculumSessions.mockImplementation(async (_signal, options) => [
+      ...otherSessions,
+      ...(options?.skipCache ? currentSessions : currentSessions.slice(0, 3)),
+    ]);
+
+    await renderPage();
+    expect(await screen.findByText('Reporting Basics')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText('16 module sessions')).toBeInTheDocument();
+    expect(dialog.getAllByText(/^Session \d+$/)).toHaveLength(16);
+    expect(dialog.getByText('16 Sept 2026, 11:30 AM')).toBeInTheDocument();
+    expect(dialog.getByText('21 Sept 2026, 11:00 AM')).toBeInTheDocument();
+    expect(dialog.getByText('9 Nov 2026, 11:00 AM')).toBeInTheDocument();
+    await userEvent.click(dialog.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(createTeamsMeeting).toHaveBeenCalledTimes(1));
+    // Keep each weekday's own time, including the October clock change in
+    // the configured Microsoft calendar's London timezone.
+    const expectedStarts = [
+      '2026-09-16T10:30:00.000Z', '2026-09-21T10:00:00.000Z',
+      '2026-09-23T10:30:00.000Z', '2026-09-28T10:00:00.000Z',
+      '2026-09-30T10:30:00.000Z', '2026-10-05T10:00:00.000Z',
+      '2026-10-07T10:30:00.000Z', '2026-10-12T10:00:00.000Z',
+      '2026-10-14T10:30:00.000Z', '2026-10-19T10:00:00.000Z',
+      '2026-10-21T10:30:00.000Z', '2026-10-26T11:00:00.000Z',
+      '2026-10-28T11:30:00.000Z', '2026-11-02T11:00:00.000Z',
+      '2026-11-04T11:30:00.000Z', '2026-11-09T11:00:00.000Z',
+    ];
+    expect(createTeamsMeeting).toHaveBeenCalledWith(expect.objectContaining({
+      repeatOccurrences: 16,
+      scheduledOccurrences: expectedStarts.map((startDateTimeUtc, index) => ({
+        sessionNumber: index + 1, startDateTimeUtc, durationMinutes: 180,
+      })),
+    }));
+  });
+
   it('plays a recording in place and records how it was watched', async () => {
     await renderPage();
     expect(await screen.findByText('Data Foundations')).toBeInTheDocument();
@@ -562,7 +619,7 @@ describe('Teams Meetings page', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('heading', { name: /Reporting Basics/ })).toBeInTheDocument();
     expect(within(dialog).getByText('Dates the calendar will be created on')).toBeInTheDocument();
-    expect(within(dialog).getByText('4 Sept 2026, 09:30')).toBeInTheDocument();
+    expect(within(dialog).getByText('4 Sept 2026, 9:30 AM')).toBeInTheDocument();
     const details = within(dialog).getByLabelText(/Details/i) as HTMLTextAreaElement;
     expect(details.value).toBe('');
     expect(within(dialog).queryByText(/__program_id/)).not.toBeInTheDocument();
@@ -606,8 +663,12 @@ describe('Teams Meetings page', () => {
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
 
-    await waitFor(() => expect(alertMock).toHaveBeenCalledTimes(1));
-    expect(alertMock.mock.calls[0][0]).toMatchObject({ title: 'Session dates sent to Teams' });
+    await waitFor(() => expect(finishTeamsCreation).toHaveBeenCalledTimes(1));
+    expect(finishTeamsCreation).toHaveBeenCalledWith(
+      expect.objectContaining({ created: true, meeting: { settingsApplied: true } }),
+      expect.objectContaining({ scheduledOccurrences: expect.any(Array) }),
+      '',
+    );
 
     // The dialog is gone, not swapped for the summary view of the same module.
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

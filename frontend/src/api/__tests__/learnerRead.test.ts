@@ -5,6 +5,8 @@ import { fetchLearnerDetail, fetchLearnerSummary, peekLearnerDetail, invalidateL
 import { fetchStudentActivity } from '../studentActivity';
 import { fetchTrainingPlanDashboard } from '../trainingPlanDashboard';
 import { overviewSchedule } from '../learnerOverview';
+import { updateLearnerCoach } from '../coach';
+import { updateEnrolmentUser } from '../enrolmentUsers';
 import { getSummary, RecordError } from '@/features/old-otjh/api';
 
 const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
@@ -18,6 +20,20 @@ beforeEach(() => { clearAllCachedResources(); vi.stubGlobal('fetch', vi.fn()); }
 afterEach(() => { clearAllCachedResources(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('learner data transport', () => {
+  it.each(['case owner', 'coach'])('refreshes the dashboard coach after saving the %s', async field => {
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ sessions: [], reviews: [], coach: { name: 'Rewan Yasser' } }));
+    expect((await overviewSchedule.read('commercial', '501')).coach.name).toBe('Rewan Yasser');
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ coachName: 'Test curriculum', coachEmail: 'curriculum@example.com' }));
+    if (field === 'case owner') {
+      await updateEnrolmentUser('501', { caseOwner: 'Test curriculum' });
+    } else {
+      await updateLearnerCoach('501', { coachName: 'Test curriculum', coachEmail: 'curriculum@example.com' });
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ sessions: [], reviews: [], coach: { name: 'Test curriculum' } }));
+    expect((await overviewSchedule.read('commercial', '501')).coach.name).toBe('Test curriculum');
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
   it.each(['student-activity', 'metrics'])('allows slow verified %s reads but still bounds a stuck source', async resource => {
     vi.useFakeTimers();
     const network = pending<Response>();
@@ -107,7 +123,7 @@ describe('learner data transport', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.each([401, 403, 500])('preserves HTTP %i and never caches a refusal or failure', async status => {
+  it.each([401, 403])('preserves HTTP %i and never caches a refusal or failure', async status => {
     vi.mocked(fetch).mockResolvedValueOnce(reply({ error: 'Cannot load this record', code: 'unavailable' }, status));
     await expect(readLearnerJson('/learner_api/example/', { ttlMs: 30_000 })).rejects.toMatchObject({ status, code: 'unavailable' });
     vi.mocked(fetch).mockResolvedValueOnce(reply({ ok: true }));
@@ -115,9 +131,25 @@ describe('learner data transport', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it('rejects HTML and retries instead of caching an invalid JSON response', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(new Response('<html>Error</html>', { status: 502 }));
-    await expect(readLearnerJson('/learner_api/example/')).rejects.toThrow(/invalid response/);
+  it('automatically retries a transient HTML 500 response once', async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response('<html>Error</html>', { status: 500 }))
+      .mockResolvedValueOnce(reply({ ok: true }));
+    const recovered = readLearnerJson('/learner_api/example/');
+    await vi.advanceTimersByTimeAsync(600);
+    await expect(recovered).resolves.toEqual({ ok: true });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces a repeated invalid server response and allows a later recovery', async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response('<html>Error</html>', { status: 502 }))
+      .mockResolvedValueOnce(new Response('<html>Error</html>', { status: 502 }));
+    const failed = expect(readLearnerJson('/learner_api/example/')).rejects.toThrow(/invalid response/);
+    await vi.advanceTimersByTimeAsync(600);
+    await failed;
     vi.mocked(fetch).mockResolvedValueOnce(reply({ ok: true }));
     await expect(readLearnerJson('/learner_api/example/')).resolves.toEqual({ ok: true });
   });

@@ -16,6 +16,8 @@ import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { checkMonthlyAssignment, emptyMonthlyAssignment, MONTHLY_STEPS, type MonthlyAssignment, type AssignmentQualityCheck } from '@/api/monthlyAssignment';
 import { MonthlyAnswerField, MonthlyAssignmentSteps } from './MonthlyAssignmentSteps';
+import { AssignmentAttachment } from '../monthly-submission/AssignmentAttachment';
+import { assignmentTimeHours } from './AssignmentTimeEntries';
 import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
 
@@ -57,6 +59,8 @@ export function AssignmentSubmissionWizard({
   initialMonth,
   questionHtml,
   questionText,
+  questionFileUrl,
+  questionFileName,
   ksbMappings,
   evidenceFiles,
   evidenceDetails,
@@ -86,6 +90,8 @@ export function AssignmentSubmissionWizard({
   initialMonth?: string | null;
   questionHtml?: string | null;
   questionText?: string | null;
+  questionFileUrl?: string | null;
+  questionFileName?: string | null;
   ksbMappings: ComponentKsbMapping[];
   evidenceFiles: EvidenceRecord[];
   evidenceDetails: EvidenceTrainingPlanDetails;
@@ -108,6 +114,8 @@ export function AssignmentSubmissionWizard({
   // The Training Plan month seeds a new assignment; a saved draft always wins.
   const [defaultMonth] = useState(() => initialMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(initialMonth) ? initialMonth : londonDate().slice(0, 7));
   const [monthly, setMonthly] = useState<MonthlyAssignment>(() => emptyMonthlyAssignment(ksbMappings.map(m => m.code), defaultMonth));
+  const detailedSeconds = monthly.timeEntries === undefined ? null : Math.round(assignmentTimeHours(monthly.timeEntries) * 3600);
+  const claimedSeconds = detailedSeconds ?? timeSeconds;
   const [checks, setChecks] = useState<AssignmentQualityCheck[]>([]);
   const [checking, setChecking] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -133,6 +141,9 @@ export function AssignmentSubmissionWizard({
   const recoveryKey = `monthly-assignment-draft:${kind}:${learnerId}:${componentId}`;
 
   useEffect(() => { onRestoreTimeRef.current = onRestoreTime; }, [onRestoreTime]);
+  useEffect(() => {
+    if (detailedSeconds !== null) onRestoreTimeRef.current(detailedSeconds, 'input');
+  }, [detailedSeconds]);
 
   const locked = historicalReadOnly || imported || status === 'submitted_for_tutor_review' || status === 'accepted';
   const readOnly = locked || loadFailed || submittingProgress;
@@ -184,7 +195,7 @@ export function AssignmentSubmissionWizard({
     evidenceConsentConfirmed: monthly.sharingConsent,
     selectedBenefits: [],
     benefitExplanation: answers.businessImpact,
-    actualTimeHours: timeSeconds && timeSeconds > 0 ? String(timeSeconds / 3600) : '',
+    actualTimeHours: claimedSeconds && claimedSeconds > 0 ? String(claimedSeconds / 3600) : '',
     completedDuringPaidHours: monthly.paidHours ? 'yes' : 'no',
     dateCompleted: mode === 'submit' ? londonDate() : '',
     otjhConfirmed: mode === 'submit',
@@ -197,7 +208,7 @@ export function AssignmentSubmissionWizard({
     outsideWorkingHours,
     outsideWorkingHoursConfirmed,
     monthlyAssignment: { ...monthly, step },
-    assignmentTimeSource: timeSource,
+    assignmentTimeSource: detailedSeconds !== null ? 'input' : timeSource,
   });
   latestDraftRef.current = payload('draft');
 
@@ -247,10 +258,10 @@ export function AssignmentSubmissionWizard({
         setStatus(submission.status || '');
         setImported(['imported_legacy', 'classified_legacy'].includes(submission.submissionOrigin || ''));
         if (submission.monthlyAssignment) {
-          const restored = { ...emptyMonthlyAssignment(ksbMappings.map(m => m.code), defaultMonth), ...submission.monthlyAssignment };
+          const restored = { ...emptyMonthlyAssignment(ksbMappings.map(m => m.code), defaultMonth), ...submission.monthlyAssignment, timeEntries: submission.monthlyAssignment.timeEntries };
           setMonthly(restored);
           setStep(Math.max(0, Math.min(7, Number(restored.step) || 0)));
-        }
+        } else setMonthly(current => ({ ...current, timeEntries: undefined }));
         const storedHours = Number(submission.actualTimeHours);
         if (Number.isFinite(storedHours) && storedHours > 0) {
           const seconds = Math.round(storedHours * 3600);
@@ -354,7 +365,7 @@ export function AssignmentSubmissionWizard({
 
   const submit = async () => {
     if (readOnly || submittingRef.current || checking || submittingProgress) return;
-    if (!timeSeconds || timeSeconds <= 0) {
+    if (!claimedSeconds || claimedSeconds <= 0) {
       setSaveError('Enter the time spent on this assignment before submitting.');
       return;
     }
@@ -378,7 +389,7 @@ export function AssignmentSubmissionWizard({
         setSaveError('Your draft is saved. Complete the outstanding checks before submitting.');
         return;
       }
-      setSavedTimeSeconds(timeSeconds);
+      setSavedTimeSeconds(claimedSeconds);
       await onSubmitProgress(answers);
       setStatus('submitted_for_tutor_review');
       try { sessionStorage.removeItem(recoveryKey); } catch { /* Optional recovery copy. */ }
@@ -491,10 +502,11 @@ export function AssignmentSubmissionWizard({
                   {cleanQuestionHtml ? (
                     <div className="max-w-none [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={{ __html: cleanQuestionHtml }} />
                   ) : (
-                    <p className="whitespace-pre-line">{questionText || 'Your tutor has not added the assignment question yet.'}</p>
+                    <p className="whitespace-pre-line">{questionText || (questionFileUrl ? 'Preview the attached file for your assignment question.' : 'Your tutor has not added the assignment question yet.')}</p>
                   )}
                 </div>
               </div>
+              {questionFileUrl && <AssignmentAttachment key={questionFileUrl} url={questionFileUrl} fileName={questionFileName} title={title} />}
               <MonthlyAnswerField title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
               <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">Write at least 120 words, then click Generate learning statements to draft the three fields below. Review and edit the generated text before submitting.</p>
               {learningGeneration.status && <div
@@ -629,6 +641,7 @@ export function AssignmentSubmissionWizard({
                   <h3 className="font-bold">Submission details</h3>
                   <p>Month: {monthly.month} · Time: {savedTimeSeconds ? `${(savedTimeSeconds / 3600).toFixed(2)} hours` : imported ? 'See original source record' : '0 hours'}</p>
                   <p>Coaching reference: {monthly.meetingKey || 'Not linked'}</p>
+                  {monthly.timeEntries?.map((entry, index) => <p key={index} className="mt-2"><strong>{entry.topic}</strong>: {entry.hours} hours · {entry.date}</p>)}
                   {monthly.claims.map(c => <p key={c.code} className="mt-2 whitespace-pre-wrap"><strong>{c.code}</strong>: {c.explanation}</p>)}
                 </section>
                 {monthly.slides.map((slide, index) => <section key={index} className="rounded-xl border border-background-200 p-4"><h3 className="font-bold">Slide {index + 1}: {slide.title}</h3><p className="mt-3 whitespace-pre-wrap text-sm">{slide.body}</p></section>)}

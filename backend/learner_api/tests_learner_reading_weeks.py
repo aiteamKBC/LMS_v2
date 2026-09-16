@@ -1,9 +1,10 @@
-"""The learner Training Plan shows the curriculum's own timeline, closures included.
+"""The learner Training Plan shows the curriculum's own timeline, holidays included.
 
 A learner who only ever receives session dates cannot tell a bank holiday from a
-mistake: the week simply is not there. ``attach_curriculum_slots`` gives every
-learner module the curriculum scheduler's slot spine, so a closed delivery day
-stays in the learner's timeline as a Reading Week that names the holiday.
+mistake: the day the holiday falls on has to say so. ``attach_curriculum_slots``
+gives every learner module the curriculum scheduler's slot spine, so a delivery
+day a ticked holiday lands on stays a normal session in the learner's timeline
+and simply names the holiday -- nothing is cancelled and nothing moves.
 
 The point of these tests is that the learner surface has NO scheduling logic of
 its own. Every assertion below is checked twice -- once against the learner
@@ -111,56 +112,53 @@ class AModuleWithNoHolidays(SimpleTestCase):
             ],
         )
 
-    def test_no_reading_week_appears(self):
-        self.assertEqual([slot for slot in self.module['curriculumSlots'] if slot['type'] == 'reading-week'], [])
+    def test_no_slot_is_flagged(self):
+        self.assertEqual([slot['cause'] for slot in self.module['curriculumSlots']], [''] * 6)
 
     def test_the_delivery_end_does_not_move(self):
         self.assertEqual(self.module['effectiveEndDate'], '2026-05-18')
         self.assertEqual(self.module['originalEndDate'], '2026-05-18')
 
 
-class OneHolidayReachesTheLearnerAsAReadingWeek(SimpleTestCase):
+class OneHolidayReachesTheLearnerAsAFlagOnItsOwnWeek(SimpleTestCase):
     """Cases 2, 3, 4, 5, 15."""
 
     def setUp(self):
         self.module = learner_module(excluded=['england-and-wales:2026-05-25'])
 
-    def test_the_closed_day_is_a_reading_week_in_the_learner_timeline(self):
+    def test_the_holiday_day_is_still_an_ordinary_delivered_slot(self):
         self.assertEqual(
             spine(self.module),
             [
                 ('2026-04-13', 'live-session', 1), ('2026-04-20', 'live-session', 2),
                 ('2026-04-27', 'live-session', 3),
-                # Monday 4 May is closed and still present.
-                ('2026-05-04', 'reading-week', None),
-                ('2026-05-11', 'live-session', 4), ('2026-05-18', 'live-session', 5),
-                ('2026-05-25', 'live-session', 6),
+                # Monday 4 May: still a live session, flagged rather than closed.
+                ('2026-05-04', 'live-session', 4),
+                ('2026-05-11', 'live-session', 5), ('2026-05-18', 'live-session', 6),
             ],
         )
 
     def test_the_holiday_details_reach_the_learner(self):
-        reading = next(slot for slot in self.module['curriculumSlots'] if slot['type'] == 'reading-week')
-        holiday = reading['holidays'][0]
+        flagged = next(slot for slot in self.module['curriculumSlots'] if slot['cause'] == 'holiday')
+        holiday = flagged['holidays'][0]
 
-        self.assertEqual(reading['cause'], 'holiday')
-        self.assertEqual(reading['sessionNumber'], None)
+        self.assertEqual(flagged['date'], '2026-05-04')
+        self.assertEqual(flagged['sessionNumber'], 4)
         self.assertEqual(holiday['label'], 'Early May bank holiday')
         self.assertEqual(holiday['startDate'], '2026-05-04')
         self.assertEqual(holiday['type'], views.BANK_HOLIDAY_TYPE)
 
-    def test_the_session_due_that_week_shifts_to_the_next_slot(self):
-        delivered = [slot for slot in self.module['curriculumSlots'] if slot['type'] == 'live-session']
-        after = next(slot for slot in delivered if slot['date'] == '2026-05-11')
+    def test_no_other_slot_is_flagged(self):
+        flagged = [slot['date'] for slot in self.module['curriculumSlots'] if slot['cause'] == 'holiday']
+        self.assertEqual(flagged, ['2026-05-04'])
 
-        self.assertEqual(after['sessionNumber'], 4)
-
-    def test_the_delivery_end_moves_one_slot(self):
+    def test_the_delivery_end_does_not_move(self):
         self.assertEqual(self.module['originalEndDate'], '2026-05-18')
-        self.assertEqual(self.module['effectiveEndDate'], '2026-05-25')
+        self.assertEqual(self.module['effectiveEndDate'], '2026-05-18')
 
-    def test_no_live_session_is_placed_on_the_closed_day(self):
+    def test_a_live_session_is_still_placed_on_the_holiday(self):
         delivered = [slot['date'] for slot in self.module['curriculumSlots'] if slot['type'] == 'live-session']
-        self.assertNotIn('2026-05-04', delivered)
+        self.assertIn('2026-05-04', delivered)
 
 
 class AnExcludedHolidayIsInvisibleToTheLearner(SimpleTestCase):
@@ -171,8 +169,8 @@ class AnExcludedHolidayIsInvisibleToTheLearner(SimpleTestCase):
             'england-and-wales:2026-05-04', 'england-and-wales:2026-05-25',
         ])
 
-    def test_no_reading_week_is_created(self):
-        self.assertEqual([slot['type'] for slot in self.module['curriculumSlots']], ['live-session'] * 6)
+    def test_no_slot_is_flagged(self):
+        self.assertEqual([slot['cause'] for slot in self.module['curriculumSlots']], [''] * 6)
 
     def test_the_session_runs_on_the_unticked_day(self):
         delivered = [slot['date'] for slot in self.module['curriculumSlots'] if slot['type'] == 'live-session']
@@ -190,15 +188,14 @@ class AnExcludedHolidayIsInvisibleToTheLearner(SimpleTestCase):
 
     def test_an_exclusion_between_two_applied_holidays_removes_only_itself(self):
         # Case 8's awkward variant: 4 May excluded, 25 May still applied. Eight
-        # sessions, so the run is long enough to reach the second holiday -- a
-        # six-session run ends on 18 May and never meets it.
+        # sessions, so the run is long enough to reach the second holiday.
         module = learner_module(module_row(sessions=8), excluded=['england-and-wales:2026-05-04'])
-        closed = [slot['date'] for slot in module['curriculumSlots'] if slot['type'] == 'reading-week']
+        flagged = [slot['date'] for slot in module['curriculumSlots'] if slot['cause'] == 'holiday']
 
-        self.assertEqual(closed, ['2026-05-25'])
-        # The excluded date delivers, and only one slot is lost overall.
+        self.assertEqual(flagged, ['2026-05-25'])
+        # The excluded date delivers unflagged, and nothing about the run moves.
         self.assertIn('2026-05-04', [slot['date'] for slot in module['curriculumSlots'] if slot['type'] == 'live-session'])
-        self.assertEqual(module['effectiveEndDate'], '2026-06-08')
+        self.assertEqual(module['effectiveEndDate'], '2026-06-01')
 
 
 class ConsecutiveAndSeparatedHolidays(SimpleTestCase):
@@ -209,31 +206,29 @@ class ConsecutiveAndSeparatedHolidays(SimpleTestCase):
         {'id': 'h-2', 'title': 'Second closure', 'holiday_date': '2026-04-27'},
     ]
 
-    def test_two_closures_in_a_row_are_two_reading_weeks(self):
+    def test_two_holidays_in_a_row_flag_their_own_slots(self):
         resolved = {COHORT: views.scheduling_holidays_from(self.BACK_TO_BACK, START)}
         payload = {'MOD-1': {'id': 'MOD-1'}}
         with patch.object(views, 'cohort_selected_holidays_by_cohort', return_value=resolved):
             attach_curriculum_slots([module_row(sessions=4)], payload, {'MOD-1': 4})
 
         self.assertEqual(
-            [(slot['date'], slot['type'], slot['sessionNumber']) for slot in payload['MOD-1']['curriculumSlots']],
+            [(slot['date'], slot['type'], slot['cause'], slot['sessionNumber']) for slot in payload['MOD-1']['curriculumSlots']],
             [
-                ('2026-04-13', 'live-session', 1),
-                ('2026-04-20', 'reading-week', None),
-                ('2026-04-27', 'reading-week', None),
-                ('2026-05-04', 'live-session', 2),
-                ('2026-05-11', 'live-session', 3),
-                ('2026-05-18', 'live-session', 4),
+                ('2026-04-13', 'live-session', '', 1),
+                ('2026-04-20', 'live-session', 'holiday', 2),
+                ('2026-04-27', 'live-session', 'holiday', 3),
+                ('2026-05-04', 'live-session', '', 4),
             ],
         )
 
-    def test_two_separated_holidays_cost_two_slots(self):
+    def test_two_separated_holidays_flag_two_slots_and_move_nothing(self):
         module = learner_module(module_row(sessions=8))
-        closed = [slot['date'] for slot in module['curriculumSlots'] if slot['type'] == 'reading-week']
+        flagged = [slot['date'] for slot in module['curriculumSlots'] if slot['cause'] == 'holiday']
 
-        self.assertEqual(closed, ['2026-05-04', '2026-05-25'])
+        self.assertEqual(flagged, ['2026-05-04', '2026-05-25'])
         self.assertEqual(module['originalEndDate'], '2026-06-01')
-        self.assertEqual(module['effectiveEndDate'], '2026-06-15')
+        self.assertEqual(module['effectiveEndDate'], '2026-06-01')
 
 
 class TheLearnerTimelineLosesAndInventsNothing(SimpleTestCase):
@@ -276,26 +271,26 @@ class TheLearnerTimelineLosesAndInventsNothing(SimpleTestCase):
 
 
 class TwiceWeeklyDelivery(SimpleTestCase):
-    """Case 9: the shift is the next delivery occurrence, never a flat seven days."""
+    """Case 9: a ticked holiday flags only the occurrence it falls on."""
 
     def setUp(self):
         self.row = module_row(delivery='Monday, Thursday', sessions=8)
         self.module = learner_module(self.row, excluded=['england-and-wales:2026-05-25'])
 
-    def test_the_closed_monday_is_the_only_closed_slot(self):
-        closed = [slot['date'] for slot in self.module['curriculumSlots'] if slot['type'] == 'reading-week']
-        self.assertEqual(closed, ['2026-05-04'])
+    def test_the_holiday_monday_is_the_only_flagged_slot(self):
+        flagged = [slot['date'] for slot in self.module['curriculumSlots'] if slot['cause'] == 'holiday']
+        self.assertEqual(flagged, ['2026-05-04'])
 
-    def test_the_displaced_session_runs_on_the_next_delivery_day(self):
+    def test_the_thursday_beside_it_is_untouched(self):
         after = next(slot for slot in self.module['curriculumSlots'] if slot['date'] == '2026-05-07')
 
-        # Thursday 7 May: three days later, not seven.
         self.assertEqual(after['type'], 'live-session')
+        self.assertEqual(after['cause'], '')
         self.assertEqual(after['day'], 'Thursday')
 
-    def test_the_end_moves_by_one_occurrence_not_one_week(self):
+    def test_the_end_does_not_move(self):
         self.assertEqual(self.module['originalEndDate'], '2026-05-07')
-        self.assertEqual(self.module['effectiveEndDate'], '2026-05-11')
+        self.assertEqual(self.module['effectiveEndDate'], '2026-05-07')
 
 
 class ModulesThatCannotBePlanned(SimpleTestCase):
@@ -316,7 +311,7 @@ class ModulesThatCannotBePlanned(SimpleTestCase):
         with patch.object(views, 'cohort_selected_holidays_by_cohort', side_effect=RuntimeError('cohort read down')):
             attach_curriculum_slots([row], payload, {row['id']: 6})
 
-        # No holidays could be resolved, so nothing is skipped -- but the
+        # No holidays could be resolved, so nothing is flagged -- but the
         # learner still gets a dated timeline rather than a broken page.
         self.assertEqual(len(payload[row['id']]['curriculumSlots']), 6)
         self.assertEqual(payload[row['id']]['effectiveEndDate'], '2026-05-18')

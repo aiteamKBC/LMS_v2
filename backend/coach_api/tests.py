@@ -37,6 +37,7 @@ from coach_api.views import (
     caseload_aptem_ids,
     caseload_evidenced_ksb_counts,
     dashboard_attendance_rows,
+    dashboard_review_history,
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
     fetch_source_schedule_rows,
@@ -162,6 +163,42 @@ class DashboardAttendanceTests(SimpleTestCase):
         with patch("coach_api.views.fetch_kbc_attendance_rates") as rates:
             self.assertEqual(dashboard_attendance_rows([], []), [])
         rates.assert_not_called()
+
+
+class DashboardReviewHistoryTests(SimpleTestCase):
+    @patch("coach_api.views.connections")
+    @patch("coach_api.views.caseload_aptem_ids", return_value={7: 4321})
+    def test_reviews_are_batched_and_split_into_mcm_and_reviews(self, aptem_ids, connections):
+        columns = [
+            "learner_id",
+            "id",
+            "aptem_review_id",
+            "review_name",
+            "review_type",
+            "reviewer_name",
+            "learner_name",
+            "planned_scheduled_date",
+            "completed_date",
+            "status",
+            "review_data",
+            "extraction_status",
+            "last_error",
+        ]
+        cursor = connections["default"].cursor.return_value.__enter__.return_value
+        cursor.description = [(column,) for column in columns]
+        cursor.fetchall.return_value = [
+            (7, 2, "A-2", "Monthly Coaching Meeting", "MCM", "Coach", "Learner",
+             None, date(2026, 9, 10), "Finished", "{}", "complete", None),
+            (7, 1, "A-1", "Progress Review", "Progress Review", "Coach", "Learner",
+             date(2026, 8, 20), None, "Planned", "{}", "complete", None),
+        ]
+
+        payload = dashboard_review_history([SimpleNamespace(id=7)])
+
+        self.assertEqual(payload[7]["aptemId"], "4321")
+        self.assertEqual([item["type"] for item in payload[7]["mcm"]], ["MCM"])
+        self.assertEqual([item["type"] for item in payload[7]["reviews"]], ["Progress Review"])
+        cursor.execute.assert_called_once()
 
 
 class AuditHourOverlayTests(SimpleTestCase):

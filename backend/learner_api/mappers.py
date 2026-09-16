@@ -986,7 +986,11 @@ def to_learner_detail(source, learner_profile):
     video_progress = [r for r in progress if r.get("kind") == "video"]
     # Generic non-quiz component completions (podcast/reading/slides/reflection/…),
     # written by learner_api.components.submit_component_progress.
-    component_progress = [r for r in progress if r.get("kind") == "component"]
+    component_progress = [
+        r for r in progress
+        if r.get("kind") == "component"
+        or (r.get("kind") == "quiz_reading" and r.get("submittedAt"))
+    ]
     progress_ksb_codes = sorted({
         _s(code).upper()
         for row in progress
@@ -998,17 +1002,23 @@ def to_learner_detail(source, learner_profile):
     activity_feed = learner_profile.activity_feed_entries(newest_first=True) if learner_profile else []
     snapshot_ksbs = _as_list(learner_profile.ksbs) if learner_profile else []
     curriculum_ksbs = []
-    if learner_profile:
-        try:
-            from .active_users import current_curriculum_ksb_items_for_learner
+    # Resolved from the programme's authored KSB profile, which needs only the
+    # source row and its training plan. Gating this on an existing
+    # LearnerProfile left every learner without one — a learner enrolled but
+    # never activated, so no "Learner".learners row exists yet — with an empty
+    # "ksbs" list, which is what the workspace hands the KSB picker. The
+    # picker then had nothing to offer and reported "No programme KSBs match
+    # this category", even though the programme's standard defines them.
+    try:
+        from .active_users import current_curriculum_ksb_items_for_learner
 
-            curriculum_ksbs = current_curriculum_ksb_items_for_learner(
-                learner_profile,
-                source=source,
-                training_plan=training_plan,
-            )
-        except Exception:
-            curriculum_ksbs = []
+        curriculum_ksbs = current_curriculum_ksb_items_for_learner(
+            learner_profile,
+            source=source,
+            training_plan=training_plan,
+        )
+    except Exception:
+        curriculum_ksbs = []
     from .apprenticeship_agreement import _group_dates
 
     programme_start, cohort_end, _ = _group_dates(source)

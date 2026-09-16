@@ -59,6 +59,8 @@ export interface LearnerCalendarEvent {
 
 export interface LearnerCalendarResponse {
   learner: { kind: LearnerKind; id: number; email?: string };
+  /** Current assignment; event.coachName remains the saved meeting host. */
+  currentCoach?: { name: string; email: string };
   events: LearnerCalendarEvent[];
   bookingCalendar?: BookingCalendarRules;
 }
@@ -115,6 +117,11 @@ export function fetchLearnerEventReviewInstance(
   signal?: AbortSignal,
 ): Promise<LearnerReviewDefinition | { instance: null }> {
   return request<LearnerReviewDefinition | { instance: null }>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`, { signal, credentials: 'include' });
+}
+
+export async function downloadLearnerMcmPdf(kind: LearnerKind, learnerId: string, eventKey: string): Promise<void> {
+  const { saveReviewPdfResponse } = await import('./reviewPdf');
+  await saveReviewPdfResponse(await fetch(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/pdf/`, { credentials: 'include' }));
 }
 
 export function fetchLearnerMeetingArtifacts(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {

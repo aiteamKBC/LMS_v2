@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { isTeamsReviewCancelled } from './calendarReview';
+import { finishTeamsCreation } from './creationResult';
+import { calendarInputError } from './calendarTime';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -618,7 +621,8 @@ export default function CurriculumTeamsMeetingsPage() {
     try {
       const [nextSummaries, nextSessions] = await Promise.all([
         fetchCurriculumTeamsMeetingSummaries(signal, { occurrenceDates: true, skipCache: true }),
-        fetchCurriculumSessions(signal),
+        // Create and sync must use the latest module dates, just like the summaries.
+        fetchCurriculumSessions(signal, { skipCache: true }),
       ]);
       if (signal?.aborted) return;
       setSummaries(nextSummaries);
@@ -972,6 +976,8 @@ export default function CurriculumTeamsMeetingsPage() {
   const pushDates = async (row: MeetingRow) => {
     const summary = row.summary;
     if (!summary || !row.sessions.length) return;
+    const invalid = calendarInputError(row);
+    if (invalid) { setNotice({ tone: 'error', text: invalid }); return; }
     const occurrences = scheduledOccurrences(row);
     setBusy(`${row.catalogueId}:dates`);
     setNotice(null);
@@ -1009,6 +1015,7 @@ export default function CurriculumTeamsMeetingsPage() {
         timer: warnings.length ? undefined : 2000,
       });
     } catch (err) {
+      if (isTeamsReviewCancelled(err)) return;
       setNotice({ tone: 'error', text: err instanceof Error ? err.message : 'The session dates could not be sent to Teams.' });
     } finally {
       setBusy('');
@@ -1138,6 +1145,7 @@ export default function CurriculumTeamsMeetingsPage() {
         attendees,
         presenters,
         coOrganizers,
+        peopleOnly: true,
       });
       peopleDrawer.close();
       await loadTeamsState();
@@ -1150,6 +1158,7 @@ export default function CurriculumTeamsMeetingsPage() {
         timer: warning ? undefined : 2200,
       });
     } catch (err) {
+      if (isTeamsReviewCancelled(err)) return;
       peopleDrawer.setError(err instanceof Error ? err.message : 'The invitations could not be saved.');
     } finally {
       peopleDrawer.setSaving(false);
@@ -1178,7 +1187,7 @@ export default function CurriculumTeamsMeetingsPage() {
       presenters: presenters.join('\n'),
       coOrganizers: '',
       details: '',
-      durationMinutes: String(row.durationMinutes),
+      durationMinutes: '',
     });
     // Starts from blank, so there is nothing typed by hand to overwrite.
     void prefillInvitees(row, createDrawer.patch);
@@ -1194,48 +1203,22 @@ export default function CurriculumTeamsMeetingsPage() {
       return;
     }
     if (!row.sessions.length) { createDrawer.setError('This module has no stored session dates yet.'); return; }
-    const meetingTitle = cleanText(row.name, 'Live session');
-    const duration = Math.max(15, Number(form.durationMinutes) || row.durationMinutes);
-    const occurrences = scheduledOccurrences(row).map(occurrence => ({ ...occurrence, durationMinutes: duration }));
-    const input: TeamsMeetingInput = {
-      title: meetingTitle,
-      organizerEmail: organizer,
-      attendees: emailList(form.attendees),
-      presenters: emailList(form.presenters),
-      coOrganizers: emailList(form.coOrganizers),
-      moduleCatalogueId: row.catalogueId,
-      moduleTitle: meetingTitle,
-      localStartDateTime: sessionNaiveLocal(row.sessions[0]),
-      startDateTimeUtc: occurrences[0].startDateTimeUtc,
-      durationMinutes: duration,
-      repeat: occurrences.length > 1 ? 'weekly' : 'none',
-      repeatOccurrences: occurrences.length,
-      scheduledOccurrences: occurrences,
-      lobbyBypass: form.lobbyBypass,
-      recording: form.recording,
-      spokenLanguage: form.spokenLanguage,
-      meetingType: form.meetingType,
-      details: form.details,
-      requestResponses: true,
-      allowNewTimeProposals: true,
-      hideAttendees: false,
-      transactionId: `TEAMS-${row.catalogueId}`,
-    };
     createDrawer.setSaving(true);
     createDrawer.setError(null);
     try {
+      const input = buildTeamsCalendarInput(row, form);
       const result = await createTeamsMeeting(input);
       // Creating the series is only half of it: the module's live-session
       // components are where delivery reads the join link from, and the restore
       // endpoint is the one place that writes it into all of them.
-      let attached = 0;
+      let attachmentWarning = '';
       try {
-        const attachment = await restoreModuleTeamsMeeting(
+        await restoreModuleTeamsMeeting(
           row.catalogueId,
           { createMissingComponents: true },
         );
-        attached = (attachment.updatedComponents || 0) + (attachment.createdComponents || 0);
       } catch {
+        attachmentWarning = 'The calendar is saved, but its links could not be attached to every module component. Use Re-attach meeting to components.';
         setNotice({
           tone: 'warning',
           text: `${row.name}: the Teams meeting was created, but its join link could not be written into the module's live-session components. Use "Re-attach meeting to components" to retry.`,
@@ -1249,22 +1232,9 @@ export default function CurriculumTeamsMeetingsPage() {
       // Not awaited. The refresh is a round trip and the confirmation must not
       // queue behind it -- the table catches up while the alert is on screen.
       void loadTeamsState();
-      // `settingsApplied` false means the calendar is right and the recording is
-      // not: Graph refused the meeting options, so the session opens recording
-      // nothing. It reads as success otherwise, which is how it went unnoticed.
-      const optionsRefused = !result.meeting.settingsApplied;
-      await showCurriculumAlert({
-        title: optionsRefused
-          ? 'Created, but NOT recording'
-          : result.warnings.length ? 'Created with warnings' : 'Session dates sent to Teams',
-        text: optionsRefused
-          ? `The invitations and join links are in place, but Microsoft Graph refused the recording, transcription and lobby options, so these sessions will record nothing. Organizer: ${result.meeting.organizerEmail || 'unknown'}. ${result.warnings[0] || 'Check the backend log for the exact Graph status, code and request-id.'}`
-          : result.warnings.length
-            ? result.warnings[0]
-            : `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to Teams${attached ? `, linked to ${attached} live-session component${attached === 1 ? '' : 's'}` : ''}.`,
-        timer: optionsRefused || result.warnings.length ? undefined : 2400,
-      });
+      await finishTeamsCreation(result, input, attachmentWarning);
     } catch (err) {
+      if (isTeamsReviewCancelled(err)) return;
       createDrawer.setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');
     } finally {
       createDrawer.setSaving(false);

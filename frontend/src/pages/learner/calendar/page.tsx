@@ -411,13 +411,13 @@ type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 
 
 const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'completed'];
 
-const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string }> = {
-  all: { label: 'All', dot: 'bg-foreground-400' },
-  'needs-schedule': { label: 'Not Scheduled', dot: 'bg-rose-500' },
-  scheduled: { label: 'Scheduled', dot: 'bg-primary-500' },
-  pending: { label: 'Pending', dot: 'bg-amber-500' },
-  'in-progress': { label: 'In Progress', dot: 'bg-secondary-500' },
-  completed: { label: 'Completed', dot: 'bg-emerald-500' },
+const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string; badge: string }> = {
+  all: { label: 'All', dot: 'bg-foreground-400', badge: 'bg-background-200 text-foreground-700 ring-background-300' },
+  'needs-schedule': { label: 'Not Scheduled', dot: 'bg-rose-500', badge: 'bg-rose-100 text-rose-800 ring-rose-200' },
+  scheduled: { label: 'Scheduled', dot: 'bg-primary-500', badge: 'bg-primary-100 text-primary-800 ring-primary-200' },
+  pending: { label: 'Pending', dot: 'bg-amber-500', badge: 'bg-amber-100 text-amber-800 ring-amber-200' },
+  'in-progress': { label: 'In Progress', dot: 'bg-secondary-500', badge: 'bg-secondary-100 text-secondary-800 ring-secondary-200' },
+  completed: { label: 'Completed', dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-800 ring-emerald-200' },
 };
 
 function todayISO(): string {
@@ -1509,7 +1509,10 @@ function LearnerCalendarBody() {
           onClose={() => setShowEventDetails(null)}
           badges={<>
             <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{learnerSourceMeta(showEventDetails).label}</span>
-            <span className="rounded-full bg-background-200 px-2.5 py-1 text-foreground-700">{LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}</span>
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ring-1 ring-inset ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].badge}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].dot}`}></span>
+              {LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}
+            </span>
           </>}
           actions={<>
 
@@ -1869,6 +1872,7 @@ function LearnerCalendarBody() {
                               );
                             }
                             const sourceMeta = learnerSourceMeta(ev);
+                            const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                             return (
                               <button
                                 type="button"
@@ -1882,9 +1886,17 @@ function LearnerCalendarBody() {
                                   <span className={`h-2 w-2 shrink-0 rounded-full ${sourceMeta.dot}`}></span>
                                   <span className="shrink-0 text-[11px] font-bold leading-tight tabular-nums">{ev.timeToBeConfirmed ? 'TBC' : ev.time.split('–')[0]}</span>
                                   <span className="truncate text-[11px] font-bold leading-tight">{ev.title}</span>
-                                  <span className={`ml-auto h-2 w-2 shrink-0 rounded-full border border-white/80 ${LEARNER_STATUS_META[learnerEventStatus(ev)].dot}`} title={LEARNER_STATUS_META[learnerEventStatus(ev)].label}></span>
                                 </div>
-                                {(ev.host || ev.club) && <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</p>}
+                                <div className="mt-1 flex min-w-0 items-center justify-between gap-1.5">
+                                  {(ev.host || ev.club) && <span className="min-w-0 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</span>}
+                                  <span
+                                    aria-label={`${statusMeta.label} status`}
+                                    className={`ml-auto inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold leading-none ring-1 ring-inset sm:text-[9px] ${statusMeta.badge}`}
+                                  >
+                                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusMeta.dot}`}></span>
+                                    {statusMeta.label}
+                                  </span>
+                                </div>
                               </button>
                             );
                           })}
@@ -1940,7 +1952,10 @@ function LearnerCalendarBody() {
                               {ev.timeToBeConfirmed ? 'Time to be confirmed' : ev.time} · {ev.club}
                             </p>
                           </div>
-                          <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-foreground-700">{statusMeta.label}</span>
+                          <span aria-label={`${statusMeta.label} status`} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset ${statusMeta.badge}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${statusMeta.dot}`}></span>
+                            {statusMeta.label}
+                          </span>
                         </button>
                       );
                     })}

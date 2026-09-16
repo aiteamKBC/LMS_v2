@@ -51,3 +51,44 @@ class KsbGenerationTests(TestCase):
             {'code': 'K1', 'explanation': explanation, 'evidenceIds': ['file1']},
             {'code': 'K2', 'explanation': '', 'evidenceIds': []},
         ])
+
+    def test_empty_evidence_and_links_only_do_not_query_file_storage(self):
+        with patch.object(ksb_generation, 'connections', {}) :
+            self.assertEqual(ksb_generation.evidence_context('commercial', '123', []), ([], []))
+            documents, notices = ksb_generation.evidence_context('commercial', '123', [{'id': 'link:1'}])
+        self.assertEqual(documents, [])
+        self.assertTrue(notices)
+
+    @override_settings(OPENAI_API_KEY='test', OPENAI_REFLECTION_MODEL='test')
+    def test_answer_only_generation_without_evidence_or_when_evidence_is_unavailable(self):
+        explanation = ' '.join(['supported'] * 25)
+        for evidence in (None, [], [{'id': 'file1'}]):
+            with self.subTest(evidence=evidence):
+                client = MagicMock()
+                client.responses.create.return_value.output_text = json.dumps({'claims': [
+                    {'code': 'K1', 'explanation': explanation, 'evidenceIds': ['invented']}]})
+                payload = {'learnerId': '123', 'learnerKind': 'commercial', 'activityId': 'a',
+                           'answer': 'I planned the project and monitored costs using a spreadsheet.',
+                           'mappings': [{'code': 'K1'}]}
+                if evidence is not None:
+                    payload['evidence'] = evidence
+                request = RequestFactory().post('/', data=json.dumps(payload), content_type='application/json')
+                with patch('learner_api.components.component_ksb_codes', return_value=['K1']), \
+                     patch('learner_api.reflection_ai._openai_client', return_value=client), \
+                     patch('learner_api.reflection_ai._moderation_flagged', return_value=False), \
+                     patch.object(ksb_generation, 'evidence_context', side_effect=RuntimeError('Unavailable')) as read_evidence, \
+                     patch.object(ksb_generation.logger, 'exception'):
+                    response = inspect.unwrap(ksb_generation.generate_ksb_explanations)(request)
+                self.assertEqual(response.status_code, 200)
+                result = json.loads(response.content)
+                self.assertEqual(result['claims'], [{'code': 'K1', 'explanation': explanation, 'evidenceIds': []}])
+                if evidence:
+                    read_evidence.assert_called_once()
+                    self.assertTrue(result['notices'])
+                else:
+                    read_evidence.assert_not_called()
+                messages = client.responses.create.call_args.kwargs['input']
+                self.assertIn('Generate explanations from the answer alone', messages[0]['content'])
+                context = json.loads(messages[1]['content'])
+                self.assertEqual(context['answer'], payload['answer'])
+                self.assertEqual(context['readableEvidence'], [])

@@ -763,6 +763,51 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
             learner_email='learner@example.com',
         )
 
+    @patch('learner_api.attendance.fetch_verified_teams_attendance_rows')
+    @patch('learner_api.attendance.fetch_kbc_attendance_rows', return_value=[])
+    def test_kbc_source_uses_only_aptem_register(self, fetch_rows, fetch_teams):
+        source = SimpleNamespace(
+            id=19,
+            username='Test Learner',
+            email='learner@example.com',
+            aptem_id='92',
+        )
+        source_model = MagicMock()
+        source_model.DoesNotExist = type('SourceDoesNotExist', (Exception,), {})
+        source_model.all_learners.only.return_value.get.return_value = source
+
+        with patch.dict(attendance_module.SOURCE_MODELS, {'apprenticeship': source_model}, clear=True):
+            response = learner_attendance.__wrapped__(
+                RequestFactory().get('/learner_api/attendance/apprenticeship/19/?source=kbc'),
+                'apprenticeship',
+                19,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        fetch_rows.assert_called_once_with(
+            aptem_id='92', learner_id=19,
+            learner_name='Test Learner', learner_email='learner@example.com',
+        )
+        fetch_teams.assert_not_called()
+
+    @patch('learner_api.attendance.fetch_kbc_attendance_rows')
+    def test_kbc_source_skips_learners_without_an_aptem_id(self, fetch_rows):
+        source = SimpleNamespace(id=19, username='Test Learner', email='learner@example.com', aptem_id=None)
+        source_model = MagicMock()
+        source_model.DoesNotExist = type('SourceDoesNotExist', (Exception,), {})
+        source_model.all_learners.only.return_value.get.return_value = source
+
+        with patch.dict(attendance_module.SOURCE_MODELS, {'apprenticeship': source_model}, clear=True):
+            response = learner_attendance.__wrapped__(
+                RequestFactory().get('/learner_api/attendance/apprenticeship/19/?source=kbc'),
+                'apprenticeship',
+                19,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertJSONEqual(response.content, {'attendance': None})
+        fetch_rows.assert_not_called()
+
 
 class TeamsAttendanceSyncTests(SimpleTestCase):
     @patch('learner_api.teams_attendance.ensure_teams_attendance_reporting_columns')

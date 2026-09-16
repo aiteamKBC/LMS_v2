@@ -19,6 +19,10 @@ export function OverviewLearningPanels({ kind, learnerId }: { kind: LearnerKind;
   const weeklyModules = week.data?.modules.filter(item => item.total > 0) || [];
   const selectedId = selection?.weekKey === weekKey ? selection.subjectId : null;
   const module = weeklyModules.find(item => item.id === selectedId) || weeklyModules[0];
+  const planSubject = module && (week.data?.planSubjects || []).find(subject => subject.id === module.id
+    || subject.moduleIds.some(id => module.moduleIds?.includes(id)));
+  const moduleKsbFallback = !module?.ksbCodes.length && !!planSubject?.ksbCodes?.length;
+  const displayedKsbCodes = module?.ksbCodes.length ? module.ksbCodes : planSubject?.ksbCodes || [];
   const moduleId = module?.id.startsWith('current:') ? module.id.slice(8) : module ? schedule.data?.moduleLinks[module.id]?.id : undefined;
   const moduleIds = new Set([...(module?.moduleIds || []), ...(moduleId ? [moduleId] : [])]);
   const relevantSessions = moduleIds.size ? schedule.data?.sessions.filter(session => moduleIds.has(session.moduleId)) || []
@@ -44,7 +48,9 @@ export function OverviewLearningPanels({ kind, learnerId }: { kind: LearnerKind;
           : !week.error && <div className={styles.empty}><CalendarDays size={26} aria-hidden="true" /><div><h3>No activities scheduled this week</h3><p>You can still explore your modules and continue learning.</p></div></div>}
         <div className={styles.facts}>
           <div className={styles.fact}><span><Video size={16} aria-hidden="true" />Live session</span><strong>{schedule.loading ? 'Loading…' : schedule.error && !schedule.data ? 'Unavailable' : live ? `${dateLabel(ukDate(live.start))} · ${ukTime(live.start)}` : 'Not scheduled'}</strong>{live && <small>UK time</small>}</div>
-          <div className={styles.fact}><span><Target size={16} aria-hidden="true" />KSBs covered</span><strong>{module?.ksbCodes.length ? module.ksbCodes.join(', ') : module?.total ? 'Not mapped yet' : '—'}</strong>{module?.ksbMappingMissing && <small>Some activity mappings are missing</small>}</div>
+          <div className={styles.fact}><span><Target size={16} aria-hidden="true" />KSBs covered</span><strong title={displayedKsbCodes.join(', ') || undefined}>{displayedKsbCodes.length ? displayedKsbCodes.join(', ') : module?.total ? 'Not mapped yet' : '—'}</strong>
+            {moduleKsbFallback ? <small>Module-level mapping · this week's activities have no direct KSB mapping</small>
+              : module?.ksbMappingMissing && <small>Some activity mappings are missing</small>}</div>
           <div className={styles.fact}><span><Clock3 size={16} aria-hidden="true" />OTJH this week</span><strong>{hours(week.data?.otjh.actual)} <span className={styles.divider}>/</span> {hours(expected)}</strong><small>Actual / expected · all modules this week</small></div>
         </div>
         {!!week.data?.missingExpectedHours && <p className={styles.note}><Info size={15} aria-hidden="true" />Some activities this week still need expected hours.</p>}

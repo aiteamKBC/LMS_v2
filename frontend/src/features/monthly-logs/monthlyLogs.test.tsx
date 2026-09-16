@@ -71,6 +71,24 @@ describe('monthly logs', () => {
       .toEqual(['/learner/monthly-logs/2026-08', '/learner/monthly-logs/2026-09']);
   });
 
+  it('shows the current month as an in-progress live log, not as an unsigned closed month', async () => {
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [{ ...current, is_open: true }], total_months: 1, completed_months: 0 });
+    page();
+    expect(await screen.findByText('September 2026')).toBeInTheDocument();
+    expect(screen.getAllByText('Month in progress').length).toBeGreaterThan(0);
+    expect(screen.getByText('View current log')).toBeVisible();
+    expect(screen.getByText('Current month in progress')).toBeVisible();
+  });
+
+  it('allows reviewing current-month activities but keeps signing unavailable', async () => {
+    vi.mocked(getLogMonth).mockResolvedValue({ ...current, is_open: true });
+    page('/learner/monthly-logs/2026-09');
+    expect(await screen.findByText('Completed reading')).toBeInTheDocument();
+    expect(screen.getAllByText('Available after month-end')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /Sign as/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Signing opens after the month ends/)).toBeVisible();
+  });
+
   it('filters the year and unsigned learner months while keeping historical reports reachable', async () => {
     const earlier = { ...retained, month: '2025-05', coach_signature: null };
     vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [current, retained, earlier] });

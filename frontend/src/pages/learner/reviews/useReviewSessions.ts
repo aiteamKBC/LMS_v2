@@ -10,6 +10,11 @@ export function isReviewSession(event: LearnerCalendarEvent, source: 'mcr' | 'pr
   return event.reviewTypeCode ? event.reviewTypeCode === code : !event.reviewTemplateId && event.source === source;
 }
 
+/** Only Curriculum review changes can alter the review sessions on this page. */
+export function isReviewSessionWrite(path: string) {
+  return path.includes('/reviews/');
+}
+
 /** Imported completed records remain history; Curriculum owns upcoming work. */
 export function mergeCompletedReviewHistory(events: LearnerCalendarEvent[], history: LearnerCalendarEvent[]) {
   const linkedIds = new Set(events.map(event => event.reviewId).filter(Boolean));
@@ -22,6 +27,7 @@ export function mergeCompletedReviewHistory(events: LearnerCalendarEvent[], hist
 export function useReviewSessions(source: 'mcr' | 'progress-review') {
   const myLearner = useLinkedLearner();
   const [learner, setLearner] = useState<LearnerDetail | null>(null);
+  const [currentCoach, setCurrentCoach] = useState<{ name: string; email: string } | null>(null);
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
   const [bookingCalendar, setBookingCalendar] = useState<BookingCalendarRules | null>(null);
   const [loading, setLoading] = useState(true);
@@ -30,10 +36,11 @@ export function useReviewSessions(source: 'mcr' | 'progress-review') {
   const [usingImportedReviews, setUsingImportedReviews] = useState(false);
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
-  useLiveRefresh(refresh);
+  useLiveRefresh(refresh, { match: isReviewSessionWrite });
 
   useEffect(() => {
     setLearner(null);
+    setCurrentCoach(null);
     setEvents([]);
     setBookingCalendar(null);
     setUsingImportedReviews(false);
@@ -42,7 +49,10 @@ export function useReviewSessions(source: 'mcr' | 'progress-review') {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    // Keep the current page mounted during focus/remote-write revalidation.
+    // Replacing it with the initial skeleton unmounted children such as the
+    // Teams artifacts panel, making every background refresh look like a full
+    // page reload and restarting its recording request.
     setCalendarError('');
     setDetailError('');
     void fetchLearnerDetail(myLearner.kind, myLearner.id, { revalidate: true })
@@ -59,6 +69,7 @@ export function useReviewSessions(source: 'mcr' | 'progress-review') {
       .then(async calendar => {
         if (cancelled) return;
         setBookingCalendar(calendar.bookingCalendar || null);
+        setCurrentCoach(calendar.currentCoach || null);
         setEvents(calendar.events);
         setLoading(false);
         const history = await historyPromise;
@@ -74,7 +85,7 @@ export function useReviewSessions(source: 'mcr' | 'progress-review') {
 
   const sessions = useMemo(() => events.filter(event => isReviewSession(event, source))
     .sort((a, b) => (a.date || a.targetDate || '').localeCompare(b.date || b.targetDate || '') || a.sequence - b.sequence || a.eventKey.localeCompare(b.eventKey)), [events, source]);
-  return { myLearner, learner, sessions, setEvents, bookingCalendar, loading, error: calendarError || detailError, refresh, usingImportedReviews };
+  return { myLearner, learner, currentCoach, sessions, setEvents, bookingCalendar, loading, error: calendarError || detailError, refresh, usingImportedReviews };
 }
 
 /** Convert read-only imported review rows to the event shape used by the list.

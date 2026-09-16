@@ -8,8 +8,6 @@ type LoadOptions = {
   revalidate?: boolean;
 };
 
-const MODULE_LOAD_RETRY_DELAY_MS = 400;
-
 type UseCurriculumModulesOptions = {
   autoLoad?: boolean;
   skipCache?: boolean;
@@ -36,17 +34,14 @@ export function useCurriculumModules({ autoLoad = true, skipCache = false, reval
       setError(null);
     }
 
-    const request = (retry: boolean): Promise<CurriculumModule[]> => fetchCurriculumModules(signal, { compact, skipCache: options.skipCache ?? skipCache, revalidate: options.revalidate ?? revalidate })
-      .catch(error => {
-        if (signal.aborted || retry) throw error;
-        return new Promise<CurriculumModule[]>((resolve, reject) => {
-          setTimeout(() => {
-            fetchCurriculumModules(signal, { compact, skipCache: options.skipCache ?? skipCache, revalidate: options.revalidate ?? revalidate }).then(resolve, reject);
-          }, MODULE_LOAD_RETRY_DELAY_MS);
-        });
-      });
-
-    return request(false)
+    // `fetchCurriculumModules` already retries a retryable failure (a 5xx, a
+    // dropped connection) itself, with its own backoff -- a second retry layer
+    // here on top of that one does not make a flaky read more likely to
+    // succeed, it just pays the same timeout budget twice in a row. A genuine
+    // timeout is the case that matters most to fail fast from: it is excluded
+    // from that inner retry on purpose, so this only ever gets one attempt at
+    // it and settles into `error` promptly instead of quietly doubling the wait.
+    return fetchCurriculumModules(signal, { compact, skipCache: options.skipCache ?? skipCache, revalidate: options.revalidate ?? revalidate })
       .then(result => {
         if (!mountedRef.current || signal.aborted) return;
         setModules(result);

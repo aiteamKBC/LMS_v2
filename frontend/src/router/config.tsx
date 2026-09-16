@@ -77,7 +77,6 @@ const CurriculumCohorts = lazyRoute(() => import("../pages/curriculum/cohorts/pa
 const CurriculumCohortWorkspace = lazyRoute(() => import("../pages/curriculum/cohort-workspace/page"));
 const CurriculumGroups = lazyRoute(() => import("../pages/curriculum/groups/page"));
 const CurriculumGroupWorkspace = lazyRoute(() => import("../pages/curriculum/group-workspace/page"));
-const CurriculumHolidays = lazyRoute(() => import("../pages/curriculum/holidays/page"));
 const CurriculumEnglandHolidays = lazyRoute(() => import("../pages/curriculum/england-holidays/page"));
 const CurriculumModuleWorkspace = lazyRoute(() => import("../pages/curriculum/module-workspace/page"));
 const CurriculumTeamsMeetings = lazyRoute(() => import("../pages/curriculum/teams-meetings/page"));
@@ -120,6 +119,7 @@ const ForgotPasswordPage = lazyRoute(() => import("../pages/forgot-password/page
 const LoginPage = lazyRoute(() => import("../pages/login/page"));
 const OldOtjhPage = lazyRoute(() => import("../features/old-otjh/page"));
 const AccessRequiredPage = lazyRoute(() => import("../pages/access-required/page"));
+const ChooseWorkspacePage = lazyRoute(() => import("../pages/choose-workspace/page"));
 // Serves both emailed-token flows; `mode` picks which.
 const SetPasswordPage = lazyRoute(() => import("../pages/set-password/page"));
 const FundingOverviewPage = lazyRoute(() => import("../pages/finance/funding/page"));
@@ -308,6 +308,13 @@ const routes: RouteObject[] = [
     // outside any workspace shell — there is no workspace they can open yet.
     path: "/access-required",
     element: <AccessRequiredPage />,
+  },
+  {
+    // Where an account holding more than one access grant picks what to open.
+    // NOT public: it names the workspaces a specific account can reach, so it
+    // stays inside RequireAuth with everything else below.
+    path: "/choose-workspace",
+    element: <ChooseWorkspacePage />,
   },
   {
     path: "/forgot-password",
@@ -949,15 +956,8 @@ const routes: RouteObject[] = [
     element: <CurriculumTeamsMeetings />,
   },
   {
-    // The whole calendar: GOV.UK's bank holidays and this college's own closure
-    // periods, in one list. The closures are authored here; the bank holidays
-    // are read-only and are managed on the page below.
-    path: "/curriculum/holidays",
-    element: <CurriculumHolidays />,
-  },
-  {
-    // The GOV.UK half on its own, with what the site has changed and when it was
-    // last checked.
+    // The bank holiday calendar: GOV.UK holidays stay synced here, and extra
+    // manual holidays are added here without touching the GOV.UK mirror.
     path: "/curriculum/england-holidays",
     element: <CurriculumEnglandHolidays />,
   },

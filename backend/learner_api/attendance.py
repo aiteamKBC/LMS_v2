@@ -277,12 +277,7 @@ def _summarize_attendance(rows, *, now=None):
 
 def combined_attendance_rows(source):
     """Refresh KBC on every server read and merge actual Teams occurrences."""
-    rows = []
-    if student_activity_available(getattr(source, 'aptem_id', None)):
-        rows = [{**row, 'source': 'kbc-attendance'} for row in fetch_kbc_attendance_rows(
-            aptem_id=source.aptem_id, learner_id=source.id,
-            learner_name=getattr(source, 'username', '') or '', learner_email=source.email or '',
-        )]
+    rows = kbc_attendance_rows(source)
     # The shared Teams reader groups reconnects by occurrence and email and
     # excludes sessions without a finished attendance report. IDs here refer
     # to LearnerProfile, so use the verified email and check enrolment linkage.
@@ -298,6 +293,22 @@ def combined_attendance_rows(source):
         if previous is None or row['attendance_status'] in {'present', 'late'}:
             unique[key] = row
     return list(unique.values())
+
+
+def kbc_attendance_rows(source):
+    """Read only the KBC register for a learner with a valid Aptem identity.
+
+    This deliberately does not fall back to email and does not add Teams rows.
+    It is used where the UI must mirror ``public.kbc_attendance`` exactly.
+    """
+    if not student_activity_available(getattr(source, 'aptem_id', None)):
+        return []
+    return [{**row, 'source': 'kbc-attendance'} for row in fetch_kbc_attendance_rows(
+        aptem_id=source.aptem_id,
+        learner_id=source.id,
+        learner_name=getattr(source, 'username', '') or '',
+        learner_email=getattr(source, 'email', '') or '',
+    )]
 
 
 @learner_self_or_staff(kwarg="learner_id")
@@ -318,8 +329,12 @@ def learner_attendance(request, kind, learner_id):
         return _error(f'Database error: {exc}', 502)
 
     try:
-        from .attendance_lectures import lecture_register
-        rows = lecture_register(source)
+        # The coach Case File requests this focused view. Its source is only
+        # the KBC database table and Aptem ID, never an email or Teams merge.
+        rows = kbc_attendance_rows(source) if request.GET.get('source') == 'kbc' else None
+        if rows is None:
+            from .attendance_lectures import lecture_register
+            rows = lecture_register(source)
     except Exception:
         return _error('Unable to load attendance. Please try again.', 502)
 

@@ -13,6 +13,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.coach_booking import booking_url
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile
+from .coach_assignment import current_coach, source_coach
 from .student_activity import CURRENT_SUBJECTS_SQL, _builder_subject_metadata
 from .subject_content import as_list, clean_text, safe_url
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
@@ -69,16 +70,15 @@ def attach_curriculum_slots(module_rows, by_id, week_counts):
     Module Builder, the Teams series and the tutor conflict check use, with the
     cohort's own ``excluded_holiday_ids`` deny-list already applied upstream --
     and the spine comes from ``module_session_plan_for_count``, which is the
-    single door onto ``build_module_session_plan``. Nothing about holidays or
-    Reading Weeks is decided here, so the learner cannot be shown a timeline the
-    curriculum does not itself hold.
+    single door onto ``build_module_session_plan``. Nothing about which slots a
+    holiday touches is decided here, so the learner cannot be shown a timeline
+    the curriculum does not itself hold.
 
-    ``slots`` is what makes a holiday visible to a learner at all: a closed
-    delivery slot delivers no session, so a learner reading only session dates
-    sees an unexplained gap. Reading Weeks must come from this spine and never
-    be inferred from gaps between session dates -- a gap is also what a term
-    break, an unauthored week or a module that simply does not deliver that week
-    looks like.
+    ``slots`` is what makes a holiday visible to a learner at all: every slot
+    still delivers its session, ticked holiday or not, but a slot a holiday
+    falls on names it -- so a learner reading the timeline sees which week to
+    expect a closure on, rather than an unexplained gap or a silently missed
+    warning.
 
     Holidays are resolved once for every cohort on the page rather than per
     module, because every module of a cohort shares that cohort's holidays.
@@ -251,9 +251,10 @@ def read_dashboard(source, section=None):
     # still receive the complete response when no section was requested.
     contract_data = ({'months': {}, 'contractStatus': 'loading'} if section == 'overview'
                      else contract_plan(source, contract))
-    coach_name = ((getattr(profile, 'coach_name', '') if profile else '')
-                  or (historical or {}).get('coach_name') or assigned_group_coach(source, modules))
-    coach_email = (getattr(profile, 'coach_email', '') if profile else '') or (historical or {}).get('coach_email') or ''
+    contact = current_coach(source, profile, historical)
+    coach_name, coach_email = contact['coach_name'], contact['coach_email']
+    if not coach_name and not coach_email and source_coach(source) is None:
+        coach_name = assigned_group_coach(source, modules)
     from .calendar import coaching_events_for_learner
     # Use the same active programme cycle as the calendar booking destination.
     active_profile = profile if profile and profile.lifecycle_status == 'active' else None

@@ -33,6 +33,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
+from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
+from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
+from .teams_calendar_checks import CalendarMismatch, calendar_targets, graph_calendar_time, local_calendar_recurrence, verify_calendar, publish_attendees, safe_teams_join_url, utc_datetime
 
 from learner_api.progress_rules import (
     progress_achievement_status,
@@ -88,6 +91,31 @@ _CURRICULUM_BUILD_LOCKS = {}
 # stale rows. The Django-cache generation below provides the cross-worker layer.
 _CURRICULUM_CACHE_EPOCH = 0
 _CURRICULUM_SHARED_EPOCH_KEY = 'curriculum:cache-epoch'
+# The cross-worker generation counter, kept in the one store every worker really
+# shares: the database.
+#
+# It used to live in Django's cache alone. With a Redis CACHE_URL that is shared
+# and correct; without one Django falls back to LocMemCache, which is per
+# process -- and production runs nine services of two workers, so a write bumped
+# the epoch in exactly one of eighteen caches. The other seventeen kept serving
+# their pre-write payload for the whole 1800s TTL, which is a cohort, group,
+# module or authored week that saves successfully and then does not appear:
+# reload and you are talking to a different worker that never heard about it.
+# Reads still answer from the process-local cache; this is only what tells a
+# worker that its copy is out of date.
+CURRICULUM_EPOCH_TABLE = 'cache_epoch'
+# How long a worker may go on trusting the epoch it last read. It bounds both
+# the staleness a write in another worker can cause and the cost of asking: one
+# single-row read per worker per window, against the ~13s rebuild it protects.
+SHARED_EPOCH_POLL_SECONDS = 3.0
+_SHARED_EPOCH_STATE = {'value': None, 'checked_at': 0.0}
+_SHARED_EPOCH_LOCK = threading.Lock()
+_CURRICULUM_EPOCH_TABLE_READY = False
+# Per-thread: a write in this request has invalidated, and one shared bump is
+# owed once the request is through. Deduped because invalidate_curriculum_cache()
+# is called from inside write helpers, sometimes once per written row -- a tree
+# save would otherwise spend thousands of UPDATEs on one counter.
+_CURRICULUM_EPOCH_BUMP = threading.local()
 _TABLE_COLUMNS_CACHE = {}
 _TABLE_EXISTS_CACHE = {}
 _AUTHORING_TABLES_READY = False
@@ -117,14 +145,11 @@ def invalidate_curriculum_cache():
         # afterwards and repopulates the cache with pre-write rows, which would
         # then serve stale authoring data for the rest of the TTL.
         _CURRICULUM_CACHE_EPOCH += 1
-    # Generation-based invalidation works with Django's built-in Redis backend
-    # without relying on backend-specific delete-pattern APIs. Old generations
-    # expire naturally after the normal TTL.
-    try:
-        cache.add(_CURRICULUM_SHARED_EPOCH_KEY, 0, timeout=None)
-        cache.incr(_CURRICULUM_SHARED_EPOCH_KEY)
-    except Exception:
-        logger.warning('Unable to invalidate shared curriculum cache.', exc_info=True)
+    # Generation-based invalidation: every worker keys its cache entries on the
+    # counter, so moving it retires all of them at once without needing a
+    # backend-specific delete-pattern API. Old generations expire naturally
+    # after the normal TTL.
+    bump_shared_curriculum_epoch()
     # Only the negative answers are dropped. Whether a table exists changes on
     # DDL, never on a curriculum write, and the ensure_* helpers only ever add
     # tables -- so a cached True is still true, while a cached False may have
@@ -317,14 +342,170 @@ def scoped_curriculum_read(fn):
     return wrapped
 
 
-def shared_curriculum_epoch():
+def ensure_curriculum_epoch_table():
+    """Provision the one-row counter table, once per process.
+
+    Created here rather than in a migration for the same reason the other
+    ``ensure_*`` helpers do it: this app owns externally managed tables in the
+    ``curriculum`` schema and provisions them on first use. Returns False when
+    the table cannot be reached at all, which is the signal to fall back to the
+    process-local counter rather than fail a read.
+    """
+    global _CURRICULUM_EPOCH_TABLE_READY
+    if _CURRICULUM_EPOCH_TABLE_READY:
+        return True
+    try:
+        # Under a savepoint: this runs on a read path that a write request may
+        # already have inside an atomic block, and in PostgreSQL a failed
+        # statement poisons the whole transaction unless it can be rolled back
+        # to one. The same guard is on every other statement below.
+        with transaction.atomic(), connection.cursor() as cursor:
+            if connection.vendor == 'postgresql':
+                cursor.execute('create schema if not exists %s' % quote_ident(CURRICULUM_SCHEMA))
+            cursor.execute(
+                'create table if not exists %s ('
+                ' id integer primary key,'
+                ' epoch bigint not null default 0'
+                ')' % table_name(CURRICULUM_EPOCH_TABLE)
+            )
+            cursor.execute(
+                'insert into %s (id, epoch) values (1, 0) on conflict (id) do nothing'
+                % table_name(CURRICULUM_EPOCH_TABLE)
+            )
+    except Exception:
+        logger.warning('Unable to provision the shared curriculum epoch table.', exc_info=True)
+        return False
+    _CURRICULUM_EPOCH_TABLE_READY = True
+    return True
+
+
+def local_shared_curriculum_epoch():
+    """The pre-database behaviour: the counter in Django's own cache.
+
+    Correct when a Redis ``CACHE_URL`` is configured and harmless when it is
+    not, so it stays as the fallback for a database that cannot answer.
+    """
     try:
         cache.add(_CURRICULUM_SHARED_EPOCH_KEY, 0, timeout=None)
         return int(cache.get(_CURRICULUM_SHARED_EPOCH_KEY) or 0)
     except Exception:
-        # Redis must never turn a cacheable read into an application outage.
+        # A cache backend must never turn a cacheable read into an outage.
         logger.warning('Unable to read shared curriculum cache epoch.', exc_info=True)
         return 0
+
+
+def remember_shared_curriculum_epoch(value):
+    with _SHARED_EPOCH_LOCK:
+        _SHARED_EPOCH_STATE['value'] = int(value)
+        _SHARED_EPOCH_STATE['checked_at'] = time.monotonic()
+
+
+def read_shared_curriculum_epoch_row():
+    rows = fetch_all(
+        'select %s from %s where %s = 1'
+        % (quote_ident('epoch'), table_name(CURRICULUM_EPOCH_TABLE), quote_ident('id'))
+    )
+    return int((rows[0] if rows else {}).get('epoch') or 0)
+
+
+def shared_curriculum_epoch():
+    """The generation every worker's cache entries are keyed on.
+
+    Read from the database at most once per ``SHARED_EPOCH_POLL_SECONDS``; in
+    between, this process answers from what it last saw. A bump made *here*
+    writes straight through to that memory, so the change-log middleware still
+    sees the epoch move across its own request.
+    """
+    now = time.monotonic()
+    with _SHARED_EPOCH_LOCK:
+        value = _SHARED_EPOCH_STATE['value']
+        checked_at = _SHARED_EPOCH_STATE['checked_at']
+    if value is not None and now - checked_at < SHARED_EPOCH_POLL_SECONDS:
+        return value
+    if not ensure_curriculum_epoch_table():
+        return local_shared_curriculum_epoch()
+    try:
+        with transaction.atomic():
+            epoch = read_shared_curriculum_epoch_row()
+    except Exception:
+        logger.warning('Unable to read the shared curriculum epoch.', exc_info=True)
+        # The last value this process saw beats 0: answering 0 would read as
+        # "everybody rolled back", retiring every warm payload in the process
+        # over one unavailable read.
+        return value if value is not None else local_shared_curriculum_epoch()
+    remember_shared_curriculum_epoch(epoch)
+    return epoch
+
+
+def write_shared_curriculum_epoch_bump():
+    """Move the counter by one and record where it landed."""
+    if not ensure_curriculum_epoch_table():
+        try:
+            cache.add(_CURRICULUM_SHARED_EPOCH_KEY, 0, timeout=None)
+            cache.incr(_CURRICULUM_SHARED_EPOCH_KEY)
+        except Exception:
+            logger.warning('Unable to invalidate shared curriculum cache.', exc_info=True)
+        return
+    try:
+        with transaction.atomic():
+            if connection.vendor == 'postgresql':
+                rows = fetch_all(
+                    'update %s set %s = %s + 1 where %s = 1 returning %s'
+                    % (
+                        table_name(CURRICULUM_EPOCH_TABLE),
+                        quote_ident('epoch'),
+                        quote_ident('epoch'),
+                        quote_ident('id'),
+                        quote_ident('epoch'),
+                    )
+                )
+                epoch = int((rows[0] if rows else {}).get('epoch') or 0)
+            else:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        'update %s set %s = %s + 1 where %s = 1'
+                        % (
+                            table_name(CURRICULUM_EPOCH_TABLE),
+                            quote_ident('epoch'),
+                            quote_ident('epoch'),
+                            quote_ident('id'),
+                        )
+                    )
+                epoch = read_shared_curriculum_epoch_row()
+    except Exception:
+        logger.warning('Unable to bump the shared curriculum epoch.', exc_info=True)
+        return
+    remember_shared_curriculum_epoch(epoch)
+
+
+def bump_shared_curriculum_epoch():
+    """Retire every worker's cached payload, once per request that writes.
+
+    Inside a request the bump is owed rather than made: the change-log
+    middleware flushes it after the view, so one save costs one UPDATE however
+    many rows it wrote, and the new generation becomes visible to other workers
+    only once the data it describes has committed. Outside a request (a
+    management command, the warm loop) there is nobody to flush it, so it is
+    made straight away.
+    """
+    if getattr(_CURRICULUM_EPOCH_BUMP, 'scoped', False):
+        _CURRICULUM_EPOCH_BUMP.pending = True
+        return
+    write_shared_curriculum_epoch_bump()
+
+
+def begin_curriculum_write_scope():
+    _CURRICULUM_EPOCH_BUMP.scoped = True
+    _CURRICULUM_EPOCH_BUMP.pending = False
+
+
+def end_curriculum_write_scope():
+    """Make the request's one bump, if anything in it invalidated."""
+    pending = getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False)
+    _CURRICULUM_EPOCH_BUMP.scoped = False
+    _CURRICULUM_EPOCH_BUMP.pending = False
+    if pending:
+        write_shared_curriculum_epoch_bump()
 
 
 CURRICULUM_CHANGE_LOG_KEY = 'curriculum:changes'
@@ -1019,6 +1200,7 @@ def provision_live_sessions_table():
                 hide_attendees boolean not null default false,
                 status varchar(32) not null default 'active',
                 warnings {json_type},
+                calendar_series {json_type},
                 created_at timestamp not null default current_timestamp,
                 updated_at timestamp not null default current_timestamp,
                 foreign key (module_catalogue_id)
@@ -1026,6 +1208,10 @@ def provision_live_sessions_table():
                     on delete cascade
             )
         ''')
+        if connection.vendor == 'postgresql':
+            cursor.execute(f'alter table {authoring_table_name(LIVE_SESSIONS_TABLE)} add column if not exists calendar_series {json_type}')
+        elif 'calendar_series' not in column_names(LIVE_SESSIONS_TABLE):
+            cursor.execute(f'alter table {authoring_table_name(LIVE_SESSIONS_TABLE)} add column calendar_series {json_type}')
         cursor.execute(
             f'create index if not exists curriculum_live_sessions_module_idx '
             f'on {authoring_table_name(LIVE_SESSIONS_TABLE)} (module_catalogue_id)'
@@ -1312,7 +1498,7 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
             'scheduled_start': item['start'],
             'scheduled_end': item['end'],
             'join_url': clean_str(join_url),
-            'status': 'scheduled',
+            'status': 'completed' if existing.get('status') == 'completed' else 'scheduled',
             'created_at': existing.get('created_at') or now,
             'updated_at': now,
         })
@@ -1329,7 +1515,7 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
     return rows
 
 
-def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id='', co_organizers=()):
+def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id='', co_organizers=(), *, persist_occurrences=True):
     ensure_module_authoring_tables()
     ensure_live_session_tracking_tables()
     module_catalogue_id = clean_str(payload.get('moduleCatalogueId'))
@@ -1387,12 +1573,14 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
         'meeting_type': clean_str(payload.get('meetingType')) or 'live-session',
         'request_responses': bool(payload.get('requestResponses', True)),
         'allow_time_proposals': bool(payload.get('allowNewTimeProposals', True)),
-        'hide_attendees': bool(payload.get('hideAttendees', False)),
+        'hide_attendees': True,
         'status': 'active',
         'warnings': json_db_value(warnings),
         'created_at': now,
         'updated_at': now,
     })
+    if not persist_occurrences:
+        return live_session_id, 0
     occurrence_rows = persist_live_session_occurrences(
         live_session_id,
         payload,
@@ -1643,7 +1831,7 @@ def teams_event_payload(payload, graph_settings):
     repeat = clean_str(payload.get('repeat')).lower() or 'none'
     if repeat not in TEAMS_REPEAT_VALUES:
         raise ValueError('Unsupported repeat option.')
-    occurrences = max(2, min(52, int(payload.get('repeatOccurrences') or 12)))
+    occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or 12)))
     co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
     co_organizer_set = set(co_organizers)
     presenters = [
@@ -1658,27 +1846,16 @@ def teams_event_payload(payload, graph_settings):
     invited_people = list(dict.fromkeys([*co_organizers, *presenters, *attendees]))
     details = clean_str(payload.get('details'))
 
-    # Anchor the series to the same UTC instant the per-session occurrences are
-    # derived from. The wizard computes those in the browser's timezone, so reading
-    # the naive local string in the organizer's Graph timezone can put the weekly
-    # grid hours away from every target: nothing matches, every occurrence has to be
-    # moved, and Graph rejects moves that cross a neighbour -- which shreds the
-    # series into standalone recreations. Same instant either way, minus the churn.
-    anchor = utc_start
-    if anchor.tzinfo is not None:
-        anchor = anchor.astimezone(timezone.utc).replace(tzinfo=None)
-    anchor = anchor.replace(second=0, microsecond=0)
+    # Convert each instant in the business zone. A fixed UTC offset changes
+    # midnight Thursday into two different weekdays across the autumn clock change.
+    zone_name = graph_timezone_iana(graph_settings)
+    graph_zone = graph_settings.get('timezone') or 'GMT Standard Time'
+    targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, zone_name)
     event = {
         'subject': title,
         'body': {'contentType': 'HTML', 'content': teams_event_body_html(title, details)},
-        'start': {
-            'dateTime': anchor.isoformat(timespec='seconds'),
-            'timeZone': 'UTC',
-        },
-        'end': {
-            'dateTime': (anchor + timedelta(minutes=duration)).isoformat(timespec='seconds'),
-            'timeZone': 'UTC',
-        },
+        'start': graph_calendar_time(targets[0]['start'], zone_name, graph_zone),
+        'end': graph_calendar_time(targets[0]['end'], zone_name, graph_zone),
         'attendees': [
             {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
             for email in invited_people
@@ -1687,7 +1864,7 @@ def teams_event_payload(payload, graph_settings):
         'onlineMeetingProvider': 'teamsForBusiness',
         'responseRequested': bool(payload.get('requestResponses', True)),
         'allowNewTimeProposals': bool(payload.get('allowNewTimeProposals', True)),
-        'hideAttendees': bool(payload.get('hideAttendees', False)),
+        'hideAttendees': True,
     }
     transaction_id = clean_str(payload.get('transactionId'))[:255]
     if transaction_id:
@@ -1695,9 +1872,7 @@ def teams_event_payload(payload, graph_settings):
     # Holiday shifts stretch the calendar span past the Nth weekly slot, so size the
     # recurrence by the span the wizard actually needs. Sizing it by session count
     # leaves the trailing shifted dates with no instance to move onto.
-    recurrence_days = teams_recurrence_weekdays(payload, anchor)
-    recurrence_slots = teams_recurrence_slot_count(payload, anchor, repeat, occurrences, recurrence_days)
-    recurrence = teams_event_recurrence(repeat, anchor, max(2, recurrence_slots), recurrence_days)
+    recurrence = local_calendar_recurrence(targets, repeat, zone_name, graph_zone)
     if recurrence:
         event['recurrence'] = recurrence
     # Return normalized timing too, for the component settings response.
@@ -1742,6 +1917,14 @@ def teams_calendar_minute_key(value):
 
 
 def teams_series_email_list(*values):
+    """The email addresses in a stored invitation list.
+
+    Anything that is not an address is dropped rather than carried through. A
+    caller that hands this a JSON *string* it has already exploded into
+    characters (``list('["a@b"]')``) would otherwise turn one meeting's roster
+    into one "person" per distinct character -- rows that reach Graph as
+    invitees and the attendance panel as "28 expected".
+    """
     emails = []
     for value in values:
         if isinstance(value, str):
@@ -1754,7 +1937,9 @@ def teams_series_email_list(*values):
             candidates = []
         for candidate in candidates:
             email = clean_str(candidate).lower()
-            if email and email not in emails:
+            if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
+                continue
+            if email not in emails:
                 emails.append(email)
     return emails
 
@@ -1868,6 +2053,7 @@ def apply_teams_occurrence_shifts(
 
     warnings = []
     recreated_details = []
+    protected_instances = set()
     if not target_occurrences:
         return warnings, recreated_details
 
@@ -1888,7 +2074,7 @@ def apply_teams_occurrence_shifts(
     }
     try:
         instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
-        instances = instance_response.get('value') if isinstance(instance_response, dict) else []
+        instances = [graph_event_utc(item) for item in (instance_response.get('value') or [])] if isinstance(instance_response, dict) else []
         instances = sorted(instances, key=lambda item: clean_str((item.get('start') or {}).get('dateTime')))
         # Claim instances that already sit on a wanted date before assigning the
         # rest. Pairing purely by position would move an instance that is already
@@ -1941,7 +2127,8 @@ def apply_teams_occurrence_shifts(
                 continue
             current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
             target_key = teams_calendar_minute_key(target['start'])
-            if current_key and current_key == target_key:
+            current_end = teams_calendar_minute_key((instance.get('end') or {}).get('dateTime'))
+            if current_key and current_key == target_key and current_end == teams_calendar_minute_key(target['end']):
                 continue
             instance_key = urllib_parse.quote(instance_id, safe='')
             try:
@@ -1950,19 +2137,20 @@ def apply_teams_occurrence_shifts(
                     'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
                 })
             except RuntimeError as exc:
+                protected_instances.add(instance_id)
                 warnings.append({
                     'code': 'teams_shifted_occurrence_not_moved',
                     'message': 'Microsoft Teams could not move this occurrence, so it was left in the recurring series to preserve the module\'s fixed join URL.',
                     'detail': str(exc),
                 })
         instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
-        instances = instance_response.get('value') if isinstance(instance_response, dict) else []
+        instances = [graph_event_utc(item) for item in (instance_response.get('value') or [])] if isinstance(instance_response, dict) else []
         for instance in instances:
             instance_id = clean_str(instance.get('id'))
             if not instance_id:
                 continue
             current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
-            if current_key and current_key not in target_by_key:
+            if current_key and current_key not in target_by_key and instance_id not in protected_instances:
                 microsoft_graph_request('DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}')
     except RuntimeError as exc:
         logger.warning('Unable to reconcile individual Teams event instances: %s', exc)
@@ -2004,12 +2192,25 @@ def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc,
     patch_body = {
         'start': {'dateTime': new_start_utc.replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
         'end': {'dateTime': new_end_utc.replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+        'hideAttendees': True,
     }
+
+    def move_verified(instance_id):
+        path = f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}'
+        current = microsoft_graph_request('GET', path)
+        actual_link = clean_str((current.get('onlineMeeting') or {}).get('joinUrl'))
+        if current.get('isCancelled') or actual_link != join_url or not safe_teams_join_url(actual_link):
+            raise RuntimeError('The session join link or calendar identity could not be verified.')
+        microsoft_graph_request('PATCH', path, payload=patch_body)
+        verify_calendar(microsoft_graph_request, owner_key, instance_id, [
+            {'session_number': occurrence.get('session_number') or 1,
+             'start': utc_datetime(new_start_utc), 'end': utc_datetime(new_end_utc)},
+        ], join_url, False)
 
     # Already its own event: move it directly, no series instance to resolve.
     if occ_event_id and occ_event_id != series_event_id:
         try:
-            microsoft_graph_request('PATCH', f'users/{owner_key}/events/{urllib_parse.quote(occ_event_id, safe="")}', payload=patch_body)
+            move_verified(occ_event_id)
         except RuntimeError as exc:
             logger.warning('Unable to reschedule a standalone Teams occurrence: %s', exc)
             warnings.append({'code': 'teams_occurrence_not_moved', 'message': 'Microsoft Teams could not move this session.', 'detail': str(exc)})
@@ -2053,16 +2254,15 @@ def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc,
         warnings.append({'code': 'teams_occurrence_not_found', 'message': 'Microsoft Teams did not list this session, so it was not moved.', 'detail': ''})
         return join_url, online_meeting_id, result_event_id, warnings
 
-    instance_key = urllib_parse.quote(instance_id, safe='')
     try:
-        microsoft_graph_request('PATCH', f'users/{owner_key}/events/{instance_key}', payload=patch_body)
+        move_verified(instance_id)
     except RuntimeError as exc:
         warnings.append({
             'code': 'teams_occurrence_not_moved',
             'message': 'Microsoft Teams could not move this occurrence, so it was left in the recurring series to preserve the module\'s fixed join URL.',
             'detail': str(exc),
         })
-    return join_url, online_meeting_id, result_event_id, warnings
+    return join_url, online_meeting_id, instance_id, warnings
 
 
 def teams_meeting_base_path(organizer, meeting_id, join_url=''):
@@ -2131,15 +2331,17 @@ def apply_teams_meeting_options(
     if lobby_choice not in TEAMS_LOBBY_VALUES:
         lobby_choice = 'invited'
     recording_choice = clean_str(recording).lower() or 'none'
-    co_organizer_emails = teams_series_email_list(list(co_organizers))
+    # Never `list(...)` these: a caller that passes the stored JSON text instead
+    # of a parsed list would have it split into characters here.
+    co_organizer_emails = teams_series_email_list(co_organizers)
     co_organizer_set = set(co_organizer_emails)
     presenter_emails = [
-        email for email in teams_series_email_list(list(presenters))
+        email for email in teams_series_email_list(presenters)
         if email not in co_organizer_set
     ]
     presenter_set = set(presenter_emails)
     attendee_emails = [
-        email for email in teams_series_email_list(list(attendees))
+        email for email in teams_series_email_list(attendees)
         if email not in co_organizer_set and email not in presenter_set
     ]
     roster = [*co_organizer_emails, *presenter_emails, *attendee_emails]
@@ -2298,7 +2500,8 @@ def live_session_meeting_groups(series, occurrences):
     series_join_url = clean_str(series.get('join_url'))
     grouped = {}
     for row in occurrences:
-        meeting_id = clean_str(row.get('online_meeting_id')) or series_meeting_id
+        own_join_url = clean_str(row.get('join_url'))
+        meeting_id = clean_str(row.get('online_meeting_id')) or (series_meeting_id if not own_join_url or own_join_url == series_join_url else '')
         if not meeting_id:
             continue
         bucket = grouped.setdefault(meeting_id, {
@@ -2386,6 +2589,13 @@ def curriculum_teams_meeting(request):
             },
         )
 
+    try:
+        weekday_groups = calendar_groups(payload, graph_settings)
+    except (TypeError, ValueError) as exc:
+        return json_error(str(exc), status=400)
+    if weekday_groups:
+        return save_weekday_calendar(payload, graph_settings)
+
     organizer = teams_new_meeting_organizer(payload.get('organizerEmail'))
     if not organizer:
         return json_error(
@@ -2395,7 +2605,12 @@ def curriculum_teams_meeting(request):
 
     try:
         event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
-    except (TypeError, ValueError) as exc:
+        targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
+        payload = {**payload, 'hideAttendees': True, 'scheduledOccurrences': [
+            {'sessionNumber': item['session_number'], 'startDateTimeUtc': item['start'].isoformat(),
+             'durationMinutes': int((item['end'] - item['start']).total_seconds() / 60)} for item in targets
+        ]}
+    except (TypeError, ValueError, KeyError) as exc:
         return json_error(str(exc), status=400)
     if co_organizers and not has_column(LIVE_SESSIONS_TABLE, 'co_organizers'):
         return json_error(
@@ -2406,12 +2621,16 @@ def curriculum_teams_meeting(request):
 
     owner_key = urllib_parse.quote(organizer, safe='')
     try:
-        event = microsoft_graph_request('POST', f'users/{owner_key}/events', payload=event_payload)
+        # Prepare the calendar without recipients. Holiday cleanup must not send
+        # provisional invitations or cancellation emails to the class.
+        event = microsoft_graph_request('POST', f'users/{owner_key}/events', payload={**event_payload, 'attendees': []})
     except RuntimeError as exc:
         logger.warning('Unable to create Module Builder Teams event: %s', exc)
         return json_error('Microsoft Teams could not create the meeting.', status=502, detail=str(exc))
 
     event_id = clean_str(event.get('id'))
+    if not event_id:
+        return json_error('Microsoft did not return a calendar identifier. No invitations were sent.', status=502)
     online_meeting = event.get('onlineMeeting') or {}
     join_url = clean_str(online_meeting.get('joinUrl'))
     if event_id and not join_url:
@@ -2422,6 +2641,18 @@ def curriculum_teams_meeting(request):
             join_url = clean_str(online_meeting.get('joinUrl'))
         except RuntimeError:
             pass
+
+    # Checkpoint the event before further Graph calls. A partial failure can be
+    # resumed through this calendar's update action without creating another one.
+    try:
+        live_session_id, _ = persist_live_session_series(
+            payload, event, ['Invitations pending calendar verification.'], graph_settings,
+            organizer, attendees, presenters, co_organizers=co_organizers, persist_occurrences=False,
+        )
+    except Exception:
+        logger.exception('The prepared Teams calendar could not be saved.')
+        return json_error('The calendar was prepared but could not be saved. No invitations were sent.',
+                          status=500, meetingCreated=True, eventId=event_id)
 
     warnings = []
     lobby_choice = clean_str(payload.get('lobbyBypass')).lower() or 'invited'
@@ -2441,7 +2672,7 @@ def curriculum_teams_meeting(request):
     # Graph has just built a plain weekly series. Move its occurrences onto the
     # wizard's holiday-shifted dates now, otherwise the calendar keeps sessions on
     # holidays the wizard already moved them off and the two disagree from day one.
-    if event_id:
+    if repeat != 'none':
         shift_warnings, recreated_details = apply_teams_occurrence_shifts(
             owner_key,
             urllib_parse.quote(event_id, safe=''),
@@ -2479,18 +2710,27 @@ def curriculum_teams_meeting(request):
 
     event['_meetingOptionsUrl'] = meeting_options_url
     try:
-        live_session_id, tracked_occurrences = persist_live_session_series(
-            payload,
-            event,
-            warnings,
-            graph_settings,
-            organizer,
-            attendees,
-            presenters,
-            clean_str(graph_meeting.get('id')),
-            co_organizers=co_organizers,
+        if warnings or not settings_applied:
+            raise RuntimeError('The calendar or meeting options could not be verified. Invitations remain pending.')
+        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+        publish_attendees(microsoft_graph_request, owner_key, event, event_payload['attendees'])
+        # Publishing must not resurrect deleted slots or change the shared link.
+        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+        occurrence_rows = replace_live_session_occurrences(
+            live_session_id, payload, utc_start, duration, repeat, occurrences,
+            event_id=event_id, join_url=join_url,
         )
-        persist_recreated_occurrence_details(live_session_id, recreated_details)
+        tracked_occurrences = len(occurrence_rows)
+        update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
+            'warnings': json_db_value([]), 'online_meeting_id': meeting_id,
+            'meeting_options_url': meeting_options_url, 'join_url': join_url, 'updated_at': datetime.utcnow(),
+        })
+    except RuntimeError as exc:
+        update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
+            'warnings': json_db_value([*warnings, str(exc)]), 'updated_at': datetime.utcnow(),
+        })
+        return json_error('The calendar is saved, but verification or invitation delivery is incomplete. Open its review to retry.',
+                          status=502, detail=str(exc), meetingCreated=True, liveSessionId=live_session_id)
     except Exception:
         logger.exception('Teams meeting was created, but its live_sessions record could not be saved.')
         return json_error(
@@ -2788,12 +3028,21 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if not isinstance(payload, dict):
         return json_error('A valid JSON body is required.')
     series = series_rows[0]
+    try:
+        weekday_groups = [] if payload.get('peopleOnly') else calendar_groups(payload, get_graph_settings())
+    except (TypeError, ValueError) as exc:
+        return json_error(str(exc), status=400)
+    if stored_calendar_series(series) or weekday_groups:
+        return save_weekday_calendar(payload, get_graph_settings(), series)
+
     # The stored organizer, never the caller's. This event already exists on one
     # mailbox, and asking Graph for it on another is a 404 that would strand a
     # live series -- so pinning an organizer changes where *new* meetings are
     # created and leaves every series already running on its own calendar.
     organizer = clean_str(series.get('organizer_email')) or teams_meeting_default_organizer()
-    event_id = clean_str(payload.get('eventId') or series.get('graph_event_id'))
+    event_id = clean_str(series.get('graph_event_id'))
+    if payload.get('eventId') and clean_str(payload['eventId']) != event_id:
+        return json_error('The reviewed event does not belong to this calendar.', status=409)
     if not organizer or not event_id:
         return json_error('This Teams meeting is missing organizer or calendar event identifiers.', status=409)
 
@@ -2850,34 +3099,50 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if repeat not in TEAMS_REPEAT_VALUES:
         return json_error('Unsupported repeat option.', status=400)
     occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or series.get('repeat_occurrences') or 1)))
-    # Holiday shifts push later sessions beyond the Nth weekly slot, so the recurrence
-    # range must span the shifted end date instead of the plain session count. Sizing it
-    # by session count leaves the trailing shifted dates with no instance to move onto.
-    recurrence_days = teams_recurrence_weekdays(payload, local_start)
-    recurrence_slots = teams_recurrence_slot_count(payload, local_start, repeat, occurrences, recurrence_days)
+    try:
+        targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
+        recurrence = local_calendar_recurrence(targets, repeat, graph_timezone_iana(graph_settings),
+                                               graph_settings.get('timezone') or 'GMT Standard Time')
+    except (ValueError, TypeError, KeyError) as exc:
+        return json_error(str(exc), status=400)
+    payload = {**payload, 'scheduledOccurrences': [
+        {'sessionNumber': item['session_number'], 'startDateTimeUtc': item['start'].isoformat(),
+         'durationMinutes': int((item['end'] - item['start']).total_seconds() / 60)} for item in targets
+    ]}
     event_patch = {
         'subject': title,
-        'start': {
-            'dateTime': local_start.replace(second=0, microsecond=0).isoformat(timespec='seconds'),
-            'timeZone': graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time',
-        },
-        'end': {
-            'dateTime': (local_start + timedelta(minutes=duration)).replace(second=0, microsecond=0).isoformat(timespec='seconds'),
-            'timeZone': graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time',
-        },
+        'hideAttendees': True,
+        'start': graph_calendar_time(targets[0]['start'], graph_timezone_iana(graph_settings), graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time'),
+        'end': graph_calendar_time(targets[0]['end'], graph_timezone_iana(graph_settings), graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time'),
     }
-    if people_changed:
-        event_patch['attendees'] = [
-            {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
-            for email in invited_people
-        ]
-    recurrence = teams_event_recurrence(repeat, local_start, max(2, recurrence_slots), recurrence_days)
     event_patch['recurrence'] = recurrence if repeat != 'none' else None
 
     owner_key = urllib_parse.quote(organizer, safe='')
     event_key = urllib_parse.quote(event_id, safe='')
+    dates_already_verified = False
     try:
-        event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload=event_patch)
+        current = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
+        if current.get('isCancelled'):
+            return json_error('This Microsoft calendar has been cancelled. Review it before continuing.', status=409)
+        current_join = clean_str((current.get('onlineMeeting') or {}).get('joinUrl'))
+        if series.get('join_url') and current_join != series['join_url']:
+            return json_error('The Microsoft join link differs from the saved calendar. Review it before continuing.', status=409)
+        try:
+            current = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, current_join, repeat != 'none')
+            dates_already_verified = True
+        except CalendarMismatch:
+            pass  # A known difference is the reason to update. Read failures still abort.
+        if payload.get('peopleOnly'):
+            # Saving people must not reapply a series pattern and revive cancelled slots.
+            event = current
+            if current.get('hideAttendees') is not True:
+                microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload={'hideAttendees': True})
+        elif dates_already_verified:
+            event = current
+            if current.get('subject') != title:
+                event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload={'subject': title})
+        else:
+            event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload=event_patch)
         if not isinstance(event, dict):
             event = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
     except RuntimeError as exc:
@@ -2892,14 +3157,11 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'presenters': presenters,
         'co_organizers': co_organizers,
     }
-    warnings, recreated_details = apply_teams_occurrence_shifts(
-        owner_key,
-        event_key,
-        title,
-        teams_shifted_occurrence_targets(payload, duration),
-        invited_people,
-        meeting_options,
-    )
+    warnings, recreated_details = [], []
+    if not payload.get('peopleOnly') and not dates_already_verified and repeat != 'none':
+        warnings, recreated_details = apply_teams_occurrence_shifts(
+            owner_key, event_key, title, teams_shifted_occurrence_targets(payload, duration), invited_people, meeting_options,
+        )
 
     join_url = clean_str((event.get('onlineMeeting') or {}).get('joinUrl')) or clean_str(series.get('join_url'))
     # Re-applied on every save, not only when the people change. Graph resets an
@@ -2918,7 +3180,23 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         online_meeting_id=series.get('online_meeting_id'),
     )
     warnings.extend(option_warnings)
-    occurrence_rows = replace_live_session_occurrences(
+    try:
+        if warnings or not _applied:
+            raise RuntimeError('Microsoft did not accept every calendar or meeting option change.')
+        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+        publish_attendees(microsoft_graph_request, owner_key, event, [
+            {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
+            for email in invited_people
+        ])
+        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+    except RuntimeError as exc:
+        update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
+            'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
+            'updated_at': datetime.utcnow(),
+        })
+        return json_error('Microsoft did not confirm the reviewed calendar. Requested dates have not been marked as synchronized.',
+                          status=502, detail=str(exc), partial=True, liveSessionId=live_session_id)
+    occurrence_rows = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id]) if payload.get('peopleOnly') else replace_live_session_occurrences(
         live_session_id,
         payload,
         utc_start,
@@ -2930,6 +3208,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     )
     persist_recreated_occurrence_details(live_session_id, recreated_details)
     series_update = {
+        'hide_attendees': True,
+        'warnings': json_db_value([]),
         'online_meeting_id': clean_str(graph_meeting.get('id')) or clean_str(series.get('online_meeting_id')),
         'module_title': title,
         'start_datetime': utc_start,
@@ -2940,6 +3220,9 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'web_link': clean_str(event.get('webLink')) or clean_str(series.get('web_link')),
         'updated_at': datetime.utcnow(),
     }
+    if payload.get('peopleOnly'):
+        for field in ('module_title', 'start_datetime', 'duration_minutes', 'repeat_pattern', 'repeat_occurrences'):
+            series_update.pop(field, None)
     if people_changed:
         series_update['attendees'] = json_db_value(attendees)
         series_update['presenters'] = json_db_value(presenters)
@@ -3227,6 +3510,8 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     # the row was loaded with and asks Graph for nothing at all.
     series['online_meeting_id'] = meeting_id
     errors = []
+    if any(clean_str(row.get('join_url')) not in ('', join_url) and not clean_str(row.get('online_meeting_id')) for row in occurrences):
+        errors.append('A weekday series has no online meeting ID yet. Update the calendar to retry its Teams configuration.')
     synced = {'attendanceReports': 0, 'attendanceRecords': 0, 'transcripts': 0, 'recordings': 0}
     now = datetime.utcnow()
 
@@ -4460,70 +4745,54 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     holidays_by_date = holiday_details_by_date(holidays)
     guard_days = max(3650, session_count * 21)
 
-    # The delivery days counted from the start with no closure taken into
-    # account: where each session was DUE before any holiday touched the run.
-    # A session keeps that date as `slotDate` so a screen can say which day was
-    # closed under it, and the last of them is the end date the module would
-    # have had with nothing shut. It is not where the session runs, and from the
-    # first closure onwards it is not where its week sits either -- the closed
-    # slot becomes a reading week of its own and everything behind it moves down
-    # one open slot.
-    slots = []
-    slot_cursor = start
-    slot_guard = guard_days
-    while len(slots) < session_count and slot_guard > 0:
-        if slot_cursor.weekday() in days:
-            slots.append(slot_cursor)
-        slot_cursor += timedelta(days=1)
-        slot_guard -= 1
-
-    # The curriculum spine: EVERY delivery slot the module passes through, open
-    # or closed, in calendar order. A closed slot keeps its place in the
-    # curriculum -- it is a reading week caused by a holiday, and it names the
-    # holiday that took it -- but it consumes no live session, so the session
-    # that was due there and every session behind it move down one open slot.
-    # The spine is therefore longer than the session list by exactly the number
-    # of closures the plan stepped over, which is what moves the delivery end
-    # date out by one slot per closure without any date arithmetic of its own.
+    # The curriculum spine: every delivery day the module passes through, in
+    # calendar order, one per authored delivery slot.
+    #
+    # A ticked holiday does NOT move the run. It closes the room, not the
+    # curriculum: the slot keeps the date the delivery pattern gave it, the week
+    # authored into it keeps that date too, and every week behind it stays
+    # exactly where it was. What changes is what the slot delivers -- a closed
+    # slot is a reading week, so its other components stand and no live session
+    # is scheduled on it. `slotDate` therefore always equals `date`, and the
+    # module ends on the day its own pattern says it ends, closures or not.
+    #
+    # Nothing here decides what the week becomes. A holiday on a delivery day is
+    # stated, not acted on: the slot stays a live-session slot carrying the
+    # holidays that fall on it, and the author is the one who turns that week
+    # into a reading week, drops its live session or leaves it exactly as it is.
+    #
+    # `skippedHolidays` on a session names the holidays landing on THAT session's
+    # own day, so a screen can state the clash on the week it belongs to.
     curriculum_slots = []
     sessions = []
     skipped = []
-    pending_skipped = []
     cursor = start
-    while len(sessions) < session_count and guard_days > 0:
+    while len(curriculum_slots) < session_count and guard_days > 0:
         if cursor.weekday() in days:
-            if cursor in selected_holidays:
+            closed_by = holidays_by_date.get(cursor) or []
+            closed = cursor in selected_holidays
+            if closed:
                 skipped.append(cursor.isoformat())
-                pending_skipped.append(cursor.isoformat())
-                curriculum_slots.append({
-                    'slotNumber': len(curriculum_slots) + 1,
-                    'date': cursor.isoformat(),
-                    'day': cursor.strftime('%A'),
-                    'type': 'reading-week',
-                    'cause': 'holiday',
-                    'sessionNumber': None,
-                    'holidays': holidays_by_date.get(cursor) or [],
-                })
-            else:
-                slot = slots[len(sessions)] if len(sessions) < len(slots) else cursor
-                sessions.append({
-                    'sessionNumber': len(sessions) + 1,
-                    'date': cursor.isoformat(),
-                    'day': cursor.strftime('%A'),
-                    'slotDate': slot.isoformat(),
-                    'slotDay': slot.strftime('%A'),
-                    'skippedHolidays': pending_skipped,
-                })
-                curriculum_slots.append({
-                    'slotNumber': len(curriculum_slots) + 1,
-                    'date': cursor.isoformat(),
-                    'day': cursor.strftime('%A'),
-                    'type': 'live-session',
-                    'cause': '',
-                    'sessionNumber': len(sessions),
-                    'holidays': [],
-                })
-                pending_skipped = []
+            sessions.append({
+                'sessionNumber': len(sessions) + 1,
+                'date': cursor.isoformat(),
+                'day': cursor.strftime('%A'),
+                'slotDate': cursor.isoformat(),
+                'slotDay': cursor.strftime('%A'),
+                'skippedHolidays': [cursor.isoformat()] if closed else [],
+            })
+            curriculum_slots.append({
+                'slotNumber': len(curriculum_slots) + 1,
+                'date': cursor.isoformat(),
+                'day': cursor.strftime('%A'),
+                # Still a live-session slot: a holiday marks the day, it does
+                # not reclassify the week. `cause` and `holidays` are what a
+                # screen reads to warn the author that this one needs a look.
+                'type': 'live-session',
+                'cause': 'holiday' if closed else '',
+                'sessionNumber': len(sessions),
+                'holidays': closed_by if closed else [],
+            })
         cursor += timedelta(days=1)
         guard_days -= 1
 
@@ -4535,11 +4804,10 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
         'slots': curriculum_slots,
         'skippedHolidays': skipped,
         'finalEndDate': sessions[-1]['date'] if sessions else '',
-        # Where the run would have ended with nothing closed: the last of the
-        # holiday-blind slots. Stated rather than derived, because "one delivery
-        # slot later" is only "seven days later" for a module that delivers once
-        # a week -- a Mon+Thu module loses three or four days per closure.
-        'originalEndDate': slots[-1].isoformat() if slots else '',
+        # The same day: nothing moves the run any more, so the end date a
+        # closure-free plan would have had IS the end date this plan has.
+        # Stated rather than dropped, because callers render the pair.
+        'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
     }
 
@@ -8647,9 +8915,16 @@ def module_delivery_session_plan(module, session_count, start, holidays=None):
     day at all. There is no weekday to skip onto in that case, so it stays a
     plain count of weeks and reports no shifts.
     """
-    delivery_days = module.get('session_week_day') or module.get('week_days') or module.get('delivery_days') or ''
-    plan = build_module_session_plan(start, session_count, delivery_days, holidays) if delivery_days else {}
+    weekly = module_weekly_schedule(module)
+    delivery_days = ', '.join(slot['day'] for slot in weekly) or module.get('session_week_day') or module.get('week_days') or module.get('delivery_days') or ''
+    # A module-specific closure must not change other modules in its cohort.
+    own_holidays = parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), [])
+    applied_holidays = [*(holidays or []), *(own_holidays if isinstance(own_holidays, list) else [])]
+    plan = build_module_session_plan(start, session_count, delivery_days, applied_holidays) if delivery_days else {}
     if plan.get('sessions'):
+        for session in plan['sessions']:
+            clock, end, duration = module_session_clock(module, session_date=session.get('date'))
+            session.update(startTime=clock, endTime=end, durationMinutes=duration)
         return plan
     warnings = plan.get('warnings') or []
     if not start:
@@ -8664,6 +8939,9 @@ def module_delivery_session_plan(module, session_count, start, holidays=None):
             'slotDate': (start + timedelta(days=index * 7)).isoformat(),
             'slotDay': (start + timedelta(days=index * 7)).strftime('%A'),
             'skippedHolidays': [],
+            'startTime': module_session_clock(module)[0],
+            'endTime': module_session_clock(module)[1],
+            'durationMinutes': module_session_clock(module)[2],
         }
         for index in range(session_count)
     ]
@@ -8794,8 +9072,8 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
                 'type': 'Live Session',
                 'date': session_date.isoformat(),
                 'day': planned_session.get('day') or session_date.strftime('%A'),
-                'startTime': start_time,
-                'endTime': end_time,
+                'startTime': planned_session.get('startTime') or start_time,
+                'endTime': planned_session.get('endTime') or end_time,
                 'tutor': tutor,
                 'group': group_name,
                 'cohort': cohort_name,
@@ -9034,6 +9312,9 @@ def delivery_days_per_week(module_row):
     the calendar session count is the authored week count times this. Never
     below 1: a module with no delivery day still runs once per week.
     """
+    weekly = module_weekly_schedule(module_row)
+    if weekly:
+        return len(weekly)
     raw = clean_str((module_row or {}).get('session_week_day') or (module_row or {}).get('weekDays'))
     if not raw:
         return 1
@@ -9105,7 +9386,7 @@ def module_week_session_plan(module_row, week_count=0):
     ).get('sessions') or []
 
 
-def module_session_clock(module_row, group_row=None):
+def module_session_clock(module_row, group_row=None, session_date=None):
     """The wall clock a module's sessions occupy, with the calendar's fallbacks.
 
     Returns ``(start_time, end_time, duration_minutes)``. The fallbacks are the
@@ -9114,6 +9395,11 @@ def module_session_clock(module_row, group_row=None):
     """
     start_time = clean_str((module_row or {}).get('session_start_time')) or clean_str((group_row or {}).get('session_start_time')) or DEFAULT_SESSION_START_TIME
     end_time = clean_str((module_row or {}).get('session_end_time')) or clean_str((group_row or {}).get('session_end_time')) or DEFAULT_SESSION_END_TIME
+    day = parse_date(session_date)
+    for slot in module_weekly_schedule(module_row):
+        if day and slot['day'].lower() == day.strftime('%A').lower():
+            start_time, end_time = slot['startTime'], slot['endTime']
+            break
     start_minutes = parse_clock_minutes(start_time)
     end_minutes = parse_clock_minutes(end_time)
     duration = 0
@@ -9169,6 +9455,7 @@ def module_schedule_view(module, tutor_name=None):
     # selection that is not saved yet is the one place the ticked set cannot be
     # read back from `cohort_id`, so it may hand the list over directly.
     holidays = module.get('holidays') or module.get('linkedHolidays') or module.get('selectedHolidays') or []
+    weekly = module_weekly_schedule(module)
     return {
         'module_catalogue_id': first('module_catalogue_id', 'moduleCatalogueId', 'catalogueId', 'catalogue_id'),
         'title': first('title', 'name', 'moduleName'),
@@ -9185,7 +9472,9 @@ def module_schedule_view(module, tutor_name=None):
         'tutor_name': tutor if staff_assignment_key(tutor) else '',
         'sessions_number': parse_int(sessions_number, 0),
         'start_date': first('start_date', 'startDate'),
-        'session_week_day': first('session_week_day', 'weekDays', 'week_days', 'delivery_days', 'deliveryDays'),
+        'session_week_day': ', '.join(slot['day'] for slot in weekly) or first('session_week_day', 'weekDays', 'week_days', 'delivery_days', 'deliveryDays'),
+        'weekly_schedule': weekly,
+        'session_holidays': parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), []),
         'session_start_time': first('session_start_time', 'startTime', 'start_time'),
         'session_end_time': first('session_end_time', 'endTime', 'end_time'),
     }
@@ -9209,6 +9498,7 @@ def module_schedule_assignment_changed(before, after):
         'session_week_day',
         'session_start_time',
         'session_end_time',
+        'weekly_schedule',
     )
     return any(clean_str(before.get(key)) != clean_str(after.get(key)) for key in keys)
 
@@ -9219,13 +9509,16 @@ def module_slot_clash_dates(left, right, holiday_cache=None):
     Overlap rather than equality: 10:00-12:00 against 11:00-13:00 puts the same
     tutor in two rooms just as surely as two identical slots do.
     """
-    left_start, left_end = module_time_window(left)
-    right_start, right_end = module_time_window(right)
-    if left_start >= right_end or right_start >= left_end:
-        return []
-    return sorted(
-        module_session_dates(left, holiday_cache) & module_session_dates(right, holiday_cache)
-    )
+    shared = module_session_dates(left, holiday_cache) & module_session_dates(right, holiday_cache)
+    clashes = []
+    for day in sorted(shared):
+        left_clock, left_finish, _ = module_session_clock(left, session_date=day)
+        right_clock, right_finish, _ = module_session_clock(right, session_date=day)
+        left_start, left_end = module_time_window({'session_start_time': left_clock, 'session_end_time': left_finish})
+        right_start, right_end = module_time_window({'session_start_time': right_clock, 'session_end_time': right_finish})
+        if left_start < right_end and right_start < left_end:
+            clashes.append(day)
+    return clashes
 
 
 def tutor_conflict_context(module_rows=None):
@@ -9298,16 +9591,21 @@ def find_tutor_schedule_conflicts(
         if not shared:
             continue
         seen.add(catalogue_id)
-        conflicts.append({
-            'moduleCatalogueId': catalogue_id,
-            'moduleName': other.get('title') or catalogue_id,
-            'programme': other.get('programme_name'),
-            'cohort': other.get('cohort_name'),
-            'group': other.get('group_name'),
-            'startTime': other.get('session_start_time') or DEFAULT_SESSION_START_TIME,
-            'endTime': other.get('session_end_time') or DEFAULT_SESSION_END_TIME,
-            'dates': [item.isoformat() for item in shared],
-        })
+        dates_by_clock = defaultdict(list)
+        for day in shared:
+            clock, end, _duration = module_session_clock(other, session_date=day)
+            dates_by_clock[(clock, end)].append(day.isoformat())
+        for (clock, end), dates in dates_by_clock.items():
+            conflicts.append({
+                'moduleCatalogueId': catalogue_id,
+                'moduleName': other.get('title') or catalogue_id,
+                'programme': other.get('programme_name'),
+                'cohort': other.get('cohort_name'),
+                'group': other.get('group_name'),
+                'startTime': clock,
+                'endTime': end,
+                'dates': dates,
+            })
     return sorted(conflicts, key=lambda item: (item['dates'][0], item['moduleName']))
 
 
@@ -11500,6 +11798,7 @@ def provision_module_authoring_tables():
                 session_week_day varchar(255),
                 session_start_time varchar(32),
                 session_end_time varchar(32),
+                weekly_schedule {json_type},
                 source_type varchar(64),
                 source_id varchar(255),
                 created_at timestamp not null default current_timestamp,
@@ -11519,6 +11818,7 @@ def provision_module_authoring_tables():
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_week_day varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_start_time varchar(32)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_end_time varchar(32)')
+            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists weekly_schedule {json_type}')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_type varchar(64)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_id varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists tutor_name varchar(255)')
@@ -11552,6 +11852,8 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column session_start_time varchar(32)')
             if 'session_end_time' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column session_end_time varchar(32)')
+            if 'weekly_schedule' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column weekly_schedule {json_type}')
             if 'source_type' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column source_type varchar(64)')
             if 'source_id' not in columns:
@@ -12522,12 +12824,15 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     columns = list(values.keys())
     placeholders = ', '.join(['%s'] * len(columns))
     update_columns = [column for column in columns if column not in set(key_columns) | {'created_at'}]
-    if connection.vendor == 'postgresql':
+    if connection.vendor == 'postgresql' or table in (AUTHORING_MODULES_TABLE, LIVE_SESSION_OCCURRENCES_TABLE):
+        # REPLACE deletes the old SQLite row, cascading away the module's
+        # calendar or the occurrence's attendance. These identities must survive edits.
         conflict = ', '.join(quote_ident(column) for column in key_columns)
         assignments = ', '.join(f'{quote_ident(column)} = excluded.{quote_ident(column)}' for column in update_columns)
         query = (
             f'insert into {authoring_table_name(table)} ({", ".join(quote_ident(column) for column in columns)}) '
-            f'values ({placeholders}) on conflict ({conflict}) do update set {assignments} returning *'
+            f'values ({placeholders}) on conflict ({conflict}) do update set {assignments}'
+            + (' returning *' if connection.vendor == 'postgresql' else '')
         )
     else:
         query = (
@@ -13502,6 +13807,10 @@ def validate_component_authoring_payload(component, path):
 
 def validate_module_authoring_payload(payload):
     errors = []
+    try:
+        module_weekly_schedule(payload)
+    except ValueError as exc:
+        errors.append({'path': 'weeklySchedule', 'message': str(exc)})
     source_cache = {}
     if not clean_str(payload.get('title') or payload.get('name')):
         errors.append({'path': 'title', 'message': 'Module title is required.'})
@@ -14802,7 +15111,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     for row in component_rows:
         components_by_week[clean_str(row.get('week_id'))].append(row)
 
-    session_plan = module_week_session_plan(module_row, len(week_rows))
+    structure_rows = [{**week, 'components': components_by_week.get(clean_str(week.get('id')), [])} for week in week_rows]
+    session_rows = module_structure_uses_session_rows(structure_rows, module_stored_session_count(module_row), delivery_days_per_week(module_row))
+    session_plan = module_week_session_plan(module_row, 0 if session_rows else len(week_rows))
     session_start_time, _session_end_time, session_duration = module_session_clock(module_row, group_row)
     default_points = live_session_component_points() if create_missing else 0
     now = datetime.utcnow()
@@ -14813,7 +15124,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     def settings_for_session(session_index, existing_settings=None):
         """Everything that belongs to session ``session_index`` (0-based)."""
         existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
-        occurrence = occurrence_rows[session_index] if session_index < len(occurrence_rows) else None
+        occurrence = next((row for row in occurrence_rows if parse_int(row.get('session_number'), 0) == session_index + 1), None)
+        if not occurrence and stored_calendar_series(series_row):
+            return {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
         session_settings = live_occurrence_component_settings(occurrence, series_settings)
         shared_series_settings = {
             key: value
@@ -14822,6 +15135,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         }
         planned = session_plan[session_index] if session_index < len(session_plan) else {}
         session_date = format_date(planned.get('date'))
+        slot_time, _slot_end, slot_duration = module_session_clock(module_row, group_row, session_date)
         planned_settings = {}
         tracked_occurrence = (
             clean_str(existing_settings.get('sessionDateTimeUtc'))
@@ -14832,13 +15146,13 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         )
         if session_date and not (clean_str(existing_settings.get('sessionDate')) or tracked_occurrence):
             planned_settings['sessionDate'] = session_date
-            planned_settings['sessionTime'] = session_start_time
-            planned_settings['durationMinutes'] = session_duration
-            planned_settings['teamsDurationMinutes'] = session_duration
+            planned_settings['sessionTime'] = slot_time
+            planned_settings['durationMinutes'] = slot_duration
+            planned_settings['teamsDurationMinutes'] = slot_duration
             # Only when the calendar holds no instant of its own for this
             # session: the occurrence's start is the one Teams will really run.
             if not clean_str(session_settings.get('sessionDateTimeUtc')):
-                planned_instant = calendar_clock_to_utc_iso(session_date, session_start_time)
+                planned_instant = calendar_clock_to_utc_iso(session_date, slot_time)
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
@@ -14862,12 +15176,12 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 })
             updated += 1
         if not create_missing:
-            if not live_rows:
+            if not live_rows and not session_rows:
                 # A content-only week still occupies one dated slot, matching the
                 # structure payload's backward-compatible week-header walk.
                 session_index += 1
             continue
-        missing_count = max(0, sessions_per_week - len(live_rows))
+        missing_count = 0 if session_rows else max(0, sessions_per_week - len(live_rows))
         for offset in range(missing_count):
             settings_for_week = settings_for_session(session_index)
             session_index += 1
@@ -14999,7 +15313,14 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
         'updatedComponents': updated_components,
         'createdComponents': created_components,
         'meeting': settings_update,
-        'module': payload,
+        # Stamped the same way the structure GET stamps it. A POST here rewrote
+        # the module's live-session components, so the revision the Module
+        # Builder is holding is now behind -- and the Builder opens a module by
+        # calling this endpoint whenever a join link has gone missing. Handing
+        # back the pre-restore revision left that module permanently unsaveable:
+        # every save was refused as stale, and reloading ran the same restore
+        # again.
+        'module': structure_payload_with_revision(payload, resolved_id),
     }
     if pending_components is not None:
         # Weeks that have no live-session component yet, so re-attaching has
@@ -15052,7 +15373,7 @@ def module_expected_teams_occurrence_keys(module_row, holidays=None, group_row=N
     start_time, _end_time, _duration = module_session_clock(module_row, group_row)
     keys = []
     for session in plan.get('sessions') or []:
-        key = teams_calendar_minute_key(calendar_clock_to_utc_iso(session.get('date'), start_time))
+        key = teams_calendar_minute_key(calendar_clock_to_utc_iso(session.get('date'), session.get('startTime') or start_time))
         if key:
             keys.append(key)
     return keys, plan
@@ -15361,6 +15682,8 @@ def curriculum_teams_meeting_summary(request):
             'liveSessionId': session_id,
             'status': clean_str(row.get('status')) or 'active',
             'moduleTitle': clean_str(row.get('module_title')),
+            'calendarSeries': stored_calendar_series(row),
+            'verificationPending': bool(parse_json_value(row.get('warnings'), [])),
             'joinUrl': clean_str(row.get('join_url')),
             'webLink': clean_str(row.get('web_link')),
             'meetingOptionsUrl': clean_str(row.get('meeting_options_url')),
@@ -15406,6 +15729,12 @@ def curriculum_teams_meeting_summary(request):
             entry['differingOccurrenceCount'] = verdict['differingOccurrences']
             entry['missingFromTeams'] = verdict['missingFromTeams']
             entry['extraInTeams'] = verdict['extraInTeams']
+            if any(item.get('verified') is False for item in entry.get('calendarSeries') or []):
+                entry['syncState'] = 'unverified'
+                entry['syncReasons'] = [*entry['syncReasons'], 'weekday_series_unverified']
+            if entry.get('verificationPending'):
+                entry['syncState'] = 'unverified'
+                entry['syncReasons'] = [*entry['syncReasons'], 'calendar_verification_pending']
 
     return curriculum_results_response(results, request=request)
 
@@ -15524,6 +15853,44 @@ def curriculum_live_session_occurrences(request):
     return JsonResponse({'series': series_payload, 'occurrences': occurrences_payload})
 
 
+def module_structure_live_session_counts(weeks):
+    """Count authored live sessions per row, excluding reading-only rows."""
+    return [
+        sum(
+            normalise_component_type(component.get('type')) == 'live_session'
+            for component in week.get('components') or []
+        )
+        for week in weeks or []
+    ]
+
+
+def module_structure_uses_session_rows(weeks, session_count, delivery_day_count):
+    """Recognise a complete imported structure with one row per session.
+
+    These rows can include a separate holiday/reading row. They must not each
+    consume every delivery day, as true calendar-week rows do. Requiring every
+    planned session to be authored leaves partial and empty week shells on the
+    existing calendar-week mapping.
+    """
+    counts = module_structure_live_session_counts(weeks)
+    count = max(0, parse_int(session_count, 0))
+    per_week = max(1, parse_int(delivery_day_count, 1))
+    return (
+        count > 0
+        and sum(counts) == count
+        and all(value <= 1 for value in counts)
+        and len(counts) > (count + per_week - 1) // per_week
+    )
+
+
+def module_delivery_week_count(module, weeks):
+    count = module_stored_session_count(module)
+    days = delivery_days_per_week(module)
+    if module_structure_uses_session_rows(weeks, count, days):
+        return (count + days - 1) // days
+    return module_stored_week_count(module, len(weeks))
+
+
 def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=None):
     """Stamp the module's planned session date/day/time onto its weeks in place.
 
@@ -15552,14 +15919,18 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
     sessions are the module's, not the authoring's.
     """
     per_week = module_week_delivery_days(module, len(weeks))
-    planned_count = module_stored_session_count(module, len(weeks))
-    spare = max(0, planned_count - len(weeks) * per_week)
-    week_slot_counts = []
-    for week in weeks:
-        authored = len([component for component in week.get('components') or [] if component.get('type') == 'live-session'])
-        extra = min(max(0, authored - per_week), spare)
-        spare -= extra
-        week_slot_counts.append(per_week + extra)
+    stored_count = module_stored_session_count(module)
+    if module_structure_uses_session_rows(weeks, stored_count, per_week):
+        planned_count = stored_count
+        week_slot_counts = module_structure_live_session_counts(weeks)
+    else:
+        planned_count = module_stored_session_count(module, len(weeks))
+        spare = max(0, planned_count - len(weeks) * per_week)
+        week_slot_counts = []
+        for authored in module_structure_live_session_counts(weeks):
+            extra = min(max(0, authored - per_week), spare)
+            spare -= extra
+            week_slot_counts.append(per_week + extra)
     session_plan = module_session_plan_for_count(
         module,
         max(planned_count, sum(week_slot_counts)),
@@ -15589,15 +15960,16 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 session_date = format_date(planned.get('date'))
                 if not session_date:
                     continue
+                slot_time, _slot_end, slot_duration = module_session_clock(module, group_row, session_date)
                 planned_settings = {
                     **settings,
                     'sessionDate': session_date,
                     'sessionDay': clean_str(planned.get('day')),
-                    'sessionTime': session_start_time,
-                    'durationMinutes': session_duration,
-                    'teamsDurationMinutes': session_duration,
+                    'sessionTime': slot_time,
+                    'durationMinutes': slot_duration,
+                    'teamsDurationMinutes': slot_duration,
                 }
-                planned_instant = calendar_clock_to_utc_iso(session_date, session_start_time)
+                planned_instant = calendar_clock_to_utc_iso(session_date, slot_time)
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
@@ -15611,11 +15983,133 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
         # disagreed with the frontend's `applyModuleWeekSessionPlan`, which has
         # walked the delivered date all along.
         session_date = format_date(first_planned.get('date'))
+        session_start_time, _session_end_time, session_duration = module_session_clock(module, group_row, session_date)
         week['sessionDate'] = session_date
         week['sessionDay'] = clean_str(first_planned.get('day'))
         week['sessionStartTime'] = session_start_time if session_date else ''
         week['sessionDurationMinutes'] = session_duration if session_date else 0
     return weeks
+
+
+# ---------------------------------------------------------------------------
+# Structure revisions
+#
+# ``curriculum_module_structure`` PATCH is a whole-structure REPLACEMENT: it
+# soft-deletes every week, component and KSB mapping the module owns and writes
+# back what the payload carries. That makes "which version was this payload
+# built from" a safety question rather than a nicety -- a browser holding a
+# five-minute-old copy of the module does not just show stale weeks, its next
+# save writes them over whatever was authored in the meantime.
+#
+# The revision is a fingerprint of the stored material rather than a counter,
+# for two reasons. It needs no column, so no migration and no backfill -- the
+# authoring tables are ``managed = False`` and externally owned. And it is
+# derived from the rows themselves, so it moves for EVERY write that reaches
+# them, whichever endpoint made it: the structure PATCH, the settings PATCH, the
+# component PATCH, a week delete, the programme tree save, a Teams attach. A
+# counter would only move where somebody remembered to increment it, and the
+# write this is guarding against is precisely the one nobody remembered.
+#
+# A save that rewrites the same content therefore leaves the revision alone,
+# which is correct: two tabs that agree cannot conflict.
+# ---------------------------------------------------------------------------
+
+# Columns that move when the row is rewritten to the values it already held.
+# Including them would turn every no-op save into a conflict for everyone else.
+STRUCTURE_REVISION_VOLATILE_COLUMNS = ('created_at', 'updated_at', 'detached_at')
+
+# The tables one structure save replaces, with the filter that decides which of
+# their rows the module currently owns and the column each is ordered by. Read
+# in this order so the fingerprint does not depend on dictionary iteration.
+STRUCTURE_REVISION_SOURCES = (
+    ('module', AUTHORING_MODULES_TABLE, None, 'module_catalogue_id'),
+    ('weeks', AUTHORING_WEEKS_TABLE, active_week_rows, 'id'),
+    ('components', AUTHORING_COMPONENTS_TABLE, active_component_rows, 'id'),
+    ('mappings', AUTHORING_KSB_MAPPINGS_TABLE, active_mapping_rows, 'id'),
+    ('completion', AUTHORING_COMPLETION_TABLE, None, 'module_catalogue_id'),
+    ('advanced', AUTHORING_ADVANCED_TABLE, None, 'module_catalogue_id'),
+)
+
+
+def module_structure_revision(module_catalogue_id):
+    """Fingerprint of everything a structure PATCH would replace.
+
+    Six indexed single-module reads. A module that is not stored fingerprints as
+    the empty structure, so a first save of a fresh draft is never a conflict.
+
+    Rows are sorted by their own key rather than trusted in database order: a
+    fingerprint that depended on which order Postgres happened to return the
+    components in would refuse saves at random.
+    """
+    catalogue_id = clean_str(module_catalogue_id)
+    if not catalogue_id:
+        return ''
+    ensure_module_authoring_tables()
+    material = []
+    for label, table, keep, sort_column in STRUCTURE_REVISION_SOURCES:
+        try:
+            rows = authoring_fetch_all(
+                table,
+                'module_catalogue_id = %s',
+                [catalogue_id],
+                exclude_columns=STRUCTURE_REVISION_VOLATILE_COLUMNS,
+            )
+        except Exception:
+            # A table that cannot be read must not fail the request it was asked
+            # about. Returning '' turns the guard off for this save rather than
+            # refusing it, which matches how every other optional protection in
+            # this module degrades -- and the caller only enforces a non-empty
+            # revision.
+            logger.warning('Unable to fingerprint %s for module %s.', table, catalogue_id, exc_info=True)
+            return ''
+        if keep:
+            rows = keep(rows)
+        material.append([
+            label,
+            sorted(rows, key=lambda row: clean_str(row.get(sort_column))),
+        ])
+    return hashlib.sha256(
+        json.dumps(material, sort_keys=True, default=str).encode()
+    ).hexdigest()[:32]
+
+
+def structure_payload_with_revision(payload, module_catalogue_id):
+    """Stamp a structure payload with the revision it was built from.
+
+    Computed alongside the payload, never after it is served, so a payload that
+    comes back from the cache carries the revision of the content in it. That is
+    what makes a stale read safe: the save it feeds sends a superseded revision
+    and is refused, instead of the cached weeks quietly replacing the stored ones.
+    """
+    if not payload:
+        return payload
+    return {**payload, 'structureRevision': module_structure_revision(module_catalogue_id)}
+
+
+def lock_module_structure_row(module_catalogue_id):
+    """Hold this module's row for the rest of the transaction.
+
+    Without it the revision check is a read followed by a write, and two saves
+    that both read revision 41 both pass it -- the second overwriting the first
+    with the very payload the check exists to refuse. The lock makes
+    check-and-write one operation: the second save blocks here until the first
+    commits, then reads the revision the first one produced and is refused.
+
+    SQLite (the test runner) has no row locks and needs none: a write
+    transaction takes the whole database.
+    """
+    if connection.vendor != 'postgresql':
+        return
+    with connection.cursor() as cursor:
+        cursor.execute(
+            'select 1 from %s where %s = %%s for update'
+            % (
+                authoring_table_name(AUTHORING_MODULES_TABLE),
+                quote_ident('module_catalogue_id'),
+            ),
+            [clean_str(module_catalogue_id)],
+        )
+        cursor.fetchall()
 
 
 def get_authoring_structure_payload(module_catalogue_id):
@@ -15719,6 +16213,9 @@ def get_authoring_structure_payload(module_catalogue_id):
         'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)),
         'startDate': format_date(module.get('start_date')),
         'endDate': format_date(module.get('end_date')),
+        'weeklySchedule': module_weekly_schedule(module),
+        'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
+        'deliveryWeeks': module_delivery_week_count(module, weeks),
         'weekDays': module.get('session_week_day') or group_row.get('session_week_day') or schedule_day_part(group_row.get('schedule')) or '',
         'startTime': module.get('session_start_time') or group_row.get('session_start_time') or schedule_time_parts(group_row.get('schedule'))[0],
         'endTime': module.get('session_end_time') or group_row.get('session_end_time') or schedule_time_parts(group_row.get('schedule'))[1],
@@ -15744,6 +16241,7 @@ def get_authoring_structure_payload(module_catalogue_id):
             'coach': payload.get('coach') or '',
             'tutor': payload.get('tutor') or '',
             'color': payload.get('color') or '',
+            'weeklySchedule': payload.get('weeklySchedule') or [],
             'weekDays': payload.get('weekDays') or '',
             'startTime': payload.get('startTime') or '',
             'endTime': payload.get('endTime') or '',
@@ -15945,6 +16443,9 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)),
             'startDate': format_date(module.get('start_date')),
             'endDate': format_date(module.get('end_date')),
+            'weeklySchedule': module_weekly_schedule(module),
+            'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
+            'deliveryWeeks': module_delivery_week_count(module, weeks),
             'weekDays': module.get('session_week_day') or group_row.get('session_week_day') or schedule_day_part(group_row.get('schedule')) or '',
             'startTime': module.get('session_start_time') or group_row.get('session_start_time') or schedule_time_parts(group_row.get('schedule'))[0],
             'endTime': module.get('session_end_time') or group_row.get('session_end_time') or schedule_time_parts(group_row.get('schedule'))[1],
@@ -15971,7 +16472,8 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
                 'coach': payload.get('coach') or '',
                 'tutor': payload.get('tutor') or '',
                 'color': payload.get('color') or '',
-                'weekDays': payload.get('weekDays') or '',
+                'weeklySchedule': payload.get('weeklySchedule') or [],
+            'weekDays': payload.get('weekDays') or '',
                 'startTime': payload.get('startTime') or '',
                 'endTime': payload.get('endTime') or '',
             }
@@ -16071,6 +16573,11 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
             'tutor': row.get('tutor_name') or '',
             'coach': group_coach_name,
             'sessionsNumber': parse_int(row.get('sessions_number'), 0),
+            'weeklySchedule': module_weekly_schedule(row),
+            'sessionHolidays': parse_json_value(row.get('session_holidays'), []),
+            'weekDays': row.get('session_week_day') or '',
+            'startTime': row.get('session_start_time') or '',
+            'endTime': row.get('session_end_time') or '',
             'startDate': format_date(row.get('start_date')),
             'endDate': format_date(row.get('end_date')),
             'qualityScore': parse_int(row.get('quality_score'), 0),
@@ -16168,6 +16675,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
         )
         summary['weeks'] = authored_week_count
         summary['weeksNumber'] = authored_week_count
+        summary['deliveryWeeks'] = module_delivery_week_count(module_rows_by_catalogue_id.get(catalogue_id, {}), summary['weekStructure'])
 
     # The tutor is already on the module row. The coach belongs to the group, so
     # it is read from the group rather than from the person: staff carry no
@@ -16225,6 +16733,12 @@ def authoring_summary_catalogue_item(summary):
         'startDate': summary['startDate'],
         'endDate': summary['endDate'],
         'sessionsNumber': summary['sessionsNumber'],
+        'weeklySchedule': summary.get('weeklySchedule') or [],
+        'sessionHolidays': summary.get('sessionHolidays') or [],
+        'deliveryWeeks': summary.get('deliveryWeeks'),
+        'weekDays': summary.get('weekDays') or '',
+        'startTime': summary.get('startTime') or '',
+        'endTime': summary.get('endTime') or '',
         'weekStructure': summary.get('weekStructure') or [],
         'sessionNames': summary['sessionNames'],
         'ksbCodes': summary['ksbCodes'],
@@ -16287,6 +16801,12 @@ def enrich_curriculum_modules_with_authoring_details(modules):
             'startDate': authoring.get('startDate') or module.get('startDate'),
             'endDate': authoring.get('endDate') or module.get('endDate'),
             'sessionsNumber': authoring.get('sessionsNumber') or module.get('sessionsNumber'),
+            'weeklySchedule': authoring.get('weeklySchedule') or [],
+            'sessionHolidays': authoring.get('sessionHolidays') or [],
+            'deliveryWeeks': authoring.get('deliveryWeeks'),
+            'weekDays': authoring.get('weekDays') or module.get('weekDays') or '',
+            'startTime': authoring.get('startTime') or module.get('startTime') or '',
+            'endTime': authoring.get('endTime') or module.get('endTime') or '',
             'weeks': authoring.get('weeks') or module.get('weeks'),
             'weekStructure': authoring.get('weekStructure') or module.get('weekStructure') or [],
             'sessionNames': meaningful_session_names(authoring.get('sessionNames')) or module.get('sessionNames') or [],
@@ -17104,14 +17624,28 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     authored_week_count = parse_int(payload.get('weeksNumber'), 0) or parse_int(payload.get('weeks_number'), 0)
     if authored_week_count <= 0:
         authored_week_count = len(weeks) or module_stored_week_count(existing_module_row)
+    weekly_schedule = merged_weekly_schedule(payload, existing_module_row)
+    if weekly_schedule:
+        if not has_column(AUTHORING_MODULES_TABLE, 'weekly_schedule'):
+            raise ModuleAuthoringValidationError([{'path': 'weeklySchedule', 'message': 'Apply curriculum migration 0063 before saving per-day times.'}])
+        session_week_day = ', '.join(slot['day'] for slot in weekly_schedule)
+        session_start_time = weekly_schedule[0]['startTime']
+        session_end_time = weekly_schedule[0]['endTime']
     delivery_day_count = delivery_days_per_week({'session_week_day': session_week_day})
     requested_sessions = parse_int(payload.get('sessionsNumber'), 0) or parse_int(payload.get('sessions_number'), 0)
     if requested_sessions > 0:
         stored_sessions_number = requested_sessions
+    elif parse_int(existing_module_row.get('sessions_number'), 0) > 0:
+        stored_sessions_number = parse_int(existing_module_row.get('sessions_number'), 0)
     elif authored_week_count > 0:
         stored_sessions_number = authored_week_count * delivery_day_count
     else:
         stored_sessions_number = parse_int(existing_module_row.get('sessions_number'), 0)
+    # Imported/session-based structures can grow while carrying the original
+    # allocation's stale count. Every authored live component needs a calendar
+    # occurrence; a reading-only holiday row needs none. Keep the planned count
+    # as a floor for week shells that have not had their live sessions authored.
+    stored_sessions_number = max(stored_sessions_number, sum(module_structure_live_session_counts(weeks)))
 
     saved_module_row = None
     with transaction.atomic():
@@ -17155,6 +17689,7 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'session_week_day': session_week_day or None,
             'session_start_time': session_start_time or None,
             'session_end_time': session_end_time or None,
+            'weekly_schedule': json_db_value(weekly_schedule),
             'tutor_name': tutor_name or None,
             'tutor_email': tutor_email or None,
         })
@@ -17274,6 +17809,14 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
         })
 
     if group_id:
+        # A module can override its group's timetable. Only a newly inferred
+        # group inherits these defaults; saving a module must not rewrite an
+        # existing group's days/times (and thereby affect its other modules).
+        group_schedule = {} if fetch_group_row(group_id) else {
+            'weekDays': session_week_day,
+            'startTime': session_start_time,
+            'endTime': session_end_time,
+        }
         persist_group_authoring_detail({
             'id': group_id,
             'name': group_name,
@@ -17281,9 +17824,7 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'cohort': cohort_name,
             'programmeId': programme_id,
             'programme': programme_name,
-            'weekDays': payload.get('weekDays') or payload.get('deliveryDays') or delivery_metadata.get('weekDays') or delivery_metadata.get('deliveryDays'),
-            'startTime': payload.get('startTime') or payload.get('start_time') or delivery_metadata.get('startTime') or delivery_metadata.get('start_time'),
-            'endTime': payload.get('endTime') or payload.get('end_time') or delivery_metadata.get('endTime') or delivery_metadata.get('end_time'),
+            **group_schedule,
             'modules': [payload.get('title') or payload.get('name') or f'Module {module_catalogue_id}'],
         }, [], [saved_module_row] if saved_module_row else [])
 
@@ -17293,6 +17834,11 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
         # programme_id on groups whose cohort is missing and the foreign key
         # then rejects the write.
         repair_curriculum_parent_links(programme_id)
+    calendars = authoring_fetch_all(LIVE_SESSIONS_TABLE, "module_catalogue_id = %s and status = 'active'", [module_catalogue_id])
+    if calendars and stored_calendar_series(calendars[0]):
+        calendar = calendars[0]
+        occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'", [calendar['id']], 'session_number')
+        attach_teams_meeting_to_module_weeks(module_catalogue_id, calendar, live_session_row_to_component_settings(calendar), occurrences)
     result = get_authoring_structure_payload(module_catalogue_id)
     result['qualityChecklist'] = checklist
     invalidate_curriculum_cache()
@@ -18025,16 +18571,18 @@ def curriculum_cache_epoch(request):
     counter `invalidate_curriculum_cache()` bumps, so it moves on every write and
     on nothing else -- no timestamps, no per-record versions to keep in step.
 
-    Deliberately the cheapest read in this module: one Redis GET, no database, no
-    payload build. A tab open in another country polls it every few seconds, so
-    it has to stay that way. Reading it must never fail a page either --
-    `shared_curriculum_epoch()` already answers 0 when Redis is unreachable, and
-    a client that sees a frozen epoch simply keeps the data it has and falls back
-    on its own refresh-when-you-return.
+    Deliberately the cheapest read in this module: at most one single-row read
+    per worker per SHARED_EPOCH_POLL_SECONDS, no payload build. A tab open in
+    another country polls it every few seconds, so it has to stay that way.
+    Reading it must never fail a page either -- `shared_curriculum_epoch()`
+    answers with the last value this worker saw when the counter cannot be read,
+    and a client that sees a frozen epoch simply keeps the data it has and falls
+    back on its own refresh-when-you-return.
 
-    Only meaningful across workers when a shared cache is configured. On LocMem
-    (local development, single process) it still moves for that process, which is
-    all a single-process dev server needs.
+    Meaningful across workers because the counter lives in the database. It used
+    to live in Django's cache, which is per process without a Redis CACHE_URL,
+    so under nine two-worker services it told seventeen workers out of eighteen
+    nothing at all.
 
     `changes` says which paths moved the counter, so a client that is only a few
     epochs behind can refresh those and leave the rest of its cache alone. It is
@@ -18130,12 +18678,20 @@ def curriculum_preview_module_session_plan(request):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    try:
+        weekly = module_weekly_schedule(payload)
+    except ValueError as exc:
+        return json_error(str(exc), fields=['weeklySchedule'])
     plan = build_module_session_plan(
         payload.get('startDate') or payload.get('start_date'),
         payload.get('numberOfSessions') or payload.get('sessionsNumber') or payload.get('weeks'),
-        payload.get('deliveryDays') or payload.get('weekDays') or payload.get('delivery_day'),
+        ', '.join(slot['day'] for slot in weekly) or payload.get('deliveryDays') or payload.get('weekDays') or payload.get('delivery_day'),
         payload.get('holidays') or payload.get('linkedHolidays') or [],
     )
+    slot = module_schedule_view(payload)
+    for session in plan.get('sessions') or []:
+        clock, end, duration = module_session_clock(slot, session_date=session.get('date'))
+        session.update(startTime=clock, endTime=end, durationMinutes=duration)
     return JsonResponse(plan)
 
 
@@ -18164,6 +18720,10 @@ def curriculum_preview_tutor_availability(request):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    try:
+        module_weekly_schedule(payload)
+    except ValueError as exc:
+        return json_error(str(exc), fields=['weeklySchedule'])
 
     slot = module_schedule_view(payload)
     # Resolved the same way the module PATCH resolves its own identifier, so the
@@ -19225,6 +19785,10 @@ def curriculum_module_collection(request):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    try:
+        module_weekly_schedule(payload)
+    except ValueError as exc:
+        return json_error(str(exc), fields=['weeklySchedule'])
     module_type = clean_str(payload.get('moduleType') or payload.get('module_type') or payload.get('sourceType') or payload.get('source_type')).lower()
     has_authoring_shape = bool(payload.get('weekStructure') is not None or payload.get('completionCriteria') is not None or payload.get('advancedDetails') is not None)
     is_authoring_request = module_type in {'authoring', 'module_builder', 'builder'} or (payload.get('title') and (not payload.get('name') or has_authoring_shape))
@@ -19243,6 +19807,11 @@ def curriculum_module_collection(request):
             'status': payload.get('status') or 'draft',
             'sessionsNumber': payload.get('sessionsNumber') or payload.get('sessions_number') or 0,
             'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0,
+            'weeklySchedule': payload.get('weeklySchedule'),
+            'weekDays': payload.get('weekDays'),
+            'startTime': payload.get('startTime'),
+            'endTime': payload.get('endTime'),
+            'deliveryMetadata': payload.get('deliveryMetadata'),
             'startDate': payload.get('startDate') or payload.get('start_date') or '',
             'endDate': payload.get('endDate') or payload.get('end_date') or '',
             'tutor': payload.get('tutor') or payload.get('tutorName') or payload.get('tutor_name') or '',
@@ -19323,6 +19892,11 @@ def curriculum_module_collection(request):
         'status': payload.get('status') or 'draft',
         'sessionsNumber': payload.get('sessionsNumber') or payload.get('weeks') or 1,
         'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0,
+        'weeklySchedule': payload.get('weeklySchedule'),
+        'weekDays': payload.get('weekDays'),
+        'startTime': payload.get('startTime'),
+        'endTime': payload.get('endTime'),
+        'deliveryMetadata': payload.get('deliveryMetadata'),
         'startDate': payload.get('startDate') or payload.get('start_date') or '',
         'endDate': payload.get('endDate') or payload.get('end_date') or '',
         'tutor': payload.get('tutor') or payload.get('tutorName') or payload.get('tutor_name') or '',
@@ -19338,6 +19912,7 @@ def curriculum_module_collection(request):
 
 
 @csrf_exempt
+
 def curriculum_module_structure_resolve(request):
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
@@ -19582,6 +20157,7 @@ def curriculum_module_structure(request, module_catalogue_id):
     resolved_catalogue_id = stored_catalogue_id or module_catalogue_id
     if request.method == 'GET':
         is_training_alias = module_catalogue_id.startswith('training-module-')
+        bypass_cache = request_bypasses_curriculum_cache(request)
         try:
             # One read scope for the whole payload. The KSB source inference
             # inside it (mappings_with_inferred_sources) asks whether a code
@@ -19593,10 +20169,11 @@ def curriculum_module_structure(request, module_catalogue_id):
                 if is_training_alias:
                     # A training-plan alias provisions on the way through, so it
                     # is never served from a cache.
-                    payload = (
+                    payload = structure_payload_with_revision(
                         get_authoring_structure_payload(resolved_catalogue_id)
                         if resolved_catalogue_id != module_catalogue_id
-                        else ensure_training_module_authoring_structure(module_catalogue_id)
+                        else ensure_training_module_authoring_structure(module_catalogue_id),
+                        resolved_catalogue_id,
                     )
                 elif stored_catalogue_id:
                     # Cached the way curriculum_module_structure_resolve already
@@ -19606,12 +20183,33 @@ def curriculum_module_structure(request, module_catalogue_id):
                     # cached -- an id that resolves to nothing is a 404 worth
                     # recomputing, so a module authored a moment later is not
                     # missing until the TTL runs out.
+                    #
+                    # A no-cache request rebuilds. The Module Builder sends one
+                    # every time it opens a module, and it means it: the
+                    # workspace saves the WHOLE structure back, so a stale read
+                    # here is not a stale screen, it is the next save writing
+                    # pre-edit weeks and components over the stored ones. This
+                    # endpoint was the one read path that ignored the header.
+                    #
+                    # The revision is stamped INSIDE the factory, so it is
+                    # cached with the payload it describes rather than computed
+                    # fresh for whatever came out of the cache. A caller served
+                    # a stale copy is therefore handed the stale copy's
+                    # revision, and the save it feeds is refused instead of
+                    # replacing the stored weeks with the cached ones.
                     payload = cached_curriculum_value(
                         f'module-structure:{resolved_catalogue_id}',
-                        lambda: get_authoring_structure_payload(resolved_catalogue_id),
+                        lambda: structure_payload_with_revision(
+                            get_authoring_structure_payload(resolved_catalogue_id),
+                            resolved_catalogue_id,
+                        ),
+                        force=bypass_cache,
                     )
                 else:
-                    payload = get_authoring_structure_payload(resolved_catalogue_id)
+                    payload = structure_payload_with_revision(
+                        get_authoring_structure_payload(resolved_catalogue_id),
+                        resolved_catalogue_id,
+                    )
             # Outside the read scope on purpose: this is a write, and the scope
             # above memoises reads for the request. A write that read a memoised
             # row would be deciding from a snapshot taken earlier in the request.
@@ -19632,6 +20230,10 @@ def curriculum_module_structure(request, module_catalogue_id):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    try:
+        module_weekly_schedule(payload)
+    except ValueError as exc:
+        return json_error(str(exc), fields=['weeklySchedule'])
     # An identifier that names an existing module but did not resolve to one must
     # not fall through to the save: ``unique_module_catalogue_id`` mints a fresh
     # MOD id for anything it cannot recognise, so the whole structure would be
@@ -19673,6 +20275,21 @@ def curriculum_module_structure(request, module_catalogue_id):
         )
         if archived_error:
             return archived_error
+    # Optimistic concurrency. A caller that read the structure sends the
+    # revision it read back as ``expectedRevision`` (or an ``If-Match`` header),
+    # and this save is refused unless the stored material is still exactly that.
+    #
+    # Opt-in rather than compulsory, because the callers that write here without
+    # ever having read a revision are legitimate and must keep working: the
+    # programme tree save, the structure wizard, the Excel import, the duplicate
+    # and a module's first save. What the check protects is the one caller that
+    # holds the whole structure open in a browser for an hour and then writes all
+    # of it back -- and the Module Builder always sends it.
+    expected_revision = clean_str(
+        payload.get('expectedRevision')
+        or payload.get('expected_revision')
+        or request.headers.get('If-Match')
+    )
     try:
         if module_catalogue_id.startswith('training-module-'):
             training_id = module_catalogue_id.replace('training-module-', '', 1)
@@ -19681,17 +20298,48 @@ def curriculum_module_structure(request, module_catalogue_id):
                 'sourceType': payload.get('sourceType') or 'training_plan',
                 'sourceId': payload.get('sourceId') or training_id,
             }
-        result = save_module_authoring_structure(resolved_catalogue_id, payload)
-        if module_catalogue_id.startswith('training-module-'):
-            link_training_row_to_catalogue(
-                module_catalogue_id.replace('training-module-', '', 1),
-                result.get('catalogueId') or resolved_catalogue_id,
-            )
+        # One transaction around the check and the write. See
+        # lock_module_structure_row: read-then-write would let two saves that
+        # read the same revision both pass.
+        with transaction.atomic():
+            if expected_revision:
+                lock_module_structure_row(resolved_catalogue_id)
+                current_revision = module_structure_revision(resolved_catalogue_id)
+                if current_revision and current_revision != expected_revision:
+                    # Deliberately NOT a merge and NOT a retry. The payload
+                    # waiting here replaces every week and component in the
+                    # module, so applying it would destroy whatever the other
+                    # writer authored; the caller keeps its edits in memory and
+                    # is told to re-read. The current structure travels with the
+                    # refusal so it can show what changed without a second call.
+                    return json_error(
+                        'This module changed after you opened it. Your changes have not been '
+                        'overwritten. Reload the latest version before saving again.',
+                        status=409,
+                        conflict=True,
+                        expectedRevision=expected_revision,
+                        currentRevision=current_revision,
+                        module=structure_payload_with_revision(
+                            get_authoring_structure_payload(resolved_catalogue_id),
+                            resolved_catalogue_id,
+                        ),
+                    )
+            result = save_module_authoring_structure(resolved_catalogue_id, payload)
+            if module_catalogue_id.startswith('training-module-'):
+                link_training_row_to_catalogue(
+                    module_catalogue_id.replace('training-module-', '', 1),
+                    result.get('catalogueId') or resolved_catalogue_id,
+                )
+            saved_catalogue_id = result.get('catalogueId') or resolved_catalogue_id
     except ModuleAuthoringValidationError as exc:
         return json_error('Module authoring validation failed.', status=400, validationErrors=exc.errors)
     except Exception as exc:
         logger.exception('Unable to save module authoring structure for %s.', module_catalogue_id)
         return json_error('Unable to save module authoring structure.', status=500, detail=str(exc))
+    # Read after the transaction has committed, so the revision handed back is
+    # the one a reader would fingerprint now. Inside the block it would describe
+    # rows that a rollback could still take away.
+    result['structureRevision'] = module_structure_revision(saved_catalogue_id)
     return JsonResponse(result)
 
 
@@ -19791,6 +20439,10 @@ def curriculum_module_session_plan(request, module_catalogue_id):
         requested = requested_sessions or (
             requested_weeks * module_week_delivery_days(module_row, requested_weeks) if requested_weeks else 0
         )
+        if not requested_sessions and requested_weeks == module_stored_week_count(module_row):
+            structure = get_authoring_structure_payload(catalogue_id) or {}
+            if module_structure_uses_session_rows(structure.get('weekStructure') or [], module_stored_session_count(module_row), delivery_days_per_week(module_row)):
+                requested = module_stored_session_count(module_row)
         plan = module_session_plan_for_count(
             module_row,
             requested or module_stored_session_count(module_row),
@@ -20928,15 +21580,19 @@ def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=
     """
     lineage = lineage or scope_placement_lineage(scope, identifier)
     programme_ident = scope_programme_identifier(lineage)
-    if not programme_ident:
+    module_id = clean_str(lineage.get('moduleCatalogueId')) if scope in {'module', 'week', 'component'} else ''
+    if not programme_ident and not module_id:
         return []
-    learners = assigned_learners_for_programme(programme_ident, lifecycle_status)
+    learners = assigned_learners_for_programme(programme_ident, lifecycle_status) if programme_ident else []
     learners = narrow_learners_to_placement(
         learners, 'cohortId', lineage.get('cohortId'), 'cohort', lineage.get('cohortName'),
     )
     learners = narrow_learners_to_placement(
         learners, 'groupId', lineage.get('groupId'), 'group', lineage.get('groupName'),
     )
+    if module_id and connection.vendor == 'postgresql':
+        from .learner_assignments import module_assignment_roster
+        learners = module_assignment_roster(module_id, learners, lifecycle_status)
     return learners
 
 
@@ -21966,6 +22622,15 @@ def learner_authored_plan(plan, learner, unmatched='scope'):
     ``scope`` hands them the whole scope, ``none`` hands them nothing. Which is
     right is not a per-learner question — see ``learner_plans_for_scope``.
     """
+    # Direct module membership is independent of the learner's group. This
+    # marker is only supplied by module/week/component rosters, so the scope
+    # here is exactly the content they were assigned.
+    if learner.get('assignmentBasis') == 'module':
+        return {
+            'otjh': plan.get('scopeOtjh', 0),
+            'ksbWeights': dict(plan.get('scopeKsbWeights', {})),
+            'basis': 'module',
+        }
     key = learner_plan_group_key(plan, learner)
     if key and key in plan.get('groupKeys', set()):
         return {
@@ -23111,6 +23776,10 @@ def curriculum_module_detail(request, identifier):
         payload = json_body(request)
         if payload is None:
             return json_error('Invalid JSON body.')
+        try:
+            module_weekly_schedule(payload)
+        except ValueError as exc:
+            return json_error(str(exc), fields=['weeklySchedule'])
         current = get_authoring_structure_payload(module_catalogue_id)
         current_delivery_metadata = current.get('deliveryMetadata') if isinstance(current.get('deliveryMetadata'), dict) else {}
         current_week_structure = current.get('weekStructure') or []
@@ -23167,6 +23836,7 @@ def curriculum_module_detail(request, identifier):
             'cohortName': payload.get('cohortName') or payload.get('cohort') or current.get('cohortName') or current.get('cohort') or '',
             'groupId': payload.get('groupId') or current.get('groupId') or '',
             'groupName': payload.get('groupName') or payload.get('group') or current.get('groupName') or current.get('group') or '',
+            'weeklySchedule': merged_weekly_schedule(payload, current),
             'weekDays': payload.get('weekDays') or current.get('weekDays') or current_delivery_metadata.get('weekDays') or '',
             'startTime': payload.get('startTime') or current.get('startTime') or current_delivery_metadata.get('startTime') or '',
             'endTime': payload.get('endTime') or current.get('endTime') or current_delivery_metadata.get('endTime') or '',
@@ -24320,6 +24990,7 @@ def curriculum_group_detail(request, identifier):
             if module_delivery_updates else []
         )
         if module_delivery_updates:
+            module_delivery_updates['weekly_schedule'] = json_db_value([])
             module_delivery_updates['updated_at'] = datetime.utcnow()
             # Module rows are the source used to derive the session calendar.
             # They inherit the group's slot when attached, so a later group edit
@@ -25037,7 +25708,8 @@ def permanent_module_delete_response(module_row):
 
 def module_attachment_authoring_payload(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure=None, source_type='module_authoring', source_id=''):
     current_structure = current_structure or {}
-    schedule = clean_str(item.get('weekDays') or item.get('deliveryDays') or group.get('weekDays') or group.get('schedule'))
+    weekly = merged_weekly_schedule(item, current_structure)
+    schedule = ', '.join(slot['day'] for slot in weekly) or clean_str(item.get('weekDays') or item.get('deliveryDays') or group.get('weekDays') or group.get('schedule'))
     has_explicit_tutor = 'tutor' in item or 'tutorName' in item or 'tutor_name' in item
     explicit_tutor = clean_str(item.get('tutor') or item.get('tutorName') or item.get('tutor_name'))
     group_tutor = '' if is_blank_staff_assignment(group.get('tutor')) else clean_str(group.get('tutor'))
@@ -25068,6 +25740,7 @@ def module_attachment_authoring_payload(item, group, cohort, catalogue_id, modul
         'weeksNumber': attachment_week_count(item, session_count, schedule),
         'startDate': start_date,
         'endDate': end_date,
+        'weeklySchedule': merged_weekly_schedule(item, current_structure),
         'weekDays': schedule,
         'startTime': item.get('startTime') or group.get('startTime') or '',
         'endTime': item.get('endTime') or group.get('endTime') or '',
@@ -25225,6 +25898,10 @@ def attachment_session_count(item, weeks=None):
     explicit = parse_int(item.get('sessionsNumber'), 0)
     if explicit:
         return explicit
+    weekly = module_weekly_schedule(item)
+    if weekly:
+        count = parse_int(item.get('weeks') or item.get('weeksNumber'), 0) or len(weeks or payload_week_list(item.get('weekStructure') or item.get('weeks')))
+        return max(1, count) * len(weekly)
     raw_weeks = item.get('weeks')
     if not isinstance(raw_weeks, (list, tuple, dict)):
         counted = parse_int(raw_weeks, 0)
@@ -25328,6 +26005,13 @@ def curriculum_group_modules(request, identifier):
     modules = payload.get('modules') if isinstance(payload.get('modules'), list) else [payload]
     if not isinstance(modules, list):
         return json_error('At least one module is required.', fields=['modules'])
+    for item in modules:
+        if not isinstance(item, dict):
+            return json_error('Each module attachment must be an object.', status=400)
+        try:
+            module_weekly_schedule(item)
+        except ValueError as exc:
+            return json_error(str(exc), fields=['weeklySchedule'])
 
     # Resolve group and parent cohort from the normalized tables only.
     group_row = resolve_group_row(identifier)
@@ -25368,12 +26052,16 @@ def curriculum_group_modules(request, identifier):
                 requested_value = clean_str(explicit_catalogue_value or item.get('catalogueId') or item.get('moduleId'))
                 requested_catalogue_id = requested_value if is_canonical_module_catalogue_id(requested_value) else ''
 
+                try:
+                    weekly = module_weekly_schedule(item)
+                except ValueError as exc:
+                    return json_error(str(exc), fields=['weeklySchedule'])
                 start_date = item.get('startDate') or cohort.get('startDate')
                 start_error = module_cohort_date_error(module_name, start_date, None, cohort)
                 if start_error:
                     return json_error(start_error[0], fields=[start_error[1]], status=400)
 
-                delivery_days = item.get('weekDays') or group.get('weekDays') or group.get('schedule')
+                delivery_days = ', '.join(slot['day'] for slot in weekly) or item.get('weekDays') or group.get('weekDays') or group.get('schedule')
                 session_count = attachment_session_count(item)
                 session_plan = build_module_session_plan(start_date, session_count, delivery_days, item.get('holidays') or item.get('linkedHolidays') or [])
                 end_date = item.get('endDate') or session_plan.get('finalEndDate') or cohort.get('endDate')
@@ -25461,6 +26149,12 @@ def curriculum_group_modules(request, identifier):
                 'removedModuleIds': removed_module_ids,
                 'skippedDuplicates': skipped,
             })
+    except ModuleAuthoringValidationError as exc:
+        return json_error(
+            str(exc),
+            fields=list(dict.fromkeys(error['path'] for error in exc.errors)),
+            validationErrors=exc.errors,
+        )
     except TutorScheduleConflictError as exc:
         # Raised mid-loop, so the attachments already written in this
         # request roll back with it and the group is left as it was.
@@ -26358,6 +27052,7 @@ _SCHEMA_READY_FLAGS = (
     '_LIVE_SESSIONS_TABLE_READY',
     '_LIVE_SESSION_TRACKING_TABLES_READY',
     '_WEEK_TEMPLATE_TABLES_READY',
+    '_CURRICULUM_EPOCH_TABLE_READY',
 )
 
 

@@ -1,4 +1,4 @@
-import type { AuthUser, Role } from '@/api/auth';
+import type { AccessWorkspace, AuthUser, Role } from '@/api/auth';
 
 /**
  * Which audience each area of the SPA is for, and where an account belongs.
@@ -97,6 +97,10 @@ const RULES: ReadonlyArray<readonly [string, readonly Role[]]> = [
 
   // Shared surfaces. Each renders against the viewer's own nav and reads only
   // their own records, so every signed-in account belongs on them.
+  // Signed in, but no workspace chosen yet. Open to every role: the whole point
+  // is that the account has several, and the page only ever offers what the
+  // server already granted it.
+  ['/choose-workspace', ANYONE],
   ['/communication', ANYONE],
   ['/home', ANYONE],
   ['/messages', ANYONE],
@@ -161,34 +165,58 @@ export function isBareLearnerWorkspacePath(path: string | null | undefined): boo
   return routePathname(path) === '/workspace/learner';
 }
 
+/** Where the workspace chooser lives. */
+export const CHOOSE_WORKSPACE_ROUTE = '/choose-workspace';
+
 /**
- * Where LoginPage should send a successfully authenticated account.
+ * The workspaces this account may open, as the server described them.
  *
- * Learners always start at Student Home, including when signing in from an old
- * Dashboard or activity link. The entry gate verifies previous-record signing
- * before the page is shown. Navigation after sign-in still uses the normal
- * routes. Record monitors always start at their monitoring dashboard.
+ * Always an array, so callers need not repeat the null handling. The server is
+ * the authority on both the set and each landing route: anything derived here
+ * from `access` alone would miss the `learner` entry a staff member who also
+ * studies gets, whose route carries the id of their own record.
+ */
+export function workspacesFor(
+  account: Pick<AuthUser, 'accessWorkspaces'> | null | undefined,
+): AccessWorkspace[] {
+  return account?.accessWorkspaces ?? [];
+}
+
+/**
+ * Whether this account should be asked which workspace it wants.
  *
- * `from` is helpful for pasted deep links, but `/workspace/learner` without a
- * learner id is the learner self-workspace. Staff can open learner pages for
- * read-only review, so route access deliberately allows it; as a post-login
- * return target, though, it often means "the browser happened to be looking at
- * the remembered learner". In that case a coach/admin should land in their own
- * workspace instead of inheriting `localStorage.my_learner`.
+ * Only when there is a real choice — two or more. One workspace is not a
+ * choice, and showing a page with a single button on it would be a step in
+ * everybody's way for nothing.
+ *
+ * `record-monitor` is deliberately excluded: `homeRouteFor` and
+ * `mayAccessRoute` both pin that grant to /old-otjh, so offering it a menu
+ * would list workspaces it is then refused at the door.
+ */
+export function shouldChooseWorkspace(
+  account: Pick<AuthUser, 'access' | 'accessWorkspaces'> | null | undefined,
+): boolean {
+  if (!account) return false;
+  if (account.access === 'record-monitor') return false;
+  return workspacesFor(account).length > 1;
+}
+
+/**
+ * Every successful sign-in starts at the account's own home. A route left in
+ * browser history or old login state must never choose the new session's page.
+ * Keep the optional legacy argument so older callers cannot restore that route.
+ *
+ * An account holding more than one access grant is asked which one it wants
+ * first — landing it on the primary silently would hide the others behind a
+ * menu nobody knows to look for. The chooser then navigates to the `home` the
+ * server gave for the workspace picked.
  */
 export function postLoginRouteFor(
-  account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>,
-  requestedPath?: string | null,
+  account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord' | 'accessWorkspaces'>,
+  _requestedPath?: string | null,
 ): string {
-  if (account.access === 'record-monitor' || account.role === 'learner') {
-    return homeRouteFor(account);
-  }
-  const requested = String(requestedPath || '').trim();
-  if (!requested) return homeRouteFor(account);
-  if (isBareLearnerWorkspacePath(requested)) {
-    return homeRouteFor(account);
-  }
-  return requested;
+  if (shouldChooseWorkspace(account)) return CHOOSE_WORKSPACE_ROUTE;
+  return homeRouteFor(account);
 }
 
 const HOME_BY_ROLE: Record<Role, string> = {

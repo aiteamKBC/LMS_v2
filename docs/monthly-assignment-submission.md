@@ -23,8 +23,8 @@ New submissions must pass these 13 server checks:
 
 1. Assignment answer: at least 120 words.
 2. Learned / understood / gained skills: at least 20 words each.
-3. At least one available evidence file owned by this learner, or HTTP(S) evidence link, cross-referenced to valid answer point numbers (non-empty answer lines).
-4. Every claimed programme KSB: at least 20 words of explanation and cross-referenced evidence. Unknown or duplicate KSB codes are rejected.
+3. Evidence uploads, library files and HTTP(S) links are optional. If provided, every file must be available and owned by the learner, and every link must be valid. Answer point numbers are optional and must reference existing answer lines when provided.
+4. Every claimed programme KSB: at least 20 words of explanation. Selecting supporting evidence is optional; selected references must point to valid attached evidence. Unknown or duplicate KSB codes are rejected.
 5. Planned hours and KSB review confirmed.
 6. New knowledge, new skills/behaviours and employer-sharing declarations confirmed.
 7. Positive finite time, with out-of-hours confirmation where applicable. **No six-hour cap.** Existing signed timing/progress verification remains in force.
@@ -50,3 +50,23 @@ Schema-free backend tests: `python manage.py test learner_api.tests_monthly_assi
 Frontend draft tests: `node node_modules/vitest/vitest.mjs run src/pages/learner/video-watch/AssignmentSubmissionWizard.test.tsx src/api/reflectionSubmission.test.ts`.
 
 Before production rollout, manually exercise an authorized learner account: partial save/reload; scanned Azure evidence plus library cross-reference; positive time above six hours; out-of-hours confirmation; a real coaching booking and conflict rejection; PPT export/edit/re-export; final submission and locked preview. These live writes are deliberately not performed by repository automation.
+
+
+## Assignment coach availability (14 September 2026)
+
+Assignment MCM bookings load 60-minute available starts from the assigned coach's
+Microsoft Graph getSchedule response, including Outlook working hours, and remove
+conflicts with stored LMS coach bookings. Times are displayed in Europe/London;
+slots start every 15 minutes. Missing or incomplete availability blocks booking
+and offers a retry through Refresh meetings. The booking endpoint rechecks the
+selected time before saving. This read does not create invitations or bookings.
+
+An assignmentMonth alone does not imply an imported review: a normal assignment
+MCM can be booked without reviewId. Supplied imported-review references retain
+the existing update flow. Weekday, holiday and assignment booking-window rules
+still apply.
+
+Reference: https://learn.microsoft.com/en-us/graph/api/calendar-getschedule?view=graph-rest-1.0
+Validation: 24 database-free backend tests and 10 frontend booking tests passed.
+A read-only check of the assigned test coach returned available slots for
+21 September 2026. No live booking or invitation was created during verification.

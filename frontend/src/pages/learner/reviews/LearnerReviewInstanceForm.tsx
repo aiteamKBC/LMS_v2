@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
+import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { fetchLearnerEventReviewInstance, type LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { flattenReviewFields, type ReviewParticipantRole } from '@/api/reviewInstances';
+import { flattenReviewFields } from '@/api/reviewInstances';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 
 /**
@@ -20,17 +22,11 @@ import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
  * the page's existing signature flow, but never writes answers here.
  */
 
-const SIGNATURE_LABELS: Record<ReviewParticipantRole, string> = {
-  advisor: 'Coach',
-  employer: 'Employer',
-  participant: 'Learner',
-  referrer: 'Referrer',
-};
-
 export interface LearnerReviewInstanceState {
   definition: LearnerReviewDefinition | null;
   loading: boolean;
   error: string;
+  refresh: () => void;
 }
 
 /**
@@ -45,6 +41,8 @@ export function useLearnerReviewInstance(
   const [definition, setDefinition] = useState<LearnerReviewDefinition | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [revision, setRevision] = useState(0);
+  const refresh = useCallback(() => setRevision(value => value + 1), []);
 
   useEffect(() => {
     if (!eventKey) {
@@ -69,13 +67,39 @@ export function useLearnerReviewInstance(
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [kind, learnerId, eventKey]);
+  }, [kind, learnerId, eventKey, revision]);
 
-  return { definition, loading, error };
+  return { definition, loading, error, refresh };
 }
 
-export function LearnerReviewInstanceForm({ definition, onSign, signatoryName = 'Learner' }: { definition: LearnerReviewDefinition; onSign?: (signature: string) => Promise<void>; signatoryName?: string }) {
+export function LearnerReviewInstanceForm({ definition, onSign, onDownload, signatoryName = 'Learner' }: { definition: LearnerReviewDefinition; onSign?: (signature: string) => Promise<void>; onDownload?: () => Promise<void>; signatoryName?: string }) {
   const [openSectionId, setOpenSectionId] = useState('');
+  const [signing, setSigning] = useState(false);
+  const [signatureError, setSignatureError] = useState('');
+  const [signatureOpen, setSignatureOpen] = useState(true);
+  const signingInFlight = useRef(false);
+  const signatureSection = useRef<HTMLDivElement>(null);
+
+  function showSignatures() {
+    setSignatureOpen(true);
+    signatureSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    signatureSection.current?.focus({ preventScroll: true });
+  }
+
+  async function saveSignature(signature: string) {
+    if (!onSign || signingInFlight.current) return;
+    signingInFlight.current = true;
+    setSigning(true);
+    setSignatureError('');
+    try {
+      await onSign(signature);
+    } catch (reason) {
+      setSignatureError(reason instanceof Error ? reason.message : 'Could not save your signature. Please try again.');
+    } finally {
+      signingInFlight.current = false;
+      setSigning(false);
+    }
+  }
 
   useEffect(() => {
     setOpenSectionId(definition.sections.find((section) => section.enabled)?.id || '');
@@ -91,11 +115,18 @@ export function LearnerReviewInstanceForm({ definition, onSign, signatoryName = 
     return saved;
   }, [definition]);
 
-  const requiredSignatures = useMemo(
-    () => (Object.entries(definition.signatures) as Array<[ReviewParticipantRole, { required: boolean; signed: boolean; signedName?: string | null; signedAt?: string | null }]>)
-      .filter(([, state]) => state.required),
-    [definition.signatures],
-  );
+  const requiredSignatures = Object.values(definition.signatures).filter(state => state.required);
+  const submitted = ['awaiting-signature', 'completed'].includes(definition.instance?.status || '');
+  const allSigned = requiredSignatures.length > 0 && requiredSignatures.every(state => state.signed);
+  const learnerSigned = Boolean(definition.signatures.participant?.signed);
+  const canSign = Boolean(onSign && submitted && definition.signatures.participant?.required && !learnerSigned);
+  const signatureTitle = allSigned ? 'All signatures saved' : canSign ? 'Ready for your signature'
+    : learnerSigned ? 'Your signature is saved' : submitted ? 'Awaiting required signatures' : 'Your coach is preparing this review';
+  const signatureHelp = allSigned ? 'All required parties have signed this review.'
+    : canSign ? "Read your coach's notes and the agreed next steps, then sign below."
+    : learnerSigned ? 'You do not need to sign again. This review is waiting for the remaining required signatures.'
+    : submitted ? 'The review is ready for the required parties to sign.'
+    : 'The coach must complete this review before you can sign it.';
 
   return (
     <section className="space-y-3" data-testid="learner-review-instance-form">
@@ -108,9 +139,19 @@ export function LearnerReviewInstanceForm({ definition, onSign, signatoryName = 
         </h2>
         <p className="mt-1 text-xs text-primary-800">
           <AppIcon className="ri-information-line mr-1.5" />
-          These sections and questions come from Curriculum.
+          Review your coach's notes and the agreed next steps.
         </p>
       </div>
+
+      {requiredSignatures.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4">
+        <div className="min-w-0 flex-1 basis-64">
+          <h3 className="text-sm font-bold text-violet-950">{signatureTitle}</h3>
+          <p className="mt-1 text-sm text-violet-900">{signatureHelp}</p>
+        </div>
+        <button type="button" onClick={showSignatures} className="rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-violet-800 hover:bg-violet-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-600">
+          {canSign ? 'Go to signature' : 'View signatures'}
+        </button>
+      </div>}
 
       <ReviewFormRenderer
         sections={definition.sections}
@@ -121,37 +162,21 @@ export function LearnerReviewInstanceForm({ definition, onSign, signatoryName = 
         onOpenSectionChange={setOpenSectionId}
       />
 
-      {requiredSignatures.length > 0 ? (
-        <div className="rounded-2xl border border-background-200 bg-background-50 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Signatures</p>
-          <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
-            {requiredSignatures.map(([role, state]) => (
-              <div key={role} className="flex items-center gap-2.5 rounded-xl bg-background-100 px-3.5 py-2.5">
-                <AppIcon className={state.signed ? 'ri-checkbox-circle-line text-emerald-600' : 'ri-time-line text-amber-600'} />
-                <div className="min-w-0">
-                  <p className="text-[10px] font-semibold uppercase text-foreground-400">{SIGNATURE_LABELS[role] || role}</p>
-                  <p className="truncate text-xs font-bold text-foreground-800">
-                    {state.signed ? state.signedName || 'Signed' : 'Awaiting signature'}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-          {onSign && definition.signatures.participant?.required && !definition.signatures.participant.signed &&
-            !['awaiting-signature', 'completed'].includes(definition.instance?.status || '') ? (
-            <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-800">
-              The coach must complete this review before you can sign it.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-      {onSign && definition.signatures.participant?.required && !definition.signatures.participant.signed &&
-        ['awaiting-signature', 'completed'].includes(definition.instance?.status || '') ? (
-        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+      <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
+        <ReviewSignatures signatures={definition.signatures} />
+        <ReviewPdfDownload availability={definition.pdf} onDownload={onDownload} />
+      {canSign && signatureOpen ? (
+        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4" aria-busy={signing}>
           <p className="mb-3 text-sm font-bold text-violet-950">Your signature is required</p>
-          <SignaturePad signatoryName={signatoryName} onCommit={(signature) => { void onSign(signature); }} onCancel={() => undefined} />
+          {signatureError && <p role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{signatureError} You can try signing again.</p>}
+          {signing && <p role="status" className="mb-3 text-sm text-violet-900">Saving your signature…</p>}
+          <fieldset disabled={signing} className="min-w-0 border-0 p-0">
+            <SignaturePad signatoryName={signatoryName} onCommit={(signature) => { void saveSignature(signature); }} onCancel={() => setSignatureOpen(false)} />
+          </fieldset>
         </div>
       ) : null}
+      {canSign && !signatureOpen && <button type="button" onClick={showSignatures} className="rounded-xl bg-violet-700 px-4 py-3 text-sm font-semibold text-white hover:bg-violet-800">Review &amp; sign</button>}
+      </div>
     </section>
   );
 }

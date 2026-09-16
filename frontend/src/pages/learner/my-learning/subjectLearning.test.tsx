@@ -227,7 +227,7 @@ describe('map and My Learning navigation', () => {
     expect(screen.queryByRole('button', { name: 'First reading' })).not.toBeInTheDocument();
   });
 
-  it('keeps Continue learning on a completed current module instead of a different unfinished subject', async () => {
+  it('moves Continue learning from a completed current module to an unfinished subject', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));
     vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
@@ -238,8 +238,15 @@ describe('map and My Learning navigation', () => {
     const schedule = { modules: [module('M1', '2026-09-01', '2026-09-30')], moduleLinks: metadata.builder_subjects } as unknown as TrainingPlanDashboard;
     render(<MemoryRouter><StudentActivityPanel data={completedModule} schedule={schedule} kind="commercial" learnerId="132" loading={false} error={null} onRetry={() => {}} /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('button', { name: 'Continue learning' }));
-    expect(screen.getByRole('region', { name: 'Week 2 materials' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Another subject' })).toBeVisible();
+  });
+
+  it('hides the whole Continue learning panel when every activity is complete', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
+    const completed = { ...data, activities: data.activities.map(activity => ({ ...activity, completed: true })) };
+    render(<MemoryRouter><StudentActivityPanel view="catalogue" data={completed} kind="commercial" learnerId="132" loading={false} error={null} onRetry={() => {}} /></MemoryRouter>);
+    await screen.findByRole('button', { name: /Open subject/ });
+    expect(screen.queryByRole('heading', { name: 'Continue learning' })).not.toBeInTheDocument();
   });
 
   it.each(['current', '2026-09-07'])('opens a completed current-week native player from a Continue link (%s)', async week => {
@@ -360,5 +367,21 @@ describe('map and My Learning navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
     expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: /Open subject/ })).toBeVisible();
+  });
+
+  it('uses the authoritative activity total everywhere and opens deadlines as assignments', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
+    render(<MemoryRouter><StudentActivityPanel view="catalogue" kind="commercial" learnerId="132" data={data} loading={false} error={null} onRetry={() => {}}
+      metrics={{ migrated: true,
+        programme: { completed: 35, total: 304, percent: 11.51, status: 'ready' },
+        ksb: { completed: 0, total: 0, percent: null, status: 'empty' },
+        otjh: { historical: 0, new: 0, actual: 0, planned: 0 } }}
+      deadlines={[{ id: 'native:ASSIGNMENT-1', title: 'Due assignment', type: 'assignment', date: '2050-10-10', subjectId: 'legacy:1' }]} />
+    </MemoryRouter>);
+
+    await screen.findByRole('button', { name: /Open subject/ });
+    expect(screen.getByText('1 subjects · 304 activities')).toBeVisible();
+    expect(screen.getByRole('link', { name: 'View all assignments' })).toHaveAttribute('href', '/learner/my-learning/commercial/132?tab=assignments');
+    expect(screen.getByRole('link', { name: /Due assignment/ })).toHaveAttribute('href', '/learner/monthly-submission/commercial/132/ASSIGNMENT-1');
   });
 });

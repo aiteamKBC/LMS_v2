@@ -16,6 +16,7 @@ import {
   type HolidayShiftPlan,
 } from '../shared/entities/sessionShiftPreview';
 import { FormField, SelectControl, TextAreaControl, TextControl } from '../shared/entities/ui';
+import { calendarInputError, normalizedClock, clockLabel } from './calendarTime';
 
 // ============================================================================
 // The one create form for a module's Teams calendar.
@@ -45,13 +46,19 @@ export function minuteKey(value: unknown): string {
 
 /** `YYYY-MM-DDTHH:mm` for a stored session — the wall clock the group meets on. */
 export function sessionNaiveLocal(session: CurriculumSession): string {
-  const time = cleanText(session.startTime).slice(0, 5) || DEFAULT_START_TIME;
+  // Keep incomplete legacy rows renderable. Creation validates the original
+  // values before any request, so this display fallback can never be sent.
+  let time = DEFAULT_START_TIME;
+  try { time = normalizedClock(session.startTime); } catch { /* Shown by calendarInputError. */ }
   return `${cleanText(session.date)}T${time}`;
 }
 
 export function minutesBetween(startTime: string, endTime: string): number {
-  const [startHour, startMinute] = cleanText(startTime).split(':').map(Number);
-  const [endHour, endMinute] = cleanText(endTime).split(':').map(Number);
+  if (!cleanText(startTime) || !cleanText(endTime)) return 0;
+  let start: string, end: string;
+  try { start = normalizedClock(startTime); end = normalizedClock(endTime); } catch { return 0; }
+  const [startHour, startMinute] = start.split(':').map(Number);
+  const [endHour, endMinute] = end.split(':').map(Number);
   if ([startHour, startMinute, endHour, endMinute].some(value => !Number.isFinite(value))) return 0;
   return (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
 }
@@ -74,7 +81,10 @@ export function naiveLocalFromUtc(value: unknown, timeZone = getCalendarTimeZone
 }
 
 /** A date and time as the Microsoft calendar shows it, not as this reader's PC does. */
-export const calendarLabel = formatCalendarDateTime;
+export const calendarLabel = (value: string) => {
+  const [date, time] = formatCalendarDateTime(value).split(', ');
+  return time ? `${date}, ${clockLabel(time)}` : date;
+};
 
 export function teamsGapNote(plannedUtc: string, teamsUtc: string, hasCalendar: boolean): { matches: boolean; note: string } {
   if (!plannedUtc) return { matches: true, note: '' };
@@ -227,6 +237,7 @@ export function ModuleSessionSchedulePreview({
 
   return (
     <div className="overflow-hidden rounded-xl border border-background-200 bg-background-50">
+      {calendarInputError(row) && <p role="alert" className="p-3 text-sm text-red-700">{calendarInputError(row)}</p>}
       <div className="flex flex-col gap-2 border-b border-background-200 bg-background-100/50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wider text-primary-700">{title}</p>
@@ -277,6 +288,7 @@ export function ModuleSessionSchedulePreview({
 
 /** Everything the create form holds, and nothing a caller has to reproduce. */
 export interface TeamsCalendarForm {
+  seriesMode?: 'auto' | 'shared' | 'per_day';
   title: string;
   organizerEmail: string;
   attendees: string;
@@ -298,7 +310,8 @@ export function emptyTeamsCalendarForm(): TeamsCalendarForm {
     presenters: '',
     coOrganizers: '',
     details: '',
-    durationMinutes: String(DEFAULT_DURATION_MINUTES),
+    durationMinutes: '',
+    seriesMode: 'auto',
     lobbyBypass: 'invited',
     recording: 'record-transcribe',
     spokenLanguage: 'en-GB',
@@ -323,14 +336,16 @@ export function teamsCalendarOccurrences(row: TeamsCalendarTarget) {
 /**
  * The create payload, built the same way from either door.
  *
- * The chosen duration applies to every occurrence, and the dates are the
+ * Durations follow each session unless explicitly overridden. The dates are the
  * module's own — a holiday-shifted plan included, which is what the backend
  * moves each Graph instance onto.
  */
 export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCalendarForm): TeamsMeetingInput {
+  const invalid = calendarInputError(row);
+  if (invalid) throw new Error(invalid);
   const meetingTitle = cleanText(row.name) || 'Live session';
   const duration = Math.max(15, Number(form.durationMinutes) || row.durationMinutes || DEFAULT_DURATION_MINUTES);
-  const occurrences = teamsCalendarOccurrences(row).map(occurrence => ({ ...occurrence, durationMinutes: duration }));
+  const occurrences = teamsCalendarOccurrences(row).map(occurrence => form.durationMinutes ? { ...occurrence, durationMinutes: duration } : occurrence);
   return {
     title: meetingTitle,
     organizerEmail: form.organizerEmail.trim(),
@@ -341,7 +356,8 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
     moduleTitle: meetingTitle,
     localStartDateTime: sessionNaiveLocal(row.sessions[0]),
     startDateTimeUtc: occurrences[0].startDateTimeUtc,
-    durationMinutes: duration,
+    durationMinutes: occurrences[0]?.durationMinutes || duration,
+    seriesMode: form.seriesMode || 'auto',
     repeat: occurrences.length > 1 ? 'weekly' : 'none',
     repeatOccurrences: occurrences.length,
     scheduledOccurrences: occurrences,
@@ -352,7 +368,7 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
     details: form.details,
     requestResponses: true,
     allowNewTimeProposals: true,
-    hideAttendees: false,
+    hideAttendees: true,
     // Keeps retries and double-clicks for the same module idempotent at Graph
     // as well as at our own API and database boundary.
     transactionId: `TEAMS-${row.catalogueId}`,
@@ -426,6 +442,13 @@ export function TeamsCalendarFormBody({
             holidayLabelFor={holidayLabelFor}
           />
 
+          <FormField label="Teams series and links" hint="Different start times or durations need a separate weekly series for each day. Each day's link repeats every week.">
+            <SelectControl value={form.seriesMode || 'auto'} onChange={value => patch({ seriesMode: value as TeamsCalendarForm['seriesMode'] })} options={[
+              { value: 'auto', label: 'Automatic: share a link when times match' },
+              { value: 'per_day', label: 'Separate series and link for each day' },
+              ...(new Set(teamsCalendarOccurrences(row).map(item => `${naiveLocalFromUtc(item.startDateTimeUtc).slice(11)}:${form.durationMinutes || item.durationMinutes}`)).size <= 1 ? [{ value: 'shared', label: 'One series and link for all days' }] : []),
+            ]} />
+          </FormField>
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField
               label="Organizer Microsoft 365 email"
@@ -444,7 +467,7 @@ export function TeamsCalendarFormBody({
               <SelectControl
                 value={form.durationMinutes}
                 onChange={value => patch({ durationMinutes: value })}
-                options={durationOptions(form.durationMinutes, row.durationMinutes)}
+                options={[{ value: '', label: 'Use scheduled duration for each session' }, ...durationOptions(form.durationMinutes, row.durationMinutes)]}
               />
             </FormField>
             <FormField label="Who can bypass the lobby?">

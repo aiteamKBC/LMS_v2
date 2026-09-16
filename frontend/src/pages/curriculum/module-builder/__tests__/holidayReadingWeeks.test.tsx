@@ -3,24 +3,24 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createLocalModuleDraft,
-  holidayReadingWeeksByWeekId,
+  weeksTouchedByHoliday,
   moduleWeekIdBySessionNumber,
   recalculateModule,
   type ModuleCatalogueItem,
   type ModuleWeekSessionPlan,
   type ModuleSessionSlot,
 } from '../moduleAuthoringData';
-import { HolidayReadingWeekCard } from '../../shared/entities/sessionShiftPreview';
+import { WeekHolidayNotice } from '../../shared/entities/sessionShiftPreview';
 
 /**
- * A holiday that lands on a delivery day consumes that slot. The curriculum
- * week stays where it is — as a READING WEEK with no live session — and the
- * session that was due there moves down to the next open slot, taking every
- * session behind it with it, in order.
+ * A ticked holiday landing on a delivery day moves nothing. The week keeps its
+ * own date, its own place in the run and its own live session -- the plan
+ * simply flags that day so the author can see the clash and decide what the
+ * week becomes.
  *
  * The slot spine below is exactly what `build_module_session_plan` serves for a
- * Monday module starting 5 April 2027 with Monday 3 May closed; the backend
- * side of the same scenario is pinned in
+ * Monday module starting 5 April 2027 with Monday 3 May ticked as a holiday;
+ * the backend side of the same scenario is pinned in
  * backend/curriculum_api/tests_holiday_reading_weeks.py.
  */
 const EARLY_MAY = {
@@ -31,47 +31,44 @@ const EARLY_MAY = {
   type: 'Bank holiday',
 };
 
-function slot(overrides: Partial<ModuleSessionSlot> & Pick<ModuleSessionSlot, 'slotNumber' | 'date' | 'type'>): ModuleSessionSlot {
+function slot(overrides: Partial<ModuleSessionSlot> & Pick<ModuleSessionSlot, 'slotNumber' | 'date' | 'sessionNumber'>): ModuleSessionSlot {
   return {
     day: 'Monday',
-    cause: overrides.type === 'reading-week' ? 'holiday' : '',
-    sessionNumber: null,
+    type: 'live-session',
+    cause: (overrides.holidays?.length ?? 0) > 0 ? 'holiday' : '',
     holidays: [],
     ...overrides,
   };
 }
 
-/** The spine and sessions for a six-session Monday module with 3 May closed. */
-function planWithOneClosure(): ModuleWeekSessionPlan {
-  const delivered = ['2027-04-05', '2027-04-12', '2027-04-19', '2027-04-26', '2027-05-10', '2027-05-17'];
+/** The spine and sessions for a six-session Monday module with 3 May a holiday. */
+function planWithOneHoliday(): ModuleWeekSessionPlan {
+  const delivered = ['2027-04-05', '2027-04-12', '2027-04-19', '2027-04-26', '2027-05-03', '2027-05-10'];
   return {
     sessions: delivered.map((date, index) => ({
       sessionNumber: index + 1,
       date,
       day: 'Monday',
-      // Session 5 was due on the closed Monday.
-      slotDate: index === 4 ? '2027-05-03' : date,
+      slotDate: date,
       slotDay: 'Monday',
+      // Session 5's own day is the ticked holiday.
       skippedHolidays: index === 4 ? ['2027-05-03'] : [],
     })),
-    slots: [
-      slot({ slotNumber: 1, date: '2027-04-05', type: 'live-session', sessionNumber: 1 }),
-      slot({ slotNumber: 2, date: '2027-04-12', type: 'live-session', sessionNumber: 2 }),
-      slot({ slotNumber: 3, date: '2027-04-19', type: 'live-session', sessionNumber: 3 }),
-      slot({ slotNumber: 4, date: '2027-04-26', type: 'live-session', sessionNumber: 4 }),
-      slot({ slotNumber: 5, date: '2027-05-03', type: 'reading-week', holidays: [EARLY_MAY] }),
-      slot({ slotNumber: 6, date: '2027-05-10', type: 'live-session', sessionNumber: 5 }),
-      slot({ slotNumber: 7, date: '2027-05-17', type: 'live-session', sessionNumber: 6 }),
-    ],
+    slots: delivered.map((date, index) => slot({
+      slotNumber: index + 1,
+      date,
+      sessionNumber: index + 1,
+      holidays: index === 4 ? [EARLY_MAY] : [],
+    })),
     skippedHolidays: ['2027-05-03'],
-    finalEndDate: '2027-05-17',
+    finalEndDate: '2027-05-10',
     originalEndDate: '2027-05-10',
     warnings: [],
   };
 }
 
-/** A plan with nothing closed: six open slots, six sessions. */
-function planWithNoClosure(): ModuleWeekSessionPlan {
+/** A plan with no holiday ticked: six ordinary open slots. */
+function planWithNoHoliday(): ModuleWeekSessionPlan {
   const delivered = ['2027-04-05', '2027-04-12', '2027-04-19', '2027-04-26', '2027-05-03', '2027-05-10'];
   return {
     sessions: delivered.map((date, index) => ({
@@ -85,7 +82,6 @@ function planWithNoClosure(): ModuleWeekSessionPlan {
     slots: delivered.map((date, index) => slot({
       slotNumber: index + 1,
       date,
-      type: 'live-session',
       sessionNumber: index + 1,
     })),
     skippedHolidays: [],
@@ -108,101 +104,42 @@ function mondayModule(weeks = 6, sessionsNumber = weeks): ModuleCatalogueItem {
   }));
 }
 
-describe('placing holiday reading weeks among the authored weeks', () => {
-  it('hangs the closed slot above the week that now delivers the displaced session', () => {
+describe('flagging which authored week sits on a ticked holiday', () => {
+  it('names the week whose own delivery day the holiday falls on -- nothing moves', () => {
     const module = mondayModule();
-    const plan = planWithOneClosure();
+    const plan = planWithOneHoliday();
 
-    const { before, trailing } = holidayReadingWeeksByWeekId(module, plan);
+    const touched = weeksTouchedByHoliday(module, plan);
 
-    // Session 5 is the fifth authored week, and the reading week sits above it.
+    // Session 5 is the fifth authored week, and it keeps its own date.
     const fifthWeek = module.weekStructure[4];
-    expect(before.get(fifthWeek.id)?.map(item => item.date)).toEqual(['2027-05-03']);
-    expect(trailing).toEqual([]);
-    // Nothing hangs above any other week.
-    expect([...before.keys()]).toEqual([fifthWeek.id]);
+    expect(touched.get(fifthWeek.id)?.map(item => item.date)).toEqual(['2027-05-03']);
+    // The plan's own dates are unmoved: every session runs on its own delivery
+    // day, ticked holiday or not.
+    expect(plan.sessions.map(session => session.date)).toEqual(
+      ['2027-04-05', '2027-04-12', '2027-04-19', '2027-04-26', '2027-05-03', '2027-05-10'],
+    );
+    // Nothing else is flagged.
+    expect([...touched.keys()]).toEqual([fifthWeek.id]);
   });
 
-  it('inserts nothing when no delivery slot was closed', () => {
-    const { before, trailing } = holidayReadingWeeksByWeekId(mondayModule(), planWithNoClosure());
+  it('flags nothing when no delivery slot is a holiday', () => {
+    const touched = weeksTouchedByHoliday(mondayModule(), planWithNoHoliday());
 
-    expect(before.size).toBe(0);
-    expect(trailing).toEqual([]);
+    expect(touched.size).toBe(0);
   });
 
   it('is inert for a payload that carries no slot spine', () => {
-    const plan = planWithOneClosure();
-    const { before, trailing } = holidayReadingWeeksByWeekId(mondayModule(), { ...plan, slots: undefined });
+    const plan = planWithOneHoliday();
+    const touched = weeksTouchedByHoliday(mondayModule(), { ...plan, slots: undefined });
 
-    expect(before.size).toBe(0);
-    expect(trailing).toEqual([]);
-  });
-
-  it('keeps two closures against the two weeks that absorbed them', () => {
-    const module = mondayModule(8, 8);
-    const plan = planWithOneClosure();
-    const twoClosures: ModuleWeekSessionPlan = {
-      ...plan,
-      sessions: [
-        ...plan.sessions,
-        { sessionNumber: 7, date: '2027-06-07', day: 'Monday', slotDate: '2027-05-31', slotDay: 'Monday', skippedHolidays: ['2027-05-31'] },
-        { sessionNumber: 8, date: '2027-06-14', day: 'Monday', slotDate: '2027-06-07', slotDay: 'Monday', skippedHolidays: [] },
-      ],
-      slots: [
-        ...(plan.slots || []),
-        slot({ slotNumber: 8, date: '2027-05-24', type: 'live-session', sessionNumber: 6 }),
-        slot({
-          slotNumber: 9,
-          date: '2027-05-31',
-          type: 'reading-week',
-          holidays: [{ id: 'england-and-wales:2027-05-31', label: 'Spring bank holiday', startDate: '2027-05-31', endDate: '2027-05-31', type: 'Bank holiday' }],
-        }),
-        slot({ slotNumber: 10, date: '2027-06-07', type: 'live-session', sessionNumber: 7 }),
-        slot({ slotNumber: 11, date: '2027-06-14', type: 'live-session', sessionNumber: 8 }),
-      ],
-    };
-
-    const { before } = holidayReadingWeeksByWeekId(module, twoClosures);
-
-    expect(before.get(module.weekStructure[4].id)?.map(item => item.date)).toEqual(['2027-05-03']);
-    // Session 7 belongs to the seventh authored week, which is where the second
-    // closure hangs. No week carries both, and neither closure is dropped.
-    expect(before.get(module.weekStructure[6].id)?.map(item => item.date)).toEqual(['2027-05-31']);
-    expect([...before.values()].flat()).toHaveLength(2);
-  });
-
-  it('keeps consecutive closures together above the week that follows them', () => {
-    const module = mondayModule(4, 4);
-    const backToBack: ModuleWeekSessionPlan = {
-      sessions: [
-        { sessionNumber: 1, date: '2027-04-05', day: 'Monday', slotDate: '2027-04-05', skippedHolidays: [] },
-        { sessionNumber: 2, date: '2027-04-12', day: 'Monday', slotDate: '2027-04-12', skippedHolidays: [] },
-        { sessionNumber: 3, date: '2027-05-03', day: 'Monday', slotDate: '2027-04-19', skippedHolidays: ['2027-04-19', '2027-04-26'] },
-        { sessionNumber: 4, date: '2027-05-10', day: 'Monday', slotDate: '2027-04-26', skippedHolidays: [] },
-      ],
-      slots: [
-        slot({ slotNumber: 1, date: '2027-04-05', type: 'live-session', sessionNumber: 1 }),
-        slot({ slotNumber: 2, date: '2027-04-12', type: 'live-session', sessionNumber: 2 }),
-        slot({ slotNumber: 3, date: '2027-04-19', type: 'reading-week', holidays: [{ id: 'h-1', label: 'First closure', startDate: '2027-04-19', endDate: '2027-04-19' }] }),
-        slot({ slotNumber: 4, date: '2027-04-26', type: 'reading-week', holidays: [{ id: 'h-2', label: 'Second closure', startDate: '2027-04-26', endDate: '2027-04-26' }] }),
-        slot({ slotNumber: 5, date: '2027-05-03', type: 'live-session', sessionNumber: 3 }),
-        slot({ slotNumber: 6, date: '2027-05-10', type: 'live-session', sessionNumber: 4 }),
-      ],
-      skippedHolidays: ['2027-04-19', '2027-04-26'],
-      finalEndDate: '2027-05-10',
-      originalEndDate: '2027-04-26',
-      warnings: [],
-    };
-
-    const { before } = holidayReadingWeeksByWeekId(module, backToBack);
-
-    expect(before.get(module.weekStructure[2].id)?.map(item => item.date)).toEqual(['2027-04-19', '2027-04-26']);
+    expect(touched.size).toBe(0);
   });
 
   it('pairs a twice-weekly module with the week that owns each session number', () => {
     // Two delivery days per authored week, so week 2 owns sessions 3 and 4.
     const module = mondayModule(3, 6);
-    const byNumber = moduleWeekIdBySessionNumber(module, planWithOneClosure().sessions);
+    const byNumber = moduleWeekIdBySessionNumber(module, planWithOneHoliday().sessions);
 
     expect(byNumber.get(1)).toBe(module.weekStructure[0].id);
     expect(byNumber.get(2)).toBe(module.weekStructure[0].id);
@@ -211,30 +148,20 @@ describe('placing holiday reading weeks among the authored weeks', () => {
   });
 });
 
-describe('what a holiday reading week shows', () => {
-  it('names the holiday, its date and its type, and says no session runs', () => {
+describe('what the holiday notice shows', () => {
+  it('names the holiday, its date and its type, on the week\'s own date', () => {
     render(
-      <HolidayReadingWeekCard
+      <WeekHolidayNotice
         slot={{ slotNumber: 5, date: '2027-05-03', day: 'Monday', holidays: [{ ...EARLY_MAY, notes: 'Substitute day' }] }}
       />,
     );
 
-    expect(screen.getByText('Week 5')).toBeInTheDocument();
-    expect(screen.getByText('Reading week')).toBeInTheDocument();
-    expect(screen.getByText('No live session scheduled')).toBeInTheDocument();
-    const detail = screen.getByTestId('holiday-reading-week').textContent || '';
-    expect(detail).toContain('Holiday:');
+    expect(screen.getByText(/falls on a holiday/i)).toBeInTheDocument();
+    const detail = screen.getByTestId('week-holiday-notice').textContent || '';
     expect(detail).toContain('Early May bank holiday');
     expect(detail).toContain('Bank holiday');
     expect(detail).toContain('Substitute day');
     // Its own date, in the same words the rest of the curriculum reads dates in.
     expect(detail).toContain('3 May 2027');
-  });
-
-  it('still explains itself when the holiday record carries no name', () => {
-    render(<HolidayReadingWeekCard slot={{ slotNumber: 2, date: '2027-05-03', holidays: [] }} />);
-
-    expect(screen.getByText('No live session scheduled')).toBeInTheDocument();
-    expect(screen.getByTestId('holiday-reading-week').textContent).toContain('Holiday');
   });
 });

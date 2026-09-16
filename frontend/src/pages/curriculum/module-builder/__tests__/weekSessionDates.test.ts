@@ -5,6 +5,8 @@ import {
   createEmptyWeek,
   createLocalModuleDraft,
   moduleWeekSessionDates,
+  moduleWeekIdBySessionNumber,
+  moduleUsesSessionRows,
   recalculateModule,
   resequenceWeekSessionDates,
   type ModuleCatalogueItem,
@@ -78,6 +80,31 @@ function withSeventhWeek(module: ModuleCatalogueItem) {
 }
 
 describe('dating a week added in the builder', () => {
+  it('schedules all sixteen imported live sessions without consuming a date for the holiday row', () => {
+    const draft = createLocalModuleDraft({ programme: 'Al Fanar', title: 'PCP', description: '', weeks: 1, sessionsNumber: 3, status: 'draft' });
+    const weeks = Array.from({ length: 16 }, (_, index) => {
+      const week = createEmptyWeek(draft.id, index + 1);
+      return { ...week, components: [createEmptyComponent(week.id, 'live-session', 1)] };
+    });
+    const holiday = createEmptyWeek(draft.id, 3);
+    weeks.splice(2, 0, { ...holiday, title: 'Saudi National Day', components: [createEmptyComponent(holiday.id, 'reading', 1)] });
+    const module = recalculateModule({ ...draft, weeklySchedule: [
+      { day: 'Monday', startTime: '11:00', endTime: '14:00' },
+      { day: 'Wednesday', startTime: '11:30', endTime: '14:30' },
+    ], weekStructure: weeks });
+    expect(module.sessionsNumber).toBe(16);
+    expect(moduleUsesSessionRows(module)).toBe(true);
+    const dates = ['2026-09-16', '2026-09-21', '2026-10-05', '2026-10-07', '2026-10-12', '2026-10-14', '2026-10-19', '2026-10-21', '2026-10-26', '2026-10-28', '2026-11-02', '2026-11-04', '2026-11-09', '2026-11-11', '2026-11-16', '2026-11-18'];
+    const plan = planFor(dates);
+    const dated = applyModuleWeekSessionPlan(module, plan);
+    expect(dated.weekStructure).toHaveLength(17);
+    expect(dated.weekStructure[2].components[0].id).toBe(weeks[2].components[0].id);
+    expect(moduleWeekSessionDates(dated, plan.sessions).flat()).toEqual(dates);
+    expect(moduleWeekSessionDates(dated, plan.sessions)[2]).toEqual([]);
+    expect(moduleWeekIdBySessionNumber(dated, plan.sessions).get(16)).toBe(weeks[16].id);
+    expect(dated.weekStructure.flatMap(week => week.components.filter(c => c.type === 'live-session').map(c => c.settings.sessionDate))).toEqual(dates);
+  });
+
   it('gives two live sessions in one week their distinct delivery dates', () => {
     const draft = createLocalModuleDraft({
       programme: 'Split Programme',

@@ -1,4 +1,5 @@
 import { BrowserRouter } from 'react-router-dom';
+import { SafeguardingSignIn } from '@/components/SafeguardingSignIn';
 import { AuthProvider } from '@/hooks/useAuth';
 import { AiSettingsProvider } from '@/hooks/useAiSettings';
 import { ToastProvider } from '@/hooks/useToast';
@@ -13,7 +14,7 @@ export default function App() {
         <ToastProvider>
           <AiSettingsProvider>
             <AuthProvider>
-              <AppRoutes />
+              <SafeguardingSignIn><AppRoutes /></SafeguardingSignIn>
               <ToastContainer />
             </AuthProvider>
           </AiSettingsProvider>

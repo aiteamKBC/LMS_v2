@@ -946,6 +946,8 @@ export default function ComponentViewPage() {
                     initialMonth={searchParams.get('month')}
                     questionHtml={component.assignmentBriefHtml}
                     questionText={component.assignmentBrief}
+                    questionFileUrl={component.resourceUrl}
+                    questionFileName={component.fileName}
                     ksbMappings={component.ksbMappings || []}
                     evidenceFiles={evidenceFiles}
                     evidenceDetails={activityEvidenceContext.trainingPlanDetails}

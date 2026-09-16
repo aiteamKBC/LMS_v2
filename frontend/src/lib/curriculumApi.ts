@@ -31,9 +31,23 @@ export function isRetryableError(error: unknown): boolean {
       }
     }
 
-    // Network/timeout errors (no HTTP response)
-    if (msg.includes('network') || msg.includes('timeout')) {
-      return true; // Network errors are transient and should be retried
+    // A client-side timeout (`fetchJsonOnce`'s own "Curriculum API timed out for
+    // …" message) is deliberately excluded here: the request already spent its
+    // whole budget once, so retrying it spends that budget again for the same
+    // outcome instead of surfacing the failure. This used to read
+    // `msg.includes('timeout')`, which never matched the word "timed out" this
+    // codebase actually throws -- every timeout fell through to "retry unknown
+    // errors" below and got retried up to RETRY_ATTEMPTS times, each attempt
+    // paying the full timeout again, which is how one slow endpoint turned into
+    // several minutes of retries stacked on top of each other.
+    if (msg.includes('timed out')) {
+      return false;
+    }
+
+    // A network error with no response at all (offline, DNS, connection reset)
+    // is the transient case this retry exists for.
+    if (msg.includes('network')) {
+      return true;
     }
   }
 
@@ -56,6 +70,7 @@ export function isRetryableError(error: unknown): boolean {
 
 interface CurriculumRequestInit {
   method?: string;
+  credentials?: RequestCredentials;
   headers?: Record<string, string>;
   body?: string;
   signal?: AbortSignal;
@@ -145,7 +160,7 @@ export function tutorConflictMessage(error: unknown): string | null {
 }
 
 /**
- * The backend's own sentence for any refused write, or `fallback`.
+ * The backend's own sentence and validation details for a refused write, or `fallback`.
  *
  * Same reasoning as `tutorConflictMessage` above, generalised: every handler
  * answers a refusal with `{ error: '...' }` saying what to do about it, and
@@ -153,11 +168,23 @@ export function tutorConflictMessage(error: unknown): string | null {
  * for /path: …". A dialog should show the sentence, not the diagnostic.
  */
 export function curriculumErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof CurriculumApiError && error.data && typeof error.data === 'object') {
-    const message = (error.data as { error?: unknown }).error;
-    if (typeof message === 'string' && message.trim()) return message;
-  }
-  return fallback;
+  return error instanceof CurriculumApiError ? curriculumPayloadErrorMessage(error.data) || fallback : fallback;
+}
+
+function curriculumPayloadErrorMessage(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const payload = data as Record<string, unknown>;
+  const message = typeof payload.error === 'string' && payload.error.trim() ? payload.error : '';
+  const details = [payload.validationErrors, payload.errors]
+    .flatMap(errors => Array.isArray(errors) ? errors : [])
+    .map((item: unknown) => typeof item === 'string'
+      ? item
+      : item && typeof item === 'object' ? (item as { message?: unknown }).message : undefined)
+    .filter((detail): detail is string => typeof detail === 'string' && Boolean(detail.trim()))
+    .map(detail => detail.trim())
+    .filter(detail => detail !== message.trim());
+  const validation = [...new Set(details)].join('; ');
+  return message && validation ? `${message} - ${validation}` : message || validation;
 }
 
 export interface CurriculumProgramme {
@@ -199,6 +226,12 @@ export interface CurriculumProgramme {
   // Off-the-job hours a learner must complete for the whole programme. null means no
   // target has been set, which is different from a target of zero.
   requiredOtjh?: number | null;
+}
+
+export interface CurriculumWeeklySession {
+  day: string;
+  startTime: string;
+  endTime: string;
 }
 
 export interface CurriculumModule {
@@ -244,6 +277,13 @@ export interface CurriculumModule {
    * every edit round-trip multiply the weeks by the delivery days.
    */
   sessionsNumber?: number;
+  weeklySchedule?: CurriculumWeeklySession[];
+  sessionHolidays?: CurriculumHoliday[];
+  /** Teaching weeks, separate from imported content rows. */
+  deliveryWeeks?: number;
+  weekDays?: string;
+  startTime?: string;
+  endTime?: string;
   startDate?: string;
   endDate?: string;
   totalOtjh?: number;
@@ -1700,7 +1740,7 @@ export interface CurriculumProgrammeDetail {
 }
 
 export interface CurriculumSessionPlanPreview {
-  sessions: Array<{ sessionNumber: number; date: string; day: string; skippedHolidays: string[] }>;
+  sessions: Array<{ sessionNumber: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; skippedHolidays: string[] }>;
   skippedHolidays: string[];
   finalEndDate: string;
   warnings: string[];
@@ -2627,16 +2667,8 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
     let payload: unknown;
     try {
       payload = await response.json();
-      const payloadRecord = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-      const validationErrors = Array.isArray(payloadRecord.validationErrors) ? payloadRecord.validationErrors : [];
-      const validation = validationErrors
-        .map((item: unknown) => item && typeof item === 'object' ? (item as { message?: string }).message : '')
-        .filter(Boolean)
-        .join('; ');
-      const errorText = typeof payloadRecord.error === 'string' ? payloadRecord.error : '';
-      detail = errorText
-        ? `: ${errorText}${validation ? ` - ${validation}` : ''}`
-        : '';
+      const errorText = curriculumPayloadErrorMessage(payload);
+      detail = errorText ? `: ${errorText}` : '';
     } catch {
       detail = '';
     }
@@ -2700,7 +2732,12 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+  // Without a timeout this hangs on the browser's own default (minutes) when the
+  // backend is slow, leaving the catalogue's loading skeleton up long after a
+  // sibling request against the same server has already timed out and reported
+  // it. Matching that 30s budget lets the list fail into its own error+Retry
+  // banner instead of spinning forever.
+  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 30000 });
 }
 
 export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
@@ -3198,6 +3235,7 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   endDate?: string;
   tutor?: string;
   coach?: string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -3233,6 +3271,7 @@ export type CurriculumModuleAttachmentInput = {
   endDate?: string;
   coach?: string;
   tutor?: string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -3603,7 +3642,7 @@ export function previewCohortEndDate(input: {
   return postJson<CurriculumCohortEndDatePreview>('/curriculum/preview/cohort-end-date/', input);
 }
 
-export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
+export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
   return postJson<CurriculumSessionPlanPreview>('/curriculum/preview/module-session-plan/', input);
 }
 
@@ -3611,6 +3650,7 @@ export function previewModuleSessionPlan(input: { startDate?: string; numberOfSe
 export interface CurriculumTutorAvailabilityInput {
   startDate?: string;
   sessionsNumber?: number | string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;

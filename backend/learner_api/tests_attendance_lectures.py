@@ -64,7 +64,7 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result['session_start_time'].strftime('%H:%M'), '00:30')
         self.assertEqual(result['scheduled_start'].tzinfo, datetime_timezone.utc)
 
-    def test_schedule_requires_saved_module_assignment_as_well_as_invitation(self):
+    def test_schedule_requires_assignment_and_accepts_invitation_or_confirmed_attendance(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
         cur.fetchall.return_value = [('assigned-module', 'Current module title')]
@@ -75,10 +75,29 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertIn('enrolment."Created_users" WHERE id=%s', assignment_sql)
         self.assertEqual(assignment_params, [12])
         schedule_sql, schedule_params = cur.execute.call_args_list[1].args
-        self.assertEqual(schedule_params, [['assigned-module'], 'learner@example.test'])
+        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module'],
+                                           'learner@example.test', 'learner@example.test'])
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
         self.assertIn('jsonb_array_elements_text', schedule_sql)
+        self.assertIn('curriculum.live_session_attendance', schedule_sql)
+        self.assertIn('a.total_attendance_seconds>0', schedule_sql)
         self.assertIn('m.title AS module_title', schedule_sql)
+
+    def test_confirmed_teams_attendee_is_present_when_the_saved_invite_is_missing(self):
+        source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__.return_value.fetchall.return_value = [('business', 'Business')]
+        now = timezone.now()
+        raw = {'session_id': 'occ-1', 'occurrence_id': 'occ-1', 'live_session_id': 'live-1',
+               'scheduled_start': now-timedelta(hours=2), 'scheduled_end': now-timedelta(hours=1),
+               'updated_at': now, 'module_title': 'Business', 'module_catalogue_id': 'business',
+               'session_number': 1, 'attended': True}
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[raw]):
+            result = read_native_occurrences(source)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['attendance_status'], 'present')
+        self.assertEqual(result[0]['source'], 'microsoft-teams')
 
     def test_schedule_excludes_deleted_modules_and_superseded_or_failed_series_and_occurrences(self):
         conn = MagicMock()

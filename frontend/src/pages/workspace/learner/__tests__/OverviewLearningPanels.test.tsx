@@ -26,6 +26,17 @@ beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new 
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('overview learning panels', () => {
+  it('shows honest module-level KSBs when this week has no direct mappings', async () => {
+    const week = fixture();
+    week.modules[0] = { ...week.modules[0], ksbCodes: [], ksbMappingMissing: false };
+    week.planSubjects = [{ id: 'current:M1', title: 'Managing Change', source: 'current', completed: 2, total: 4,
+      dates: ['2026-09-09'], moduleIds: ['M1'], sessionTitles: [], ksbCodes: ['B2', 'K1', 'S3'] }];
+    setup({ week });
+    expect(await screen.findByText('B2, K1, S3')).toBeVisible();
+    expect(screen.getByText("Module-level mapping · this week's activities have no direct KSB mapping")).toBeVisible();
+    expect(screen.queryByText('Not mapped yet')).not.toBeInTheDocument();
+  });
+
   it('connects weekly progress, KSBs, hours and the correct module destination', async () => {
     setup();
     const select = await screen.findByRole('combobox', { name: 'Module' });

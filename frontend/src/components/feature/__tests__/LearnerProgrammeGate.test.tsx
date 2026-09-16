@@ -23,10 +23,10 @@ afterEach(cleanup);
 describe('cohort start route gate', () => {
   it.each(['/learner/my-learning', '/learner/modules/commercial/499', '/learner/quiz/commercial/499/1',
     '/learner/video/commercial/499/1', '/learner/component/commercial/499/1', '/learner/monthly-submission/commercial/499/1'])(
-    'keeps %s from mounting before cohort start', path => {
+    'opens %s even though the cohort start date is still ahead', path => {
       renderGate(path);
-      expect(screen.getByText('Programme and plan')).toBeVisible();
-      expect(mounted).not.toHaveBeenCalled();
+      expect(screen.getByText('Lesson content')).toBeVisible();
+      expect(mounted).toHaveBeenCalled();
     },
   );
   it('opens module content once the server reports the cohort has started', () => {

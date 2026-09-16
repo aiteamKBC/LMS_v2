@@ -18,6 +18,20 @@
 export type Role = 'admin' | 'staff' | 'employer' | 'learner';
 export type SubjectType = 'learner' | 'employer' | 'staff';
 
+/**
+ * One workspace an account may open, as the server describes it.
+ *
+ * `access` is an ACCESS_OPTIONS id (`coach`, `tutor`, …) or the literal
+ * `learner` for a staff member's own enrolment record. `home` is the route it
+ * opens — already carrying the query string the learner entry needs — so the
+ * chooser never has to build a destination itself.
+ */
+export interface AccessWorkspace {
+  access: string;
+  home: string;
+  navRole?: string | null;
+}
+
 export interface AuthUser {
   id: number;
   email: string;
@@ -40,6 +54,18 @@ export interface AuthUser {
   accessHome?: string | null;
   /** `roleNavMap` key for `access`, chosen server-side (ACCESS_NAV_ROLES). */
   accessNavRole?: string | null;
+  /** Every grant this account holds, in canonical order. Includes `access`. */
+  accesses?: string[];
+  /**
+   * Each grant with where it leads — what the workspace chooser offers.
+   *
+   * Built server-side so the set of workspaces and their landing routes are
+   * decided in one place (identity.account_payload). A staff member who is also
+   * studying gets a `learner` entry here too, pointing at their own record.
+   *
+   * One entry means there is nothing to choose: sign-in goes straight there.
+   */
+  accessWorkspaces?: AccessWorkspace[];
   /** This person's own enrolment record, when they have one.
    *
    * Set for a staff member or administrator who is ALSO studying a programme.
@@ -214,15 +240,14 @@ export async function apiLogout(): Promise<void> {
  * full page navigation, not a fetch: the whole point is to hand the browser to
  * Microsoft and let it come back with a `Set-Cookie`.
  *
- * `next` is a path to return to after signing in; the server ignores anything
- * that is not a same-site path.
+ * Successful sign-in opens the account home; no previous-page destination is
+ * sent to the provider flow.
  *
  * Throws `AuthError` with code `sso_unconfigured` (503) when the deployment has
  * no Microsoft app registration wired up.
  */
-export async function apiMicrosoftStart(next?: string): Promise<string> {
-  const query = next ? `?next=${encodeURIComponent(next)}` : '';
-  const data = await request<{ authorizationUrl: string }>(`/microsoft/start/${query}`);
+export async function apiMicrosoftStart(): Promise<string> {
+  const data = await request<{ authorizationUrl: string }>('/microsoft/start/');
   return data.authorizationUrl;
 }
 

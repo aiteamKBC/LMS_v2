@@ -1,9 +1,12 @@
 from django.urls import path
 
-from . import programme_audit, quality, review_schedule, review_types, reviews, views
+from . import learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from .teams_schedule_delivery import schedule_email
 
 
 urlpatterns = [
+    path('curriculum/cohorts/<str:identifier>/learner-assignments/', learner_assignments.cohort_learner_assignments, name='curriculum-cohort-learner-assignments'),
+    path('curriculum/modules/<str:identifier>/learner-assignments/', learner_assignments.module_learner_assignments, name='curriculum-module-learner-assignments'),
     path('curriculum/programmes/<str:programme_id>/reviews/', reviews.curriculum_programme_review_collection, name='curriculum-programme-reviews'),
     path('curriculum/programmes/<str:programme_id>/reviews/clone/', reviews.curriculum_review_clone, name='curriculum-programme-reviews-clone'),
     path('curriculum/programmes/<str:programme_id>/reviews/schedule/', review_schedule.curriculum_programme_review_schedule, name='curriculum-programme-reviews-schedule'),
@@ -79,6 +82,7 @@ urlpatterns = [
     path('curriculum/teams-meetings/summary/', views.curriculum_teams_meeting_summary, name='curriculum-teams-meeting-summary'),
     path('curriculum/live-sessions/occurrences/', views.curriculum_live_session_occurrences, name='curriculum-live-session-occurrences'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule/', views.curriculum_teams_meeting_schedule, name='curriculum-teams-meeting-schedule'),
+    path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<int:session_number>/schedule/', views.curriculum_teams_meeting_occurrence_schedule, name='curriculum-teams-meeting-occurrence-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<str:occurrence_id>/join/', views.curriculum_teams_meeting_join, name='curriculum-teams-meeting-join'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/', views.curriculum_teams_meeting_artifacts, name='curriculum-teams-meeting-artifacts'),

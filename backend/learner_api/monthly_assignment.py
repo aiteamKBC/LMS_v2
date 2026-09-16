@@ -16,6 +16,7 @@ from django.db import connections, DatabaseError, transaction
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from login.permissions import learner_self_or_admin
+from .booking_calendar import booking_date_restriction
 
 
 def text(value):
@@ -43,11 +44,42 @@ def month_bounds(month):
         return None, None
 
 
+def valid_time_entries(monthly, hours):
+    # Older submissions retain their original aggregate time.
+    if "timeEntries" not in monthly:
+        return True
+    entries = monthly.get("timeEntries")
+    start, end = month_bounds(monthly.get("month"))
+    if not start or not isinstance(entries, list) or not entries:
+        return False
+    total = 0
+    for entry in entries:
+        if not isinstance(entry, dict) or not text(entry.get("topic")):
+            return False
+        try:
+            duration = float(entry.get("hours"))
+            day = date.fromisoformat(text(entry.get("date")))
+        except (ValueError, TypeError):
+            return False
+        if not math.isfinite(duration) or not 0 < duration <= 8 or not start <= day <= end or booking_date_restriction(day, today=day):
+            return False
+        total += duration
+    return math.isfinite(total) and math.isclose(total, hours, rel_tol=0, abs_tol=1 / 3600)
+
+
 def coaching_booking_bounds(month):
     start, end = month_bounds(month)
     if not start:
         return None, None
     return end - timedelta(days=9), end + timedelta(days=5)
+
+
+def coaching_booking_windows(month):
+    first = coaching_booking_bounds(month)
+    if not first[0]:
+        return []
+    following_month = first[1].strftime('%Y-%m')
+    return [first, coaching_booking_bounds(following_month)]
 
 
 def presentation_fingerprint(payload):
@@ -86,12 +118,12 @@ def approved_evidence_ids(payload):
 def booked_coaching(payload):
     from .calendar import _learner_calendar_record
     monthly = mapping(payload.get("monthlyAssignment"))
-    start, end = coaching_booking_bounds(monthly.get("month"))
-    if not start or not text(monthly.get("meetingKey")):
+    windows = coaching_booking_windows(monthly.get("month"))
+    if not windows or not text(monthly.get("meetingKey")):
         return False
     record = _learner_calendar_record(payload.get("learnerKind"), int(payload.get("learnerId")), monthly["meetingKey"])
     return bool(record and record.event_type == "mcr" and record.scheduled_date
-                and start <= record.scheduled_date <= end
+                and any(start <= record.scheduled_date <= end for start, end in windows)
                 and record.status in ("scheduled", "in-progress", "completed", "awaiting-signature"))
 
 
@@ -114,6 +146,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
     owned = approved_evidence_ids(payload) if evidence_ids is None and evidence else (evidence_ids or set())
     answer_lines = [line.strip() for line in text(payload.get("assignmentAnswer")).splitlines() if line.strip()]
     linked_ids = set()
+    evidence_valid = True
     for entry in evidence:
         entry_id = text(entry.get("id"))
         url = text(entry.get("url"))
@@ -126,6 +159,8 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         valid_points = not point_text or (bool(points) and all(1 <= p <= len(answer_lines) for p in points))
         if entry_id and (is_link or entry_id in owned) and valid_points:
             linked_ids.add(entry_id)
+        else:
+            evidence_valid = False
     claims = [mapping(c) for c in items(monthly.get("claims"))]
     allowed = available_ksb_codes(payload) if allowed_ksbs is None and claims else (allowed_ksbs or set())
     claimed_codes = [text(c.get("code")) for c in claims]
@@ -137,16 +172,16 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
     checks = [
         ("answer", "Assignment answer: at least 120 words", words(payload.get("assignmentAnswer")) >= 120),
         ("learning", "Learned, understood and gained skills: at least 20 words each", all(words(v) >= 20 for v in [payload.get("whatYouLearned"), monthly.get("understood"), monthly.get("gainedSkills")])),
-        ("evidence", "At least one available evidence item; answer point numbers are optional and must be valid if provided", bool(linked_ids)),
-        ("ksbs", "Every claimed programme KSB has a 20-word explanation and linked evidence", bool(claims) and len(set(claimed_codes)) == len(claimed_codes) and set(claimed_codes) <= allowed and all(words(c.get("explanation")) >= 20 and bool(set(str(e) for e in items(c.get("evidenceIds"))) & linked_ids) for c in claims)),
+        ("evidence", "Evidence files and links are optional; any provided items and answer point numbers must be valid", evidence_valid),
+        ("ksbs", "Every claimed programme KSB has a 20-word explanation; evidence links are optional and must be valid if selected", bool(claims) and len(set(claimed_codes)) == len(claimed_codes) and set(claimed_codes) <= allowed and all(words(c.get("explanation")) >= 20 and set(str(e) for e in items(c.get("evidenceIds"))) <= linked_ids for c in claims)),
         ("planned", "Planned hours and KSBs reviewed", monthly.get("plannedReviewed") is True),
         ("declarations", "New learning, skills and employer evidence-sharing declarations confirmed", all(monthly.get(k) is True for k in ["newKnowledge", "newSkills", "sharingConsent"])),
-        ("hours", "Positive time recorded and any out-of-hours work confirmed (no six-hour cap)", math.isfinite(hours) and hours > 0 and (not payload.get("outsideWorkingHours") or payload.get("outsideWorkingHoursConfirmed") is True)),
+        ("hours", "Record each topic with positive hours (maximum 8 per topic) and a working date in the assignment month (no weekends or bank holidays); confirm any out-of-hours work", math.isfinite(hours) and hours > 0 and valid_time_entries(monthly, hours) and (not payload.get("outsideWorkingHours") or payload.get("outsideWorkingHoursConfirmed") is True)),
         ("reflection", "Monthly LMS reflection and integrated understanding: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["lmsReflection", "integratedReflection"])),
         ("benefit", "Employer benefit confirmed and measurable outcomes described (20 words)", monthly.get("employerBenefit") is True and words(payload.get("businessImpact")) >= 20),
         ("impact", "Career, job and employer impacts: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["careerImpact", "jobImpact", "employerImpact"])),
         ("action", "Action plan and EPA preparedness: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["actionPlan", "epaPreparedness"])),
-        ("meeting", "Coaching meeting booked from the last ten days of the submission month through the 5th of the following month", booked),
+        ("meeting", "Coaching meeting booked in the submission-month or next-month window (last ten days through the following 5th)", booked),
         ("presentation", "Presentation generated, exported and reviewed", valid_presentation(payload)),
     ]
     return [{"key": key, "label": label, "passed": bool(passed)} for key, label, passed in checks]

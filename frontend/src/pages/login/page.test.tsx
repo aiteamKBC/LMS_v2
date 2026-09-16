@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import LoginPage from './page';
-import { AuthError, type AuthUser } from '@/api/auth';
+import { AuthError, apiAuthHealth, apiMicrosoftStart, type AuthUser } from '@/api/auth';
 
 const { login, authState } = vi.hoisted(() => ({ login: vi.fn(), authState: {
   account: null as Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'> | null,
@@ -13,9 +13,15 @@ vi.mock('@/hooks/useAuth', () => ({
 vi.mock('@/api/auth', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/auth')>(),
   apiAuthHealth: vi.fn().mockResolvedValue({ microsoftSso: { configured: false } }),
+  apiMicrosoftStart: vi.fn(),
 }));
 
-beforeEach(() => { authState.account = null; login.mockReset(); login.mockImplementation(() => new Promise(() => {})); });
+beforeEach(() => {
+  authState.account = null;
+  login.mockReset(); login.mockImplementation(() => new Promise(() => {}));
+  vi.mocked(apiAuthHealth).mockResolvedValue({ microsoftSso: { configured: false } } as Awaited<ReturnType<typeof apiAuthHealth>>);
+  vi.mocked(apiMicrosoftStart).mockReset();
+});
 afterEach(cleanup);
 
 function openForm() {
@@ -123,4 +129,41 @@ it.each([
   expect(screen.queryByRole('heading', { name: 'Transition portal' })).not.toBeInTheDocument();
   if (existingSession) expect(login).not.toHaveBeenCalled();
   else expect(login).toHaveBeenCalledWith('learner@example.test', ' Example password 7! ', false);
+});
+
+const homeAccounts = [
+  { role: 'admin' as const, accessHome: '/workspace/admin' },
+  { role: 'staff' as const, accessHome: '/workspace/coach' },
+  { role: 'staff' as const, accessHome: '/workspace/tutor' },
+  { role: 'staff' as const, accessHome: '/workspace/curriculum' },
+  { role: 'staff' as const, accessHome: '/access-required' },
+  { role: 'employer' as const, subjectId: 42, accessHome: '/employers/42' },
+];
+it.each(homeAccounts.flatMap(account => [false, true].map(existingSession => ({ account, existingSession }))))(
+  'opens $account.accessHome with existing session=$existingSession despite the last open page', async ({ account, existingSession }) => {
+    if (existingSession) authState.account = account;
+    else login.mockResolvedValue(account);
+    render(<MemoryRouter initialEntries={[{ pathname: '/login', state: { from: '/notifications?filter=unread' } }]}><Routes>
+      <Route path="/login" element={<LoginPage/>}/>
+      <Route path={account.accessHome} element={<h1>Account home</h1>}/>
+      <Route path="/notifications" element={<h1>Old page</h1>}/>
+    </Routes></MemoryRouter>);
+    if (!existingSession) {
+      autofill(screen.getByLabelText('Email address', { exact: true }) as HTMLInputElement, 'user@example.test');
+      autofill(screen.getByLabelText('Password', { exact: true }) as HTMLInputElement, 'Test password 7!');
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
+    }
+    expect(await screen.findByRole('heading', { name: 'Account home' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Old page' })).not.toBeInTheDocument();
+  },
+);
+
+it('starts Microsoft sign-in without forwarding a remembered page', async () => {
+  vi.mocked(apiAuthHealth).mockResolvedValue({ microsoftSso: { configured: true } } as Awaited<ReturnType<typeof apiAuthHealth>>);
+  // Stop before the external handoff; verify the destination argument and error recovery.
+  vi.mocked(apiMicrosoftStart).mockRejectedValue(new AuthError('Provider temporarily unavailable.', 503));
+  render(<MemoryRouter initialEntries={[{ pathname: '/login', state: { from: '/curriculum/programmes?tab=published' } }]}><LoginPage/></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: /Microsoft/i }));
+  await screen.findByText('Provider temporarily unavailable.');
+  expect(apiMicrosoftStart).toHaveBeenCalledExactlyOnceWith();
 });

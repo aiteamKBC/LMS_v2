@@ -966,7 +966,7 @@ export const WEEKEND_DAYS = ['Saturday', 'Sunday'];
 export const WEEKEND_HINT = 'Saturday and Sunday are weekend holidays in England — delivery on these days is unusual.';
 
 /** Delivery days as a comma-separated string, which is how the API stores them. */
-export function WeekdayControl({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+export function WeekdayControl({ value, onChange, maxSelections }: { value: string; onChange: (value: string) => void; maxSelections?: number }) {
   const selected = value.split(',').map(day => day.trim()).filter(Boolean);
   const toggle = (day: string) => {
     const next = selected.includes(day) ? selected.filter(item => item !== day) : [...selected, day];
@@ -984,8 +984,10 @@ export function WeekdayControl({ value, onChange }: { value: string; onChange: (
               key={day}
               type="button"
               onClick={() => toggle(day)}
+              aria-pressed={active}
+              disabled={!active && maxSelections !== undefined && selected.length >= maxSelections}
               title={weekend ? WEEKEND_HINT : undefined}
-              className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth ${
+              className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-40 ${
                 active
                   ? 'border-primary-600 bg-primary-600 text-white'
                   : weekend
@@ -1091,6 +1093,7 @@ export function EntityDrawer({
   onClose,
   onSubmit,
   submitLabel,
+  submitDisabled = false,
   cancelLabel = 'Cancel',
   extraAction,
   backAction,
@@ -1109,6 +1112,7 @@ export function EntityDrawer({
   onClose: () => void;
   onSubmit: () => void | Promise<void>;
   submitLabel: string;
+  submitDisabled?: boolean;
   cancelLabel?: string;
   extraAction?: DrawerExtraAction;
   /** A step back in a chain, e.g. "Back to Cohort" — placed before `extraAction`. */
@@ -1274,7 +1278,7 @@ export function EntityDrawer({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || submitDisabled}
               className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving && <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>}

@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { downloadLearnerMcmPdf, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
+import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
-import { MetricCard } from '@/components/ui/MetricCard';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import { useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
 import type { ImportedReview } from '@/api/reviewHistory';
@@ -18,17 +18,15 @@ import {
   learningMinutesForRecord,
   uniqueLearningProgress,
 } from '@/lib/reviewLearningProgress';
-import reviewStyles from '../progress-reviews/progressReviews.module.css';
-import FeaturedMeeting from '../reviews/FeaturedMeeting';
-import MeetingAttendanceActions from '../reviews/MeetingAttendanceActions';
 import { useMeetingAttendance } from '../reviews/useMeetingAttendance';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import AbsenceReportDialog from '../attendance/components/AbsenceReportDialog';
 import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
-import { meetingCalendarHref } from '../reviews/meetingBooking';
 import { useMeetingBooking } from '../reviews/useMeetingBooking';
-import MeetingSchedulingAction from '../reviews/MeetingSchedulingAction';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
+
+import CoachingHome from './CoachingHome';
+import { useCoachingReviewDefinitions } from './useCoachingReviewDefinitions';
 
 const learnerNav = roleNavMap.learner;
 
@@ -76,22 +74,6 @@ function statusLabel(status?: string): string {
     'not-scheduled': 'Not Scheduled', scheduled: 'Scheduled', 'in-progress': 'In Progress', completed: 'Completed', cancelled: 'Cancelled',
   };
   return status ? labels[status] || status : '-';
-}
-
-function normalizedSessionStatus(session: LearnerCalendarEvent): string {
-  return (session.status || '').toLowerCase().replace(/_/g, '-');
-}
-
-function sessionIsBooked(session: LearnerCalendarEvent): boolean {
-  return Boolean(session.scheduledDate)
-    && !['not-scheduled', 'planned', 'cancelled', 'unknown'].includes(normalizedSessionStatus(session));
-}
-
-function sessionSchedulingLabel(session: LearnerCalendarEvent): string {
-  if (['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(normalizedSessionStatus(session))) {
-    return 'View in calendar';
-  }
-  return sessionIsBooked(session) ? 'Reschedule' : 'Schedule';
 }
 
 function initials(name?: string): string {
@@ -289,146 +271,28 @@ export function MonthlyCoachingListPage() {
 }
 
 function MonthlyCoachingList() {
-  const { myLearner, learner, sessions, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('mcr');
+  const { myLearner, learner, currentCoach, sessions, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('mcr');
   const attendance = useMeetingAttendance(myLearner);
+  const reviews = useCoachingReviewDefinitions(myLearner.kind, myLearner.id, sessions);
   const [absence, setAbsence] = useState<MeetingAttendance | null>(null);
-  const [page, setPage] = useState(1);
-  const [view, setView] = useState<'planned' | 'finished'>('planned');
-  const pageSize = 10;
-  const finishedSessions = sessions.filter((session) => session.status.toLowerCase() === 'completed');
-  const plannedSessions = sessions.filter((session) => session.status.toLowerCase() !== 'completed');
-  const tabSessions = view === 'finished' ? finishedSessions : plannedSessions;
-  const totalPages = Math.max(1, Math.ceil(tabSessions.length / pageSize));
-  const currentPage = Math.min(page, totalPages);
-  const visibleSessions = tabSessions.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const completedCount = sessions.filter((review) => review.status.toLowerCase() === 'completed').length;
-  const scheduledCount = sessions.filter((review) => review.status.toLowerCase() === 'scheduled').length;
-  const inProgressCount = sessions.filter((review) => review.status.toLowerCase() === 'in-progress').length;
-  const notScheduledCount = sessions.filter((review) => ['not-scheduled', 'not scheduled', 'not_scheduled'].includes(review.status.toLowerCase())).length;
-  const summaryMetrics = [
-    { label: 'Total', value: sessions.length, icon: 'ri-stack-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
-    { label: 'Scheduled', value: scheduledCount, icon: 'ri-calendar-check-line', tone: 'info' as const, iconClassName: 'bg-blue-100 text-blue-700' },
-    { label: 'In progress', value: inProgressCount, icon: 'ri-time-line', tone: 'caution' as const, iconClassName: 'bg-amber-100 text-amber-700' },
-    { label: 'Completed', value: completedCount, icon: 'ri-checkbox-circle-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
-    { label: 'Not Scheduled', value: notScheduledCount, icon: 'ri-time-line', tone: 'neutral' as const, iconClassName: 'bg-amber-100 text-amber-700' },
-  ];
-  const pageRows = visibleSessions;
-
   const booking = useMeetingBooking({
     learner: myLearner, rules: bookingCalendar, attendance: attendance.data?.sessions || [],
     titleOf: monthlyCoachingTitle, setEvents, refresh: () => { refresh(); attendance.refresh(); },
   });
-  const { openBooking } = booking;
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Coaching meetings" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
-      <main className={`page-container ${reviewStyles.page} min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6`}>
-        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
-        <section className="learner-super-admin-hero workspace-page-hero relative overflow-hidden rounded-2xl p-4 sm:rounded-3xl sm:p-6 md:p-6">
-          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600"><AppIcon className="ri-calendar-event-line" />Monthly coaching</span>
-              <h1 className="mt-3 text-[22px] font-bold leading-tight text-primary-800 sm:text-2xl md:text-3xl">Monthly Coaching Meetings</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-foreground-500">Review your learning, progress and next actions with your coach and line manager.</p>
-            </div>
-            <div className="grid grid-cols-2 gap-2 lg:min-w-[650px] lg:grid-cols-5">
-              {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} value={loading ? '-' : metric.value} className="progress-review-hero-metric bg-white" valuePosition="stacked" />)}
-            </div>
-          </div>
-        </section>
-
+      <main className="page-container min-w-0 w-full space-y-4 p-4 md:p-7">
+        {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
         {booking.notice}
-        <FeaturedMeeting sessions={sessions} source="mcr" learner={learner} learnerQuery={`kind=${myLearner.kind}&learner=${myLearner.id}`}
-          today={attendance.data?.today || bookingCalendar?.today || isoDate(new Date())} loading={loading} error={error}
-          onSchedule={openBooking} titleOf={monthlyCoachingTitle} attendance={attendance.data?.sessions || []}
-          timeZone={attendance.data?.timeZone} busy={attendance.busy} canAct={attendance.canAct} onAttend={attendance.attend} onReport={setAbsence} />
         {attendance.error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{attendance.error}<button type="button" onClick={attendance.refresh} className="ml-2 underline">Retry attendance</button></p>}
         {attendance.notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">{attendance.notice}</p>}
-        <section aria-label="Monthly Coaching Meetings" className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Monthly Coaching Meetings</h2><p className="mt-0.5 text-xs text-foreground-500">Check each meeting status and open the full coaching record.</p></div></div><div className="flex flex-wrap items-center gap-2"><Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link></div></div>
-          <div role="tablist" aria-label="Monthly coaching meeting status" className="flex overflow-x-auto border-b border-background-200 bg-white px-4 pt-3 sm:px-5">
-              {(['planned', 'finished'] as const).map((tab) => {
-                const count = tab === 'planned' ? plannedSessions.length : finishedSessions.length;
-                return <button key={tab} type="button" role="tab" aria-selected={view === tab} onClick={() => { setView(tab); setPage(1); }} className={`-mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-xs font-bold transition ${view === tab ? 'border-primary-600 text-primary-700' : 'border-transparent text-foreground-500 hover:border-primary-200 hover:text-primary-700'}`}><AppIcon className={tab === 'planned' ? 'ri-calendar-event-line' : 'ri-checkbox-circle-line'} />{tab === 'planned' ? 'Planned' : 'Finished'}<span className={`rounded-full px-2 py-0.5 text-[10px] ${view === tab ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}>{count}</span></button>;
-              })}
-          </div>
-          {loading ? <div className="p-5"><RowsSkeleton rows={8} className="divide-y divide-background-100 [&>div]:py-3" /></div> : error && sessions.length === 0 ? null : tabSessions.length === 0 ? <div className="p-5"><Empty>{view === 'finished' ? 'No finished monthly coaching reviews were found.' : 'No planned monthly coaching sessions were found.'}</Empty></div> : (
-            <>
-              <div className="divide-y divide-background-200 md:hidden">
-                {pageRows.map((session) => {
-                  const booked = sessionIsBooked(session);
-                  const normalizedStatus = normalizedSessionStatus(session);
-                  const detailHref = `/learner/monthly-coaching/${encodeURIComponent(session.id)}?kind=${myLearner.kind}&learner=${myLearner.id}`;
-                  return (
-                    <article key={session.id} className="space-y-4 p-4">
-                      <div className="flex items-start gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <h3 className="text-sm font-bold text-foreground-900">{monthlyCoachingTitle(session)}</h3>
-                              <p className="mt-1 text-[11px] text-foreground-500">Monthly Coaching Review</p>
-                            </div>
-                            <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${normalizedStatus === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : normalizedStatus === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}>
-                              <AppIcon className={normalizedStatus === 'completed' ? 'ri-checkbox-circle-line' : normalizedStatus === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(normalizedStatus)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="flex min-w-0 items-center gap-2 rounded-xl bg-background-100/70 p-2.5">
-                          <AppIcon className="ri-calendar-line shrink-0 text-primary-500" />
-                          <div className="min-w-0"><p className="text-[9px] uppercase text-foreground-400">{booked ? 'Scheduled' : 'Planned'}</p><p className="truncate text-xs font-semibold text-foreground-800">{formatDate(booked ? session.scheduledDate : session.targetDate)}</p>{booked && <p className="text-[10px] text-foreground-400">{formatTime(session.scheduledTime)}</p>}</div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="col-span-2"><MeetingAttendanceActions session={attendance.data?.sessions.find(item => item.id === session.id)} busy={Boolean(attendance.busy)} canAct={attendance.canAct}
-                          onAttend={() => attendance.attend(session.id)} onReport={() => { const item = attendance.data?.sessions.find(item => item.id === session.id); if (item) setAbsence(item); }} onReschedule={() => openBooking(session)} /></div>
-                        <MeetingSchedulingAction label={sessionSchedulingLabel(session)}
-                          calendarHref={meetingCalendarHref(session, myLearner, undefined, attendance.data?.sessions.find(item => item.id === session.id))}
-                          onSchedule={() => openBooking(session)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2" />
-                        <Link to={detailHref} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-background-300 bg-white px-3 text-xs font-bold text-foreground-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">View session <AppIcon className="ri-arrow-right-line" /></Link>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-              <div className={`${reviewStyles.tableWrap} hidden md:block`}>
-                <table className="w-full text-left">
-                  <thead><tr><th className="px-5 py-3.5">Meeting name / type</th><th className="px-5 py-3.5">Coach</th><th className="px-5 py-3.5">Planned / scheduled date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Attendance action</th><th className="px-5 py-3.5">Scheduling assistant</th><th className="px-5 py-3.5 text-right">Review actions</th></tr></thead>
-                  <tbody className="divide-y divide-background-200">
-                    {pageRows.map((session) => {
-                      const booked = sessionIsBooked(session);
-                      const normalizedStatus = normalizedSessionStatus(session);
-                      const detailHref = `/learner/monthly-coaching/${encodeURIComponent(session.id)}?kind=${myLearner.kind}&learner=${myLearner.id}`;
-                      return (
-                        <tr key={session.id} className="group transition-colors hover:bg-primary-50/35">
-                          <td className="px-5 py-4"><p className="text-xs font-bold text-foreground-900">{monthlyCoachingTitle(session)}</p><p className="mt-1 text-[10px] text-foreground-500">Monthly Coaching Review</p></td>
-                          <td className="px-5 py-4"><div className="flex items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-[10px] font-bold text-primary-700">{initials(session.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{session.coachName || '-'}</span></div></td>
-                          <td className="px-5 py-4"><div className="flex items-center gap-2"><AppIcon className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(booked ? session.scheduledDate : session.targetDate)}</p>{booked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(session.scheduledTime)}</p>}</div></div></td>
-                          <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${normalizedStatus === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : normalizedStatus === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}><AppIcon className={normalizedStatus === 'completed' ? 'ri-checkbox-circle-line' : normalizedStatus === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(normalizedStatus)}</span></td>
-                          <td className="px-5 py-4"><MeetingAttendanceActions session={attendance.data?.sessions.find(item => item.id === session.id)} busy={Boolean(attendance.busy)} canAct={attendance.canAct}
-                            onAttend={() => attendance.attend(session.id)} onReport={() => { const item = attendance.data?.sessions.find(item => item.id === session.id); if (item) setAbsence(item); }} onReschedule={() => openBooking(session)} /></td>
-                          <td className="px-5 py-4">
-                            <MeetingSchedulingAction label={sessionSchedulingLabel(session)}
-                          calendarHref={meetingCalendarHref(session, myLearner, undefined, attendance.data?.sessions.find(item => item.id === session.id))}
-                          onSchedule={() => openBooking(session)} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2" />
-                          </td>
-                          <td className="px-5 py-4 text-right"><Link to={detailHref} className={`${reviewStyles.primaryButton} inline-flex h-9 items-center gap-2 rounded-xl px-4 text-xs font-bold transition focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2`}>View <AppIcon className="ri-arrow-right-line" /></Link></td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-                <div className="flex items-center gap-1.5"><button type="button" onClick={() => setPage(1)} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-left-line" /></button><button type="button" onClick={() => setPage((value) => Math.max(1, Math.min(value, totalPages) - 1))} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line" /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} aria-current={currentPage === number ? 'page' : undefined} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${currentPage === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}<button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line" /></button><button type="button" onClick={() => setPage(totalPages)} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button><span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span></div>
-                <p className="text-[10px] text-foreground-500">{tabSessions.length === 0 ? 0 : (currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, tabSessions.length)} of {tabSessions.length} items</p>
-              </div>
-            </>
-          )}
-        </section>
+        {reviews.error && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{reviews.error}<button type="button" disabled={reviews.loading} onClick={reviews.refresh} className="ml-2 underline">Retry signature details</button></p>}
+        {reviews.loading && <p role="status" className="text-sm text-foreground-500">Checking meeting signatures...</p>}
+        <CoachingHome sessions={sessions} attendance={attendance.data?.sessions || []} reviews={reviews.definitions} learner={myLearner} currentCoach={currentCoach}
+          today={attendance.data?.today || bookingCalendar?.today || isoDate(new Date())} timeZone={attendance.data?.timeZone}
+          loading={loading} error={error} canAct={attendance.canAct} busy={Boolean(attendance.busy)}
+          onSchedule={booking.openBooking} onAttend={attendance.attend} onReport={setAbsence}/>
         {booking.dialog}
         {absence?.absenceSessionId && absence.date && <AbsenceReportDialog onClose={() => setAbsence(null)}>
           <AbsenceReportForm key={absence.id} scope="meetings" compact showHistory={false}
@@ -442,13 +306,14 @@ function MonthlyCoachingList() {
 
 export default function MonthlyCoachingPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { sessionId } = useParams<{ sessionId: string }>();
   const { myLearner, learner, sessions, loading, error, refresh } = useReviewSessions('mcr');
+  const { canProgress } = useLearnerWorkspaceAccess(myLearner.id);
   // Keep the data-driven Aptem review details visible on first open while
   // preserving the existing learning-summary default for legacy meetings.
   const [openSections, setOpenSections] = useState<string[]>(['learning', 'imported-review']);
   const selected = sessions.find((session) => session.id === sessionId) || null;
-  const [monthlyLogPromptOpen, setMonthlyLogPromptOpen] = useState(false);
   const reviewInstance = useLearnerReviewInstance(
     myLearner.kind,
     myLearner.id,
@@ -459,15 +324,22 @@ export default function MonthlyCoachingPage() {
     selected && meetingMonth && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') &&
     ['completed', 'awaiting-signature'].includes(reviewInstance.definition?.instance?.status || selected.status),
   );
-  useEffect(() => {
-    if (completedMcm) setMonthlyLogPromptOpen(true);
-  }, [completedMcm]);
+  const backParams = new URLSearchParams({ kind: myLearner.kind, learner: myLearner.id });
+  if (searchParams.get('view') === 'all') {
+    backParams.set('view', 'all');
+    const tab = searchParams.get('tab');
+    if (tab && ['needs-action', 'upcoming', 'past'].includes(tab)) backParams.set('tab', tab);
+    const page = Number.parseInt(searchParams.get('page') || '1', 10);
+    if (Number.isFinite(page) && page > 1) backParams.set('page', String(page));
+  }
+  const backHref = `/learner/monthly-coaching?${backParams}`;
+  const refreshReview = reviewInstance.refresh;
   const signLearnerReview = useCallback((signature: string) => signLearnerProgressReview(
     myLearner.kind,
     myLearner.id,
     selected?.eventKey || selected?.id || '',
     { name: learner?.name || 'Learner', signature },
-  ).then(() => refresh()), [learner?.name, myLearner.id, myLearner.kind, refresh, selected?.eventKey, selected?.id]);
+  ).then(() => { refresh(); refreshReview(); }), [learner?.name, myLearner.id, myLearner.kind, refresh, refreshReview, selected?.eventKey, selected?.id]);
   const index = selected ? sessions.findIndex((session) => session.id === selected.id) : -1;
   const previous = index > 0 ? sessions[index - 1] : null;
 
@@ -511,16 +383,13 @@ export default function MonthlyCoachingPage() {
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Coaching meeting" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
       <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
-        {monthlyLogPromptOpen && completedMcm && meetingMonth && <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="monthly-log-prompt-title">
-          <div className="w-full max-w-lg rounded-2xl border border-background-200 bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Meeting completed</p><h2 id="monthly-log-prompt-title" className="mt-1 text-xl font-bold text-foreground-900">Review and sign your monthly log</h2></div><button type="button" className="flex h-9 w-9 items-center justify-center rounded-lg bg-background-100 text-foreground-600" onClick={() => setMonthlyLogPromptOpen(false)} aria-label="Close"><AppIcon className="ri-close-line" /></button></div>
-            <p className="mt-3 text-sm leading-6 text-foreground-600">Your coach has completed this Monthly Coaching Meeting. Open the {monthLabel(meetingMonth)} record to review the activities and add your signature. Your coach can sign the same record from their account.</p>
-            <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" className="rounded-lg border border-background-300 px-4 py-2 text-xs font-bold text-foreground-700" onClick={() => setMonthlyLogPromptOpen(false)}>Later</button><button type="button" className="rounded-lg bg-primary-700 px-4 py-2 text-xs font-bold text-white" onClick={() => navigate(`/learner/monthly-logs/${myLearner.kind}/${myLearner.id}/${meetingMonth}?workflow=mcm&source=mcm`)}><AppIcon className="ri-file-list-3-line mr-1.5" />Open monthly log</button></div>
-          </div>
-        </div>}
+        {completedMcm && meetingMonth && <aside className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-background-200 bg-background-50 p-4" aria-label="Monthly learning log">
+          <div><p className="text-sm font-semibold text-foreground-900">Your monthly learning log</p><p className="mt-1 text-sm text-foreground-600">You can also review your learning activities for {monthLabel(`${meetingMonth}-01`)}.</p></div>
+          <Link className="rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700" to={`/learner/monthly-logs/${myLearner.kind}/${myLearner.id}/${meetingMonth}?workflow=mcm&source=mcm`}>Open monthly log</Link>
+        </aside>}
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
-        <button type="button" onClick={() => navigate(`/learner/monthly-coaching?kind=${myLearner.kind}&learner=${myLearner.id}`)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
-        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}</p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} signatoryName={learner?.name || 'Learner'} onSign={signLearnerReview} /> : selected.reviewTemplateId ? <Empty>This review form is not available.</Empty> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(`/learner/monthly-coaching?kind=${myLearner.kind}&learner=${myLearner.id}`)} /> : (
+        <button type="button" onClick={() => navigate(backHref)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
+        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} /> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
               <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>

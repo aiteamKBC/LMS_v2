@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { isTeamsReviewCancelled } from '../teams-meetings/calendarReview';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Modal } from '@/pages/users/components/Modal';
-import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
+import { finishTeamsCreation } from '../teams-meetings/creationResult';
 import {
   fetchCurriculumHolidays,
   fetchCurriculumSessions,
@@ -13,7 +14,6 @@ import { InlineError } from '../shared/entities/ui';
 import {
   buildTeamsCalendarInput,
   emptyTeamsCalendarForm,
-  minutesBetween,
   sessionNaiveLocal,
   TeamsCalendarFormBody,
   type TeamsCalendarForm,
@@ -23,6 +23,8 @@ import {
   createTeamsMeeting,
   fetchModuleMeetingInvitees,
   loadTeamsMeetingConfiguration,
+  restoreModuleTeamsMeeting,
+  utcIsoToCalendarParts,
   zonedNaiveToUtcIso,
   type ModuleComponent,
   type TeamsMeetingInput,
@@ -101,11 +103,6 @@ export function TeamsMeetingModal({
   // the "no stored session dates" warning must wait — otherwise it flashes on
   // every open before the sessions arrive and reads as a module with no schedule.
   const [sessionsLoading, setSessionsLoading] = useState(true);
-  // The Duration defaults to the length the group was created with — the gap
-  // between its session start and end — so the meeting matches the schedule
-  // without anyone re-picking it. Only a duration changed here, in this form,
-  // survives that default.
-  const durationTouched = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -122,11 +119,6 @@ export function TeamsMeetingModal({
           .filter(session => cleanText(session.moduleCatalogueId || session.moduleId).toLowerCase() === wanted)
           .sort((left, right) => sessionNaiveLocal(left).localeCompare(sessionNaiveLocal(right)));
         setSessions(filtered);
-        if (!durationTouched.current && filtered.length) {
-          const groupMinutes = minutesBetween(filtered[0].startTime, filtered[0].endTime);
-          if (groupMinutes > 0) patch({ durationMinutes: String(groupMinutes) });
-          durationTouched.current = true;
-        }
       })
       .catch(() => { if (active) setSessions([]); })
       .finally(() => { if (active) setSessionsLoading(false); });
@@ -216,29 +208,30 @@ export function TeamsMeetingModal({
       setError('This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.');
       return;
     }
-    const input = buildTeamsCalendarInput(row, form);
     setSaving(true);
     try {
+      const input = buildTeamsCalendarInput(row, form);
       const result = await createTeamsMeeting(input);
-      onCreated(result, input);
+      let attachmentWarning = '';
+      try {
+        await restoreModuleTeamsMeeting(row.catalogueId);
+      } catch {
+        attachmentWarning = 'The calendar was created, but its component links could not be refreshed. Use Restore Teams sessions & links.';
+      }
+      const selectedIndex = sessions.findIndex(session => session.componentId === component.id || session.date === component.settings.sessionDate);
+      const scheduled = input.scheduledOccurrences?.[Math.max(0, selectedIndex)];
+      const selectedDate = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc).date : '';
+      const day = selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${selectedDate}T12:00:00Z`)) : '';
+      const daySeries = result.meeting.calendarSeries?.find(series => series.day === day);
+      onCreated({ ...result, meeting: {
+        ...result.meeting,
+        ...(daySeries ? { joinUrl: daySeries.joinUrl, eventId: daySeries.eventId, onlineMeetingId: daySeries.onlineMeetingId || '' } : {}),
+        ...(scheduled ? { startDateTimeUtc: scheduled.startDateTimeUtc, durationMinutes: scheduled.durationMinutes } : {}),
+      } }, input);
       onClose();
-      // `settingsApplied` false means the calendar is right and the recording is
-      // not: Graph refused the meeting options, so the session opens recording
-      // nothing. It reads as success otherwise, which is how it went unnoticed.
-      const optionsRefused = !result.meeting.settingsApplied;
-      const occurrences = input.scheduledOccurrences || [];
-      await showCurriculumAlert({
-        title: optionsRefused
-          ? 'Created, but NOT recording'
-          : result.warnings.length ? 'Created with warnings' : 'Session dates sent to Teams',
-        text: optionsRefused
-          ? `The invitations and join links are in place, but Microsoft Graph refused the recording, transcription and lobby options, so these sessions will record nothing. Organizer: ${result.meeting.organizerEmail || 'unknown'}. ${result.warnings[0] || 'Check the backend log for the exact Graph status, code and request-id.'}`
-          : result.warnings.length
-            ? result.warnings[0]
-            : `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to Teams.`,
-        timer: optionsRefused || result.warnings.length ? undefined : 2400,
-      });
+      await finishTeamsCreation(result, input, attachmentWarning);
     } catch (err) {
+      if (isTeamsReviewCancelled(err)) return;
       setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');
     } finally {
       setSaving(false);

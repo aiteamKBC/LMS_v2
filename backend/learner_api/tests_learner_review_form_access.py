@@ -23,7 +23,7 @@ from coach_api.models import CoachCalendarEvent
 from coach_api.views import ensure_review_instance_for_calendar_record
 from curriculum_api import review_instances, review_types, reviews
 
-from .calendar import _generated_cycle_events, _serialize_event, learner_calendar_event_review
+from .calendar import _generated_cycle_events, _serialize_event, learner_calendar_event_review, learner_progress_review_sign
 from .tests_learner_review_pages import LearnerReviewPageTestCase, PROGRAMME_ID
 
 # One section with a required text field and a conditional block, so "the form
@@ -119,6 +119,71 @@ class LearnerReviewFormAccessTestCase(LearnerReviewPageTestCase):
                 request, 'apprenticeship', 101, record.event_key if record else event_key,
             )
         return response.status_code, json.loads(response.content.decode())
+
+
+class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
+    def _finished_meeting(self):
+        template = self._authored_template(
+            name='Monthly Learner Catch-up',
+            review_type_id=self._system_type_id(review_types.REVIEW_TYPE_CODE_MCM),
+        )
+        record = self._schedule(self._occurrence('mcr'), template)
+        instance = review_instances.get_review_instance(record.review_instance_id)
+        definition = review_instances.review_instance_form_definition(instance)
+        fields = definition['sections'][0]['fields']
+        review_instances.save_review_instance_answers(instance, {
+            fields[0]['id']: 'We reviewed this month together.', fields[1]['id']: 'no',
+        }, actor=record.owner_email)
+        ok, errors = review_instances.complete_review_instance(
+            review_instances.get_review_instance(record.review_instance_id), actor=record.owner_email,
+        )
+        self.assertTrue(ok, errors)
+        record.status = CoachCalendarEvent.STATUS_AWAITING_SIGNATURE
+        record.save(update_fields=['status'])
+        return record
+
+    def _sign(self, record, mark):
+        request = SimpleNamespace(method='POST', body=json.dumps({
+            'name': 'Learner One', 'signature': mark,
+        }).encode())
+        with patch('learner_api.calendar._learner_calendar_record', return_value=record):
+            response = learner_progress_review_sign.__wrapped__.__wrapped__(
+                request, 'apprenticeship', 101, record.event_key,
+            )
+        return response.status_code, json.loads(response.content.decode())
+
+    def test_final_learner_signature_completes_calendar_and_keeps_both_marks_on_reload(self):
+        record = self._finished_meeting()
+        coach_mark = 'data:image/png;base64,Y29hY2g='
+        learner_mark = 'data:image/png;base64,bGVhcm5lcg=='
+        review_instances.record_review_instance_signature(
+            review_instances.get_review_instance(record.review_instance_id), 'advisor',
+            signed_by=record.owner_email, signed_name='Coach One', signature=coach_mark,
+        )
+
+        status, payload = self._sign(record, learner_mark)
+
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload['event']['status'], CoachCalendarEvent.STATUS_COMPLETED)
+        self.assertEqual(payload['review']['instance']['status'], review_instances.STATUS_COMPLETED)
+        record.refresh_from_db()
+        self.assertEqual(record.status, CoachCalendarEvent.STATUS_COMPLETED)
+        status, reloaded = self._view(record)
+        self.assertEqual(status, 200)
+        self.assertEqual(reloaded['signatures']['advisor']['signature'], coach_mark)
+        self.assertEqual(reloaded['signatures']['participant']['signature'], learner_mark)
+
+    def test_learner_signature_keeps_calendar_waiting_when_coach_has_not_signed(self):
+        record = self._finished_meeting()
+
+        status, payload = self._sign(record, 'data:image/png;base64,bGVhcm5lcg==')
+
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload['event']['status'], CoachCalendarEvent.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(payload['review']['instance']['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertTrue(payload['review']['signatures']['participant']['signed'])
+        self.assertFalse(payload['review']['signatures']['advisor']['signed'])
+        self.assertIsNone(payload['review']['signatures']['advisor']['signature'])
 
 
 class UnscheduledOccurrenceTests(LearnerReviewFormAccessTestCase):

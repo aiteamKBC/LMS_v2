@@ -70,16 +70,16 @@ export function ActionRow({
       <div
         onClick={onClick}
         className={cn(
-          'flex flex-col gap-3 px-4 py-3.5 lg:flex-row lg:items-center',
+          'ui-action-row__summary flex flex-col gap-3 px-4 py-3.5 lg:flex-row lg:items-center',
           railed && 'pl-5',
           onClick && 'cursor-pointer transition-colors hover:bg-primary-50/30',
         )}
       >
-        {leading ? <div className="shrink-0">{leading}</div> : null}
+        {leading ? <div className="ui-action-row__leading shrink-0">{leading}</div> : null}
 
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="min-w-0 truncate text-[14px] font-semibold text-foreground-900">{title}</p>
+        <div className="ui-action-row__identity min-w-0 flex-1">
+          <div className="ui-action-row__heading flex flex-wrap items-center gap-2">
+            <p className="ui-action-row__title min-w-0 truncate text-[14px] font-semibold text-foreground-900">{title}</p>
             {status}
           </div>
           {subtitle ? (
@@ -88,11 +88,11 @@ export function ActionRow({
         </div>
 
         {meta ? (
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 lg:shrink-0">{meta}</div>
+          <div className="ui-action-row__meta flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 lg:shrink-0">{meta}</div>
         ) : null}
 
         {actions ? (
-          <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>
+          <div className="ui-action-row__actions flex min-w-0 shrink-0 flex-wrap items-center gap-2">{actions}</div>
         ) : null}
       </div>
 
