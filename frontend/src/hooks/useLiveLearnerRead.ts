@@ -7,6 +7,13 @@ export const LEARNER_TOTALS_REFRESH_MS = 30_000;
 type Reader<T> = (kind: LearnerKind, id: string, signal?: AbortSignal, fresh?: boolean) => Promise<T>;
 type Peek<T> = (kind: LearnerKind, id: string) => T | undefined;
 
+export type LiveLearnerReadResult<T> = {
+  data: T | null;
+  error: string;
+  loading: boolean;
+  refresh: () => void;
+};
+
 /** Refresh visible totals without hiding the last successful response. */
 export function useLiveLearnerRead<T>(
   kind: LearnerKind | null | undefined,
@@ -14,7 +21,7 @@ export function useLiveLearnerRead<T>(
   enabled: boolean,
   read: Reader<T>,
   peek: Peek<T>,
-) {
+): LiveLearnerReadResult<T> {
   const key = `${kind}:${id}`;
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{ key: string; data: T | undefined; error: string } | null>(null);

@@ -153,12 +153,55 @@ def activity_planned_hours(historical, native, links):
     return round(sum(planned.values()), 4)
 
 
+def metrics_from_loaded(source, kind, *, migrated, native, progress,
+                        direct_progress, historical, attempts, links, history_ready):
+    """Finish dashboard metrics from the activity snapshot already in memory.
+
+    ``overview-week?section=dashboard`` and the standalone metrics endpoint use
+    this same calculation.  Keeping the expensive subject, component, legacy
+    activity and export-link reads outside this function lets the Dashboard
+    load them once without changing the metric definitions used elsewhere.
+    """
+    with connections['enrolment'].cursor() as cursor:
+        planned = read_planned_hours(source, kind, cursor)
+        old_hours = 0 if not migrated else None
+        if migrated:
+            cursor.execute('''SELECT SUM(actual_hours) FROM structured_manual_activities.manual_learner_activities
+                WHERE aptem_id=%s AND accepted=true AND deleted_at IS NULL''',
+                           [int(str(source.aptem_id).strip())])
+            old_hours = number(cursor.fetchone()[0])
+    try:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute('''SELECT activity_id, component_ref, status, actual_time_hours,
+                    full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
+                FROM "Learner".learning_reflection_submissions
+                WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment'
+                ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
+            submissions = rows(cursor)
+    except (DatabaseError, psycopg.Error, StopIteration):
+        # Older installations may not have reflection submissions yet.
+        submissions = []
+    if planned is None and history_ready:
+        planned = activity_planned_hours(historical, native, links)
+    actual_hours = completed_otjh(native, direct_progress, submissions, old_hours)
+    new_hours = (round(actual_hours - old_hours, 4)
+                 if actual_hours is not None and old_hours is not None else round(_direct_progress_otjh(direct_progress), 4))
+    return {
+        'migrated': migrated,
+        'programme': programme_totals(historical, native, progress, attempts, links) if history_ready
+                     else unavailable('historical_activities_missing'),
+        'otjh': {'historical': old_hours, 'new': new_hours,
+                 'actual': actual_hours, 'planned': planned},
+        'ksb': ksb_totals(native, progress, historical, attempts, links) if history_ready
+               else unavailable('historical_activities_missing'),
+    }
+
+
 def read_metrics(source, kind):
     migrated = student_activity_available(source.aptem_id)
     direct_progress = _direct_progress_records(source.pk)
-    direct_hours = _direct_progress_otjh(direct_progress)
     historical, attempts, links = [], set(), {}
-    history_ready, old_hours = not migrated, 0 if not migrated else None
+    history_ready = not migrated
     with connections['enrolment'].cursor() as cursor:
         cursor.execute(CURRENT_SUBJECTS_SQL, [source.pk])
         module_ids = [row[0] for row in cursor.fetchall()]
@@ -179,7 +222,6 @@ def read_metrics(source, kind):
         # Imported completions of explicitly assigned native components remain
         # achievements too. Only OTJ hours above exclude the imported mirror.
         progress = rows(cursor)
-        planned = read_planned_hours(source, kind, cursor)
         if migrated:
             aptem_id = int(str(source.aptem_id).strip())
             cursor.execute('SELECT learner_email FROM "Last_audit".learners WHERE aptem_id=%s', [aptem_id])
@@ -187,11 +229,6 @@ def read_metrics(source, kind):
             if identity and identity[0] and source.email and identity[0].strip().casefold() != source.email.strip().casefold():
                 raise ValueError('The previous learning identity could not be verified.')
             history_ready = identity is not None
-            # The owner confirmed this accepted monthly ledger as the baseline.
-            cursor.execute('''SELECT SUM(actual_hours) FROM structured_manual_activities.manual_learner_activities
-                WHERE aptem_id=%s AND accepted=true AND deleted_at IS NULL''', [aptem_id])
-            raw_hours = cursor.fetchone()[0]
-            old_hours = number(raw_hours)
             if history_ready:
                 cursor.execute('''SELECT gl.group_id,ga.activity_id,r.status,r.video_completed,
                     r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
@@ -237,32 +274,9 @@ def read_metrics(source, kind):
                     if component and activity:
                         candidates.setdefault(str(component), set()).add((str(group), str(activity)))
                 links = {component: next(iter(keys)) for component, keys in candidates.items() if len(keys) == 1}
-    try:
-        with connections['enrolment'].cursor() as cursor:
-            cursor.execute('''SELECT activity_id, component_ref, status, actual_time_hours,
-                    full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
-                FROM "Learner".learning_reflection_submissions
-                WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment'
-                ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
-            submissions = rows(cursor)
-    except (DatabaseError, psycopg.Error, StopIteration):
-        # Older installations may not have reflection submissions yet.
-        submissions = []
-    if planned is None and history_ready:
-        planned = activity_planned_hours(historical, native, links)
-    actual_hours = completed_otjh(native, direct_progress, submissions, old_hours)
-    new_hours = (round(actual_hours - old_hours, 4)
-                 if actual_hours is not None and old_hours is not None else round(direct_hours, 4))
-    return {
-        'migrated': migrated,
-        'programme': programme_totals(historical, native, progress, attempts, links) if history_ready
-                     else unavailable('historical_activities_missing'),
-        'otjh': {'historical': old_hours, 'new': new_hours,
-                 'actual': actual_hours,
-                 'planned': planned},
-        'ksb': ksb_totals(native, progress, historical, attempts, links) if history_ready
-               else unavailable('historical_activities_missing'),
-    }
+    return metrics_from_loaded(source, kind, migrated=migrated, native=native,
+        progress=progress, direct_progress=direct_progress, historical=historical,
+        attempts=attempts, links=links, history_ready=history_ready)
 
 
 @require_GET

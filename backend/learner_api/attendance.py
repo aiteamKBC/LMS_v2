@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 from datetime import time
 
@@ -17,6 +18,7 @@ from .teams_attendance import fetch_verified_teams_attendance_rows
 
 
 DEFAULT_KBC_ATTENDANCE_DATABASE = 'AiTeamKBC'
+logger = logging.getLogger(__name__)
 
 
 def _error(message, status):
@@ -325,8 +327,9 @@ def learner_attendance(request, kind, learner_id):
         source = model.all_learners.only('id', 'username', 'email', 'aptem_id').get(pk=learner_id)
     except model.DoesNotExist:
         return _error('Learner not found.', 404)
-    except DatabaseError as exc:
-        return _error(f'Database error: {exc}', 502)
+    except DatabaseError:
+        logger.warning('Learner attendance identity lookup failed.', exc_info=True)
+        return _error('Unable to load attendance. Please try again.', 502)
 
     try:
         # The coach Case File requests this focused view. Its source is only

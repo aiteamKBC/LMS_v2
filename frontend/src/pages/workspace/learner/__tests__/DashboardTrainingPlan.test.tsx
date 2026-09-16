@@ -11,6 +11,9 @@ const week = (): OverviewWeek => ({
   expectedHours: 5, missingExpectedHours: 0, deadlines: [],
   otjh: { actual: 2, historical: 0, new: 2, undatedHistoricalRows: 0 },
   modules: [{ id: 'current:M1', title: 'Marketing', weekLabels: ['Week 1'], completed: 1, total: 2, percent: 50, ksbCodes: ['K1'], ksbMappingMissing: false }],
+  metrics: { migrated: false, programme: { completed: 1, total: 2, percent: 50, status: 'ready' },
+    ksb: { completed: 1, total: 1, percent: 100, status: 'ready' },
+    otjh: { historical: 0, new: 2, actual: 2, planned: 5 } },
   planSubjects: [{ id: 'current:M1', title: 'Marketing', source: 'current', completed: 1, total: 2,
     dates: ['2026-09-07'], moduleIds: ['M1'], sessionTitles: [], activityCounts: { reading: 2 }, ksbCodes: ['K1'], ksbMappingMissing: false }],
 });
@@ -66,7 +69,7 @@ describe('dashboard learning layout', () => {
   it('retains weekly learning when the training plan cannot load', async () => {
     setup(schedule(), 'training-plan-dashboard');
     expect(await screen.findByRole('progressbar', { name: "This week's activity progress" })).toHaveAttribute('aria-valuenow', '50');
-    expect(screen.getByRole('button', { name: 'Retry monthly learning' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Retry monthly learning' })).toBeVisible();
   });
 
   it('refreshes bookings and cancellations in Reviews while preserving the selected tab and filters', async () => {

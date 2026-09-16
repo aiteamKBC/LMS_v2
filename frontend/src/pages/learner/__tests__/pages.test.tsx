@@ -43,7 +43,10 @@ function payload(url: string): unknown {
   if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
   if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
   if (url.includes('/profile-photo/')) return null;
-  if (url.includes('/overview-week/')) return { weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', planSubjects: [], modules: [], deadlines: [], undatedActivities: 0, expectedHours: null, missingExpectedHours: 0, otjh: { actual: 0, historical: 0, new: 0, undatedHistoricalRows: 0 } };
+  if (url.includes('/overview-week/')) return { weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', planSubjects: [], modules: [], deadlines: [], undatedActivities: 0, expectedHours: null, missingExpectedHours: 0, otjh: { actual: 0, historical: 0, new: 0, undatedHistoricalRows: 0 },
+    metrics: { migrated: false, programme: { completed: 0, total: 0, percent: null, status: 'empty' },
+      ksb: { completed: 0, total: 0, percent: null, status: 'empty', codes: [] },
+      otjh: { historical: 0, new: 0, actual: 0, planned: null } } };
   if (/\/learner-(detail|summary)\//.test(url)) return detail();
   if (url.includes('/subject-covers/')) return { covers: {}, current_subjects: [], builder_subjects: {}, modules: {} };
   if (url.includes('/training-plan-dashboard/')) return { months: {}, actual: [], actualAvailable: false, modules: [], moduleLinks: {}, sessions: [], reviews: [], coach: { name: '', bookingUrl: null }, contractStatus: 'not-available', generatedAt: '' };
@@ -355,7 +358,7 @@ describe('learner loading and recovery', () => {
     expect(screen.queryByText('Your start date has not been set yet')).not.toBeInTheDocument();
     await waitFor(() => {
       const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-      for (const endpoint of ['/metrics/', '/attendance/', '/overview-week/', '/training-plan-dashboard/']) {
+      for (const endpoint of ['/attendance/', '/overview-week/', '/training-plan-dashboard/']) {
         expect(requests.some(url => url.includes(endpoint))).toBe(true);
       }
     });
@@ -379,7 +382,7 @@ describe('learner loading and recovery', () => {
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
     await waitFor(() => {
       const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-      expect(requests.some(url => url.includes('/metrics/'))).toBe(true);
+      expect(requests.some(url => url.includes('/metrics/'))).toBe(false);
       expect(requests.some(url => url.includes('/attendance/'))).toBe(true);
       expect(requests.some(url => url.includes('/overview-week/'))).toBe(true);
     });
@@ -445,7 +448,7 @@ describe('learner loading and recovery', () => {
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     await waitFor(() => {
       const paths = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-      expect(paths.some(url => url.includes('/metrics/'))).toBe(true);
+      expect(paths.some(url => url.includes('/metrics/'))).toBe(false);
       expect(paths.some(url => url.includes('/attendance/'))).toBe(true);
       expect(paths.some(url => url.includes('/overview-week/'))).toBe(true);
       expect(paths.some(url => url.includes('/training-plan-dashboard/'))).toBe(true);
@@ -456,6 +459,7 @@ describe('learner loading and recovery', () => {
     const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(requests.filter(url => /learner-detail|student-activity|subject-covers/.test(url))).toEqual([]);
     expect(requests.filter(url => url.includes('overview-week'))).toHaveLength(1);
+    expect(requests.some(url => url.includes('section=dashboard'))).toBe(true);
     expect(requests.filter(url => url.includes('section=overview'))).toHaveLength(1);
     expect(screen.queryByTestId('page-crash')).not.toBeInTheDocument();
   });
