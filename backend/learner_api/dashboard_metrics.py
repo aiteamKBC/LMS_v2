@@ -165,13 +165,13 @@ def read_metrics(source, kind):
         cursor.execute('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
                  FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
-                   AND (k.deleted_at IS NULL OR k.deleted_via_parent IS NOT NULL)), '[]'::jsonb) AS ksb_mappings,
+                   AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb) AS ksb_mappings,
                 coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                           WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
                          c.settings_json->>'linkedQuizId') AS quiz_id
             FROM curriculum.components c
             WHERE c.module_catalogue_id=ANY(%s)
-              AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)''', [module_ids])
+              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')''', [module_ids])
         native = rows(cursor)
         cursor.execute('''SELECT p.component_ref AS "componentId",p.quiz_ref AS "quizId",p.kind,p.passed
             FROM "Learner".learners l JOIN "Learner".learner_progress_entries p ON p.learner_id=l.id

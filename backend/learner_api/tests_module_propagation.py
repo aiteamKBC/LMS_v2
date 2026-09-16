@@ -110,6 +110,73 @@ class LiveAssignedModuleTests(SimpleTestCase):
         self.assertEqual(result[2][0]['contentHtml'], html)
         self.assertEqual(result[2][0]['moduleId'], 'MOD-NEW')
 
+    def test_removing_the_video_removes_the_component_from_the_learner(self):
+        """A coach clearing videoUrl in Module Builder is a content removal: the
+        component has nothing left to do, so it leaves the learner's tree."""
+        result, _ = self.resolve([
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
+            [('C-VID', 'W-NEW', 'MOD-NEW', 'video', 'Watch this', '', {'videoUrl': ''},
+              '', 0, [{'code': 'K1', 'weight': 1}], False, None, False)],
+            [],
+        ], assigned=[MODULE])
+        # The week survives the removal; only the emptied component goes.
+        self.assertEqual(result[0], ['New module'])
+        self.assertEqual([w['weekId'] for w in result[1]], ['W-NEW'])
+        self.assertEqual(result[2], [])
+
+    def test_video_authored_as_an_embed_is_not_mistaken_for_a_removed_one(self):
+        result, _ = self.resolve([
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
+            [('C-VID', 'W-NEW', 'MOD-NEW', 'video', 'Watch this',
+              '', {'embedCode': '<iframe src="https://example.test/v"></iframe>'},
+              '', 0, [{'code': 'K1', 'weight': 1}], False, None, False)],
+            [],
+        ], assigned=[MODULE])
+        self.assertEqual(result[2][0]['componentId'], 'C-VID')
+        self.assertEqual(result[2][0]['videoUrl'], 'https://example.test/v')
+
+    def test_video_component_keeping_other_content_stays_without_its_player(self):
+        result, _ = self.resolve([
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
+            [('C-VID', 'W-NEW', 'MOD-NEW', 'video', 'Watch this', '',
+              {'videoUrl': '', 'readingContent': '<p>Notes</p>'}, '', 0, [{'code': 'K1', 'weight': 1}], False, None, False)],
+            [],
+        ], assigned=[MODULE])
+        self.assertEqual(result[2][0]['componentId'], 'C-VID')
+        self.assertIsNone(result[2][0]['videoUrl'])
+        self.assertEqual(result[2][0]['contentHtml'], '<p>Notes</p>')
+
+    def test_removing_a_video_does_not_touch_other_components_in_the_week(self):
+        result, _ = self.resolve([
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
+            [('C-VID', 'W-NEW', 'MOD-NEW', 'video', 'Watch this', '', {'videoUrl': ''},
+              '', 0, [{'code': 'K1', 'weight': 1}], False, None, False),
+             ('C-READ', 'W-NEW', 'MOD-NEW', 'reading', 'Read this', '',
+              {'readingContent': '<p>Body</p>'}, '', 1, [{'code': 'K1', 'weight': 1}], False, None, False)],
+            [],
+        ], assigned=[MODULE])
+        self.assertEqual([c['componentId'] for c in result[2]], ['C-READ'])
+
+    def test_a_standalone_delete_is_not_read_as_a_parent_cascade(self):
+        """The exemption that keeps cascade-hidden content available to an
+        already-assigned learner must not swallow standalone deletes.
+
+        ``soft_delete_payload`` stamps ``deleted_via_parent`` as NULL when
+        nothing above the row took it down, but rows written before that fix
+        carry an empty string. Both mean "deleted on its own", so the SQL tests
+        emptiness -- ``IS NOT NULL`` matched every deleted row and left deleted
+        components on the learner's page forever.
+        """
+        _, cursor = self.resolve([[('MOD-NEW', 'New module')], [], []], assigned=[MODULE])
+        for sql, _params in [call.args for call in cursor.execute.call_args_list]:
+            if 'deleted_via_parent' in sql:
+                self.assertNotIn('deleted_via_parent IS NOT NULL', sql)
+                self.assertIn("COALESCE", sql)
+
     def test_current_membership_replaces_stale_children(self):
         result, cursor = self.resolve([[('MOD-NEW', 'New module')], [], []],
             modules=['Old module'], weeks=[{'moduleId': 'MOD-OLD', 'module': 'Old module'}], assigned=[MODULE])

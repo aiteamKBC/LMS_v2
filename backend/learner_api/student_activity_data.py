@@ -24,7 +24,7 @@ def read_activity_sources(cursor, group_ids, module_ids):
         CROSS JOIN LATERAL jsonb_array_elements(section->'materials') material
         JOIN curriculum.components c ON c.id=material->>'component_id'
         WHERE c.module_catalogue_id=ANY(%s)
-          AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)''',
+          AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')''',
                    [sorted(set(group_ids)), sorted(set(module_ids))])
     candidates = {}
     for component, module, group, activity in cursor.fetchall():

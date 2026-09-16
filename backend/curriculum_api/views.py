@@ -3973,7 +3973,11 @@ def soft_delete_payload(table, *, via_parent='', deleted_by='system', extra=None
     payload = {
         'deleted_at': datetime.utcnow(),
         'deleted_by': clean_str(deleted_by) or 'system',
-        'deleted_via_parent': clean_str(via_parent) or '',
+        # NULL, not '', when nothing above took this row down. Readers tell a
+        # cascade from a standalone delete by this column, and an empty string
+        # reads as "deleted via a parent" to any SQL using `IS NOT NULL` --
+        # which kept individually-deleted content visible to assigned learners.
+        'deleted_via_parent': clean_str(via_parent) or None,
         'updated_at': datetime.utcnow(),
         **(extra or {}),
     }
@@ -4016,7 +4020,11 @@ def soft_delete_rows(table, where_sql, where_params=None, *, via_parent='', dele
     if not active_checks:
         active_checks.append('1 = 1')
     guarded_where = f'({where_sql}) and (' + ' and '.join(active_checks) + ')'
-    rows = update_rows(table, guarded_where, where_params or [], payload)
+    # `deleted_via_parent` is deliberately NULL for a standalone delete, and
+    # filtered_payload drops None unless the column is allowed to be nulled --
+    # without this the column would keep a stale value from an earlier cascade.
+    rows = update_rows(table, guarded_where, where_params or [], payload,
+                       allow_null_columns=['deleted_via_parent'])
     # Logged even when it matches nothing: a soft delete that hits zero rows is
     # almost always the interesting case (already archived, or wrong id).
     log_curriculum_storage(
