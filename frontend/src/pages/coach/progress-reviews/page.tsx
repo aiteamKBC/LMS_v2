@@ -58,6 +58,7 @@ import {
 } from './components/ProgressReviewSlidesModal';
 import ProgressReviewPptxModal from './components/ProgressReviewPptxModal';
 import { bulkGenerateProgressReviews, fetchLatestRun } from '@/api/progressReviews';
+import { markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
 import {
   buildKsbProgress,
   completedComponentIds,
@@ -1222,6 +1223,27 @@ export default function CoachProgressReviews() {
     setCompletionEvent(event);
   };
 
+  const markReviewInProgress = async (event: CoachCalendarEvent) => {
+    if (!event.reviewTemplateId) {
+      openCompletionForm(event);
+      return;
+    }
+    try {
+      setBusyEventId(eventIdentity(event));
+      setActionError(null);
+      setActionNotice(null);
+      const instanceId = event.reviewInstanceId || (await openReviewInstanceForEvent(eventIdentity(event))).instanceId;
+      const updated = await markReviewInstanceInProgressManually(instanceId, {
+        reasonCode: 'coach-confirmed-live-start',
+      });
+      updateEvent({ ...event, reviewInstanceId: instanceId, status: updated.instance.status as CoachCalendarEvent['status'] });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to mark this review in progress.');
+    } finally {
+      setBusyEventId(null);
+    }
+  };
+
   const handleCreateSlides = (event: CoachCalendarEvent) => {
     if (!reviewHasLearnerReference(event) || !eventTargetDate(event)) {
       setActionError('This review is missing its learner id or review date, so slides cannot be generated yet.');
@@ -1520,7 +1542,7 @@ export default function CoachProgressReviews() {
                               label="Mark In Progress"
                               icon="ri-flashlight-line"
                               disabled={isBusy}
-                              onClick={() => openCompletionForm(review)}
+                              onClick={() => { void markReviewInProgress(review); }}
                             />
                           ) : null}
                           {review.status === 'in-progress' ? (
@@ -1574,7 +1596,6 @@ export default function CoachProgressReviews() {
             key={eventIdentity(completionEvent)}
             event={completionEvent}
             instanceId={completionEvent.reviewInstanceId}
-            showManualOverrideOnOpen={completionEvent.status === 'scheduled'}
             onClose={() => setCompletionEvent(null)}
             onStatusChanged={(status) => {
               updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });

@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer, computeMissingRequiredFields, computeVisibleRequiredFields } from '@/components/reviews/ReviewFormRenderer';
+import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import {
   completeReviewInstance,
+  downloadMcmReviewPdf,
   fetchReviewInstanceForm,
   flattenReviewFields,
-  markReviewInstanceInProgressManually,
   saveReviewInstanceAnswers,
   signReviewInstance,
-  type ManualInProgressReasonCode,
   type ReviewInstanceFormDefinition,
 } from '@/api/reviewInstances';
 import { ModalHeader, ModalShell } from './ModalHeader';
@@ -17,15 +18,6 @@ import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { useAuth } from '@/hooks/useAuth';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
-
-const MANUAL_OVERRIDE_REASONS: { value: ManualInProgressReasonCode; label: string }[] = [
-  { value: 'teams-link-issue', label: 'Teams link problem' },
-  { value: 'graph-unavailable', label: 'Microsoft Graph unavailable' },
-  { value: 'attendance-not-detected', label: "Attendance wasn't detected" },
-  { value: 'meeting-held-outside-teams', label: 'Meeting held outside Teams' },
-  { value: 'scheduler-delay', label: 'Sync/scheduler delay' },
-  { value: 'other', label: 'Other' },
-];
 
 /**
  * The generic "open a Curriculum-driven Review" screen -- what a coach sees
@@ -42,9 +34,7 @@ export function ReviewInstanceModal({
   event,
   instanceId,
   onClose,
-  onCompleted,
   onStatusChanged,
-  showManualOverrideOnOpen = false,
 }: {
   /** Only what the header shows -- deliberately structural so the timetable,
    *  meetings and progress-review pages can each pass their own event type. */
@@ -56,27 +46,21 @@ export function ReviewInstanceModal({
    *  requires a signature, 'completed' when it requires none. Callers mirror
    *  this onto their own CoachCalendarEvent state rather than assuming which
    *  one it landed on. */
-  onCompleted: (status: string) => void;
+  onCompleted?: (status: string) => void;
   /** Keeps the parent calendar row in sync after a lifecycle change that
    *  does not close this modal, such as a manual scheduled -> in-progress
    *  override. */
   onStatusChanged?: (status: string) => void;
-  showManualOverrideOnOpen?: boolean;
 }) {
   const { auth } = useAuth();
   const [definition, setDefinition] = useState<ReviewInstanceFormDefinition | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const signatureSaveInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [openSectionId, setOpenSectionId] = useState('');
   const [showErrors, setShowErrors] = useState(false);
-  const [showManualOverride, setShowManualOverride] = useState(showManualOverrideOnOpen);
-  const [manualReason, setManualReason] = useState<ManualInProgressReasonCode | ''>('');
-  const [manualNote, setManualNote] = useState('');
-  const [manualStartedAt, setManualStartedAt] = useState('');
-  const [manualBusy, setManualBusy] = useState(false);
-  const [manualError, setManualError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -114,8 +98,27 @@ export function ReviewInstanceModal({
     [definition, answers],
   );
   const answeredCount = requiredCount - missingFieldIds.size;
+  const isSignatureStage = definition ? ['awaiting-signature', 'completed'].includes(definition.instance.status) : false;
+  const advisorSignature = definition?.signatures.advisor;
+  const advisorSignaturePending = Boolean(
+    definition
+    && advisorSignature?.required
+    && !advisorSignature.signed
+    && isSignatureStage,
+  );
+  const advisorSignatureSaved = Boolean(definition && advisorSignature?.required && advisorSignature.signed);
+  const requiredSignatures = definition ? Object.values(definition.signatures).filter(state => state.required) : [];
+  const allRequiredSignaturesSaved = requiredSignatures.length > 0 && requiredSignatures.every(state => state.signed);
+  const waitingForOtherSignatures = Boolean(
+    definition
+    && isSignatureStage
+    && !advisorSignaturePending
+    && !allRequiredSignaturesSaved,
+  );
+  const formReadOnly = isSignatureStage;
 
   const handleAnswerChange = (fieldId: string, value: unknown) => {
+    if (formReadOnly) return;
     setAnswers((current) => ({ ...current, [fieldId]: value }));
     setShowErrors(false);
   };
@@ -156,7 +159,8 @@ export function ReviewInstanceModal({
     try {
       await saveReviewInstanceAnswers(definition.instance.id, answers);
       const completed = await completeReviewInstance(definition.instance.id);
-      onCompleted(completed.instance.status);
+      setDefinition(completed);
+      onStatusChanged?.(completed.instance.status);
     } catch (err) {
       if (isAbortError(err)) return;
       setError(err instanceof Error ? err.message : 'This review cannot be completed yet.');
@@ -165,34 +169,7 @@ export function ReviewInstanceModal({
     }
   };
 
-  const confirmManualOverride = async () => {
-    if (!definition || !manualReason) return;
-    if (manualReason === 'other' && !manualNote.trim()) {
-      setManualError('Add details when the reason is "Other".');
-      return;
-    }
-    setManualBusy(true);
-    setManualError(null);
-    try {
-      const updated = await markReviewInstanceInProgressManually(definition.instance.id, {
-        reasonCode: manualReason,
-        note: manualNote,
-        startedAt: manualStartedAt ? new Date(manualStartedAt).toISOString() : undefined,
-      });
-      setDefinition(updated);
-      onStatusChanged?.(updated.instance.status);
-      setShowManualOverride(false);
-      setManualReason('');
-      setManualNote('');
-      setManualStartedAt('');
-    } catch (err) {
-      setManualError(err instanceof Error ? err.message : 'This review cannot be marked in progress.');
-    } finally {
-      setManualBusy(false);
-    }
-  };
-
-  const busy = saving || manualBusy;
+  const busy = saving;
 
   return (
     <ModalShell busy={busy} onClose={onClose}>
@@ -235,106 +212,13 @@ export function ReviewInstanceModal({
               ))}
             </div>
 
-            {definition.manualOverride ? (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-800">
-                <AppIcon className="ri-flashlight-line mr-1.5"></AppIcon>
-                <strong>Manually marked In Progress</strong> -- reason: {
-                  MANUAL_OVERRIDE_REASONS.find((r) => r.value === definition.manualOverride?.reasonCode)?.label
-                    || definition.manualOverride.reasonCode
-                }
-                {definition.manualOverride.note ? ` (${definition.manualOverride.note})` : ''}
-                {' '}by {definition.manualOverride.changedBy}
-                {definition.manualOverride.changedAt ? `, ${formatDateLabel(definition.manualOverride.changedAt)}` : ''}
-                {definition.manualOverride.manualStartedAt ? ` · actual start: ${formatDateLabel(definition.manualOverride.manualStartedAt)}` : ''}
-              </div>
-            ) : null}
-
-            {definition.instance.status === 'scheduled' && !showManualOverride ? (
+            {definition.instance.status === 'scheduled' ? (
               <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-[13px] font-bold text-amber-900">Not yet in progress</p>
                   <p className="mt-0.5 text-[12px] text-amber-800">
-                    This moves to "In Progress" automatically once Microsoft Teams confirms the coach or learner joined the meeting.
+                    Start the review from the meeting actions before completing this form.
                   </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowManualOverride(true)}
-                  className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-white px-4 text-xs font-bold text-amber-800 shadow-sm transition hover:bg-amber-100"
-                >
-                  <AppIcon className="ri-flashlight-line"></AppIcon>Mark as In Progress
-                </button>
-              </div>
-            ) : null}
-
-            {definition.instance.status === 'scheduled' && showManualOverride ? (
-              <div className="space-y-3 rounded-2xl border border-amber-300 bg-amber-50 p-4">
-                <div>
-                  <p className="text-[13px] font-bold text-amber-900">Manually mark this review In Progress</p>
-                  <p className="mt-0.5 text-[12px] text-amber-800">
-                    Use this only when Microsoft Teams attendance cannot be confirmed automatically -- for example a Teams
-                    link problem, a Microsoft Graph outage, or the meeting happening on another channel. This is an override,
-                    not the normal path, and is recorded as a manual action.
-                  </p>
-                </div>
-                <label className="block">
-                  <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber-900">Reason</span>
-                  <select
-                    value={manualReason}
-                    onChange={(e) => setManualReason(e.target.value as ManualInProgressReasonCode)}
-                    className="h-10 w-full rounded-lg border border-amber-300 bg-white px-3 text-[13px] text-foreground-900 outline-none"
-                  >
-                    <option value="">Select a reason...</option>
-                    {MANUAL_OVERRIDE_REASONS.map((reason) => (
-                      <option key={reason.value} value={reason.value}>{reason.label}</option>
-                    ))}
-                  </select>
-                </label>
-                {manualReason === 'other' ? (
-                  <label className="block">
-                    <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber-900">Details (required)</span>
-                    <textarea
-                      value={manualNote}
-                      onChange={(e) => setManualNote(e.target.value)}
-                      rows={2}
-                      className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-[13px] text-foreground-900 outline-none"
-                      placeholder="What happened?"
-                    />
-                  </label>
-                ) : null}
-                <label className="block">
-                  <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber-900">Actual start time (optional)</span>
-                  <input
-                    type="datetime-local"
-                    value={manualStartedAt}
-                    onChange={(e) => setManualStartedAt(e.target.value)}
-                    className="h-10 w-full rounded-lg border border-amber-300 bg-white px-3 text-[13px] text-foreground-900 outline-none sm:w-64"
-                  />
-                  <span className="mt-1 block text-[11px] text-amber-700">Leave blank to use the time you confirm this.</span>
-                </label>
-                {manualError ? (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
-                    <AppIcon className="ri-error-warning-line mr-1.5"></AppIcon>{manualError}
-                  </div>
-                ) : null}
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setShowManualOverride(false); setManualError(null); }}
-                    disabled={manualBusy}
-                    className="h-9 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-amber-100 disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={confirmManualOverride}
-                    disabled={manualBusy || !manualReason}
-                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-amber-700 disabled:opacity-60"
-                  >
-                    <AppIcon className={manualBusy ? 'ri-loader-4-line animate-spin' : 'ri-check-line'}></AppIcon>
-                    Confirm
-                  </button>
                 </div>
               </div>
             ) : null}
@@ -344,29 +228,82 @@ export function ReviewInstanceModal({
               answers={answers}
               onAnswerChange={handleAnswerChange}
               errors={showErrors ? { missingFieldIds } : undefined}
-              readOnly={definition.instance.status === 'completed'}
+              readOnly={formReadOnly}
               openSectionId={openSectionId}
               onOpenSectionChange={setOpenSectionId}
             />
-            {definition.signatures.advisor?.required && !definition.signatures.advisor.signed &&
-              ['awaiting-signature', 'completed'].includes(definition.instance.status) ? (
-              <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
-                <p className="mb-3 text-sm font-bold text-violet-950">Your coach signature is required</p>
-                <SignaturePad
-                  signatoryName={auth.user?.fullName || event.learner || 'Coach'}
-                  onCommit={(signature) => {
-                    void signReviewInstance(definition.instance.id, 'advisor', auth.user?.fullName || 'Coach', signature)
-                      .then(setDefinition);
-                  }}
-                  onCancel={() => undefined}
-                />
+            {advisorSignaturePending ? (
+              <section aria-label="Review signature step" tabIndex={-1} className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+                <h3 className="mb-3 text-sm font-bold text-violet-950">Your coach signature is required</h3>
+                {auth.user?.fullName ? (
+                  <fieldset disabled={saving} className="min-w-0 border-0 p-0">
+                    <SignaturePad
+                      signatoryName={auth.user.fullName}
+                      onCommit={(signature) => {
+                        if (signatureSaveInFlightRef.current) return;
+                        signatureSaveInFlightRef.current = true;
+                        setSaving(true);
+                        setError(null);
+                        void signReviewInstance(definition.instance.id, 'advisor', auth.user?.fullName || 'Coach', signature)
+                          .then((updated) => {
+                            setDefinition(updated);
+                            onStatusChanged?.(updated.instance.status);
+                          })
+                          .catch((err) => {
+                            if (isAbortError(err)) return;
+                            setError(err instanceof Error ? err.message : 'Unable to save your signature.');
+                          })
+                          .finally(() => {
+                            signatureSaveInFlightRef.current = false;
+                            setSaving(false);
+                          });
+                      }}
+                      onCancel={() => undefined}
+                    />
+                  </fieldset>
+                ) : (
+                  <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
+                    Your account has no name on record, so this cannot be signed.
+                  </p>
+                )}
+              </section>
+            ) : null}
+            {advisorSignatureSaved ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+                Your coach signature has been saved.
               </div>
+            ) : null}
+            {waitingForOtherSignatures ? (
+              <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 text-sm font-semibold text-violet-900">
+                Your part is complete. The review is waiting for the remaining required signatures.
+              </div>
+            ) : null}
+            {definition.instance.status === 'completed' ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+                Review completed
+              </div>
+            ) : null}
+            {/* The signed-PDF export and the full signature summary (coach +
+                learner + any other configured party) are specific to the
+                canonical Monthly Coaching Meeting review type -- identified
+                by the Review Type's stable code, never by name/title -- and
+                reuse the exact same components/API the learner side already
+                uses, reading the same signatures/pdf-availability this same
+                fetch already returned. */}
+            {definition.template.reviewTypeCode === 'mcm' && isSignatureStage ? (
+              <>
+                <ReviewSignatures signatures={definition.signatures} />
+                <ReviewPdfDownload
+                  availability={definition.pdf}
+                  onDownload={() => downloadMcmReviewPdf(definition.instance.id)}
+                />
+              </>
             ) : null}
           </>
         ) : null}
 
         {error ? (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
+          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
             <AppIcon className="ri-error-warning-line mr-2"></AppIcon>{error}
           </div>
         ) : null}
@@ -374,7 +311,7 @@ export function ReviewInstanceModal({
 
       <footer className="flex shrink-0 flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
         <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">Cancel</button>
-        <div className="flex gap-2">
+        {!isSignatureStage ? <div className="flex gap-2">
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>Save draft
           </button>
@@ -382,7 +319,7 @@ export function ReviewInstanceModal({
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
             {saving ? 'Saving...' : 'Complete review'}
           </button>
-        </div>
+        </div> : null}
       </footer>
     </ModalShell>
   );

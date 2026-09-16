@@ -16,7 +16,7 @@ import { initialsFor } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
 import { ReviewInstanceModal } from '@/pages/coach/shared/ReviewInstanceModal';
-import { openReviewInstanceForEvent, fetchLearnerAdditionReviewTemplates, createLearnerReviewAddition } from '@/api/reviewInstances';
+import { createLearnerReviewAddition, fetchLearnerAdditionReviewTemplates, markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
 import type { LearnerAdditionReviewTemplate, LearnerAdditionReasonCode } from '@/api/reviewInstances';
 import {
   buildCoachSourceOptions,
@@ -932,7 +932,6 @@ export default function CoachTimetablePage() {
   // Review template's occurrence can open one; nothing here is per-review-type.
   const [reviewFormEvent, setReviewFormEvent] = useState<TimetableEvent | null>(null);
   const [reviewFormInstanceId, setReviewFormInstanceId] = useState('');
-  const [reviewFormShowManualOverride, setReviewFormShowManualOverride] = useState(false);
   const [reviewFormBusy, setReviewFormBusy] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleModalType, setScheduleModalType] = useState<SchedulableSource>('mcr');
@@ -1767,7 +1766,7 @@ export default function CoachTimetablePage() {
     updateSingleEvent,
   ]);
 
-  const openReviewForm = useCallback(async (event: TimetableEvent, showManualOverride = false) => {
+  const openReviewForm = useCallback(async (event: TimetableEvent) => {
     if (!event.eventKey) return;
     setEventActionError(null);
     setEventActionNotice(null);
@@ -1776,13 +1775,30 @@ export default function CoachTimetablePage() {
       const { instanceId } = await openReviewInstanceForEvent(event.eventKey);
       setReviewFormInstanceId(instanceId);
       setReviewFormEvent(event);
-      setReviewFormShowManualOverride(showManualOverride);
     } catch (err) {
       setEventActionError(err instanceof Error ? err.message : 'Unable to open this review form.');
     } finally {
       setReviewFormBusy(false);
     }
   }, []);
+
+  const markReviewInProgress = useCallback(async (event: TimetableEvent) => {
+    if (!event.eventKey) return;
+    setEventActionError(null);
+    setEventActionNotice(null);
+    setEventActionBusy(true);
+    try {
+      const instanceId = event.reviewInstanceId || (await openReviewInstanceForEvent(event.eventKey)).instanceId;
+      const updated = await markReviewInstanceInProgressManually(instanceId, {
+        reasonCode: 'coach-confirmed-live-start',
+      });
+      updateSingleEvent({ ...event, reviewInstanceId: instanceId, status: updated.instance.status as TimetableEvent['status'] });
+    } catch (err) {
+      setEventActionError(err instanceof Error ? err.message : 'Unable to mark this review in progress.');
+    } finally {
+      setEventActionBusy(false);
+    }
+  }, [updateSingleEvent]);
 
   const handleProgressReviewSubmit = useCallback(async (responses: ProgressReviewResponses) => {
     if (!progressReviewCompletionEvent?.eventKey) return;
@@ -2747,7 +2763,7 @@ export default function CoachTimetablePage() {
                         {selectedEvent.status === 'scheduled' && selectedEvent.reviewTemplateId && (
                           <button
                             type="button"
-                            onClick={() => openReviewForm(selectedEvent, true)}
+                            onClick={() => { void markReviewInProgress(selectedEvent); }}
                             disabled={eventActionBusy || reviewFormBusy}
                             className="rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-[12px] font-bold text-amber-800 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
                           >
@@ -3534,11 +3550,9 @@ export default function CoachTimetablePage() {
           key={reviewFormInstanceId}
           event={reviewFormEvent}
           instanceId={reviewFormInstanceId}
-          showManualOverrideOnOpen={reviewFormShowManualOverride}
           onClose={() => {
             setReviewFormEvent(null);
             setReviewFormInstanceId('');
-            setReviewFormShowManualOverride(false);
           }}
           onStatusChanged={(status) => {
             updateSingleEvent({ ...reviewFormEvent, status: status as TimetableEvent['status'] });
@@ -3547,7 +3561,6 @@ export default function CoachTimetablePage() {
             updateSingleEvent({ ...reviewFormEvent, status: status as TimetableEvent['status'] });
             setReviewFormEvent(null);
             setReviewFormInstanceId('');
-            setReviewFormShowManualOverride(false);
           }}
         />
       )}

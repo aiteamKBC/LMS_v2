@@ -996,6 +996,7 @@ def mark_review_instance_in_progress_from_attendance(instance_id, *, started_at,
 #: override (Phase 4). The frontend maps these to friendly labels; the
 #: backend never accepts free text as the reason itself.
 MANUAL_OVERRIDE_REASON_CODES = (
+    'coach-confirmed-live-start',
     'teams-link-issue',
     'graph-unavailable',
     'attendance-not-detected',
@@ -1301,6 +1302,9 @@ def review_instance_form_definition(instance_row):
         # override rather than real Teams attendance (Phase 5).
         'manualOverride': _serialize_manual_override(latest_review_instance_manual_override(instance_row.get('id'))),
     }
+    from .review_pdf import pdf_availability
+    result['pdf'] = pdf_availability(result)
+    return result
 
 
 def _serialize_manual_override(row):
@@ -1313,9 +1317,6 @@ def _serialize_manual_override(row):
         'changedAt': curriculum_views.format_created_at(row.get('changed_at')),
         'manualStartedAt': curriculum_views.format_created_at(row.get('manual_started_at')),
     }
-    from .review_pdf import pdf_availability
-    result['pdf'] = pdf_availability(result)
-    return result
 
 
 def _visible_required_unanswered_fields(sections, answers_by_field):

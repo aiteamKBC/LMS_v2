@@ -178,6 +178,15 @@ def build_mcm_pdf(definition, information):
         if rows:
             story.extend([section(block.get('title', ''), rows), Spacer(1, 16)])
 
+    # A presentation-only placeholder, matching the legacy reference PDF's
+    # structure -- the Review Instance owns no meeting-summary field today,
+    # so this always shows "No Summary Generated". If one is added later,
+    # this reads it instead, without any dependency on the separate
+    # coach_meeting_summaries/CoachCalendarEvent AI-summary feature.
+    summary = definition.get('meetingSummary')
+    summary_text = summary.strip() if isinstance(summary, str) and summary.strip() else 'No Summary Generated'
+    story.extend([section('Meeting Summary', [paragraph(summary_text)]), Spacer(1, 16)])
+
     # A dedicated final page follows the PR reference, using the actual saved
     # mark. Never substitute a typed name or another document's signature.
     story.append(PageBreak())

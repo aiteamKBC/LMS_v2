@@ -162,6 +162,7 @@ export async function completeReviewInstance(instanceId: string) {
 }
 
 export type ManualInProgressReasonCode =
+  | 'coach-confirmed-live-start'
   | 'teams-link-issue'
   | 'graph-unavailable'
   | 'attendance-not-detected'

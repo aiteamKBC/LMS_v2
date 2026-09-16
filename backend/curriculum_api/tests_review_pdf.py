@@ -88,6 +88,27 @@ class SignedMcmPdfTests(SimpleTestCase):
         self.assertTrue(all(float(page.mediabox.width) > float(page.mediabox.height) for page in pdf.pages))
         self.assertEqual(definition, original)
 
+    def test_meeting_summary_section_shows_a_placeholder_when_the_instance_has_none(self):
+        # The Review Instance owns no meeting-summary field today -- this is
+        # a presentation-only requirement matching the reference PDF, not a
+        # dependency on the separate coach_meeting_summaries/CoachCalendarEvent
+        # AI-summary feature.
+        definition = sample_definition()
+        self.assertNotIn('meetingSummary', definition)
+        pdf = PdfReader(BytesIO(build_mcm_pdf(definition, SAMPLE_INFORMATION)))
+        text = '\n'.join(page.extract_text() for page in pdf.pages)
+        self.assertIn('Meeting Summary', text)
+        self.assertIn('No Summary Generated', text)
+
+    def test_meeting_summary_section_renders_a_saved_summary_when_present(self):
+        definition = sample_definition()
+        definition['meetingSummary'] = 'Agreed to focus on time management next month.'
+        pdf = PdfReader(BytesIO(build_mcm_pdf(definition, SAMPLE_INFORMATION)))
+        text = '\n'.join(page.extract_text() for page in pdf.pages)
+        self.assertIn('Meeting Summary', text)
+        self.assertIn('Agreed to focus on time management next month.', text)
+        self.assertNotIn('No Summary Generated', text)
+
     def test_invalid_or_remote_signature_never_produces_a_signed_pdf(self):
         for mark in ('https://example.test/signature.png', 'data:image/svg+xml;base64,PHN2Zy8+', 'data:image/png;base64,bm90LWFuLWltYWdl'):
             with self.subTest(mark=mark):

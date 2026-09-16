@@ -7774,6 +7774,7 @@ def collect_live_session_events(
             # sessions 1 and 2 are both taught inside week 1.
             week_index = (session["sessionNumber"] - 1) // delivery_days
             week = ordered_weeks[week_index] if week_index < len(ordered_weeks) else None
+            week_id = clean_text(week.get("id")) if week else ""
             events.append(
                 build_live_session_calendar_event(
                     row,
@@ -7786,9 +7787,7 @@ def collect_live_session_events(
                     week_title=clean_text(week.get("title")) if week else None,
                     tracked_series=tracked_series,
                     tracked_occurrence=tracked_occurrence,
-                    component_meeting_link=clean_text(week.get("id")) and component_links_by_week.get(
-                        clean_text(week.get("id")), ""
-                    ),
+                    component_meeting_link=week_id and component_links_by_week.get(week_id, ""),
                 )
             )
 

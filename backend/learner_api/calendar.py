@@ -790,6 +790,33 @@ def learner_calendar_event_review(request, kind, pk, event_key):
 
 
 @learner_self_or_staff(kwarg="pk")
+def learner_calendar_event_review_pdf(request, kind, pk, event_key):
+    """Download the signed MCM PDF for a learner-visible calendar review."""
+    response = learner_calendar_event_review(request, kind, pk, event_key)
+    if getattr(response, "status_code", 500) != 200:
+        return response
+    try:
+        definition = json.loads(response.content.decode("utf-8"))
+    except (AttributeError, UnicodeDecodeError, ValueError):
+        return _error("Review definition could not be read.", 502)
+
+    from curriculum_api.review_pdf import learner_information, mcm_pdf_response, pdf_availability
+
+    if not (pdf_availability(definition) or {}).get("available"):
+        return mcm_pdf_response(definition, {})
+
+    model = SOURCE_MODELS.get(kind)
+    learner = model.all_learners.filter(pk=pk).first() if model else None
+    record = _learner_calendar_record(kind, pk, event_key)
+    information = learner_information(
+        learner,
+        name=getattr(record, "learner_name", "") if record else "",
+        programme=getattr(record, "programme", "") if record else "",
+    )
+    return mcm_pdf_response(definition, information)
+
+
+@learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_artifacts(request, kind, pk, event_key):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -879,6 +906,15 @@ def learner_progress_review_sign(request, kind, pk, event_key):
             )
         except ValueError as exc:
             return _error(str(exc), 409)
+        instance_status = _s((definition.get("instance") or {}).get("status"))
+        if instance_status == CoachCalendarEvent.STATUS_COMPLETED:
+            record.status = CoachCalendarEvent.STATUS_COMPLETED
+            if not record.review_completed_at:
+                record.review_completed_at = timezone.now()
+            record.save(update_fields=["status", "review_completed_at", "updated_at"])
+        elif instance_status == CoachCalendarEvent.STATUS_AWAITING_SIGNATURE:
+            record.status = CoachCalendarEvent.STATUS_AWAITING_SIGNATURE
+            record.save(update_fields=["status", "updated_at"])
         return JsonResponse({"event": _serialize_event(record), "review": definition})
     try:
         payload = json.loads(request.body or b"{}")

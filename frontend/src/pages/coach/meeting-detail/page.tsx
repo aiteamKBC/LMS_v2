@@ -15,7 +15,7 @@ import { cn } from '@/lib/cn';
 import { statusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
-import { openReviewInstanceForEvent } from '@/api/reviewInstances';
+import { markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
 import { MonthlyCoachingCompletionModal } from '../meetings/MonthlyCoachingCompletionModal';
 import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
@@ -328,6 +328,28 @@ export default function CoachMeetingDetail() {
     }
   };
 
+  const markReviewInProgress = async () => {
+    if (!event) return;
+    if (!event.reviewTemplateId) {
+      await openReviewWorkflow(true);
+      return;
+    }
+    setBusy(true);
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      const instanceId = event.reviewInstanceId || (await openReviewInstanceForEvent(eventIdentity(event))).instanceId;
+      const updated = await markReviewInstanceInProgressManually(instanceId, {
+        reasonCode: 'coach-confirmed-live-start',
+      });
+      updateEvent({ ...event, reviewInstanceId: instanceId, status: updated.instance.status as CoachCalendarEvent['status'] });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to mark this review in progress.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const url = event ? meetingUrl(event) : '';
   const canEditBooking = event?.status === 'not-scheduled' || event?.status === 'scheduled';
   const showMeetingActions = canEditBooking || event?.status === 'in-progress';
@@ -336,6 +358,11 @@ export default function CoachMeetingDetail() {
     : event?.status === 'in-progress'
       ? 'Meeting Actions'
       : `Manage ${isProgressReview ? 'Review' : 'Meeting'}`;
+  const canOpenReviewFormFromHeader = Boolean(
+    event?.reviewInstanceId
+    && ['awaiting-signature', 'completed'].includes(event.status),
+  );
+  const reviewFormHeaderLabel = event?.status === 'completed' ? 'View Form' : 'Sign Form';
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle={isProgressReview ? 'Review Details' : 'Meeting Details'} pageSubtitle={isProgressReview ? 'Progress review workspace' : 'Monthly coaching meeting workspace'} userName={ownerName} userRole="Progress Coach">
@@ -363,6 +390,7 @@ export default function CoachMeetingDetail() {
               actions={(
                 <>
                   <RowAction label="Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={openEventInCalendar} />
+                  {canOpenReviewFormFromHeader ? <RowAction label={reviewFormHeaderLabel} icon="ri-file-list-3-line" emphasis="primary" disabled={busy} onClick={() => { void openReviewWorkflow(false); }} /> : null}
                   {url ? <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={busy} onClick={() => { void handleJoin(); }} /> : null}
                 </>
               )}
@@ -397,7 +425,7 @@ export default function CoachMeetingDetail() {
                 <div className={cn('flex flex-wrap items-center gap-2', canEditBooking && 'mt-5 border-t border-foreground-100 pt-4')}>
                   {canEditBooking ? <RowAction label={event.status === 'scheduled' ? 'Reschedule' : 'Schedule'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy} onClick={() => { void handleSchedule(); }} /> : null}
                   {(event.status === 'scheduled' || event.status === 'in-progress') && url ? <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={busy} onClick={() => { void handleJoin(); }} /> : null}
-                  {event.status === 'scheduled' ? <RowAction label="Mark In Progress" icon="ri-flashlight-line" disabled={busy} onClick={() => { void openReviewWorkflow(true); }} /> : null}
+                  {event.status === 'scheduled' ? <RowAction label="Mark In Progress" icon="ri-flashlight-line" disabled={busy} onClick={() => { void markReviewInProgress(); }} /> : null}
                   {event.status === 'in-progress' ? <RowAction label="Form" icon="ri-file-list-3-line" disabled={busy} onClick={() => { void openReviewWorkflow(false); }} /> : null}
                 </div>
               </Panel>
@@ -453,7 +481,6 @@ export default function CoachMeetingDetail() {
                 key={eventIdentity(completionEvent)}
                 event={completionEvent}
                 instanceId={completionEvent.reviewInstanceId}
-                showManualOverrideOnOpen={completionEvent.status === 'scheduled'}
                 onClose={() => setCompletionEvent(null)}
                 onStatusChanged={(status) => {
                   const updated = { ...completionEvent, status: status as CoachCalendarEvent['status'] };

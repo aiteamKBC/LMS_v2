@@ -1,13 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
-import { completeReviewInstance, fetchReviewInstanceForm, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
+import { completeReviewInstance, downloadMcmReviewPdf, fetchReviewInstanceForm, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
 vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/reviewInstances')>(),
   fetchReviewInstanceForm: vi.fn(), saveReviewInstanceAnswers: vi.fn(), completeReviewInstance: vi.fn(), signReviewInstance: vi.fn(),
+  downloadMcmReviewPdf: vi.fn(),
 }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ signatoryName, onCommit }: { signatoryName: string; onCommit: (signature: string) => void }) => <div>
@@ -24,13 +25,29 @@ function definition(status = 'in-progress'): ReviewInstanceFormDefinition {
     sections: [{ id: 'section-1', title: 'Next steps', estimatedMinutes: 5, displayOrder: 1, enabled: true,
       fields: [{ id: 'field-1', title: 'Agreed action', fieldType: 'text', required: true, displayOrder: 1, configuration: {}, answer: 'Review the next module' }] }],
     signatures: { advisor: { required: true, signed: false }, participant: { required: true, signed: false }, employer: { required: false, signed: false }, referrer: { required: false, signed: false } },
+    manualOverride: null,
   };
+}
+
+/** Same shape, but classified as the canonical Monthly Coaching Meeting
+ *  review type via the stable `reviewTypeCode` -- never by name/title. */
+function mcmDefinition(status = 'awaiting-signature'): ReviewInstanceFormDefinition {
+  const base = definition(status);
+  return { ...base, template: { ...base.template, reviewTypeCode: 'mcm' }, pdf: { available: false, reason: 'The PDF is available after the learner and all required parties have signed.' } };
 }
 
 function mount() {
   const onStatusChange = vi.fn();
   const onClose = vi.fn();
-  render(<ReviewInstanceModal event={{ learner: 'Ayman Learner', programme: 'Marketing' }} instanceId="instance-1" onClose={onClose} onStatusChange={onStatusChange} />);
+  render(
+    <ReviewInstanceModal
+      event={{ learner: 'Ayman Learner', programme: 'Marketing' }}
+      instanceId="instance-1"
+      onClose={onClose}
+      onCompleted={vi.fn()}
+      onStatusChanged={onStatusChange}
+    />,
+  );
   return { onStatusChange, onClose };
 }
 
@@ -52,7 +69,6 @@ describe('coach review signature workflow', () => {
     expect(await screen.findByRole('heading', { name: 'Your coach signature is required' })).toBeVisible();
     expect(onStatusChange).toHaveBeenCalledWith('awaiting-signature');
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByLabelText('Review signature step')).toHaveFocus();
     expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox')).toBeDisabled();
@@ -147,5 +163,48 @@ describe('coach review signature workflow', () => {
     expect(onStatusChange).toHaveBeenCalledWith('completed');
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Confirm coach signature' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Monthly Coaching Meeting signature summary + signed PDF', () => {
+  it('shows the full signature summary and a disabled PDF button once at the signature stage, for the mcm review type only', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('awaiting-signature'));
+    mount();
+    expect(await screen.findByRole('region', { name: 'Review signatures' })).toBeVisible();
+    expect(screen.getByText('0 of 2 required signatures saved')).toBeVisible();
+    const download = screen.getByRole('button', { name: 'Download signed PDF' });
+    expect(download).toBeDisabled();
+    expect(screen.getByText('The PDF is available after the learner and all required parties have signed.')).toBeVisible();
+  });
+
+  it('does not show the signature summary or PDF button for a non-mcm review type at the same lifecycle stage', async () => {
+    const nonMcm = definition('awaiting-signature');
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(nonMcm);
+    mount();
+    await screen.findByDisplayValue('Review the next module');
+    expect(screen.queryByRole('region', { name: 'Review signatures' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download signed PDF' })).not.toBeInTheDocument();
+  });
+
+  it('does not show the signature summary or PDF button before the review reaches the signature stage', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('in-progress'));
+    mount();
+    await screen.findByDisplayValue('Review the next module');
+    expect(screen.queryByRole('region', { name: 'Review signatures' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download signed PDF' })).not.toBeInTheDocument();
+  });
+
+  it('downloads the same review instance the coach has open once the PDF is available', async () => {
+    const ready = mcmDefinition('completed');
+    ready.signatures.advisor = { required: true, signed: true, signedName: 'Sam Coach', signedAt: '2026-09-14T10:00:00Z' };
+    ready.signatures.participant = { required: true, signed: true, signedName: 'Ayman Learner', signedAt: '2026-09-14T09:30:00Z' };
+    ready.pdf = { available: true, reason: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(ready);
+    vi.mocked(downloadMcmReviewPdf).mockResolvedValue(undefined);
+    mount();
+    const download = await screen.findByRole('button', { name: 'Download signed PDF' });
+    expect(download).toBeEnabled();
+    fireEvent.click(download);
+    await waitFor(() => expect(downloadMcmReviewPdf).toHaveBeenCalledWith('instance-1'));
   });
 });

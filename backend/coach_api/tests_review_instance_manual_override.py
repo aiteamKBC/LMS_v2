@@ -137,7 +137,7 @@ class ManualOverrideTestCase(TestCase):
 
     def test_assigned_coach_manually_marks_scheduled_mcm_in_progress(self):
         record = self._scheduled_linked_row(event_type='mcr', type_code='mcm')
-        response = self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'})
+        response = self._call(record.review_instance_id, body={'reasonCode': 'coach-confirmed-live-start'})
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
 
