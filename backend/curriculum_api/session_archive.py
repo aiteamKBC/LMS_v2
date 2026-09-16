@@ -11,6 +11,8 @@ from django.db import connections
 
 from .session_results import read, result_rows
 from .session_results_policy import archive_prefix, attendance_csv, transcript_text
+from .session_media_policy import transcript_timing_ready
+from .session_transcripts import parse_vtt_cues
 
 log = logging.getLogger(__name__)
 CONTAINER = os.environ.get('AZURE_SESSION_RECORDINGS_CONTAINER', 'session-recordings')
@@ -19,6 +21,14 @@ CONTAINER = os.environ.get('AZURE_SESSION_RECORDINGS_CONTAINER', 'session-record
 def storage_client():
     from learner_api.evidence_storage import _service_client
     return _service_client()
+
+
+def save_transcript_timing(artifact_id, raw):
+    timeline = {'version': 1, 'cues': parse_vtt_cues(raw.decode('utf-8-sig', errors='replace'))}
+    with connections['default'].cursor() as cursor:
+        cursor.execute('''UPDATE curriculum.live_session_artifacts
+            SET metadata=jsonb_set(coalesce(metadata::jsonb,'{}'::jsonb),'{lmsTranscriptTimeline}',%s::jsonb)
+            WHERE id=%s AND artifact_type='transcript' ''', [json.dumps(timeline, ensure_ascii=False), artifact_id])
 
 
 def provision_container():
@@ -56,6 +66,17 @@ def archive_series(series_id):
     token = None
     for artifact in artifacts:
         if artifact['saved_status'] == 'ready':
+            # Backfill timing for previously archived transcripts from Azure once.
+            # Ready videos are never downloaded or uploaded again.
+            if artifact['artifact_type'] == 'transcript' and not transcript_timing_ready(artifact):
+                try:
+                    raw = client.get_blob_client(CONTAINER, artifact['saved_name']).download_blob(offset=0, length=16 * 1024 * 1024 + 1).readall()
+                    if len(raw) > 16 * 1024 * 1024:
+                        raise ValueError('Transcript exceeds the supported size.')
+                    save_transcript_timing(artifact['id'], raw)
+                except Exception as failure:
+                    log.warning('Transcript timing %s failed: %s', artifact['id'], type(failure).__name__)
+                    errors.append(f"Could not prepare transcript timing for {artifact['id']}. Check worker logs.")
             continue
         occurrence = by_id[artifact['occurrence_id']]
         kind = artifact['artifact_type']
@@ -103,6 +124,7 @@ def archive_series(series_id):
                         raise ValueError('Transcript exceeds the supported size.')
                     text = transcript_text(raw.decode('utf-8-sig', errors='replace'))
                 client.get_blob_client(CONTAINER, name.rsplit('.', 1)[0] + '.txt').upload_blob(text.encode('utf-8'), overwrite=True)
+                save_transcript_timing(artifact['id'], raw)
             save_archive(artifact, name, text=text)
         except Exception as failure:
             log.warning('Session artifact %s archive failed: %s', artifact['id'], type(failure).__name__)
