@@ -174,7 +174,7 @@ describe('apiMe', () => {
     const second = expect(apiMe()).rejects.toMatchObject({ code: 'timeout' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const signal = lastInit().signal!;
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(45_000);
     await Promise.all([first, second]);
     expect(signal.aborted).toBe(true);
 
@@ -193,7 +193,7 @@ describe('apiMe', () => {
       }),
     }));
     const result = expect(apiMe()).rejects.toMatchObject({ code: 'timeout' });
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(45_000);
     await result;
     expect(vi.getTimerCount()).toBe(0);
   });

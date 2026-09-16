@@ -11,6 +11,7 @@ import type {
   CurriculumProgramme,
   CurriculumTeamsMeetingSummary,
 } from '@/lib/curriculumApi';
+import type { ModuleCatalogueItem } from '../../module-builder/moduleAuthoringData';
 
 /**
  * The Schedule tab reads the module's saved plan: the dates the backend
@@ -76,23 +77,38 @@ const teamsMeetings: CurriculumTeamsMeetingSummary[] = [
   },
 ];
 
-// Session two lands a week late: the weekly slot fell on the closure.
-const plan = {
-  sessions: [
-    { sessionNumber: 1, date: '2026-09-02', day: 'Wednesday', skippedHolidays: [] as string[] },
-    { sessionNumber: 2, date: '2026-09-16', day: 'Wednesday', skippedHolidays: ['2026-09-09'] },
-  ],
-  skippedHolidays: ['2026-09-09'],
-  finalEndDate: '2026-09-16',
-  warnings: [] as string[],
-};
+// The module's Course structure IS its schedule: two weeks, one live-session
+// component each, each carrying its own date. Nothing is generated from
+// `sessionsNumber` any more, so a structure is what the Schedule tab has to be
+// given -- without one the tab correctly reports the module as unfinished.
+//
+// Session two lands ON the closure and stays there: a holiday warns and moves
+// nothing.
+function liveSession(id: string, weekId: string, sessionDate: string) {
+  return {
+    id, weekId, type: 'live-session' as const, title: `Live ${id}`, description: '',
+    expectedOtjh: 2, points: 0, reflectionRequired: false, reflectionQuestion: '',
+    workplaceEvidenceRequired: false, tutorValidationRequired: false,
+    coachValidationRequired: false, ksbMappings: [],
+    settings: { sessionDate, sessionTime: '09:30', durationMinutes: 120 },
+  };
+}
 
-const previewModuleSessionPlan = vi.fn(async () => plan);
+const structure = {
+  catalogueId: 'MOD-1', id: 'MOD-1', title: 'Data Foundations', sourceId: 'MOD-1',
+  programmeId: 'PROG-DATA', programmeName: 'Data Analyst', cohort: 'Sept 2026', group: 'Group A',
+  weeks: 2, sessionsNumber: 2, startDate: '2026-09-02', endDate: '2026-09-09',
+  status: 'published', totalOtjh: 4, ksbCount: 0, lessonCount: 0, quizCount: 0,
+  weekStructure: [
+    { id: 'WEEK-1', weekNumber: 1, title: 'W1', sessionDate: '2026-09-02', components: [liveSession('COMP-1', 'WEEK-1', '2026-09-02')] },
+    { id: 'WEEK-2', weekNumber: 2, title: 'W2', sessionDate: '2026-09-09', components: [liveSession('COMP-2', 'WEEK-2', '2026-09-09')] },
+  ],
+} as unknown as ModuleCatalogueItem;
+
 const updateCurriculumModule = vi.fn(async () => ({}));
 
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
-  previewModuleSessionPlan: (...args: unknown[]) => previewModuleSessionPlan(...(args as [])),
   updateCurriculumModule: (...args: unknown[]) => updateCurriculumModule(...(args as [])),
   fetchCurriculumModuleKsbCoverage: vi.fn(async () => null),
 }));
@@ -104,7 +120,8 @@ const createTeamsMeeting = vi.fn(async () => ({
   warnings: [] as string[],
 }));
 
-// Teams is still holding the unbroken weekly slot the closure moved session two off.
+// Teams is holding a date of its own for session two, so the tab still has an
+// off-the-plan calendar to report.
 const artifacts = {
   series: { id: 'LIVE-1', module_title: 'Data Foundations', organizer_email: 'tutor@example.com', join_url: '', online_meeting_id: 'meeting-1' },
   occurrences: [
@@ -113,7 +130,7 @@ const artifacts = {
       participant_count: 0, status: 'scheduled', attendance: [], artifacts: [],
     },
     {
-      id: 'OCC-2', session_number: 2, scheduled_start: '2026-09-09T08:30:00Z', scheduled_end: '2026-09-09T10:30:00Z',
+      id: 'OCC-2', session_number: 2, scheduled_start: '2026-09-16T08:30:00Z', scheduled_end: '2026-09-16T10:30:00Z',
       participant_count: 0, status: 'scheduled', attendance: [], artifacts: [],
     },
   ],
@@ -123,7 +140,7 @@ const artifacts = {
 // 09:30 in the calendar's zone into a UTC instant is the real implementation.
 vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
   ...(await importOriginal<typeof import('../../module-builder/moduleAuthoringData')>()),
-  loadModuleStructure: vi.fn(async () => null),
+  loadModuleStructure: vi.fn(async () => structure),
   loadTeamsMeetingConfiguration: vi.fn(async () => ({
     configured: true, defaultOrganizer: 'tutor@example.com',
     timeZone: 'GMT Standard Time', timeZoneIana: 'Europe/London',
@@ -165,16 +182,23 @@ describe('Module workspace — Schedule tab Teams calendar', () => {
     updateCurriculumModule.mockClear();
   });
 
-  it('names the holiday every moved session stepped over', async () => {
+  // Rewritten with the clash rule: a holiday is a warning now and nothing else,
+  // so the red "blocked / replacement" pair this used to assert no longer
+  // exists. What replaces it is a note on the session's own ordinary row.
+  it('warns on the session a holiday falls on, and moves nothing', async () => {
     await renderSchedule();
     expect(await screen.findByText('Session 1')).toBeInTheDocument();
 
-    // The closed date keeps a card of its own, in red, naming the holiday that
-    // shut it and the day the session moved to.
-    const blocked = screen.getByText('Shifted to replacement').closest('div')?.parentElement;
-    expect(blocked).toHaveTextContent('09 Sept 2026');
-    expect(blocked).toHaveTextContent('Blocked by Autumn closure; replacement scheduled on 16 Sept 2026.');
-    // A session that runs on its own day stays quiet: "no clash", repeated down
+    // The session keeps its own date and its own single row...
+    expect(await screen.findByText(/Heads up: this session falls on a holiday \(Autumn closure\)/))
+      .toBeInTheDocument();
+    // ...and the clash machinery is gone: no blocked card, no replacement, no
+    // second date for one session, nothing counted as skipped.
+    expect(screen.queryByText('Shifted to replacement')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Blocked by/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Replacement delivered')).not.toBeInTheDocument();
+    expect(screen.queryByText(/skipped$/)).not.toBeInTheDocument();
+    // A session that runs on a clear day stays quiet: "no clash", repeated down
     // the list, is not a fact anyone reads.
     expect(screen.queryByText(/No holiday clash/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Runs on its own day/)).not.toBeInTheDocument();
@@ -199,7 +223,7 @@ describe('Module workspace — Schedule tab Teams calendar', () => {
   it('says the Teams calendar is off the plan, and sends the reader to the page that fixes it', async () => {
     await renderSchedule();
     expect((await screen.findAllByText('Session 2')).length).toBeGreaterThan(0);
-    // The date Teams is holding for session two is the pre-shift one.
+    // Teams is holding a date of its own for session two.
     await waitFor(() => expect(
       screen.getByText('The Teams calendar is not on these dates yet — send them from the Teams Meetings page.'),
     ).toBeInTheDocument());

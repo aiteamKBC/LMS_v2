@@ -205,7 +205,7 @@ export function TeamsMeetingModal({
       return;
     }
     if (!sessions.length) {
-      setError('This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.');
+      setError('This module has no dated live sessions, so there is nothing to put on a calendar. A meeting is created for each live-session component in the Course structure, on that component’s own date — add them, or give the ones it has a date, and save.');
       return;
     }
     setSaving(true);

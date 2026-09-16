@@ -16,8 +16,9 @@ import type {
 /**
  * The point of this page is that the module's own session dates are the
  * authority: it has to say when the Teams calendar disagrees with them, and
- * pressing the button has to send those exact dates — holiday shifts included —
- * rather than a plain weekly recurrence Graph invented for itself.
+ * pressing the button has to send those exact dates rather than a plain weekly
+ * recurrence Graph invented for itself. A holiday landing on one of those dates
+ * warns and changes nothing, so it never alters what is sent.
  */
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
@@ -81,9 +82,10 @@ const sessions: CurriculumSession[] = [
   session('MOD-1', '2026-09-02'),
   session('MOD-1', '2026-09-09'),
   session('MOD-2', '2026-09-03'),
-  // Moved a week past a closure, exactly as the backend generator leaves it:
-  // the field carries the dates that were skipped, and the page names them.
-  session('MOD-2', '2026-09-17', { skippedHolidays: ['2026-09-10'] }),
+  // A session sitting ON a holiday, exactly as the backend generator leaves it
+  // now that the clash rule is parked: the date is the session's own, the field
+  // names the holiday that falls on it, and the page warns and stops there.
+  session('MOD-2', '2026-09-17', { skippedHolidays: ['2026-09-17'] }),
   session('MOD-3', '2026-09-04'),
   // Right day, wrong hour: the calendar entry sits an hour off the module.
   session('MOD-4', '2026-09-08'),
@@ -113,7 +115,7 @@ const summaries: CurriculumTeamsMeetingSummary[] = [
     repeatPattern: 'weekly', startDateTime: '2026-09-03T08:30:00Z', durationMinutes: 120,
     occurrenceCount: 2, upcomingCount: 2, syncedCount: 0, nextOccurrence: '2026-09-03T08:30:00Z',
     updatedAt: '2026-08-20T10:00:00Z',
-    // Teams still holds the unbroken weekly slot the closure moved the module off.
+    // Teams is holding a date of its own, which is what makes this row differ.
     occurrenceDates: ['2026-09-03T08:30:00Z', '2026-09-10T08:30:00Z'],
     syncState: 'out-of-sync', expectedOccurrenceCount: 2, differingOccurrenceCount: 1,
     missingFromTeams: ['2026-09-17T08:30:00Z'], extraInTeams: ['2026-09-10T08:30:00Z'],
@@ -194,7 +196,7 @@ vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
 }));
 
 const holidays = [
-  { id: 'HOL-1', label: 'Autumn closure', startDate: '2026-09-10', endDate: '2026-09-10' },
+  { id: 'HOL-1', label: 'Autumn closure', startDate: '2026-09-17', endDate: '2026-09-17' },
 ];
 
 vi.mock('@/hooks/useCurriculumEntities', () => ({
@@ -263,39 +265,46 @@ describe('Teams Meetings page', () => {
     expect(row.getByText('1 session differs')).toBeInTheDocument();
   });
 
-  it('names the holiday that moved a session, in the dialog and in the create form', async () => {
+  // Rewritten with the clash rule: a holiday warns and does nothing else, so
+  // the red "blocked" row and its green "replacement" partner this used to
+  // assert are gone. One ordinary row, with a warning under it.
+  it('warns on the session a holiday falls on, and gives it no second date', async () => {
     await renderPage();
     expect(await screen.findByText('Risk Management')).toBeInTheDocument();
     await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
 
     const dialog = await screen.findByRole('dialog');
-    // The closed date keeps a row of its own, in red, saying which holiday shut
-    // it and where the session went — the same pair of cards the module form
-    // shows, rather than a column of prose beside every unmoved session.
-    const blocked = within(dialog).getByText('Shifted to replacement').closest('div')?.parentElement;
-    expect(blocked).toHaveTextContent('10 Sept 2026');
-    expect(blocked).toHaveTextContent('Blocked by Autumn closure; replacement scheduled on 17 Sept 2026.');
-    // …and the day it moved onto is marked as the replacement, not as a
-    // second, unexplained session.
-    expect(within(dialog).getByText('17 Sept 2026, 9:30 AM').closest('div'))
-      .toHaveTextContent('Replacement delivered');
+    // The session keeps its own date, and the holiday is named under it.
+    expect(within(dialog).getByText('17 Sept 2026, 9:30 AM').closest('div')?.parentElement)
+      .toHaveTextContent('Heads up: this session falls on a holiday (Autumn closure). It runs as planned.');
+    // Nothing is blocked, replaced, moved or skipped.
+    expect(within(dialog).queryByText('Shifted to replacement')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/Blocked by/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('Replacement delivered')).not.toBeInTheDocument();
     // The session numbers the holiday note talks about are findable in the list.
     expect(within(dialog).getByText('Session 1')).toBeInTheDocument();
     expect(within(dialog).getAllByText('Session 2').length).toBeGreaterThan(0);
   });
 
-  it('spells out that a closure rolls the rest of the plan, end date included', async () => {
+  // Rewritten with the clash rule: there is no cascade left to spell out. What
+  // the note has to say now is the opposite — a holiday is here, and it costs
+  // the plan nothing.
+  it('names the holiday above the dates, and says it changes nothing', async () => {
     await renderPage();
     expect(await screen.findByText('Risk Management')).toBeInTheDocument();
     await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
 
     const dialog = await screen.findByRole('dialog');
-    // Moved dates alone read as "one session slipped", so the rule and its
-    // cost to the module's end date are stated in words above them.
-    expect(within(dialog).getByText(/closes/)).toHaveTextContent('Autumn closure closes 10 Sept 2026');
-    expect(within(dialog).getByText(/moves to the next delivery day/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Session 2 runs later/))
-      .toHaveTextContent('the module now ends 17 Sept 2026 instead of 10 Sept 2026');
+    expect(within(dialog).getByText(/inside this module/))
+      .toHaveTextContent('Autumn closure falls on 17 Sept 2026');
+    expect(within(dialog).getByText(/Every session keeps its own date/))
+      .toHaveTextContent('none is moved or dropped');
+    // The badge counts dates a holiday lands on, not sessions it displaced.
+    expect(within(dialog).getByText('1 session on a holiday')).toBeInTheDocument();
+    // The parked cascade is not stated anywhere.
+    expect(within(dialog).queryByText(/moves to the next delivery day/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/runs later/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/moved by holidays/)).not.toBeInTheDocument();
   });
 
   it('separates a calendar entry on the wrong day from one on the wrong hour', async () => {
@@ -449,7 +458,7 @@ describe('Teams Meetings page', () => {
     }
   });
 
-  it('sends the module’s own holiday-shifted session dates to Teams', async () => {
+  it('sends the module’s own session dates to Teams', async () => {
     await renderPage();
     expect(await screen.findByText('Risk Management')).toBeInTheDocument();
     // Every Teams action for a module lives in its dialog, which the row's one
@@ -471,7 +480,8 @@ describe('Teams Meetings page', () => {
     expect(input.repeatOccurrences).toBe(2);
     expect(input.scheduledOccurrences.map(item => item.startDateTimeUtc)).toEqual([
       '2026-09-03T08:30:00.000Z',
-      // The shifted session, not the weekly slot Teams is still holding.
+      // The module's own date, not the slot Teams is still holding -- and a
+      // holiday on that date changes nothing about what is sent.
       '2026-09-17T08:30:00.000Z',
     ]);
     expect(input.scheduledOccurrences.map(item => item.durationMinutes)).toEqual([120, 120]);

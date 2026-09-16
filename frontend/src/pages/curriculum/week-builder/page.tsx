@@ -855,6 +855,15 @@ interface RailNodeProps {
   selected: boolean;
   issues: number;
   weekSessionDate?: string;
+  /**
+   * The delivery days of this week a ticked holiday falls on, as `YYYY-MM-DD`.
+   *
+   * A warning and nothing else: a live session dated to one of these still runs
+   * on that date, still belongs to this week and is still scheduled, created
+   * and pushed to Teams exactly as it was. Nothing here reads it as a clash to
+   * resolve -- whether the session runs is the author's call, made on the week.
+   */
+  holidayDates?: string[];
   onSelect?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
@@ -872,14 +881,25 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, issues, weekSessionDate, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, index, selected, issues, weekSessionDate, holidayDates, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
-  // A blank component-level date reads as "not yet scheduled", but the week
-  // already knows when it runs -- show that instead of leaving the row silent.
-  const scheduledDate = component.type === 'live-session'
-    ? String(component.settings.sessionDate || weekSessionDate || '')
-    : '';
+  const isLiveSession = component.type === 'live-session';
+  // The date this live session itself holds. It used to fall back to the week's
+  // date, which read as a scheduled session -- but a live session with no date
+  // of its own is not placed on the calendar and is not sent to Teams, so a
+  // borrowed date said the opposite of what was true. The week's date is still
+  // shown below, labelled as the week's.
+  const scheduledDate = isLiveSession ? String(component.settings.sessionDate || '') : '';
+  const weekDate = isLiveSession && !scheduledDate ? String(weekSessionDate || '') : '';
+  // The week already says a holiday falls on it. This says WHICH live session
+  // it lands on, which is the part an author acts on in a week running more
+  // than one. Stated only -- the row is otherwise completely ordinary.
+  const onHoliday = Boolean(
+    isLiveSession
+    && scheduledDate
+    && (holidayDates || []).includes(scheduledDate.slice(0, 10)),
+  );
   return (
     <div id={`node-${component.id}`} className="group/node flex gap-3">
       <SpineGutter>
@@ -902,6 +922,29 @@ function RailNodeCard({ component, index, selected, issues, weekSessionDate, dra
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
             {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
+            {/* Says what is missing rather than filling it in: this session is
+                not on the calendar and not in the Teams series until it has a
+                date of its own. The week's date is offered as context, marked
+                as the week's so it cannot be read as this session's. */}
+            {isLiveSession && !scheduledDate && (
+              <span
+                title="This live session has no date, so it is not on the calendar and is not sent to Teams. Give it one in its settings."
+                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+              >
+                <AppIcon className="ri-calendar-close-line text-[10px]"></AppIcon>
+                No date
+              </span>
+            )}
+            {weekDate && <span className="tabular-nums text-foreground-300">week: {formatDateLabel(weekDate)}</span>}
+            {onHoliday && (
+              <span
+                title="This live session falls on a holiday. It is unchanged: same date, same week, still scheduled."
+                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+              >
+                <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
+                Holiday
+              </span>
+            )}
           </span>
         </span>
         {(onDuplicate || onDelete) && (
@@ -1052,13 +1095,17 @@ export interface WeekComponentRailProps {
   // The week's own calendar date, for a live-session row that has not been
   // given its own date yet. Unset for a template, which has no calendar date.
   weekSessionDate?: string;
+  // The delivery days of this week a ticked holiday falls on. Passed only by a
+  // caller that has read the module's session plan; see RailNodeProps for what
+  // it does (warn) and does not do (anything else).
+  holidayDates?: string[];
   // Opens the caller's reuse picker. Optional because the rail is shared: the
   // module builder owns the picker and the copy, and a surface without one (a
   // week template, say) simply does not pass it and shows no Reuse action.
   onReuseComponents?: () => void;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, onReuseComponents }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, components, selectedId, onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, onReuseComponents }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const sensors = useSensors(
@@ -1153,6 +1200,7 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
                     onDelete={() => removeComponent(component.id)}
                     issues={validateWeekComponent(component).length}
                     weekSessionDate={weekSessionDate}
+                    holidayDates={holidayDates}
                   />
                   <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === components.length - 1} />
                 </Fragment>
@@ -1160,7 +1208,7 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
             </div>
           </SortableContext>
           <DragOverlay>
-            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} /> : null}
+            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} holidayDates={holidayDates} /> : null}
           </DragOverlay>
         </DndContext>
       )}

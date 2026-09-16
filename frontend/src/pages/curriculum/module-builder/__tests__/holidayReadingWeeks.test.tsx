@@ -164,4 +164,36 @@ describe('what the holiday notice shows', () => {
     // Its own date, in the same words the rest of the curriculum reads dates in.
     expect(detail).toContain('3 May 2027');
   });
+
+  it('leaves out the closed day when the week header above already prints it', () => {
+    render(
+      <WeekHolidayNotice
+        slot={{ slotNumber: 5, date: '2027-05-03', day: 'Monday', holidays: [EARLY_MAY] }}
+        weekDate="2027-05-03"
+      />,
+    );
+
+    const detail = screen.getByTestId('week-holiday-notice').textContent || '';
+    expect(detail).toContain('falls on a holiday');
+    // The holiday's own record still reads in full -- only the repeat of the
+    // week's date is gone.
+    expect(detail).toContain('Early May bank holiday');
+    // The removed span is the one carrying the weekday name -- the holiday's
+    // own date line still legitimately reads "03 May 2027", which is a
+    // substring match away from a false pass here.
+    expect(detail).not.toContain('Monday');
+  });
+
+  it('still names the closed day when it is not the one the header shows', () => {
+    // A week delivering Monday and Friday: the header says Monday, the holiday
+    // closed the Friday. Dropping the day here would hide which one it is.
+    render(
+      <WeekHolidayNotice
+        slot={{ slotNumber: 6, date: '2027-05-07', day: 'Friday', holidays: [EARLY_MAY] }}
+        weekDate="2027-05-03"
+      />,
+    );
+
+    expect(screen.getByTestId('week-holiday-notice').textContent || '').toContain('7 May 2027');
+  });
 });

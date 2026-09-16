@@ -369,6 +369,10 @@ export default function ModuleBuilder() {
   const [duplicatingModuleComplete, setDuplicatingModuleComplete] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
+  // Which list the catalogue is showing. Nothing is read until the archive is
+  // opened; see useCurriculumArchive, which Cohorts and Groups share.
+  const [showArchived, setShowArchived] = useState(false);
+  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
@@ -1509,7 +1513,12 @@ export default function ModuleBuilder() {
   // arrived as `options`, `options.closeAfterSave` read undefined, and every
   // save threw up a "Returning to the modules list" alert and then closed the
   // workspace. Leaving is what the guarded Back button is for.
-  const persistWorkingModule = useCallback(async () => {
+  // `source` only labels the save for the audit trail; it changes nothing about
+  // what is sent or how. Callers that are the reader pressing Save leave it
+  // alone, and the auto-save effect names itself so its writes are recorded as
+  // ordinary edits with an auto-save source rather than as an action of their
+  // own. Never passed straight to an onClick -- see the note above.
+  const persistWorkingModule = useCallback(async (source: 'auto-save' | 'manual' = 'manual') => {
     if (!workingModule) return null;
     // The backend refuses this with a 400 anyway; saying so here keeps the
     // reader's unsaved work in the workspace instead of round-tripping it.
@@ -1569,6 +1578,7 @@ export default function ModuleBuilder() {
       setWorkingModule(moduleToSave);
       const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
         expectedRevision: serverRevisionRef.current,
+        source,
       });
       if (saveRequestRef.current !== requestId) return null;
       // The write landed, so this is the version the next save is measured
@@ -1669,7 +1679,7 @@ export default function ModuleBuilder() {
       // module is still dirty afterwards, and dirty is this effect's trigger.
       // Editing again produces a different state, which is a new attempt.
       autoSaveAttemptRef.current = workingModuleSnapshot;
-      void persistWorkingModule();
+      void persistWorkingModule('auto-save');
     }, AUTO_SAVE_QUIET_MS);
     // Every further edit cancels the pending save and starts the wait again, so
     // a long burst of typing costs one request rather than one per pause.
@@ -1793,8 +1803,40 @@ export default function ModuleBuilder() {
       reload({ silent: true });
     } catch (err) {
       setDeletingModuleId(null);
-      setActionMessage(err instanceof Error ? err.message : 'Unable to delete module.');
+      setActionMessage(err instanceof Error ? err.message : 'Unable to archive module.');
       throw err;
+    }
+  };
+
+  // Read only once the archive is opened, and re-read after every restore or
+  // permanent delete: the list has to lose the row that was just dealt with.
+  const archive = useCurriculumArchive(fetchArchivedCurriculumModules, showArchived);
+
+  const restoreArchivedModule = async (module: CurriculumArchivedModule) => {
+    if (archiveBusyId) return;
+    setArchiveBusyId(module.id);
+    try {
+      await restoreModuleWithConfirm(module, async () => {
+        archive.reload();
+        // The module is back in the catalogue, so the catalogue behind this
+        // view has to hear about it too.
+        await reload({ silent: true });
+      });
+    } finally {
+      setArchiveBusyId(null);
+    }
+  };
+
+  const deleteArchivedModule = async (module: CurriculumArchivedModule) => {
+    if (archiveBusyId) return;
+    setArchiveBusyId(module.id);
+    try {
+      await permanentlyDeleteModuleWithConfirm(module, async () => {
+        archive.reload();
+        await reload({ silent: true });
+      });
+    } finally {
+      setArchiveBusyId(null);
     }
   };
 
@@ -1803,13 +1845,13 @@ export default function ModuleBuilder() {
     const weekCount = module.weekStructure.length || module.weeks || 0;
     const componentCount = module.lessonCount || module.weekStructure.reduce((total, week) => total + week.components.length, 0);
     await showCurriculumConfirm({
-      title: 'Delete this module?',
-      text: `${module.title} and its authoring structure will be removed. This deletes ${weekCount} weeks, ${componentCount} components, KSB mappings, completion criteria and advanced details from Module Builder.`,
+      title: 'Archive this module?',
+      text: `${module.title} leaves the catalogue with its ${weekCount} weeks, ${componentCount} components, KSB mappings, completion criteria and advanced details. Nothing is deleted - it can be brought back from View archive.`,
       icon: 'warning',
-      confirmButtonText: 'Yes, delete module',
+      confirmButtonText: 'Yes, archive module',
       cancelButtonText: 'Cancel',
-      successTitle: 'Module deleted',
-      successText: `${module.title} and all authoring components were deleted.`,
+      successTitle: 'Module archived',
+      successText: `${module.title} is in the archive, with everything authored under it.`,
       onConfirm: async () => {
         await deleteModule(module);
       },
@@ -2406,10 +2448,21 @@ export default function ModuleBuilder() {
                 </p>
               </div>
             </div>
-            <button onClick={() => setCreateOpen(true)} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70">
-              <AppIcon className="ri-add-line"></AppIcon>
-              New module
-            </button>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {/* Count only once the archive has been read: until then there is
+                  nothing to count, and a badge claiming 0 would be a number the
+                  page has not checked. */}
+              <ArchiveToggleButton
+                active={showArchived}
+                count={archive.loaded ? archive.records.length : null}
+                onToggle={() => setShowArchived(current => !current)}
+                label="View archive"
+              />
+              <button onClick={() => setCreateOpen(true)} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70">
+                <AppIcon className="ri-add-line"></AppIcon>
+                New module
+              </button>
+            </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-background-200 pt-3">
             <BuilderStatChip icon="ri-stack-line" label="Modules" value={catalogueModules.length} />
@@ -2453,6 +2506,16 @@ export default function ModuleBuilder() {
           </div>
         )}
 
+        {showArchived ? (
+          <ArchivedModulesPanel
+            records={archive.records}
+            loading={archive.loading}
+            error={archive.error}
+            busyId={archiveBusyId}
+            onRestore={module => { void restoreArchivedModule(module); }}
+            onDelete={module => { void deleteArchivedModule(module); }}
+          />
+        ) : (
         <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0">
@@ -2594,6 +2657,7 @@ export default function ModuleBuilder() {
             )}
           </div>
         </div>
+        )}
         <ModuleFormDrawer
           open={createOpen}
           defaults={{
@@ -3085,6 +3149,19 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             <p className="mt-0.5 text-[11px] text-foreground-500">Weeks, in order</p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            {/* Teams lives on its own page, so this only carries the reader over
+                to it with this module already selected. Nothing here writes to
+                Teams. */}
+            {module.catalogueId && (
+              <Link
+                to={`/curriculum/teams-meetings?module=${encodeURIComponent(module.catalogueId)}`}
+                title="Open this module on the Teams Meetings page to see its live sessions"
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 text-[11px] font-bold text-violet-700 transition-smooth hover:bg-violet-100"
+              >
+                <AppIcon className="ri-vidicon-line"></AppIcon>
+                View sessions
+              </Link>
+            )}
             {/* The only control on this screen that reads the saved week-template
                 library, which is why it is the only one still called a template. */}
             <button onClick={onAddWeekFromTemplate} title="Add a whole new week, built from a saved week template" className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
@@ -3215,10 +3292,15 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   session runs as authored. Whether it becomes a reading week,
                   keeps its session or something else is the author's call. */}
               {weekHolidayNotices.map(slot => (
-                <WeekHolidayNotice key={`holiday-${slot.date}`} slot={slot} compact />
+                <WeekHolidayNotice key={`holiday-${slot.date}`} slot={slot} weekDate={week.sessionDate} compact />
               ))}
               {expanded && (
                 <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
+                  {/* `holidayDates` is drawn from the same slots the week's
+                      own notice above uses, so the warning on the week and the
+                      warning on its live session always name the same day. It
+                      warns and stops there -- the session keeps its date, its
+                      week and its Teams meeting. */}
                   <WeekComponentRail
                     weekId={week.id}
                     components={week.components}
@@ -3228,6 +3310,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     pointsByType={pointsByType}
                     variant="nested"
                     weekSessionDate={week.sessionDate}
+                    holidayDates={weekHolidayNotices.map(slot => slot.date)}
                     onReuseComponents={() => onReuseComponents(week.id)}
                   />
                 </div>
@@ -4527,9 +4610,6 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${readyPercent === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
               {readyPercent}%
             </span>
-          </div>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
-            <div className={`h-full rounded-full ${readyPercent === 100 ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${readyPercent}%` }} />
           </div>
         </div>
         <div className="space-y-4 p-4">
@@ -6147,6 +6227,182 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
+/**
+ * The module archive: where "Archive module" puts a module, and the way back.
+ *
+ * Restore and Delete permanently are deliberately not the matched pair they
+ * look like. One is reversible and the other is the only permanent delete in
+ * Curriculum Studio that destroys authored content, so they are worded and
+ * coloured apart, and the notice above says so once for the whole list.
+ */
+function ArchivedModulesPanel({ records, loading, error, busyId, onRestore, onDelete }: {
+  records: CurriculumArchivedModule[];
+  loading: boolean;
+  error: string | null;
+  /** The module a restore or a delete is currently running for. */
+  busyId: string | null;
+  onRestore: (module: CurriculumArchivedModule) => void;
+  onDelete: (module: CurriculumArchivedModule) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [programmeFilter, setProgrammeFilter] = useState('All');
+
+  const programmeOptions = useMemo(() => {
+    const names = new Set<string>();
+    records.forEach(module => { if (module.programme) names.add(module.programme); });
+    return ['All', ...Array.from(names).sort((a, b) => a.localeCompare(b))];
+  }, [records]);
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return records.filter(module => {
+      if (programmeFilter !== 'All' && module.programme !== programmeFilter) return false;
+      if (!needle) return true;
+      return [module.title, module.programme, module.cohort, module.group]
+        .some(value => (value || '').toLowerCase().includes(needle));
+    });
+  }, [records, query, programmeFilter]);
+
+  const filtersActive = Boolean(query) || programmeFilter !== 'All';
+
+  return (
+    <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[13px] font-bold text-foreground-950">Archived modules</p>
+            <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
+              {filtered.length} of {records.length} archived
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-0 grow sm:w-64 sm:grow-0">
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
+              <input
+                type="text"
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder="Search archived modules..."
+                className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50"
+              />
+            </div>
+            <select
+              aria-label="Programme"
+              value={programmeFilter}
+              onChange={event => setProgrammeFilter(event.target.value)}
+              className={FILTER_SELECT_CLASS}
+            >
+              {programmeOptions.map(option => <option key={option} value={option}>{option === 'All' ? 'All programmes' : option}</option>)}
+            </select>
+            <button
+              type="button"
+              disabled={!filtersActive}
+              onClick={() => { setQuery(''); setProgrammeFilter('All'); }}
+              className="h-10 rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+        <ArchiveNotice>
+          Restoring brings a module back into the catalogue with the weeks and components archived
+          with it. Deleting permanently removes those from the database for good - it is the one
+          delete in Curriculum Studio that destroys authored content. Learner accounts and progress
+          are never touched by either.
+        </ArchiveNotice>
+      </div>
+      <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
+        {loading && !records.length ? (
+          <ModuleListSkeleton />
+        ) : error ? (
+          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
+            {error}
+          </div>
+        ) : filtered.length ? (
+          <div className="space-y-3">
+            {filtered.map(module => {
+              const busy = busyId === module.id;
+              // Archived because its programme was, rather than on its own: the
+              // programme is what has to come back, and it brings this with it.
+              const viaProgramme = Boolean(module.archivedViaParent) || module.programmeArchived;
+              return (
+                <div key={module.id} className="rounded-xl border border-background-200 bg-background-50 px-4 py-3 shadow-sm">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-bold text-foreground-900">{module.title || module.id}</p>
+                      <p className="mt-1 truncate text-[11px] text-foreground-500">
+                        {[module.programme, module.cohort, module.group].filter(Boolean).join(' / ') || 'No delivery scope'}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
+                          {module.weeks} week{module.weeks === 1 ? '' : 's'}
+                        </span>
+                        <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
+                          {module.components} component{module.components === 1 ? '' : 's'}
+                        </span>
+                        {module.archivedAt && (
+                          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800">
+                            Archived {formatDateLabel(module.archivedAt)}
+                          </span>
+                        )}
+                      </div>
+                      {viaProgramme && (
+                        <p className="mt-2 text-[11px] font-semibold text-amber-800">
+                          Archived with its programme. Restore the programme and this module comes back with it.
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onRestore(module)}
+                        disabled={busy || module.programmeArchived}
+                        title={module.programmeArchived
+                          ? `${module.programme || 'Its programme'} is archived too - restore the programme and this module comes back with it`
+                          : 'Put this module back in the catalogue, with the weeks and components archived with it'}
+                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:border-background-200 disabled:bg-background-100 disabled:text-foreground-300"
+                      >
+                        <AppIcon className={busy ? 'ri-loader-4-line animate-spin' : 'ri-arrow-go-back-line'}></AppIcon>
+                        Restore module
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDelete(module)}
+                        disabled={busy}
+                        title="Remove this module, its weeks and its components from the database for good"
+                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <AppIcon className="ri-delete-bin-line"></AppIcon>
+                        Delete permanently
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+            <span className="grid h-14 w-14 place-items-center rounded-full bg-primary-50 text-primary-500">
+              <AppIcon className="ri-archive-line text-2xl"></AppIcon>
+            </span>
+            <div>
+              <p className="text-[13px] font-semibold text-foreground-700">
+                {records.length ? 'No archived modules match your search' : 'Nothing archived'}
+              </p>
+              <p className="mt-1 max-w-xs text-[12px] text-foreground-400">
+                {records.length
+                  ? 'Try a different search or clear the programme filter.'
+                  : 'Archiving a module from the catalogue puts it here, where it can be restored or removed for good.'}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ModuleCatalogueCard({
   module,
   teamsSummary,
@@ -6236,7 +6492,7 @@ function ModuleCatalogueCard({
           </button>
           <ModuleCardActionButton label="Edit module" icon="ri-edit-line" onClick={onSettings} />
           <ModuleCardActionButton label="Duplicate module" icon="ri-file-copy-line" onClick={onDuplicate} />
-          <ModuleCardActionButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
+          <ModuleCardActionButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
         </div>
       </div>
     </article>

@@ -3930,7 +3930,13 @@ def insert_row(table, payload):
         f'values ({placeholders}) returning *'
     )
     try:
-        return execute_returning(query, [values[column] for column in columns])[0]
+        row = execute_returning(query, [values[column] for column in columns])[0]
+        # The created row is its own snapshot, so recording the create costs no
+        # extra read. Without this a programme, a holiday or a week template
+        # entered history only at its first EDIT, and "who created this?" -- the
+        # first question anyone asks of an audit trail -- had no answer at all.
+        versioning.record_rows(table, [row])
+        return row
     except DatabaseError as exc:
         if 'no column named' not in str(exc).lower():
             raise
@@ -3946,7 +3952,9 @@ def insert_row(table, payload):
             f'({", ".join(quote_ident(column) for column in columns)}) '
             f'values ({placeholders}) returning *'
         )
-        return execute_returning(query, [values[column] for column in columns])[0]
+        row = execute_returning(query, [values[column] for column in columns])[0]
+        versioning.record_rows(table, [row])
+        return row
 
 
 def update_rows(table, where_sql, where_params, payload, allow_null_columns=None):
@@ -3962,7 +3970,13 @@ def update_rows(table, where_sql, where_params, payload, allow_null_columns=None
 
 def delete_rows(table, where_sql, where_params):
     query = f'delete from {table_name(table)} where {where_sql} returning *'
-    return execute_returning(query, where_params)
+    rows = execute_returning(query, where_params)
+    # Recorded from the rows the delete returned, which is the only moment the
+    # content still exists. Querying the record afterwards finds nothing, and an
+    # audit trail whose delete entry cannot say what was deleted is the one entry
+    # that most needed to.
+    versioning.record_deleted_rows(table, rows)
+    return rows
 
 
 def row_has_deleted_at(row):
@@ -8544,70 +8558,102 @@ def meaningful_session_names(names):
     return clean_names
 
 
+#: Matches a stored component type against the live-session type whichever way
+#: it was spelled. ``normalise_component_type`` does the same in Python; this is
+#: the SQL half, so the narrow read below can ask the database for live-session
+#: rows only instead of pulling every component's ``settings_json``.
+LIVE_SESSION_TYPE_SQL = "lower(replace(coalesce(type, ''), '-', '_')) = 'live_session'"
+
+
 def authoring_session_links(module_catalogue_id):
+    """One entry per authored live session in a module, in course order.
+
+    See ``authoring_session_links_by_catalogue`` for the rule. Kept as the
+    single-module spelling so the two cannot describe different things.
+    """
     module_catalogue_id = clean_str(module_catalogue_id)
     if not module_catalogue_id:
         return []
-    try:
-        structure = get_authoring_structure_payload(module_catalogue_id)
-    except Exception:
-        logger.debug('Unable to read authored session links for %s.', module_catalogue_id, exc_info=True)
-        return []
-    links = []
-    for week in (structure or {}).get('weekStructure') or []:
-        live_component = next((
-            component for component in (week.get('components') or [])
-            if normalise_component_type(component.get('type')) == 'live_session'
-        ), None)
-        links.append({
-            'weekId': week.get('id') or '',
-            'componentId': (live_component or {}).get('id') or '',
-            'title': (live_component or {}).get('title') or week.get('title') or '',
-        })
-    return links
+    return authoring_session_links_by_catalogue([module_catalogue_id]).get(module_catalogue_id, [])
 
 
 def authoring_session_links_by_catalogue(module_catalogue_ids):
+    """Every authored live session of each module, in course-structure order.
+
+    **One live-session component is one live session.** The course structure is
+    the authority for how many a module has and for when each one runs, so this
+    returns one entry per live-session component -- not one per week. A week
+    delivering twice (a Mon+Fri module) owns two of them, and each carries its
+    own component id, so both get their own Teams occurrence and their own join
+    link instead of the second one landing on nothing.
+
+    Each entry also carries the date the component itself holds
+    (``settings.sessionDate`` and its clock), which is what dates the session
+    list and, through it, everything sent to the Teams calendar. A component
+    that has never been dated carries an empty ``date`` and is a gap for the
+    screens to report -- no caller may date it from the generated plan, because
+    a date nobody chose still creates a real calendar entry and a real meeting.
+
+    Weeks with no live session contribute nothing. A week is a week -- reading,
+    assignments and the rest stand -- but it delivers no live session, so there
+    is no meeting to create for it.
+    """
     module_catalogue_ids = unique([clean_str(value) for value in module_catalogue_ids if clean_str(value)])
     if not module_catalogue_ids:
         return {}
     try:
         placeholders = ','.join(['%s'] * len(module_catalogue_ids))
-        week_rows = authoring_fetch_all(
+        week_rows = active_week_rows(authoring_fetch_all(
             AUTHORING_WEEKS_TABLE,
             f'module_catalogue_id in ({placeholders})',
             module_catalogue_ids,
             'module_catalogue_id, display_order, week_number, id',
-        )
-        component_rows = authoring_fetch_all(
+        ))
+        # Full rows, because `settings_json` is where a component's own date
+        # lives -- affordable only because the type filter runs in SQL and
+        # leaves roughly one row per week instead of the whole 24 MB column.
+        component_rows = active_component_rows(authoring_fetch_all(
             AUTHORING_COMPONENTS_TABLE,
-            f'module_catalogue_id in ({placeholders})',
+            f'module_catalogue_id in ({placeholders}) and {LIVE_SESSION_TYPE_SQL}',
             module_catalogue_ids,
             'module_catalogue_id, week_id, display_order, id',
-            # Reads id/title/type/week_id only; settings_json is 24 MB.
-            exclude_columns=COMPONENT_HEAVY_COLUMNS,
-        )
-    except Exception:
+        ))
+    except (Exception, AssertionError):
+        # AssertionError included deliberately: a SimpleTestCase blocks database
+        # access with one, and every caller here has to degrade to "no authored
+        # live sessions" rather than take the whole session list down with it.
         logger.debug('Unable to batch read authored session links.', exc_info=True)
         return {}
 
-    live_components_by_week = {}
+    live_components_by_week = defaultdict(list)
     for row in component_rows:
+        # The SQL filter is the fast path; this is the authority, so a spelling
+        # it somehow let through is still rejected here.
         if normalise_component_type(row.get('type')) != 'live_session':
             continue
         week_id = clean_str(row.get('week_id'))
-        if week_id and week_id not in live_components_by_week:
-            live_components_by_week[week_id] = row
+        if week_id:
+            live_components_by_week[week_id].append(row)
 
     links_by_catalogue = defaultdict(list)
-    for row in week_rows:
-        week_id = clean_str(row.get('id'))
-        component = live_components_by_week.get(week_id) or {}
-        links_by_catalogue[clean_str(row.get('module_catalogue_id'))].append({
-            'weekId': week_id,
-            'componentId': clean_str(component.get('id')),
-            'title': component.get('title') or row.get('title') or '',
-        })
+    for week_row in week_rows:
+        week_id = clean_str(week_row.get('id'))
+        catalogue_id = clean_str(week_row.get('module_catalogue_id'))
+        for component in live_components_by_week.get(week_id) or []:
+            settings = component_builder_settings(component)
+            settings = settings if isinstance(settings, dict) else {}
+            links_by_catalogue[catalogue_id].append({
+                'weekId': week_id,
+                'componentId': clean_str(component.get('id')),
+                'title': component.get('title') or week_row.get('title') or '',
+                # The component's own schedule. Empty for one never dated, which
+                # the caller reads as "take this position's planned slot".
+                'date': format_date(settings.get('sessionDate')),
+                'startTime': clean_str(settings.get('sessionTime')),
+                'durationMinutes': parse_int(
+                    settings.get('durationMinutes') or settings.get('teamsDurationMinutes'), 0,
+                ),
+            })
     return dict(links_by_catalogue)
 
 
@@ -9023,41 +9069,78 @@ def cohort_holiday_period_end(cohort):
 
 
 def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_cohort=None):
+    """The live sessions each authored module delivers, from its own structure.
+
+    **One live-session component is one session.** The course structure decides
+    how many there are and when each one runs, not ``sessions_number``: the
+    module drawer says how many WEEKS the module has, and the author then puts
+    live sessions inside them. Delete one and the module delivers one session
+    fewer; date one by hand and that is the date it runs on. Everything
+    downstream of this list -- the calendar, the Teams occurrences and their
+    join links, attendance -- therefore counts and dates exactly what the Course
+    structure shows.
+
+    **Nothing is invented here.** A module with no authored live sessions
+    delivers none, and a live session nobody has dated is not placed on a date
+    of our choosing. Both used to be filled in from ``sessions_number`` and the
+    generated weekly plan, which put sessions on the calendar that no author had
+    written and dates on sessions that no author had chosen -- and then created
+    Teams meetings for them. Where the author has not done the job, the screens
+    say so (``moduleAuthoredLiveSessions`` and the Schedule tab in the module
+    workspace); they do not show a plausible-looking stand-in.
+
+    A ticked holiday landing on one of these dates is named in
+    ``skippedHolidays`` and does nothing else. It is read off the date itself,
+    so it stays right for a component whose date was moved by hand.
+    """
     sessions = []
-    for module in authoring_module_rows or []:
+    modules = [module for module in (authoring_module_rows or []) if clean_str(module.get('module_catalogue_id'))]
+    live_sessions_by_catalogue = authoring_session_links_by_catalogue([
+        clean_str(module.get('module_catalogue_id')) for module in modules
+    ])
+    for module in modules:
         status = clean_str(module.get('status')).lower()
         if status == 'archived':
             continue
         catalogue_id = clean_str(module.get('module_catalogue_id'))
-        if not catalogue_id:
+        # Only live sessions that carry a date of their own. An undated one is
+        # an unfinished module, reported as such rather than dated by us.
+        live_links = [
+            link for link in (live_sessions_by_catalogue.get(catalogue_id) or [])
+            if parse_date(link.get('date'))
+        ]
+        if not live_links:
             continue
-        session_count = parse_int(module.get('sessions_number'), 0)
-        if session_count <= 0:
-            continue
-        start = parse_date(module.get('start_date'))
-        if not start:
-            continue
-        # The cohort's ticked holidays, so a generated date never lands on one
-        # the cohort closed. Without them this list disagreed with the module
-        # form's own preview and with the dates sent to the Teams calendar.
+        # The cohort's ticked holidays. They move nothing -- a holiday is a
+        # warning -- but a date that lands on one has to be able to say so.
         applied_holidays = (holidays_by_cohort or {}).get(clean_str(module.get('cohort_id'))) or []
-        session_plan = module_delivery_session_plan(module, session_count, start, applied_holidays)
-        plan = session_plan.get('sessions') or []
-        schedule_warnings = session_plan.get('warnings') or []
+        own_holidays = parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), [])
+        closed_dates = holiday_date_set([
+            *applied_holidays,
+            *(own_holidays if isinstance(own_holidays, list) else []),
+        ])
         title = clean_str(module.get('title')) or catalogue_id
         programme_name = clean_str(module.get('programme_name')) or 'Unassigned programme'
         programme_id = clean_str(module.get('programme_id')) or f'program-{slugify(programme_name)}'
         group_name = clean_str(module.get('group_name')) or clean_str(module.get('group_id')) or 'Unassigned group'
         cohort_name = clean_str(module.get('cohort_name')) or clean_str(module.get('cohort_id')) or 'Unassigned cohort'
-        start_time = clean_str(module.get('session_start_time')) or '09:00'
-        end_time = clean_str(module.get('session_end_time')) or '10:00'
         tutor = clean_str(module.get('tutor_name')) or 'Unassigned'
 
-        for index in range(session_count):
-            planned_session = plan[index] if index < len(plan) else {}
-            session_date = parse_date(planned_session.get('date')) if planned_session else start + timedelta(days=index * 7)
-            if not session_date:
-                continue
+        for index, link in enumerate(live_links):
+            session_date = parse_date(link.get('date'))
+            iso_date = session_date.isoformat()
+            # The module's clock stands in for the time of day only, and only
+            # because a module-wide slot is a real stored value the author set
+            # on the module -- not a guess. The DATE is never stood in for.
+            clock_start, clock_end, _clock_duration = module_session_clock(module, session_date=iso_date)
+            component_start = clean_str(link.get('startTime'))
+            component_duration = parse_int(link.get('durationMinutes'), 0)
+            start_time = component_start or clock_start
+            end_time = (
+                clock_time_plus_minutes(start_time, component_duration)
+                if component_start and component_duration > 0
+                else clock_end
+            )
             sessions.append({
                 'id': f'module-{catalogue_id}-session-{index + 1}',
                 'trainingPlanId': module.get('source_id') or '',
@@ -9067,13 +9150,17 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
                 'groupId': clean_str(module.get('group_id')),
                 'moduleId': catalogue_id,
                 'moduleCatalogueId': catalogue_id,
-                'weekId': f'{catalogue_id}-week-{index + 1}',
+                # The week this live session really sits in, and the component
+                # that is this session -- so a join link written back reaches
+                # the row the author is looking at.
+                'weekId': clean_str(link.get('weekId')),
+                'componentId': clean_str(link.get('componentId')),
                 'title': f'{title} #{index + 1}',
                 'type': 'Live Session',
-                'date': session_date.isoformat(),
-                'day': planned_session.get('day') or session_date.strftime('%A'),
-                'startTime': planned_session.get('startTime') or start_time,
-                'endTime': planned_session.get('endTime') or end_time,
+                'date': iso_date,
+                'day': session_date.strftime('%A'),
+                'startTime': start_time,
+                'endTime': end_time,
                 'tutor': tutor,
                 'group': group_name,
                 'cohort': cohort_name,
@@ -9081,8 +9168,10 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
                 'venue': 'LMS',
                 'module': title,
                 'week': index + 1,
-                'skippedHolidays': planned_session.get('skippedHolidays') or [],
-                'scheduleWarnings': schedule_warnings,
+                # Read off this session's own date, so a hand-moved component
+                # still warns about the day it actually lands on.
+                'skippedHolidays': [iso_date] if session_date in closed_dates else [],
+                'scheduleWarnings': [],
                 'status': 'completed' if session_date < date.today() else 'scheduled',
                 'ksbCodes': [],
             })
@@ -9129,6 +9218,21 @@ def parse_clock_minutes(value):
     if hours > 23 or minutes > 59:
         return None
     return hours * 60 + minutes
+
+
+def clock_time_plus_minutes(time_value, minutes):
+    """``('09:30', 120)`` -> ``'11:30'``. Empty when either side is unreadable.
+
+    Used to close a live session that carries its own start and duration -- a
+    component stores those two, never an end time -- so the calendar can state
+    the window the session really occupies rather than the module's default one.
+    """
+    start = parse_clock_minutes(time_value)
+    length = parse_int(minutes, 0)
+    if start is None or length <= 0:
+        return ''
+    total = (start + length) % (24 * 60)
+    return f'{total // 60:02d}:{total % 60:02d}'
 
 
 def module_time_window(module):
@@ -9724,12 +9828,25 @@ def group_tutor_assignment_conflict(group_id, tutor_name, module_rows=None):
     return first_tutor_schedule_conflict(candidates, module_rows=module_rows)
 
 
-def prefer_authoring_module_sessions(training_sessions, authoring_sessions):
-    authoring_catalogue_ids = {
-        clean_str(session.get('moduleCatalogueId'))
-        for session in authoring_sessions
-        if clean_str(session.get('moduleCatalogueId'))
-    }
+def prefer_authoring_module_sessions(training_sessions, authoring_sessions, authoring_catalogue_ids=None):
+    """The Course structure wins for every authoring module, not just the ones it dated.
+
+    ``authoring_catalogue_ids`` is the id of every module the authoring system owns,
+    independent of whether it delivered any sessions. Deriving that set from
+    ``authoring_sessions`` instead -- as this used to do -- read a module with zero
+    authored live sessions as a module the authoring system had no opinion on, so it
+    fell through to the legacy generator below, which still invents its sessions from
+    ``sessions_number``. A module with no live-session components has to deliver none,
+    not the training row's old count.
+    """
+    if authoring_catalogue_ids is None:
+        authoring_catalogue_ids = {
+            clean_str(session.get('moduleCatalogueId'))
+            for session in authoring_sessions
+            if clean_str(session.get('moduleCatalogueId'))
+        }
+    else:
+        authoring_catalogue_ids = {clean_str(value) for value in authoring_catalogue_ids if clean_str(value)}
     filtered_training = [
         session for session in training_sessions
         if clean_str(session.get('moduleCatalogueId')) not in authoring_catalogue_ids
@@ -9949,7 +10066,11 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
             authoring_modules,
             cohort_selected_holidays_by_id(cohorts, rows.get('holidays', [])),
         )
-        sessions = prefer_authoring_module_sessions(training_sessions, authoring_sessions)
+        sessions = prefer_authoring_module_sessions(
+            training_sessions,
+            authoring_sessions,
+            authoring_catalogue_ids=[row.get('module_catalogue_id') for row in authoring_modules],
+        )
         session_count = len(sessions)
     # Every active profile is exposed, whether or not a programme currently
     # points at it. A KSB framework is a reusable standard (an IfATE profile is
@@ -12791,9 +12912,31 @@ def free_programme_fetch_all(table, where_sql='', params=None, order_sql=''):
 
 
 def authoring_delete(table, where_sql='1 = 1', params=None):
+    """Hard-delete authoring rows, recording what they held before they went.
+
+    ``returning *`` is asked for only when the table is one history covers, so
+    the sweeps that clear rows nothing has ever pointed at do not pay to
+    serialise them. On sqlite, which has no DELETE ... RETURNING, the rows are
+    read back inside the same transaction first.
+    """
     ensure_module_authoring_tables()
-    with connection.cursor() as cursor:
-        cursor.execute(f'delete from {authoring_table_name(table)} where {where_sql}', params or [])
+    versioned = table in versioning.VERSIONED_TABLES
+    if not versioned:
+        with connection.cursor() as cursor:
+            cursor.execute(f'delete from {authoring_table_name(table)} where {where_sql}', params or [])
+        return
+    if connection.vendor == 'postgresql':
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'delete from {authoring_table_name(table)} where {where_sql} returning *',
+                params or [],
+            )
+            rows = rows_as_dicts(cursor)
+    else:
+        rows = authoring_fetch_all(table, where_sql, params or [], ensure_tables=False)
+        with connection.cursor() as cursor:
+            cursor.execute(f'delete from {authoring_table_name(table)} where {where_sql}', params or [])
+    versioning.record_deleted_rows(table, rows)
 
 
 def free_programme_delete(table, where_sql, params=None):
@@ -14333,6 +14476,41 @@ def payload_coach_validation(component, default=True):
     return default
 
 
+def component_assurance_flag(component, stored_row, camel_key, column, default):
+    """One assurance flag, resolved without inventing an answer.
+
+    The three flags - reflection, tutor validation, coach validation - are
+    authored on one screen and written by two different save paths, and the
+    module-structure save rewrites every component in the module whether or not
+    the author touched it. So the only safe reading of a payload that does not
+    mention a flag is "not supplied", and the only safe response is to keep what
+    the row already held.
+
+    It used to read ``bool_payload(component.get('reflectionRequired'))``, which
+    cannot tell an explicit ``false`` from an absent key and answered ``False``
+    to both, while coach validation defaulted the other way and answered
+    ``True``. A component object that had lost the two keys therefore came back
+    from a save with reflection cleared and coach validation switched on -- and
+    because the two defaults point in opposite directions, the pair flipped
+    together in opposite directions, over and over, as the author moved between
+    a screen that carried the flags and one that did not. It is visible in the
+    revision log as ~1,100 paired flips across 600 components.
+
+    The schema default is used only when there is no stored row to preserve,
+    which is to say only when this component is being created.
+    """
+    for key in (camel_key, column):
+        if key in component:
+            return bool_payload(component.get(key))
+    if stored_row is None:
+        return default
+    stored = stored_row.get(column)
+    # A row written before the column existed reports None, and that means
+    # "nobody ever set this", not "off" - the same reading component_coach_validation
+    # applies to a narrowed read.
+    return default if stored is None else bool_payload(stored)
+
+
 def component_week_label(row):
     week_number = parse_int(row.get('week_number'), 0)
     return f'Week {week_number}' if week_number else (row.get('title') or 'Week 1')
@@ -15121,10 +15299,24 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     created = 0
     handled_component_ids = set()
 
-    def settings_for_session(session_index, existing_settings=None):
-        """Everything that belongs to session ``session_index`` (0-based)."""
+    def settings_for_session(slot_index, occurrence_index, existing_settings=None):
+        """Everything that belongs to one live session.
+
+        Two indexes, because they count different things and a week with no live
+        session separates them:
+
+        * ``slot_index`` is the position in the module's dated plan. A
+          content-only week still occupies one, so week N stays on delivery slot
+          N -- that is what dates a live session nobody has dated by hand.
+        * ``occurrence_index`` is the position in the Teams series, which counts
+          live sessions and nothing else. One live-session component is one
+          occurrence, so a week that delivers none consumes no occurrence.
+
+        Counting the Teams occurrence with the slot index put every live session
+        after a content-only week on the previous session's meeting.
+        """
         existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
-        occurrence = next((row for row in occurrence_rows if parse_int(row.get('session_number'), 0) == session_index + 1), None)
+        occurrence = next((row for row in occurrence_rows if parse_int(row.get('session_number'), 0) == occurrence_index + 1), None)
         if not occurrence and stored_calendar_series(series_row):
             return {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
         session_settings = live_occurrence_component_settings(occurrence, series_settings)
@@ -15133,7 +15325,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             for key, value in series_settings.items()
             if key not in {'sessionDate', 'sessionDay', 'sessionTime', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc'}
         }
-        planned = session_plan[session_index] if session_index < len(session_plan) else {}
+        planned = session_plan[slot_index] if slot_index < len(session_plan) else {}
         session_date = format_date(planned.get('date'))
         slot_time, _slot_end, slot_duration = module_session_clock(module_row, group_row, session_date)
         planned_settings = {}
@@ -15159,14 +15351,19 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         return {**shared_series_settings, **planned_settings, **session_settings}
 
     session_index = 0
+    # The Teams series counts live sessions, not delivery slots. See
+    # `settings_for_session` and `authoring_session_links_by_catalogue`, which
+    # number the occurrences the same way.
+    occurrence_index = 0
     sessions_per_week = delivery_days_per_week(module_row)
     for week_row in week_rows:
         week_id = clean_str(week_row.get('id'))
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
         for row in live_rows:
             existing_settings = component_builder_settings(row)
-            settings_for_week = settings_for_session(session_index, existing_settings)
+            settings_for_week = settings_for_session(session_index, occurrence_index, existing_settings)
             session_index += 1
+            occurrence_index += 1
             handled_component_ids.add(clean_str(row.get('id')))
             if not dry_run:
                 update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
@@ -15183,8 +15380,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             continue
         missing_count = 0 if session_rows else max(0, sessions_per_week - len(live_rows))
         for offset in range(missing_count):
-            settings_for_week = settings_for_session(session_index)
+            settings_for_week = settings_for_session(session_index, occurrence_index)
             session_index += 1
+            occurrence_index += 1
             join_url = clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl'))
             position = len(components_by_week.get(week_id, [])) + offset
             duration = parse_int(settings_for_week.get('durationMinutes'), session_duration) or session_duration
@@ -15353,27 +15551,50 @@ TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES = {'cancelled', 'canceled', 'declined', '
 TEAMS_SYNC_REPORTED_DATE_LIMIT = 12
 
 
-def module_expected_teams_occurrence_keys(module_row, holidays=None, group_row=None):
-    """The UTC minutes the module's *current* plan says Teams should hold.
+def module_expected_teams_occurrence_keys(module_row, holidays=None, group_row=None, live_sessions=None):
+    """The UTC minutes the module's authored live sessions say Teams should hold.
 
-    The same scheduling logic ``GET /curriculum/modules/<id>/session-plan/``
-    serves -- it is the same ``module_session_plan_for_count`` call -- turned
-    into instants by ``calendar_clock_to_utc_iso``, exactly as the week
-    structure dates its own live sessions. So the expected dates here, the dates
-    that endpoint answers with and the dates the push sends are one plan.
+    Read from the same place the session list is -- the module's live-session
+    components, one per session, each on its own date -- so what this expects,
+    what the calendar shows and what the push sends are one thing. Comparing a
+    calendar built from the components against a plan generated from
+    ``sessions_number`` would report every hand-dated session as a difference
+    that pressing Update could never resolve.
 
-    Returns ``(keys, plan)``: the minute keys in plan order, and the plan itself
-    so a caller can see the holidays it skipped and the warnings it raised.
+    Only live sessions that carry a date of their own count. An undated one is
+    an unfinished module, not a session Teams is expected to hold, and a module
+    with none expects nothing -- the verdict then reads ``no-sessions``, which
+    is the truth, rather than "out of sync" against a plan nobody authored.
+
+    ``live_sessions`` is this module's entries from
+    ``authoring_session_links_by_catalogue``. Pass them in from a caller that has
+    already batched the read; leave it as ``None`` and this reads its own.
+
+    Returns ``(keys, plan)``: the minute keys in course order, and the plan, so a
+    caller can still see its warnings.
     """
+    catalogue_id = clean_str((module_row or {}).get('module_catalogue_id'))
+    if live_sessions is None and catalogue_id:
+        live_sessions = authoring_session_links_by_catalogue([catalogue_id]).get(catalogue_id) or []
+    dated = [link for link in (live_sessions or []) if format_date(link.get('date'))]
     plan = module_session_plan_for_count(
         module_row,
-        module_stored_session_count(module_row),
+        len(dated),
         holidays=holidays,
     )
-    start_time, _end_time, _duration = module_session_clock(module_row, group_row)
+    fallback_start, _end_time, _duration = module_session_clock(module_row, group_row)
     keys = []
-    for session in plan.get('sessions') or []:
-        key = teams_calendar_minute_key(calendar_clock_to_utc_iso(session.get('date'), session.get('startTime') or start_time))
+    # The same walk `build_sessions_from_authoring_modules` makes, over the same
+    # rows, with the same clock fallback. Any drift between the two reappears as
+    # a permanent "Dates differ" on a calendar that is actually correct -- which
+    # is why neither of them may invent a session the other does not have.
+    for link in dated:
+        session_date = format_date(link.get('date'))
+        clock_start, _clock_end, _clock_duration = module_session_clock(
+            module_row, group_row, session_date=session_date,
+        )
+        start_time = clean_str(link.get('startTime')) or clock_start or fallback_start
+        key = teams_calendar_minute_key(calendar_clock_to_utc_iso(session_date, start_time))
         if key:
             keys.append(key)
     return keys, plan
@@ -15386,6 +15607,7 @@ def teams_calendar_sync_verdict(
     group_row=None,
     occurrences_readable=True,
     holidays_readable=True,
+    live_sessions=None,
 ):
     """Whether the tracked Teams occurrences still match the module's own plan.
 
@@ -15434,7 +15656,7 @@ def teams_calendar_sync_verdict(
             return verdict('unverified', ['occurrence_date_unreadable'])
         actual_keys.append(key)
 
-    expected_keys, plan = module_expected_teams_occurrence_keys(module_row, holidays, group_row)
+    expected_keys, plan = module_expected_teams_occurrence_keys(module_row, holidays, group_row, live_sessions)
     if not expected_keys:
         if not active:
             return verdict('no-sessions', plan.get('warnings') or [])
@@ -15542,6 +15764,11 @@ def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, oc
             # is the authority anyway -- a group edit writes it into these rows.
             logger.debug('Could not read groups for the Teams calendar sync verdict.', exc_info=True)
 
+    # The authored live sessions of every module on the page, in one read. The
+    # verdict is decided against them, so reading them per module would be the
+    # per-row round trip this function exists to avoid.
+    live_sessions_by_module = authoring_session_links_by_catalogue(list(modules_by_id.keys()))
+
     verdicts = {}
     for module_id in wanted:
         module_row = modules_by_id.get(module_id)
@@ -15554,6 +15781,7 @@ def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, oc
                 group_row=groups_by_id.get(clean_str((module_row or {}).get('group_id'))),
                 occurrences_readable=occurrences_readable,
                 holidays_readable=holidays_readable or not cohort_id,
+                live_sessions=live_sessions_by_module.get(module_id) or [],
             )
         except Exception:
             logger.exception('Unable to compare the Teams calendar for %s.', module_id)
@@ -17694,6 +17922,15 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'tutor_email': tutor_email or None,
         })
         link_live_session_series_to_module(module_catalogue_id, {**payload, 'weekStructure': weeks})
+        # Read before the withdraw-and-rewrite below, because the assurance
+        # flags a payload does not mention must survive this save - see
+        # component_assurance_flag(). Keyed by id; a component this payload is
+        # creating simply is not in here.
+        stored_components_by_id = {
+            clean_str(row.get('id')): row
+            for row in authoring_fetch_all(
+                AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
+        }
         authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
         authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
         authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
@@ -17753,11 +17990,17 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                     'expected_otjh': component_expected_otjh(component),
                     'points': parse_int(component.get('points'), 0),
                     'ksb_mappings': json_db_value(component_ksb_items),
-                    'reflection_required': bool_payload(component.get('reflectionRequired')),
+                    'reflection_required': component_assurance_flag(
+                        component, stored_components_by_id.get(component_id),
+                        'reflectionRequired', 'reflection_required', False),
                     REFLECTION_QUESTION_COLUMN: component_reflection,
                     'workplace_evidence_required': False,
-                    'tutor_validation_required': bool_payload(component.get('tutorValidationRequired')),
-                    'coach_validation_required': payload_coach_validation(component),
+                    'tutor_validation_required': component_assurance_flag(
+                        component, stored_components_by_id.get(component_id),
+                        'tutorValidationRequired', 'tutor_validation_required', False),
+                    'coach_validation_required': component_assurance_flag(
+                        component, stored_components_by_id.get(component_id),
+                        'coachValidationRequired', 'coach_validation_required', True),
                     'display_order': component_index,
                     'settings_json': json_db_value(component_settings),
                     'live_sessions_link': clean_str(component_settings.get('liveSessionUrl') or component_settings.get('teamsMeetingUrl')),
@@ -19215,6 +19458,26 @@ def propagate_programme_name(programme_id, programme_name):
     programme_name = clean_str(programme_name)
     if not programme_id or not programme_name:
         return
+    # Nobody edited these cohorts, groups and modules. One person renamed one
+    # programme and the system carried the new name down; recording it as their
+    # edit to each child would say they opened forty modules and retyped a field.
+    # The person stays on the record as what caused it, which is the true and
+    # useful half of the attribution.
+    with versioning.audit_context(
+        actor_type=versioning.ACTOR_SYSTEM,
+        source='recalculation',
+        # Named outright. "Edited" would be true but useless here: the question
+        # a reader brings to this row is why a module they never opened changed,
+        # and "Recalculated ... triggered by ..." answers it in the row itself.
+        # A declared action only ever replaces a plain `updated`, so it cannot
+        # talk over a create, an archive or a restore.
+        action='recalculated',
+        metadata={'recalculated_from': 'programme_rename', 'reason_code': 'programme_name_propagation'},
+    ):
+        _propagate_programme_name_rows(programme_id, programme_name)
+
+
+def _propagate_programme_name_rows(programme_id, programme_name):
     for table in (COHORT_AUTHORING_DETAILS_TABLE, GROUPS_TABLE, AUTHORING_MODULES_TABLE):
         try:
             # Only the rows that actually disagree. This runs on every curriculum
@@ -19601,7 +19864,11 @@ def curriculum_programme_tree_save(request):
     if payload is None:
         return json_error('Invalid JSON body.')
     try:
-        with transaction.atomic():
+        # Labels every revision this save produces as coming from the tree save,
+        # which is the one caller that legitimately rewrites a whole programme's
+        # structure in one request. Without it a reader cannot tell a person
+        # editing one cohort from the tree rewriting forty.
+        with transaction.atomic(), versioning.source('tree-save'):
             programme = upsert_programme_for_tree(payload.get('programme') or payload)
             programme_id = clean_str(programme.get('sourceId') or programme.get('id') or payload.get('programmeId'))
             programme_name = clean_str(programme.get('name') or (payload.get('programme') or {}).get('name'))

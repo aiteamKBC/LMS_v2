@@ -385,6 +385,67 @@ export function moduleWeekIdBySessionNumber(
   return byNumber;
 }
 
+/** `String(value).trim()`, for the optional text an authored row carries. */
+function trimmed(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
+/** One authored live session: the component that IS that session. */
+export interface AuthoredLiveSession {
+  componentId: string;
+  weekId: string;
+  /** The component's own name, which is what the session is called. */
+  title: string;
+  /** `YYYY-MM-DD`. Empty for a live session nobody has dated yet. */
+  date: string;
+  /** `HH:MM` in the business zone, as the component stores it. */
+  startTime: string;
+  durationMinutes: number;
+}
+
+/**
+ * Every live session this module delivers, in Course structure order.
+ *
+ * **One live-session component is one session.** The module drawer says how
+ * many WEEKS there are; the live sessions are whatever the author put inside
+ * them. So this -- not `sessionsNumber` -- is how many sessions the module
+ * runs, and each one's own `sessionDate` is when it runs.
+ *
+ * `date` is the component's OWN date and nothing else. A live session nobody
+ * has dated comes back with an empty `date` and is a gap for the screen to
+ * report -- never a date borrowed from its week or from the generated plan.
+ * Both stand-ins read as a scheduled session to everyone downstream, so a
+ * module that was never finished would quietly get a calendar entry and a Teams
+ * meeting on a day no author ever chose.
+ *
+ * Mirrors `authoring_session_links_by_catalogue` in curriculum_api/views.py,
+ * which is what the backend dates the session list and the Teams occurrences
+ * from. Any drift between the two shows up as a Teams calendar that reports
+ * itself permanently out of sync.
+ */
+export function moduleAuthoredLiveSessions(
+  module: ModuleCatalogueItem | null | undefined,
+): AuthoredLiveSession[] {
+  const sessions: AuthoredLiveSession[] = [];
+  (module?.weekStructure || []).forEach(week => {
+    (week.components || []).forEach(component => {
+      if (component.type !== 'live-session') return;
+      const settings = component.settings || {};
+      sessions.push({
+        componentId: component.id,
+        weekId: week.id,
+        title: trimmed(component.title) || trimmed(week.title),
+        date: trimmed(settings.sessionDate),
+        // The week's slot time is the module's own stored value, not a guess,
+        // so it may stand in for the time of day. The DATE never may.
+        startTime: trimmed(settings.sessionTime) || trimmed(week.sessionStartTime),
+        durationMinutes: Number(settings.durationMinutes || settings.teamsDurationMinutes || 0) || 0,
+      });
+    });
+  });
+  return sessions;
+}
+
 /**
  * Which authored weeks have a delivery day a ticked holiday falls on.
  *
@@ -1351,9 +1412,17 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
           moduleId,
           weekId,
           workplaceEvidenceRequired: false,
-          // A component stored before the flag existed comes back without it,
-          // and absent means on - nobody has turned coach validation off.
-          coachValidationRequired: component.coachValidationRequired !== false,
+          // Normalised only when the component actually carries it. Filling in
+          // `true` for a component object that had lost the key looked harmless
+          // -- absent did mean on -- but this value goes straight into the next
+          // structure save, so it did not describe the component, it OVERWROTE
+          // it: an author who had turned coach validation off got it switched
+          // back on by a save they never made a decision in. What the component
+          // does not say, only the stored row knows, and the backend keeps it
+          // (see component_assurance_flag).
+          ...(component.coachValidationRequired === undefined
+            ? {}
+            : { coachValidationRequired: component.coachValidationRequired !== false }),
           ksbMappings: normaliseKsbMappings(component.ksbMappings || [], fallbackKsbSource),
           settings: normaliseComponentSettings(component.type, component.settings || {}),
         })),
@@ -1538,11 +1607,18 @@ export class ModuleStructureConflictError extends Error {
  * silently replacing the other's weeks and components. Omitting it restores
  * last-write-wins, so only a caller with nothing to have read -- a first save,
  * an import -- should leave it out.
+ *
+ * `source` says which kind of save this is, for the audit trail. It is metadata
+ * and nothing more: the backend decides the actor, the action and the values
+ * itself, and ignores any label it does not recognise. Auto-save is a *source*,
+ * never an action -- the recorded event is still "component updated", so a
+ * module left open all afternoon produces one entry per real edit rather than
+ * one per timer tick.
  */
 export async function saveModuleStructure(
   moduleCatalogueId: string,
   payload: ModuleCatalogueItem,
-  options: { expectedRevision?: string } = {},
+  options: { expectedRevision?: string; source?: 'auto-save' | 'manual' } = {},
 ) {
   const recalculated = recalculateModule(payload);
   // `weeksNumber` states the authored week count outright. `weeks` cannot carry
@@ -1556,6 +1632,7 @@ export async function saveModuleStructure(
   const saved = recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
     body: JSON.stringify(body),
+    headers: { 'X-Curriculum-Save-Source': options.source || 'manual' },
     timeoutMs: 90000,
   }).catch((err: unknown) => {
     if (!(err instanceof ApiError) || err.status !== 409 || !err.data?.conflict) throw err;
