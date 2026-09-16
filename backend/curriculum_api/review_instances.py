@@ -808,9 +808,11 @@ def existing_review_instance_ids():
     return [row.get('id') for row in rows]
 
 
-def get_review_instance(instance_id):
+def get_review_instance(instance_id, *, for_update=False):
+    # Booking callers hold a transaction while checking the linked lifecycle.
+    lock = ' for update' if for_update and curriculum_views.connection.vendor == 'postgresql' else ''
     rows = curriculum_views.fetch_all(
-        f'select * from {curriculum_views.table_name(REVIEW_INSTANCES_TABLE)} where id = %s',
+        f'select * from {curriculum_views.table_name(REVIEW_INSTANCES_TABLE)} where id = %s{lock}',
         [instance_id],
     )
     return rows[0] if rows else None
@@ -958,8 +960,8 @@ def set_review_instance_status(instance_id, status, *, actor='system', extra=Non
 def mark_review_instance_scheduled(instance_id, *, actor='system'):
     """not-scheduled -> scheduled, once a real booking (date/time) exists on
     the linked CoachCalendarEvent -- see coach_api.views
-    ensure_review_instance_for_calendar_record, which calls this right after
-    the calendar row itself becomes STATUS_SCHEDULED. Guarded in the UPDATE
+    persist_calendar_sync_reservation, which calls this for both new and
+    already-linked bookings. Guarded in the UPDATE
     itself (``and status = 'not-scheduled'``) rather than read-then-write, so
     it is atomic and a repeat call is a no-op instead of a race.
     """
