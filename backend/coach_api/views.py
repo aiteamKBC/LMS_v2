@@ -8532,8 +8532,48 @@ class CalendarSyncInProgress(RuntimeError):
     pass
 
 
-def persist_calendar_sync_reservation(candidate: CoachCalendarEvent) -> CoachCalendarEvent:
-    """Persist scheduling inputs and mark pending before Graph network I/O."""
+def sync_scheduled_review_instance(record: CoachCalendarEvent) -> CoachCalendarEvent:
+    """Validate the booking link and advance only an unstarted review.
+
+    Also used by unchanged reschedule requests, without touching Graph or its
+    sync state. Both rows are read under lock, including on retry.
+    """
+    if not clean_text(record.review_instance_id):
+        return record
+    with transaction.atomic():
+        record = CoachCalendarEvent.objects.select_for_update().get(pk=record.pk)
+        instance = curriculum_review_instances.get_review_instance(record.review_instance_id, for_update=True)
+        if (
+            not instance
+            or instance.get('calendar_event_id') != record.pk
+            or instance.get('learner_id') != record.learner_id
+            or clean_email(instance.get('coach_email')) != clean_email(record.owner_email)
+            or clean_text(instance.get('review_template_id')) != clean_text(record.review_template_id)
+        ):
+            raise LearnerCalendarConflict("This booking's review link is inconsistent. Please contact support.")
+        if (
+            record.status != CoachCalendarEvent.STATUS_SCHEDULED
+            or instance.get('status') not in {
+                curriculum_review_instances.STATUS_NOT_SCHEDULED,
+                curriculum_review_instances.STATUS_SCHEDULED,
+            }
+        ):
+            raise LearnerCalendarConflict("Only an unstarted review can be scheduled or rescheduled.")
+        if record.scheduled_date is None or record.scheduled_time is None:
+            raise LearnerCalendarConflict("A review booking must have a scheduled date and time.")
+        if instance['status'] == curriculum_review_instances.STATUS_NOT_SCHEDULED:
+            updated = curriculum_review_instances.mark_review_instance_scheduled(
+                instance['id'], actor=record.owner_email or 'coach',
+            )
+            if not updated:
+                raise LearnerCalendarConflict("The review status changed. Reload it before scheduling again.")
+        return record
+
+
+def persist_calendar_sync_reservation(
+    candidate: CoachCalendarEvent, *, review_event: dict | None = None,
+) -> CoachCalendarEvent:
+    """Save booking inputs, review linkage and lifecycle before Graph I/O."""
     mutable_fields = (
         "owner_email",
         "owner_name",
@@ -8566,6 +8606,12 @@ def persist_calendar_sync_reservation(candidate: CoachCalendarEvent) -> CoachCal
             CoachCalendarEvent.SYNC_RECONCILIATION,
         }:
             raise CalendarSyncInProgress("Calendar event synchronization is already in progress.")
+        if (record.review_instance_id or candidate.review_template_id) and record.status in {
+            CoachCalendarEvent.STATUS_IN_PROGRESS,
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+            CoachCalendarEvent.STATUS_COMPLETED,
+        }:
+            raise LearnerCalendarConflict("Only an unstarted review can be scheduled or rescheduled.")
         if (
             candidate.scheduled_date
             and candidate.scheduled_time
@@ -8592,10 +8638,14 @@ def persist_calendar_sync_reservation(candidate: CoachCalendarEvent) -> CoachCal
                 exclude_record_id=candidate.pk,
             )
         for field in mutable_fields:
+            if record.review_instance_id and field in {"review_template_id", "occurrence_number"}:
+                continue
             setattr(record, field, getattr(candidate, field))
         record.sync_state = CoachCalendarEvent.SYNC_PENDING
         record.save(update_fields=[*mutable_fields, "sync_state", "updated_at"])
-        return record
+        if review_event is not None and record.review_template_id and not record.review_instance_id:
+            ensure_review_instance_for_calendar_record(record, review_event)
+        return sync_scheduled_review_instance(record)
 
 
 def synchronize_reserved_calendar_event(
@@ -8961,7 +9011,9 @@ def coach_timetable_schedule_event(request):
         )
 
     try:
-        record = persist_calendar_sync_reservation(record)
+        record = persist_calendar_sync_reservation(record, review_event=base_event)
+    except ReviewTemplateUnavailableError as exc:
+        return JsonResponse({"detail": str(exc)}, status=409)
     except LearnerCalendarConflict as exc:
         return JsonResponse({"detail": str(exc)}, status=409)
     except CalendarSyncInProgress:
@@ -8971,12 +9023,6 @@ def coach_timetable_schedule_event(request):
             message="Calendar event synchronization is already in progress.",
             status=409,
         )
-
-    if first_time_linkage:
-        try:
-            ensure_review_instance_for_calendar_record(record, base_event)
-        except ReviewTemplateUnavailableError as exc:
-            return JsonResponse({"detail": str(exc)}, status=409)
 
     record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
     if not calendar_record_has_launch_url(record):

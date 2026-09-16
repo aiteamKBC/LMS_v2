@@ -1280,7 +1280,6 @@ def learner_calendar_book(request, kind, pk):
             return _error("Target date is missing for this event.", 400)
 
         from coach_api.views import (
-            ensure_review_instance_for_calendar_record,
             require_review_template_for_first_linkage,
             ReviewTemplateUnavailableError,
         )
@@ -1345,13 +1344,10 @@ def learner_calendar_book(request, kind, pk):
                 else int(base_event.get('occurrenceNumber') or base_event.get('sequence') or 1)
             )
 
-            record = persist_calendar_sync_reservation(record)
-            if first_time_linkage:
-                try:
-                    ensure_review_instance_for_calendar_record(record, base_event)
-                except ReviewTemplateUnavailableError as exc:
-                    return _error(str(exc), 409)
+            record = persist_calendar_sync_reservation(record, review_event=base_event)
             record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
+        except ReviewTemplateUnavailableError as exc:
+            return _error(str(exc), 409)
         except LearnerCalendarConflict as exc:
             return _error(str(exc), 409)
         except CalendarSyncInProgress:
@@ -1561,6 +1557,7 @@ def learner_calendar_reschedule(request, kind, pk):
         parse_date_value,
         parse_time_value,
         persist_calendar_sync_reservation,
+        sync_scheduled_review_instance,
         synchronize_reserved_calendar_event,
     )
 
@@ -1608,6 +1605,8 @@ def learner_calendar_reschedule(request, kind, pk):
             and record.duration_minutes == duration_minutes
             and record.sync_state == CoachCalendarEvent.SYNC_SYNCED
         ):
+            if getattr(record, 'review_instance_id', ''):
+                record = sync_scheduled_review_instance(record)
             _mark_imported_review_scheduled(
                 payload.get("reviewId"), record.learner_id, scheduled_date, scheduled_time,
             )
