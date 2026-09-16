@@ -81,7 +81,7 @@ class CompactLearnerLoadingTests(SimpleTestCase):
         self.assertNotIn(selected, sql)
         self.assertIn("c.module_catalogue_id=ANY(%s)", sql)
         for table in ("c", "m", "w"):
-            self.assertIn(f"{table}.deleted_at IS NULL OR {table}.deleted_via_parent IS NOT NULL", sql)
+            self.assertIn(f"{table}.deleted_at IS NULL OR COALESCE({table}.deleted_via_parent, '') <> ''", sql)
         self.assertEqual(params, [selected, ["M1"]])
         self.assertEqual(result, {"componentId": "C1", "contentHtml": "<p>Selected reading</p>"})
 

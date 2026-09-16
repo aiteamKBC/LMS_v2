@@ -219,7 +219,7 @@ def read_dashboard(source, section=None):
             by_id = {module['id']: module for module in modules}
             week_counts = defaultdict(int)
             cur.execute('''SELECT module_catalogue_id,learning_outcomes FROM curriculum.weeks
-                WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)
+                WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')
                 ORDER BY display_order,week_number,id''', [ids])
             for row in rows(cur):
                 week_counts[row['module_catalogue_id']] += 1

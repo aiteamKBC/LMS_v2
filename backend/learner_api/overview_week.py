@@ -239,13 +239,13 @@ def read_week(source, now=None, *, home_kind=None):
             w.title AS section_title,c.settings_json->>'dueTiming' AS due_timing,
             coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code)) FROM curriculum.ksb_mappings k
-                 WHERE k.component_id=c.id AND (k.deleted_at IS NULL OR k.deleted_via_parent IS NOT NULL)), '[]'::jsonb) AS ksb_mappings,
+                 WHERE k.component_id=c.id AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb) AS ksb_mappings,
             coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                       WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),c.settings_json->>'linkedQuizId') AS quiz_id
             FROM curriculum.components c JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)
-              AND (w.id IS NULL OR w.deleted_at IS NULL OR w.deleted_via_parent IS NOT NULL)''', [module_ids])
+            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
+              AND (w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')''', [module_ids])
         native = rows(cur)
         # Match My Learning's delivery calendar, including undated lesson titles,
         # empty teaching weeks and cohort holidays.
