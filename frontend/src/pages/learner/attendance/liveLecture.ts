@@ -24,6 +24,7 @@ export function isLectureLive(lecture: AttendanceLecture, now: number): boolean 
 
 export function lectureJoinUrl(lecture: AttendanceLecture): string | null {
   try {
+    if (/^\/learner_api\/session-results\/[^?#]+\/join\/$/.test(lecture.joinUrl || '')) return lecture.joinUrl!;
     const url = new URL(lecture.joinUrl || '');
     return ['https:', 'http:'].includes(url.protocol) ? url.href : null;
   } catch { return null; }

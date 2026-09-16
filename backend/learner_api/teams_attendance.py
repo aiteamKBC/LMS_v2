@@ -1,8 +1,10 @@
 from collections import defaultdict
+from curriculum_api.session_results_policy import evidence_seconds
 from datetime import datetime, timezone as datetime_timezone
 
 from django.db import connections, router, transaction
 from django.db.models import Q
+from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -21,18 +23,13 @@ def _email(value) -> str:
 
 
 def _session_expected_emails(session: LiveSession) -> set[str]:
-    """Who this live session's own Teams invite list expects to attend.
+    """Invitation snapshot; authenticated LMS launches extend individual occurrences."""
 
-    This is now the sole source of "who is expected" for attendance rows: a
-    learner's enrolment-side group text is never consulted, so it can no
-    longer silently drop a real learner from every row just because their
-    group field doesn't textually match the module's. The trade-off runs the
-    other way instead: the invite list is a snapshot taken when the meeting
-    was created (or last had its people list re-sent), so a learner added to
-    the module afterwards stays invisible here until someone resends it.
-    """
+    # Lazily imported: curriculum_api.views imports this module's sync entry
+    # point, so a module-level import here would close the loop.
+    from curriculum_api.views import teams_series_email_list
 
-    return {email for email in (_email(value) for value in (session.attendees or [])) if email}
+    return set(teams_series_email_list(session.attendees))
 
 
 def _local_datetime(value):
@@ -70,6 +67,33 @@ def _attendance_interval_bounds(intervals) -> tuple[datetime | None, datetime | 
     return first_join, last_leave
 
 
+def _reported_participant_emails(database, session_ids, learner_emails):
+    """Read identified participants of completed reports, scoped to each occurrence."""
+    by_series, by_occurrence = defaultdict(set), defaultdict(set)
+    occurrences = dict(
+        LiveSessionOccurrence.objects.using(database)
+        .filter(live_session_id__in=session_ids, actual_end__isnull=False)
+        .exclude(Q(attendance_report_id__isnull=True) | Q(attendance_report_id__exact=""))
+        .values_list("id", "live_session_id")
+    )
+    if not occurrences:
+        return by_series, by_occurrence
+
+    participants = (
+        LiveSessionAttendance.objects.using(database)
+        .filter(occurrence_id__in=list(occurrences))
+        .annotate(normalized_email=Lower(Trim("email")))
+    )
+    if learner_emails is not None:
+        participants = participants.filter(normalized_email__in=list(learner_emails))
+    for occurrence_id, email in participants.values_list("occurrence_id", "normalized_email"):
+        email = _email(email)
+        if email:
+            by_series[occurrences[occurrence_id]].add(email)
+            by_occurrence[occurrence_id].add(email)
+    return by_series, by_occurrence
+
+
 def fetch_verified_teams_attendance_rows(
     learner_ids: list[int] | None = None,
     learner_emails: list[str] | None = None,
@@ -78,12 +102,14 @@ def fetch_verified_teams_attendance_rows(
     all_learners: bool = False,
     start_date=None,
     end_date=None,
+    include_reported_participants: bool = False,
 ) -> list[dict]:
     """Build real attendance from completed Microsoft Teams reports.
 
-    "Expected" is whoever is on the live session's own Teams invite list
-    (see ``_session_expected_emails``), not whoever the learner's enrolment
-    record says shares the module's group.
+    Expected learners come from the invitation snapshot or an authenticated
+    Join launch for that exact occurrence. A launch never establishes presence.
+    Coach attendance can also display identified report participants without
+    changing the expected roster used by synchronization and other consumers.
     """
 
     ids = sorted({int(value) for value in (learner_ids or []) if value})
@@ -123,10 +149,22 @@ def fetch_verified_teams_attendance_rows(
     if not sessions:
         return []
 
+    from curriculum_api.session_results import launch_expectations
+    launched_series, launched_occurrences = launch_expectations(
+        [session.id for session in sessions],
+        identity_learners_by_email.keys() if identity_learners_by_email is not None else None,
+    )
+    reported_series, reported_occurrences = defaultdict(set), defaultdict(set)
+    if include_reported_participants:
+        reported_series, reported_occurrences = _reported_participant_emails(
+            database,
+            [session.id for session in sessions],
+            identity_learners_by_email.keys() if identity_learners_by_email is not None else None,
+        )
     expected_emails_by_session: dict[str, set[str]] = {}
     all_expected_emails: set[str] = set()
     for session in sessions:
-        session_emails = _session_expected_emails(session)
+        session_emails = _session_expected_emails(session) | launched_series[session.id] | reported_series[session.id]
         if identity_learners_by_email is not None:
             session_emails &= identity_learners_by_email.keys()
         if not session_emails:
@@ -164,7 +202,7 @@ def fetch_verified_teams_attendance_rows(
 
     occurrence_queryset = (
         LiveSessionOccurrence.objects.using(database)
-        .filter(live_session_id__in=list(sessions_by_id))
+        .filter(live_session_id__in=list(sessions_by_id), actual_end__isnull=False)
         .exclude(Q(attendance_report_id__isnull=True) | Q(attendance_report_id__exact=""))
     )
     # Monthly/reporting callers only need a bounded slice. Applying the range
@@ -199,21 +237,24 @@ def fetch_verified_teams_attendance_rows(
             "intervals",
         )
     )
+    unidentified_occurrences = set()
     for record in attendance_records:
         email_key = _email(record.email)
         if not email_key:
+            unidentified_occurrences.add(record.occurrence_id)
             continue
         first_join, last_leave = _attendance_interval_bounds(record.intervals)
         existing = attendance_by_occurrence[record.occurrence_id].get(email_key)
         if existing is None:
             attendance_by_occurrence[record.occurrence_id][email_key] = {
                 "total_attendance_seconds": max(record.total_attendance_seconds or 0, 0),
+                "records": [{"intervals": record.intervals, "total_attendance_seconds": record.total_attendance_seconds}],
                 "source_record_id": str(record.graph_record_id or "").strip(),
                 "first_join_at": first_join,
                 "last_leave_at": last_leave,
             }
         else:
-            existing["total_attendance_seconds"] += max(record.total_attendance_seconds or 0, 0)
+            existing["records"].append({"intervals": record.intervals, "total_attendance_seconds": record.total_attendance_seconds})
             if not existing["source_record_id"] and record.graph_record_id:
                 existing["source_record_id"] = str(record.graph_record_id).strip()
             if first_join is not None and (
@@ -225,6 +266,9 @@ def fetch_verified_teams_attendance_rows(
             ):
                 existing["last_leave_at"] = last_leave
 
+    for people in attendance_by_occurrence.values():
+        for evidence in people.values():
+            evidence["total_attendance_seconds"] = evidence_seconds(evidence.pop("records"))
     rows = []
     calculated_at = timezone.now()
     for occurrence in occurrences:
@@ -244,11 +288,17 @@ def fetch_verified_teams_attendance_rows(
         # that can't be found no longer hides an otherwise-valid invite match.
         module = modules_by_id.get(module_ref)
 
-        for email in expected_emails_by_session.get(session.id, ()):
+        occurrence_expected = (_session_expected_emails(session) | launched_occurrences[occurrence.id])
+        occurrence_emails = occurrence_expected | reported_occurrences[occurrence.id]
+        for email in occurrence_emails & expected_emails_by_session.get(session.id, set()):
             learner = learners_by_email.get(email)
             if learner is None:
                 continue
             attendance = attendance_by_occurrence[occurrence.id].get(email)
+            if attendance is None and (email not in occurrence_expected or occurrence.id in unidentified_occurrences):
+                # A report-only participant needs evidence in this read too;
+                # a concurrent refresh must not turn removed evidence into absence.
+                continue
             rows.append(
                 {
                     "learner_id": learner.id,
@@ -268,7 +318,7 @@ def fetch_verified_teams_attendance_rows(
                     "session_date": start.date(),
                     "session_start_time": start.time().replace(tzinfo=None),
                     "session_end_time": end.time().replace(tzinfo=None) if end else None,
-                    "attendance_status": "present" if attendance else "absent",
+                    "attendance_status": "present" if attendance and attendance["total_attendance_seconds"] > 180 else "absent",
                     "minutes_late": 0,
                     "catchup_completed": False,
                     "absence_reason": "",
@@ -279,8 +329,12 @@ def fetch_verified_teams_attendance_rows(
                     "module_title": str(session.module_title or "").strip(),
                     "group_id": str(module.group_id or "").strip() if module else "",
                     "group_name": str(module.group_name or "").strip() if module else "",
-                    "is_expected": True,
-                    "eligibility_reason": "teams_invite_list",
+                    "is_expected": email in occurrence_expected,
+                    "eligibility_reason": (
+                        "teams_invite_list" if email in _session_expected_emails(session)
+                        else "assigned_lms_join" if email in launched_occurrences[occurrence.id]
+                        else "verified_teams_participant"
+                    ),
                     "scheduled_start": occurrence.scheduled_start,
                     "scheduled_end": occurrence.scheduled_end,
                     "actual_start": occurrence.actual_start,
@@ -293,7 +347,8 @@ def fetch_verified_teams_attendance_rows(
                 }
             )
 
-    return rows
+    from .session_recovery import apply_recovery_to_rows
+    return apply_recovery_to_rows(rows)
 
 
 ATTENDANCE_REPORTING_TABLE = '"Learner"."learner_attendance_details"'
@@ -499,10 +554,10 @@ def sync_verified_teams_attendance_reporting(
             session_date = EXCLUDED.session_date,
             session_start_time = EXCLUDED.session_start_time,
             session_end_time = EXCLUDED.session_end_time,
-            attendance_status = EXCLUDED.attendance_status,
+            attendance_status = CASE WHEN learner_attendance_details.catchup_completed THEN 'present' ELSE EXCLUDED.attendance_status END,
             minutes_late = EXCLUDED.minutes_late,
-            absence_reason = EXCLUDED.absence_reason,
-            catchup_completed = EXCLUDED.catchup_completed,
+            absence_reason = CASE WHEN coalesce(learner_attendance_details.absence_reason,'')<>'' THEN learner_attendance_details.absence_reason ELSE EXCLUDED.absence_reason END,
+            catchup_completed = learner_attendance_details.catchup_completed OR EXCLUDED.catchup_completed,
             coach_name = EXCLUDED.coach_name,
             module_title = EXCLUDED.module_title,
             attended_seconds = EXCLUDED.attended_seconds,
@@ -566,10 +621,10 @@ def sync_verified_teams_attendance_reporting(
         for row in rows
     ]
     with transaction.atomic(using=database):
-        # Publish the schema/view change and its rebuilt roster together, so a
-        # concurrent learner request cannot observe the new view before stale
-        # eligibility has been reconciled.
-        ensure_teams_attendance_reporting_columns(database)
+        # Reconcile eligibility and publish the register together. Schema changes
+        # belong to the owner-run SQL, never to a background synchronization.
+        with connections[database].cursor() as check:
+            check.execute(f"SELECT attended_seconds, occurrence_id, is_expected, catchup_completed FROM {ATTENDANCE_REPORTING_TABLE} LIMIT 0")
         with connections[database].cursor() as cursor:
             # Retain stale rows for audit/absence-report foreign keys, but hide
             # them from the read view until this roster rebuild marks them

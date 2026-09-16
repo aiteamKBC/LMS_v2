@@ -290,7 +290,10 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   // match — hence the same allowance the unsaved preset gets.
   const canSave = useMemo(() => {
     if (!data) return false;
-    return dirty || (!data.saved && plan.length > 0) || plan.some((m) => m.inherited);
+    // `fromAptem` rows are in the same position as `inherited` ones: the
+    // server merged them into the shown plan, so `dirty` is blind to them,
+    // and saving is what actually records them on the learner.
+    return dirty || (!data.saved && plan.length > 0) || plan.some((m) => m.inherited || m.fromAptem);
   }, [data, dirty, plan]);
 
   // Each of these is the staff member editing the plan by hand, which is what
@@ -635,6 +638,16 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                       )}
                       {/* Arrived from the group after this plan was agreed. The
                           learner is taught it either way; saving records it. */}
+                      {/* Taught through the Aptem import but never recorded on
+                          the plan. Saving is what writes it to the learner. */}
+                      {m.fromAptem && (
+                        <span
+                          className="ml-2 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700"
+                          title="This learner is enrolled in this subject through their Aptem import. Save to record it on the plan."
+                        >
+                          From Aptem
+                        </span>
+                      )}
                       {m.inherited && (
                         <span
                           className="ml-2 rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700"

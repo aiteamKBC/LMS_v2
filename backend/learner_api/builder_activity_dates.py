@@ -42,18 +42,18 @@ def read_builder_activity_dates(cursor, module_ids):
     )
 
     module_fields = ('module_catalogue_id', 'start_date', 'sessions_number',
-                     'session_week_day', 'session_start_time', 'session_end_time', 'cohort_id')
+                     'session_week_day', 'session_start_time', 'session_end_time', 'cohort_id', 'session_overrides')
     cursor.execute('''SELECT module_catalogue_id,start_date,sessions_number,
-        session_week_day,session_start_time,session_end_time,cohort_id
-        FROM curriculum.modules WHERE module_catalogue_id=ANY(%s)
-        AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)''', [module_ids])
+        session_week_day,session_start_time,session_end_time,cohort_id,to_jsonb(m)->'session_overrides'
+        FROM curriculum.modules m WHERE module_catalogue_id=ANY(%s)
+        AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')''', [module_ids])
     modules = {str(row[0]): dict(zip(module_fields, row)) for row in cursor.fetchall()}
     if not modules:
         return {}
     ids = list(modules)
     cursor.execute('''SELECT id,module_catalogue_id,title FROM curriculum.weeks
         WHERE module_catalogue_id=ANY(%s)
-          AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)
+          AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')
         ORDER BY module_catalogue_id,display_order,week_number,id''', [ids])
     weeks = {(str(module_id), str(week_id)): {'id': str(week_id), 'title': title, 'components': []}
              for week_id, module_id, title in cursor.fetchall()}
@@ -66,7 +66,7 @@ def read_builder_activity_dates(cursor, module_ids):
             'teamsSessionNumber',c.settings_json->>'teamsSessionNumber')
         FROM curriculum.components c
         WHERE c.module_catalogue_id=ANY(%s)
-          AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)
+          AND (c.deleted_at IS NULL OR c.COALESCE(deleted_via_parent, '') <> '')
         ORDER BY c.module_catalogue_id,c.display_order,c.id''', [ids])
     dates = {}
     for component_id, module_id, week_id, title, component_type, settings in cursor.fetchall():
@@ -89,6 +89,9 @@ def read_builder_activity_dates(cursor, module_ids):
                                           holidays=holidays.get(str(module['cohort_id']), []))
         for week in module_weeks:
             for component in week['components']:
+                if component['type'] == 'live-session' and component['settings'].get('sessionRescheduled'):
+                    dates[component['id']] = _component_schedule(component, week['title'])
+                    continue
                 # Explicit dates, Introduction and ambiguous authored dates keep
                 # their placement. Only genuinely undated content inherits a slot.
                 if dates[component['id']]['date_source'] != 'undated':
