@@ -84,11 +84,27 @@ export interface CoachCalendarEvent {
   managerSignedBy?: string;
   /** The Curriculum review_templates.id this occurrence was generated from. */
   reviewTemplateId?: string | null;
+  reviewTypeId?: string | null;
+  reviewTypeCode?: string | null;
+  reviewTypeName?: string | null;
+  reviewTypeIsSystem?: boolean;
   /** Set once this occurrence has been scheduled at least once -- its
    *  presence is what routes "open review" to the dynamic Curriculum-driven
    *  form (see reviewInstances.ts) instead of any hard-coded one. */
   reviewInstanceId?: string | null;
   occurrenceNumber?: number | null;
+}
+
+export interface CoachReviewGenerationIssue {
+  learnerId: string;
+  code:
+    | 'missing_curriculum_programme'
+    | 'no_enabled_review_templates'
+    | 'missing_learner_enrolment'
+    | 'missing_learner_start_date'
+    | 'invalid_learner_start_date'
+    | 'review_schedule_unavailable'
+    | string;
 }
 
 interface CoachTimetableResponse {
@@ -97,6 +113,7 @@ interface CoachTimetableResponse {
     email?: string;
   };
   events?: CoachCalendarEvent[];
+  reviewGenerationIssues?: CoachReviewGenerationIssue[];
 }
 
 export interface ScheduleFormState {
@@ -332,9 +349,11 @@ export async function fetchCoachCalendarEventsForCoach(
 export async function fetchCoachMeetingArtifacts(
   eventKey: string,
   signal?: AbortSignal,
+  options: { refresh?: boolean } = {},
 ): Promise<CoachMeetingArtifactsResponse> {
+  const query = options.refresh ? '?refresh=1' : '';
   const response = await coachFetch(
-    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts`,
+    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts${query}`,
     { signal },
   );
   return readJsonResponse<CoachMeetingArtifactsResponse>(response);
@@ -614,6 +633,20 @@ export function isAtRiskProgressReview(event: CoachCalendarEvent, referenceDate 
 
 export function meetingUrl(event: CoachCalendarEvent) {
   return event.meetingLink || event.graphWebLink || '';
+}
+
+export function openPendingMeetingWindow() {
+  const meetingWindow = window.open('about:blank', '_blank');
+  if (meetingWindow) meetingWindow.opener = null;
+  return meetingWindow;
+}
+
+export function navigateMeetingWindow(meetingWindow: Window | null, url: string) {
+  if (meetingWindow && !meetingWindow.closed) {
+    meetingWindow.location.href = url;
+    return;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 export function eventPeriodLabel(event: CoachCalendarEvent) {

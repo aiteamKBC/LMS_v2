@@ -271,7 +271,7 @@ export const USER_GUIDES: GuideSection[] = [
     pagePath: '/learner/progress-reviews',
     role: 'learner',
     steps: [
-      { step: 1, title: 'View Your Review Dashboard', description: 'The Progress Reviews page shows your review schedule, upcoming review date, preparation status, and past review history. Reviews happen every 12 weeks.', icon: 'ri-dashboard-line' },
+      { step: 1, title: 'View Your Review Dashboard', description: 'The Progress Reviews page shows your review schedule, upcoming review date, preparation status, and past review history. Your review dates are set by your programme.', icon: 'ri-dashboard-line' },
       { step: 2, title: 'Check Your Next Review', description: 'The "Next Review" card shows the date, time, attendees (you, your coach, your employer), and the review number. Click "Prepare" to start getting ready.', icon: 'ri-calendar-event-line', action: 'Click Prepare' },
       { step: 3, title: 'Complete Preparation Forms', description: 'Before each review, you need to complete preparation forms. These include: Self-Assessment, Workplace Feedback, OTJH Summary, and KSB Progress. Click each form to fill it in.', icon: 'ri-file-list-3-line', action: 'Click each form' },
       { step: 4, title: 'Review Areas Dashboard', description: 'The Review Areas section shows the 10 review areas: Attendance, OTJH, KSB Progress, Module Progress, Quizzes, Evidence, Workplace Practice, Maths/English, Behaviour, and Safeguarding. Each has a RAG rating.', icon: 'ri-layout-grid-line' },

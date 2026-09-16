@@ -105,8 +105,11 @@ class LearnerReviewPageTestCase(TestCase):
         """enrolment."Created_users" -- the learner's own record."""
         return SimpleNamespace(
             id=101, pk=101, email='learner@example.com', learner_type='commercial',
-            start_date=LEARNER_START.isoformat(), end_date='2027-08-09',
-            practical_period_end_date='', apprenticeship_end_date='',
+            # learner_start_date is the Review recurrence anchor; start_date is
+            # kept in step too since resolve_schedule_window's WINDOW bound
+            # still reads it.
+            learner_start_date=LEARNER_START.isoformat(), start_date=LEARNER_START.isoformat(),
+            end_date='2027-08-09', practical_period_end_date='', apprenticeship_end_date='',
         )
 
     def _profile(self):
@@ -192,3 +195,51 @@ class ProgressReviewPageRecurrenceTests(LearnerReviewPageTestCase):
         self.assertNotIn(timedelta(weeks=12), gaps)
 
         self.assertEqual({row['reviewTypeCode'] for row in rows}, {'progress_review'})
+
+
+class NoCurriculumTemplateProducesNothingTests(LearnerReviewPageTestCase):
+    """A learner's start date alone must never generate MCM/PR occurrences.
+
+    There is no fixed-interval fallback: with no enabled Curriculum template
+    for a Review Type, that page gets zero rows, no matter how much time has
+    passed since the learner started -- not "every 30 days", not "every 12
+    weeks", not one occurrence.
+    """
+
+    def test_no_mcm_template_produces_no_monthly_coaching_rows(self):
+        # No MCM template created for this programme at all.
+        rows = self._page_rows('mcr')
+        self.assertEqual(rows, [])
+
+    def test_no_progress_review_template_produces_no_progress_review_rows(self):
+        rows = self._page_rows('progress-review')
+        self.assertEqual(rows, [])
+
+    def test_one_month_past_start_date_alone_produces_no_review(self):
+        events = _generated_cycle_events(self._enrolment_row(), self._profile(), set())
+        self.assertEqual(events, [])
+
+    def test_twelve_weeks_past_start_date_alone_produces_no_progress_review(self):
+        # Same fixtures, no Progress Review template configured -- reaching
+        # the old 12-week mark must not manufacture an occurrence.
+        events = _generated_cycle_events(self._enrolment_row(), self._profile(), set())
+        self.assertEqual([e for e in events if e['source'] == 'progress-review'], [])
+
+    def test_learner_with_no_curriculum_programme_mapping_gets_nothing(self):
+        """A learner whose programme does not resolve in Curriculum at all
+        (not just "has no template") also gets zero generated occurrences --
+        never the historical fixed-interval slots."""
+        profile = SimpleNamespace(
+            id=999, pk=999, email='no-programme@example.com',
+            start_date=date(2026, 8, 3), end_date=date(2027, 8, 2),
+            coach_name='Coach One', coach_email='coach@example.com',
+            programme='Programme With No Curriculum Mapping', programme_status='Active',
+            cohort='Cohort A', group_name='Group A',
+        )
+        enrolment = SimpleNamespace(
+            id=999, pk=999, email='no-programme@example.com', learner_type='commercial',
+            start_date=LEARNER_START.isoformat(), end_date='2027-08-09',
+            practical_period_end_date='', apprenticeship_end_date='',
+        )
+        events = _generated_cycle_events(enrolment, profile, set())
+        self.assertEqual(events, [])

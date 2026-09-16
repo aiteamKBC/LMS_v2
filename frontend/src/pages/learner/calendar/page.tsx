@@ -559,7 +559,9 @@ function LearnerCalendarBody() {
   const [addToCalendarToast, setAddToCalendarToast] = useState<string | null>(null);
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
   const selectedReview = useLearnerReviewInstance(myLearner.kind, myLearner.id,
-    showEventDetails?.reviewTemplateId ? showEventDetails.eventKey || showEventDetails.id : '');
+    showEventDetails?.reviewTemplateId && showEventDetails.source !== 'live-session'
+      ? showEventDetails.eventKey || showEventDetails.id
+      : '');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDayDrawer, setShowDayDrawer] = useState(false);
   const [customTitle, setCustomTitle] = useState('');
@@ -1746,10 +1748,10 @@ function LearnerCalendarBody() {
                 </button>
               )}
             </div>
-            <div className="grid gap-3 xl:grid-cols-2">
-              <div className="rounded-xl bg-background-50/70 p-2">
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+              <div className="min-w-0 rounded-xl bg-background-50/70 p-2">
                 <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Source</p>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex max-h-24 flex-wrap content-start gap-2 overflow-y-auto pr-1">
                   {sourceFilters.map((option) => {
                     const source = option.key;
                     const meta = { label: option.longLabel, short: option.label, dot: option.dot };
@@ -1759,7 +1761,7 @@ function LearnerCalendarBody() {
                         key={source}
                         type="button"
                         onClick={() => setFilterSource(source)}
-                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
+                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
                         title={`${meta.label} (${sourceFilterCounts[source]})`}
                       >
                         <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : meta.dot}`}></span>
@@ -1770,7 +1772,7 @@ function LearnerCalendarBody() {
                   })}
                 </div>
               </div>
-              <div className="rounded-xl bg-background-50/70 p-2">
+              <div className="min-w-0 rounded-xl bg-background-50/70 p-2">
                 <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Status</p>
                 <div className="flex flex-wrap gap-2">
                   {LEARNER_STATUS_FILTERS.map((status) => {

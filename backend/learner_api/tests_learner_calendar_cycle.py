@@ -37,6 +37,10 @@ def _learner(**kwargs):
     fields = {
         'pk': 101,
         'email': 'aya.khater@example.com',
+        # learner_start_date is the Review recurrence anchor; start_date is
+        # kept in step too since resolve_schedule_window's WINDOW bound
+        # still reads it.
+        'learner_start_date': START,
         'start_date': START,
         'end_date': None,
         'practical_period_end_date': '',
@@ -155,7 +159,7 @@ class GeneratedCycleTests(CurriculumCycleFixture, SimpleTestCase):
     def test_the_window_falls_back_to_the_enrolment_row(self):
         # The coach passes prefetched commercial/enrolment maps; this endpoint
         # holds one learner, so the row's own dates stand in.
-        learner = _learner(start_date='2026-08-03', end_date='2027-08-02')
+        learner = _learner(learner_start_date='2026-08-03', start_date='2026-08-03', end_date='2027-08-02')
 
         events = _generated_cycle_events(learner, _mirror(start_date=None, end_date=None), set())
 
@@ -164,13 +168,19 @@ class GeneratedCycleTests(CurriculumCycleFixture, SimpleTestCase):
     def test_a_learner_with_no_window_has_no_cycle_to_show(self):
         # Nothing to count from — the coach timetable skips them too.
         self.assertEqual(
-            _generated_cycle_events(_learner(start_date=None), _mirror(start_date=None, end_date=None), set()), [],
+            _generated_cycle_events(
+                _learner(learner_start_date=None, start_date=None), _mirror(start_date=None, end_date=None), set(),
+            ), [],
         )
 
     def test_an_end_date_before_the_start_generates_nothing(self):
         mirror = _mirror(start_date=END, end_date=START)
 
-        self.assertEqual(_generated_cycle_events(_learner(start_date=END, end_date=START), mirror, set()), [])
+        self.assertEqual(
+            _generated_cycle_events(
+                _learner(learner_start_date=END, start_date=END, end_date=START), mirror, set(),
+            ), [],
+        )
 
     def test_a_learner_with_no_delivery_record_has_no_cycle(self):
         self.assertEqual(_generated_cycle_events(_learner(), None, set()), [])

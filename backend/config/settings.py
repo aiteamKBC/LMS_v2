@@ -61,6 +61,12 @@ SAFEGUARDING_SSO_CALLBACK_URL = os.environ.get(
     "https://safeguarding.kentbusinesscollege.net/auth/lms/callback",
 ).strip()
 
+if "runserver" in sys.argv:
+    # Local dev should not block login/session requests behind a large
+    # Curriculum cache rebuild. Production can opt in via the environment, and
+    # any developer who wants to profile warming can still set CURRICULUM_WARM=1.
+    os.environ.setdefault("CURRICULUM_WARM", "0")
+
 
 DB_CONN_MAX_AGE = int(os.environ.get('DB_CONN_MAX_AGE', '300'))
 DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() != 'false'

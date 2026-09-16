@@ -7,11 +7,12 @@ interface CalendarEventDialogProps {
   onClose: () => void;
   children: ReactNode;
   badges?: ReactNode;
+  headerAction?: ReactNode;
   actions?: ReactNode;
 }
 
 /** Shared event preview for calendar cards in every calendar view. */
-export function CalendarEventDialog({ title, onClose, children, badges, actions }: CalendarEventDialogProps) {
+export function CalendarEventDialog({ title, onClose, children, badges, headerAction, actions }: CalendarEventDialogProps) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -79,7 +80,10 @@ export function CalendarEventDialog({ title, onClose, children, badges, actions 
               <AppIcon className="ri-close-line h-5 w-5" />
             </button>
           </div>
-          <h2 id={titleId} className="break-words text-xl font-heading font-bold leading-snug text-foreground-950">{title}</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 id={titleId} className="min-w-0 break-words text-xl font-heading font-bold leading-snug text-foreground-950">{title}</h2>
+            {headerAction ? <div className="shrink-0">{headerAction}</div> : null}
+          </div>
           {badges && <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold">{badges}</div>}
         </div>
         {actions && <div className="flex shrink-0 flex-wrap gap-2 border-b border-foreground-200 bg-white px-5 py-3 sm:px-6">{actions}</div>}
