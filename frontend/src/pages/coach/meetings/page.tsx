@@ -93,6 +93,29 @@ function pageFromQuery(value: string | null) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
+function startOfMonth(value = new Date()) {
+  return new Date(value.getFullYear(), value.getMonth(), 1);
+}
+
+function monthKey(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthFromQuery(value: string | null) {
+  if (!value || !/^\d{4}-\d{2}$/.test(value)) return startOfMonth();
+  const [year, month] = value.split('-').map(Number);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return startOfMonth();
+  return new Date(year, month - 1, 1);
+}
+
+function addMonths(value: Date, offset: number) {
+  return new Date(value.getFullYear(), value.getMonth() + offset, 1);
+}
+
+function monthLabel(value: Date) {
+  return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(value);
+}
+
 export default function CoachMeetings() {
   const coach = useCoachIdentity();
   const navigate = useNavigate();
@@ -100,6 +123,7 @@ export default function CoachMeetings() {
   const [filter, setFilter] = useState<MeetingFilter>(() => filterFromQuery(searchParams.get('filter')));
   const [groupFilter, setGroupFilter] = useState(() => searchParams.get('group') || ALL_GROUPS_FILTER);
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '');
+  const [selectedMonth, setSelectedMonth] = useState(() => monthFromQuery(searchParams.get('month')));
   const [currentPage, setCurrentPage] = useState(() => pageFromQuery(searchParams.get('page')));
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
   const [ownerName, setOwnerName] = useState('Coach');
@@ -111,9 +135,10 @@ export default function CoachMeetings() {
     if (filter !== 'this-month') params.set('filter', filter);
     if (groupFilter !== ALL_GROUPS_FILTER) params.set('group', groupFilter);
     if (searchTerm.trim()) params.set('q', searchTerm.trim());
+    if (monthKey(selectedMonth) !== monthKey(startOfMonth())) params.set('month', monthKey(selectedMonth));
     if (currentPage > 1) params.set('page', String(currentPage));
     setSearchParams(params, { replace: true });
-  }, [currentPage, filter, groupFilter, searchTerm, setSearchParams]);
+  }, [currentPage, filter, groupFilter, searchTerm, selectedMonth, setSearchParams]);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -143,7 +168,11 @@ export default function CoachMeetings() {
     return () => controller.abort();
   }, [coach.email, coach.isInitialized, coach.name]);
 
-  const thisMonthEvents = events.filter(event => isEventThisMonth(event));
+  const selectedMonthLabel = monthLabel(selectedMonth);
+  const selectedMonthIsCurrent = monthKey(selectedMonth) === monthKey(startOfMonth());
+  const monthFilterLabel = selectedMonthIsCurrent ? FILTER_COPY['this-month'].label : selectedMonthLabel;
+  const monthFilterDescription = `Monthly coaching meetings due or scheduled in ${selectedMonthLabel}.`;
+  const selectedMonthEvents = events.filter(event => isEventThisMonth(event, selectedMonth));
   const atRiskEvents = events.filter(event => isAtRiskEvent(event));
   const dueSoonEvents = events.filter(event => isDueSoonEvent(event));
   const needsScheduleEvents = events.filter(needsScheduling);
@@ -173,7 +202,7 @@ export default function CoachMeetings() {
   }, [groupFilter, groupFilterOptions, loading]);
 
   const tabFiltered = events.filter(event => {
-    if (filter === 'this-month') return isEventThisMonth(event);
+    if (filter === 'this-month') return isEventThisMonth(event, selectedMonth);
     if (filter === 'at-risk') return isAtRiskEvent(event);
     if (filter === 'due-soon') return isDueSoonEvent(event);
     if (filter === 'needs-schedule') return needsScheduling(event);
@@ -197,7 +226,7 @@ export default function CoachMeetings() {
   }, [activePage, currentPage, loading]);
 
   const filterTabs: PageTabItem[] = [
-    { value: 'this-month', label: FILTER_COPY['this-month'].label, count: thisMonthEvents.length },
+    { value: 'this-month', label: monthFilterLabel, count: selectedMonthEvents.length },
     { value: 'at-risk', label: FILTER_COPY['at-risk'].label, count: atRiskEvents.length, tone: 'critical' },
     { value: 'due-soon', label: FILTER_COPY['due-soon'].label, count: dueSoonEvents.length, tone: 'upcoming' },
     { value: 'needs-schedule', label: FILTER_COPY['needs-schedule'].label, count: needsScheduleEvents.length, tone: 'caution' },
@@ -212,11 +241,18 @@ export default function CoachMeetings() {
     setCurrentPage(1);
   };
 
+  const changeMonth = (nextMonth: Date) => {
+    setSelectedMonth(startOfMonth(nextMonth));
+    setFilter('this-month');
+    setCurrentPage(1);
+  };
+
   const listUrl = () => {
     const query = new URLSearchParams();
     if (filter !== 'this-month') query.set('filter', filter);
     if (groupFilter !== ALL_GROUPS_FILTER) query.set('group', groupFilter);
     if (searchTerm.trim()) query.set('q', searchTerm.trim());
+    if (monthKey(selectedMonth) !== monthKey(startOfMonth())) query.set('month', monthKey(selectedMonth));
     if (activePage > 1) query.set('page', String(activePage));
     const queryString = query.toString();
     return `/coach/meetings${queryString ? `?${queryString}` : ''}`;
@@ -289,9 +325,46 @@ export default function CoachMeetings() {
 
         <Panel padding="none">
           <div className="border-b border-foreground-100 p-4">
-            <div className="mb-3">
-              <h3 className="text-[15px] font-semibold text-foreground-900">{FILTER_COPY[filter].label} coaching meetings</h3>
-              <p className="mt-0.5 max-w-3xl text-[12px] leading-relaxed text-foreground-500">{FILTER_COPY[filter].description}</p>
+            <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <h3 className="text-[15px] font-semibold text-foreground-900">
+                  {filter === 'this-month' ? selectedMonthLabel : FILTER_COPY[filter].label} coaching meetings
+                </h3>
+                <p className="mt-0.5 max-w-3xl text-[12px] leading-relaxed text-foreground-500">
+                  {filter === 'this-month' ? monthFilterDescription : FILTER_COPY[filter].description}
+                </p>
+              </div>
+              <div className="inline-flex w-full flex-wrap items-center gap-2 rounded-xl border border-foreground-100 bg-white p-1.5 shadow-sm sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => changeMonth(addMonths(selectedMonth, -1))}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-primary-700 transition hover:bg-primary-50"
+                  aria-label="Previous month"
+                >
+                  <AppIcon className="ri-arrow-left-s-line text-lg"></AppIcon>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeMonth(startOfMonth())}
+                  className={cn(
+                    'inline-flex h-9 items-center justify-center rounded-lg px-3 text-[12px] font-bold transition',
+                    selectedMonthIsCurrent ? 'bg-primary-600 text-white shadow-sm' : 'bg-primary-50 text-primary-700 hover:bg-primary-100',
+                  )}
+                >
+                  Today
+                </button>
+                <span className="inline-flex h-9 min-w-36 items-center justify-center gap-2 rounded-lg px-3 text-[12px] font-bold text-foreground-900">
+                  {selectedMonthLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => changeMonth(addMonths(selectedMonth, 1))}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-primary-700 transition hover:bg-primary-50"
+                  aria-label="Next month"
+                >
+                  <AppIcon className="ri-arrow-right-s-line text-lg"></AppIcon>
+                </button>
+              </div>
             </div>
             <FilterToolbar
               className="mb-3 border-0 bg-transparent p-0 shadow-none"
