@@ -8,7 +8,7 @@ import {
   zonedNaiveToUtcIso,
   type TeamsMeetingInput,
 } from '../module-builder/moduleAuthoringData';
-import { EmailChipsInput, emailList } from '../module-builder/EmailChipsInput';
+import { emailList } from '../module-builder/EmailChipsInput';
 import { EntraPeopleInput } from './EntraPeopleInput';
 import { cleanText, formatDateLabel } from '../shared/entities/model';
 import {
@@ -543,7 +543,7 @@ export function TeamsCalendarFormBody({
               />
             </FormField>
             <FormField label="Attendees" hint="Presenters and co-organisers are invited automatically.">
-              <EmailChipsInput
+              <EntraPeopleInput label="Attendees"
                 value={form.attendees}
                 onChange={value => patch({ attendees: value })}
               />
