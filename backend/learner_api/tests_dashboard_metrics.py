@@ -154,6 +154,7 @@ class DashboardMetricsTests(SimpleTestCase):
             with self.subTest(document=document), \
                  patch('learner_api.dashboard_metrics.connections') as connections, \
                  patch('learner_api.dashboard_metrics._direct_progress_records', return_value=[]), \
+                 patch('learner_api.dashboard_metrics._effective_plan_ids', return_value=['module-one', 'module-two']), \
                  patch('learner_api.dashboard_metrics.rows', side_effect=[native, []]), \
                  patch('learner_api.dashboard_metrics.TrainingPlanDocument.objects') as manager:
                 manager.using.return_value.filter.return_value.order_by.return_value.values.return_value.first.return_value = document
@@ -162,10 +163,10 @@ class DashboardMetricsTests(SimpleTestCase):
                 result = read_metrics(source, 'commercial')
                 self.assertEqual(result['otjh']['planned'], expected)
                 self.assertEqual(result['otjh']['actual'], 0)
-                query, params = cursor.execute.call_args_list[1].args
+                query, params = cursor.execute.call_args_list[0].args
                 self.assertIn('c.expected_otjh AS expected_hours', query)
                 self.assertIn('c.module_catalogue_id=ANY(%s)', query)
-                self.assertIn('c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL', query)
+                self.assertIn("c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> ''", query)
                 self.assertEqual(params, [['module-one', 'module-two']])
 
     def test_migrated_metrics_keep_audited_inventory_and_refresh_saved_progress(self):
@@ -188,11 +189,12 @@ class DashboardMetricsTests(SimpleTestCase):
                 with self.subTest(attempts=saved_attempts), \
                      patch('learner_api.dashboard_metrics.connections') as connections, \
                      patch('learner_api.dashboard_metrics._direct_progress_records', return_value=[]), \
+                     patch('learner_api.dashboard_metrics._effective_plan_ids', return_value=['module-one']), \
                      patch('learner_api.dashboard_metrics.rows', side_effect=[native, progress, historical]), \
                      patch('learner_api.dashboard_metrics.read_planned_hours', return_value=867):
                     cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
                     cursor.fetchone.side_effect = [(source.email,), (1171.34,)]
-                    cursor.fetchall.side_effect = [[('module-one',)], saved_attempts, [(2, '10', 'imported')]]
+                    cursor.fetchall.side_effect = [saved_attempts, [(2, '10', 'imported')]]
                     result = read_metrics(source, 'commercial')
                     self.assertEqual(tuple(result[metric][key] for metric in ('programme', 'ksb')
                                            for key in ('completed', 'total', 'percent')), expected)

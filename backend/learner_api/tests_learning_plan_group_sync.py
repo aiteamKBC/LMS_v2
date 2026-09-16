@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
-from .learning_plan import _effective_plan_ids, _module_payload, learning_plan
+from .learning_plan import _effective_plan_ids, _module_payload, effective_training_plan, learning_plan
 
 MODULE_ROWS = [
     {
@@ -44,6 +44,7 @@ class GroupSyncTests(SimpleTestCase):
         self.enterContext(
             patch("login.permissions.authenticate_request", return_value=SimpleNamespace(role="admin")),
         )
+        self.enterContext(patch("learner_api.learning_plan._meetings", return_value=([], "")))
 
     def _get(self, learner, preset):
         catalogue = [_module_payload(row) for row in MODULE_ROWS]
@@ -51,6 +52,8 @@ class GroupSyncTests(SimpleTestCase):
         with patch("learner_api.learning_plan.EnrolmentUser") as model, \
                 patch("learner_api.learning_plan._programme_modules", return_value=catalogue), \
                 patch("learner_api.learning_plan._all_modules", return_value=catalogue), \
+                patch("learner_api.learning_plan._modules_by_id",
+                      side_effect=lambda ids, catalogue=catalogue: {m["moduleId"]: m for m in catalogue if m["moduleId"] in set(ids)}), \
                 patch("learner_api.learning_plan._group_module_ids", return_value=preset):
             model.all_learners.get.return_value = learner
             response = learning_plan(request, 19)
@@ -70,7 +73,13 @@ class GroupSyncTests(SimpleTestCase):
     def test_the_inherited_module_counts_towards_the_hours_being_agreed(self):
         body = self._get(_learner([{"moduleId": "MOD-1"}]), ["MOD-1", "MOD-2"])
 
-        self.assertEqual(body["totals"], {"moduleCount": 2, "totalHours": 12})
+        self.assertEqual(body["totals"], {
+            "moduleCount": 2,
+            "moduleHours": 12.0,
+            "meetingCount": 0,
+            "meetingHours": 0,
+            "totalHours": 12.0,
+        })
 
     def test_an_inherited_module_is_not_also_offered_by_the_picker(self):
         body = self._get(_learner([{"moduleId": "MOD-1"}]), ["MOD-1", "MOD-2"])
@@ -114,6 +123,8 @@ class GroupSyncTests(SimpleTestCase):
         with patch("learner_api.learning_plan.EnrolmentUser") as model, \
                 patch("learner_api.learning_plan._programme_modules", return_value=catalogue), \
                 patch("learner_api.learning_plan._all_modules", return_value=catalogue), \
+                patch("learner_api.learning_plan._modules_by_id",
+                      side_effect=lambda ids, catalogue=catalogue: {m["moduleId"]: m for m in catalogue if m["moduleId"] in set(ids)}), \
                 patch("learner_api.learning_plan._group_module_ids", return_value=preset), \
                 patch("learner_api.learning_plan.sync_learning_plan_mirror"), \
                 patch("learner_api.learning_plan.advance_learner"):
@@ -172,4 +183,20 @@ class ModulePickerAgreesWithThePlanTests(SimpleTestCase):
         with patch("learner_api.learning_plan._group_module_ids") as preset:
             self.assertEqual(_effective_plan_ids(_learner([]), {}), [])
         # Not merely empty -- the group is never consulted for an emptied plan.
+        preset.assert_not_called()
+
+    def test_learner_read_appends_inherited_modules_without_saving_them(self):
+        saved = [{"moduleId": "MOD-1", "moduleTitle": "Agreed module", "weeks": []}]
+        learner = _learner(saved)
+        with patch("learner_api.learning_plan._group_module_ids", return_value=["MOD-1", "MOD-2"]):
+            effective = effective_training_plan(learner)
+
+        self.assertEqual([module["moduleId"] for module in effective], ["MOD-1", "MOD-2"])
+        self.assertEqual(effective[1], {"moduleId": "MOD-2"})
+        self.assertEqual(learner.learning_plan, saved)
+
+    def test_explicit_learner_read_does_not_add_group_modules(self):
+        saved = [{"moduleId": "MOD-1", "assignmentMode": "explicit"}]
+        with patch("learner_api.learning_plan._group_module_ids") as preset:
+            self.assertEqual(effective_training_plan(_learner(saved)), saved)
         preset.assert_not_called()

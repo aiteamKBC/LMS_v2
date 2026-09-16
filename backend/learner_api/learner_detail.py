@@ -30,6 +30,7 @@ from .active_users import completed_hours_from_progress, fmt_hours, hydrate_sour
 from .identity import learner_profile_for_source
 from .aptem_status import programme_status
 from .learner_progression import access_gate, advance_learner
+from .learning_plan import effective_training_plan
 from .programme_access import learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
@@ -608,7 +609,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None):
                     SELECT m.module_catalogue_id, m.title, COALESCE(m.programme_id, ''), COALESCE(m.programme_name, '')
                     FROM curriculum.modules m
                     WHERE m.module_catalogue_id = ANY(%s)
-                      AND (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)
+                      AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
                     """,
                     [module_order],
                 )
@@ -1354,7 +1355,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 # was cascade-hidden with its parent programme available to an
                 # already-assigned learner; a row deleted on its own remains
                 # excluded. ``deleted_via_parent`` distinguishes the two cases.
-                "AND (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)",
+                "AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')",
                 [module_ids],
             )
             master_module_title = {mid: title for mid, title in cur.fetchall()}
@@ -1362,7 +1363,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             cur.execute(
                 "SELECT id, module_catalogue_id, title, week_number, display_order "
                 "FROM curriculum.weeks WHERE module_catalogue_id = ANY(%s) "
-                "AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL) "
+                "AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '') "
                 "ORDER BY module_catalogue_id, display_order, week_number, id",
                 [module_ids],
             )
@@ -1388,7 +1389,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", "
                 "tutor_validation_required "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
-                "AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL) "
+                "AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '') "
                 "ORDER BY week_id, display_order, id",
                 [module_ids],
             )
@@ -1461,7 +1462,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "SELECT component_id, ksb_code, ksb_description, classification, weight, weight_class "
                     "FROM curriculum.ksb_mappings "
                     "WHERE component_id = ANY(%s) "
-                    "AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL) "
+                    "AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '') "
                     "ORDER BY component_id, ksb_code",
                     [missing_ksb_component_ids],
                 )
@@ -1505,7 +1506,10 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             or None
         )
         normalised_type = _s(ctype).strip().lower().replace("-", "_")
-        video_url = _s(settings.get("videoUrl")) or None
+        # Use the shared resolver, not a bare settings["videoUrl"] read: a video
+        # can be authored as an embed snippet instead of a plain URL, and the
+        # removal check below must not treat that as "video removed".
+        video_url = _video_url_from_settings(settings)
         # Generalised content payload per component type (mirrors the authoring
         # settings_json keys in the Module Builder). Lets the learner open a
         # podcast / reading / slide deck / reflection the same way as a video.
@@ -1575,6 +1579,20 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
         duration = settings.get("durationMinutes")
         ksb_weight, ksb_count = ksb_weight_by_component.get(comp_id, (0.0, 0))
         linked_quiz = quiz_meta_by_id.get(quiz_id_by_component.get(comp_id))
+        # A video component whose video the author has since removed has nothing
+        # left for the learner to do, so drop it from the live tree exactly as a
+        # deleted component is dropped — rather than showing an empty player.
+        # Only the tree is affected: completions already recorded against this
+        # component stay in "Training_plan_progress" and keep their credit,
+        # because progress is read from that log by componentId, not from here.
+        #
+        # Guarded on the other content a video component can carry, so removing
+        # the video from one that also has, say, a linked quiz or a reading body
+        # hides the player without hiding the remaining work.
+        if normalised_type == "video" and not video_url and not (
+            linked_quiz or content_html or resource_url or audio_url or live_session_url
+        ):
+            continue
         comps_by_week.setdefault(week_id, []).append({
             "componentId": comp_id,
             "display": _display_quiz_title(linked_quiz["title"]) if linked_quiz else _display_component_title(ctype, ctitle),
@@ -1598,6 +1616,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "resourceUrl": resource_url,
             "liveSessionUrl": live_session_url,
             "teamsLiveSessionId": _s(settings.get("teamsLiveSessionId")) or None,
+            "teamsSessionNumber": settings.get("teamsSessionNumber") or None,
             "sessionDate": _s(settings.get("sessionDate")) or None,
             "sessionTime": _s(settings.get("sessionTime")) or None,
             "sessionDateTimeUtc": _s(settings.get("sessionDateTimeUtc")) or None,
@@ -1663,6 +1682,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "resourceUrl": comp["resourceUrl"],
                     "liveSessionUrl": comp["liveSessionUrl"],
                     "teamsLiveSessionId": comp["teamsLiveSessionId"],
+                    "teamsSessionNumber": comp["teamsSessionNumber"],
                     "sessionDate": comp["sessionDate"],
                     "sessionTime": comp["sessionTime"],
                     "sessionDateTimeUtc": comp["sessionDateTimeUtc"],
@@ -1729,6 +1749,7 @@ def build_learner_detail(source, pk, *, compact=False):
     # in the authored weeks/components before serialising the learner page,
     # which also repairs learners activated before this behaviour existed.
     hydrate_source_training_plan(source)
+    assigned_modules = effective_training_plan(source)
     learner_profile = _active_profile_for_source(source, pk)
 
     if learner_profile and not learner_profile.ksbs:
@@ -1750,7 +1771,7 @@ def build_learner_detail(source, pk, *, compact=False):
     # edits in Module Builder reflect here immediately (structured-plan learners).
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
         detail["modules"], detail["week"], detail["components"],
-        assigned_modules=get_training_plan(source),
+        assigned_modules=assigned_modules,
         **({"compact": True} if compact else {}),
     )
     detail["components"] = _apply_programme_assignment_template(
@@ -1758,7 +1779,7 @@ def build_learner_detail(source, pk, *, compact=False):
     )
     detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(detail["components"])
     detail["week"], detail["components"] = _append_week_quizzes(
-        detail["week"], detail["components"], assigned_modules=get_training_plan(source),
+        detail["week"], detail["components"], assigned_modules=assigned_modules,
     )
     snapshot = _live_otjh_snapshot(detail, learner_profile)
     _apply_live_otjh_snapshot(detail, snapshot)
@@ -1786,7 +1807,7 @@ def _reading_content(source, component_id):
     component id must never grant access to unassigned or deleted content.
     """
     module_ids = list(dict.fromkeys(
-        _s(module.get("moduleId")) for module in get_training_plan(source)
+        _s(module.get("moduleId")) for module in effective_training_plan(source)
         if isinstance(module, dict) and _s(module.get("moduleId"))
     ))
     if not module_ids or not component_id:
@@ -1797,9 +1818,9 @@ def _reading_content(source, component_id):
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=m.module_catalogue_id
             WHERE c.id=%s AND c.module_catalogue_id=ANY(%s)
-              AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)
-              AND (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)
-              AND (w.deleted_at IS NULL OR w.deleted_via_parent IS NOT NULL)''', [component_id, module_ids])
+              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
+              AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
+              AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')''', [component_id, module_ids])
         row = cursor.fetchone()
     return {"componentId": row[0], "contentHtml": _s(row[1]) or None} if row else None
 

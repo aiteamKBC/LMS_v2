@@ -543,6 +543,10 @@ export function SessionsTree({
     setSyncNotice(null);
     try {
       const result = await syncTeamsMeetingArtifacts(session.liveSessionId);
+      if ('state' in result) {
+        setSyncNotice({ tone: 'success', text: result.message });
+        return;
+      }
       // Manual sync must bypass the ordinary GET cache. Otherwise the POST can
       // save new Graph rows while this panel still renders its old empty payload.
       const occurrence = await loadArtifacts(session, true);

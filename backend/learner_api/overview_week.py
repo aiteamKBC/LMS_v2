@@ -10,7 +10,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from audit_api.last_audit_ledger_views import _is_completed
 from .builder_activity_dates import read_builder_activity_dates
-from .dashboard_metrics import point_codes, ratio
+from .dashboard_metrics import metrics_from_loaded, point_codes, ratio
 from .progress_rules import progress_counts_as_achieved
 from .learner_detail import SOURCE_MODELS
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
@@ -225,7 +225,7 @@ def summarise_week(historical, native, progress, attempts, links, start, end):
             'missingExpectedHours': sum(value is None for value in expected.values())}
 
 
-def read_week(source, now=None, *, home_kind=None):
+def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
     start, end = week_bounds(now)
     migrated = student_activity_available(source.aptem_id)
     historical, attempts, links = [], set(), {}
@@ -239,13 +239,13 @@ def read_week(source, now=None, *, home_kind=None):
             w.title AS section_title,c.settings_json->>'dueTiming' AS due_timing,
             coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code)) FROM curriculum.ksb_mappings k
-                 WHERE k.component_id=c.id AND (k.deleted_at IS NULL OR k.deleted_via_parent IS NOT NULL)), '[]'::jsonb) AS ksb_mappings,
+                 WHERE k.component_id=c.id AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb) AS ksb_mappings,
             coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                       WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),c.settings_json->>'linkedQuizId') AS quiz_id
             FROM curriculum.components c JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)
-              AND (w.id IS NULL OR w.deleted_at IS NULL OR w.deleted_via_parent IS NOT NULL)''', [module_ids])
+            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
+              AND (w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')''', [module_ids])
         native = rows(cur)
         # Match My Learning's delivery calendar, including undated lesson titles,
         # empty teaching weeks and cohort holidays.
@@ -317,6 +317,22 @@ def read_week(source, now=None, *, home_kind=None):
             'monthlyOtjh': monthly_otjh_summary(plan_activities, progress),
             'otjh': {'actual': round(old_hours + new_hours, 4) if old_hours is not None and not undated_hours else None,
                      'historical': old_hours, 'new': round(new_hours, 4), 'undatedHistoricalRows': undated_hours}}
+    if dashboard_kind:
+        with connections['enrolment'].cursor() as cur:
+            cur.execute('''SELECT p.component_ref AS "componentId",p.quiz_ref AS "quizId",p.kind,p.passed
+                FROM "Learner".learners l JOIN "Learner".learner_progress_entries p ON p.learner_id=l.id
+                WHERE l.enrolment_id=%s AND p.kind<>'activity_event' ''', [source.pk])
+            metric_progress = rows(cur)
+            metric_attempts = attempts
+            if migrated:
+                aptem_id = int(str(source.aptem_id).strip())
+                cur.execute('''SELECT DISTINCT group_id,activity_id FROM "Learner".subject_activity_attempts
+                    WHERE enrolment_id=%s AND aptem_id=%s AND completed=true
+                      AND submitted_at IS NOT NULL''', [source.pk, aptem_id])
+                metric_attempts = {(str(group), str(activity)) for group, activity in cur.fetchall()}
+        result['metrics'] = metrics_from_loaded(source, dashboard_kind, migrated=migrated, native=native,
+            progress=metric_progress, direct_progress=progress, historical=historical,
+            attempts=metric_attempts, links=links, history_ready=True)
     if home_kind:
         from .home_progress import read_home_progress
         result['homeProgress'] = read_home_progress(source, home_kind,
@@ -332,12 +348,16 @@ def overview_week(request, kind, pk):
     if model is None:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     try:
-        home = request.GET.get('section') == 'home'
+        section = request.GET.get('section')
+        if section not in (None, 'home', 'dashboard'):
+            return JsonResponse({'error': 'Invalid overview section.'}, status=400)
+        home = section == 'home'
         fields = ['id', 'aptem_id', 'email']
         if home:
             fields.extend(['username', 'employer_id', 'start_date', 'end_date', 'programme', 'cohort'])
         source = model.all_learners.only(*fields).get(pk=pk)
-        payload = read_week(source, home_kind=kind) if home else read_week(source)
+        payload = read_week(source, home_kind=kind) if home else read_week(
+            source, dashboard_kind=kind if section == 'dashboard' else None)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except LookupError as error:

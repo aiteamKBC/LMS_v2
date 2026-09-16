@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { useDashboardPlan } from './useDashboardPlan';
+import type { DashboardPlanState } from './useDashboardPlan';
 import { dashboardPlanSubjects } from './dashboardPlan';
 import { TrainingPlanDetails } from '@/pages/learner/training-plan-timeline/TrainingPlanDetails';
 import { OverviewLearningPanels } from './OverviewLearningPanels';
@@ -9,8 +9,8 @@ import { DashboardRewards } from './DashboardRewards';
 import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */
-export function DashboardTrainingPlan({ kind, learnerId, canOpenActivities = true, programmeStartDate, canOpenRewards = true }: { kind: LearnerKind; learnerId: string; canOpenActivities?: boolean; programmeStartDate?: string | null; canOpenRewards?: boolean }) {
-  const { data, subjects: summaries, loading, error, refresh, retryContract } = useDashboardPlan(kind, learnerId);
+export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities = true, programmeStartDate, canOpenRewards = true }: { kind: LearnerKind; learnerId: string; plan: DashboardPlanState; canOpenActivities?: boolean; programmeStartDate?: string | null; canOpenRewards?: boolean }) {
+  const { data, subjects: summaries, loading, error, refresh, retryContract, week, schedule } = plan;
   const [params] = useSearchParams();
   const { hash } = useLocation();
   const initialSubjectId = params.get('subject') || '';
@@ -21,7 +21,7 @@ export function DashboardTrainingPlan({ kind, learnerId, canOpenActivities = tru
   const scrolled = useRef('');
   const hasSnapshot = !!data && !!summaries;
   const subjects = useMemo(() => data && summaries ? dashboardPlanSubjects(summaries, data) : [], [data, summaries]);
-  const weeklyFocus = canOpenActivities ? <OverviewLearningPanels kind={kind} learnerId={learnerId} /> : undefined;
+  const weeklyFocus = canOpenActivities ? <OverviewLearningPanels kind={kind} learnerId={learnerId} week={week} schedule={schedule} /> : undefined;
   useEffect(() => {
     if (!hasSnapshot || (!initialSubjectId && hash !== '#module-timeline') || scrolled.current === scrollDestination) return;
     scrolled.current = scrollDestination;

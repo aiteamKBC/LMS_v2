@@ -122,7 +122,7 @@ def read_native_occurrences(source):
             CASE WHEN o.attendance_report_id IS NULL OR o.attendance_report_id='' THEN false
                  ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
                      WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s
-                       AND a.total_attendance_seconds>0) END AS attended
+                       AND a.total_attendance_seconds>180) END AS attended
             FROM curriculum.live_session_occurrences o
             JOIN curriculum.live_sessions s ON s.id=o.live_session_id
             JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
@@ -136,9 +136,11 @@ def read_native_occurrences(source):
                    OR (o.attendance_report_id IS NOT NULL AND o.attendance_report_id<>''
                        AND EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
                            WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s
-                             AND a.total_attendance_seconds>0)))
+                             AND a.total_attendance_seconds>0))
+                   OR EXISTS(SELECT 1 FROM curriculum.live_session_join_launches j
+                       WHERE j.occurrence_id=o.id AND lower(btrim(j.viewer_email))=%s))
             ORDER BY o.scheduled_start,o.id''', [_key(source.email), module_ids,
-                                                _key(source.email), _key(source.email)])
+                                                _key(source.email), _key(source.email), _key(source.email)])
         result = dict_rows(cur)
     now = timezone.now()
     for row in result:
@@ -358,13 +360,13 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             'durationMinutes': _duration(row), 'contentSummary': '', 'ksbs': [], 'ksbScope': None, 'activities': [],
             'startsAt': _aware(row['scheduled_start']).isoformat() if row.get('scheduled_start') else None,
             'endsAt': _aware(row['scheduled_end']).isoformat() if row.get('scheduled_end') else None,
-            'joinUrl': _text(row.get('join_url')),
+            'joinUrl': (f"/learner_api/session-results/{kind}/{learner_id}/{row['live_session_id']}/sessions/{row['session_number']}/join/" if source == 'microsoft-teams' and row.get('live_session_id') and row.get('session_number') else _text(row.get('join_url'))),
             'tutor': _text(row.get('tutor_name')), 'coach': _text(row.get('coach_name')),
             'attendanceConfirmed': bool(row.get('attendance_confirmed')),
             'creditedMinutes': row.get('credited_minutes'),
             'status': {'present': 'completed', 'late': 'late', 'absent': 'absent',
                        'upcoming': 'upcoming', 'in_progress': 'in_progress'}.get(row['attendance_status'], 'pending'),
-            'catchupStatus': None, 'updatedAt': row['updated_at'].isoformat() if row.get('updated_at') else None,
+            'excused': bool(row.get('excused')), 'catchupStatus': 'completed' if row.get('catchup_completed') else None, 'updatedAt': row['updated_at'].isoformat() if row.get('updated_at') else None,
         }
         if source == 'kbc-attendance':
             meta = legacy_meta.get(row['session_id']) or {}
@@ -428,7 +430,7 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
                 lecture['monthlyLog']['month'] = lecture['date'][:7]
         if lecture['status'] == 'absent':
             activities = lecture['activities']
-            lecture['catchupStatus'] = 'completed' if activities and all(a['completed'] for a in activities) else 'pending'
+            lecture['catchupStatus'] = ('pending' if source == 'microsoft-teams' else 'completed' if activities and all(a['completed'] for a in activities) else 'pending')
         lectures.append(lecture)
     return sorted(lectures, key=lambda r: (r['date'], r['startTime'], r['id']))
 

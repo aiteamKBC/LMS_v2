@@ -21,7 +21,8 @@ export default function FeaturedLecture({ lecture, now, timeZone, busy, canAtten
   const joinUrl = lectureJoinUrl(lecture);
   const hasDuration = Number.isFinite(lecture.durationMinutes) && (lecture.durationMinutes || 0) > 0;
   const hours = hasDuration ? Number((lecture.durationMinutes! / 60).toFixed(2)) : null;
-  const help = attended ? `Attendance recorded${lecture.creditedMinutes != null ? ` · ${Number((lecture.creditedMinutes / 60).toFixed(2))} hours credited` : ''}.` :
+  const nativeTeams = lecture.source === 'microsoft-teams';
+  const help = nativeTeams ? 'Attendance is verified from Teams after more than 3 minutes in the session.' : attended ? `Attendance recorded${lecture.creditedMinutes != null ? ` · ${Number((lecture.creditedMinutes / 60).toFixed(2))} hours credited` : ''}.` :
     !canAttend ? 'Attendance can be recorded by the learner or an administrator.' :
       !today ? 'Attend will be available on the lecture date.' :
         !hasDuration ? 'The lecture duration is not available yet. Please contact support.' :
@@ -47,11 +48,11 @@ export default function FeaturedLecture({ lecture, now, timeZone, busy, canAtten
       <div className={styles.featuredFooter}>
         <div><p id={helpId}>{help}</p>{lecture.startTime && <p className={styles.featuredTimezone}>Times shown in {timeZone || 'Europe/London'}.</p>}</div>
         <div className={styles.featuredActions}>
-          <button type="button" className={`primary-action ${styles.attendButton}`} disabled={busy || attended || !today || !hasDuration || !canAttend}
+          <button type="button" className={`primary-action ${styles.attendButton}`} disabled={nativeTeams || busy || attended || !today || !hasDuration || !canAttend}
             aria-describedby={helpId} onClick={() => onAttend(lecture)}><AppIcon className="ri-checkbox-circle-line" />{busy ? 'Saving…' : attended ? 'Attended' : 'Attend'}</button>
           <button type="button" className={styles.reportButton} disabled={busy || !lecture.canReportAbsence}
             onClick={() => onReport(lecture)}><AppIcon className="ri-calendar-close-line" />{lecture.absenceReport ? 'Absence reported' : 'Report Absence'}</button>
-          {today && joinUrl && <a className={styles.joinSession} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-external-link-line" /></a>}
+          {today && joinUrl && (!nativeTeams || Date.parse(lecture.endsAt || '') > now) && <a className={styles.joinSession} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-external-link-line" /></a>}
         </div>
       </div>
       {error && <p role="alert" className={styles.attendError}>{error}</p>}

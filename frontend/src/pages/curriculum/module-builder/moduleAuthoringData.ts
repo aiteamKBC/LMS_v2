@@ -1,3 +1,4 @@
+import { requestSessionSync } from '@/api/sessionResults';
 import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
 import {
   CurriculumApiError,
@@ -2043,6 +2044,8 @@ export interface TeamsMeetingOccurrence {
 
 export interface TeamsMeetingArtifactsResult {
   series: {
+    timezone?: string;
+    timeZoneIana?: string;
     id: string;
     module_title: string;
     organizer_email: string;
@@ -2059,11 +2062,8 @@ export interface TeamsMeetingArtifactsResult {
   occurrences: TeamsMeetingOccurrence[];
 }
 
-export function syncTeamsMeetingArtifacts(liveSessionId: string) {
-  return apiJson<TeamsArtifactSyncResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
-    method: 'POST',
-    timeoutMs: 45000,
-  });
+export function syncTeamsMeetingArtifacts(liveSessionId: string): Promise<TeamsArtifactSyncResult | { state: 'queued'; message: string }> {
+  return requestSessionSync(liveSessionId);
 }
 
 export function loadTeamsMeetingArtifacts(liveSessionId: string) {

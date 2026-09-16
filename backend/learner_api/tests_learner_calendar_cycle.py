@@ -248,24 +248,74 @@ class StoredRowOwnershipTests(SimpleTestCase):
 class CalendarResponseTests(CurriculumCycleFixture, SimpleTestCase):
     """The endpoint hands the page one calendar in date order."""
 
-    def _call(self, records, mirror, live_events=None, module_ids=None, learner=None):
+    def _call(self, records, mirror, live_events=None, module_ids=None, learner=None, kind='commercial'):
         from django.test import RequestFactory
 
         from . import calendar as module
 
         queryset = Mock()
         queryset.order_by.return_value = records
-        with patch.object(module, 'SOURCE_MODELS', {'commercial': Mock()}) as models, \
+        with patch.object(module, 'SOURCE_MODELS', {kind: Mock()}) as models, \
                 patch.object(module.CoachCalendarEvent.objects, 'filter', return_value=queryset), \
                 patch('coach_api.views.collect_live_session_events', return_value=live_events or []) as collect_live, \
                 patch.object(module, 'learner_profile_for_source', return_value=mirror), \
                 patch.object(module.connections['enrolment'], 'cursor') as cursor, \
                 patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff', id=-1)):
             cursor.return_value.__enter__.return_value.fetchall.return_value = [(key,) for key in (module_ids if module_ids is not None else ['MOD-1'])]
-            models['commercial'].all_learners.filter.return_value.first.return_value = learner or _learner()
-            response = inspect.unwrap(module.learner_calendar)(RequestFactory().get('/x'), 'commercial', 101)
+            models[kind].all_learners.filter.return_value.first.return_value = learner or _learner()
+            response = inspect.unwrap(module.learner_calendar)(RequestFactory().get('/x'), kind, 101)
+        self.assertEqual(response.status_code, 200)
         import json
         return json.loads(response.content), collect_live
+
+    def test_legacy_cycle_keeps_saved_teams_booking_without_review_template_fields(self):
+        from .tests_booking_calendar import RescheduleEndpointTests
+
+        self.programme.return_value = None
+        learner, mirror = _learner(), _mirror()
+        generated = _generated_cycle_events(learner, mirror, set())
+        for kind in ('commercial', 'apprenticeship'):
+            for event_type in ('mcr', 'progress-review'):
+                slot = next(event for event in generated if event['source'] == event_type)
+                for status in ('scheduled', 'completed'):
+                    with self.subTest(kind=kind, event_type=event_type, status=status):
+                        record = RescheduleEndpointTests.scheduled_record()
+                        record.event_key = slot['eventKey']
+                        record.event_type = event_type
+                        record.sequence = slot['sequence']
+                        record.target_date = date.fromisoformat(slot['targetDate'])
+                        record.learner_id = mirror.id
+                        record.learner_email = learner.email
+                        record.status = status
+                        record.notes = 'Preserve the booked session'
+                        record.review_responses = {'learner_signature': 'synthetic-signature'}
+                        record.save = Mock(side_effect=AssertionError('Calendar reads must not save bookings'))
+                        original = vars(record).copy()
+                        with patch('coach_api.views.microsoft_graph_request') as graph:
+                            for _ in range(2):
+                                body, _ = self._call([record], mirror, module_ids=[], learner=learner, kind=kind)
+                                booked = [event for event in body['events'] if event['eventKey'] == record.event_key]
+                                self.assertEqual(len(booked), 1)
+                                event = booked[0]
+                                self.assertEqual(event['status'], status)
+                                self.assertEqual(event['source'], event_type)
+                                self.assertEqual(event['date'], record.scheduled_date.isoformat())
+                                self.assertEqual(event['targetDate'], slot['targetDate'])
+                                self.assertEqual(event['scheduledTime'], '10:00')
+                                self.assertEqual(event['durationMinutes'], 60)
+                                self.assertEqual(event['meetingLink'], record.meeting_link)
+                                self.assertEqual(event['coachEmail'], record.owner_email)
+                                self.assertEqual(event['notes'], record.notes)
+                                self.assertEqual(event['reviewResponses'], record.review_responses)
+                                self.assertTrue(event['learnerSigned'])
+                                self.assertTrue(event['invited'])
+                                self.assertEqual(event['syncState'], 'synced')
+                                self.assertIsNone(event['reviewTemplateId'])
+                                self.assertEqual(event['occurrenceNumber'], record.sequence)
+                                self.assertEqual(len(body['events']), len(generated))
+                            graph.assert_not_called()
+                        record.save.assert_not_called()
+                        self.assertEqual(vars(record), original)
 
     def test_current_coach_is_separate_from_existing_meeting_organiser_and_link(self):
         from .tests_booking_calendar import RescheduleEndpointTests

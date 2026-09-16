@@ -3963,14 +3963,19 @@ def filter_attendance_detail_summary_data(summary_data: dict, learner_ids: list[
     return build_attendance_detail_summary_payload(rows)
 
 
-def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: list[str]) -> dict:
+def fetch_attendance_detail_summary_data(
+    learner_ids: list[int], email_keys: list[str], *, include_reported_participants: bool = False,
+) -> dict:
     ids = sorted({int(learner_id) for learner_id in learner_ids if learner_id})
     emails = sorted({normalize_email(email) for email in email_keys if normalize_email(email)})
     empty = empty_attendance_detail_summary()
     if not ids and not emails:
         return empty
 
-    rows = fetch_verified_teams_attendance_rows(ids, emails)
+    if include_reported_participants:
+        rows = fetch_verified_teams_attendance_rows(ids, emails, include_reported_participants=True)
+    else:
+        rows = fetch_verified_teams_attendance_rows(ids, emails)
     return build_attendance_detail_summary_payload(rows)
 
 
@@ -9183,6 +9188,13 @@ def coach_timetable_event_action(request):
         catchup_record.owner_name = owner_name or catchup_record.owner_name
         catchup_record.last_graph_sync_error = public_graph_sync_warning(warning)
         catchup_record.save()
+        if action == "complete":
+            from learner_api.session_recovery import refresh_catchup_attendance
+            try:
+                refresh_catchup_attendance(event_key)
+            except Exception:
+                logger.exception("Catch-up saved but lecture register update needs retry")
+                warning = "Catch-up completed. The lecture attendance register still needs synchronization."
 
         learner = fetch_owner_active_learner_profiles(owner_email)
         learner_map = build_learner_profile_map(learner)
@@ -9639,6 +9651,7 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
     rows = fetch_verified_teams_attendance_rows(
         [to_int(learner.get("id"))],
         [normalize_email(learner.get("email"))],
+        include_reported_participants=True,
     )
 
     return [
@@ -10233,7 +10246,9 @@ def coach_attendance(request):
         active_learner_ids = [int(learner["id"]) for learner in active_learners if learner.get("id")]
         email_keys = [normalize_email(learner.get("email")) for learner in caseload_learners]
         active_email_keys = [normalize_email(learner.get("email")) for learner in active_learners]
-        attendance_data = fetch_attendance_detail_summary_data(learner_ids, email_keys)
+        attendance_data = fetch_attendance_detail_summary_data(
+            learner_ids, email_keys, include_reported_participants=True,
+        )
         active_attendance_data = filter_attendance_detail_summary_data(
             attendance_data,
             active_learner_ids,
@@ -10586,6 +10601,14 @@ def coach_absence_reports(request):
                 message="Could not save the absence report decision.",
                 status=502,
             )
+        recovery_warning = ''
+        if status == CoachAbsenceReport.STATUS_APPROVED and report.catchup_event_key:
+            try:
+                from learner_api.session_recovery import refresh_catchup_attendance
+                refresh_catchup_attendance(report.catchup_event_key)
+            except Exception:
+                recovery_warning = 'Decision saved. Attendance register update needs retry.'
+                logger.warning('Catch-up register refresh needs retry for report %s', report.pk)
         attendance_rates = fetch_absence_report_attendance_rates([report.learner_id], [report.learner_email])
         attendance_rate = attendance_rates["by_id"].get(report.learner_id)
         if attendance_rate is None:
@@ -10593,7 +10616,7 @@ def coach_absence_reports(request):
         detail_data = fetch_attendance_detail_summary_data([report.learner_id], [report.learner_email])
         detail_rows = detail_data["recordsById"].get(report.learner_id) or detail_data["records"].get(normalize_email(report.learner_email), [])
         previous_absences = count_previous_absences_from_detail_rows(detail_rows, report.session_date)
-        return JsonResponse({"item": serialize_absence_report(report, active_map.get(report.learner_id), attendance_rate, previous_absences)})
+        return JsonResponse({"item": serialize_absence_report(report, active_map.get(report.learner_id), attendance_rate, previous_absences), "warning": recovery_warning})
 
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)

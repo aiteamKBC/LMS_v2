@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
+import { fetchModuleSessionPlan, loadTeamsMeetingArtifacts } from '../../module-builder/moduleAuthoringData';
 import type {
   CurriculumCohort,
   CurriculumGroup,
@@ -124,6 +125,7 @@ const artifacts = {
 vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
   ...(await importOriginal<typeof import('../../module-builder/moduleAuthoringData')>()),
   loadModuleStructure: vi.fn(async () => null),
+  fetchModuleSessionPlan: vi.fn((...args: unknown[]) => previewModuleSessionPlan(...(args as []))),
   loadTeamsMeetingConfiguration: vi.fn(async () => ({
     configured: true, defaultOrganizer: 'tutor@example.com',
     timeZone: 'GMT Standard Time', timeZoneIana: 'Europe/London',
@@ -159,6 +161,9 @@ async function renderSchedule() {
 
 describe('Module workspace — Schedule tab Teams calendar', () => {
   beforeEach(() => {
+    vi.mocked(fetchModuleSessionPlan).mockClear();
+    vi.mocked(loadTeamsMeetingArtifacts).mockReset();
+    vi.mocked(loadTeamsMeetingArtifacts).mockResolvedValue(artifacts as never);
     entityTeamsMeetings = teamsMeetings;
     updateTeamsMeetingSchedule.mockClear();
     createTeamsMeeting.mockClear();
@@ -178,6 +183,31 @@ describe('Module workspace — Schedule tab Teams calendar', () => {
     // the list, is not a fact anyone reads.
     expect(screen.queryByText(/No holiday clash/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Runs on its own day/)).not.toBeInTheDocument();
+  });
+
+  it('shows the saved session exception instead of rebuilding the group clock', async () => {
+    vi.mocked(fetchModuleSessionPlan).mockResolvedValueOnce({ ...plan, sessions: [
+      { ...plan.sessions[0], date: '2026-09-04', day: 'Friday', startTime: '12:00', endTime: '13:30', durationMinutes: 90 },
+      plan.sessions[1],
+    ] });
+    await renderSchedule();
+    await screen.findByText('Session 1');
+    expect(fetchModuleSessionPlan).toHaveBeenCalledWith('MOD-1');
+    expect(screen.getByText(/4 Sept 2026, 12:00/)).toBeInTheDocument();
+    expect(screen.getByText('90–120 min')).toBeInTheDocument();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+  });
+
+  it('shows cancellation against its own session while preserving the next session and its evidence', async () => {
+    vi.mocked(loadTeamsMeetingArtifacts).mockResolvedValue({ ...artifacts, occurrences: [
+      { ...artifacts.occurrences[0], status: 'cancelled' },
+      { ...artifacts.occurrences[1], status: 'held', participant_count: 3 },
+    ] } as never);
+    await renderSchedule();
+    expect(await screen.findByText(/cancelled.*0 attended/)).toBeInTheDocument();
+    expect(screen.getAllByText(/held.*3 attended/)).toHaveLength(1);
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
   it('offers the meeting once, and gives each session its own status instead', async () => {

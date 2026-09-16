@@ -38,6 +38,9 @@ export interface LearningPlanModule {
    * the plan but not yet stored against the learner. Saving the plan adopts it.
    */
   inherited?: boolean;
+  /** Taught via the learner's Aptem import but never written to their plan
+   *  column. Shown like `inherited`: visible, flagged, saved only on Save. */
+  fromAptem?: boolean;
 }
 
 /** A programme the picker can switch to, with how many modules it offers. */

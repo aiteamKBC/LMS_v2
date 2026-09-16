@@ -1,3 +1,4 @@
+import { SessionResults } from '@/components/feature/SessionResults';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -727,7 +728,9 @@ export default function ComponentViewPage() {
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
               {!isAssignment && (
-                <ComponentContent component={component} contentKind={contentKind} parsed={parsed} title={pageTitle}
+                <ComponentContent component={{ ...component, liveSessionUrl: component.teamsLiveSessionId && component.teamsSessionNumber
+                    ? `/learner_api/session-results/${kind}/${id}/${encodeURIComponent(component.teamsLiveSessionId)}/sessions/${component.teamsSessionNumber}/join/`
+                    : component.liveSessionUrl }} contentKind={contentKind} parsed={parsed} title={pageTitle}
                   onDuration={(d) => setRealDuration((prev) => prev ?? d)}
                   onProgress={() => undefined}
                   onPlayingChange={setPlayerPlaying}
@@ -736,11 +739,11 @@ export default function ComponentViewPage() {
                 />
               )}
               {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
-                <LiveSessionResultsCard
-                  liveSessionId={component.teamsLiveSessionId}
-                  sessionNumber={(ctx?.weeks.findIndex((week) => week.active) ?? -1) + 1 || 1}
-                  learnerEmail={detail?.email || ''}
-                />
+                component.teamsSessionNumber ? <SessionResults
+                  seriesId={component.teamsLiveSessionId}
+                  sessionNumber={component.teamsSessionNumber}
+                  learner={{ kind: kind as LearnerKind, id: id || '' }}
+                /> : <p className="mt-4 rounded-xl border bg-amber-50 p-4 text-sm">This live session needs its saved session number before results can be shown. Please contact your tutor.</p>
               )}
 
               {/* Title + timer + finish */}
@@ -2106,114 +2109,8 @@ function ComponentContent(props: Parameters<typeof ComponentBody>[0]) {
   return <ComponentBody {...props} />;
 }
 
-function LiveSessionResultsCard({
-  liveSessionId,
-  sessionNumber,
-  learnerEmail,
-}: {
-  liveSessionId: string;
-  sessionNumber: number;
-  learnerEmail: string;
-}) {
-  const [data, setData] = useState<TeamsMeetingArtifactsResult | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setData(null);
-    loadTeamsMeetingArtifacts(liveSessionId)
-      .then((result) => { if (!cancelled) setData(result); })
-      .catch(() => undefined)
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [liveSessionId]);
-
-  const occurrence = data?.occurrences.find((item) => Number(item.session_number) === sessionNumber)
-    || data?.occurrences[sessionNumber - 1]
-    || null;
-  const normalizedEmail = learnerEmail.trim().toLowerCase();
-  const learnerAttendance = occurrence?.attendance.find(
-    (person) => person.email?.trim().toLowerCase() === normalizedEmail,
-  );
-  const reportReady = Boolean(occurrence?.attendance_report_id);
-  const recordings = occurrence?.artifacts.filter((artifact) => artifact.artifact_type === 'recording') || [];
-  const attendanceMinutes = Math.max(0, Math.round(Number(learnerAttendance?.total_attendance_seconds || 0) / 60));
-  const attendanceState = learnerAttendance ? 'attended' : reportReady ? 'absent' : 'awaiting';
-  const attendanceMeta = {
-    attended: {
-      label: 'Attended',
-      detail: attendanceMinutes ? `${attendanceMinutes} min verified by Teams` : 'Joined the Teams meeting',
-      icon: 'ri-user-follow-line',
-      tone: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-    },
-    absent: {
-      label: 'Absent',
-      detail: 'Not found in the verified attendance report',
-      icon: 'ri-user-unfollow-line',
-      tone: 'border-red-200 bg-red-50 text-red-800',
-    },
-    awaiting: {
-      label: 'Awaiting report',
-      detail: 'Sync after the Teams meeting has ended',
-      icon: 'ri-time-line',
-      tone: 'border-amber-200 bg-amber-50 text-amber-800',
-    },
-  }[attendanceState];
-
-  return (
-    <section className="mt-4 overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">
-      <div className="border-b border-primary-100 bg-primary-50/70 px-5 py-4">
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Microsoft Teams results</p>
-          <h2 className="mt-1 text-sm font-heading font-black text-foreground-900">Attendance, absence and recording</h2>
-        </div>
-      </div>
-
-      <div className="p-5">
-        {loading ? (
-          <p className="inline-flex items-center gap-2 text-xs font-semibold text-foreground-500">
-            <AppIcon className="ri-loader-4-line animate-spin" /> Loading Teams results…
-          </p>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className={`rounded-xl border p-4 ${attendanceMeta.tone}`}>
-              <div className="flex items-center gap-3">
-                <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/70"><AppIcon className={`${attendanceMeta.icon} text-lg`} /></span>
-                <div>
-                  <p className="text-[9px] font-black uppercase tracking-wide opacity-70">Attendance status</p>
-                  <p className="mt-0.5 text-sm font-black">{attendanceMeta.label}</p>
-                  <p className="mt-0.5 text-[10px] font-semibold opacity-80">{attendanceMeta.detail}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className={`rounded-xl border p-4 ${recordings.length ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-background-200 bg-background-100 text-foreground-600'}`}>
-              <div className="flex items-center gap-3">
-                <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/70"><AppIcon className="ri-record-circle-line text-lg" /></span>
-                <div className="min-w-0">
-                  <p className="text-[9px] font-black uppercase tracking-wide opacity-70">Session recording</p>
-                  <p className="mt-0.5 text-sm font-black">{recordings.length ? 'Recording ready' : 'Not available yet'}</p>
-                  {recordings.map((recording, index) => (
-                    <a
-                      key={recording.id}
-                      href={teamsMeetingArtifactContentUrl(liveSessionId, recording.id)}
-                      className="mt-1 inline-flex items-center gap-1 text-[10px] font-black underline"
-                    >
-                      <AppIcon className="ri-download-cloud-2-line" /> Download recording{recordings.length > 1 ? ` ${index + 1}` : ''}
-                    </a>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported }: {
+export function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported, preview = false }: {
+  preview?: boolean;
   component: JourneyComponent;
   contentKind: ReturnType<typeof componentContentKind>;
   parsed: ReturnType<typeof parseVideoUrl> | null;
@@ -2224,6 +2121,20 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   onEnded: () => void;
   onUnsupported: () => void;
 }) {
+  const sessionEnd = component.sessionDateTimeUtc && component.durationMinutes
+    ? Date.parse(component.sessionDateTimeUtc) + component.durationMinutes * 60000 : NaN;
+  const [clock, setClock] = useState(Date.now);
+  useEffect(() => {
+    if (!Number.isFinite(sessionEnd) || preview) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      clearTimeout(timer);
+      const now = Date.now(); setClock(now);
+      if (sessionEnd > now) timer = setTimeout(tick, Math.min(60000, sessionEnd - now));
+    };
+    tick(); window.addEventListener('focus', tick);
+    return () => { clearTimeout(timer); window.removeEventListener('focus', tick); };
+  }, [sessionEnd, preview]);
   if (contentKind === 'video' && parsed) {
     return (
       <div className="rounded-2xl overflow-hidden bg-black shadow-sm ring-1 ring-background-300">
@@ -2325,6 +2236,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   if ((component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session') {
     const parsedStart = component.sessionDateTimeUtc ? new Date(component.sessionDateTimeUtc) : null;
     const validStart = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart : null;
+    const ended = Boolean(validStart && component.durationMinutes && clock >= validStart.getTime() + component.durationMinutes * 60000);
     const dateLabel = component.sessionDate
       ? new Date(`${component.sessionDate}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
       : (validStart
@@ -2354,17 +2266,17 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
               </div>
             </div>
 
-            {component.liveSessionUrl ? (
+            {component.liveSessionUrl && !ended && !preview ? (
               <a href={component.liveSessionUrl} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-[12px] font-black shadow-lg transition-transform hover:-translate-y-0.5">
                 <AppIcon className="ri-microsoft-teams-line text-base" />
                 Join live session
                 <AppIcon className="ri-external-link-line text-xs" />
               </a>
             ) : (
-              <span className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-[11px] font-bold text-white/80">
+              <button type="button" disabled className="inline-flex min-h-11 shrink-0 cursor-not-allowed items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-[11px] font-bold text-white/80">
                 <AppIcon className="ri-calendar-todo-line text-base" />
-                Meeting link not scheduled
-              </span>
+                {preview ? 'Join is disabled in preview' : ended ? 'Session ended' : 'Meeting link not scheduled'}
+              </button>
             )}
           </div>
         </div>

@@ -74,6 +74,7 @@ export interface LearnerComponentEntry {
   reflectionQuestion?: string | null;   // custom Apply-tab question; null uses the default copy
   resourceUrl?: string | null;          // generic external/download URL
   liveSessionUrl?: string | null;       // Microsoft Teams join URL for live sessions
+  teamsSessionNumber?: number | null;
   teamsLiveSessionId?: string | null;   // curriculum.live_sessions.id for attendance/artifact sync
   sessionDate?: string | null;
   sessionTime?: string | null;

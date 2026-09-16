@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Link, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -22,7 +22,7 @@ function mount(path = '/learner/home') {
   </MemoryRouter></QueryClientProvider>);
 }
 beforeEach(() => { session.auth.account.role = 'learner'; vi.mocked(fetchLearnerEntry).mockResolvedValue(pending); });
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); });
 
 describe('mandatory student entry', () => {
   it.each(['/learner/home', '/workspace/learner', '/workspace/learner/dashboard', '/learner/my-learning'])('blocks direct navigation to %s even without the session legacy hint', async path => {
@@ -67,6 +67,23 @@ describe('mandatory student entry', () => {
     vi.mocked(fetchLearnerEntry).mockResolvedValue(allowed);
     fireEvent(window, new Event('previous-record-updated'));
     expect(await screen.findByText('Personalised student home')).toBeInTheDocument();
+  });
+  it('checks on mount and after a saved record, without polling or focus refreshes', async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetchLearnerEntry).mockResolvedValue(allowed);
+    mount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(fetchLearnerEntry).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(fetchLearnerEntry).toHaveBeenCalledTimes(1);
+
+    fireEvent(window, new Event('previous-record-updated'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(fetchLearnerEntry).toHaveBeenCalledTimes(2);
   });
   it('keeps support and sign-out available during the block', async () => {
     mount();

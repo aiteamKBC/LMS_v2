@@ -495,7 +495,10 @@ def coaching_events_for_learner(learner, mirror):
         if record:
             stored = _serialize_event(record, review_types_by_template=types, templates_by_id=templates)
             for field in ('title', 'source', 'type', 'reviewTemplateId', 'occurrenceNumber', 'reviewTypeId', 'reviewTypeCode', 'reviewTypeName', 'reviewTypeIsSystem'):
-                stored[field] = event[field]
+                # Legacy cycles have no Curriculum review metadata. Preserve
+                # the serialized booking fields when the generator omits them.
+                if field in event:
+                    stored[field] = event[field]
             events.append(stored)
         else:
             events.append(event)

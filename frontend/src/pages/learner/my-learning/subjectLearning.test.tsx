@@ -6,7 +6,7 @@ import type { PlanModule, TrainingPlanDashboard } from '@/api/trainingPlanDashbo
 import type { StudentActivityResponse, SubjectMaterial } from '@/api/studentActivity';
 import * as api from '@/api/studentActivity';
 import { StudentActivityPanel, subjectsFrom, type Subject, type SubjectEntry } from './SubjectWorkspace';
-import { currentLearningSubject, currentLearningWeek, continuingLearningWeek, learningPlanSelection, learningToday, learningHref, nextLearningWeek, resolveLearningSubject, subjectMapWeeks, subjectWeeks, subjectOpeningActivity } from './subjectLearning';
+import { certificateEligible, currentLearningSubject, currentLearningWeek, continuingLearningWeek, learningDeadlines, learningPlanSelection, learningToday, learningHref, nextLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectWeeks, subjectOpeningActivity } from './subjectLearning';
 
 const entry = (id: string, date: string, completed = false): SubjectEntry => ({ id, title: `Activity ${id}`, category: 'reading', completed, position: 0,
   schedule: { date, month: date?.slice(0, 7) || 'undated', week_start: date, week_end: date } });
@@ -26,6 +26,31 @@ const material = { title: 'First reading', reading_html: '', media: [{ kind: 'em
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('shared subject and week selection', () => {
+  it('recommends current, then next dated, then any incomplete subject', () => {
+    const current: Subject = { id: 'current:M1', title: 'Current', source: 'current', activities: [entry('current', '2026-09-10', true)] };
+    const next: Subject = { id: 'current:M2', title: 'Next', source: 'current', activities: [entry('next', '2026-10-10')] };
+    const fallback: Subject = { id: 'legacy:3', title: 'Fallback', source: 'legacy', activities: [entry('fallback', '')] };
+    const schedule = { modules: [module('M1', '2026-09-01', '2026-09-30'), module('M2', '2026-10-01', '2026-10-31')], moduleLinks: {} } as unknown as TrainingPlanDashboard;
+    expect(recommendedLearningSubject([fallback, current, next], null, undefined, schedule, '2026-09-16')).toBe(next);
+    expect(recommendedLearningSubject([fallback, current], null, undefined, { ...schedule, modules: [schedule.modules[0]] }, '2026-09-16')).toBe(fallback);
+  });
+
+  it('creates deadlines only for unfinished end-of-week assignments and checkpoints', () => {
+    const due = { ...entry('due', '2050-10-04'), category: 'assignment', schedule: { date: '2050-10-04', month: '2050-10', week_start: '2050-10-04', week_end: '2050-10-10', due_timing: 'end of week' } };
+    const ordinary = { ...entry('ordinary', '2050-10-04'), category: 'assignment' };
+    const subject: Subject = { id: 'current:M1', title: 'Subject', source: 'current', activities: [due, ordinary] };
+    expect(learningDeadlines([subject], '2050-01-01')).toEqual([{ id: 'due', title: 'Activity due', type: 'assignment', date: '2050-10-10', subjectId: 'current:M1' }]);
+  });
+
+  it('requires a passed final quiz when the certificate template says so', () => {
+    const quiz = { ...entry('final', '2026-09-10', true), native: { componentId: 'FINAL', title: 'Final Test', isQuiz: true, quizAttempts: [{ passed: false }] } } as SubjectEntry;
+    const subject: Subject = { id: 'current:M1', title: 'Current', source: 'current', activities: [quiz] };
+    const template = { id: 1, version: 2, title: 'Certificate', minimumProgress: 100, requireFinalTest: true };
+    expect(certificateEligible(subject, template)).toBe(false);
+    quiz.native!.quizAttempts = [{ passed: true, grade: 1, quizId: 1, startedAt: '2026-09-10T09:00:00Z', submittedAt: '2026-09-10T09:10:00Z' }];
+    expect(certificateEligible(subject, template)).toBe(true);
+  });
+
   it('keeps a calendar week together across two months and preserves every activity', () => {
     const subject: Subject = { id: 'legacy:1', title: 'Subject', source: 'legacy', activities: [entry('1', '2026-08-31'),
       { ...entry('2', '2026-09-01'), schedule: { date: '2026-09-01', month: '2026-09', week_start: '2026-08-31', week_end: '2026-09-06' } }] };
@@ -370,13 +395,15 @@ describe('map and My Learning navigation', () => {
   });
 
   it('uses the authoritative activity total everywhere and opens deadlines as assignments', async () => {
-    vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
-    render(<MemoryRouter><StudentActivityPanel view="catalogue" kind="commercial" learnerId="132" data={data} loading={false} error={null} onRetry={() => {}}
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ ...metadata, activity_dates: {
+      'ASSIGNMENT-1': { date: '2050-10-04', month: '2050-10', week_start: '2050-10-04', week_end: '2050-10-10', due_timing: 'end of week' },
+    } });
+    const real = { components: [{ moduleId: 'M1', module: 'Leadership', componentId: 'ASSIGNMENT-1', component: 'Due assignment', type: 'assignment' }] } as LearnerDetail;
+    render(<MemoryRouter><StudentActivityPanel view="catalogue" kind="commercial" learnerId="132" data={data} real={real} loading={false} error={null} onRetry={() => {}}
       metrics={{ migrated: true,
         programme: { completed: 35, total: 304, percent: 11.51, status: 'ready' },
         ksb: { completed: 0, total: 0, percent: null, status: 'empty' },
-        otjh: { historical: 0, new: 0, actual: 0, planned: 0 } }}
-      deadlines={[{ id: 'native:ASSIGNMENT-1', title: 'Due assignment', type: 'assignment', date: '2050-10-10', subjectId: 'legacy:1' }]} />
+        otjh: { historical: 0, new: 0, actual: 0, planned: 0 } }} />
     </MemoryRouter>);
 
     await screen.findByRole('button', { name: /Open subject/ });

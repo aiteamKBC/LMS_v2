@@ -520,7 +520,12 @@ class TeamsAttendanceRosterTests(SimpleTestCase):
             'id': 'ATT-1',
             'email': 'present@example.com',
             'display_name': 'Present',
-            'intervals': [{}],
+            'total_attendance_seconds': 240,
+            # Presence now requires more than three verified minutes.
+            'intervals': [{
+                'joinDateTime': '2026-09-02T09:00:00Z',
+                'leaveDateTime': '2026-09-02T09:04:00Z',
+            }],
         }], include_absent=True)
 
         by_email = {row['email']: row for row in roster}
@@ -528,6 +533,19 @@ class TeamsAttendanceRosterTests(SimpleTestCase):
         self.assertFalse(by_email['absent@example.com']['attended'])
         self.assertFalse(by_email['organizer@example.com']['attended'])
         self.assertEqual(by_email['present@example.com']['join_count'], 1)
+
+    def test_roster_requires_more_than_three_verified_minutes(self):
+        series = {'attendees': ['learner@example.com']}
+        for seconds, attended in [(0, False), (180, False), (181, True)]:
+            with self.subTest(seconds=seconds):
+                roster = views.attendance_roster(series, [{
+                    'id': 'ATT-THRESHOLD',
+                    'email': 'learner@example.com',
+                    'total_attendance_seconds': seconds,
+                    'intervals': [],
+                }], include_absent=True)
+                row = next(item for item in roster if item['email'] == 'learner@example.com')
+                self.assertEqual(row['attended'], attended)
 
     def test_keeps_different_graph_reports_as_separate_attendance_runs(self):
         series = {

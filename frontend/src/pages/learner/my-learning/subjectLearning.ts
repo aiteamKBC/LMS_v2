@@ -1,6 +1,9 @@
 import type { Subject, SubjectEntry, CoverMetadata } from './SubjectWorkspace';
-import type { PlanModule, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import type { PlanModule } from '@/api/trainingPlanDashboard';
+import type { LearningSchedule } from '@/api/learnerOverview';
 import type { LearnerDetail } from '@/api/learnerDetail';
+import type { OverviewWeek } from '@/api/learnerOverview';
+import type { CertificateTemplateSummary } from '@/api/learnerCertificates';
 import { learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
 import { dateKey, weekKey } from '@/pages/learner/training-plan-timeline/model';
 import { hasComponentContent } from '@/utils/learnerJourney';
@@ -9,6 +12,40 @@ export type LearningWeek = { id: string; label: string; title: string; start: st
 export const learningToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
 export const learningDate = (date: string) => new Date(`${date.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 export const subjectPercent = (subject: Subject) => subject.activities.length ? Math.round(subject.activities.filter(a => a.completed).length / subject.activities.length * 10000) / 100 : 0;
+
+export function certificateEligible(subject: Subject, template: CertificateTemplateSummary | null) {
+  const total = subject.activities.length;
+  const completed = subject.activities.filter(activity => activity.completed).length;
+  const percent = total ? Math.round(completed / total * 10000) / 100 : 0;
+  const finalTestPassed = subject.activities.some(activity => {
+    const component = activity.native;
+    return component?.isQuiz
+      && (component.title || '').toLowerCase().includes('final')
+      && component.quizAttempts?.some(attempt => attempt.passed === true);
+  });
+  return !!template && total > 0
+    && (subject.id.startsWith('current:') || subject.id.startsWith('unlinked:'))
+    && percent >= Number(template.minimumProgress || 0)
+    && (!template.requireFinalTest || finalTestPassed);
+}
+
+/** Only authored end-of-week rules create deadlines; ordinary dated content does not. */
+export function learningDeadlines(subjects: Subject[], today = learningToday()): OverviewWeek['deadlines'] {
+  const deadlines = new Map<string, OverviewWeek['deadlines'][number]>();
+  for (const subject of subjects) {
+    for (const activity of subject.activities) {
+      const type = activity.category.trim().toLowerCase().replace(/-/g, '_');
+      const dueTiming = activity.schedule.due_timing?.trim().toLowerCase();
+      const date = activity.schedule.week_end;
+      if (!['assignment', 'checkpoint'].includes(type) || activity.completed
+        || dueTiming !== 'end of week' || !date || date < today) continue;
+      const componentId = activity.native?.componentId;
+      const id = componentId ? `native:${componentId}` : activity.id;
+      deadlines.set(id, { id, title: activity.title, type: type as 'assignment' | 'checkpoint', date, subjectId: subject.id });
+    }
+  }
+  return [...deadlines.values()].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+}
 
 /** The delivery date identifies its Monday–Sunday week when the API omits the range. */
 function activityWeekRange(entry: SubjectEntry) {
@@ -47,7 +84,7 @@ export function subjectWeeks(subject: Subject): LearningWeek[] {
 }
 
 /** Keep assigned weeks visible even before their materials have been published. */
-export function subjectMapWeeks(subject: Subject, real?: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: TrainingPlanDashboard | null) {
+export function subjectMapWeeks(subject: Subject, real?: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null) {
   const weeks = subjectWeeks(subject);
   const moduleIds = new Set([
     subject.id.startsWith('current:') ? subject.id.slice(8) : '',
@@ -67,7 +104,7 @@ export function subjectMapWeeks(subject: Subject, real?: LearnerDetail | null, m
 }
 
 /** Resolve Builder links before names, including courses merged with imported history. */
-export function resolveLearningSubject(subjects: Subject[], requested?: string | null, metadata?: CoverMetadata | null, schedule?: TrainingPlanDashboard | null) {
+export function resolveLearningSubject(subjects: Subject[], requested?: string | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null) {
   if (!requested) return undefined;
   const exact = subjects.find(s => s.id === requested);
   if (exact) return exact;
@@ -89,7 +126,7 @@ type LearningPlanSelection = {
 /** Only the assigned training-plan teaching period can make a module current.
  * Keep the header's placement rules and its next/previous choices, but preserve
  * that distinction instead of labelling every fallback as current. */
-export function learningPlanSelection(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: TrainingPlanDashboard | null, today = learningToday()): LearningPlanSelection {
+export function learningPlanSelection(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()): LearningPlanSelection {
   if (!schedule) return { status: 'unavailable', entries: [] };
   const plan = learnerHeaderPlan(schedule.modules || [], real || {}, today);
   const first = plan.modules[0];
@@ -104,9 +141,25 @@ export function learningPlanSelection(subjects: Subject[], real: LearnerDetail |
   return { status, entries };
 }
 
-export function currentLearningSubject(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: TrainingPlanDashboard | null, today = learningToday()) {
+export function currentLearningSubject(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()) {
   const selection = learningPlanSelection(subjects, real, metadata, schedule, today);
   return selection.status === 'current' ? selection.entries[0]?.subject : undefined;
+}
+
+/** Continue with an unfinished current module, then the next dated module,
+ * then any remaining subject when the plan has no usable dates. */
+export function recommendedLearningSubject(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()) {
+  const hasRemaining = (subject: Subject) => subject.activities.some(activity => !activity.completed);
+  const selection = learningPlanSelection(subjects, real, metadata, schedule, today);
+  const planned = selection.entries.find(entry => hasRemaining(entry.subject))?.subject;
+  if (['current', 'next'].includes(selection.status) && planned) return planned;
+
+  const next = [...(schedule?.modules || [])]
+    .filter(module => dateKey(module.start_date) > today)
+    .sort((a, b) => dateKey(a.start_date).localeCompare(dateKey(b.start_date)))
+    .map(module => resolveLearningSubject(subjects, `current:${module.id}`, metadata, schedule))
+    .find((subject): subject is Subject => !!subject && hasRemaining(subject));
+  return next || subjects.find(hasRemaining);
 }
 
 export function nextLearningWeek(subject: Subject, today = learningToday()) {
