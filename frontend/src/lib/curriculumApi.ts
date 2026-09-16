@@ -31,9 +31,23 @@ export function isRetryableError(error: unknown): boolean {
       }
     }
 
-    // Network/timeout errors (no HTTP response)
-    if (msg.includes('network') || msg.includes('timeout')) {
-      return true; // Network errors are transient and should be retried
+    // A client-side timeout (`fetchJsonOnce`'s own "Curriculum API timed out for
+    // …" message) is deliberately excluded here: the request already spent its
+    // whole budget once, so retrying it spends that budget again for the same
+    // outcome instead of surfacing the failure. This used to read
+    // `msg.includes('timeout')`, which never matched the word "timed out" this
+    // codebase actually throws -- every timeout fell through to "retry unknown
+    // errors" below and got retried up to RETRY_ATTEMPTS times, each attempt
+    // paying the full timeout again, which is how one slow endpoint turned into
+    // several minutes of retries stacked on top of each other.
+    if (msg.includes('timed out')) {
+      return false;
+    }
+
+    // A network error with no response at all (offline, DNS, connection reset)
+    // is the transient case this retry exists for.
+    if (msg.includes('network')) {
+      return true;
     }
   }
 
@@ -2718,7 +2732,12 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+  // Without a timeout this hangs on the browser's own default (minutes) when the
+  // backend is slow, leaving the catalogue's loading skeleton up long after a
+  // sibling request against the same server has already timed out and reported
+  // it. Matching that 30s budget lets the list fail into its own error+Retry
+  // banner instead of spinning forever.
+  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 30000 });
 }
 
 export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {

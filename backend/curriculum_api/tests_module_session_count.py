@@ -13,7 +13,9 @@ class ImportedModuleSessionCountTests(CurriculumPersistenceHarness):
         workshop = [{'id': 'workshop', 'label': 'Workshop', 'startDate': '2026-09-27', 'endDate': '2026-10-03'}]
         plan = views.module_delivery_session_plan(module, 16, date(2026, 9, 16), workshop)
         self.assertEqual(len(plan['sessions']), 16)
-        self.assertEqual(plan['finalEndDate'], '2026-11-18')
+        # A ticked holiday no longer pushes the end date out: 16 sessions run on
+        # their own Mon/Wed pattern, three of them flagged and none displaced.
+        self.assertEqual(plan['finalEndDate'], '2026-11-09')
         self.assertEqual(plan['skippedHolidays'], ['2026-09-23', '2026-09-28', '2026-09-30'])
         other = views.module_delivery_session_plan({**module, 'session_holidays': []}, 16, date(2026, 9, 16), workshop)
         self.assertIn('2026-09-23', [s['date'] for s in other['sessions']])

@@ -1929,6 +1929,14 @@ def teams_calendar_minute_key(value):
 
 
 def teams_series_email_list(*values):
+    """The email addresses in a stored invitation list.
+
+    Anything that is not an address is dropped rather than carried through. A
+    caller that hands this a JSON *string* it has already exploded into
+    characters (``list('["a@b"]')``) would otherwise turn one meeting's roster
+    into one "person" per distinct character -- rows that reach Graph as
+    invitees and the attendance panel as "28 expected".
+    """
     emails = []
     for value in values:
         if isinstance(value, str):
@@ -1941,7 +1949,9 @@ def teams_series_email_list(*values):
             candidates = []
         for candidate in candidates:
             email = clean_str(candidate).lower()
-            if email and email not in emails:
+            if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
+                continue
+            if email not in emails:
                 emails.append(email)
     return emails
 
@@ -2321,15 +2331,17 @@ def apply_teams_meeting_options(
     if lobby_choice not in TEAMS_LOBBY_VALUES:
         lobby_choice = 'invited'
     recording_choice = clean_str(recording).lower() or 'none'
-    co_organizer_emails = teams_series_email_list(list(co_organizers))
+    # Never `list(...)` these: a caller that passes the stored JSON text instead
+    # of a parsed list would have it split into characters here.
+    co_organizer_emails = teams_series_email_list(co_organizers)
     co_organizer_set = set(co_organizer_emails)
     presenter_emails = [
-        email for email in teams_series_email_list(list(presenters))
+        email for email in teams_series_email_list(presenters)
         if email not in co_organizer_set
     ]
     presenter_set = set(presenter_emails)
     attendee_emails = [
-        email for email in teams_series_email_list(list(attendees))
+        email for email in teams_series_email_list(attendees)
         if email not in co_organizer_set and email not in presenter_set
     ]
     roster = [*co_organizer_emails, *presenter_emails, *attendee_emails]
@@ -4667,70 +4679,54 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     holidays_by_date = holiday_details_by_date(holidays)
     guard_days = max(3650, session_count * 21)
 
-    # The delivery days counted from the start with no closure taken into
-    # account: where each session was DUE before any holiday touched the run.
-    # A session keeps that date as `slotDate` so a screen can say which day was
-    # closed under it, and the last of them is the end date the module would
-    # have had with nothing shut. It is not where the session runs, and from the
-    # first closure onwards it is not where its week sits either -- the closed
-    # slot becomes a reading week of its own and everything behind it moves down
-    # one open slot.
-    slots = []
-    slot_cursor = start
-    slot_guard = guard_days
-    while len(slots) < session_count and slot_guard > 0:
-        if slot_cursor.weekday() in days:
-            slots.append(slot_cursor)
-        slot_cursor += timedelta(days=1)
-        slot_guard -= 1
-
-    # The curriculum spine: EVERY delivery slot the module passes through, open
-    # or closed, in calendar order. A closed slot keeps its place in the
-    # curriculum -- it is a reading week caused by a holiday, and it names the
-    # holiday that took it -- but it consumes no live session, so the session
-    # that was due there and every session behind it move down one open slot.
-    # The spine is therefore longer than the session list by exactly the number
-    # of closures the plan stepped over, which is what moves the delivery end
-    # date out by one slot per closure without any date arithmetic of its own.
+    # The curriculum spine: every delivery day the module passes through, in
+    # calendar order, one per authored delivery slot.
+    #
+    # A ticked holiday does NOT move the run. It closes the room, not the
+    # curriculum: the slot keeps the date the delivery pattern gave it, the week
+    # authored into it keeps that date too, and every week behind it stays
+    # exactly where it was. What changes is what the slot delivers -- a closed
+    # slot is a reading week, so its other components stand and no live session
+    # is scheduled on it. `slotDate` therefore always equals `date`, and the
+    # module ends on the day its own pattern says it ends, closures or not.
+    #
+    # Nothing here decides what the week becomes. A holiday on a delivery day is
+    # stated, not acted on: the slot stays a live-session slot carrying the
+    # holidays that fall on it, and the author is the one who turns that week
+    # into a reading week, drops its live session or leaves it exactly as it is.
+    #
+    # `skippedHolidays` on a session names the holidays landing on THAT session's
+    # own day, so a screen can state the clash on the week it belongs to.
     curriculum_slots = []
     sessions = []
     skipped = []
-    pending_skipped = []
     cursor = start
-    while len(sessions) < session_count and guard_days > 0:
+    while len(curriculum_slots) < session_count and guard_days > 0:
         if cursor.weekday() in days:
-            if cursor in selected_holidays:
+            closed_by = holidays_by_date.get(cursor) or []
+            closed = cursor in selected_holidays
+            if closed:
                 skipped.append(cursor.isoformat())
-                pending_skipped.append(cursor.isoformat())
-                curriculum_slots.append({
-                    'slotNumber': len(curriculum_slots) + 1,
-                    'date': cursor.isoformat(),
-                    'day': cursor.strftime('%A'),
-                    'type': 'reading-week',
-                    'cause': 'holiday',
-                    'sessionNumber': None,
-                    'holidays': holidays_by_date.get(cursor) or [],
-                })
-            else:
-                slot = slots[len(sessions)] if len(sessions) < len(slots) else cursor
-                sessions.append({
-                    'sessionNumber': len(sessions) + 1,
-                    'date': cursor.isoformat(),
-                    'day': cursor.strftime('%A'),
-                    'slotDate': slot.isoformat(),
-                    'slotDay': slot.strftime('%A'),
-                    'skippedHolidays': pending_skipped,
-                })
-                curriculum_slots.append({
-                    'slotNumber': len(curriculum_slots) + 1,
-                    'date': cursor.isoformat(),
-                    'day': cursor.strftime('%A'),
-                    'type': 'live-session',
-                    'cause': '',
-                    'sessionNumber': len(sessions),
-                    'holidays': [],
-                })
-                pending_skipped = []
+            sessions.append({
+                'sessionNumber': len(sessions) + 1,
+                'date': cursor.isoformat(),
+                'day': cursor.strftime('%A'),
+                'slotDate': cursor.isoformat(),
+                'slotDay': cursor.strftime('%A'),
+                'skippedHolidays': [cursor.isoformat()] if closed else [],
+            })
+            curriculum_slots.append({
+                'slotNumber': len(curriculum_slots) + 1,
+                'date': cursor.isoformat(),
+                'day': cursor.strftime('%A'),
+                # Still a live-session slot: a holiday marks the day, it does
+                # not reclassify the week. `cause` and `holidays` are what a
+                # screen reads to warn the author that this one needs a look.
+                'type': 'live-session',
+                'cause': 'holiday' if closed else '',
+                'sessionNumber': len(sessions),
+                'holidays': closed_by if closed else [],
+            })
         cursor += timedelta(days=1)
         guard_days -= 1
 
@@ -4742,11 +4738,10 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
         'slots': curriculum_slots,
         'skippedHolidays': skipped,
         'finalEndDate': sessions[-1]['date'] if sessions else '',
-        # Where the run would have ended with nothing closed: the last of the
-        # holiday-blind slots. Stated rather than derived, because "one delivery
-        # slot later" is only "seven days later" for a module that delivers once
-        # a week -- a Mon+Thu module loses three or four days per closure.
-        'originalEndDate': slots[-1].isoformat() if slots else '',
+        # The same day: nothing moves the run any more, so the end date a
+        # closure-free plan would have had IS the end date this plan has.
+        # Stated rather than dropped, because callers render the pair.
+        'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
     }
 
@@ -15252,7 +15247,14 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
         'updatedComponents': updated_components,
         'createdComponents': created_components,
         'meeting': settings_update,
-        'module': payload,
+        # Stamped the same way the structure GET stamps it. A POST here rewrote
+        # the module's live-session components, so the revision the Module
+        # Builder is holding is now behind -- and the Builder opens a module by
+        # calling this endpoint whenever a join link has gone missing. Handing
+        # back the pre-restore revision left that module permanently unsaveable:
+        # every save was refused as stale, and reloading ran the same restore
+        # again.
+        'module': structure_payload_with_revision(payload, resolved_id),
     }
     if pending_components is not None:
         # Weeks that have no live-session component yet, so re-attaching has
@@ -15917,6 +15919,127 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
         week['sessionStartTime'] = session_start_time if session_date else ''
         week['sessionDurationMinutes'] = session_duration if session_date else 0
     return weeks
+
+
+# ---------------------------------------------------------------------------
+# Structure revisions
+#
+# ``curriculum_module_structure`` PATCH is a whole-structure REPLACEMENT: it
+# soft-deletes every week, component and KSB mapping the module owns and writes
+# back what the payload carries. That makes "which version was this payload
+# built from" a safety question rather than a nicety -- a browser holding a
+# five-minute-old copy of the module does not just show stale weeks, its next
+# save writes them over whatever was authored in the meantime.
+#
+# The revision is a fingerprint of the stored material rather than a counter,
+# for two reasons. It needs no column, so no migration and no backfill -- the
+# authoring tables are ``managed = False`` and externally owned. And it is
+# derived from the rows themselves, so it moves for EVERY write that reaches
+# them, whichever endpoint made it: the structure PATCH, the settings PATCH, the
+# component PATCH, a week delete, the programme tree save, a Teams attach. A
+# counter would only move where somebody remembered to increment it, and the
+# write this is guarding against is precisely the one nobody remembered.
+#
+# A save that rewrites the same content therefore leaves the revision alone,
+# which is correct: two tabs that agree cannot conflict.
+# ---------------------------------------------------------------------------
+
+# Columns that move when the row is rewritten to the values it already held.
+# Including them would turn every no-op save into a conflict for everyone else.
+STRUCTURE_REVISION_VOLATILE_COLUMNS = ('created_at', 'updated_at', 'detached_at')
+
+# The tables one structure save replaces, with the filter that decides which of
+# their rows the module currently owns and the column each is ordered by. Read
+# in this order so the fingerprint does not depend on dictionary iteration.
+STRUCTURE_REVISION_SOURCES = (
+    ('module', AUTHORING_MODULES_TABLE, None, 'module_catalogue_id'),
+    ('weeks', AUTHORING_WEEKS_TABLE, active_week_rows, 'id'),
+    ('components', AUTHORING_COMPONENTS_TABLE, active_component_rows, 'id'),
+    ('mappings', AUTHORING_KSB_MAPPINGS_TABLE, active_mapping_rows, 'id'),
+    ('completion', AUTHORING_COMPLETION_TABLE, None, 'module_catalogue_id'),
+    ('advanced', AUTHORING_ADVANCED_TABLE, None, 'module_catalogue_id'),
+)
+
+
+def module_structure_revision(module_catalogue_id):
+    """Fingerprint of everything a structure PATCH would replace.
+
+    Six indexed single-module reads. A module that is not stored fingerprints as
+    the empty structure, so a first save of a fresh draft is never a conflict.
+
+    Rows are sorted by their own key rather than trusted in database order: a
+    fingerprint that depended on which order Postgres happened to return the
+    components in would refuse saves at random.
+    """
+    catalogue_id = clean_str(module_catalogue_id)
+    if not catalogue_id:
+        return ''
+    ensure_module_authoring_tables()
+    material = []
+    for label, table, keep, sort_column in STRUCTURE_REVISION_SOURCES:
+        try:
+            rows = authoring_fetch_all(
+                table,
+                'module_catalogue_id = %s',
+                [catalogue_id],
+                exclude_columns=STRUCTURE_REVISION_VOLATILE_COLUMNS,
+            )
+        except Exception:
+            # A table that cannot be read must not fail the request it was asked
+            # about. Returning '' turns the guard off for this save rather than
+            # refusing it, which matches how every other optional protection in
+            # this module degrades -- and the caller only enforces a non-empty
+            # revision.
+            logger.warning('Unable to fingerprint %s for module %s.', table, catalogue_id, exc_info=True)
+            return ''
+        if keep:
+            rows = keep(rows)
+        material.append([
+            label,
+            sorted(rows, key=lambda row: clean_str(row.get(sort_column))),
+        ])
+    return hashlib.sha256(
+        json.dumps(material, sort_keys=True, default=str).encode()
+    ).hexdigest()[:32]
+
+
+def structure_payload_with_revision(payload, module_catalogue_id):
+    """Stamp a structure payload with the revision it was built from.
+
+    Computed alongside the payload, never after it is served, so a payload that
+    comes back from the cache carries the revision of the content in it. That is
+    what makes a stale read safe: the save it feeds sends a superseded revision
+    and is refused, instead of the cached weeks quietly replacing the stored ones.
+    """
+    if not payload:
+        return payload
+    return {**payload, 'structureRevision': module_structure_revision(module_catalogue_id)}
+
+
+def lock_module_structure_row(module_catalogue_id):
+    """Hold this module's row for the rest of the transaction.
+
+    Without it the revision check is a read followed by a write, and two saves
+    that both read revision 41 both pass it -- the second overwriting the first
+    with the very payload the check exists to refuse. The lock makes
+    check-and-write one operation: the second save blocks here until the first
+    commits, then reads the revision the first one produced and is refused.
+
+    SQLite (the test runner) has no row locks and needs none: a write
+    transaction takes the whole database.
+    """
+    if connection.vendor != 'postgresql':
+        return
+    with connection.cursor() as cursor:
+        cursor.execute(
+            'select 1 from %s where %s = %%s for update'
+            % (
+                authoring_table_name(AUTHORING_MODULES_TABLE),
+                quote_ident('module_catalogue_id'),
+            ),
+            [clean_str(module_catalogue_id)],
+        )
+        cursor.fetchall()
 
 
 def get_authoring_structure_payload(module_catalogue_id):
@@ -19964,6 +20087,7 @@ def curriculum_module_structure(request, module_catalogue_id):
     resolved_catalogue_id = stored_catalogue_id or module_catalogue_id
     if request.method == 'GET':
         is_training_alias = module_catalogue_id.startswith('training-module-')
+        bypass_cache = request_bypasses_curriculum_cache(request)
         try:
             # One read scope for the whole payload. The KSB source inference
             # inside it (mappings_with_inferred_sources) asks whether a code
@@ -19975,10 +20099,11 @@ def curriculum_module_structure(request, module_catalogue_id):
                 if is_training_alias:
                     # A training-plan alias provisions on the way through, so it
                     # is never served from a cache.
-                    payload = (
+                    payload = structure_payload_with_revision(
                         get_authoring_structure_payload(resolved_catalogue_id)
                         if resolved_catalogue_id != module_catalogue_id
-                        else ensure_training_module_authoring_structure(module_catalogue_id)
+                        else ensure_training_module_authoring_structure(module_catalogue_id),
+                        resolved_catalogue_id,
                     )
                 elif stored_catalogue_id:
                     # Cached the way curriculum_module_structure_resolve already
@@ -19988,12 +20113,33 @@ def curriculum_module_structure(request, module_catalogue_id):
                     # cached -- an id that resolves to nothing is a 404 worth
                     # recomputing, so a module authored a moment later is not
                     # missing until the TTL runs out.
+                    #
+                    # A no-cache request rebuilds. The Module Builder sends one
+                    # every time it opens a module, and it means it: the
+                    # workspace saves the WHOLE structure back, so a stale read
+                    # here is not a stale screen, it is the next save writing
+                    # pre-edit weeks and components over the stored ones. This
+                    # endpoint was the one read path that ignored the header.
+                    #
+                    # The revision is stamped INSIDE the factory, so it is
+                    # cached with the payload it describes rather than computed
+                    # fresh for whatever came out of the cache. A caller served
+                    # a stale copy is therefore handed the stale copy's
+                    # revision, and the save it feeds is refused instead of
+                    # replacing the stored weeks with the cached ones.
                     payload = cached_curriculum_value(
                         f'module-structure:{resolved_catalogue_id}',
-                        lambda: get_authoring_structure_payload(resolved_catalogue_id),
+                        lambda: structure_payload_with_revision(
+                            get_authoring_structure_payload(resolved_catalogue_id),
+                            resolved_catalogue_id,
+                        ),
+                        force=bypass_cache,
                     )
                 else:
-                    payload = get_authoring_structure_payload(resolved_catalogue_id)
+                    payload = structure_payload_with_revision(
+                        get_authoring_structure_payload(resolved_catalogue_id),
+                        resolved_catalogue_id,
+                    )
             # Outside the read scope on purpose: this is a write, and the scope
             # above memoises reads for the request. A write that read a memoised
             # row would be deciding from a snapshot taken earlier in the request.
@@ -20059,6 +20205,21 @@ def curriculum_module_structure(request, module_catalogue_id):
         )
         if archived_error:
             return archived_error
+    # Optimistic concurrency. A caller that read the structure sends the
+    # revision it read back as ``expectedRevision`` (or an ``If-Match`` header),
+    # and this save is refused unless the stored material is still exactly that.
+    #
+    # Opt-in rather than compulsory, because the callers that write here without
+    # ever having read a revision are legitimate and must keep working: the
+    # programme tree save, the structure wizard, the Excel import, the duplicate
+    # and a module's first save. What the check protects is the one caller that
+    # holds the whole structure open in a browser for an hour and then writes all
+    # of it back -- and the Module Builder always sends it.
+    expected_revision = clean_str(
+        payload.get('expectedRevision')
+        or payload.get('expected_revision')
+        or request.headers.get('If-Match')
+    )
     try:
         if module_catalogue_id.startswith('training-module-'):
             training_id = module_catalogue_id.replace('training-module-', '', 1)
@@ -20067,17 +20228,48 @@ def curriculum_module_structure(request, module_catalogue_id):
                 'sourceType': payload.get('sourceType') or 'training_plan',
                 'sourceId': payload.get('sourceId') or training_id,
             }
-        result = save_module_authoring_structure(resolved_catalogue_id, payload)
-        if module_catalogue_id.startswith('training-module-'):
-            link_training_row_to_catalogue(
-                module_catalogue_id.replace('training-module-', '', 1),
-                result.get('catalogueId') or resolved_catalogue_id,
-            )
+        # One transaction around the check and the write. See
+        # lock_module_structure_row: read-then-write would let two saves that
+        # read the same revision both pass.
+        with transaction.atomic():
+            if expected_revision:
+                lock_module_structure_row(resolved_catalogue_id)
+                current_revision = module_structure_revision(resolved_catalogue_id)
+                if current_revision and current_revision != expected_revision:
+                    # Deliberately NOT a merge and NOT a retry. The payload
+                    # waiting here replaces every week and component in the
+                    # module, so applying it would destroy whatever the other
+                    # writer authored; the caller keeps its edits in memory and
+                    # is told to re-read. The current structure travels with the
+                    # refusal so it can show what changed without a second call.
+                    return json_error(
+                        'This module changed after you opened it. Your changes have not been '
+                        'overwritten. Reload the latest version before saving again.',
+                        status=409,
+                        conflict=True,
+                        expectedRevision=expected_revision,
+                        currentRevision=current_revision,
+                        module=structure_payload_with_revision(
+                            get_authoring_structure_payload(resolved_catalogue_id),
+                            resolved_catalogue_id,
+                        ),
+                    )
+            result = save_module_authoring_structure(resolved_catalogue_id, payload)
+            if module_catalogue_id.startswith('training-module-'):
+                link_training_row_to_catalogue(
+                    module_catalogue_id.replace('training-module-', '', 1),
+                    result.get('catalogueId') or resolved_catalogue_id,
+                )
+            saved_catalogue_id = result.get('catalogueId') or resolved_catalogue_id
     except ModuleAuthoringValidationError as exc:
         return json_error('Module authoring validation failed.', status=400, validationErrors=exc.errors)
     except Exception as exc:
         logger.exception('Unable to save module authoring structure for %s.', module_catalogue_id)
         return json_error('Unable to save module authoring structure.', status=500, detail=str(exc))
+    # Read after the transaction has committed, so the revision handed back is
+    # the one a reader would fingerprint now. Inside the block it would describe
+    # rows that a rollback could still take away.
+    result['structureRevision'] = module_structure_revision(saved_catalogue_id)
     return JsonResponse(result)
 
 

@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
@@ -128,8 +129,18 @@ async function renderAt(search: string) {
   return render(
     <MemoryRouter initialEntries={[`/curriculum/module-builder${search}`]}>
       <ModuleBuilder />
+      <AddressProbe />
     </MemoryRouter>,
   );
+}
+
+/** Reports the router's own query string, which is what a reload would replay. */
+function AddressProbe() {
+  return <output data-testid="address">{useLocation().search}</output>;
+}
+
+function address() {
+  return new URLSearchParams(screen.getByTestId('address').textContent || '');
 }
 
 describe('Module Builder deep links', { timeout: 15000 }, () => {
@@ -163,6 +174,34 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     const requestedIds = (loadModuleStructure.mock.calls as unknown as unknown[][]).map(call => call[0]);
     expect(requestedIds).not.toContain('MOD-202608229DBEB6F2ACA5');
     expect(createNewModule).not.toHaveBeenCalled();
+  });
+
+  it('puts the module it opens in the address, so a reload comes back to it', async () => {
+    // The workspace used to live in component state alone. Reload, Back, or a
+    // restored tab all landed on the catalogue, and someone who had been
+    // authoring for an hour was shown a module list instead of their module.
+    // openModule refuses to open a module whose stored structure could not be
+    // read -- see the guard it protects -- so the read has to answer here.
+    loadModuleStructure.mockResolvedValueOnce({ weekStructure: [] } as never);
+    // Scoped to the programme with exactly one module, so the card clicked is
+    // not decided by how the catalogue happens to sort two of them.
+    await renderAt('?programme=Marketing+Manager');
+    expect(address().get('module')).toBeNull();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit components' }));
+
+    await waitFor(() => expect(address().get('module')).toBe('MOD-202608229DBEB6F2ACA5'));
+  });
+
+  it('takes the module back out of the address when the reader leaves it', async () => {
+    // Or a reload from the catalogue would re-open the module just left.
+    loadModuleStructure.mockResolvedValueOnce({ weekStructure: [] } as never);
+    await renderAt('?module=MOD-20260818112738930447');
+    await waitFor(() => expect(loadModuleStructure).toHaveBeenCalled());
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to modules' }));
+
+    await waitFor(() => expect(address().get('module')).toBeNull());
   });
 
   it('reports a dead id instead of resolving it by title', async () => {

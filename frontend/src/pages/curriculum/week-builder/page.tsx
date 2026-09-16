@@ -57,6 +57,7 @@ import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawe
 import { loadModuleStructure, saveModuleStructure, utcIsoToCalendarParts } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { TeamsMeetingModal, type TeamsMeetingModuleContext } from '@/pages/curriculum/module-builder/TeamsMeetingModal';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
+import { LiveSessionArtifactsPanel } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
 import { formatDateLabel } from '@/pages/curriculum/shared/entities/model';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
@@ -67,7 +68,7 @@ const QuizEditorPanel = lazy(() => import('@/pages/curriculum/quiz-xml/edit/Quiz
 const GuidedQuizUpload = lazy(() => import('./GuidedQuizUpload').then(m => ({ default: m.GuidedQuizUpload })));
 
 export type { WeekScope };
-export interface GroupOption { key: string; name: string; cohort?: string }
+export interface GroupOption { key: string; name: string; cohort?: string; cohortId?: string; programmeId?: string; programme?: string }
 export type WeekComponentUploader = (componentId: string, file: File, componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment') => Promise<WeekComponentUploadResult>;
 
 const curriculumNav = roleNavMap.curriculum;
@@ -479,7 +480,7 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
     let active = true;
     const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
     loadCurriculumScope()
-      .then(({ groups, modules }) => {
+      .then(({ groups, modules, programmes }) => {
         if (!active) return;
         const weekModule = modules.find(module => (module.moduleCatalogueId || module.id) === initial.moduleCatalogueId);
         const resolvedModuleName = weekModule?.name || '';
@@ -495,7 +496,29 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
           const byModule = scoped.filter(group => (group.modules || []).some(mod => norm(mod) === norm(resolvedModuleName)));
           if (byModule.length) scoped = byModule;
         }
-        setGroupOptions((scoped.length ? scoped : groups).map(group => ({ key: group.id, name: group.name, cohort: group.cohort })));
+        // Every group stays reachable here, not just the ones scoped above:
+        // "Assigned groups" is also where a live-session component gets a
+        // copy placed into a *different* programme/cohort's group (sharing
+        // the same Teams link across a duplicated module), so the picker
+        // must never hide groups outside this week's own programme/module —
+        // it only lists the scoped-in ones first, for convenience.
+        const preferred = scoped.length ? scoped : groups;
+        const preferredIds = new Set(preferred.map(group => group.id));
+        const ordered = [...preferred, ...groups.filter(group => !preferredIds.has(group.id))];
+        // A group's own `programme` name is blank on plenty of records — the
+        // raw programmeId is meaningless to a tutor, so resolve the readable
+        // name from the programme list instead (matching id/sourceId/name,
+        // same keys `moduleBelongsToVisibleProgramme` uses).
+        const programmeNameByKey = new Map<string, string>();
+        programmes.forEach(programme => {
+          [programme.id, programme.sourceId, programme.name].forEach(key => {
+            if (key && !programmeNameByKey.has(norm(key))) programmeNameByKey.set(norm(key), programme.name);
+          });
+        });
+        const resolveProgrammeName = (group: typeof groups[number]) => (
+          group.programme || programmeNameByKey.get(norm(group.programmeId)) || group.programmeId || ''
+        );
+        setGroupOptions(ordered.map(group => ({ key: group.id, name: group.name, cohort: group.cohort, cohortId: group.cohortId, programmeId: group.programmeId, programme: resolveProgrammeName(group) })));
       })
       .catch(() => { /* picker stays empty */ })
       .finally(() => { if (active) setScopeReady(true); });
@@ -1497,6 +1520,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const sessionTime = s('sessionTime') || String(weekSessionTime || '').slice(0, 5) || '';
   const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
+  const teamsLiveSessionId = s('teamsLiveSessionId');
 
   return (
     <>
@@ -1548,6 +1572,26 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 
         <Field label="Session outline" className="mt-4"><textarea value={s('sessionPurpose')} onChange={e => setSetting('sessionPurpose', e.target.value)} rows={3} placeholder="A short summary of what this session covers…" className={`${inputClass} resize-none`} /></Field>
       </Section>
+
+      {/* Once the meeting has run, its Teams recording, transcript and
+          attendance belong on the session that authored it — the same panel the
+          programme's Sessions tab opens — so the recording can be downloaded
+          here, split, and re-uploaded as recorded components. */}
+      {teamsLiveSessionId && (
+        <Section title="Recording & attendance">
+          <LiveSessionArtifactsPanel
+            session={{
+              liveSessionId: teamsLiveSessionId,
+              title: component.title,
+              dateIso: s('sessionDateTimeUtc') || s('teamsStartDateTimeUtc') || sessionDate,
+              date: sessionDate,
+              actualStart: '',
+              artifactsSyncedAt: '',
+            }}
+            sessionNumber={Number(s('teamsSessionNumber')) || undefined}
+          />
+        </Section>
+      )}
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
@@ -2687,26 +2731,27 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lockedOption?.key]);
 
-  // Placed copies this component has produced elsewhere, one entry per group
-  // (parallel arrays — ComponentSettingValue has no object type). At most one
-  // placement per group key: an already-assigned group's row only ever
-  // toggles off, it never re-opens the placement panel.
+  // Placed copies this component has produced elsewhere, one entry per copy
+  // (parallel arrays — ComponentSettingValue has no object type). A single
+  // group can now hold several entries — one per week it was placed into —
+  // since the placement panel places into any number of weeks at once.
   const placedGroupKeys = (component.settings.placedCopyGroupKeys as string[] | undefined) ?? [];
   const placedModuleCatalogueIds = (component.settings.placedCopyModuleCatalogueIds as string[] | undefined) ?? [];
   const placedWeekIds = (component.settings.placedCopyWeekIds as string[] | undefined) ?? [];
   const placedComponentIds = (component.settings.placedCopyComponentIds as string[] | undefined) ?? [];
 
-  const recordPlacement = (key: string, result: PlacementResult) => {
+  const recordPlacement = (key: string, results: PlacementResult[]) => {
     setBrowsingKey(null);
+    if (!results.length) return;
     onChange({
       settings: {
         ...component.settings,
         selectedGroupKeys: [...selectedKeys, key],
         selectedGroupNames: groupOptions.filter(option => [...selectedKeys, key].includes(option.key)).map(option => option.name),
-        placedCopyGroupKeys: [...placedGroupKeys, key],
-        placedCopyModuleCatalogueIds: [...placedModuleCatalogueIds, result.moduleCatalogueId],
-        placedCopyWeekIds: [...placedWeekIds, result.weekId],
-        placedCopyComponentIds: [...placedComponentIds, result.componentId],
+        placedCopyGroupKeys: [...placedGroupKeys, ...results.map(() => key)],
+        placedCopyModuleCatalogueIds: [...placedModuleCatalogueIds, ...results.map(result => result.moduleCatalogueId)],
+        placedCopyWeekIds: [...placedWeekIds, ...results.map(result => result.weekId)],
+        placedCopyComponentIds: [...placedComponentIds, ...results.map(result => result.componentId)],
       },
     });
   };
@@ -2717,41 +2762,52 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
       setGroups([...selectedKeys, key]);
       return;
     }
-    const placementIndex = placedGroupKeys.indexOf(key);
-    if (placementIndex === -1) {
+    const placementIndices = placedGroupKeys.reduce<number[]>((indices, groupKey, index) => (groupKey === key ? [...indices, index] : indices), []);
+    if (placementIndices.length === 0) {
       setGroups(selectedKeys.filter(existing => existing !== key));
       return;
     }
     const groupLabel = groupOptions.find(option => option.key === key)?.name || 'this group';
+    const multiple = placementIndices.length > 1;
     await showCurriculumConfirm({
       title: 'Remove this group?',
-      text: `This part was copied into ${groupLabel}'s week. Removing the group also deletes that copy from their module.`,
+      text: `This part was copied into ${placementIndices.length} of ${groupLabel}'s week${multiple ? 's' : ''}. Removing the group also deletes ${multiple ? 'those copies' : 'that copy'} from their module.`,
       icon: 'warning',
-      confirmButtonText: 'Remove and delete the copy',
+      confirmButtonText: `Remove and delete the cop${multiple ? 'ies' : 'y'}`,
       cancelButtonText: 'Keep it',
       onConfirm: async () => {
-        const moduleCatalogueId = placedModuleCatalogueIds[placementIndex];
-        const weekId = placedWeekIds[placementIndex];
-        const componentId = placedComponentIds[placementIndex];
-        // Fresh, not cached: the save below replaces the whole structure, so a
-        // stale read would revert everything else edited since.
-        const structure = await loadModuleStructure(moduleCatalogueId, { skipCache: true });
-        if (structure) {
-          const nextWeekStructure = structure.weekStructure.map(week => (
-            week.id === weekId ? { ...week, components: week.components.filter(item => item.id !== componentId) } : week
-          ));
+        const targets = placementIndices.map(index => ({
+          moduleCatalogueId: placedModuleCatalogueIds[index],
+          weekId: placedWeekIds[index],
+          componentId: placedComponentIds[index],
+        }));
+        // Every placement for one group comes from the same browse session,
+        // so this is almost always one module — grouped defensively in case
+        // it ever isn't, so each module structure is only saved once.
+        const moduleIds = Array.from(new Set(targets.map(target => target.moduleCatalogueId)));
+        for (const moduleCatalogueId of moduleIds) {
+          // Fresh, not cached: the save below replaces the whole structure, so a
+          // stale read would revert everything else edited since.
+          const structure = await loadModuleStructure(moduleCatalogueId, { skipCache: true });
+          if (!structure) continue;
+          const removeComponentIds = new Set(targets.filter(target => target.moduleCatalogueId === moduleCatalogueId).map(target => target.componentId));
+          const nextWeekStructure = structure.weekStructure.map(week => ({
+            ...week,
+            components: week.components.filter(item => !removeComponentIds.has(item.id)),
+          }));
           await saveModuleStructure(moduleCatalogueId, { ...structure, weekStructure: nextWeekStructure });
         }
         const nextSelectedKeys = selectedKeys.filter(existing => existing !== key);
+        const removeIndices = new Set(placementIndices);
         onChange({
           settings: {
             ...component.settings,
             selectedGroupKeys: nextSelectedKeys,
             selectedGroupNames: groupOptions.filter(option => nextSelectedKeys.includes(option.key)).map(option => option.name),
-            placedCopyGroupKeys: placedGroupKeys.filter((_, index) => index !== placementIndex),
-            placedCopyModuleCatalogueIds: placedModuleCatalogueIds.filter((_, index) => index !== placementIndex),
-            placedCopyWeekIds: placedWeekIds.filter((_, index) => index !== placementIndex),
-            placedCopyComponentIds: placedComponentIds.filter((_, index) => index !== placementIndex),
+            placedCopyGroupKeys: placedGroupKeys.filter((_, index) => !removeIndices.has(index)),
+            placedCopyModuleCatalogueIds: placedModuleCatalogueIds.filter((_, index) => !removeIndices.has(index)),
+            placedCopyWeekIds: placedWeekIds.filter((_, index) => !removeIndices.has(index)),
+            placedCopyComponentIds: placedComponentIds.filter((_, index) => !removeIndices.has(index)),
           },
         });
       },
@@ -2775,7 +2831,7 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
           key={browsingOption.key}
           component={component}
           groupName={browsingOption.name}
-          programmeId={programmeId}
+          programmeId={browsingOption.programmeId || programmeId}
           onClose={() => setBrowsingKey(null)}
           onPlaced={result => recordPlacement(browsingOption.key, result)}
         />
@@ -2794,22 +2850,86 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
   onBrowse: (key: string) => void;
 }) {
   const selectedSet = new Set(selectedKeys);
+  // Groups now span every programme/cohort (not just this module's own), so
+  // this narrows the picker in two steps — programme, then that programme's
+  // cohorts — before the groups themselves are listed. The module's own
+  // (locked) group always stays visible regardless of what's picked here.
+  const programmeChoices = useMemo(() => {
+    const byId = new Map<string, string>();
+    options.forEach(option => {
+      const id = option.programmeId || option.programme;
+      if (id && !byId.has(id)) byId.set(id, option.programme || option.programmeId || '');
+    });
+    return Array.from(byId, ([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [options]);
+  const [programmeFilter, setProgrammeFilter] = useState('');
+  const [cohortFilter, setCohortFilter] = useState('');
+  const cohortChoices = useMemo(() => {
+    const scoped = programmeFilter
+      ? options.filter(option => (option.programmeId || option.programme) === programmeFilter)
+      : options;
+    const byId = new Map<string, string>();
+    scoped.forEach(option => {
+      const id = option.cohortId || option.cohort;
+      if (id && !byId.has(id)) byId.set(id, option.cohort || option.cohortId || '');
+    });
+    return Array.from(byId, ([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [options, programmeFilter]);
+  // A programme change can orphan the chosen cohort (it belonged to the old
+  // programme) — drop it rather than leave a cohort filter silently applied
+  // from a different programme.
+  useEffect(() => {
+    if (cohortFilter && !cohortChoices.some(choice => choice.id === cohortFilter)) setCohortFilter('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [programmeFilter]);
+  const filteredOptions = options.filter(option => {
+    if (option.key === lockedKey) return true;
+    if (programmeFilter && (option.programmeId || option.programme) !== programmeFilter) return false;
+    if (cohortFilter && (option.cohortId || option.cohort) !== cohortFilter) return false;
+    return true;
+  });
+  const filtering = Boolean(programmeFilter || cohortFilter);
   return (
     <div className="rounded-xl border border-background-200 bg-background-100/30 p-3">
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] font-semibold text-foreground-500 tabular-nums">{selectedKeys.length} of {options.length} selected</span>
         {options.length > 0 && (
           <div className="flex items-center gap-1">
-            <button onClick={() => onChange(options.map(option => option.key))} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-primary-600 hover:bg-primary-50 transition-smooth">Select all</button>
+            <button onClick={() => onChange(Array.from(new Set([...selectedKeys, ...filteredOptions.map(option => option.key)])))} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-primary-600 hover:bg-primary-50 transition-smooth">
+              {filtering ? 'Select shown' : 'Select all'}
+            </button>
             <button onClick={() => onChange(lockedKey ? [lockedKey] : [])} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-foreground-400 hover:bg-background-100 transition-smooth">Clear</button>
           </div>
         )}
       </div>
+      {programmeChoices.length > 0 && (
+        <div className="mb-2 grid grid-cols-2 gap-2">
+          <select
+            value={programmeFilter}
+            onChange={event => setProgrammeFilter(event.target.value)}
+            className="w-full rounded-lg border border-background-200 bg-background-50 px-2 py-1.5 text-[11px] outline-none transition-shadow focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+          >
+            <option value="">All programmes</option>
+            {programmeChoices.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
+          </select>
+          <select
+            value={cohortFilter}
+            onChange={event => setCohortFilter(event.target.value)}
+            disabled={cohortChoices.length === 0}
+            className="w-full rounded-lg border border-background-200 bg-background-50 px-2 py-1.5 text-[11px] outline-none transition-shadow focus:border-primary-300 focus:ring-2 focus:ring-primary-100 disabled:opacity-50"
+          >
+            <option value="">All cohorts</option>
+            {cohortChoices.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
+          </select>
+        </div>
+      )}
       {options.length === 0 ? (
         <p className="text-[11px] text-foreground-400">No delivery groups are linked to this programme yet.</p>
+      ) : filteredOptions.length === 0 ? (
+        <p className="text-[11px] text-foreground-400">No groups match this programme/cohort.</p>
       ) : (
         <div className="grid gap-2 sm:grid-cols-2">
-          {options.map(option => {
+          {filteredOptions.map(option => {
             const on = selectedSet.has(option.key);
             const browsing = browsingKey === option.key;
             const locked = option.key === lockedKey;
@@ -2848,7 +2968,11 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12px] font-bold text-foreground-800">{option.name}</span>
-                  {option.cohort && <span className="block truncate text-[10px] text-foreground-400">{option.cohort}</span>}
+                  {(option.cohort || option.programme) && (
+                    <span className="block truncate text-[10px] text-foreground-400">
+                      {[option.cohort, option.programme].filter(Boolean).join(' · ')}
+                    </span>
+                  )}
                   {!on && <span className="mt-0.5 block truncate text-[10px] font-semibold text-primary-500">{browsing ? 'Browsing…' : "Not assigned — click to place a copy here"}</span>}
                 </span>
               </div>
