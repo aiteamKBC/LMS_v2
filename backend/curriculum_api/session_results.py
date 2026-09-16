@@ -32,6 +32,12 @@ def json_value(value, default):
         return default
 
 
+def archive_schema_missing(error):
+    """Only a missing table allows explicitly degraded saved-result reads."""
+    cause = error.__cause__ or error
+    return getattr(cause, 'sqlstate', None) == '42P01'
+
+
 def launch_expectations(series_ids, emails=None):
     """Authenticated LMS launches add an expected learner only to that occurrence.
 
@@ -64,11 +70,21 @@ def result_rows(series, *, session_number=None, email=None):
     if not ids:
         return []
     records = read('SELECT * FROM curriculum.live_session_attendance WHERE occurrence_id=ANY(%s)', [ids])
-    artifacts = read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,
-        r.status AS archive_status,r.transcript_text,r.updated_at AS archived_at
-        FROM curriculum.live_session_artifacts a
-        LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
-        WHERE a.occurrence_id=ANY(%s) ORDER BY a.created_datetime,a.id''', [ids])
+    archive_ready = True
+    try:
+        artifacts = read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,
+            r.status AS archive_status,r.transcript_text,r.updated_at AS archived_at
+            FROM curriculum.live_session_artifacts a
+            LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
+            WHERE a.occurrence_id=ANY(%s) ORDER BY a.created_datetime,a.id''', [ids])
+    except DatabaseError as error:
+        if not archive_schema_missing(error):
+            raise
+        archive_ready = False
+        artifacts = read('''SELECT id,occurrence_id,artifact_type,created_datetime,
+            NULL AS archive_status,NULL AS transcript_text,NULL AS archived_at
+            FROM curriculum.live_session_artifacts WHERE occurrence_id=ANY(%s)
+            ORDER BY created_datetime,id''', [ids])
     attendance_by_id, artifacts_by_id = defaultdict(list), defaultdict(list)
     for record in records:
         record['intervals'] = json_value(record.get('intervals'), [])
@@ -86,7 +102,7 @@ def result_rows(series, *, session_number=None, email=None):
         roster = session_roster(expected | launches[item['id']], attendance_by_id[item['id']], complete=complete)
         results.append({'id': item['id'], 'seriesId': series['id'], 'sessionNumber': item['session_number'],
                         'startsAt': instant(item['scheduled_start']), 'endsAt': instant(item['scheduled_end']),
-                        'state': item['status'], 'reportReady': complete,
+                        'state': item['status'], 'reportReady': complete, 'archiveReady': archive_ready,
                         'syncedAt': instant(item.get('artifacts_synced_at')),
                         'attendance': roster, 'artifacts': artifacts_by_id[item['id']]})
     apply_recovery(results)
@@ -164,8 +180,15 @@ def module_results(request, module_id):
                 item[key] = instant(item[key])
         results = [{'id': row['id'], 'title': row['module_title'],
                     'sessions': [item for item in occurrences if item['seriesId'] == row['id']]} for row in series]
-        jobs = read('SELECT live_session_id,state,last_error,finished_at FROM curriculum.session_result_jobs WHERE live_session_id=ANY(%s)', [[row['id'] for row in series]]) if series else []
-        return JsonResponse({'series': results, 'jobs': jobs, 'presenceThresholdSeconds': 180})
+        payload = {'series': results, 'jobs': [], 'presenceThresholdSeconds': 180, 'syncAvailable': True}
+        if series:
+            try:
+                payload['jobs'] = read('SELECT live_session_id,state,last_error,finished_at FROM curriculum.session_result_jobs WHERE live_session_id=ANY(%s)', [ids])
+            except DatabaseError as error:
+                if not archive_schema_missing(error):
+                    raise
+                payload.update(syncAvailable=False, warning='Recording storage needs setup. You can open saved sessions and attendance; synchronization is unavailable until setup is complete.')
+        return JsonResponse(payload)
     except DatabaseError:
         return unavailable()
 
@@ -254,7 +277,10 @@ def queue_sync(request, series_id):
                 ON CONFLICT(live_session_id) DO UPDATE SET state='queued',requested_at=now(),next_attempt_at=now(),attempts=0,last_error='',force_refresh=true
                 WHERE session_result_jobs.state NOT IN ('running','queued')''', [series_id])
         return JsonResponse({'state': 'queued', 'message': 'Sync requested. Results will be saved in the background.'}, status=202)
-    except DatabaseError:
+    except DatabaseError as error:
+        if archive_schema_missing(error):
+            return JsonResponse({'error': 'Recording storage needs setup before synchronization can run.',
+                                 'code': 'session_archive_setup_required'}, status=503)
         return unavailable()
 
 

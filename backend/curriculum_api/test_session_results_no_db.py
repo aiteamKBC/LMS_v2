@@ -235,7 +235,7 @@ class EndpointTests(unittest.TestCase):
             'timezone': types.SimpleNamespace(now=lambda: datetime(2026, 9, 16, 12, tzinfo=timezone.utc))}
         functions(ROOT.parent / 'login/permissions.py', {'require_role', '_learner_progress_gate', 'learner_self_or_staff'}, self.ns)
         functions(ROOT / 'session_results.py', {'json_value', 'result_rows', 'admin_session', 'learner_results', 'learner_content',
-            'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable'}, self.ns)
+            'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable', 'archive_schema_missing'}, self.ns)
         self.cursor = Mock(); self.cursor.__enter__ = Mock(return_value=self.cursor); self.cursor.__exit__ = Mock(return_value=False)
         self.ns['connections'] = {'default': types.SimpleNamespace(cursor=lambda: self.cursor)}
         self.ns['read'] = Mock(return_value=[])
@@ -296,6 +296,58 @@ class EndpointTests(unittest.TestCase):
         query, params = self.cursor.execute.call_args.args
         self.assertIn("state NOT IN ('running','queued')", query)
         self.assertEqual(params, ['S'])
+
+    def missing_archive(self):
+        cause = Exception('Missing archive table')
+        cause.sqlstate = '42P01'
+        error = self.ns['DatabaseError']('Storage unavailable')
+        error.__cause__ = cause
+        return error
+
+    def test_module_index_retains_sessions_when_sync_setup_is_missing(self):
+        self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}],
+            [{'id': 'O', 'seriesId': 'S', 'sessionNumber': 1, 'startsAt': None,
+              'endsAt': None, 'syncedAt': None, 'reportReady': True, 'fileCount': 2}], self.missing_archive()]
+        response = self.ns['module_results'](self.req(), module_id='M')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['series'][0]['sessions'][0]['id'], 'O')
+        self.assertFalse(response['syncAvailable'])
+        self.assertIn('needs setup', response['warning'])
+        self.assertEqual(response['jobs'], [])
+        self.assertEqual(self.ns['read'].call_args.args[1], [['S']])
+        self.cursor.execute.assert_not_called()
+
+    def test_module_index_does_not_hide_other_database_failures(self):
+        self.ns['read'].side_effect = [[{'id': 'S', 'module_title': 'Example'}], [], self.ns['DatabaseError']('Read failed')]
+        with self.assertLogs('test', level='ERROR'):
+            response = self.ns['module_results'](self.req(), module_id='M')
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn('series', response)
+
+    def test_missing_archive_preserves_attendance_and_known_file_metadata(self):
+        self.ns['apply_recovery'] = Mock()
+        self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 1, 'status': 'completed',
+            'attendance_report_id': 'R', 'actual_end': '2026-09-16T10:00Z',
+            'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}],
+            [{'occurrence_id': 'O', 'email': 'a@example.invalid', 'total_attendance_seconds': 240}],
+            self.missing_archive(), [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': 'recording',
+            'created_datetime': None, 'archive_status': None, 'transcript_text': None}]]
+        rows = self.ns['result_rows']({'id': 'S', 'attendees': ['a@example.invalid']}, session_number=1)
+        self.assertFalse(rows[0]['archiveReady'])
+        self.assertEqual(rows[0]['attendance'][0]['attendance'], 1)
+        self.assertEqual(rows[0]['artifacts'][0]['state'], 'pending')
+        self.assertNotIn('url', rows[0]['artifacts'][0])
+        self.ns['apply_recovery'].assert_called_once_with(rows)
+        self.assertEqual(self.ns['read'].call_args.args[1], [['O']])
+        self.cursor.execute.assert_not_called()
+
+    def test_missing_archive_queue_never_claims_success(self):
+        self.ns['read'].return_value = [{'id': 'S'}]
+        self.cursor.execute.side_effect = self.missing_archive()
+        response = self.ns['queue_sync'](self.req(method='POST'), series_id='S')
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response['code'], 'session_archive_setup_required')
+        self.assertNotIn('state', response)
 
     def test_pending_file_cannot_be_downloaded(self):
         self.ns['read'].return_value = [{'status': 'pending'}]

@@ -22,6 +22,9 @@ export function previewComponent(component: ModuleComponent): JourneyComponent {
     reflectionPrompt: setting('reflectionPrompt') || setting('podcastReflectionQuestion') || setting('readingReflectionPrompts') || component.description,
     reflectionRequired: component.reflectionRequired, reflectionQuestion: component.reflectionQuestion,
     liveSessionUrl: setting('teamsJoinUrl') || setting('liveSessionUrl'), sessionDate: setting('sessionDate'),
+    teamsLiveSessionId: setting('teamsLiveSessionId') || null,
+    teamsSessionNumber: Number.isInteger(Number(setting('teamsSessionNumber'))) && Number(setting('teamsSessionNumber')) > 0
+      ? Number(setting('teamsSessionNumber')) : null,
     sessionTime: setting('sessionTime'), sessionDateTimeUtc: setting('sessionDateTimeUtc'),
     durationMinutes: Number(setting('durationMinutes')) || null };
 }

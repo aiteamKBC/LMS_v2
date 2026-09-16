@@ -41,4 +41,22 @@ describe('Learner preview', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(close).toHaveBeenCalledOnce();
   });
+
+  it('loads the exact live session recording in preview without learner writes', async () => {
+    const live = { ...component({ teamsLiveSessionId: 'S1', teamsSessionNumber: '2' }), type: 'live-session', title: 'Live lesson' } as ModuleComponent;
+    expect(previewComponent(live)).toMatchObject({ teamsLiveSessionId: 'S1', teamsSessionNumber: 2 });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ sessions: [{
+      id: 'O2', seriesId: 'S1', sessionNumber: 2, reportReady: true, attendance: [],
+      artifacts: [{ id: 'A2', type: 'recording', state: 'ready' }],
+    }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const module = { title: 'Example module', weekStructure: [{ id: 'W2', weekNumber: 2, title: 'Week', components: [live] }] } as ModuleCatalogueItem;
+    render(<LearnerPreview module={module} onClose={vi.fn()} />);
+    expect(await screen.findByLabelText('Session recording 1')).toHaveAttribute('src', '/curriculum_api/curriculum/session-results/S1/artifacts/A2/');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('/curriculum_api/curriculum/session-results/S1/sessions/2/');
+    expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
+    expect(screen.queryByRole('button', { name: 'Sync attendance & files' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'attendance' })).not.toBeInTheDocument();
+  });
 });

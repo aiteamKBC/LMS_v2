@@ -71,6 +71,41 @@ describe('Saved session results', () => {
     fireEvent.change(screen.getByLabelText('Search attendance'), { target: { value: 'nobody' } });
     expect(screen.queryByText('Learner One')).not.toBeInTheDocument();
   });
+
+  it('queues synchronization from the open admin session without reloading or polling', async () => {
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ state: 'queued', message: 'Sync requested.' }) } as Response);
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    await screen.findByLabelText('Session recording 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Sync attendance & files' }));
+    expect(await screen.findByText('Sync requested.')).toBeInTheDocument();
+    expect(coachFetch).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps attendance visible with a precise setup warning when archive storage is missing', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, archiveReady: false,
+      artifacts: session.artifacts.map(file => ({ ...file, state: 'pending' })) }] }));
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    expect(await screen.findByText(/Recording storage needs setup/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sync attendance & files' })).toBeDisabled();
+    expect(screen.getByText(/Teams has a recording/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Session recording 1')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'attendance' }));
+    expect(screen.getByText('Learner One')).toBeInTheDocument();
+    expect(screen.getByText('Present')).toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
+
+  it('previews saved media without exposing the roster or synchronization controls', async () => {
+    render(<SessionResults seriesId="S1" sessionNumber={1} preview />);
+    await screen.findByLabelText('Session recording 1');
+    expect(screen.queryByRole('tab', { name: 'attendance' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sync attendance & files' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Your attendance: Present')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'transcripts' }));
+    expect(screen.getByText('Speaker: Saved lesson.')).toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('Module session index', () => {
@@ -99,5 +134,16 @@ describe('Module session index', () => {
     page.rerender(<ModuleSessions moduleId="M2" />);
     await waitFor(() => expect(screen.queryByLabelText('Session recording 1')).not.toBeInTheDocument());
     expect(fetchMock.mock.calls.some(call => call[0].includes('/modules/M2/'))).toBe(true);
+  });
+
+  it('shows saved sessions and a disabled sync action when setup is incomplete', async () => {
+    fetchMock.mockImplementation(() => ok({ series: [{ id: 'S1', title: 'Example module', sessions: [session] }],
+      jobs: [], syncAvailable: false, warning: 'Recording storage needs setup.' }));
+    render(<ModuleSessions moduleId="M1" />);
+    await screen.findByText('Session 1');
+    expect(screen.getByText('Recording storage needs setup.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sync attendance & files' })).toBeDisabled();
+    expect(screen.getByText('Attendance report saved')).toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
   });
 });

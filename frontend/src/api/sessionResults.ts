@@ -12,10 +12,12 @@ export interface SessionFile {
 }
 export interface SessionResult {
   id: string; seriesId: string; sessionNumber: number; startsAt: string; endsAt: string;
-  state: string; reportReady: boolean; syncedAt?: string; fileCount?: number;
+  state: string; reportReady: boolean; syncedAt?: string; fileCount?: number; archiveReady?: boolean;
   attendance?: SessionPerson[]; artifacts?: SessionFile[];
 }
 export interface ModuleSessionResults {
+  syncAvailable?: boolean;
+  warning?: string;
   series: { id: string; title: string; sessions: SessionResult[] }[];
   jobs: { live_session_id: string; state: string; last_error: string; finished_at?: string }[];
 }

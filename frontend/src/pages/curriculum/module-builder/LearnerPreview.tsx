@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
+import { SessionResults } from '@/components/feature/SessionResults';
 import { previewComponent } from './learnerPreviewData';
 import { componentContentKind } from '@/utils/learnerJourney';
 import { parseVideoUrl } from '@/components/feature/VideoPlayer';
@@ -73,6 +74,9 @@ export function LearnerPreview({ module, initialComponentId, onClose }: {
             {component.assignmentBrief && !component.assignmentBriefHtml && <p className="whitespace-pre-wrap rounded-xl border bg-white p-5">{component.assignmentBrief}</p>}
             {component.assignmentBriefHtml && <div className="rich-text-surface rounded-xl border bg-white p-5" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(component.assignmentBriefHtml) }} />}
             <ComponentBody component={component} contentKind={componentContentKind(component.type)} parsed={component.videoUrl ? parseVideoUrl(component.videoUrl) : null} title={component.title} preview onDuration={noop} onProgress={noop} onPlayingChange={noop} onEnded={noop} onUnsupported={noop} />
+            {component.type === 'live_session' && (component.teamsLiveSessionId && component.teamsSessionNumber
+              ? <SessionResults seriesId={component.teamsLiveSessionId} sessionNumber={component.teamsSessionNumber} preview />
+              : <p className="rounded-xl border bg-amber-50 p-4 text-sm">Link this component to a Teams session to preview its saved recording and transcript.</p>)}
             {component.reflectionRequired && <label className="block rounded-xl border bg-white p-4 text-sm font-semibold">{component.reflectionQuestion || 'Your reflection'}<textarea className="mt-3 min-h-28 w-full rounded-lg border p-3 font-normal" placeholder="Try the learner reflection field…" /></label>}
           </>}</div>}</Suspense></main>
       </div>
