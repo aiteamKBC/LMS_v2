@@ -43,7 +43,7 @@ from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .learner_progression import advance_learner
-from .mappers import _s, stored_training_plan, training_plan_field
+from .mappers import _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser
 
 logger = logging.getLogger(__name__)
@@ -708,6 +708,29 @@ def _effective_plan_ids(learner, preset_cache):
         return ids
     planned = set(ids)
     return ids + [i for i in _preset_ids_for(learner, preset_cache) if i not in planned]
+
+
+def effective_training_plan(learner, preset_cache=None):
+    """Read-only plan snapshot including modules newly inherited from a group.
+
+    The stored plan remains the agreement record and is never changed here.
+    Learner-facing reads still need the effective assignment shown by the
+    enrolment modal, so append minimal id-bearing entries for newly inherited
+    modules. Module Builder remains authoritative for their live titles, weeks
+    and components.
+    """
+    plan = list(get_training_plan(learner) or [])
+    effective_ids = _effective_plan_ids(
+        learner, preset_cache if preset_cache is not None else {},
+    )
+    represented = {
+        _s(entry.get('moduleId')) for entry in plan
+        if isinstance(entry, dict) and _s(entry.get('moduleId'))
+    }
+    return plan + [
+        {'moduleId': module_id}
+        for module_id in effective_ids if module_id not in represented
+    ]
 
 
 def _learner_picker_row(learner, module_id, preset_cache):

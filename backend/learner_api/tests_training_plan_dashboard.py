@@ -45,6 +45,11 @@ def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, spl
 
 
 class TrainingPlanDashboardTests(SimpleTestCase):
+    def setUp(self):
+        self.effective_plan = self.enterContext(
+            patch('learner_api.training_plan_dashboard._effective_plan_ids', return_value=['M1']),
+        )
+
     def test_learning_section_returns_only_module_selection_data(self):
         source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
         connection = MagicMock()
@@ -66,6 +71,22 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         sql = ' '.join(str(call.args[0]) for call in cursor.execute.call_args_list)
         self.assertNotIn('manual_learner_activities', sql)
         self.assertNotIn('live_sessions', sql)
+        self.effective_plan.assert_called_with(source, {})
+
+    def test_learning_section_requests_saved_and_inherited_module_metadata(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com')
+        self.effective_plan.return_value = ['SAVED', 'GROUP-NEW']
+        connection = MagicMock()
+        builder = MagicMock(return_value=({}, {}))
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', builder):
+            result = read_dashboard(source, section='learning')
+
+        self.assertEqual(result['modules'], [])
+        builder.assert_called_once_with(
+            connection.cursor.return_value.__enter__.return_value,
+            ['current:SAVED', 'current:GROUP-NEW'],
+        )
 
     def test_coach_fallback_uses_only_the_current_programme_cohort_and_group(self):
         source = SimpleNamespace(programme=' Marketing Level 4 ', cohort='October 2026', group='G1')

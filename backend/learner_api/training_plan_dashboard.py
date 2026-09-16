@@ -13,8 +13,9 @@ from login.permissions import learner_self_or_staff
 from old_otjh.coach_booking import booking_url
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile
+from .learning_plan import _effective_plan_ids
 from .coach_assignment import current_coach, source_coach
-from .student_activity import CURRENT_SUBJECTS_SQL, _builder_subject_metadata
+from .student_activity import _builder_subject_metadata
 from .subject_content import as_list, clean_text, safe_url
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
 
@@ -192,8 +193,7 @@ def read_dashboard(source, section=None):
                 GROUP BY month,group_id ORDER BY month,group_id''', [aptem_id])
             actual = [{'month': row['month'], 'groupId': str(row['group_id']) if row['group_id'] is not None else None,
                        'hours': number(row['hours']) or 0, 'count': row['activity_count']} for row in rows(cur)]
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.pk])
-        refs = [f'current:{row[0]}' for row in cur.fetchall()]
+        refs = [f'current:{module_id}' for module_id in _effective_plan_ids(source, {})]
         if aptem_id and historical:
             cur.execute('''SELECT gl.group_id FROM "Last_audit".group_learners gl
                 JOIN "Last_audit".learners l ON l.learner_id=gl.learner_id WHERE l.aptem_id=%s''', [aptem_id])

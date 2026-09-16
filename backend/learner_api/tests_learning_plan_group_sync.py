@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
-from .learning_plan import _effective_plan_ids, _module_payload, learning_plan
+from .learning_plan import _effective_plan_ids, _module_payload, effective_training_plan, learning_plan
 
 MODULE_ROWS = [
     {
@@ -179,4 +179,20 @@ class ModulePickerAgreesWithThePlanTests(SimpleTestCase):
         with patch("learner_api.learning_plan._group_module_ids") as preset:
             self.assertEqual(_effective_plan_ids(_learner([]), {}), [])
         # Not merely empty -- the group is never consulted for an emptied plan.
+        preset.assert_not_called()
+
+    def test_learner_read_appends_inherited_modules_without_saving_them(self):
+        saved = [{"moduleId": "MOD-1", "moduleTitle": "Agreed module", "weeks": []}]
+        learner = _learner(saved)
+        with patch("learner_api.learning_plan._group_module_ids", return_value=["MOD-1", "MOD-2"]):
+            effective = effective_training_plan(learner)
+
+        self.assertEqual([module["moduleId"] for module in effective], ["MOD-1", "MOD-2"])
+        self.assertEqual(effective[1], {"moduleId": "MOD-2"})
+        self.assertEqual(learner.learning_plan, saved)
+
+    def test_explicit_learner_read_does_not_add_group_modules(self):
+        saved = [{"moduleId": "MOD-1", "assignmentMode": "explicit"}]
+        with patch("learner_api.learning_plan._group_module_ids") as preset:
+            self.assertEqual(effective_training_plan(_learner(saved)), saved)
         preset.assert_not_called()

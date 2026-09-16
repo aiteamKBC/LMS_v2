@@ -42,13 +42,20 @@ class CompactLearnerLoadingTests(SimpleTestCase):
             stack.enter_context(patch("learner_api.active_users.refresh_learner_ksb_snapshot", return_value=refreshed_ksbs))
             stack.enter_context(patch.object(detail, "to_learner_detail", return_value={
                 "modules": ["Module"], "week": [], "components": [component], "quizAttempts": [{"grade": 1}]}))
-            stack.enter_context(patch.object(detail, "get_training_plan", return_value=[]))
+            effective_plan = [{"moduleId": "GROUP-NEW"}]
+            stack.enter_context(patch.object(detail, "effective_training_plan", return_value=effective_plan))
             stack.enter_context(patch.object(detail, "access_gate", return_value={"blocked": False}))
-            stack.enter_context(patch.object(detail, "_resolve_from_master", side_effect=lambda m, w, c, **kw: (m, w, c)))
+            master = stack.enter_context(patch.object(
+                detail, "_resolve_from_master", side_effect=lambda m, w, c, **kw: (m, w, c),
+            ))
             stack.enter_context(patch.object(detail, "_annotate_otjh", return_value=([component], 0)))
-            stack.enter_context(patch.object(detail, "_append_week_quizzes", side_effect=lambda w, c, **kw: (w, c)))
+            quizzes = stack.enter_context(patch.object(
+                detail, "_append_week_quizzes", side_effect=lambda w, c, **kw: (w, c),
+            ))
             stack.enter_context(patch.object(detail, "_live_otjh_snapshot", return_value={}))
             result = detail.build_learner_detail(SimpleNamespace(programme=""), 125, compact=compact)
+            self.resolved_plan = master.call_args.kwargs["assigned_modules"]
+            self.quiz_plan = quizzes.call_args.kwargs["assigned_modules"]
         return result, resolve.call_count
 
     def test_compact_payload_preserves_required_nulls_false_zero_and_progress(self):
@@ -70,11 +77,16 @@ class CompactLearnerLoadingTests(SimpleTestCase):
         result, _ = self.build(False, [])
         self.assertIn("contentHtml", result["components"][0])
 
+    def test_effective_plan_drives_live_components_and_quizzes(self):
+        self.build(True, [])
+        self.assertEqual(self.resolved_plan, [{"moduleId": "GROUP-NEW"}])
+        self.assertEqual(self.quiz_plan, self.resolved_plan)
+
     def test_selected_reading_stays_scoped_to_assigned_modules_and_parameterized(self):
         cursor = ScriptedCursor([[("C1", "<p>Selected reading</p>")]])
         selected = "C1' OR true --"
         with patch.object(detail, "connections", {"enrolment": ScriptedConnection(cursor)}), \
-                patch.object(detail, "get_training_plan", return_value=[{"moduleId": "M1"}]), \
+                patch.object(detail, "effective_training_plan", return_value=[{"moduleId": "M1"}]), \
                 patch.object(cursor, "execute", wraps=cursor.execute) as execute:
             result = detail._reading_content(SimpleNamespace(), selected)
         sql, params = execute.call_args.args
@@ -88,9 +100,9 @@ class CompactLearnerLoadingTests(SimpleTestCase):
     def test_unassigned_reading_is_not_returned(self):
         cursor = ScriptedCursor([[]])
         with patch.object(detail, "connections", {"enrolment": ScriptedConnection(cursor)}), \
-                patch.object(detail, "get_training_plan", return_value=[{"moduleId": "M1"}]):
+                patch.object(detail, "effective_training_plan", return_value=[{"moduleId": "M1"}]):
             self.assertIsNone(detail._reading_content(SimpleNamespace(), "C2"))
 
     def test_empty_assignment_needs_no_content_query(self):
-        with patch.object(detail, "get_training_plan", return_value=[]):
+        with patch.object(detail, "effective_training_plan", return_value=[]):
             self.assertIsNone(detail._reading_content(SimpleNamespace(), "C1"))

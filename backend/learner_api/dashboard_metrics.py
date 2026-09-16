@@ -13,7 +13,8 @@ from .learner_detail import SOURCE_MODELS
 from .models import TrainingPlanDocument
 from .progress_rules import progress_counts_as_achieved
 from .student_activity_access import student_activity_available
-from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
+from .student_activity import _direct_progress_records, _direct_progress_otjh
+from .learning_plan import _effective_plan_ids
 from .training_plan_dashboard import find_contract, number, rows
 from .otjh_totals import completed_otjh
 
@@ -203,8 +204,7 @@ def read_metrics(source, kind):
     historical, attempts, links = [], set(), {}
     history_ready = not migrated
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(CURRENT_SUBJECTS_SQL, [source.pk])
-        module_ids = [row[0] for row in cursor.fetchall()]
+        module_ids = _effective_plan_ids(source, {})
         cursor.execute('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
                  FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
