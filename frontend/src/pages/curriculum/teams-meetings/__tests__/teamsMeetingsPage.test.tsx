@@ -631,6 +631,18 @@ describe('Teams Meetings page', () => {
     expect(row.getByRole('button', { name: 'Create Teams meetings calendar' })).toBeInTheDocument();
   });
 
+  it('uses the Entra people picker for every meeting role', async () => {
+    await renderPage();
+    expect(await screen.findByText('Reporting Basics')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByRole('combobox', { name: 'Organizer' })).toHaveAttribute('placeholder', expect.stringContaining('Search'));
+    expect(dialog.getByRole('combobox', { name: 'Co-organizers' })).toHaveAttribute('placeholder', 'Search Entra by name or email...');
+    expect(dialog.getByRole('combobox', { name: 'Presenters' })).toHaveAttribute('placeholder', 'Search Entra by name or email...');
+    expect(dialog.getByRole('combobox', { name: 'Attendees' })).toHaveAttribute('placeholder', 'Search Entra by name or email...');
+  });
+
   it('creates all 16 current session dates when the session cache still holds only three', async () => {
     const dates = [
       '2026-09-16', '2026-09-21', '2026-09-23', '2026-09-28',
