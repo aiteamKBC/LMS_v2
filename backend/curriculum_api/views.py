@@ -13675,6 +13675,11 @@ COMPONENT_SETTINGS_SCHEMA = {
 
 
 LEGACY_SETTING_KEYS = {'legacySettings', 'legacySourceType', 'legacyUnsupportedSource', 'shortcode'}
+LIVE_SESSION_TRACKING_SETTING_KEYS = {
+    'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
+    'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
+    'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
+}
 
 
 class ModuleAuthoringValidationError(ValueError):
@@ -13707,6 +13712,13 @@ def component_settings_defaults(component_type):
     return COMPONENT_SETTINGS_SCHEMA.get(frontend_component_type(component_type), COMPONENT_SETTINGS_SCHEMA['reading'])
 
 
+def allowed_component_setting_keys(component_type):
+    allowed = set(component_settings_defaults(component_type)) | LEGACY_SETTING_KEYS
+    if frontend_component_type(component_type) == 'live-session':
+        allowed |= LIVE_SESSION_TRACKING_SETTING_KEYS
+    return allowed
+
+
 def normalise_component_settings_payload(component_type, settings):
     source = dict(settings) if isinstance(settings, dict) else {}
     stored_legacy = as_json_value(source.get('legacySettings'), {})
@@ -13734,7 +13746,7 @@ def normalise_component_settings_payload(component_type, settings):
         source['assignmentFileName'] = source.get('assignmentFileName') or source.get('uploadedFileName') or ''
         source['assignmentFileUrl'] = source.get('assignmentFileUrl') or source.get('uploadedFileUrl') or ''
     defaults = component_settings_defaults(component_type)
-    allowed = set(defaults.keys()) | LEGACY_SETTING_KEYS
+    allowed = allowed_component_setting_keys(component_type)
     normalised = dict(defaults)
     legacy = {}
     for key, value in source.items():
@@ -13761,7 +13773,7 @@ def validate_component_authoring_payload(component, path):
     component_type = frontend_component_type(component.get('type'))
     settings = normalise_component_settings_payload(component_type, component.get('settings'))
     component['settings'] = settings
-    allowed = set(component_settings_defaults(component_type).keys()) | LEGACY_SETTING_KEYS
+    allowed = allowed_component_setting_keys(component_type)
     title = clean_str(component.get('title'))
     status = clean_str(settings.get('contentStatus') or 'Draft')
     version = clean_str(settings.get('version') or '0.1')

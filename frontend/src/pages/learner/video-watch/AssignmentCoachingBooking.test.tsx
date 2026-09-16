@@ -35,7 +35,7 @@ it('books the official MCM key and links the returned meeting after saving the d
   fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
   fireEvent.click(screen.getByRole('button', { name: 'Book 60-minute MCM' }));
   await waitFor(() => expect(props.onSelect).toHaveBeenCalledWith(slot.eventKey));
-  expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '1', expect.objectContaining({ sessionType: 'mcr', eventKey: slot.eventKey, durationMinutes: 60, scheduledDate: '2026-09-22' }));
+  expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '1', expect.objectContaining({ sessionType: 'mcr', bookingContext: 'monthly-assignment', eventKey: slot.eventKey, durationMinutes: 60, scheduledDate: '2026-09-22' }));
   expect(props.onSave.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(bookLearnerCalendarSession).mock.invocationCallOrder[0]);
   expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
   expect(screen.getByLabelText('Date')).toHaveTextContent('Select a date');
@@ -93,7 +93,22 @@ it('books directly with the assigned coach when no generated slot exists', async
   await screen.findByRole('option', { name: '09:00' });
   fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
   fireEvent.click(screen.getByRole('button', { name: 'Book 60-minute MCM' }));
-  await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '1', expect.objectContaining({ assignmentMonth: '2026-09', eventKey: undefined, sessionType: 'mcr', durationMinutes: 60 })));
+  await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '1', expect.objectContaining({ bookingContext: 'monthly-assignment', assignmentMonth: '2026-09', eventKey: undefined, sessionType: 'mcr', durationMinutes: 60 })));
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('books the second assignment window for %s without an imported review', async kind => {
+  render(<AssignmentCoachingBooking {...props} kind={kind} />);
+  fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
+  chooseDate('2026-10-28');
+  await screen.findByRole('option', { name: '10:00' });
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value: '10:00' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Book 60-minute MCM' }));
+  await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith(kind, '1', expect.objectContaining({
+    bookingContext: 'monthly-assignment', sessionType: 'mcr', eventKey: slot.eventKey,
+    assignmentMonth: '2026-09', scheduledDate: '2026-10-28', scheduledTime: '10:00',
+    durationMinutes: 60, timezoneOffsetMinutes: 0,
+  })));
+  expect(vi.mocked(bookLearnerCalendarSession).mock.calls[0][2]).not.toHaveProperty('reviewId');
 });
 
 it('loads own meeting artifacts without a Teams join link', async () => {

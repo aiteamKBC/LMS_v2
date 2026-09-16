@@ -1175,6 +1175,11 @@ def learner_calendar_book(request, kind, pk):
     learner_email = _s(getattr(mirror, "email", "")) or _s(learner.email)
     assignment_month = _s(payload.get("assignmentMonth")) if session_type in {"mcr", "progress-review"} else ""
     imported_review_id = _s(payload.get("reviewId")) if assignment_month else ""
+    # The assignment screen and imported reviews both send assignmentMonth.
+    # An explicit context keeps their eligibility rules and identities separate.
+    assignment_booking = _s(payload.get("bookingContext")) == "monthly-assignment"
+    if assignment_booking and (session_type != "mcr" or not assignment_month or _s(payload.get("reviewId"))):
+        return _error("Monthly assignment bookings require an MCM, an assignment month, and no imported review.", 400)
     # Requests opened from the generic learner modal go to the coach for
     # approval. Programme-cycle rows opened from an official calendar card
     # retain their existing direct scheduling flow.
@@ -1201,12 +1206,15 @@ def learner_calendar_book(request, kind, pk):
     calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk
 
     if assignment_month:
-        if not imported_review_id:
+        if not imported_review_id and not assignment_booking:
             return _error("reviewId is required when scheduling an imported monthly coaching review.", 400)
         if session_type == "mcr":
-            from .monthly_assignment import coaching_booking_bounds
-            window_start, window_end = coaching_booking_bounds(assignment_month)
-            if not window_start or not window_start <= scheduled_date <= window_end or duration_minutes != 60:
+            from .monthly_assignment import coaching_booking_bounds, coaching_booking_windows
+            windows = (coaching_booking_windows(assignment_month) if assignment_booking
+                       else [coaching_booking_bounds(assignment_month)])
+            if duration_minutes != 60 or not any(start and start <= scheduled_date <= end for start, end in windows):
+                if assignment_booking:
+                    return _error("Book a 60-minute MCM within either monthly assignment booking window.", 400)
                 return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
             if not _s(payload.get("eventKey")):
                 # assignment_month is an eligibility gate (the window check

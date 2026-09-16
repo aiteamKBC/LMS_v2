@@ -101,7 +101,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
       if (!await onSave()) { setError('Save your assignment draft before booking.'); return; }
       if (!mounted.current || Object.keys(identity).some(k => identity[k as keyof typeof identity] !== latest.current[k as keyof typeof identity])) return;
       const result = await bookLearnerCalendarSession(kind, learnerId, {
-        sessionType: 'mcr', eventKey: slot?.eventKey, assignmentMonth: month, scheduledDate: date, scheduledTime: time,
+        sessionType: 'mcr', bookingContext: 'monthly-assignment', eventKey: slot?.eventKey, assignmentMonth: month, scheduledDate: date, scheduledTime: time,
         durationMinutes: 60, timezoneOffsetMinutes: bookingOffset, notes: `Monthly assignment: ${title}`,
       });
       if (!mounted.current || Object.keys(identity).some(k => identity[k as keyof typeof identity] !== latest.current[k as keyof typeof identity])) return;

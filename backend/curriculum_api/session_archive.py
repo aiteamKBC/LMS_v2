@@ -75,9 +75,12 @@ def archive_series(series_id):
                 base = get_graph_settings()['base_url'].rstrip('/')
                 path = f"users/{quote(owner, safe='')}/onlineMeetings/{quote(meeting_id, safe='')}/{kind}s/{quote(artifact['graph_artifact_id'], safe='')}/content"
                 token = token or microsoft_graph_token()
+                headers = {'Authorization': f'Bearer {token}'}
+                if kind == 'transcript':
+                    headers['Accept'] = 'text/vtt'
                 # Disk-backed, bounded memory. No video buffers or transfer in a web request.
                 with tempfile.TemporaryFile() as stream, httpx.Client(follow_redirects=True, timeout=120) as transport:
-                    with transport.stream('GET', f'{base}/{path}', headers={'Authorization': f'Bearer {token}'}) as response:
+                    with transport.stream('GET', f'{base}/{path}', headers=headers) as response:
                         response.raise_for_status()
                         for chunk in response.iter_bytes(1024 * 1024):
                             stream.write(chunk)

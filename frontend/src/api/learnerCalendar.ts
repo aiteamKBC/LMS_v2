@@ -189,6 +189,8 @@ export function fetchOnboardingReviews(kind: LearnerKind, id: string): Promise<O
 
 export interface BookSessionInput {
   assignmentMonth?: string;
+  /** Distinguishes an assignment MCM from an imported review with month context. */
+  bookingContext?: 'monthly-assignment';
   /** Imported Aptem review row to mark scheduled after an MCR booking. */
   reviewId?: string;
   sessionType: BookableSessionType;
