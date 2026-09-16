@@ -251,6 +251,7 @@ def provision_review_instance_tables():
                 coach_email varchar(255) not null default '',
                 calendar_event_id integer,
                 definition_snapshot {json_type} not null,
+                progress_snapshot {json_type},
                 status varchar(32) not null default 'not-scheduled',
                 started_at timestamp,
                 completed_at timestamp,
@@ -1301,7 +1302,16 @@ def review_instance_form_definition(instance_row):
         # for one that was moved to in-progress by an authorised manual
         # override rather than real Teams attendance (Phase 5).
         'manualOverride': _serialize_manual_override(latest_review_instance_manual_override(instance_row.get('id'))),
+        # What a coach last calculated for THIS instance, exactly as it was
+        # stored -- never recomputed while reading, so an instance that was
+        # never calculated reads as None and a signed one keeps its figures.
+        'progressSnapshot': review_instance_progress_snapshot(instance_row),
     }
+    if result['template']['reviewTypeCode'] == review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW:
+        # Only this Review Type presents a RAG history, and only from the
+        # learner's own completed Progress Reviews -- each row showing the RAG
+        # that review itself recorded, never the learner's current coach_rag.
+        result['ragHistory'] = progress_review_rag_history(instance_row.get('learner_id'))
     from .review_pdf import pdf_availability
     result['pdf'] = pdf_availability(result)
     return result
@@ -1396,6 +1406,142 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
         # coach_api.views.apply_teams_attendance_status_transition.
 
     return review_instance_form_definition(get_review_instance(instance_row.get('id')))
+
+
+# ------------------------------------------------- progress + RAG snapshots
+
+#: The instance's own frozen copy of what a coach calculated (see
+#: learner_api.review_progress_snapshot for what goes in it). Kept beside
+#: definition_snapshot rather than inside it: that one freezes the QUESTION
+#: SET at creation time and is written exactly once, this one is written when
+#: a coach presses Calculate and may be replaced until signing begins.
+PROGRESS_SNAPSHOT_COLUMN = 'progress_snapshot'
+
+#: How a Curriculum-authored question declares itself to BE the RAG question,
+#: so the RAG value is found by the template's own stable marker rather than
+#: by matching a question's title. Set in the field's configuration, frozen
+#: per instance with the rest of the definition, so a historical review is
+#: always read through the marker IT was created with.
+RAG_SEMANTIC_KEY = 'rag_status'
+
+
+def review_instance_progress_snapshot(instance_row):
+    """What was frozen the last time a coach pressed Calculate, or None.
+
+    Never recalculated on read: an instance with no snapshot reads as None so
+    the caller can say "not calculated yet", rather than quietly substituting
+    the learner's current figures into a historical review.
+    """
+    return curriculum_views.as_json_value(instance_row.get(PROGRESS_SNAPSHOT_COLUMN), None)
+
+
+def save_review_instance_progress_snapshot(instance_row, snapshot, *, actor='system'):
+    """Freeze (or replace) this instance's calculated progress.
+
+    Same lifecycle rule the answers themselves follow: once the instance has
+    reached awaiting-signature/completed, the figures a party is about to sign
+    -- or has already signed -- can no longer move underneath them. Guarded in
+    the UPDATE's own WHERE clause as well as checked up front, so a Calculate
+    racing a completion cannot slip in after the transition.
+    """
+    if instance_row.get('status') in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
+        raise ValueError('Progress cannot be recalculated after the signature step begins.')
+    if PROGRESS_SNAPSHOT_COLUMN not in curriculum_views.column_names(REVIEW_INSTANCES_TABLE):
+        # filtered_payload would otherwise drop the snapshot silently and the
+        # write would look like it succeeded. Fail loudly instead, naming the
+        # migration that adds the column.
+        raise ValueError(
+            'This deployment cannot store a Progress Review snapshot yet: run '
+            'sql/2026-09-16_curriculum_review_instance_progress_snapshot.sql.'
+        )
+
+    rows = curriculum_views.update_rows(
+        REVIEW_INSTANCES_TABLE,
+        'id = %s and status not in (%s, %s)',
+        [instance_row.get('id'), STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED],
+        {
+            PROGRESS_SNAPSHOT_COLUMN: curriculum_views.json_db_value(json_safe(snapshot)),
+            'updated_by': actor,
+            'updated_at': datetime.utcnow(),
+        },
+    )
+    if not rows:
+        raise ValueError('Progress cannot be recalculated after the signature step begins.')
+    return rows[0]
+
+
+def _rag_field_ids(snapshot):
+    return [
+        field.get('id')
+        for field in _flatten_snapshot_fields(snapshot.get('sections', []))
+        if (field.get('configuration') or {}).get('semanticKey') == RAG_SEMANTIC_KEY
+    ]
+
+
+def review_instance_rag_value(instance_row):
+    """This instance's own recorded RAG answer, or ''.
+
+    Read from the answer saved against this instance, located through the
+    RAG marker in the definition THIS instance froze -- never from the
+    learner's current/live coach_rag, which a coach can change at any time and
+    which would otherwise rewrite the history of an already-signed review.
+    """
+    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+    field_ids = _rag_field_ids(snapshot)
+    if not field_ids:
+        return ''
+    answers = get_review_instance_answers(instance_row.get('id'))
+    for field_id in field_ids:
+        saved = answers.get(field_id)
+        value = curriculum_views.as_json_value(saved.get('answer'), None) if saved else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ''
+
+
+def list_learner_review_instances(learner_id, review_type_code, *, statuses=(STATUS_COMPLETED,)):
+    """This learner's own instances of one Review Type, newest target date
+    first. Scoped by the Review Type's stable code -- never by template name --
+    so a Progress Review history can never pick up a Monthly Coaching Meeting
+    or any other Review the programme happens to run."""
+    ensure_review_instance_tables()
+    type_row = review_types.get_review_type_by_code(review_type_code)
+    if not type_row or not learner_id:
+        return []
+    placeholders = ', '.join(['%s'] * len(statuses)) if statuses else ''
+    status_clause = f' and i.status in ({placeholders})' if statuses else ''
+    return curriculum_views.fetch_all(
+        f'select i.* from {curriculum_views.table_name(REVIEW_INSTANCES_TABLE)} i '
+        f'join {curriculum_views.table_name(reviews.REVIEW_TEMPLATES_TABLE)} t '
+        f'on t.id = i.review_template_id '
+        f'where i.learner_id = %s and t.review_type_id = %s{status_clause} '
+        f'order by i.target_date desc, i.occurrence_number desc',
+        [learner_id, type_row.get('id'), *statuses],
+    )
+
+
+def progress_review_rag_history(learner_id, *, limit=8):
+    """Completed Progress Reviews for this learner, newest first, each with the
+    RAG answer IT recorded.
+
+    A review that never captured a RAG value contributes an empty rag rather
+    than being dropped, so the history shows the occurrence took place -- the
+    same way the legacy export shows an entry with no RAG against it.
+    """
+    history = []
+    for row in list_learner_review_instances(learner_id, review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW):
+        template = reviews.get_review_template_row(row.get('review_template_id'), include_deleted=True)
+        history.append({
+            'reviewInstanceId': row.get('id'),
+            'reviewName': (template or {}).get('name') or '',
+            'occurrenceNumber': row.get('occurrence_number'),
+            'targetDate': curriculum_views.format_date(row.get('target_date')),
+            'completedAt': curriculum_views.format_created_at(row.get('completed_at')),
+            'rag': review_instance_rag_value(row),
+        })
+        if len(history) >= limit:
+            break
+    return history
 
 
 def _all_required_signatures_present(instance_id, snapshot):

@@ -60,8 +60,56 @@ export interface ReviewSignatureState {
   signature?: string | null;
 }
 
+/** One metric's frozen actual/expected/variance figures. Percent values are
+ *  null when the underlying plan could not supply them -- which reads as "not
+ *  recorded", never as 0% on track. */
+export interface ReviewProgressMetric {
+  actual: number | null;
+  expected: number | null;
+  planned: number | null;
+  actualPercent: number | null;
+  expectedPercent: number | null;
+  variancePercent: number | null;
+  varianceDirection: 'above' | 'below' | '';
+}
+
+/**
+ * What a coach froze the last time they pressed Calculate on a Progress
+ * Review. Rendered exactly as stored -- the frontend never recalculates, and
+ * never falls back to the learner's current dashboard figures, so a completed
+ * review keeps showing the numbers it was signed against.
+ *
+ * `calculatedFrom` is the individual learner's own programme start date and
+ * `calculatedAt` is the backend's own clock; both are produced server-side.
+ */
+export interface ReviewProgressSnapshot {
+  calculationMethod: string;
+  calculatedFrom: string;
+  calculatedAt: string;
+  calculatedBy: string;
+  weeksElapsed: number | null;
+  programmeProgress: ReviewProgressMetric;
+  offTheJobHours: ReviewProgressMetric;
+}
+
+/** One past completed Progress Review and the RAG that review itself
+ *  recorded ('' when it captured none). */
+export interface ReviewRagHistoryEntry {
+  reviewInstanceId: string;
+  reviewName: string;
+  occurrenceNumber: number | null;
+  targetDate: string;
+  completedAt: string | null;
+  rag: string;
+}
+
 export interface ReviewInstanceFormDefinition {
   pdf?: { available: boolean; reason: string } | null;
+  /** Progress Review only, and null until a coach calculates it. */
+  progressSnapshot?: ReviewProgressSnapshot | null;
+  /** Progress Review only -- this learner's completed Progress Reviews,
+   *  newest first. */
+  ragHistory?: ReviewRagHistoryEntry[];
   instance: {
     id: string;
     reviewTemplateId: string;
@@ -112,8 +160,21 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
 
 const instanceUrl = (instanceId: string) => `/coach_api/coach/reviews/${encodeURIComponent(instanceId)}`;
 
-export async function downloadMcmReviewPdf(instanceId: string): Promise<void> {
+export async function downloadReviewInstancePdf(instanceId: string): Promise<void> {
   await saveReviewPdfResponse(await coachFetch(`${instanceUrl(instanceId)}/pdf`));
+}
+
+/**
+ * Calculate and FREEZE a Progress Review's learner-progress snapshot.
+ *
+ * An explicit coach action: nothing else on this screen recalculates, and
+ * opening, reloading or exporting the review never does. The backend owns
+ * both ends of the window -- the learner's own programme start date and its
+ * own clock -- so no date is sent from here.
+ */
+export async function calculateReviewInstanceProgress(instanceId: string) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/progress`, { method: 'POST' });
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
 
 /**

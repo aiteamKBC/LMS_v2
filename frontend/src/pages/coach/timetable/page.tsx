@@ -1784,6 +1784,16 @@ export default function CoachTimetablePage() {
 
   const markReviewInProgress = useCallback(async (event: TimetableEvent) => {
     if (!event.eventKey) return;
+    const confirmation = await Swal.fire({
+      icon: 'question',
+      title: 'Mark review in progress?',
+      text: 'Use this when the meeting has started but Teams attendance cannot confirm it automatically.',
+      showCancelButton: true,
+      confirmButtonText: 'OK',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#6d28d9',
+    });
+    if (!confirmation.isConfirmed) return;
     setEventActionError(null);
     setEventActionNotice(null);
     setEventActionBusy(true);
@@ -2753,11 +2763,17 @@ export default function CoachTimetablePage() {
 
                         {selectedEvent.status === 'scheduled' && (
                         <button
-                          onClick={() => handleEventAction('start')}
+                          onClick={() => {
+                            if (selectedEvent.reviewTemplateId) {
+                              handleJoinSelectedMeeting();
+                              return;
+                            }
+                            handleEventAction('start');
+                          }}
                           disabled={eventActionBusy || (selectedEvent.source !== 'catch-up' && !(selectedEvent.meetingLink || selectedEvent.graphWebLink))}
                           className="rounded-lg bg-emerald-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                         >
-                          <AppIcon className="ri-play-circle-line mr-1"></AppIcon>Start
+                          <AppIcon className="ri-play-circle-line mr-1"></AppIcon>{selectedEvent.reviewTemplateId ? 'Join' : 'Start'}
                           </button>
                         )}
                         {selectedEvent.status === 'scheduled' && selectedEvent.reviewTemplateId && (
