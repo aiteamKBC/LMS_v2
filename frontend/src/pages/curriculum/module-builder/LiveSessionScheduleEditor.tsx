@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { isTeamsReviewCancelled } from '../teams-meetings/calendarReview';
 import { AppIcon } from '@/components/feature/AppIcon';
 import {
   formatCalendarDateTime,
@@ -116,6 +117,7 @@ export function LiveSessionScheduleEditor({
       setNoticeKind(warning ? 'warning' : 'success');
       setNotice(warning || 'This session was moved in Teams. The other sessions are unchanged.');
     } catch (err) {
+      if (isTeamsReviewCancelled(err)) return;
       setError(err instanceof Error ? err.message : 'Microsoft Teams could not move this session.');
     } finally {
       setRescheduling(false);

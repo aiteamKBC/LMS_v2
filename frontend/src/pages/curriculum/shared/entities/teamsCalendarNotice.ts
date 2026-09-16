@@ -21,6 +21,7 @@
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import type { StaleTeamsCalendar } from '@/lib/curriculumApi';
 import { pushModulePlanToTeams, type TeamsCalendarPushResult } from './teamsCalendarPush';
+import { isTeamsReviewCancelled } from '../../teams-meetings/calendarReview';
 
 /** The Teams Meetings page, opened on the module whose calendar has to move. */
 export function teamsMeetingsPath(calendar?: StaleTeamsCalendar | null): string {
@@ -77,23 +78,25 @@ export async function confirmTeamsCalendarUpdate({
   // eight rounds of update mail to everyone invited, which nobody should set off
   // without seeing the list first.
   const pushHere = affected.length === 1;
-  // Set inside the dialog, read after it closes: raising the outcome while the
-  // confirm is still open would replace it mid-press, and a failed push has to
-  // stay in the dialog it was pressed in so it can be pressed again.
+  // Open the full review after this notice closes; SweetAlert has one dialog.
   let pushed: TeamsCalendarPushResult | null = null;
-  await showCurriculumConfirm({
+  const confirmed = await showCurriculumConfirm({
     title: 'Teams calendar still on the old dates',
     text: `${savedText} ${subject} still on the dates from before this change. Nothing reaches Teams until the calendar is sent the new ones, so everyone invited is holding the old invitations until then.`,
     icon: 'warning',
     confirmButtonText: pushHere ? 'Send the new dates to Teams' : 'Open Teams Meetings',
     cancelButtonText: 'Not now',
-    // Throwing is the point on failure: the confirm shows the reason on itself
-    // and stays open, rather than reporting a calendar that never moved.
     onConfirm: async () => {
       if (!pushHere) {
         navigate(teamsMeetingsPath(null));
         return;
       }
+      // The full review opens after this notice closes, so two dialogs do not
+      // replace each other while a save is pending.
+    },
+  });
+  if (confirmed && pushHere) {
+    try {
       pushed = await pushModulePlanToTeams({
         moduleCatalogueId: affected[0].moduleCatalogueId,
         moduleName: name,
@@ -101,8 +104,13 @@ export async function confirmTeamsCalendarUpdate({
         startTime: sessionTimes?.startTime,
         endTime: sessionTimes?.endTime,
       });
-    },
-  });
+    } catch (error) {
+      if (!isTeamsReviewCancelled(error)) await showCurriculumAlert({
+        title: 'Teams calendar was not confirmed', icon: 'error',
+        text: error instanceof Error ? error.message : 'Review the calendar before retrying.',
+      });
+    }
+  }
   if (pushed) {
     const { sessionCount, warning } = pushed as TeamsCalendarPushResult;
     await showCurriculumAlert({

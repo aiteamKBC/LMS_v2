@@ -70,16 +70,15 @@ def attach_curriculum_slots(module_rows, by_id, week_counts):
     Module Builder, the Teams series and the tutor conflict check use, with the
     cohort's own ``excluded_holiday_ids`` deny-list already applied upstream --
     and the spine comes from ``module_session_plan_for_count``, which is the
-    single door onto ``build_module_session_plan``. Nothing about holidays or
-    Reading Weeks is decided here, so the learner cannot be shown a timeline the
-    curriculum does not itself hold.
+    single door onto ``build_module_session_plan``. Nothing about which slots a
+    holiday touches is decided here, so the learner cannot be shown a timeline
+    the curriculum does not itself hold.
 
-    ``slots`` is what makes a holiday visible to a learner at all: a closed
-    delivery slot delivers no session, so a learner reading only session dates
-    sees an unexplained gap. Reading Weeks must come from this spine and never
-    be inferred from gaps between session dates -- a gap is also what a term
-    break, an unauthored week or a module that simply does not deliver that week
-    looks like.
+    ``slots`` is what makes a holiday visible to a learner at all: every slot
+    still delivers its session, ticked holiday or not, but a slot a holiday
+    falls on names it -- so a learner reading the timeline sees which week to
+    expect a closure on, rather than an unexplained gap or a silently missed
+    warning.
 
     Holidays are resolved once for every cohort on the page rather than per
     module, because every module of a cohort shares that cohort's holidays.

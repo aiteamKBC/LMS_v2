@@ -44,42 +44,15 @@ import {
   sortEntities,
   MODULE_SORT_OPTIONS,
 } from '../shared/entities/model';
-// The same holiday-shift reading the module sessions drawer shows, reused here
-// so the Course structure rail says a week moved in exactly the words (and the
-// red/green pairing) the sessions timeline already uses.
-/**
- * One live session a holiday closed the day for.
- *
- * `slotDate` is the planned day the holiday shut, and `actualDate` is where
- * that session finally runs after every closed replacement date is skipped.
- * The rail states both so the week row reads with the same shifted date as the
- * module sessions preview.
- */
-interface ClashingLiveSession {
-  sessionNumber: number;
-  slotDate: string;
-  actualDate: string;
-  blockedBy: string;
-  /**
-   * The closures behind `blockedBy`, each with the whole period it covers.
-   *
-   * The name alone said which holiday moved the session but not how far it
-   * reaches, so a reader could not tell a single closed day from a fortnight
-   * without opening the holidays page. Kept as rows rather than one string
-   * because two holidays can close one day's sessions between them, and
-   * "A, B (01-02 Aug, 10-16 Aug)" cannot say which period belongs to which.
-   */
-  closures: { label: string; startDate: string; endDate: string }[];
-}
 import { fetchArchivedCurriculumModules, type CurriculumArchivedModule } from '@/lib/curriculumApi';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
 import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
-// The holiday reading-week card, shared with the module workspace so a closed
-// delivery slot reads the same wherever the curriculum is shown.
-import { HolidayReadingWeekCard } from '../shared/entities/sessionShiftPreview';
+// The holiday notice, shared with the module workspace so a week touched by a
+// ticked holiday reads the same wherever the curriculum is shown.
+import { WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
 import { permanentlyDeleteModuleWithConfirm, restoreModuleWithConfirm } from '../shared/entities/archive';
 import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
@@ -111,13 +84,14 @@ import {
   moduleWeekSessionDates,
   moduleWeekLiveSessionDates,
   moduleUsesSessionRows,
-  // Where the holiday reading weeks sit among the authored weeks: a closed
-  // delivery slot keeps its curriculum position and holds no live session.
-  holidayReadingWeeksByWeekId,
+  // Which authored weeks a ticked holiday falls on. States the fact only --
+  // the plan is unchanged, and what the week becomes is the author's call.
+  weeksTouchedByHoliday,
   resequenceWeekSessionDates,
   makeAuthoringId,
   recalculateModule,
   restoreModuleTeamsMeeting,
+  ModuleStructureConflictError,
   saveModuleStructure,
   uploadComponentResource,
   utcIsoToCalendarParts,
@@ -171,6 +145,68 @@ import { RichTextDraft } from './RichTextEditor';
 
 // Course structure accordion: whether expanding a week collapses the others.
 // false = classic single-open accordion (the current default look/feel).
+/**
+ * How long the workspace waits for the typing to stop before it saves.
+ *
+ * Not zero, because a save PATCHes the module's WHOLE week structure back --
+ * every week, every component, every KSB mapping. One request per keystroke in
+ * a week title would be hundreds of full-structure writes, each of which also
+ * retires the curriculum caches behind it. The quiet period is what turns a
+ * burst of edits into a single save without the reader having to think about it.
+ *
+ * A second is long enough to swallow ordinary typing and short enough that
+ * nobody watching the footer wonders whether it noticed.
+ */
+const AUTO_SAVE_QUIET_MS = 1000;
+
+/**
+ * Same shape the backend hands out as a module's canonical catalogue id
+ * (`moduleAuthoringData.ts`'s own `isCanonicalModuleCatalogueId`, not
+ * importable from here without a page <-> data-module cycle). A deep link
+ * carrying one of these names its module outright, so opening it can skip the
+ * catalogue lookup entirely -- see the mount effect below.
+ */
+const MODULE_CATALOGUE_ID_PATTERN = /^MOD-[A-Z0-9][A-Z0-9_-]*$/i;
+
+/**
+ * Auto save starts off, every time, on every module.
+ *
+ * Deliberately not remembered. A save on this endpoint replaces the whole
+ * module -- every week, every component, every KSB mapping -- so the workspace
+ * writing on its own is something the reader turns on for the module in front
+ * of them, not a setting that follows them into the next one without being
+ * asked for again.
+ */
+
+/**
+ * What the workspace has done with the reader's edits.
+ *
+ * Kept as one value rather than a pair of booleans because the states are
+ * genuinely exclusive and two of them are refusals -- a footer that reads
+ * "Unsaved changes" after a save was turned down says nothing about why, and
+ * "Saved" must never appear for a write the backend has not confirmed.
+ */
+type WorkspaceSaveStatus = 'saved' | 'pending' | 'manual' | 'saving' | 'saving-more' | 'failed' | 'conflict' | 'locked';
+
+const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: string; icon: string }> = {
+  saved: { text: 'All changes saved', tone: 'text-emerald-700', icon: 'ri-checkbox-circle-line' },
+  pending: { text: 'Unsaved changes', tone: 'text-foreground-600', icon: 'ri-edit-line' },
+  // Auto save is off, so nothing is coming to collect these edits. The sentence
+  // has to name the thing the reader must do, not just report the state.
+  manual: { text: 'Unsaved changes - press Save', tone: 'text-amber-700', icon: 'ri-edit-line' },
+  saving: { text: 'Saving module structure...', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
+  // The reader kept typing while a save was in flight. Those keystrokes are not
+  // in the request that is running, and saying "Saving..." on its own would
+  // claim they were.
+  'saving-more': { text: 'Saving... later edits still pending', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
+  failed: { text: 'Save failed - your changes are still here', tone: 'text-rose-700', icon: 'ri-error-warning-line' },
+  conflict: { text: 'Conflict - reload before saving again', tone: 'text-rose-700', icon: 'ri-git-branch-line' },
+  locked: { text: 'Read-only - archived programme', tone: 'text-amber-700', icon: 'ri-lock-line' },
+};
+
+/** A save the backend turned down. `conflict` is never worth retrying as-is. */
+type WorkspaceSaveFailure = { kind: 'error' | 'conflict'; message: string };
+
 const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
 const FILTER_SELECT_CLASS = 'h-10 min-w-40 rounded-lg border border-background-200 bg-background-100 px-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50';
@@ -351,10 +387,19 @@ export default function ModuleBuilder() {
   const [standardsLoading, setStandardsLoading] = useState(false);
   const [storageVersion, setStorageVersion] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [saveFailure, setSaveFailure] = useState<WorkspaceSaveFailure | null>(null);
+  // The state the in-flight save is carrying. Anything the reader types after
+  // this is not in that request, which is what the footer has to be able to say.
+  const [savingSnapshot, setSavingSnapshot] = useState('');
   const [restoringTeamsModuleId, setRestoringTeamsModuleId] = useState<string | null>(null);
   const [saveStartedAt, setSaveStartedAt] = useState<number | null>(null);
   const [saveElapsedSeconds, setSaveElapsedSeconds] = useState(0);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  // Set alongside `actionMessage` only when the failure is one the same click can
+  // just try again -- opening a module that timed out reading its structure.
+  // Left null for every other action-failure banner, which have no single retry
+  // step (a delete, an export) and are better dismissed than re-run blind.
+  const [actionMessageRetry, setActionMessageRetry] = useState<(() => void) | null>(null);
   const deepLinkedModuleRef = useRef('');
   // Until the user drives a filter themselves the URL is read-only: the existing
   // programme deep link resolves an id into a name a beat later, and a sync that
@@ -362,6 +407,34 @@ export default function ModuleBuilder() {
   const filtersTouchedRef = useRef(false);
   const savedModuleSnapshotRef = useRef('');
   const saveRequestRef = useRef(0);
+  /**
+   * `saving`, readable from inside a callback that has already started.
+   *
+   * The state is a render away; the overlap guard cannot wait for it. Two saves
+   * of the same module in flight at once is the race this exists to prevent --
+   * whichever reply lands second would decide what the module is.
+   */
+  const savingRef = useRef(false);
+  /**
+   * The stored revision this workspace's copy was built from.
+   *
+   * Sent with every save. The backend refuses the write if the module has moved
+   * since, so a tab that has been open while somebody else saved is told rather
+   * than allowed to replace their weeks and components with its own.
+   */
+  const serverRevisionRef = useRef('');
+  /**
+   * Whether the workspace may save without being asked.
+   *
+   * Only for a module whose stored structure this workspace actually read. A
+   * local draft, or a module opened from the compact catalogue row, has weeks
+   * that were fabricated rather than loaded -- saving those unprompted is the
+   * accident `openModule`'s own guard exists to prevent. Also dropped after a
+   * conflict: the payload in hand is the one the server just refused, and
+   * re-sending it every time the reader types is noise at best.
+   */
+  const autoSaveArmedRef = useRef(false);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
   const moduleTemplateImportInputRef = useRef<HTMLInputElement>(null);
   // Both revalidate rather than skipCache. The request still goes to the network
@@ -409,10 +482,31 @@ export default function ModuleBuilder() {
   useEffect(() => {
     let active = true;
     const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
-    loadCurriculumScope().then(({ groups }) => {
+    loadCurriculumScope().then(({ groups, programmes }) => {
       if (!active) return;
-      const scoped = groups.filter(group => norm(group.programmeId) === norm(workingModule?.programmeId) || norm(group.programme) === norm(workingModule?.programmeName));
-      setComponentGroupOptions((scoped.length ? scoped : groups).map(group => ({ key: group.id, name: group.name, cohort: group.cohort })));
+      // Every group stays reachable here, not just this module's own programme:
+      // a live-session component is routinely shared across a duplicated
+      // module living in a *different* programme/cohort (same Teams link, two
+      // cohorts), and "Assigned groups" is exactly where that other group is
+      // picked to place the shared copy. Own-programme groups are only
+      // surfaced first for convenience.
+      const ownProgramme = groups.filter(group => norm(group.programmeId) === norm(workingModule?.programmeId) || norm(group.programme) === norm(workingModule?.programmeName));
+      const ownProgrammeIds = new Set(ownProgramme.map(group => group.id));
+      const ordered = [...ownProgramme, ...groups.filter(group => !ownProgrammeIds.has(group.id))];
+      // A group's own `programme` name is blank on plenty of records — the raw
+      // programmeId (e.g. "PROG-20260827123438706373") is meaningless to a
+      // tutor, so resolve the readable name from the programme list instead,
+      // the same id/sourceId keys `moduleBelongsToVisibleProgramme` matches on.
+      const programmeNameByKey = new Map<string, string>();
+      programmes.forEach(programme => {
+        [programme.id, programme.sourceId, programme.name].forEach(key => {
+          if (key && !programmeNameByKey.has(norm(key))) programmeNameByKey.set(norm(key), programme.name);
+        });
+      });
+      const resolveProgrammeName = (group: typeof groups[number]) => (
+        group.programme || programmeNameByKey.get(norm(group.programmeId)) || group.programmeId || ''
+      );
+      setComponentGroupOptions(ordered.map(group => ({ key: group.id, name: group.name, cohort: group.cohort, cohortId: group.cohortId, programmeId: group.programmeId, programme: resolveProgrammeName(group) })));
     }).catch(() => {});
     return () => { active = false; };
   }, [workingModule?.programmeId, workingModule?.programmeName]);
@@ -668,17 +762,6 @@ export default function ModuleBuilder() {
     }, { replace: true });
   }, [setSearchParams]);
 
-  const openSavedModule = useCallback(async (saved: SavedModuleRef) => {
-    await reload({ silent: true });
-    if (!saved.created || !saved.catalogueId) return;
-    setSearchParams(previous => {
-      const next = new URLSearchParams(previous);
-      next.delete('create');
-      next.set('module', saved.catalogueId);
-      return next;
-    }, { replace: true });
-  }, [reload, setSearchParams]);
-
   const requestedHierarchy = requestedCreateScopeRef.current;
   const hierarchyProgramme = useMemo(() => {
     // Tried in this order, and each candidate is spent against every programme's
@@ -778,6 +861,12 @@ export default function ModuleBuilder() {
     const wasDirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(module) !== savedModuleSnapshotRef.current);
     try {
       const result = await restoreModuleTeamsMeeting(module.catalogueId);
+      // Re-attaching rewrites this module's live-session components in storage,
+      // so the version the workspace is holding is now behind. Without adopting
+      // the one the restore answers with, the workspace's own next save reads
+      // as somebody else's write and is refused -- on a module the reader has
+      // just been told was repaired.
+      if (result.module?.structureRevision) serverRevisionRef.current = result.module.structureRevision;
       const meetingSettings = result.meeting as ModuleComponent['settings'];
       // The endpoint answers with the module as it now stands, and each week's
       // live-session component carries that week's own session — so the stored
@@ -997,9 +1086,24 @@ export default function ModuleBuilder() {
       deliveryUsages: ksbMapModule.deliveryUsages,
     };
   }, [ksbMapModule, workingModule]);
+  // Serialising the whole module is the dirty check, the auto-save trigger and
+  // the "is this still what we sent" comparison, so it is done once per render
+  // rather than three times.
+  const workingModuleSnapshot = useMemo(() => moduleSnapshot(workingModule), [workingModule]);
   const hasUnsavedWorkingModuleChanges = Boolean(
-    workingModule && savedModuleSnapshotRef.current && moduleSnapshot(workingModule) !== savedModuleSnapshotRef.current,
+    workingModule && savedModuleSnapshotRef.current && workingModuleSnapshot !== savedModuleSnapshotRef.current,
   );
+  const workspaceSaveStatus: WorkspaceSaveStatus = workingModuleProgrammeArchived
+    ? 'locked'
+    : saving
+      ? (savingSnapshot && workingModuleSnapshot !== savingSnapshot ? 'saving-more' : 'saving')
+      : saveFailure?.kind === 'conflict'
+        ? 'conflict'
+        : saveFailure
+          ? 'failed'
+          : !hasUnsavedWorkingModuleChanges
+            ? 'saved'
+            : autoSaveEnabled ? 'pending' : 'manual';
 
   const finishLoadingProgress = useCallback(async (markComplete: (value: boolean) => void) => {
     markComplete(true);
@@ -1011,6 +1115,7 @@ export default function ModuleBuilder() {
     setOpeningModule({ title: module.title, mode: openSettings ? 'settings' : 'builder' });
     setOpeningModuleComplete(false);
     setActionMessage(null);
+    setActionMessageRetry(null);
     setNoticeAlert(null);
     try {
       // Read fresh, never from the two-minute cache: the workspace saves the
@@ -1063,17 +1168,77 @@ export default function ModuleBuilder() {
       }
       const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
+      // The version every save from here on is measured against. It came with
+      // the structure that was just read, so a save based on this copy is
+      // accepted only while the module is still that copy.
+      serverRevisionRef.current = next.structureRevision || '';
+      // Armed only for a module whose stored structure was actually read back.
+      // Anything else is a fabricated shell -- see the guard above, which is the
+      // same reason spelt out for the manual save.
+      autoSaveArmedRef.current = Boolean(remote);
+      autoSaveAttemptRef.current = '';
+      // Opening a module is where the default applies: a workspace left saving
+      // itself does not carry that into the next module the reader opens.
+      setAutoSaveEnabled(false);
+      setSaveFailure(null);
+      // The workspace is a place, so the address bar has to name it. Without
+      // this the module lived in component state alone: a browser reload -- or
+      // Back, or restoring the tab -- landed on the catalogue, and a person who
+      // had been authoring for an hour was shown a module list instead of their
+      // module and read that as their work being gone.
+      //
+      // `replace`, so opening a module is not a history step of its own: Back
+      // still means "the page I came from", which for most readers is the
+      // programme they clicked through from.
+      //
+      // The ref is stamped here as well as in the deep-link effect below. It is
+      // that effect's "this key is already dealt with" mark, and without it
+      // closing the module -- which clears the param -- could be raced by the
+      // effect re-reading the param that is still there and re-opening it.
+      deepLinkedModuleRef.current = next.catalogueId || '';
+      setSearchParams(previous => {
+        const params = new URLSearchParams(previous);
+        if (next.catalogueId) params.set('module', next.catalogueId);
+        params.delete('moduleTitle');
+        return params;
+      }, { replace: true });
       setWorkingModule(next);
       setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to load module structure.');
+      // Whatever failed was reading this same module's structure, so the same
+      // click tried again is a real retry, not a guess.
+      setActionMessageRetry(() => () => { void openModule(module, openSettings); });
     } finally {
       setOpeningModule(null);
       setOpeningModuleComplete(false);
     }
-  }, [finishLoadingProgress, resolveModuleScopeLock]);
+  }, [finishLoadingProgress, resolveModuleScopeLock, setSearchParams]);
+
+  /**
+   * What happens once the Add module form has written the module.
+   *
+   * Straight into the workspace for the module that was just created, with no
+   * wait in between: the reader pressed Create, so the module is what they
+   * asked to see.
+   */
+  const openSavedModule = useCallback(async (saved: SavedModuleRef) => {
+    // Deliberately not awaited. The catalogue list is a full rebuild that takes
+    // seconds (see the comment on useCurriculumModules above), and opening the
+    // module that was just created does not depend on it: `openModule` reads
+    // that module's own structure from its own endpoint. Awaiting the list
+    // first is what left the drawer closed over an untouched page for seconds
+    // before the workspace finally appeared. It still runs, so the list behind
+    // is current for whenever the reader presses "Back to modules".
+    void reload({ silent: true });
+    if (!saved.created || !saved.catalogueId) return;
+    // `openModule` fills everything real in from the structure it reads back;
+    // this shell only carries what it needs before that lands -- the id to read
+    // and the title to name the module while it is loading.
+    await openModule(moduleShellForOpening(saved.catalogueId, saved.name));
+  }, [openModule, reload]);
 
   const openKsbMap = useCallback(async (module: ModuleBuilderListItem) => {
     const loadingId = module.catalogueId || moduleStructureIdentifier(module) || module.title;
@@ -1224,7 +1389,26 @@ export default function ModuleBuilder() {
     // OTJH under the name the reader clicked.
     const requestedTitle = (params.get('moduleTitle') || '').trim();
     const dedupeKey = requestedKey || requestedTitle;
-    if (!dedupeKey || loading || error || workingModule || deepLinkedModuleRef.current === dedupeKey) return;
+    if (!dedupeKey || workingModule || deepLinkedModuleRef.current === dedupeKey) return;
+
+    // A canonical id names its module outright -- every link this workspace
+    // itself writes uses one (openModule stamps it into the address bar,
+    // openSavedModule opens a brand new module by it before it is even in the
+    // catalogue). Opening it does not need the catalogue list at all, so a
+    // browser refresh, or a link followed straight in, goes right into the
+    // module instead of sitting on the skeleton catalogue for however long the
+    // full list rebuild takes -- which, mid-edit, reads as the workspace
+    // having kicked the reader out to the list and lost their place.
+    if (MODULE_CATALOGUE_ID_PATTERN.test(requestedKey)) {
+      deepLinkedModuleRef.current = dedupeKey;
+      openModule(moduleShellForOpening(requestedKey, requestedTitle || requestedKey));
+      return;
+    }
+
+    // Anything else -- a legacy delivery id, a bare sourceId, a title -- only
+    // resolves by scanning the catalogue for a matching row, so those still
+    // wait for the list.
+    if (loading || error) return;
 
     // The id, and nothing else. An id that matches no catalogue module is a
     // dead link, and saying so is the honest answer -- falling back to the
@@ -1344,8 +1528,20 @@ export default function ModuleBuilder() {
       setActionMessage(firstValidationMessage(validationIssues));
       return null;
     }
+    // One save of this module at a time. A second request started while the
+    // first is running is not a second save, it is a race: the two replies can
+    // land in either order, and the loser's payload would decide what the
+    // module is. The edit that prompted this is not lost -- clearing the
+    // attempt mark below lets the auto-save effect pick it up the moment the
+    // save in flight settles, which is what "save the latest pending state"
+    // means here.
+    if (savingRef.current) {
+      autoSaveAttemptRef.current = '';
+      return null;
+    }
     const requestId = saveRequestRef.current + 1;
     saveRequestRef.current = requestId;
+    savingRef.current = true;
     setSaving(true);
     setSaveStartedAt(Date.now());
     setActionMessage(null);
@@ -1357,42 +1553,167 @@ export default function ModuleBuilder() {
         ? selectedKsbSourceId
         : '',
     });
+    // Exactly what this request carries. Everything below compares against it
+    // rather than against "is the module dirty", because those become different
+    // questions the moment somebody types while the request is in the air.
+    const sentSnapshot = moduleSnapshot(moduleToSave);
+    setSavingSnapshot(sentSnapshot);
+    // What was actually attempted, which is not what the auto-save timer saw:
+    // the payload is normalised and recalculated on the way out, and
+    // `setWorkingModule(moduleToSave)` below makes that the workspace's state.
+    // Marking the pre-normalisation snapshot alone left the two disagreeing, so
+    // a refused save came straight back round as a second attempt at the same
+    // payload -- the one thing a refusal must not do.
+    autoSaveAttemptRef.current = sentSnapshot;
     try {
       setWorkingModule(moduleToSave);
-      const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave);
-      const stillCurrent = saveRequestRef.current === requestId;
-      if (!stillCurrent) return;
+      const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
+        expectedRevision: serverRevisionRef.current,
+      });
+      if (saveRequestRef.current !== requestId) return null;
+      // The write landed, so this is the version the next save is measured
+      // against, whether or not its result is adopted below.
+      serverRevisionRef.current = saved.structureRevision || '';
       setWorkingModule(current => {
         if (!current || current.catalogueId !== moduleToSave.catalogueId) return current;
-        return saved;
+        // The server normalises what it stores -- session counts, dates, the
+        // quality score -- so adopting its answer is what keeps the screen and
+        // the database telling the same story. But only when the reader has not
+        // typed since: otherwise adopting it would put their keystrokes back to
+        // what was sent, which is the out-of-order overwrite in person. Their
+        // copy stays, still marked as needing a save, and the effect below
+        // sends it next.
+        //
+        // Writing the ref from here is deliberate and idempotent: the branch
+        // depends only on `current`, so a repeated call cannot leave the two
+        // disagreeing.
+        const unchangedSinceSent = moduleSnapshot(current) === sentSnapshot;
+        savedModuleSnapshotRef.current = unchangedSinceSent ? moduleSnapshot(saved) : sentSnapshot;
+        return unchangedSinceSent ? saved : current;
       });
-      savedModuleSnapshotRef.current = moduleSnapshot(saved);
       setStorageVersion(version => version + 1);
       setActionMessage(null);
+      setSaveFailure(null);
       // No dialog on a successful save. The footer already reads "All changes
       // saved" with a green Saved button, and a modal on every save is an
       // interruption in a screen people save constantly.
       reload();
       return saved;
     } catch (err) {
+      // Nothing is reset, reloaded or refetched here on purpose. Every refusal
+      // leaves the weeks, components, OTJH and KSB mappings the reader has
+      // authored exactly where they are -- `savedModuleSnapshotRef` is left
+      // alone too, so the workspace still knows it has unsaved work.
+      if (err instanceof ModuleStructureConflictError) {
+        // Somebody else's write is already in the module. Re-sending this
+        // payload would replace every week and component with the pre-edit
+        // ones, so the auto-save is disarmed until the module is read again --
+        // the reader is told what happened and keeps everything they typed.
+        autoSaveArmedRef.current = false;
+        setSaveFailure({ kind: 'conflict', message: err.message });
+        setActionMessage(err.message);
+        return null;
+      }
       // `curriculumErrorMessage` unwraps the handler's own sentence -- the
       // archived-programme refusal among them -- from the "Curriculum API
       // returned 400 for /path:" diagnostic CurriculumApiError carries.
-      //
-      // Nothing else happens here on purpose: no reset, no reload, no refetch.
-      // A programme archived while the Builder was open rejects the save, and
-      // the weeks, components, OTJH and KSB mappings the reader has authored
-      // since have to still be there afterwards -- `savedModuleSnapshotRef` is
-      // left alone too, so the workspace still reads "Unsaved changes".
-      setActionMessage(curriculumErrorMessage(err, err instanceof Error ? err.message : 'Unable to save module structure.'));
+      const message = curriculumErrorMessage(err, err instanceof Error ? err.message : 'Unable to save module structure.');
+      setSaveFailure({ kind: 'error', message });
+      setActionMessage(message);
       return null;
     } finally {
       if (saveRequestRef.current === requestId) {
+        savingRef.current = false;
         setSaving(false);
         setSaveStartedAt(null);
+        setSavingSnapshot('');
       }
     }
   }, [curriculumProgrammes, ksbSets, reload, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
+
+  /**
+   * The state the auto-save has already tried, so a refused one cannot loop.
+   *
+   * A save the backend or the validator turns down leaves the module dirty,
+   * and "dirty" is this effect's trigger -- without this it would retry the
+   * same refused structure every quiet period for as long as the workspace is
+   * open. Stamped with the state that was attempted; editing again produces a
+   * different state, which is a new attempt.
+   */
+  const autoSaveAttemptRef = useRef('');
+
+  // Auto-save. Every authoring edit in this workspace funnels through
+  // `updateWorkingModule`, so the module's snapshot moving is the whole signal:
+  // a week title typed, a quiz added, a PDF uploaded onto a component, a
+  // reading material placed, a KSB mapped. None of it waits for the Save
+  // button, which stays as a "save it now" and as the way back after a refusal.
+  useEffect(() => {
+    if (!workingModule || !hasUnsavedWorkingModuleChanges) return;
+    // Turned off in the footer. Nothing else changes: the Save button, the
+    // revision check and the unsaved-change guards are the same pipeline, so
+    // this is a choice about *when* a save is sent, not about how.
+    if (!autoSaveEnabled) return;
+    // Archived programmes are read-only: the save would be refused, and saying
+    // so once (when the reader tries to edit) is enough.
+    if (workingModuleProgrammeArchived) return;
+    // Not a structure this workspace read back, or one the server has already
+    // refused as stale. Either way an unprompted full-structure write would be
+    // the wrong thing to do with it; the Save button still works.
+    if (!autoSaveArmedRef.current) return;
+    // A save is already in flight. `saving` is a dependency, so the edits made
+    // during it are picked up the moment it settles.
+    if (saving) return;
+    if (autoSaveAttemptRef.current === workingModuleSnapshot) return;
+    const timer = window.setTimeout(() => {
+      // Stamped with the state being attempted, so a refusal cannot loop: the
+      // module is still dirty afterwards, and dirty is this effect's trigger.
+      // Editing again produces a different state, which is a new attempt.
+      autoSaveAttemptRef.current = workingModuleSnapshot;
+      void persistWorkingModule();
+    }, AUTO_SAVE_QUIET_MS);
+    // Every further edit cancels the pending save and starts the wait again, so
+    // a long burst of typing costs one request rather than one per pause.
+    return () => window.clearTimeout(timer);
+  }, [
+    autoSaveEnabled,
+    hasUnsavedWorkingModuleChanges,
+    persistWorkingModule,
+    saving,
+    workingModule,
+    workingModuleProgrammeArchived,
+    workingModuleSnapshot,
+  ]);
+
+  /**
+   * Turn the workspace's own saving on or off.
+   *
+   * Switching off cancels whatever quiet period was running -- the effect above
+   * re-runs and clears its timer -- and leaves every edit exactly where it is,
+   * to be sent when the reader presses Save. Switching on clears the attempt
+   * mark so work that was typed while it was off is picked up straight away
+   * rather than being treated as already tried.
+   */
+  const toggleAutoSave = useCallback(() => {
+    setAutoSaveEnabled(current => {
+      const next = !current;
+      if (next) autoSaveAttemptRef.current = '';
+      return next;
+    });
+  }, []);
+
+  /**
+   * Save now, without waiting out the quiet period.
+   *
+   * The same pipeline as the auto-save rather than a second one beside it --
+   * the revision check, the overlap guard and the conflict handling are the
+   * save, not decoration on one route to it. Clearing the attempt mark is what
+   * makes this work after a refusal: the state is otherwise recorded as already
+   * tried, which is exactly what stops the auto-save retrying it.
+   */
+  const saveWorkingModuleNow = useCallback(() => {
+    autoSaveAttemptRef.current = '';
+    return persistWorkingModule();
+  }, [persistWorkingModule]);
 
   // Export every component to an Excel sheet, one row each, for a curriculum
   // worker to have ChatGPT fill the KSBs against each title/description.
@@ -1497,6 +1818,23 @@ export default function ModuleBuilder() {
 
   const closeWorkingModule = () => {
     savedModuleSnapshotRef.current = '';
+    // Everything the save pipeline knows belonged to the module being left.
+    // Carrying a revision or an armed auto-save into the next one would have it
+    // write the module just closed, or refuse a module it has never read.
+    serverRevisionRef.current = '';
+    autoSaveArmedRef.current = false;
+    autoSaveAttemptRef.current = '';
+    setSaveFailure(null);
+    setSavingSnapshot('');
+    // Back out of the address too, or a reload from the catalogue would re-open
+    // the module the reader just left. The week/component deep-link targets go
+    // with it: they only mean anything inside the module that owns them.
+    setSearchParams(previous => {
+      const params = new URLSearchParams(previous);
+      ['module', 'moduleId', 'catalogueId', 'moduleTitle', 'week', 'weekId', 'component', 'componentId', 'settings', 'focus']
+        .forEach(key => params.delete(key));
+      return params;
+    }, { replace: true });
     setWorkingModule(null);
     setSelection(null);
     setSettingsOpen(false);
@@ -1511,6 +1849,10 @@ export default function ModuleBuilder() {
     try {
       const restored = recalculateModule(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem);
       setWorkingModule(restored);
+      // Discarding puts the workspace back to what was last stored, so whatever
+      // the server refused is no longer waiting to be sent.
+      setSaveFailure(null);
+      autoSaveAttemptRef.current = '';
       return restored;
     } catch {
       return workingModule;
@@ -1543,7 +1885,11 @@ export default function ModuleBuilder() {
     if (!current) return;
     const structureId = moduleStructureIdentifier(current);
     if (!structureId) return;
-    const remote = await loadModuleStructure(structureId).catch(() => null);
+    // Fresh, not the shared two-minute cache: this runs because the drawer has
+    // just written, and a cached answer would hand back the pre-write module --
+    // together with the pre-write revision, which would then refuse the
+    // workspace's own next save as stale.
+    const remote = await loadModuleStructure(structureId, { skipCache: true }).catch(() => null);
     if (!remote) return;
     const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
     const merged = {
@@ -1556,6 +1902,7 @@ export default function ModuleBuilder() {
     } as ModuleBuilderListItem;
     const stored = recalculateModule(getDefaultStructure(merged));
     savedModuleSnapshotRef.current = moduleSnapshot(stored);
+    serverRevisionRef.current = remote.structureRevision || '';
     const next = dirty ? recalculateModule({ ...stored, weekStructure: current.weekStructure }) : stored;
     setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? next : latest));
     if (selection) applySelectionSafely(selection, next);
@@ -1649,71 +1996,6 @@ export default function ModuleBuilder() {
     });
     return () => { active = false; };
   }, [workingModuleCatalogueId, workingModuleWeekCount, workingModuleFlatSessionCount]);
-
-  /**
-   * The holiday that closed one skipped date. A skipped date is a bare ISO day
-   * and does not explain itself; the days only ever come from the cohort's own
-   * ticked holidays, so any stored holiday covering one is the one that moved
-   * the session.
-   */
-  const holidayClosureFor = useCallback((date: string) => {
-    const day = cleanText(date);
-    if (!day) return null;
-    const match = moduleFormScope.holidays.find(holiday => (
-      String(holiday.startDate) <= day && day <= String(holiday.endDate || holiday.startDate)
-    ));
-    const label = cleanText(match?.label);
-    if (!match || !label) return null;
-    // `endDate` is optional on a stored holiday and means a single day when it
-    // is absent, which is also what the span formatter prints for it.
-    return {
-      label,
-      startDate: cleanText(match.startDate),
-      endDate: cleanText(match.endDate) || cleanText(match.startDate),
-    };
-  }, [moduleFormScope.holidays]);
-
-  /**
-   * Every live session whose own day a holiday closed, in slot order.
-   *
-   * Only a session that hit a closed date itself is here. One merely carried a
-   * slot later because the session in front of it moved clashed with nothing --
-   * saying so against its week was reporting the knock-on of a closure as a
-   * second closure, and it turned one ticked holiday into a red row on every
-   * week below it.
-   *
-   * Nothing here changes the plan. The rail states the clash and where the
-   * session is due to move to; the plan itself, the Teams calendar and the
-   * module's end date are unchanged, and the decision is made on the session.
-   */
-  const clashingLiveSessions = useMemo(() => {
-    const plan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId ? weekSessionPlanState.plan : null;
-    if (!plan) return [] as ClashingLiveSession[];
-    return (plan.sessions || []).flatMap((session, index) => {
-      const slotDate = cleanText(session.slotDate || session.date);
-      const actualDate = cleanText(session.date);
-      const closures = (session.skippedHolidays || [])
-        .map(date => cleanText(date))
-        .filter(Boolean);
-      if (!slotDate || !actualDate || !closures.length) return [];
-      // One holiday closing four days of a week is one closure, not four:
-      // keyed on the period so the same holiday found through each of its days
-      // is listed once.
-      const byPeriod = new Map<string, { label: string; startDate: string; endDate: string }>();
-      closures.forEach(date => {
-        const closure = holidayClosureFor(date);
-        if (closure) byPeriod.set(`${closure.label}|${closure.startDate}|${closure.endDate}`, closure);
-      });
-      const holidays = Array.from(byPeriod.values());
-      return [{
-        sessionNumber: Number(session.sessionNumber) || index + 1,
-        slotDate,
-        actualDate,
-        blockedBy: holidays.map(holiday => holiday.label).join(', ') || 'a holiday',
-        closures: holidays,
-      }];
-    });
-  }, [weekSessionPlanState, workingModuleCatalogueId, holidayClosureFor]);
 
   /**
    * The day each week's live session runs on, keyed by week. This is the same
@@ -1871,7 +2153,6 @@ export default function ModuleBuilder() {
                 weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components } : week)),
               }))}
               pointsByType={componentPointsByType}
-              clashingSessions={clashingLiveSessions}
               plannedSessions={workingModuleSessionPlan?.sessions}
               plannedSlots={workingModuleSessionPlan?.slots}
               expandedWeekIds={expandedWeekIds}
@@ -1973,11 +2254,14 @@ export default function ModuleBuilder() {
           <WorkspaceActionFooter
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
+            status={workspaceSaveStatus}
+            autoSave={autoSaveEnabled}
+            onToggleAutoSave={toggleAutoSave}
             locked={workingModuleProgrammeArchived}
             onEditModule={() => openPlacementForm(workingModule)}
             onModuleSettings={() => setSettingsOpen(true)}
             onDelete={() => confirmDeleteModule(workingModule)}
-            onSave={() => { void persistWorkingModule(); }}
+            onSave={() => { void saveWorkingModuleNow(); }}
           />
           <input
             ref={ksbImportInputRef}
@@ -2001,7 +2285,7 @@ export default function ModuleBuilder() {
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
             onClose={() => setSettingsOpen(false)}
-            onSave={() => { void persistWorkingModule(); }}
+            onSave={() => { void saveWorkingModuleNow(); }}
             onChange={updates => updateWorkingModule(module => ({ ...module, ...updates }))}
             onCompletionChange={updates => updateWorkingModule(module => ({ ...module, completionCriteria: { ...module.completionCriteria, ...updates } }))}
             onAdvancedChange={updates => updateWorkingModule(module => ({ ...module, advancedDetails: { ...module.advancedDetails, ...updates } }))}
@@ -2145,8 +2429,27 @@ export default function ModuleBuilder() {
           </div>
         )}
         {actionMessage && !deletingModuleId && (
-          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
-            {actionMessage}
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
+            <span>{actionMessage}</span>
+            <span className="flex shrink-0 items-center gap-2">
+              {actionMessageRetry && (
+                <button
+                  type="button"
+                  onClick={() => { const retry = actionMessageRetry; setActionMessage(null); setActionMessageRetry(null); retry?.(); }}
+                  className="rounded-lg border border-red-200 bg-white px-3 py-1.5 font-bold text-red-700 hover:bg-red-100"
+                >
+                  Retry
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { setActionMessage(null); setActionMessageRetry(null); }}
+                aria-label="Dismiss"
+                className="rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-100"
+              >
+                <AppIcon className="ri-close-line text-sm"></AppIcon>
+              </button>
+            </span>
           </div>
         )}
 
@@ -2303,10 +2606,8 @@ export default function ModuleBuilder() {
           groups={moduleFormScope.groups}
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
-          onClose={() => setCreateOpen(false)}
-          onSaved={async () => {
-            await reload({ silent: true });
-          }}
+          onClose={closeCreateDrawer}
+          onSaved={openSavedModule}
         />
         <ModuleFormDrawer
           open={Boolean(placementModule)}
@@ -2516,9 +2817,14 @@ function programmeRecordArchived(programme: CurriculumProgramme | null): boolean
   return String(programme.status || '').trim().toLowerCase() === 'archived';
 }
 
-function WorkspaceActionFooter({ saving, saved, locked = false, onEditModule, onDelete, onSave }: {
+function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSave, locked = false, onEditModule, onDelete, onSave }: {
   saving: boolean;
   saved: boolean;
+  /** What the workspace has done with the edits — the sentence in the footer. */
+  status: WorkspaceSaveStatus;
+  /** The workspace sends edits itself; off means Save is the only way out. */
+  autoSave: boolean;
+  onToggleAutoSave: () => void;
   /** The programme is archived, so the structure is read-only and Save is off. */
   locked?: boolean;
   /** Name, placement, dates and tutor — the shared module form. */
@@ -2529,22 +2835,41 @@ function WorkspaceActionFooter({ saving, saved, locked = false, onEditModule, on
   onSave: () => void;
 }) {
   const saveButtonIcon = saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-check-line' : 'ri-save-3-line';
-  const saveButtonLabel = saving ? 'Saving...' : saved ? 'Saved' : 'Save';
-  const stateText = locked
-    ? 'Read-only — archived programme'
-    : saving ? 'Saving module structure...' : saved ? 'All changes saved' : 'Unsaved changes';
-  const stateTone = locked
-    ? 'text-amber-700'
-    : saving ? 'text-amber-700' : saved ? 'text-emerald-700' : 'text-foreground-600';
+  // "Save now" while the workspace is saving itself, because the button is then
+  // for not waiting out the quiet period. With auto save off it is the only way
+  // the module is written at all, so it says the plain thing.
+  const saveButtonLabel = saving ? 'Saving...' : saved ? 'Saved' : autoSave ? 'Save now' : 'Save';
+  // One sentence for the whole save pipeline. "Saved" is shown only for a write
+  // the backend has confirmed — `saved` comes from the stored snapshot, which
+  // moves on a successful reply and nothing else.
+  const { text: stateText, tone: stateTone, icon: stateIcon } = WORKSPACE_SAVE_STATUS[status];
 
   return (
     <div className="sticky bottom-0 z-20 -mx-3 mt-2 border-t border-background-200/80 bg-background-50/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-6 lg:px-6">
       <div className="mx-auto flex w-full max-w-[1840px] flex-wrap items-center justify-between gap-3 pr-0 lg:pr-44">
         <div className={`flex items-center gap-2 text-[12px] font-semibold ${stateTone}`}>
-          <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-checkbox-circle-line' : 'ri-edit-line'}></AppIcon>
-          {stateText}
+          <AppIcon className={stateIcon}></AppIcon>
+          <span data-testid="module-builder-save-state">{stateText}</span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onToggleAutoSave}
+            data-testid="module-builder-auto-save-toggle"
+            aria-pressed={autoSave}
+            disabled={locked}
+            title={locked
+              ? ARCHIVED_PROGRAMME_BUILDER_NOTICE
+              : autoSave
+                ? 'Auto save is on. Edits are saved a moment after you stop typing.'
+                : 'Auto save is off. Your edits are kept here until you press Save.'}
+            className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border px-3 text-[12px] font-semibold transition-smooth disabled:cursor-not-allowed disabled:opacity-70 whitespace-nowrap ${autoSave
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+              : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+          >
+            <AppIcon className={autoSave ? 'ri-toggle-fill' : 'ri-toggle-line'}></AppIcon>
+            Auto save{autoSave ? ' on' : ' off'}
+          </button>
           <IconButton label="Edit module" icon="ri-edit-line" onClick={onEditModule} />
           <IconButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
           <button
@@ -2566,7 +2891,7 @@ function WorkspaceActionFooter({ saving, saved, locked = false, onEditModule, on
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, clashingSessions, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -2582,20 +2907,15 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onReuseComponents: (weekId: string) => void;
   pointsByType: Partial<Record<ModuleComponentType, number>>;
   /**
-   * The live sessions a holiday closed the day for, in slot order. Each is
-   * stated on its own week as a single line; the rail does not act on them.
-   */
-  clashingSessions?: ClashingLiveSession[];
-  /**
    * The module's flat dated plan. A week owns one slot per delivery day, so the
    * rail needs the plan itself to say which run of days each week occupies --
    * `week.sessionDate` is only the first of them.
    */
   plannedSessions?: ModuleWeekSessionPlan['sessions'];
   /**
-   * The curriculum spine, including the delivery slots a holiday closed. Those
-   * slots hold no live session and no authored week, so they are rendered as
-   * their own reading-week rows between the week cards they fall between.
+   * The curriculum spine, including which delivery slots a ticked holiday
+   * falls on. Those slots stay ordinary live-session slots -- the holiday is
+   * only a notice on the week that owns them.
    */
   plannedSlots?: ModuleWeekSessionPlan['slots'];
   expandedWeekIds: Set<string>;
@@ -2667,43 +2987,10 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     if (!first) return [];
     return group.weeks.map(week => [week.id, first.id] as const);
   }));
-  // Which week each clash belongs to -- the week whose own run of days contains
-  // the session number the backend planned. Weeks now show the delivered date,
-  // so matching only on the original closed slot would miss the moved week.
-  const clashesByWeekId = new Map<string, ClashingLiveSession[]>();
-  const weekIdBySessionNumber = new Map<number, string>();
-  let sessionNumberCursor = 1;
-  moduleWeekLiveSessionDates(module, plannedSessions).forEach((dates, index) => {
-    const week = module.weekStructure[index];
-    if (!week) return;
-    dates.forEach(() => {
-      weekIdBySessionNumber.set(sessionNumberCursor, week.id);
-      sessionNumberCursor += 1;
-    });
-  });
-  const datedWeeks = module.weekStructure.filter(week => sessionDatesOf(week).length);
-  (clashingSessions || []).forEach(clash => {
-    let ownerId = weekIdBySessionNumber.get(clash.sessionNumber) || '';
-    datedWeeks.forEach(week => {
-      const run = sessionDatesOf(week);
-      if (!ownerId && (run.includes(clash.actualDate) || run.includes(clash.slotDate))) ownerId = week.id;
-    });
-    // No run to match against (the plan has not loaded): fall back to the week
-    // that starts last on or before the closed day.
-    if (!ownerId) {
-      datedWeeks.forEach(week => {
-        if ((sessionDatesOf(week)[0] || '') <= clash.slotDate) ownerId = week.id;
-      });
-    }
-    if (!ownerId) return;
-    clashesByWeekId.set(ownerId, [...(clashesByWeekId.get(ownerId) || []), clash]);
-  });
-
-  // The delivery slots a holiday closed, keyed by the authored week that now
-  // delivers the session each closure displaced. They are curriculum positions
-  // in their own right -- reading weeks with no live session -- so they render
-  // as their own rows immediately above that week rather than as a note on it.
-  const readingWeeks = holidayReadingWeeksByWeekId(module, { sessions: plannedSessions, slots: plannedSlots });
+  // Which authored weeks have a delivery day a ticked holiday falls on. The
+  // plan is unchanged by it -- the week keeps its date and its live session --
+  // this is only where the rail hangs the notice.
+  const holidayNoticesByWeekId = weeksTouchedByHoliday(module, { sessions: plannedSessions, slots: plannedSlots });
 
   const [collapsedMonthIds, setCollapsedMonthIds] = useState<Set<string>>(new Set());
   const toggleMonthCollapsed = (monthId: string) => {
@@ -2851,7 +3138,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           const monthHeading = monthHeadings.get(week.id);
           const monthId = monthGroupIdByWeekId.get(week.id);
           const monthCollapsed = Boolean(monthId && collapsedMonthIds.has(monthId));
-          const weekClashes = clashesByWeekId.get(week.id) || [];
+          const weekHolidayNotices = holidayNoticesByWeekId.get(week.id) || [];
           return (
             <Fragment key={week.id}>
             {monthHeading && (
@@ -2862,15 +3149,15 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 </p>
               </div>
             )}
-            {/* The closed delivery slots this week sits behind. Each keeps its
-                own curriculum position and its own date; the week below it is
-                where the session that could not run in it has moved to. */}
-            {monthCollapsed ? null : (readingWeeks.before.get(week.id) || []).map(slot => (
-              <HolidayReadingWeekCard key={`reading-week-${slot.date}`} slot={slot} compact />
-            ))}
             {monthCollapsed ? null : <div
               className={`relative overflow-visible rounded-xl border transition-smooth ${dragging ? 'border-primary-300 bg-background-50 shadow-lg ring-2 ring-primary-200' : active ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
             >
+              {/* The holiday mark belongs to the whole week, not to the notice
+                  strip alone: run down the card's full height so an expanded
+                  week's components stay under it. */}
+              {weekHolidayNotices.length > 0 && (
+                <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] rounded-l-xl bg-amber-400"></span>
+              )}
               <div
                 draggable
                 onDragStart={event => {
@@ -2923,32 +3210,12 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   fourth pushed the components count onto a second row and
                   truncated the date to "2…". Here it also survives selection,
                   which repaints the card primary. */}
-              {/* The clash, stated on the week it belongs to, on the card's
-                  own background. Painting the whole row for it made a single
-                  ticked holiday the loudest thing on a rail whose subject is
-                  the course, so the card stays as it was and the edge above
-                  does the marking instead. Whether the session runs or is
-                  cancelled is still decided on the session, not here. */}
-              {weekClashes.map(clash => (
-                <p key={`clash-${clash.slotDate}`} className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 border-t border-background-200 px-2.5 py-1.5 text-[10px] leading-snug text-foreground-500">
-                  <AppIcon className="ri-error-warning-line self-center text-[12px] text-amber-500"></AppIcon>
-                  <span className="font-semibold text-foreground-700">
-                    Live session {clash.sessionNumber} clashes with{' '}
-                    {/* The holiday's whole period, in the span the rail already
-                        uses for a week's run of dates -- so "10-16 Aug 2026"
-                        here and above mean the same shape of thing. Lighter
-                        than the name: the name is what was hit, the period is
-                        how far it reaches. */}
-                    {clash.closures.length ? clash.closures.map((closure, closureIndex) => (
-                      <Fragment key={`${closure.label}-${closure.startDate}`}>
-                        {closureIndex > 0 && ', '}
-                        {closure.label}
-                        <span className="font-medium text-foreground-500"> ({formatDateLabel(closure.startDate)} - {formatDateLabel(closure.endDate)})</span>
-                      </Fragment>
-                    )) : clash.blockedBy}
-                  </span>
-                  <span>on {formatDateLabel(clash.slotDate)}; week now runs {formatDateLabel(clash.actualDate)}</span>
-                </p>
+              {/* Stated on the week it belongs to, on the card's own
+                  background: this week is completely ordinary and its live
+                  session runs as authored. Whether it becomes a reading week,
+                  keeps its session or something else is the author's call. */}
+              {weekHolidayNotices.map(slot => (
+                <WeekHolidayNotice key={`holiday-${slot.date}`} slot={slot} compact />
               ))}
               {expanded && (
                 <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
@@ -5880,18 +6147,6 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
-/**
- * Only the states that ask for something are badged. Published is what a
- * finished module is supposed to be, so it carries no badge: on a list where
- * nearly everything is published, the badge said nothing and cost a line.
- */
-function StatusBadge({ status }: { status: string }) {
-  if (status === 'published') return null;
-  const classes = status === 'draft' ? 'bg-amber-100 text-amber-700' : 'bg-primary-100 text-primary-700';
-  const label = status === 'review' ? 'in review' : status;
-  return <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${classes}`}>{label}</span>;
-}
-
 function ModuleCatalogueCard({
   module,
   teamsSummary,
@@ -5938,7 +6193,6 @@ function ModuleCatalogueCard({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[14px] font-heading font-bold text-foreground-950">{module.title}</h3>
-                <StatusBadge status={module.status} />
               </div>
               {subLabel && <p className="mt-1 text-[11px] text-foreground-500">{subLabel}</p>}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -7018,6 +7272,53 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     notes: module.description,
     color: module.color,
     deliveryUsages: (module as ModuleBuilderListItem).deliveryUsages,
+  };
+}
+
+/**
+ * The least a module can be and still be opened.
+ *
+ * `openModule` reads the real structure from the module's own endpoint and
+ * spreads it over whatever it was handed, so a module that was just created --
+ * and is therefore not in the catalogue list yet -- can be opened from its id
+ * alone. Only two of these fields are ever read before the structure lands: the
+ * id it is read by, and the title the loading overlay names. The rest are here
+ * because the type requires them, and every one of them is overwritten.
+ *
+ * Never use this to open a module that IS in the list: pass the real row, so
+ * the fields the structure endpoint does not carry (delivery usages, the
+ * programme the row was filtered under) survive the merge.
+ */
+function moduleShellForOpening(catalogueId: string, title: string): ModuleCatalogueItem {
+  return {
+    id: catalogueId,
+    catalogueId,
+    programmeId: '',
+    programmeName: '',
+    title,
+    description: '',
+    status: 'draft',
+    weeks: 0,
+    totalOtjh: 0,
+    ksbCount: 0,
+    lessonCount: 0,
+    quizCount: 0,
+    qualityScore: 0,
+    moduleKsbMappings: [],
+    completionCriteria: {
+      quizzesCompletedRequired: false,
+      checkpointsCompletedRequired: false,
+      averageScoreRequiredEnabled: false,
+      averageScoreRequired: 0,
+      totalScoreRequiredEnabled: false,
+      totalScoreRequired: 0,
+      additionalNotes: '',
+    },
+    advancedDetails: { intent: '', learnerBenefit: '', employerBenefit: '', sequencePurpose: '' },
+    background: '',
+    epaRequirements: [],
+    qualificationOutcomes: [],
+    weekStructure: [],
   };
 }
 

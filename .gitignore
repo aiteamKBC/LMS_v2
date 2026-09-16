@@ -184,7 +184,9 @@ nbproject/
 # ---------------------------------------------------------------------------
 /CLAUDE.md
 CLAUDE.local.md
-/.claude/
+/.claude/*
+# Shared policy loader; all other Claude configuration and scratch state stay local.
+!/.claude/CLAUDE.md
 .cursor/
 .codex/
 .continue/

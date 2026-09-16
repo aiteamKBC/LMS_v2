@@ -17,14 +17,16 @@
 
 import { fetchModuleSessionPlan, updateTeamsMeetingSchedule, zonedNaiveToUtcIso } from '../../module-builder/moduleAuthoringData';
 import { fetchCurriculumTeamsMeetingSummaries } from '@/lib/curriculumApi';
+import { normalizedClock } from '../../teams-meetings/calendarTime';
 
 /** The group's own hour, when a series has none of its own to keep. */
 const FALLBACK_START_TIME = '09:00';
 const FALLBACK_DURATION_MINUTES = 60;
 
 function minutesBetween(startTime: string, endTime: string): number {
-  const [startHour, startMinute] = String(startTime || '').split(':').map(Number);
-  const [endHour, endMinute] = String(endTime || '').split(':').map(Number);
+  if (!startTime || !endTime) return 0;
+  const [startHour, startMinute] = normalizedClock(startTime).split(':').map(Number);
+  const [endHour, endMinute] = normalizedClock(endTime).split(':').map(Number);
   if ([startHour, startMinute, endHour, endMinute].some(value => !Number.isFinite(value))) return 0;
   return (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
 }
@@ -74,14 +76,14 @@ export async function pushModulePlanToTeams({
   const summary = summaries.find(item => String(item.moduleCatalogueId || '').trim() === catalogueId);
   if (!summary?.liveSessionId) throw new Error('This module has no Teams meeting to update.');
 
-  const time = String(startTime || '').slice(0, 5) || FALLBACK_START_TIME;
+  const time = normalizedClock(startTime || FALLBACK_START_TIME);
   const duration = Math.max(
     15,
     minutesBetween(time, String(endTime || '')) || summary.durationMinutes || FALLBACK_DURATION_MINUTES,
   );
   const occurrences = planned.map((session, index) => ({
     sessionNumber: index + 1,
-    startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || time}`),
+    startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${normalizedClock(session.startTime || time)}`),
     durationMinutes: session.durationMinutes || minutesBetween(session.startTime || time, session.endTime || '') || duration,
   }));
 
@@ -89,7 +91,7 @@ export async function pushModulePlanToTeams({
     title: String(moduleName || summary.moduleTitle || '').trim() || 'Live session',
     organizerEmail: summary.organizerEmail,
     eventId: summary.eventId,
-    localStartDateTime: `${planned[0].date}T${planned[0].startTime || time}`,
+    localStartDateTime: `${planned[0].date}T${normalizedClock(planned[0].startTime || time)}`,
     startDateTimeUtc: occurrences[0].startDateTimeUtc,
     durationMinutes: occurrences[0].durationMinutes,
     repeat: occurrences.length > 1 ? 'weekly' : 'none',

@@ -10,6 +10,7 @@ import {
   uploadComponentFile,
 } from '@/pages/curriculum/shared/componentUploadPolicy';
 import { hoursToRoundedMinutes, roundedMinutesToHours } from '@/lib/format';
+import { reviewCalendar } from '../teams-meetings/calendarReview';
 import {
   componentTypeGroups,
   componentTypes,
@@ -198,6 +199,8 @@ export interface ModuleSlotHoliday {
   endDate: string;
   type?: string;
   notes?: string;
+  /** 'gov.uk' for a mirrored bank holiday, 'authored' for one entered here. */
+  source?: string;
 }
 
 /**
@@ -383,45 +386,35 @@ export function moduleWeekIdBySessionNumber(
 }
 
 /**
- * Where each holiday reading week sits among the authored weeks.
+ * Which authored weeks have a delivery day a ticked holiday falls on.
  *
- * A closed delivery slot is a real curriculum position with no live session in
- * it, and it belongs immediately ABOVE the authored week that delivers the next
- * open slot -- that week now holds the session the closure displaced. Reading
- * weeks after the final session have no week below them, so they come back in
- * `trailing`; a plan whose last slots are closed is not a thing the walk can
- * produce today, but a caller rendering the spine should not silently drop
- * them if it ever is.
+ * States the fact, decides nothing: the plan stays exactly as authored, every
+ * week keeps its own date, and what a week becomes -- a reading week, a live
+ * session that runs anyway, or something else -- is the author's call, made on
+ * the week itself. This is only where the rail hangs the warning.
  *
- * Returns empty maps when the plan carries no spine, so a screen talking to an
- * older payload renders exactly as it did before.
+ * Keyed by week id because one week can own more than one delivery day: a
+ * Mon+Fri week with only its Monday on a holiday is still a live week that has
+ * to say why one of its two days needs a look.
+ *
+ * Returns an empty map when the plan carries no spine, so a screen talking to
+ * an older payload renders exactly as it did before.
  */
-export function holidayReadingWeeksByWeekId(
+export function weeksTouchedByHoliday(
   module: ModuleCatalogueItem | null | undefined,
   plan: Pick<ModuleWeekSessionPlan, 'sessions' | 'slots'> | null | undefined,
-): { before: Map<string, ModuleSessionSlot[]>; trailing: ModuleSessionSlot[] } {
-  const before = new Map<string, ModuleSessionSlot[]>();
-  const trailing: ModuleSessionSlot[] = [];
+): Map<string, ModuleSessionSlot[]> {
+  const byWeekId = new Map<string, ModuleSessionSlot[]>();
   const slots = plan?.slots || [];
-  if (!module || !slots.length) return { before, trailing };
+  if (!module || !slots.length) return byWeekId;
   const weekIdBySessionNumber = moduleWeekIdBySessionNumber(module, plan?.sessions);
-  let pending: ModuleSessionSlot[] = [];
   slots.forEach(slot => {
-    if (slot.type === 'reading-week') {
-      pending.push(slot);
-      return;
-    }
-    if (!pending.length) return;
+    if (!slot.holidays?.length) return;
     const weekId = weekIdBySessionNumber.get(Number(slot.sessionNumber));
-    // A session no authored week claims (the plan is longer than the weeks
-    // written so far) has nowhere to hang the reading week above, so it waits
-    // for the next session that does.
     if (!weekId) return;
-    before.set(weekId, [...(before.get(weekId) || []), ...pending]);
-    pending = [];
+    byWeekId.set(weekId, [...(byWeekId.get(weekId) || []), slot]);
   });
-  trailing.push(...pending);
-  return { before, trailing };
+  return byWeekId;
 }
 
 /**
@@ -638,6 +631,16 @@ export interface ModuleCatalogueItem {
   qualificationOutcomes: string[];
   weekStructure: ModuleWeek[];
   sourceModule?: CurriculumModule;
+  /**
+   * The stored structure this copy was built from, as the backend fingerprints it.
+   *
+   * A save on this endpoint replaces every week and component, so it is only
+   * ever safe against the version the server holds. Sending this back as
+   * `expectedRevision` is what lets the server refuse a payload built before
+   * somebody else's write instead of performing it. Absent on a local draft
+   * that has never been stored.
+   */
+  structureRevision?: string;
 }
 
 export interface KsbOption {
@@ -1503,16 +1506,65 @@ export function flattenKsbEntries(entries: CurriculumKsbEntry[] = []): KsbOption
   }));
 }
 
-export async function saveModuleStructure(moduleCatalogueId: string, payload: ModuleCatalogueItem) {
+/**
+ * A save refused because the module moved on after this copy of it was read.
+ *
+ * Its own type rather than a status code the caller has to remember to check,
+ * because the two outcomes need opposite handling: an ordinary failure is worth
+ * retrying with the same payload, and this one is never worth retrying -- the
+ * payload replaces every week and component in the module, so re-sending it is
+ * precisely the destruction the refusal prevented.
+ */
+export class ModuleStructureConflictError extends Error {
+  /** What the server holds now, so the workspace can show it or re-open it. */
+  currentRevision: string;
+  serverModule: ModuleCatalogueItem | null;
+
+  constructor(message: string, currentRevision: string, serverModule: ModuleCatalogueItem | null) {
+    super(message);
+    this.name = 'ModuleStructureConflictError';
+    this.currentRevision = currentRevision;
+    this.serverModule = serverModule;
+    Object.setPrototypeOf(this, ModuleStructureConflictError.prototype);
+  }
+}
+
+/**
+ * Write a module's whole structure back.
+ *
+ * `expectedRevision` is the `structureRevision` that came with the copy being
+ * saved. The backend refuses the write if the stored material has moved since,
+ * which is the only thing standing between two open tabs and one of them
+ * silently replacing the other's weeks and components. Omitting it restores
+ * last-write-wins, so only a caller with nothing to have read -- a first save,
+ * an import -- should leave it out.
+ */
+export async function saveModuleStructure(
+  moduleCatalogueId: string,
+  payload: ModuleCatalogueItem,
+  options: { expectedRevision?: string } = {},
+) {
   const recalculated = recalculateModule(payload);
   // `weeksNumber` states the authored week count outright. `weeks` cannot carry
   // it: on this endpoint that name is the legacy alias for the week *list*, and
   // the backend rejects a number there.
-  const body = { ...recalculated, weeksNumber: recalculated.weekStructure.length || recalculated.weeks };
+  const body = {
+    ...recalculated,
+    weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
+    ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
+  };
   const saved = recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
     body: JSON.stringify(body),
     timeoutMs: 90000,
+  }).catch((err: unknown) => {
+    if (!(err instanceof ApiError) || err.status !== 409 || !err.data?.conflict) throw err;
+    const server = err.data.module as ModuleCatalogueItem | undefined;
+    throw new ModuleStructureConflictError(
+      typeof err.data.error === 'string' ? err.data.error : err.message,
+      String(err.data.currentRevision || ''),
+      server ? recalculateModule(server) : null,
+    );
   }));
   // `apiJson` writes go straight to the network, so nothing above invalidates
   // the read this save just made stale. `loadModuleStructure` is cached now, and
@@ -1836,10 +1888,13 @@ export function fetchModuleMeetingInvitees(moduleCatalogueId: string) {
   return apiJson<ModuleMeetingInvitees>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/meeting-invitees/`);
 }
 
-export function createTeamsMeeting(input: TeamsMeetingInput) {
+export async function createTeamsMeeting(input: TeamsMeetingInput) {
+  // Review and send the same snapshot, even if a background refresh changes the form.
+  const reviewed: TeamsMeetingInput = JSON.parse(JSON.stringify({ ...input, hideAttendees: true }));
+  await reviewCalendar({ ...reviewed, summaryEmail: true }, getCalendarTimeZone());
   return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify(reviewed),
     timeoutMs: 45000,
   }).then(result => {
     // This POST goes through this module's own client, so it never triggers the
@@ -1856,10 +1911,31 @@ export function createTeamsMeeting(input: TeamsMeetingInput) {
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[] }) {
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean }) {
+  const reviewed = JSON.parse(JSON.stringify(input)) as typeof input;
+  const { series: rawSeries, occurrences } = await loadTeamsMeetingArtifacts(liveSessionId);
+  const series = calendarSeriesForReview(rawSeries);
+  if (reviewed.peopleOnly) {
+    const held = occurrences.filter(item => item.status !== 'cancelled')
+      .sort((a, b) => parseUtcInstant(a.scheduled_start).getTime() - parseUtcInstant(b.scheduled_start).getTime());
+    if (!held.length) throw new Error('The saved session dates could not be loaded. Review the calendar dates before changing invitations.');
+    reviewed.scheduledOccurrences = held.map(item => ({ sessionNumber: item.session_number,
+      startDateTimeUtc: parseUtcInstant(item.scheduled_start).toISOString(),
+      durationMinutes: (parseUtcInstant(item.scheduled_end).getTime() - parseUtcInstant(item.scheduled_start).getTime()) / 60000,
+    }));
+    reviewed.startDateTimeUtc = reviewed.scheduledOccurrences[0].startDateTimeUtc;
+    reviewed.durationMinutes = reviewed.scheduledOccurrences[0].durationMinutes;
+  }
+  await reviewCalendar({ ...reviewed, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+    attendees: reviewed.attendees ?? series.attendees, presenters: reviewed.presenters ?? series.presenters,
+    coOrganizers: reviewed.coOrganizers ?? series.co_organizers,
+    recording: series.recording, lobbyBypass: series.lobby_bypass, spokenLanguage: series.spoken_language,
+    calendarSeries: series.calendar_series, previousOccurrences: occurrences,
+    seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
+  }, getCalendarTimeZone());
   return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
-    body: JSON.stringify(input),
+    body: JSON.stringify(reviewed),
     timeoutMs: 45000,
   }).then(result => {
     clearCurriculumGetCache();
@@ -1885,16 +1961,27 @@ export interface TeamsOccurrenceRescheduleResult {
  * every other session — and the module's default time — untouched. The tracked
  * occurrence keeps its own duration unless `durationMinutes` is passed.
  */
-export function rescheduleTeamsOccurrence(
+export async function rescheduleTeamsOccurrence(
   liveSessionId: string,
   sessionNumber: number,
   input: { startDateTimeUtc: string; durationMinutes?: number },
 ) {
+  const reviewed = { ...input };
+  const detail = await loadTeamsMeetingArtifacts(liveSessionId);
+  const series = calendarSeriesForReview(detail.series);
+  const occurrence = detail.occurrences.find(item => item.session_number === sessionNumber);
+  if (!occurrence) throw new Error('Load this session before reviewing a time change.');
+  const duration = reviewed.durationMinutes ?? (parseUtcInstant(occurrence.scheduled_end).getTime() - parseUtcInstant(occurrence.scheduled_start).getTime()) / 60000;
+  await reviewCalendar({ title: series.module_title, organizerEmail: series.organizer_email,
+    joinUrl: occurrence.join_url || series.join_url, attendees: series.attendees,
+    presenters: series.presenters, coOrganizers: series.co_organizers, previousOccurrences: [occurrence], seriesMode: 'shared',
+    scheduledOccurrences: [{ sessionNumber, startDateTimeUtc: reviewed.startDateTimeUtc, durationMinutes: duration }],
+  }, getCalendarTimeZone());
   return apiJson<TeamsOccurrenceRescheduleResult>(
     `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/occurrences/${sessionNumber}/schedule/`,
     {
       method: 'PATCH',
-      body: JSON.stringify(input),
+      body: JSON.stringify(reviewed),
       timeoutMs: 45000,
     },
   ).then(result => {
@@ -1961,6 +2048,13 @@ export interface TeamsMeetingArtifactsResult {
     organizer_email: string;
     join_url: string;
     online_meeting_id: string;
+    attendees?: string[];
+    presenters?: string[];
+    co_organizers?: string[];
+    recording?: string;
+    lobby_bypass?: string;
+    spoken_language?: string;
+    calendar_series?: Array<{ day: string; joinUrl: string; sessionNumbers: number[] }>;
   };
   occurrences: TeamsMeetingOccurrence[];
 }
@@ -1976,6 +2070,21 @@ export function loadTeamsMeetingArtifacts(liveSessionId: string) {
   return apiJson<TeamsMeetingArtifactsResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
     timeoutMs: 30000,
   });
+}
+
+function calendarSeriesForReview(series: TeamsMeetingArtifactsResult['series']) {
+  // Raw SQL JSON columns may arrive serialized, depending on the DB driver.
+  const list = <T,>(value: unknown): T[] => {
+    let decoded = value;
+    try { if (typeof value === 'string') decoded = JSON.parse(value); } catch { decoded = undefined; }
+    if (decoded === null) return [];
+    if (!Array.isArray(decoded)) throw new Error('The saved invitation details could not be loaded. Reload the calendar before saving.');
+    return decoded as T[];
+  };
+  return { ...series, attendees: list<string>(series.attendees), presenters: list<string>(series.presenters),
+    co_organizers: list<string>(series.co_organizers),
+    calendar_series: list<NonNullable<typeof series.calendar_series>[number]>(series.calendar_series ?? []),
+  };
 }
 
 export function teamsMeetingArtifactContentUrl(liveSessionId: string, artifactId: string) {
@@ -2027,11 +2136,21 @@ export function saveTeamsRecordingEvents(
 class ApiError extends Error {
   status: number;
   detail?: string;
+  /**
+   * The handler's own JSON body, when it sent one.
+   *
+   * `message` is flattened for display and loses everything structured with
+   * it. A refusal a caller has to ACT on rather than only show -- a 409 from
+   * the structure PATCH carries the current revision and the current module --
+   * needs the body itself.
+   */
+  data?: Record<string, unknown>;
 
-  constructor(status: number, message: string, detail?: string) {
+  constructor(status: number, message: string, detail?: string, data?: Record<string, unknown>) {
     super(message);
     this.status = status;
     this.detail = detail;
+    this.data = data;
   }
 }
 
@@ -2051,8 +2170,10 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
     });
     if (!response.ok) {
       let message = `Curriculum API returned ${response.status} for ${path}`;
+      let body: Record<string, unknown> | undefined;
       try {
         const payload = await response.json();
+        if (payload && typeof payload === 'object') body = payload as Record<string, unknown>;
         const validation = Array.isArray(payload?.validationErrors)
           ? payload.validationErrors.map((item: { message?: string }) => item.message).filter(Boolean).join('; ')
           : '';
@@ -2062,7 +2183,7 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
       } catch {
         // Ignore body parsing failures so the original status remains visible.
       }
-      throw new ApiError(response.status, message);
+      throw new ApiError(response.status, message, undefined, body);
     }
     return response.json();
   } catch (err) {
