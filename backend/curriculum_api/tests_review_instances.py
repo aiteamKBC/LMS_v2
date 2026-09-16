@@ -64,6 +64,16 @@ class ReviewInstancesTestCase(TestCase):
         # rather than clearing it, since every Review needs a type.
         review_types.seed_system_review_types()
 
+    def _start(self, instance):
+        """complete_review_instance now only accepts in-progress -> awaiting-
+        signature/completed (Phase 3) -- this stands in for the real trigger
+        (confirmed Teams attendance, see coach_api.views
+        .apply_teams_attendance_status_transition) for tests that only care
+        about field validation/completion, not the attendance transition
+        itself."""
+        review_instances.set_review_instance_status(instance['id'], review_instances.STATUS_IN_PROGRESS, actor='test')
+        return review_instances.get_review_instance(instance['id'])
+
     def _programme(self, programme_id='PROG-DATA', name='Data Technician'):
         views.insert_row('programmes', {
             'id': programme_id, 'programme_id': programme_id, 'program_id': programme_id,
@@ -202,7 +212,7 @@ class ReviewInstancesTestCase(TestCase):
 
         parent_field_id = review_instances.reviews.get_review_field_rows(review_id)[0]['id']
         review_instances.save_review_instance_answers(instance, {parent_field_id: 'no'}, actor='coach@example.com')
-        instance = review_instances.get_review_instance(instance['id'])
+        instance = self._start(instance)
         ok, errors = review_instances.complete_review_instance(instance, actor='coach@example.com')
         self.assertTrue(ok, errors)
 
@@ -213,6 +223,7 @@ class ReviewInstancesTestCase(TestCase):
             template, learner_id=1, learner_kind='commercial', programme_id='PROG-A',
             occurrence_number=1, target_date=date(2026, 9, 2), coach_email='coach@example.com',
         )
+        instance = self._start(instance)
         ok, errors = review_instances.complete_review_instance(instance, actor='coach@example.com')
         self.assertFalse(ok)
         self.assertIn('fields', errors)
@@ -269,7 +280,7 @@ class ReviewInstancesTestCase(TestCase):
         )
         field_id = reviews.get_review_field_rows(review_id)[0]['id']
         review_instances.save_review_instance_answers(instance, {field_id: 'Answered before the edit'}, actor='coach@example.com')
-        instance = review_instances.get_review_instance(instance['id'])
+        instance = self._start(instance)
         ok, _ = review_instances.complete_review_instance(instance, actor='coach@example.com')
         self.assertTrue(ok)
 

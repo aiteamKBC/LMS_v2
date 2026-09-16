@@ -372,6 +372,18 @@ def _auth_gate_enabled():
     ).strip().lower() not in _DISABLED_VALUES
 
 
+def auth_gate_enabled() -> bool:
+    """Public alias for :func:`_auth_gate_enabled`.
+
+    For a view outside this module that calls ``authenticate_request`` itself
+    (rather than going through ``staff_only``/``employer_or_staff``/one of the
+    learner-progress gates) but still wants ``LEARNER_API_REQUIRE_AUTH=0`` to
+    disable its own auth requirement the same way every gated endpoint in this
+    module already does, instead of re-deriving the env-var check locally.
+    """
+    return _auth_gate_enabled()
+
+
 def _read_only_learner_view():
     """403 for somebody reading a learner's plan who may not write to it.
 

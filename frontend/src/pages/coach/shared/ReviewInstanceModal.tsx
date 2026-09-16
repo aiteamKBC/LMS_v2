@@ -5,8 +5,10 @@ import {
   completeReviewInstance,
   fetchReviewInstanceForm,
   flattenReviewFields,
+  markReviewInstanceInProgressManually,
   saveReviewInstanceAnswers,
   signReviewInstance,
+  type ManualInProgressReasonCode,
   type ReviewInstanceFormDefinition,
 } from '@/api/reviewInstances';
 import { ModalHeader, ModalShell } from './ModalHeader';
@@ -15,6 +17,15 @@ import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { useAuth } from '@/hooks/useAuth';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
+
+const MANUAL_OVERRIDE_REASONS: { value: ManualInProgressReasonCode; label: string }[] = [
+  { value: 'teams-link-issue', label: 'Teams link problem' },
+  { value: 'graph-unavailable', label: 'Microsoft Graph unavailable' },
+  { value: 'attendance-not-detected', label: "Attendance wasn't detected" },
+  { value: 'meeting-held-outside-teams', label: 'Meeting held outside Teams' },
+  { value: 'scheduler-delay', label: 'Sync/scheduler delay' },
+  { value: 'other', label: 'Other' },
+];
 
 /**
  * The generic "open a Curriculum-driven Review" screen -- what a coach sees
@@ -32,6 +43,8 @@ export function ReviewInstanceModal({
   instanceId,
   onClose,
   onCompleted,
+  onStatusChanged,
+  showManualOverrideOnOpen = false,
 }: {
   /** Only what the header shows -- deliberately structural so the timetable,
    *  meetings and progress-review pages can each pass their own event type. */
@@ -44,6 +57,11 @@ export function ReviewInstanceModal({
    *  this onto their own CoachCalendarEvent state rather than assuming which
    *  one it landed on. */
   onCompleted: (status: string) => void;
+  /** Keeps the parent calendar row in sync after a lifecycle change that
+   *  does not close this modal, such as a manual scheduled -> in-progress
+   *  override. */
+  onStatusChanged?: (status: string) => void;
+  showManualOverrideOnOpen?: boolean;
 }) {
   const { auth } = useAuth();
   const [definition, setDefinition] = useState<ReviewInstanceFormDefinition | null>(null);
@@ -53,6 +71,12 @@ export function ReviewInstanceModal({
   const [error, setError] = useState<string | null>(null);
   const [openSectionId, setOpenSectionId] = useState('');
   const [showErrors, setShowErrors] = useState(false);
+  const [showManualOverride, setShowManualOverride] = useState(showManualOverrideOnOpen);
+  const [manualReason, setManualReason] = useState<ManualInProgressReasonCode | ''>('');
+  const [manualNote, setManualNote] = useState('');
+  const [manualStartedAt, setManualStartedAt] = useState('');
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -141,7 +165,34 @@ export function ReviewInstanceModal({
     }
   };
 
-  const busy = saving;
+  const confirmManualOverride = async () => {
+    if (!definition || !manualReason) return;
+    if (manualReason === 'other' && !manualNote.trim()) {
+      setManualError('Add details when the reason is "Other".');
+      return;
+    }
+    setManualBusy(true);
+    setManualError(null);
+    try {
+      const updated = await markReviewInstanceInProgressManually(definition.instance.id, {
+        reasonCode: manualReason,
+        note: manualNote,
+        startedAt: manualStartedAt ? new Date(manualStartedAt).toISOString() : undefined,
+      });
+      setDefinition(updated);
+      onStatusChanged?.(updated.instance.status);
+      setShowManualOverride(false);
+      setManualReason('');
+      setManualNote('');
+      setManualStartedAt('');
+    } catch (err) {
+      setManualError(err instanceof Error ? err.message : 'This review cannot be marked in progress.');
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  const busy = saving || manualBusy;
 
   return (
     <ModalShell busy={busy} onClose={onClose}>
@@ -183,6 +234,110 @@ export function ReviewInstanceModal({
                 </div>
               ))}
             </div>
+
+            {definition.manualOverride ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-800">
+                <AppIcon className="ri-flashlight-line mr-1.5"></AppIcon>
+                <strong>Manually marked In Progress</strong> -- reason: {
+                  MANUAL_OVERRIDE_REASONS.find((r) => r.value === definition.manualOverride?.reasonCode)?.label
+                    || definition.manualOverride.reasonCode
+                }
+                {definition.manualOverride.note ? ` (${definition.manualOverride.note})` : ''}
+                {' '}by {definition.manualOverride.changedBy}
+                {definition.manualOverride.changedAt ? `, ${formatDateLabel(definition.manualOverride.changedAt)}` : ''}
+                {definition.manualOverride.manualStartedAt ? ` · actual start: ${formatDateLabel(definition.manualOverride.manualStartedAt)}` : ''}
+              </div>
+            ) : null}
+
+            {definition.instance.status === 'scheduled' && !showManualOverride ? (
+              <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-[13px] font-bold text-amber-900">Not yet in progress</p>
+                  <p className="mt-0.5 text-[12px] text-amber-800">
+                    This moves to "In Progress" automatically once Microsoft Teams confirms the coach or learner joined the meeting.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowManualOverride(true)}
+                  className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-white px-4 text-xs font-bold text-amber-800 shadow-sm transition hover:bg-amber-100"
+                >
+                  <AppIcon className="ri-flashlight-line"></AppIcon>Mark as In Progress
+                </button>
+              </div>
+            ) : null}
+
+            {definition.instance.status === 'scheduled' && showManualOverride ? (
+              <div className="space-y-3 rounded-2xl border border-amber-300 bg-amber-50 p-4">
+                <div>
+                  <p className="text-[13px] font-bold text-amber-900">Manually mark this review In Progress</p>
+                  <p className="mt-0.5 text-[12px] text-amber-800">
+                    Use this only when Microsoft Teams attendance cannot be confirmed automatically -- for example a Teams
+                    link problem, a Microsoft Graph outage, or the meeting happening on another channel. This is an override,
+                    not the normal path, and is recorded as a manual action.
+                  </p>
+                </div>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber-900">Reason</span>
+                  <select
+                    value={manualReason}
+                    onChange={(e) => setManualReason(e.target.value as ManualInProgressReasonCode)}
+                    className="h-10 w-full rounded-lg border border-amber-300 bg-white px-3 text-[13px] text-foreground-900 outline-none"
+                  >
+                    <option value="">Select a reason...</option>
+                    {MANUAL_OVERRIDE_REASONS.map((reason) => (
+                      <option key={reason.value} value={reason.value}>{reason.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {manualReason === 'other' ? (
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber-900">Details (required)</span>
+                    <textarea
+                      value={manualNote}
+                      onChange={(e) => setManualNote(e.target.value)}
+                      rows={2}
+                      className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-[13px] text-foreground-900 outline-none"
+                      placeholder="What happened?"
+                    />
+                  </label>
+                ) : null}
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber-900">Actual start time (optional)</span>
+                  <input
+                    type="datetime-local"
+                    value={manualStartedAt}
+                    onChange={(e) => setManualStartedAt(e.target.value)}
+                    className="h-10 w-full rounded-lg border border-amber-300 bg-white px-3 text-[13px] text-foreground-900 outline-none sm:w-64"
+                  />
+                  <span className="mt-1 block text-[11px] text-amber-700">Leave blank to use the time you confirm this.</span>
+                </label>
+                {manualError ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                    <AppIcon className="ri-error-warning-line mr-1.5"></AppIcon>{manualError}
+                  </div>
+                ) : null}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setShowManualOverride(false); setManualError(null); }}
+                    disabled={manualBusy}
+                    className="h-9 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmManualOverride}
+                    disabled={manualBusy || !manualReason}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-amber-700 disabled:opacity-60"
+                  >
+                    <AppIcon className={manualBusy ? 'ri-loader-4-line animate-spin' : 'ri-check-line'}></AppIcon>
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <ReviewFormRenderer
               sections={definition.sections}

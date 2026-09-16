@@ -42,6 +42,7 @@ import {
   isScheduledEvent,
   isCompletedEvent,
   meetingUrl,
+  navigateMeetingWindow,
   needsScheduling,
   parseLocalDate,
   runCoachCalendarAction,
@@ -1128,7 +1129,7 @@ export default function CoachProgressReviews() {
     }
   };
 
-  const handleAction = async (event: CoachCalendarEvent, action: CalendarAction) => {
+  const handleAction = async (event: CoachCalendarEvent, action: CalendarAction, meetingWindow: Window | null = null) => {
     setBusyEventId(eventIdentity(event));
     setActionError(null);
     setActionNotice(null);
@@ -1137,8 +1138,10 @@ export default function CoachProgressReviews() {
       updateEvent(data.event);
       if (data.warning) setActionNotice(data.warning);
       const url = meetingUrl(data.event);
-      if (action === 'start' && url) window.open(url, '_blank', 'noopener,noreferrer');
+      if (action === 'start' && url) navigateMeetingWindow(meetingWindow, url);
+      if (action === 'start' && !url && meetingWindow && !meetingWindow.closed) meetingWindow.close();
     } catch (err) {
+      if (meetingWindow && !meetingWindow.closed) meetingWindow.close();
       setActionError(err instanceof Error ? err.message : 'Unable to update review.');
     } finally {
       setBusyEventId(null);
@@ -1146,12 +1149,24 @@ export default function CoachProgressReviews() {
   };
 
   const handleJoin = async (event: CoachCalendarEvent) => {
-    if (event.status === 'scheduled') {
-      await handleAction(event, 'start');
-      return;
-    }
     const url = meetingUrl(event);
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    if (event.status === 'scheduled') {
+      try {
+        setBusyEventId(eventIdentity(event));
+        setActionError(null);
+        setActionNotice(null);
+        const data = await runCoachCalendarAction(event, 'start');
+        updateEvent(data.event);
+        if (data.warning) setActionNotice(data.warning);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unable to update review.';
+        if (message !== 'Only a scheduled event can be started.') setActionError(message);
+      } finally {
+        setBusyEventId(null);
+      }
+      return;
+    }
   };
 
   const openCompletionForm = (event: CoachCalendarEvent) => {
@@ -1415,6 +1430,14 @@ export default function CoachProgressReviews() {
                             disabled={isBusy}
                             onClick={() => { handleSchedule(review); }}
                           />
+                          {review.status === 'scheduled' && review.reviewInstanceId ? (
+                            <RowAction
+                              label="Mark In Progress"
+                              icon="ri-flashlight-line"
+                              disabled={isBusy}
+                              onClick={() => openCompletionForm(review)}
+                            />
+                          ) : null}
                           {review.status === 'in-progress' ? (
                             <RowAction label="Submit Review" icon="ri-send-plane-line" disabled={isBusy} onClick={() => openCompletionForm(review)} />
                           ) : null}
@@ -1466,7 +1489,11 @@ export default function CoachProgressReviews() {
             key={eventIdentity(completionEvent)}
             event={completionEvent}
             instanceId={completionEvent.reviewInstanceId}
+            showManualOverrideOnOpen={completionEvent.status === 'scheduled'}
             onClose={() => setCompletionEvent(null)}
+            onStatusChanged={(status) => {
+              updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
+            }}
             onCompleted={(status) => {
               updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
               setCompletionEvent(null);

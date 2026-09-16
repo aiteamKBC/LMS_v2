@@ -1,6 +1,6 @@
 """A failed Microsoft sync must not erase or hide a locally saved appointment."""
 from contextlib import ExitStack
-from datetime import date, time
+from datetime import date, time, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -90,7 +90,10 @@ class CalendarSyncVisibilityTests(SimpleTestCase):
                     "coach_staff_display_name": "Coach",
                     "fetch_source_schedule_rows": ({}, {}),
                     "resolve_curriculum_programme_id": None,
-                    "resolve_schedule_window": (record.target_date - (views.TIMETABLE_MCR_INTERVAL if event_type == 'mcr' else views.TIMETABLE_PROGRESS_REVIEW_INTERVAL), date(2027, 10, 1)),
+                    # An arbitrary window bound -- with resolve_curriculum_programme_id
+                    # mocked to None there is no Curriculum template to generate
+                    # occurrences from, so only the stored record (below) surfaces.
+                    "resolve_schedule_window": (record.target_date - timedelta(days=30 if event_type == 'mcr' else 84), date(2027, 10, 1)),
                     "resolve_caseload_source_row": None,
                     "learner_employer_attendee": None,
                     "fetch_standalone_event_records": [record],

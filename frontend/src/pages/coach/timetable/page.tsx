@@ -3,7 +3,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import Swal from 'sweetalert2';
 import 'sweetalert2/dist/sweetalert2.min.css';
 import type { ReactNode } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -16,7 +16,8 @@ import { initialsFor } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
 import { ReviewInstanceModal } from '@/pages/coach/shared/ReviewInstanceModal';
-import { openReviewInstanceForEvent } from '@/api/reviewInstances';
+import { openReviewInstanceForEvent, fetchLearnerAdditionReviewTemplates, createLearnerReviewAddition } from '@/api/reviewInstances';
+import type { LearnerAdditionReviewTemplate, LearnerAdditionReasonCode } from '@/api/reviewInstances';
 import {
   buildCoachSourceOptions,
   eventMatchesSourceFilter,
@@ -28,16 +29,19 @@ import {
 } from './sourceFilters';
 import {
   bookCoachCalendarEvent,
+  navigateMeetingWindow,
+  openPendingMeetingWindow,
+  scheduleCoachCalendarEvent,
   statusLabel,
   statusPillClass,
 } from '@/pages/coach/shared/calendarEvents';
+import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 import {
   ModernDatePicker,
   ModernDurationPicker,
   ScheduleFieldLabel,
   ScheduleTimeInput,
 } from '@/pages/coach/shared/ScheduleControls';
-import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import { LearnerAvatar, LearnerIdentity } from '@/pages/coach/shared/LearnerIdentity';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { EventDetailLine } from './components/EventDetailLine';
@@ -48,6 +52,23 @@ const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/timetable';
 const SCHEDULE_ENDPOINT = '/coach_api/coach/timetable/events/schedule';
 const ACTION_ENDPOINT = '/coach_api/coach/timetable/events/action';
+
+function isReviewDetailEvent(event: TimetableEvent) {
+  return event.type === 'review'
+    || event.source === 'progress-review'
+    || event.source === 'review'
+    || Boolean(event.reviewTemplateId);
+}
+
+function eventDetailsPath(event: TimetableEvent) {
+  const key = event.eventKey || event.id;
+  if (!key) return null;
+  if (event.source === 'mcr' || event.source === 'catch-up' || event.source === 'student-support') {
+    return `/coach/meetings/${encodeURIComponent(key)}`;
+  }
+  if (isReviewDetailEvent(event)) return `/coach/reviews/${encodeURIComponent(key)}`;
+  return null;
+}
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Types
@@ -175,7 +196,7 @@ interface TimetableFocusIntent {
   group?: string;
 }
 
-type CoachBookableSessionType = 'catch-up' | 'student-support';
+type CoachBookableSessionType = 'catch-up' | 'student-support' | 'review';
 type ApiError = Error & { status?: number };
 
 const EMPTY_SUMMARY_METRICS: TimetableSummaryMetrics = {
@@ -794,13 +815,13 @@ function isSelectableScheduleEvent(event: TimetableEvent) {
 
 function canEditScheduleEvent(event: TimetableEvent | null | undefined): event is TimetableEvent {
   if (!event || !isSchedulableSource(event.source)) return false;
-  return !['completed', 'confirmed', 'awaiting-signature'].includes(event.status);
+  return !['completed', 'confirmed', 'in-progress', 'awaiting-signature'].includes(event.status);
 }
 
 function scheduleActionLabel(event: TimetableEvent | null | undefined) {
   if (!event) return 'Schedule';
   if (event.status === 'cancelled') return 'Schedule Again';
-  if (event.status === 'scheduled' || event.status === 'in-progress') return 'Reschedule';
+  if (event.status === 'scheduled') return 'Reschedule';
   if (event.source === 'catch-up' || event.source === 'student-support') return 'Approve & Schedule';
   return 'Schedule';
 }
@@ -864,6 +885,7 @@ function matchesSearchTerm(event: TimetableEvent, searchTerm: string) {
    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function CoachTimetablePage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const coach = useCoachIdentity();
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -891,6 +913,15 @@ export default function CoachTimetablePage() {
   const [createSessionNotes, setCreateSessionNotes] = useState('');
   const [createSessionBusy, setCreateSessionBusy] = useState(false);
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
+  // Learner-specific additional Review (Create session -> Review). A
+  // dedicated canonical occurrence for ONE learner -- see
+  // createLearnerReviewAddition -- never a standalone calendar row.
+  const [createSessionReviewTemplates, setCreateSessionReviewTemplates] = useState<LearnerAdditionReviewTemplate[]>([]);
+  const [createSessionReviewTemplatesLoading, setCreateSessionReviewTemplatesLoading] = useState(false);
+  const [createSessionReviewTemplateId, setCreateSessionReviewTemplateId] = useState('');
+  const [createSessionReviewTargetDate, setCreateSessionReviewTargetDate] = useState('');
+  const [createSessionReviewReasonCode, setCreateSessionReviewReasonCode] = useState<LearnerAdditionReasonCode | ''>('');
+  const [createSessionReviewReason, setCreateSessionReviewReason] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [eventActionBusy, setEventActionBusy] = useState(false);
@@ -901,6 +932,7 @@ export default function CoachTimetablePage() {
   // Review template's occurrence can open one; nothing here is per-review-type.
   const [reviewFormEvent, setReviewFormEvent] = useState<TimetableEvent | null>(null);
   const [reviewFormInstanceId, setReviewFormInstanceId] = useState('');
+  const [reviewFormShowManualOverride, setReviewFormShowManualOverride] = useState(false);
   const [reviewFormBusy, setReviewFormBusy] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleModalType, setScheduleModalType] = useState<SchedulableSource>('mcr');
@@ -1430,8 +1462,43 @@ export default function CoachTimetablePage() {
     setCreateSessionError(null);
     setCreateSessionLearnerSearch('');
     setCreateSessionLearnerPickerOpen(false);
+    setCreateSessionReviewTemplates([]);
+    setCreateSessionReviewTemplateId('');
+    setCreateSessionReviewTargetDate('');
+    setCreateSessionReviewReasonCode('');
+    setCreateSessionReviewReason('');
     setCreateSessionOpen(true);
   }, [coachWorkspaceReadOnly, createSessionLearnerOptions, getDefaultCreateSessionDate, selectedEvent]);
+
+  // Enabled Review templates for the CURRENTLY selected learner only -- the
+  // coach can only pick from what that learner's own programme offers (see
+  // coach_review_learner_addition_templates); refetched whenever the
+  // learner or session type changes so a stale list never leaks between
+  // learners.
+  useEffect(() => {
+    if (!createSessionOpen || createSessionType !== 'review' || !createSessionLearnerId) {
+      return;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    setCreateSessionReviewTemplatesLoading(true);
+    setCreateSessionReviewTemplateId('');
+    fetchLearnerAdditionReviewTemplates(createSessionLearnerId, controller.signal)
+      .then(body => {
+        if (cancelled) return;
+        setCreateSessionReviewTemplates(body.templates);
+      })
+      .catch(() => {
+        if (!cancelled) setCreateSessionReviewTemplates([]);
+      })
+      .finally(() => {
+        if (!cancelled) setCreateSessionReviewTemplatesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [createSessionOpen, createSessionType, createSessionLearnerId]);
 
   const closeCreateSessionModal = useCallback(() => {
     if (createSessionBusy) return;
@@ -1594,6 +1661,67 @@ export default function CoachTimetablePage() {
     updateSingleEvent,
   ]);
 
+  // "Add Review" / "Add & Schedule" -- Create session -> Review. Always
+  // creates the canonical learner-specific occurrence first (never a
+  // standalone calendar row); scheduling is a second, separate step that
+  // reuses the SAME scheduleCoachCalendarEvent helper any other generated
+  // Review occurrence is booked through -- no duplicated Graph logic here.
+  const handleAddLearnerReview = useCallback(async (alsoSchedule: boolean) => {
+    if (!createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate) return;
+    if (alsoSchedule && (!createSessionDate || !createSessionTime)) return;
+
+    setCreateSessionBusy(true);
+    setCreateSessionError(null);
+    try {
+      const addition = await createLearnerReviewAddition({
+        learnerId: createSessionLearnerId,
+        reviewTemplateId: createSessionReviewTemplateId,
+        targetDate: createSessionReviewTargetDate,
+        reasonCode: createSessionReviewReasonCode,
+        reason: createSessionReviewReason,
+      });
+
+      if (alsoSchedule) {
+        const { event: scheduledEvent, warning } = await scheduleCoachCalendarEvent(
+          { eventKey: addition.eventKey } as CoachCalendarEvent,
+          { date: createSessionDate, time: createSessionTime, durationMinutes: createSessionDuration },
+        );
+        updateSingleEvent(scheduledEvent as unknown as TimetableEvent);
+        focusEventOnCalendar(scheduledEvent as unknown as TimetableEvent);
+        setEventActionNotice(sanitizeCalendarSyncMessage(warning) || 'Review added and scheduled.');
+      } else {
+        setEventActionNotice(`${addition.reviewName || 'Review'} added for this learner -- Not Scheduled.`);
+        // No CoachCalendarEvent exists yet for a not-scheduled addition (see
+        // handleAddLearnerReview's docstring) -- there is nothing to merge
+        // into `events` via updateSingleEvent, so reload the timetable the
+        // same way the initial mount effect does.
+        await loadTimetable({ cancelled: false }, new AbortController().signal, () => false);
+      }
+
+      setEventActionError(null);
+      setCreateSessionOpen(false);
+      setCreateSessionLearnerSearch('');
+      setCreateSessionLearnerPickerOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to add this review';
+      setCreateSessionError(message);
+    } finally {
+      setCreateSessionBusy(false);
+    }
+  }, [
+    createSessionDate,
+    createSessionDuration,
+    createSessionLearnerId,
+    createSessionReviewReason,
+    createSessionReviewReasonCode,
+    createSessionReviewTargetDate,
+    createSessionReviewTemplateId,
+    createSessionTime,
+    focusEventOnCalendar,
+    loadTimetable,
+    updateSingleEvent,
+  ]);
+
   const handleModalScheduleSave = useCallback(async () => {
     if (!selectedScheduleEvent?.eventKey) return;
 
@@ -1639,7 +1767,7 @@ export default function CoachTimetablePage() {
     updateSingleEvent,
   ]);
 
-  const openReviewForm = useCallback(async (event: TimetableEvent) => {
+  const openReviewForm = useCallback(async (event: TimetableEvent, showManualOverride = false) => {
     if (!event.eventKey) return;
     setEventActionError(null);
     setEventActionNotice(null);
@@ -1648,6 +1776,7 @@ export default function CoachTimetablePage() {
       const { instanceId } = await openReviewInstanceForEvent(event.eventKey);
       setReviewFormInstanceId(instanceId);
       setReviewFormEvent(event);
+      setReviewFormShowManualOverride(showManualOverride);
     } catch (err) {
       setEventActionError(err instanceof Error ? err.message : 'Unable to open this review form.');
     } finally {
@@ -1706,6 +1835,9 @@ export default function CoachTimetablePage() {
       setProgressReviewCompletionEvent(selectedEvent);
       return;
     }
+    const startUrl = action === 'start' ? selectedEvent.meetingLink || selectedEvent.graphWebLink || '' : '';
+    if (startUrl) window.open(startUrl, '_blank', 'noopener,noreferrer');
+    const meetingWindow = action === 'start' && !startUrl ? openPendingMeetingWindow() : null;
 
     setEventActionBusy(true);
     setEventActionError(null);
@@ -1724,11 +1856,18 @@ export default function CoachTimetablePage() {
       const updatedEvent = data.event as TimetableEvent;
       const nextSelectedEvent = updateSingleEvent(updatedEvent);
       setEventActionNotice(sanitizeCalendarSyncMessage(data.warning) || null);
-      if (action === 'start' && (nextSelectedEvent.meetingLink || nextSelectedEvent.graphWebLink)) {
-        window.open(nextSelectedEvent.meetingLink || nextSelectedEvent.graphWebLink, '_blank', 'noopener,noreferrer');
+      if (action === 'start' && !startUrl && (nextSelectedEvent.meetingLink || nextSelectedEvent.graphWebLink)) {
+        navigateMeetingWindow(meetingWindow, nextSelectedEvent.meetingLink || nextSelectedEvent.graphWebLink);
+      }
+      if (action === 'start' && !startUrl && !(nextSelectedEvent.meetingLink || nextSelectedEvent.graphWebLink) && meetingWindow && !meetingWindow.closed) {
+        meetingWindow.close();
       }
     } catch (err) {
-      setEventActionError(err instanceof Error ? err.message : 'Unable to update event');
+      if (meetingWindow && !meetingWindow.closed) meetingWindow.close();
+      const message = err instanceof Error ? err.message : 'Unable to update event';
+      if (!(action === 'start' && startUrl && message === 'Only a scheduled event can be started.')) {
+        setEventActionError(message);
+      }
     } finally {
       setEventActionBusy(false);
     }
@@ -1750,6 +1889,7 @@ export default function CoachTimetablePage() {
   const selectedEventMeetingProvider = formatMeetingProviderLabel(selectedEvent, selectedEventMeetingHost);
   const selectedEventNotes = sanitizeEventNotes(selectedEvent?.notes);
   const selectedEventFeedback = sanitizeCalendarSyncMessage(eventActionError || eventActionNotice);
+  const selectedEventDetailsPath = selectedEvent ? eventDetailsPath(selectedEvent) : null;
   const selectedScheduleEventNotes = sanitizeEventNotes(selectedScheduleEvent?.notes);
   const scheduleModalFeedback = sanitizeCalendarSyncMessage(scheduleModalError || scheduleModalNotice);
   const scheduleModalTitle = scheduleModalCompact
@@ -1758,6 +1898,13 @@ export default function CoachTimetablePage() {
   const scheduleModalDescription = scheduleModalCompact
     ? 'Choose the new calendar slot for this event.'
     : 'Choose source, select item, then approve the final calendar slot.';
+
+  const openSelectedEventDetails = () => {
+    if (!selectedEventDetailsPath) return;
+    navigate(selectedEventDetailsPath, {
+      state: { returnTo: `${location.pathname}${location.search}` },
+    });
+  };
 
   return (
     <WorkspaceShell
@@ -1985,13 +2132,13 @@ export default function CoachTimetablePage() {
             </div>
           </div>
 
-          <div className="mt-2 grid grid-cols-1 items-center gap-3 border-t border-background-100 pt-3 xl:grid-cols-[minmax(0,0.78fr)_minmax(0,1.42fr)]">
+          <div className="mt-2 grid grid-cols-1 items-start gap-3 border-t border-background-100 pt-3 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
             <div className="min-w-0 rounded-lg bg-background-50/60 px-3 py-2">
               <div className="mb-2 flex items-center gap-2">
                 <p className="text-[12px] font-bold uppercase tracking-wide text-foreground-400">Source</p>
                 <span className="text-[12px] font-bold text-foreground-400">{sourceFilteredVisibleRangeEvents.length} events</span>
               </div>
-              <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1">
+              <div className="flex flex-wrap gap-2">
                 {sourceFilterOptions.map(option => {
                   const isActive = filterSource === option.value;
                   return (
@@ -2019,7 +2166,7 @@ export default function CoachTimetablePage() {
                 <p className="text-[12px] font-bold uppercase tracking-wide text-foreground-400">Status</p>
                 <span className="truncate text-[12px] font-bold text-foreground-400">{activeFilterLabel}</span>
               </div>
-              <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1">
+              <div className="flex flex-wrap gap-2">
                 {STATUS_FILTER_ORDER.map(status => {
                   const isActive = filterStatus === status;
                   return (
@@ -2380,6 +2527,17 @@ export default function CoachTimetablePage() {
                   <span className={`rounded-full px-2.5 py-1 ${statusPillClass(selectedEvent.status)}`}>{statusLabel(selectedEvent.status)}</span>
                   {selectedEvent.priority !== 'normal' && <span className={`rounded-full border px-2.5 py-1 ${priorityBadge(selectedEvent.priority)}`}>{selectedEvent.priority === 'urgent' ? 'Urgent' : 'High'}</span>}
                 </>}
+                headerAction={selectedEventDetailsPath && (
+                  <button
+                    type="button"
+                    onClick={openSelectedEventDetails}
+                    disabled={eventActionBusy}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+                  >
+                    <AppIcon className="ri-arrow-right-up-line"></AppIcon>
+                    View details
+                  </button>
+                )}
                 actions={<>
                   {!isLiveSessionEvent(selectedEvent) && canEditScheduleEvent(selectedEvent) && (
                         <button
@@ -2489,7 +2647,6 @@ export default function CoachTimetablePage() {
                         <p className="text-[12px] leading-5 text-foreground-700">{selectedEventNotes}</p>
                       </div>
                     )}
-                    <CoachMeetingArtifactsPanel event={selectedEvent} />
                   </div>
                   {selectedEventFeedback && (
                     <div className={`mt-4 rounded-lg border px-3 py-2 text-[12px] ${eventActionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
@@ -2566,6 +2723,16 @@ export default function CoachTimetablePage() {
                           </p>
                         </div>
                       </div>
+                      {selectedEvent.status === 'scheduled' && selectedEvent.reviewTemplateId && selectedEvent.scheduledDate && selectedEvent.scheduledTime
+                        && new Date(`${selectedEvent.scheduledDate}T${selectedEvent.scheduledTime}`).getTime() < Date.now() && (
+                        <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                          <AppIcon className="ri-time-line"></AppIcon>
+                          {/* Derived, display-only: the scheduled time has passed and no Teams attendance has moved
+                              this to In Progress yet -- backend status stays "scheduled" (see Phase 3/4 report);
+                              this is not a new lifecycle status. */}
+                          Meeting time has passed and no attendance has been detected yet.
+                        </div>
+                      )}
                       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-background-100 pt-3">
 
                         {selectedEvent.status === 'scheduled' && (
@@ -2577,6 +2744,16 @@ export default function CoachTimetablePage() {
                           <AppIcon className="ri-play-circle-line mr-1"></AppIcon>Start
                           </button>
                         )}
+                        {selectedEvent.status === 'scheduled' && selectedEvent.reviewTemplateId && (
+                          <button
+                            type="button"
+                            onClick={() => openReviewForm(selectedEvent, true)}
+                            disabled={eventActionBusy || reviewFormBusy}
+                            className="rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-[12px] font-bold text-amber-800 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 whitespace-nowrap"
+                          >
+                            <AppIcon className="ri-flashlight-line mr-1"></AppIcon>Mark In Progress
+                          </button>
+                        )}
                         {selectedEvent.status === 'in-progress' && (selectedEvent.meetingLink || selectedEvent.graphWebLink) && (
                           <button
                             onClick={handleJoinSelectedMeeting}
@@ -2586,7 +2763,12 @@ export default function CoachTimetablePage() {
                             <AppIcon className="ri-video-on-line mr-1"></AppIcon>Join
                           </button>
                         )}
-                        {selectedEvent.status === 'in-progress' && !(selectedEvent.source === 'progress-review' && selectedEvent.reviewTemplateId) && (
+                        {/* A row with a reviewTemplateId is (or will be, once opened) linked to a
+                            Curriculum-driven review_instance -- its "Open form" button above is the
+                            canonical way to finish and complete it. This legacy button, which posts
+                            the hard-coded reviewResponses payload, stays only for rows that are not
+                            (yet) linked; the backend applies the same rule (coach_timetable_event_action). */}
+                        {selectedEvent.status === 'in-progress' && !selectedEvent.reviewTemplateId && (
                           <button
                             onClick={() => handleEventAction('complete')}
                             disabled={eventActionBusy}
@@ -2874,6 +3056,7 @@ export default function CoachTimetablePage() {
                   {[
                     { value: 'catch-up' as CoachBookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', description: 'Quick progress check-in' },
                     { value: 'student-support' as CoachBookableSessionType, label: 'Support', icon: 'ri-heart-2-line', description: 'Extra support for learner needs' },
+                    { value: 'review' as CoachBookableSessionType, label: 'Review', icon: 'ri-file-list-3-line', description: 'Add an extra Review for this learner' },
                   ].map((sessionType) => {
                     const isActive = createSessionType === sessionType.value;
                     return (
@@ -2898,9 +3081,82 @@ export default function CoachTimetablePage() {
                 </div>
               </section>
 
+              {createSessionType === 'review' && (
+                <section className="grid gap-3 md:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Review</span>
+                    <select
+                      value={createSessionReviewTemplateId}
+                      onChange={event => setCreateSessionReviewTemplateId(event.target.value)}
+                      disabled={createSessionReviewTemplatesLoading || !createSessionReviewTemplates.length}
+                      className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200 disabled:opacity-60"
+                    >
+                      <option value="">
+                        {createSessionReviewTemplatesLoading
+                          ? 'Loading…'
+                          : createSessionReviewTemplates.length
+                            ? 'Select a Review template'
+                            : 'No Review templates configured for this learner’s programme'}
+                      </option>
+                      {createSessionReviewTemplates.map(template => (
+                        <option key={template.id} value={template.id}>{template.name}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Target date</span>
+                    <input
+                      type="date"
+                      value={createSessionReviewTargetDate}
+                      onChange={event => setCreateSessionReviewTargetDate(event.target.value)}
+                      className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Reason (Optional)</span>
+                    <select
+                      value={createSessionReviewReasonCode}
+                      onChange={event => setCreateSessionReviewReasonCode(event.target.value as LearnerAdditionReasonCode | '')}
+                      className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                    >
+                      <option value="">Select a reason</option>
+                      <option value="additional-coaching">Additional coaching required</option>
+                      <option value="learner-request">Learner request</option>
+                      <option value="employer-request">Employer request</option>
+                      <option value="performance-concern">Performance concern</option>
+                      <option value="safeguarding-follow-up">Safeguarding follow-up</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </label>
+
+                  <label className="block md:col-span-2">
+                    <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Note (Optional)</span>
+                    <textarea
+                      value={createSessionReviewReason}
+                      onChange={event => setCreateSessionReviewReason(event.target.value.slice(0, 1000))}
+                      placeholder="Add any context for this additional Review..."
+                      rows={2}
+                      className="w-full rounded-lg border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm placeholder:text-foreground-400 focus:outline-none focus:ring-2 focus:ring-primary-200 resize-none"
+                    />
+                  </label>
+                </section>
+              )}
+
+              {createSessionType === 'review' && (
+                <p className="text-[12px] text-foreground-500">
+                  Fill in the meeting date/time below only if you want to schedule the Teams meeting now with
+                  <span className="font-semibold"> Add &amp; Schedule</span>. Otherwise, use
+                  <span className="font-semibold"> Add Review</span> to add it as Not Scheduled.
+                </p>
+              )}
+
               <section className="grid gap-3 md:grid-cols-2">
                 <label className="block">
-                  <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Date</span>
+                  <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">
+                    {createSessionType === 'review' ? 'Meeting date (for Add & Schedule)' : 'Date'}
+                  </span>
                   <input
                     type="date"
                     value={createSessionDate}
@@ -2911,7 +3167,9 @@ export default function CoachTimetablePage() {
                 </label>
 
                 <label className="block">
-                  <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Time</span>
+                  <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">
+                    {createSessionType === 'review' ? 'Meeting time (for Add & Schedule)' : 'Time'}
+                  </span>
                   <input
                     type="time"
                     value={createSessionTime}
@@ -2936,19 +3194,21 @@ export default function CoachTimetablePage() {
                 </label>
               </section>
 
-              <section>
-                <label className="block">
-                  <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Notes (Optional)</span>
-                  <textarea
-                    value={createSessionNotes}
-                    onChange={event => setCreateSessionNotes(event.target.value.slice(0, 500))}
-                    placeholder="Add anything the learner should know before the session..."
-                    rows={4}
-                    className="w-full rounded-lg border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm placeholder:text-foreground-400 focus:outline-none focus:ring-2 focus:ring-primary-200 resize-none"
-                  />
-                </label>
-                <p className="mt-1 text-[12px] text-foreground-400">{createSessionNotes.length}/500</p>
-              </section>
+              {createSessionType !== 'review' && (
+                <section>
+                  <label className="block">
+                    <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Notes (Optional)</span>
+                    <textarea
+                      value={createSessionNotes}
+                      onChange={event => setCreateSessionNotes(event.target.value.slice(0, 500))}
+                      placeholder="Add anything the learner should know before the session..."
+                      rows={4}
+                      className="w-full rounded-lg border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm placeholder:text-foreground-400 focus:outline-none focus:ring-2 focus:ring-primary-200 resize-none"
+                    />
+                  </label>
+                  <p className="mt-1 text-[12px] text-foreground-400">{createSessionNotes.length}/500</p>
+                </section>
+              )}
 
               {createSessionError && (
                 <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -2964,15 +3224,41 @@ export default function CoachTimetablePage() {
                 >
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  onClick={handleCreateSession}
-                  disabled={createSessionBusy || !createSessionLearnerId || !createSessionDate || !createSessionTime}
-                  className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <AppIcon className={`${createSessionBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></AppIcon>
-                  {createSessionBusy ? 'Booking...' : 'Book Session'}
-                </button>
+                {createSessionType === 'review' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleAddLearnerReview(false)}
+                      disabled={createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId || !createSessionReviewTargetDate}
+                      className="inline-flex items-center gap-2 rounded-lg border border-primary-300 px-4 py-2.5 text-sm font-semibold text-primary-700 shadow-sm transition-smooth hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <AppIcon className={`${createSessionBusy ? 'ri-loader-4-line animate-spin' : 'ri-file-add-line'} text-base`}></AppIcon>
+                      Add Review
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleAddLearnerReview(true)}
+                      disabled={
+                        createSessionBusy || !createSessionLearnerId || !createSessionReviewTemplateId
+                        || !createSessionReviewTargetDate || !createSessionDate || !createSessionTime
+                      }
+                      className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <AppIcon className={`${createSessionBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></AppIcon>
+                      {createSessionBusy ? 'Adding...' : 'Add & Schedule'}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleCreateSession}
+                    disabled={createSessionBusy || !createSessionLearnerId || !createSessionDate || !createSessionTime}
+                    className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <AppIcon className={`${createSessionBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></AppIcon>
+                    {createSessionBusy ? 'Booking...' : 'Book Session'}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -3248,11 +3534,20 @@ export default function CoachTimetablePage() {
           key={reviewFormInstanceId}
           event={reviewFormEvent}
           instanceId={reviewFormInstanceId}
-          onClose={() => { setReviewFormEvent(null); setReviewFormInstanceId(''); }}
+          showManualOverrideOnOpen={reviewFormShowManualOverride}
+          onClose={() => {
+            setReviewFormEvent(null);
+            setReviewFormInstanceId('');
+            setReviewFormShowManualOverride(false);
+          }}
+          onStatusChanged={(status) => {
+            updateSingleEvent({ ...reviewFormEvent, status: status as TimetableEvent['status'] });
+          }}
           onCompleted={(status) => {
             updateSingleEvent({ ...reviewFormEvent, status: status as TimetableEvent['status'] });
             setReviewFormEvent(null);
             setReviewFormInstanceId('');
+            setReviewFormShowManualOverride(false);
           }}
         />
       )}

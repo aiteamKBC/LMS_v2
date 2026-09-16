@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { RowAction } from '@/components/ui/ActionRow';
+import { ActionRow, RowAction } from '@/components/ui/ActionRow';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterChip, FilterSelect, FilterToolbar, SearchInput } from '@/components/ui/FilterToolbar';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -10,19 +11,15 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { Pagination } from '@/components/ui/Pagination';
 import { Panel } from '@/components/ui/Panel';
+import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { cn } from '@/lib/cn';
+import { statusTone, type StatusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
-import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
-import { MonthlyCoachingCompletionModal } from './MonthlyCoachingCompletionModal';
-import { CalendarEventMeta, CalendarEventRow } from '../shared/CalendarEventRow';
-import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
-import { InfoTile, ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
-import { ReviewInstanceModal } from '../shared/ReviewInstanceModal';
+import { LearnerAvatar } from '../shared/LearnerIdentity';
+import { CalendarEventMeta } from '../shared/CalendarEventRow';
 import {
-  type CalendarAction,
   type CoachCalendarEvent,
-  type ScheduleFormState,
   eventDisplayDate,
   eventIdentity,
   fetchCoachCalendarEvents,
@@ -36,10 +33,8 @@ import {
   isScheduledEvent,
   meetingUrl,
   needsScheduling,
-  runCoachCalendarAction,
-  scheduleCoachCalendarEvent,
-  scheduleDefaults,
   sortEvents,
+  statusLabel,
 } from '../shared/calendarEvents';
 
 const coachNav = roleNavMap.coach;
@@ -47,48 +42,19 @@ const coachNav = roleNavMap.coach;
 type MeetingFilter = 'this-month' | 'at-risk' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'completed' | 'all';
 
 const FILTER_COPY: Record<MeetingFilter, { label: string; description: string }> = {
-  'this-month': {
-    label: 'This Month',
-    description: 'Monthly coaching meetings with a target or scheduled date inside the current month, excluding completed meetings.',
-  },
-  'at-risk': {
-    label: 'Overdue',
-    description: 'Monthly coaching meetings where the target date has passed and the meeting is still not scheduled.',
-  },
-  'due-soon': {
-    label: 'Due Soon',
-    description: 'Monthly coaching meetings not scheduled yet and due within the next 14 days.',
-  },
-  'needs-schedule': {
-    label: 'Not Scheduled',
-    description: 'Monthly coaching meetings that still need a first calendar booking.',
-  },
-  scheduled: {
-    label: 'Scheduled',
-    description: 'Monthly coaching meetings that are booked and waiting to start.',
-  },
-  'in-progress': {
-    label: 'In Progress',
-    description: 'Monthly coaching meetings that have already been started by the coach.',
-  },
-  completed: {
-    label: 'Completed',
-    description: 'Monthly coaching meetings marked as completed or confirmed.',
-  },
-  all: {
-    label: 'All',
-    description: 'Every generated monthly coaching meeting for this coach across the learner programme dates.',
-  },
-};
-
-const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
-  date: '',
-  time: '09:00',
-  durationMinutes: 60,
+  'this-month': { label: 'This Month', description: 'Monthly coaching meetings due or scheduled this month.' },
+  'at-risk': { label: 'Overdue', description: 'Meetings whose target date has passed and still need scheduling.' },
+  'due-soon': { label: 'Due Soon', description: 'Unscheduled meetings due within the next 14 days.' },
+  'needs-schedule': { label: 'Not Scheduled', description: 'Meetings that still need their first calendar booking.' },
+  scheduled: { label: 'Scheduled', description: 'Booked meetings waiting for confirmed attendance.' },
+  'in-progress': { label: 'In Progress', description: 'Meetings with confirmed attendance or a manual start.' },
+  completed: { label: 'Completed', description: 'Finished monthly coaching meetings.' },
+  all: { label: 'All', description: 'Every generated monthly coaching meeting for this coach.' },
 };
 
 const MEETINGS_PER_PAGE = 10;
 const ALL_GROUPS_FILTER = 'all-groups';
+const FILTER_VALUES = new Set<MeetingFilter>(Object.keys(FILTER_COPY) as MeetingFilter[]);
 
 function groupCohortFilterKey(event: CoachCalendarEvent) {
   const value = event.group?.trim() || event.cohort?.trim();
@@ -97,45 +63,57 @@ function groupCohortFilterKey(event: CoachCalendarEvent) {
 }
 
 function groupCohortFilterLabel(event: CoachCalendarEvent) {
-  const group = event.group?.trim();
-  if (group) return `Group: ${group}`;
-  const cohort = event.cohort?.trim();
-  if (cohort) return `Cohort: ${cohort}`;
+  if (event.group?.trim()) return `Group: ${event.group.trim()}`;
+  if (event.cohort?.trim()) return `Cohort: ${event.cohort.trim()}`;
   return '';
 }
 
 function matchesMeetingSearch(event: CoachCalendarEvent, searchTerm: string) {
-  const normalized = searchTerm.trim().toLowerCase();
-  if (!normalized) return true;
-
   const haystack = [event.learner, event.email, event.programme, event.cohort, event.group, event.learnerId]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
+  return searchTerm.trim().toLowerCase().split(/\s+/).filter(Boolean).every(token => haystack.includes(token));
+}
 
-  return normalized
-    .split(/\s+/)
-    .filter(Boolean)
-    .every(token => haystack.includes(token));
+function meetingTone(event: CoachCalendarEvent): StatusTone {
+  if (isAtRiskEvent(event)) return 'critical';
+  if (isDueSoonEvent(event)) return 'caution';
+  if (event.status === 'scheduled' || event.status === 'in-progress') return 'info';
+  if (isCompletedEvent(event)) return 'positive';
+  return 'neutral';
+}
+
+function filterFromQuery(value: string | null): MeetingFilter {
+  return value && FILTER_VALUES.has(value as MeetingFilter) ? value as MeetingFilter : 'this-month';
+}
+
+function pageFromQuery(value: string | null) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
 export default function CoachMeetings() {
   const coach = useCoachIdentity();
   const navigate = useNavigate();
-  const [filter, setFilter] = useState<MeetingFilter>('this-month');
-  const [groupFilter, setGroupFilter] = useState(ALL_GROUPS_FILTER);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [filter, setFilter] = useState<MeetingFilter>(() => filterFromQuery(searchParams.get('filter')));
+  const [groupFilter, setGroupFilter] = useState(() => searchParams.get('group') || ALL_GROUPS_FILTER);
+  const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '');
+  const [currentPage, setCurrentPage] = useState(() => pageFromQuery(searchParams.get('page')));
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
   const [ownerName, setOwnerName] = useState('Coach');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(EMPTY_SCHEDULE_FORM);
-  const [busyEventId, setBusyEventId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [actionNotice, setActionNotice] = useState<string | null>(null);
-  const [completionEvent, setCompletionEvent] = useState<CoachCalendarEvent | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (filter !== 'this-month') params.set('filter', filter);
+    if (groupFilter !== ALL_GROUPS_FILTER) params.set('group', groupFilter);
+    if (searchTerm.trim()) params.set('q', searchTerm.trim());
+    if (currentPage > 1) params.set('page', String(currentPage));
+    setSearchParams(params, { replace: true });
+  }, [currentPage, filter, groupFilter, searchTerm, setSearchParams]);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -147,25 +125,21 @@ export default function CoachMeetings() {
       return;
     }
     const controller = new AbortController();
-
-    const loadEvents = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await fetchCoachCalendarEvents(controller.signal);
-        const mcrEvents = sortEvents((data.events || []).filter(event => event.source === 'mcr'));
-        setEvents(mcrEvents);
+    setLoading(true);
+    setError(null);
+    fetchCoachCalendarEvents(controller.signal)
+      .then((data) => {
+        setEvents(sortEvents((data.events || []).filter(event => event.source === 'mcr')));
         setOwnerName(data.owner?.name || coach.name);
-      } catch (err) {
+      })
+      .catch((err) => {
         if (err instanceof DOMException && err.name === 'AbortError') return;
         setEvents([]);
         setError(err instanceof Error ? err.message : 'Unable to load coaching meetings.');
-      } finally {
+      })
+      .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
-      }
-    };
-
-    loadEvents();
+      });
     return () => controller.abort();
   }, [coach.email, coach.isInitialized, coach.name]);
 
@@ -176,6 +150,7 @@ export default function CoachMeetings() {
   const scheduledEvents = events.filter(event => isScheduledEvent(event));
   const inProgressEvents = events.filter(event => isInProgressEvent(event));
   const completedEvents = events.filter(event => isCompletedEvent(event));
+
   const groupFilterOptions = useMemo(() => {
     const seen = new Set<string>();
     const options = events.reduce<{ value: string; label: string }[]>((items, event) => {
@@ -186,7 +161,6 @@ export default function CoachMeetings() {
       items.push({ value, label });
       return items;
     }, []);
-
     return [
       { value: ALL_GROUPS_FILTER, label: 'All groups / cohorts' },
       ...options.sort((a, b) => a.label.localeCompare(b.label)),
@@ -194,10 +168,9 @@ export default function CoachMeetings() {
   }, [events]);
 
   useEffect(() => {
-    if (groupFilter === ALL_GROUPS_FILTER) return;
-    if (groupFilterOptions.some((option) => option.value === groupFilter)) return;
-    setGroupFilter(ALL_GROUPS_FILTER);
-  }, [groupFilter, groupFilterOptions]);
+    if (groupFilter === ALL_GROUPS_FILTER || loading) return;
+    if (!groupFilterOptions.some(option => option.value === groupFilter)) setGroupFilter(ALL_GROUPS_FILTER);
+  }, [groupFilter, groupFilterOptions, loading]);
 
   const tabFiltered = events.filter(event => {
     if (filter === 'this-month') return isEventThisMonth(event);
@@ -212,16 +185,16 @@ export default function CoachMeetings() {
   const groupFiltered = groupFilter === ALL_GROUPS_FILTER
     ? tabFiltered
     : tabFiltered.filter(event => groupCohortFilterKey(event) === groupFilter);
-  const normalizedSearchTerm = searchTerm.trim();
-  const filtered = normalizedSearchTerm
-    ? groupFiltered.filter(event => matchesMeetingSearch(event, normalizedSearchTerm))
+  const filtered = searchTerm.trim()
+    ? groupFiltered.filter(event => matchesMeetingSearch(event, searchTerm))
     : groupFiltered;
   const pageCount = Math.ceil(filtered.length / MEETINGS_PER_PAGE);
   const activePage = Math.min(currentPage, Math.max(pageCount, 1));
-  const paginatedEvents = filtered.slice(
-    (activePage - 1) * MEETINGS_PER_PAGE,
-    activePage * MEETINGS_PER_PAGE,
-  );
+  const paginatedEvents = filtered.slice((activePage - 1) * MEETINGS_PER_PAGE, activePage * MEETINGS_PER_PAGE);
+
+  useEffect(() => {
+    if (!loading && activePage !== currentPage) setCurrentPage(activePage);
+  }, [activePage, currentPage, loading]);
 
   const filterTabs: PageTabItem[] = [
     { value: 'this-month', label: FILTER_COPY['this-month'].label, count: thisMonthEvents.length },
@@ -237,35 +210,36 @@ export default function CoachMeetings() {
   const changeFilter = (nextFilter: MeetingFilter) => {
     setFilter(nextFilter);
     setCurrentPage(1);
-    setExpanded(null);
   };
 
-  const handleSearchChange = (value: string) => {
-    setSearchTerm(value);
-    setCurrentPage(1);
-    setExpanded(null);
+  const listUrl = () => {
+    const query = new URLSearchParams();
+    if (filter !== 'this-month') query.set('filter', filter);
+    if (groupFilter !== ALL_GROUPS_FILTER) query.set('group', groupFilter);
+    if (searchTerm.trim()) query.set('q', searchTerm.trim());
+    if (activePage > 1) query.set('page', String(activePage));
+    const queryString = query.toString();
+    return `/coach/meetings${queryString ? `?${queryString}` : ''}`;
   };
 
-  const handleGroupFilterChange = (value: string) => {
-    setGroupFilter(value);
-    setCurrentPage(1);
-    setExpanded(null);
+  const openDetails = (event: CoachCalendarEvent) => {
+    navigate(`/coach/meetings/${encodeURIComponent(eventIdentity(event))}`, { state: { returnTo: listUrl() } });
   };
 
-  const updateEvent = (updatedEvent: CoachCalendarEvent) => {
-    setEvents(prevEvents => sortEvents(prevEvents.map(event => (
-      eventIdentity(event) === eventIdentity(updatedEvent) ? updatedEvent : event
-    ))));
-    setExpanded(eventIdentity(updatedEvent));
-    setScheduleForm(scheduleDefaults(updatedEvent));
-  };
-
-  const toggleExpanded = (event: CoachCalendarEvent) => {
-    const id = eventIdentity(event);
-    setExpanded(expanded === id ? null : id);
-    setScheduleForm(scheduleDefaults(event));
-    setActionError(null);
-    setActionNotice(event.syncWarning || null);
+  const openLearnerReviews = (event: CoachCalendarEvent) => {
+    const params = new URLSearchParams({ tab: 'reviews' });
+    if (event.learnerId) params.set('id', event.learnerId);
+    if (event.learnerType) params.set('kind', event.learnerType);
+    if (event.enrolmentId) params.set('enrolmentId', event.enrolmentId);
+    navigate(`/coach/learner-case-file?${params.toString()}`, {
+      state: {
+        learnerId: event.learnerId,
+        learnerName: event.learner,
+        kind: event.learnerType,
+        enrolmentId: event.enrolmentId,
+        tab: 'reviews',
+      },
+    });
   };
 
   const openEventInCalendar = (event: CoachCalendarEvent) => {
@@ -282,67 +256,9 @@ export default function CoachMeetings() {
     });
   };
 
-  const handleSchedule = async (event: CoachCalendarEvent) => {
-    setBusyEventId(eventIdentity(event));
-    setActionError(null);
-    setActionNotice(null);
-    try {
-      const data = await scheduleCoachCalendarEvent(event, scheduleForm);
-      updateEvent(data.event);
-      if (data.warning) setActionNotice(data.warning);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to schedule meeting.');
-    } finally {
-      setBusyEventId(null);
-    }
-  };
-
-  const handleAction = async (event: CoachCalendarEvent, action: CalendarAction) => {
-    setBusyEventId(eventIdentity(event));
-    setActionError(null);
-    setActionNotice(null);
-    try {
-      const data = await runCoachCalendarAction(event, action);
-      updateEvent(data.event);
-      if (data.warning) setActionNotice(data.warning);
-      const url = meetingUrl(data.event);
-      if (action === 'start' && url) window.open(url, '_blank', 'noopener,noreferrer');
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to update meeting.');
-    } finally {
-      setBusyEventId(null);
-    }
-  };
-
-  const handleJoin = async (event: CoachCalendarEvent) => {
-    if (event.status === 'scheduled') {
-      await handleAction(event, 'start');
-      return;
-    }
+  const openMeeting = (event: CoachCalendarEvent) => {
     const url = meetingUrl(event);
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
-  };
-
-  const openCompletionForm = (event: CoachCalendarEvent) => {
-    setActionError(null);
-    setCompletionEvent(event);
-  };
-
-  const handleCompleteMeeting = async (responses: ProgressReviewResponses) => {
-    if (!completionEvent) return;
-    setBusyEventId(eventIdentity(completionEvent));
-    setActionError(null);
-    setActionNotice(null);
-    try {
-      const result = await runCoachCalendarAction(completionEvent, 'complete', { reviewResponses: responses });
-      updateEvent(result.event);
-      if (result.warning) setActionNotice(result.warning);
-      setCompletionEvent(null);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to complete monthly coaching meeting.');
-    } finally {
-      setBusyEventId(null);
-    }
   };
 
   return (
@@ -364,18 +280,12 @@ export default function CoachMeetings() {
               )}
             >
               <AppIcon className={atRiskEvents.length > 0 ? 'ri-alarm-warning-line' : 'ri-checkbox-circle-line'}></AppIcon>
-              {atRiskEvents.length > 0
-                ? `${atRiskEvents.length} overdue meeting${atRiskEvents.length === 1 ? '' : 's'}`
-                : 'Everything is on track'}
+              {atRiskEvents.length > 0 ? `${atRiskEvents.length} overdue meeting${atRiskEvents.length === 1 ? '' : 's'}` : 'Everything is on track'}
             </button>
           )}
         />
 
-        {error ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-700">
-            {error}
-          </div>
-        ) : null}
+        {error ? <EmptyState variant="error" title="Unable to load coaching meetings." description={error} /> : null}
 
         <Panel padding="none">
           <div className="border-b border-foreground-100 p-4">
@@ -383,220 +293,63 @@ export default function CoachMeetings() {
               <h3 className="text-[15px] font-semibold text-foreground-900">{FILTER_COPY[filter].label} coaching meetings</h3>
               <p className="mt-0.5 max-w-3xl text-[12px] leading-relaxed text-foreground-500">{FILTER_COPY[filter].description}</p>
             </div>
-
             <FilterToolbar
               className="mb-3 border-0 bg-transparent p-0 shadow-none"
-              search={(
-                <SearchInput
-                  value={searchTerm}
-                  onChange={handleSearchChange}
-                  placeholder="Search learner name..."
-                  ariaLabel="Search coaching meetings by learner"
-                />
-              )}
-              filters={(
-                <FilterSelect
-                  value={groupFilter}
-                  onChange={handleGroupFilterChange}
-                  options={groupFilterOptions}
-                  label="Group"
-                  icon="ri-group-line"
-                  widthClass="w-full sm:w-64"
-                  tone={groupFilter === ALL_GROUPS_FILTER ? 'default' : 'active'}
-                />
-              )}
-              trailing={(
-                <span className="whitespace-nowrap rounded-md bg-primary-50 px-3 py-1 text-[12px] font-bold text-primary-700">
-                  {(normalizedSearchTerm || groupFilter !== ALL_GROUPS_FILTER) ? `${filtered.length} of ${tabFiltered.length}` : filtered.length} {filtered.length === 1 ? 'meeting' : 'meetings'}
-                </span>
-              )}
-              chips={groupFilter !== ALL_GROUPS_FILTER ? (
-                <FilterChip
-                  label="Group/Cohort"
-                  value={groupFilterOptions.find((option) => option.value === groupFilter)?.label.replace(/^(Group|Cohort):\s*/, '') || 'Selected'}
-                  onRemove={() => handleGroupFilterChange(ALL_GROUPS_FILTER)}
-                />
-              ) : null}
+              search={<SearchInput value={searchTerm} onChange={(value) => { setSearchTerm(value); setCurrentPage(1); }} placeholder="Search learner name..." ariaLabel="Search coaching meetings by learner" />}
+              filters={<FilterSelect value={groupFilter} onChange={(value) => { setGroupFilter(value); setCurrentPage(1); }} options={groupFilterOptions} label="Group" icon="ri-group-line" widthClass="w-full sm:w-64" tone={groupFilter === ALL_GROUPS_FILTER ? 'default' : 'active'} />}
+              trailing={<span className="whitespace-nowrap rounded-md bg-primary-50 px-3 py-1 text-[12px] font-bold text-primary-700">{filtered.length} {filtered.length === 1 ? 'meeting' : 'meetings'}</span>}
+              chips={groupFilter !== ALL_GROUPS_FILTER ? <FilterChip label="Group/Cohort" value={groupFilterOptions.find(option => option.value === groupFilter)?.label.replace(/^(Group|Cohort):\s*/, '') || 'Selected'} onRemove={() => { setGroupFilter(ALL_GROUPS_FILTER); setCurrentPage(1); }} /> : null}
             />
-
             <PageTabs items={filterTabs} value={filter} onChange={(next) => changeFilter(next as MeetingFilter)} label="Filter coaching meetings by status" />
           </div>
 
-          <div className="grid gap-3 bg-background-100/55 p-3 sm:p-5 xl:grid-cols-2">
+          <div className="space-y-2 bg-background-100/55 p-3 sm:p-5">
+            {loading ? <RowsSkeleton rows={6} /> : null}
             {!loading && !error && filtered.length === 0 ? (
-              <div className="xl:col-span-2">
-                <EmptyState
-                  variant={tabFiltered.length === 0 ? 'empty' : 'no-matches'}
-                  icon={tabFiltered.length === 0 ? 'ri-calendar-check-line' : 'ri-user-search-line'}
-                  title={tabFiltered.length === 0 ? 'No coaching meetings found.' : 'No learner matches this search.'}
-                />
-              </div>
+              <EmptyState variant={tabFiltered.length === 0 ? 'empty' : 'no-matches'} icon={tabFiltered.length === 0 ? 'ri-calendar-check-line' : 'ri-user-search-line'} title={tabFiltered.length === 0 ? 'No coaching meetings found.' : 'No learner matches this search.'} />
             ) : null}
 
             {!loading && paginatedEvents.map(event => {
-              const isOpen = expanded === eventIdentity(event);
-              const isBusy = busyEventId === eventIdentity(event);
               const url = meetingUrl(event);
               return (
-                <CalendarEventRow
+                <ActionRow
                   key={eventIdentity(event)}
-                  event={event}
-                  isOpen={isOpen}
-                  onToggle={() => toggleExpanded(event)}
+                  tone={meetingTone(event)}
+                  onClick={() => openDetails(event)}
+                  leading={<LearnerAvatar name={event.learner} tone={meetingTone(event)} />}
+                  title={event.learner || 'Unknown learner'}
+                  subtitle={event.programme || event.email || 'Monthly coaching meeting'}
+                  status={(
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <StatusBadge tone={statusTone(event.status)} label={statusLabel(event.status)} size="sm" />
+                      {isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}
+                      {isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}
+                    </span>
+                  )}
                   meta={(
                     <>
-                      <CalendarEventMeta icon="ri-calendar-line">{formatDateLabel(eventDisplayDate(event))}</CalendarEventMeta>
+                      <CalendarEventMeta icon="ri-calendar-line">{event.scheduledDate ? formatDateLabel(event.scheduledDate) : `Target ${formatDateLabel(event.targetDate)}`}</CalendarEventMeta>
                       <CalendarEventMeta icon="ri-time-line">{formatTimeLabel(event)}</CalendarEventMeta>
-                      <CalendarEventMeta icon="ri-video-chat-line">{event.platform || 'Microsoft Teams'}</CalendarEventMeta>
-                      {event.cohort ? (
-                        <span className="hidden lg:inline">
-                          <CalendarEventMeta icon="ri-group-line">{event.cohort}</CalendarEventMeta>
-                        </span>
-                      ) : null}
+                      <CalendarEventMeta icon="ri-group-line">{event.group || event.cohort || '--'}</CalendarEventMeta>
                     </>
                   )}
                   actions={(
-                    <div className="hidden shrink-0 items-center gap-2 lg:flex">
+                    <div className="flex flex-wrap items-center gap-2" onClick={(clickEvent) => clickEvent.stopPropagation()}>
                       <RowAction label="Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(event)} />
-                      {url ? (
-                        <RowAction
-                          label="Join Meeting"
-                          icon="ri-video-on-line"
-                          emphasis="meeting"
-                          disabled={isBusy}
-                          onClick={() => { handleJoin(event); }}
-                        />
-                      ) : null}
-                      <RowAction
-                        label={needsScheduling(event) ? 'Schedule' : 'Manage'}
-                        icon={needsScheduling(event) ? 'ri-calendar-check-line' : 'ri-settings-3-line'}
-                        emphasis="primary"
-                        onClick={() => toggleExpanded(event)}
-                      />
+                      <RowAction label="Profile reviews" icon="ri-user-search-line" onClick={() => openLearnerReviews(event)} />
+                      {url ? <RowAction label="Join" icon="ri-video-on-line" emphasis="meeting" onClick={() => openMeeting(event)} /> : null}
+                      <RowAction label="View details" icon="ri-arrow-right-line" emphasis="primary" onClick={() => openDetails(event)} />
                     </div>
                   )}
-                >
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                      <InfoTile label="Target date" value={formatDateLabel(event.targetDate)} />
-                      <InfoTile label="Scheduled date" value={event.scheduledDate ? formatDateLabel(event.scheduledDate) : '--'} />
-                      <InfoTile label="Cohort" value={event.cohort || '--'} />
-                    </div>
-
-                    {event.notes ? (
-                      <div className="rounded-lg bg-background-100/60 p-3">
-                        <p className="mb-1 text-[12px] font-semibold text-foreground-700">Notes</p>
-                        <p className="text-[13px] text-foreground-600">{event.notes}</p>
-                      </div>
-                    ) : null}
-
-                    <CoachMeetingArtifactsPanel event={event} />
-
-                    {(actionError || actionNotice) ? (
-                      <div className={cn('rounded-lg border px-3 py-2 text-[12px]', actionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-rose-200 bg-rose-50 text-rose-800')}>
-                        {actionError || actionNotice}
-                      </div>
-                    ) : null}
-
-                    {event.status !== 'completed' ? (
-                      <div className="rounded-lg border border-background-200/60 bg-background-100/60 p-3">
-                        <p className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-foreground-500">Schedule Meeting</p>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                          <div>
-                            <ScheduleFieldLabel>Date</ScheduleFieldLabel>
-                            <ModernDatePicker value={scheduleForm.date} onChange={(value) => setScheduleForm(prev => ({ ...prev, date: value }))} />
-                          </div>
-                          <div>
-                            <ScheduleFieldLabel>Time</ScheduleFieldLabel>
-                            <ScheduleTimeInput value={scheduleForm.time} onChange={(value) => setScheduleForm(prev => ({ ...prev, time: value }))} />
-                          </div>
-                          <div>
-                            <ScheduleFieldLabel>Duration</ScheduleFieldLabel>
-                            <ModernDurationPicker value={scheduleForm.durationMinutes} onChange={(durationMinutes) => setScheduleForm(prev => ({ ...prev, durationMinutes }))} />
-                          </div>
-                        </div>
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <RowAction label="Open in Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(event)} />
-                          <RowAction
-                            label={event.status === 'scheduled' || event.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
-                            icon="ri-calendar-check-line"
-                            emphasis="primary"
-                            disabled={isBusy}
-                            onClick={() => { handleSchedule(event); }}
-                          />
-                          {(event.status === 'scheduled' || event.status === 'in-progress') ? (
-                            <RowAction
-                              label="Start"
-                              icon="ri-play-circle-line"
-                              disabled={isBusy || !url}
-                              onClick={() => { handleAction(event, 'start'); }}
-                            />
-                          ) : null}
-                          {event.status === 'in-progress' ? (
-                            <RowAction
-                              label="Complete"
-                              icon="ri-check-double-line"
-                              disabled={isBusy}
-                              onClick={() => openCompletionForm(event)}
-                            />
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                </CalendarEventRow>
+                />
               );
             })}
 
             {!loading && pageCount > 1 ? (
-              <div className="xl:col-span-2">
-                <Pagination
-                  page={activePage}
-                  totalPages={pageCount}
-                  total={filtered.length}
-                  pageSize={MEETINGS_PER_PAGE}
-                  onPageChange={(page) => {
-                    setCurrentPage(page);
-                    setExpanded(null);
-                  }}
-                  noun="meetings"
-                />
-              </div>
+              <Pagination page={activePage} totalPages={pageCount} total={filtered.length} pageSize={MEETINGS_PER_PAGE} onPageChange={setCurrentPage} noun="meetings" />
             ) : null}
           </div>
         </Panel>
-
-        {completionEvent && completionEvent.reviewInstanceId ? (
-          // A Curriculum-driven Review instance exists for this occurrence
-          // (it has been scheduled at least once) -- open the generic
-          // dynamic form instead of the legacy hard-coded MCM questions.
-          <ReviewInstanceModal
-            key={eventIdentity(completionEvent)}
-            event={completionEvent}
-            instanceId={completionEvent.reviewInstanceId}
-            onClose={() => setCompletionEvent(null)}
-            onCompleted={(status) => {
-              updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
-              setCompletionEvent(null);
-            }}
-          />
-        ) : null}
-
-        {completionEvent && !completionEvent.reviewInstanceId ? (
-          // Legacy path: an event scheduled before this occurrence carried a
-          // review_instance_id. Kept so an in-flight meeting is not stranded
-          // mid-migration -- see the final report's backward-compatibility notes.
-          <MonthlyCoachingCompletionModal
-            key={eventIdentity(completionEvent)}
-            event={completionEvent}
-            busy={busyEventId === eventIdentity(completionEvent)}
-            error={actionError}
-            onClose={() => {
-              if (!busyEventId) setCompletionEvent(null);
-            }}
-            onSubmit={handleCompleteMeeting}
-          />
-        ) : null}
       </PageContainer>
     </WorkspaceShell>
   );

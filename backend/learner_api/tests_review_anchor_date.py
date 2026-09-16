@@ -128,10 +128,17 @@ class ReviewAnchorDateTestCase(TestCase):
 
     def _enrolment_row(self, start_date='2026-08-10'):
         """enrolment."Created_users" -- the learner's own record. Start_date is
-        a TEXT column on this table, which is why it is a string here."""
+        a TEXT column on this table, which is why it is a string here.
+
+        learner_start_date is set to the same value: this fixture's `start_date`
+        parameter represents "the learner's own date" for both the (legacy,
+        window-only) Start_date column and the Review anchor column
+        (Learner_start_date) -- see learner_api.tests_review_anchor_strict for
+        tests that specifically distinguish the two.
+        """
         return SimpleNamespace(
             id=101, pk=101, email='learner@example.com', learner_type='commercial',
-            start_date=start_date, end_date='2027-08-09',
+            learner_start_date=start_date, start_date=start_date, end_date='2027-08-09',
             practical_period_end_date='', apprenticeship_end_date='',
         )
 

@@ -843,7 +843,7 @@ Learner progress looks strong.
             event_type="mcr",
             status="completed",
         )
-        request = self.factory.get("/coach_api/coach/timetable/events/mcr:42:1:2026-09-01/artifacts")
+        request = self.factory.get("/coach_api/coach/timetable/events/mcr:42:1:2026-09-01/artifacts?refresh=1")
         request.coach_email = "coach@example.com"
 
         def graph_response(_method, path, *, payload=None):
@@ -909,6 +909,39 @@ Learner progress looks strong.
             [(item["role"], item["email"]) for item in payload["attendance"]["expectedAttendees"]],
             [("coach", "coach@example.com"), ("learner", "learner@example.com")],
         )
+
+    def test_artifacts_endpoint_default_reads_stored_snapshot_only(self):
+        record = CoachCalendarEvent(
+            event_key="mcr:42:1:2026-09-01",
+            owner_email="coach@example.com",
+            learner_name="Test Learner",
+            event_type="mcr",
+            status="completed",
+        )
+        request = self.factory.get("/coach_api/coach/timetable/events/mcr:42:1:2026-09-01/artifacts")
+        request.coach_email = "coach@example.com"
+        stored_snapshot = {
+            "attendance": {"reportCount": 0, "records": [], "tracker": []},
+            "artifacts": [{"id": "recording-1", "artifact_type": "recording", "graph_artifact_id": "recording-1"}],
+            "attendanceReports": [],
+            "attendanceTracker": {"tracker": []},
+            "errors": [],
+            "partial": False,
+            "storage": {"stored": True, "syncedAt": "2026-09-01T10:35:00+00:00"},
+        }
+
+        with patch("coach_api.views.coach_meeting_artifact_record", return_value=record), \
+             patch("coach_api.views.stored_coach_meeting_snapshot", return_value=stored_snapshot) as stored, \
+             patch("coach_api.views.stored_coach_meeting_summary", return_value=None), \
+             patch("coach_api.views.fetch_coach_meeting_graph_snapshot") as graph_fetch:
+            response = unwrap(coach_timetable_event_artifacts)(request, record.event_key)
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["artifacts"][0]["id"], "recording-1")
+        self.assertEqual(payload["storage"]["stored"], True)
+        stored.assert_called_once_with(record)
+        graph_fetch.assert_not_called()
 
     def test_transcript_content_prefers_stored_database_copy(self):
         record = CoachCalendarEvent(

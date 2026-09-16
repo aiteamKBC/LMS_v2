@@ -64,7 +64,11 @@ def bookable_day(offset_days):
 def enrolment_row():
     return SimpleNamespace(
         id=101, pk=101, email=LEARNER_EMAIL, username='Test Learner',
-        learner_type='commercial', start_date=LEARNER_START.isoformat(),
+        learner_type='commercial',
+        # learner_start_date is the Review recurrence anchor (see
+        # coach_api.views.resolve_review_anchor_date); start_date is kept too
+        # since resolve_schedule_window's WINDOW bound still reads it.
+        learner_start_date=LEARNER_START.isoformat(), start_date=LEARNER_START.isoformat(),
         end_date='2027-08-09', practical_period_end_date='', apprenticeship_end_date='',
     )
 

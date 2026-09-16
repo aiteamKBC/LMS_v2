@@ -58,6 +58,7 @@ const CoachKsbImpact = lazyRoute(() => import("../pages/coach/ksb-impact/page"))
 const CoachMarkingQueue = lazyRoute(() => import("../pages/coach/marking-queue/page"));
 const CoachMarkingReviewPage = lazyRoute(() => import("../pages/coach/marking-review/page"));
 const CoachMeetings = lazyRoute(() => import("../pages/coach/meetings/page"));
+const CoachMeetingDetail = lazyRoute(() => import("../pages/coach/meeting-detail/page"));
 const MonthlyLogsPage = lazyRoute(() => import("../features/monthly-logs/page"));
 const CoachOtjhReports = lazyRoute(() => import("../pages/coach/otjh-reports/page"));
 const CoachMonthlyReports = lazyRoute(() => import("../pages/coach/monthly-reports/page"));
@@ -765,6 +766,10 @@ const routes: RouteObject[] = [
     element: <CoachMeetings />,
   },
   {
+    path: "/coach/meetings/:eventKey",
+    element: <CoachMeetingDetail />,
+  },
+  {
     path: "/coach/timetable",
     element: <CoachTimetable />,
   },
@@ -775,6 +780,14 @@ const routes: RouteObject[] = [
   {
     path: "/coach/progress-reviews",
     element: <CoachProgressReviews />,
+  },
+  {
+    path: "/coach/progress-reviews/:eventKey",
+    element: <CoachMeetingDetail />,
+  },
+  {
+    path: "/coach/reviews/:eventKey",
+    element: <CoachMeetingDetail />,
   },
   {
     path: "/coach/ksb-impact",

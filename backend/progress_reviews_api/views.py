@@ -22,7 +22,7 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import authenticate_request, learner_self_or_staff, staff_only
+from login.permissions import auth_gate_enabled, authenticate_request, learner_self_or_staff, staff_only
 
 from . import runs, storage
 from .period import iter_review_periods, resolve_review_period
@@ -320,15 +320,21 @@ def download(request, review_id):
     if not run:
         return _error("Review not found.", 404)
     account = authenticate_request(request)
+    # This view can't use @staff_only() -- a learner is allowed through, just
+    # restricted to their own deck below -- so it re-checks the same
+    # LEARNER_API_REQUIRE_AUTH toggle staff_only/employer_or_staff honour,
+    # rather than hard-requiring a session regardless of that toggle.
     if account is None:
-        return _error("Authentication required.", 401)
-    # Staff may download any generated deck; learners may download only their
-    # own review deck.  The run stores the canonical learner id, so the review
-    # id cannot be used to access another learner's PPTX.
-    if account.role == "learner" and int(run["learner_id"]) != int(account.subject_id):
-        return _error("You do not have permission to perform this action.", 403)
-    if account.role != "learner" and not getattr(account, "is_staff", False) and account.role not in {"staff", "admin", "super-admin", "coach"}:
-        return _error("You do not have permission to perform this action.", 403)
+        if auth_gate_enabled():
+            return _error("Authentication required.", 401)
+    else:
+        # Staff may download any generated deck; learners may download only
+        # their own review deck. The run stores the canonical learner id, so
+        # the review id cannot be used to access another learner's PPTX.
+        if account.role == "learner" and int(run["learner_id"]) != int(account.subject_id):
+            return _error("You do not have permission to perform this action.", 403)
+        if account.role != "learner" and not getattr(account, "is_staff", False) and account.role not in {"staff", "admin", "super-admin", "coach"}:
+            return _error("You do not have permission to perform this action.", 403)
     pptx_file = runs.get_pptx_file_for_run(review_id)
     if not pptx_file:
         return _error("No PPTX file has been generated for this review yet.", 404)
