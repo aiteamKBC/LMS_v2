@@ -244,8 +244,8 @@ export default function CoachAttendanceProfile() {
               backTo={{ to: '/coach/attendance', label: 'Back to Attendance' }}
               meta={(
                 <>
-                  <StatusBadge tone={riskTone(learner.risk)} label={riskLabel(learner.risk)} size="sm" />
-                  <span className="text-[12px] text-foreground-500">{display(learner.email)}</span>
+                  <StatusBadge tone={riskTone(learner.risk)} label={riskLabel(learner.risk)} size="sm" className={learner.risk === null ? 'text-foreground-700' : undefined} />
+                  <span className="text-[12px] text-foreground-700">{display(learner.email)}</span>
                 </>
               )}
             />

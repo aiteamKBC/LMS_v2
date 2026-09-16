@@ -43,7 +43,7 @@ CURRENT_SUBJECTS_SQL = '''
     )
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
-    WHERE (cm.deleted_at IS NULL OR cm.deleted_via_parent IS NOT NULL)
+    WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
 '''
 
 def _direct_progress_records(enrolment_id):
@@ -413,7 +413,7 @@ def _builder_subject_metadata(cursor, refs):
     cursor.execute('''
         SELECT m.module_catalogue_id,m.title,m.cover_image_url
         FROM curriculum.modules m
-        WHERE (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)
+        WHERE (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
           AND m.module_catalogue_id=ANY(%s)
     ''', [native])
     covers, links = {}, {}

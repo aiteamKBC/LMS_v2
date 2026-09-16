@@ -112,6 +112,8 @@ def confirm_attendance(request, kind, learner_id):
         if len(matches) != 1:
             return JsonResponse({'error': 'Lecture not found.'}, status=404)
         lecture = matches[0]
+        if lecture.get('source') == 'microsoft-teams':
+            return JsonResponse({'error': 'Teams attendance is verified from the meeting report. Use catch-up for a missed session.'}, status=409)
         if lecture['date'] != timezone.localdate().isoformat():
             return JsonResponse({'error': 'Attendance can only be recorded on the lecture date.'}, status=409)
         minutes = lecture.get('durationMinutes')

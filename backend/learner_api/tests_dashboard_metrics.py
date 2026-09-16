@@ -166,7 +166,7 @@ class DashboardMetricsTests(SimpleTestCase):
                 query, params = cursor.execute.call_args_list[0].args
                 self.assertIn('c.expected_otjh AS expected_hours', query)
                 self.assertIn('c.module_catalogue_id=ANY(%s)', query)
-                self.assertIn('c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL', query)
+                self.assertIn("c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> ''", query)
                 self.assertEqual(params, [['module-one', 'module-two']])
 
     def test_migrated_metrics_keep_audited_inventory_and_refresh_saved_progress(self):

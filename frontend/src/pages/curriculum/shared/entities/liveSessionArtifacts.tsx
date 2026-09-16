@@ -492,6 +492,10 @@ export function LiveSessionArtifactsPanel({
     setNotice('');
     try {
       const result = await syncTeamsMeetingArtifacts(session.liveSessionId);
+      if ('state' in result) {
+        setNotice(result.message);
+        return;
+      }
       // Past the GET cache: the POST has just written rows this panel would
       // otherwise redraw from the payload fetched before the pull.
       const occurrence = await load(true);
@@ -516,16 +520,24 @@ export function LiveSessionArtifactsPanel({
         <span className="flex-1 text-[12px] font-bold text-foreground-800">Recording, transcript and attendance</span>
         <button
           type="button"
+          onClick={() => { void load(true); }}
+          disabled={syncing || state.status === 'loading'}
+          className="inline-flex h-7 shrink-0 items-center rounded-lg border border-background-200 px-2 text-[11px] font-bold text-foreground-700 disabled:opacity-60"
+        >
+          Refresh saved results
+        </button>
+        <button
+          type="button"
           onClick={() => { void sync(); }}
           disabled={syncing}
-          title="Ask Microsoft Graph now for attendance, transcripts and recordings."
+          title="Queue attendance and file synchronization in the background."
           className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
         >
           <AppIcon className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
           {syncing ? 'Syncing…' : 'Sync from Teams'}
         </button>
       </div>
-      {notice && <p className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] font-semibold text-amber-800">{notice}</p>}
+      {notice && <p role="status" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] font-semibold text-amber-800">{notice}</p>}
       {state.status === 'ready' && !state.occurrence ? (
         <p className="px-4 py-3 text-[12px] text-foreground-500">
           Microsoft holds nothing for this session yet. It appears here once the meeting has run and been synced.

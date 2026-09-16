@@ -9,6 +9,7 @@ import {
   type TeamsMeetingInput,
 } from '../module-builder/moduleAuthoringData';
 import { EmailChipsInput, emailList } from '../module-builder/EmailChipsInput';
+import { EntraPeopleInput } from './EntraPeopleInput';
 import { cleanText, formatDateLabel } from '../shared/entities/model';
 import {
   buildHolidayShiftPlan,
@@ -455,7 +456,7 @@ export function TeamsCalendarFormBody({
               required
               hint="The calendar this series is created in. The selected account must allow this app to manage Teams meetings."
             >
-              <TextControl
+              <EntraPeopleInput single label="Organizer"
                 value={form.organizerEmail}
                 onChange={value => patch({ organizerEmail: value })}
               />
@@ -527,7 +528,7 @@ export function TeamsCalendarFormBody({
               </div>
             )}
             <FormField label="Presenters" hint="These people can share and record.">
-              <EmailChipsInput
+              <EntraPeopleInput label="Presenters"
                 value={form.presenters}
                 onChange={value => patch({ presenters: value })}
               />
@@ -536,7 +537,7 @@ export function TeamsCalendarFormBody({
               label="Co-organisers"
               hint="They run the meeting with the organizer: start and stop the recording, admit people from the lobby and change the meeting options. Invited automatically."
             >
-              <EmailChipsInput
+              <EntraPeopleInput label="Co-organizers"
                 value={form.coOrganizers}
                 onChange={value => patch({ coOrganizers: value })}
               />

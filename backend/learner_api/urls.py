@@ -18,7 +18,14 @@ from . import certificates, monthly_assignment, legacy_assignments, quiz_reading
 from . import historical_evidence
 from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
+from curriculum_api import session_results
+from .session_recovery import link_catchup
+
 urlpatterns = [
+    path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/join/', session_results.learner_join),
+    path('session-catchup/<str:kind>/<int:learner_id>/', link_catchup),
+    path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/', session_results.learner_results),
+    path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/artifacts/<str:artifact_id>/', session_results.learner_content),
     path("calendar/<str:kind>/<int:pk>/coach-availability/", coach_available_slots, name="coach-available-slots"),
     path('monthly-logs/learners/', monthly_logs.learners, name='monthly-log-learners'),
     path('monthly-logs/<int:learner_id>/', monthly_logs.summary, name='monthly-log-summary'),

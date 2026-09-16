@@ -1,6 +1,11 @@
+import { ModuleSessions } from '../module-workspace/ModuleSessions';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { isTeamsReviewCancelled } from './calendarReview';
 import { finishTeamsCreation } from './creationResult';
+import { syncTeamsCalendarState } from './calendarState';
+import { EntraPeopleInput } from './EntraPeopleInput';
+import { CalendarActionDialog, type CalendarActionTarget } from './CalendarActionDialog';
+import { calendarAction, type ActionResult } from './calendarActions';
 import { calendarInputError } from './calendarTime';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
@@ -14,7 +19,6 @@ import {
   fetchCurriculumScopeLearnerRoster,
   fetchCurriculumSessions,
   fetchCurriculumTeamsMeetingSummaries,
-  onCalendarOccurrences,
   type CurriculumModule,
   type CurriculumSession,
   type CurriculumTeamsMeetingSummary,
@@ -569,6 +573,7 @@ export default function CurriculumTeamsMeetingsPage() {
   const [cohortFilter, setCohortFilter] = useState(searchParams.get('cohort') || '');
   const [stateFilter, setStateFilter] = useState(searchParams.get('state') || '');
   const [selectedId, setSelectedId] = useState(searchParams.get('module') || '');
+  const [calendarActionTarget, setCalendarActionTarget] = useState<CalendarActionTarget | null>(null);
 
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState<{ tone: 'info' | 'warning' | 'error'; text: string } | null>(null);
@@ -582,6 +587,11 @@ export default function CurriculumTeamsMeetingsPage() {
   });
   const artifactSyncInFlight = useRef<Set<string>>(new Set());
   const artifactSyncAttempts = useRef<Map<string, number>>(new Map());
+  const calendarSyncInFlight = useRef<Set<string>>(new Set());
+  const calendarSyncAttempts = useRef<Map<string, number>>(new Map());
+  const calendarSyncStatuses = useRef<Map<string, string>>(new Map());
+  const [calendarSyncing, setCalendarSyncing] = useState<Set<string>>(() => new Set());
+  const [resultsModule, setResultsModule] = useState('');
   const [preview, setPreview] = useState<{ liveSessionId: string; artifact: TeamsMeetingArtifact; title: string } | null>(null);
   /**
    * Weeks of the selected module still waiting for a live-session component,
@@ -839,6 +849,8 @@ export default function CurriculumTeamsMeetingsPage() {
     () => rows.find(row => normaliseKey(row.catalogueId) === normaliseKey(selectedId)) || null,
     [rows, selectedId],
   );
+  const selectedLiveId = useRef('');
+  selectedLiveId.current = selected?.summary?.liveSessionId || '';
 
   const stats = useMemo(() => {
     const tracked = rows.filter(row => row.summary);
@@ -862,8 +874,9 @@ export default function CurriculumTeamsMeetingsPage() {
    * and recordings.
    */
   const detailOccurrenceFor = useCallback((index: number) => {
-    const occurrences = onCalendarOccurrences(detail?.occurrences);
-    return occurrences.find(item => Number(item.session_number) === index + 1) || occurrences[index];
+    const occurrences = detail?.occurrences || [];
+    return occurrences.find(item => Number(item.session_number) === index + 1)
+      || (occurrences.every(item => !item.session_number) ? occurrences[index] : undefined);
   }, [detail]);
 
   const loadDetail = useCallback(async (liveSessionId: string) => {
@@ -879,6 +892,30 @@ export default function CurriculumTeamsMeetingsPage() {
       setDetailLoading(false);
     }
   }, []);
+
+  const openCalendarAction = (action: CalendarActionTarget['action'], sessionNumber?: number) => {
+    if (!selected?.summary || detailLoading || detail?.series.id !== selected.summary.liveSessionId) return;
+    const occurrences = sessionNumber === undefined ? detail.occurrences
+      : detail.occurrences.filter(row => row.session_number === sessionNumber);
+    if (!occurrences.length) return;
+    setCalendarActionTarget({ liveId: selected.summary.liveSessionId, moduleId: selected.catalogueId,
+      title: `${selected.name} · ${selected.groupName}`, action, scope: sessionNumber === undefined ? 'series' : 'occurrence',
+      timeZone: detail.series.timeZoneIana || getCalendarTimeZone(), occurrences });
+    setSelectedId('');
+  };
+
+  const checkCalendarAction = async () => {
+    const liveId = selected?.summary?.liveSessionId;
+    if (!liveId || busy) return;
+    setBusy(`${liveId}:action-status`);
+    try {
+      const result = await calendarAction<ActionResult>(liveId, { stage: 'status' });
+      setNotice({ tone: result.status === 'done' || result.status === 'none' ? 'info' : 'warning', text: result.message });
+      await loadTeamsState();
+      await loadDetail(liveId);
+    } catch (error) { setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'Action status could not be checked.' }); }
+    finally { setBusy(''); }
+  };
 
   useEffect(() => {
     const liveSessionId = selected?.summary?.liveSessionId || '';
@@ -901,6 +938,10 @@ export default function CurriculumTeamsMeetingsPage() {
 
     try {
       const result = await syncTeamsMeetingArtifacts(liveSessionId);
+      if ('state' in result) {
+        if (source === 'manual') setNotice({ tone: 'info', text: result.message });
+        return;
+      }
       const nextSummaries = await fetchCurriculumTeamsMeetingSummaries(undefined, {
         occurrenceDates: true,
         skipCache: true,
@@ -941,6 +982,52 @@ export default function CurriculumTeamsMeetingsPage() {
     }
   }, [loadDetail, selected?.summary?.liveSessionId]);
 
+  const runCalendarSync = useCallback(async (liveSessionId: string, source: 'manual' | 'automatic') => {
+    if (calendarSyncInFlight.current.has(liveSessionId)) return undefined;
+    const attemptedAt = calendarSyncAttempts.current.get(liveSessionId);
+    if (source === 'automatic' && attemptedAt !== undefined && Date.now() - attemptedAt < AUTO_SYNC_RETRY_MS) {
+      return calendarSyncStatuses.current.get(liveSessionId);
+    }
+    calendarSyncInFlight.current.add(liveSessionId);
+    calendarSyncAttempts.current.set(liveSessionId, Date.now());
+    setCalendarSyncing(current => new Set(current).add(liveSessionId));
+    try {
+      const result = await syncTeamsCalendarState(liveSessionId);
+      calendarSyncStatuses.current.set(liveSessionId, result.seriesStatus);
+      if (result.changed || result.seriesStatus === 'cancelled') {
+        if (selectedLiveId.current === liveSessionId) {
+          if (result.seriesStatus === 'cancelled') {
+            setSelectedId('');
+            setDetail(null);
+          } else await loadDetail(liveSessionId);
+        }
+        await loadTeamsState();
+      }
+      if (source === 'manual' || result.changed || result.errors.length) {
+        setNotice({
+          tone: result.errors.length ? 'warning' : 'info',
+          text: result.errors.length ? result.errors.join(' ')
+            : result.seriesStatus === 'cancelled' ? 'This calendar was cancelled in Microsoft and is now cancelled in the LMS.'
+              : result.cancelledSessions.length ? `Cancelled sessions updated: ${result.cancelledSessions.join(', ')}.`
+                : 'Calendar status is up to date.',
+        });
+      }
+      return result.seriesStatus;
+    } catch (error) {
+      calendarSyncStatuses.current.delete(liveSessionId);
+      setNotice({ tone: 'warning', text: error instanceof Error ? error.message : 'Calendar status could not be checked.' });
+      return undefined;
+    } finally {
+      calendarSyncInFlight.current.delete(liveSessionId);
+      setCalendarSyncing(current => {
+        const next = new Set(current);
+        next.delete(liveSessionId);
+        return next;
+      });
+    }
+  }, [loadDetail, loadTeamsState]);
+
+  // Check cancellations for future calendars too, before syncing evidence.
   // Graph publishes attendance, transcripts and recordings after the meeting,
   // sometimes several minutes apart. Try immediately once an occurrence ends,
   // then retry recent meetings every five minutes while this page is open.
@@ -948,25 +1035,22 @@ export default function CurriculumTeamsMeetingsPage() {
   // long-running deployment does not poll its entire archive forever.
   useEffect(() => {
     if (!autoSyncEnabled || !graphConfigured || teamsLoading) return undefined;
-    const candidates = rows.filter(row => {
-      if (!row.summary) return false;
-      const ended = endedOccurrenceCount(row, now);
-      if (!ended) return false;
-      const recent = mostRecentOccurrenceEnd(row) >= now - AUTO_SYNC_RECENT_WINDOW_MS;
-      const neverAttemptedHere = !artifactSyncAttempts.current.has(row.summary.liveSessionId);
-      return ended > (row.summary.syncedCount || 0) && (recent || neverAttemptedHere);
-    });
+    const candidates = rows.filter(row => row.summary);
     let cancelled = false;
     void (async () => {
       // Keep Graph pressure predictable: one series at a time rather than a
       // burst across every module whose meeting ended on the same minute.
       for (const row of candidates) {
         if (cancelled || !row.summary) return;
-        await runArtifactSync(row.summary.liveSessionId, 'automatic');
+        const status = await runCalendarSync(row.summary.liveSessionId, 'automatic');
+        if (cancelled) return;
+        if (status !== 'active') continue;
+        // The background worker owns artifact synchronization.
+        // Opening this page does not trigger recording transfers.
       }
     })();
     return () => { cancelled = true; };
-  }, [autoSyncEnabled, graphConfigured, now, rows, runArtifactSync, teamsLoading]);
+  }, [autoSyncEnabled, graphConfigured, now, rows, runArtifactSync, runCalendarSync, teamsLoading]);
 
   // --------------------------------------------------------------- actions
 
@@ -1390,7 +1474,7 @@ export default function CurriculumTeamsMeetingsPage() {
             Microsoft Graph credentials are missing from the backend, so nothing here can reach the Teams calendar. The dates and attendance already stored are still shown.
           </div>
         )}
-        {notice && (
+        {notice && !selected && (
           <div className={`flex items-start gap-2 rounded-xl border px-4 py-3 text-[12px] font-semibold ${
             notice.tone === 'error'
               ? 'border-red-200 bg-red-50 text-red-700'
@@ -1516,6 +1600,10 @@ export default function CurriculumTeamsMeetingsPage() {
           )}
         />
 
+        {calendarActionTarget && <CalendarActionDialog target={calendarActionTarget}
+          onChanged={async () => { await loadTeamsState(); }}
+          onClose={() => { setSelectedId(calendarActionTarget.moduleId); setCalendarActionTarget(null); }} />}
+
         {selected && (
           <Modal
             /* Two lines rather than one long "name — Teams meeting" string: the
@@ -1537,8 +1625,17 @@ export default function CurriculumTeamsMeetingsPage() {
                 {/* Only the actions this module can actually take: a footer of
                     greyed-out buttons reads as broken rather than as guidance.
                     Closing is the title bar's X — no second Close down here. */}
-                {selected.summary ? (
+                {notice && <p role="status" className="mb-4 rounded-lg border bg-primary-50 p-3 text-sm">{notice.text}</p>}
+            {selected.summary ? (
                   <>
+                    <button type="button" onClick={() => openCalendarAction('reschedule')}
+                      disabled={Boolean(busy) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
+                      className="rounded-lg border px-3 py-2 text-[12px] font-bold disabled:opacity-40">Edit session dates</button>
+                    <button type="button" onClick={() => openCalendarAction('cancel')}
+                      disabled={Boolean(busy) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
+                      className="rounded-lg border border-red-200 px-3 py-2 text-[12px] font-bold text-red-700 disabled:opacity-40">Cancel series</button>
+                    <button type="button" onClick={() => void checkCalendarAction()} disabled={Boolean(busy) || !graphConfigured}
+                      className="rounded-lg border px-3 py-2 text-[12px] font-bold disabled:opacity-40">Check action status</button>
                     {/* Both of these are shown only in the state they can act
                         in. Offered unconditionally they were noise: on a module
                         whose sessions are all attached and none has run yet,
@@ -1609,9 +1706,9 @@ export default function CurriculumTeamsMeetingsPage() {
               <div className="space-y-4">
                 {/* Invitations are edited beside the people they name, rather
                     than from a button on every table row. */}
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">The meeting</p>
-                  <span className="flex items-center gap-2">
+                  <span className="flex flex-wrap items-center gap-2">
                   {/* Once the dates are on the calendar the next thing anyone
                       wants is the way in, so the join link is a button here
                       rather than a line of text further down the panel. */}
@@ -1628,6 +1725,16 @@ export default function CurriculumTeamsMeetingsPage() {
                   )}
                   <button
                     type="button"
+                    onClick={() => void runCalendarSync(selected.summary!.liveSessionId, 'manual')}
+                    disabled={calendarSyncing.has(selected.summary.liveSessionId) || !graphConfigured}
+                    title="Check Microsoft for cancellations and update the LMS."
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <AppIcon className={`${calendarSyncing.has(selected.summary.liveSessionId) ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
+                    {calendarSyncing.has(selected.summary.liveSessionId) ? 'Checking calendar...' : 'Sync calendar status'}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void runArtifactSync(selected.summary!.liveSessionId, 'manual')}
                     disabled={artifactSyncing.has(selected.summary.liveSessionId) || !graphConfigured}
                     title="Ask Microsoft Graph now for attendance, transcripts and recordings from meetings that have ended."
@@ -1641,7 +1748,7 @@ export default function CurriculumTeamsMeetingsPage() {
                     role="switch"
                     aria-checked={autoSyncEnabled}
                     onClick={() => setAutoSyncEnabled(enabled => !enabled)}
-                    title="When enabled, ended meetings are checked automatically while this page is open."
+                    title="Check calendar status while this page is open. Attendance and files are processed in the background."
                     className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth ${
                       autoSyncEnabled
                         ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
@@ -1663,6 +1770,11 @@ export default function CurriculumTeamsMeetingsPage() {
                   </button>
                   </span>
                 </div>
+
+                <button type="button" className="rounded-lg border border-primary-200 px-4 py-2 text-sm font-semibold text-primary-700" onClick={() => setResultsModule(current => current === selected.summary!.moduleCatalogueId ? '' : selected.summary!.moduleCatalogueId)}>
+                  Sessions & Recordings
+                </button>
+                {resultsModule === selected.summary.moduleCatalogueId && <ModuleSessions moduleId={resultsModule} />}
                 <div className="grid gap-x-6 sm:grid-cols-2">
                   <DetailRow label="Organizer" value={cleanText(selected.summary.organizerEmail, '—')} />
                   <DetailRow label="Repeats" value={cleanText(selected.summary.repeatPattern, 'none')} />
@@ -1701,10 +1813,16 @@ export default function CurriculumTeamsMeetingsPage() {
                   title="Module dates sent to Teams"
                   holidayLabelFor={holidayLabelFor}
                   renderActions={(index, durationMinutes) => {
+                    const occurrence = detailOccurrenceFor(index);
+                    if (occurrence?.status === 'cancelled') {
+                      return <span className="text-[11px] font-bold text-foreground-400">Cancelled</span>;
+                    }
                     // The meeting runs when Teams says it does, so the clock
                     // is read against the calendar entry when there is one
                     // and against the module's own date when there is not.
-                    const runsAt = selected.teamsStarts[index] || selected.plannedStarts[index] || '';
+                    const runsAt = occurrence?.scheduled_start
+                      || (selected.teamsStarts.length === selected.plannedStarts.length ? selected.teamsStarts[index] : '')
+                      || selected.plannedStarts[index] || '';
                     const runState = meetingRunState(runsAt, durationMinutes, now);
                     if (runState === 'ended') {
                       return (
@@ -1717,11 +1835,22 @@ export default function CurriculumTeamsMeetingsPage() {
                     // A session Teams would only accept as an event of its own
                     // has a link of its own, so the row's own link comes first
                     // and the series' link is the fallback the rest share.
-                    const joinUrl = detailOccurrenceFor(index)?.join_url || selected.summary?.joinUrl || '';
+                    const joinUrl = occurrence?.join_url || selected.summary?.joinUrl || '';
                     if (!joinUrl) {
                       return <span className="text-[11px] font-semibold text-foreground-400">Not on Teams yet</span>;
                     }
                     return (
+                      <span className="flex flex-wrap items-center justify-end gap-2">
+                      {occurrence?.status === 'scheduled' && !occurrence.actual_start && !occurrence.attendance_report_id && !occurrence.participant_count && (
+                        <>
+                          <button type="button" disabled={Boolean(busy) || detailLoading || !graphConfigured}
+                            onClick={() => openCalendarAction('reschedule', occurrence.session_number)}
+                            className="rounded border px-2 py-1 text-[11px] font-semibold">Edit time</button>
+                          <button type="button" disabled={Boolean(busy) || detailLoading || !graphConfigured}
+                            onClick={() => openCalendarAction('cancel', occurrence.session_number)}
+                            className="rounded border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-700">Cancel session</button>
+                        </>
+                      )}
                       <a
                         href={joinUrl}
                         target="_blank"
@@ -1735,6 +1864,7 @@ export default function CurriculumTeamsMeetingsPage() {
                         <AppIcon className="ri-microsoft-teams-line text-sm"></AppIcon>
                         {runState === 'live' ? 'Join now' : 'Join Teams'}
                       </a>
+                      </span>
                     );
                   }}
                   renderFacts={index => {
@@ -1800,7 +1930,7 @@ export default function CurriculumTeamsMeetingsPage() {
                 />
 
                 <p className="text-[11px] font-semibold text-foreground-400">
-                  Attendance, transcripts and recordings only exist once a meeting has run. Use Sync attendance &amp; files now, or leave auto-sync on to retry recent meetings every five minutes while this page is open.
+                  Auto-sync checks calendar cancellations every five minutes while this page is open. Attendance, transcripts and recordings are checked after a meeting has run. Use the sync buttons to check now.
                 </p>
               </div>
             ) : (
@@ -1833,7 +1963,7 @@ export default function CurriculumTeamsMeetingsPage() {
                         required
                         hint="The calendar this series is created in. The selected account must allow this app to manage Teams meetings."
                       >
-                        <TextControl
+                        <EntraPeopleInput single label="Organizer"
                           value={createDrawer.form.organizerEmail}
                           onChange={value => createDrawer.patch({ organizerEmail: value })}
                         />
@@ -1842,7 +1972,7 @@ export default function CurriculumTeamsMeetingsPage() {
                         label="Co-organizers"
                         hint="Internal Microsoft 365 users who can manage the meeting. They are invited automatically."
                       >
-                        <EmailChipsInput
+                        <EntraPeopleInput label="Co-organizers"
                           value={createDrawer.form.coOrganizers}
                           onChange={value => createDrawer.patch({ coOrganizers: value })}
                         />
@@ -1919,7 +2049,7 @@ export default function CurriculumTeamsMeetingsPage() {
                         </button>
                       </div>
                       <FormField label="Presenters" hint="These people can share and record.">
-                        <EmailChipsInput
+                        <EntraPeopleInput label="Presenters"
                           value={createDrawer.form.presenters}
                           onChange={value => createDrawer.patch({ presenters: value })}
                         />
@@ -1984,13 +2114,13 @@ export default function CurriculumTeamsMeetingsPage() {
           </button>
         </div>
         <FormField label="Presenters" hint="Only these people get the presenter role in Teams.">
-          <EmailChipsInput value={peopleDrawer.form.presenters} onChange={value => peopleDrawer.patch({ presenters: value })} />
+          <EntraPeopleInput label="Presenters" value={peopleDrawer.form.presenters} onChange={value => peopleDrawer.patch({ presenters: value })} />
         </FormField>
         <FormField
           label={'Co-organizers'}
           hint={'Internal Microsoft 365 users who can manage the meeting. They are invited automatically.'}
         >
-          <EmailChipsInput value={peopleDrawer.form.coOrganizers} onChange={value => peopleDrawer.patch({ coOrganizers: value })} />
+          <EntraPeopleInput label="Co-organizers" value={peopleDrawer.form.coOrganizers} onChange={value => peopleDrawer.patch({ coOrganizers: value })} />
         </FormField>
         <FormField label="Attendees" hint="Presenters are invited automatically — no need to repeat them.">
           <EmailChipsInput value={peopleDrawer.form.attendees} onChange={value => peopleDrawer.patch({ attendees: value })} />
