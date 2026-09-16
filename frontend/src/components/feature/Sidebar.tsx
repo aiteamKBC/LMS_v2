@@ -821,15 +821,20 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
       className={presentation ? `relative flex items-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/80 ${presentation === 'rail' ? 'h-12 w-12 justify-center' : 'min-h-12 w-full gap-3 px-3 py-2 text-[13px] font-medium'} ${active ? 'bg-brand-accent text-white shadow-sm' : 'bg-white/10 text-white/75 hover:bg-white/20 hover:text-white'}` : `${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 ${compact ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'}`}
     >
       {active && <span className={presentation ? 'hidden' : 'contents'}><ActiveMarker /></span>}
-      <span className={presentation ? 'flex h-5 w-5 shrink-0 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
+      <span className={presentation ? 'relative flex h-5 w-5 shrink-0 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} className={presentation ? 'h-5 w-5' : undefined} />
+        {presentation === 'rail' && item.badge ? <RailDot className="bg-primary-500" /> : null}
+        {presentation === 'rail' && item.statusDot && !item.badge ? <RailDot className="bg-red-500" /> : null}
+        {presentation === 'rail' && (item.comingSoon || item.tag) && !item.badge && !item.statusDot ? <RailDot className="bg-amber-400" /> : null}
       </span>
       <span className={presentation === 'rail' ? 'sr-only' : 'min-w-0 flex-1 truncate'}>{item.label}</span>
-      <span className={presentation === 'rail' ? 'absolute -right-1 -top-1 flex items-center gap-1' : 'flex shrink-0 items-center gap-1.5'}>
-        {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
-        {item.statusDot && <StatusDot color={item.statusDot} />}
-        {item.badge ? <NavBadge count={item.badge} /> : null}
-      </span>
+      {presentation !== 'rail' && (
+        <span className="flex shrink-0 items-center gap-1.5">
+          {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
+          {item.statusDot && <StatusDot color={item.statusDot} />}
+          {item.badge ? <NavBadge count={item.badge} /> : null}
+        </span>
+      )}
     </Link>
   );
 }

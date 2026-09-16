@@ -185,6 +185,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   clearAllCachedResources();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -200,6 +201,7 @@ const mountMcm = (id: string, suffix = '') => render(
     <Routes>
       <Route path="/learner/monthly-coaching/:sessionId" element={<MonthlyCoachingPage />} />
       <Route path="/learner/monthly-coaching" element={<ReturnedLocation />} />
+      <Route path="/learner/monthly-logs/:kind/:id/:month" element={<ReturnedLocation />} />
     </Routes>
   </MemoryRouter>,
 );
@@ -215,6 +217,19 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
+  it.each([true, false])('opens current month logs from an unfinished MCM with learner actions enabled: %s', async canProgress => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-15T12:00:00Z'));
+    access.canProgress = canProgress;
+    mountMcm(SCHEDULED_MCM);
+    await screen.findByTestId('learner-review-instance-form');
+
+    fireEvent.click(screen.getByRole('link', { name: "This month's logs" }));
+
+    expect(screen.getByTestId('returned-location')).toHaveTextContent('/learner/monthly-logs/apprenticeship/12/2026-11');
+    expect(vi.mocked(fetch).mock.calls.every(call => !call[1]?.method || call[1].method === 'GET')).toBe(true);
+  });
+
   it('shows the saved learner image and points to the pending coach without asking the learner to sign again', () => {
     reviewDefinition.instance!.status = 'awaiting-signature';
     reviewDefinition.signatures.participant = { required: true, signed: true, signedName: 'Aya Khater', signature: 'data:image/png;base64,c2F2ZWQ=', signedAt: '2026-09-14T15:38:56Z' };

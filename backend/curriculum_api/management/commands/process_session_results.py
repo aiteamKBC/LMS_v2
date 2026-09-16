@@ -16,32 +16,40 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--limit', type=int, default=10)
         parser.add_argument('--provision-container', action='store_true')
-        parser.add_argument('--scheduled', action='store_true', help='Queue recently ended sessions (last seven days).')
+        parser.add_argument('--scheduled', action='store_true', help='Discover files for linked meetings, including runs before their scheduled date.')
+        parser.add_argument('--live-session-id', action='append', dest='live_session_ids', default=[],
+                            help='Process only this series. May be supplied more than once.')
 
     def handle(self, *args, **options):
         if options['provision_container']:
             provision_container()
             self.stdout.write('Private recording container is available.')
             return
+        requested_ids = list(dict.fromkeys(value.strip() for value in options.get('live_session_ids', []) if value.strip()))
+        scope_params = [requested_ids] if requested_ids else []
         if options['scheduled']:
+            scheduled_scope = ' AND o.live_session_id=ANY(%s)' if requested_ids else ''
             with connections['default'].cursor() as cursor:
                 cursor.execute('''INSERT INTO curriculum.session_result_jobs(live_session_id)
                     SELECT DISTINCT o.live_session_id FROM curriculum.live_session_occurrences o
                     JOIN curriculum.live_sessions s ON s.id=o.live_session_id
-                    WHERE o.scheduled_end BETWEEN (now() AT TIME ZONE 'UTC')-interval '7 days' AND (now() AT TIME ZONE 'UTC')
+                    JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
+                    WHERE m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+                      AND coalesce(s.online_meeting_id,'')<>''
                       AND o.status NOT IN ('cancelled','deleted','superseded')
-                      AND s.status NOT IN ('cancelled','deleted','superseded','failed')
+                      AND s.status NOT IN ('cancelled','deleted','superseded','failed')''' + scheduled_scope + '''
                     ON CONFLICT(live_session_id) DO UPDATE SET state='queued',requested_at=now(),next_attempt_at=now(),attempts=0,force_refresh=false
                     WHERE session_result_jobs.state='complete'
-                      AND session_result_jobs.finished_at < now()-interval '30 minutes' ''')
+                      AND session_result_jobs.finished_at < now()-interval '5 minutes' ''', scope_params)
         processed, failed = 0, 0
+        job_scope = ' AND live_session_id=ANY(%s)' if requested_ids else ''
         for _ in range(max(1, min(options['limit'], 100))):
             lease = uuid.uuid4().hex
             with transaction.atomic(), connections['default'].cursor() as cursor:
                 cursor.execute('''SELECT live_session_id,force_refresh FROM curriculum.session_result_jobs
-                    WHERE (state IN ('queued','failed') AND next_attempt_at<=now() AND attempts<8)
-                       OR (state='running' AND started_at < now()-interval '2 hours')
-                    ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT 1''')
+                    WHERE ((state IN ('queued','failed') AND next_attempt_at<=now() AND attempts<8)
+                       OR (state='running' AND started_at < now()-interval '2 hours'))''' + job_scope + '''
+                    ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT 1''', scope_params)
                 row = cursor.fetchone()
                 if not row:
                     break

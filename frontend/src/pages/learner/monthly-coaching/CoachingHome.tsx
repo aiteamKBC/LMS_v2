@@ -5,6 +5,7 @@ import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import { meetingBookingWarning, meetingCalendarHref } from '../reviews/meetingBooking';
 import { coachingOverview, type CoachingGroup, type CoachingReviewDefinitions, type CoachingSessionState } from './coachingOverview';
+import CurrentMonthLogLink from './CurrentMonthLogLink';
 import styles from './coachingHome.module.css';
 
 export interface CoachingHomeProps {
@@ -126,7 +127,7 @@ export default function CoachingHome(props: CoachingHomeProps) {
     <header className={styles.header}>
       <div><p className={styles.eyebrow}>YOUR LEARNING, TOGETHER</p><h1 ref={heading} tabIndex={-1}>{allView ? 'All coaching meetings' : 'My coaching'}</h1>
         <p className={styles.intro}>{allView ? 'Find a meeting, check its status or revisit a summary.' : 'Your next meeting and anything that needs your attention.'}</p></div>
-      <div className={styles.headerLinks}>{allView ? <><Link className={styles.secondaryButton} to={linkToView(false)}><ArrowLeft size={17}/>Back to current meeting</Link>
+      <div className={styles.headerLinks}><CurrentMonthLogLink learner={learner} className={styles.secondaryButton} />{allView ? <><Link className={styles.secondaryButton} to={linkToView(false)}><ArrowLeft size={17}/>Back to current meeting</Link>
         <Link className={styles.textLink} to={`/learner/calendar?kind=${learner.kind}&learner=${learner.id}`}><CalendarDays size={16}/>Open calendar</Link></>
         : <Link className={styles.secondaryButton} to={linkToView(true)}><List size={18}/>View all meetings<ArrowRight size={17}/></Link>}</div>
     </header>

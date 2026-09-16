@@ -44,7 +44,7 @@ import {
   type TeamsMeetingInput,
   type TeamsRecordingEventInput,
 } from '../module-builder/moduleAuthoringData';
-import { EmailChipsInput, emailList } from '../module-builder/EmailChipsInput';
+import { emailList } from '../module-builder/EmailChipsInput';
 import {
   cleanText,
   cohortsForProgramme,
@@ -2055,7 +2055,7 @@ export default function CurriculumTeamsMeetingsPage() {
                         />
                       </FormField>
                       <FormField label="Attendees" hint="Presenters are invited automatically.">
-                        <EmailChipsInput
+                        <EntraPeopleInput label="Attendees"
                           value={createDrawer.form.attendees}
                           onChange={value => createDrawer.patch({ attendees: value })}
                         />
@@ -2123,7 +2123,7 @@ export default function CurriculumTeamsMeetingsPage() {
           <EntraPeopleInput label="Co-organizers" value={peopleDrawer.form.coOrganizers} onChange={value => peopleDrawer.patch({ coOrganizers: value })} />
         </FormField>
         <FormField label="Attendees" hint="Presenters are invited automatically — no need to repeat them.">
-          <EmailChipsInput value={peopleDrawer.form.attendees} onChange={value => peopleDrawer.patch({ attendees: value })} />
+          <EntraPeopleInput label="Attendees" value={peopleDrawer.form.attendees} onChange={value => peopleDrawer.patch({ attendees: value })} />
         </FormField>
       </EntityDrawer>
     </WorkspaceShell>

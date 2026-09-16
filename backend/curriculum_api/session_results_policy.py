@@ -2,6 +2,7 @@
 import csv
 import hashlib
 import io
+import json
 import re
 from datetime import datetime, timezone
 
@@ -62,14 +63,45 @@ def session_roster(expected, records, *, complete):
         person['records'].append(record)
     result = []
     for person in people.values():
-        seconds = evidence_seconds(person.pop('records'))
+        source_records = person.pop('records')
+        seconds = evidence_seconds(source_records)
+        visits = set()
+        for record in source_records:
+            for visit in record.get('intervals') or []:
+                if not isinstance(visit, dict):
+                    continue
+                joined, left = instant(visit.get('joinDateTime')), instant(visit.get('leaveDateTime'))
+                if joined and left and left >= joined:
+                    visits.add((joined, left))
         status = 'pending' if not complete else 'present' if seconds > PRESENT_AFTER_SECONDS else 'absent'
         if not person['email'] or (unidentified and not seconds):
             status = 'review'
         result.append({**person, 'seconds': seconds, 'status': status,
                        'attendance': 1 if status == 'present' else 0 if status == 'absent' else None,
-                       'excused': False, 'catchupCompleted': False})
+                       'excused': False, 'catchupCompleted': False,
+                       'intervals': [{'joinedAt': joined.isoformat(), 'leftAt': left.isoformat()} for joined, left in sorted(visits)]})
     return sorted(result, key=lambda person: (not person['expected'], person['name'].casefold()))
+
+
+def session_runs(occurrence, records):
+    runs = set()
+    for record in records:
+        raw = record.get('raw_data') or {}
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                raw = {}
+        if not isinstance(raw, dict):
+            continue
+        start, end = instant(raw.get('attendanceReportStart')), instant(raw.get('attendanceReportEnd'))
+        if start and end and end >= start:
+            runs.add((start, end))
+    if not runs:
+        start, end = instant(occurrence.get('actual_start')), instant(occurrence.get('actual_end'))
+        if start and end and end >= start:
+            runs.add((start, end))
+    return [{'startsAt': start.isoformat(), 'endsAt': end.isoformat()} for start, end in sorted(runs)]
 
 
 def safe_segment(label, identifier):

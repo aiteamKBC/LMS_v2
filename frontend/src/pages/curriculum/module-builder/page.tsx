@@ -2846,7 +2846,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
   // "Save now" while the workspace is saving itself, because the button is then
   // for not waiting out the quiet period. With auto save off it is the only way
   // the module is written at all, so it says the plain thing.
-  const saveButtonLabel = saving ? 'Saving...' : saved ? 'Saved' : autoSave ? 'Save now' : 'Save';
+  const saveButtonLabel = saving ? 'Saving module changes...' : saved ? 'Module saved' : autoSave ? 'Save module now' : 'Save module changes';
   // One sentence for the whole save pipeline. "Saved" is shown only for a write
   // the backend has confirmed — `saved` comes from the stored snapshot, which
   // moves on a successful reply and nothing else.
@@ -2870,7 +2870,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
               ? ARCHIVED_PROGRAMME_BUILDER_NOTICE
               : autoSave
                 ? 'Auto save is on. Edits are saved a moment after you stop typing.'
-                : 'Auto save is off. Your edits are kept here until you press Save.'}
+                : 'Auto save is off. Your edits are kept here until you press Save module changes.'}
             className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border px-3 text-[12px] font-semibold transition-smooth disabled:cursor-not-allowed disabled:opacity-70 whitespace-nowrap ${autoSave
               ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
               : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}

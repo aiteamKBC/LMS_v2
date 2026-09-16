@@ -10,7 +10,8 @@ from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 from login.permissions import require_role, learner_self_or_staff
 
-from .session_results_policy import session_roster, attendance_csv, instant
+from .session_results_policy import session_roster, attendance_csv, instant, session_runs
+from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +73,8 @@ def result_rows(series, *, session_number=None, email=None):
     records = read('SELECT * FROM curriculum.live_session_attendance WHERE occurrence_id=ANY(%s)', [ids])
     archive_ready = True
     try:
-        artifacts = read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,
+        artifacts = read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,a.end_datetime,
+            a.call_id,a.content_correlation_id,a.metadata,
             r.status AS archive_status,r.transcript_text,r.updated_at AS archived_at
             FROM curriculum.live_session_artifacts a
             LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
@@ -81,7 +83,8 @@ def result_rows(series, *, session_number=None, email=None):
         if not archive_schema_missing(error):
             raise
         archive_ready = False
-        artifacts = read('''SELECT id,occurrence_id,artifact_type,created_datetime,
+        artifacts = read('''SELECT id,occurrence_id,artifact_type,created_datetime,end_datetime,
+            call_id,content_correlation_id,metadata,
             NULL AS archive_status,NULL AS transcript_text,NULL AS archived_at
             FROM curriculum.live_session_artifacts WHERE occurrence_id=ANY(%s)
             ORDER BY created_datetime,id''', [ids])
@@ -89,10 +92,21 @@ def result_rows(series, *, session_number=None, email=None):
     for record in records:
         record['intervals'] = json_value(record.get('intervals'), [])
         attendance_by_id[record['occurrence_id']].append(record)
+    hidden = set()
+    for occurrence_id in ids:
+        hidden.update(hidden_artifact_ids([row for row in artifacts if row['occurrence_id'] == occurrence_id]))
     for artifact in artifacts:
+        if email is not None and artifact['id'] in hidden:
+            continue
         artifacts_by_id[artifact['occurrence_id']].append({
             'id': artifact['id'], 'type': artifact['artifact_type'], 'createdAt': artifact['created_datetime'],
             'state': artifact['archive_status'] or 'pending', 'text': artifact['transcript_text'],
+            'hiddenFromLearners': artifact['id'] in hidden,
+            'endsAt': instant(artifact.get('end_datetime')),
+            'timingReady': transcript_timing_ready(artifact) if artifact['artifact_type'] == 'transcript' else False,
+            'transcriptLinks': recording_transcript_links(artifact, [row for row in artifacts
+                if row['occurrence_id'] == artifact['occurrence_id'] and (email is None or row['id'] not in hidden)])
+                if artifact['artifact_type'] == 'recording' else [],
         })
     expected = set(json_value(series.get('attendees'), []))
     _by_series, launches = launch_expectations([series['id']])
@@ -100,8 +114,13 @@ def result_rows(series, *, session_number=None, email=None):
     for item in occurrences:
         complete = bool(item.get('attendance_report_id') and item.get('actual_end'))
         roster = session_roster(expected | launches[item['id']], attendance_by_id[item['id']], complete=complete)
+        runs = session_runs(item, attendance_by_id[item['id']])
         results.append({'id': item['id'], 'seriesId': series['id'], 'sessionNumber': item['session_number'],
+                        'title': series.get('module_title') or '',
                         'startsAt': instant(item['scheduled_start']), 'endsAt': instant(item['scheduled_end']),
+                        'actualStartsAt': instant(runs[0]['startsAt']) if runs else instant(item.get('actual_start')),
+                        'actualEndsAt': max(instant(run['endsAt']) for run in runs) if runs else instant(item.get('actual_end')),
+                        'runs': runs,
                         'state': item['status'], 'reportReady': complete, 'archiveReady': archive_ready,
                         'syncedAt': instant(item.get('artifacts_synced_at')),
                         'attendance': roster, 'artifacts': artifacts_by_id[item['id']]})
@@ -176,6 +195,7 @@ def module_results(request, module_id):
             FROM curriculum.live_session_occurrences o WHERE o.live_session_id=ANY(%s)
             ORDER BY o.session_number,o.id''', [ids]) if ids else []
         for item in occurrences:
+            item['title'] = next((row.get('module_title') or '' for row in series if row['id'] == item['seriesId']), '')
             for key in ('startsAt', 'endsAt', 'syncedAt'):
                 item[key] = instant(item[key])
         results = [{'id': row['id'], 'title': row['module_title'],
@@ -284,15 +304,26 @@ def queue_sync(request, series_id):
         return unavailable()
 
 
-def stored_content(request, series_id, artifact_id):
-    rows = read('''SELECT r.*,a.artifact_type FROM curriculum.session_result_archive r
+def stored_content(request, series_id, artifact_id, *, learner_view=False):
+    if learner_view:
+        siblings = read('''SELECT a.* FROM curriculum.live_session_artifacts a
+            JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
+            WHERE o.live_session_id=%s AND a.occurrence_id=(
+                SELECT occurrence_id FROM curriculum.live_session_artifacts WHERE id=%s)''', [series_id, artifact_id])
+        if not any(row['id'] == artifact_id for row in siblings) or artifact_id in hidden_artifact_ids(siblings):
+            return JsonResponse({'error': 'File not found.'}, status=404)
+    rows = read('''SELECT r.*,a.artifact_type,a.metadata FROM curriculum.session_result_archive r
         JOIN curriculum.live_session_artifacts a ON a.id=r.artifact_id
         JOIN curriculum.live_session_occurrences o ON o.id=r.occurrence_id
         WHERE r.artifact_id=%s AND o.live_session_id=%s''', [artifact_id, series_id])
     if not rows or rows[0]['status'] != 'ready':
         return JsonResponse({'error': 'This file is still being saved. Please try again later.'}, status=409)
     row = rows[0]
-    if row['artifact_type'] == 'transcript' and request.GET.get('format') == 'txt':
+    if row['artifact_type'] == 'transcript' and request.GET.get('format') == 'cues':
+        if not transcript_timing_ready(row):
+            return JsonResponse({'error': 'Transcript timing is being prepared.', 'code': 'transcript_timing_pending'}, status=409)
+        response = JsonResponse({'cues': artifact_metadata(row)['lmsTranscriptTimeline']['cues']})
+    elif row['artifact_type'] == 'transcript' and request.GET.get('format') == 'txt':
         response = HttpResponse(row['transcript_text'] or '', content_type='text/plain; charset=utf-8')
         response['Content-Disposition'] = 'attachment; filename="transcript.txt"'
     else:
@@ -325,21 +356,51 @@ def learner_content(request, kind, learner_id, series_id, artifact_id):
         _learner, series = learner_series(kind, learner_id, series_id)
         if not series:
             return JsonResponse({'error': 'Session not found.'}, status=404)
-        return stored_content(request, series_id, artifact_id)
+        return stored_content(request, series_id, artifact_id, learner_view=True)
+    except DatabaseError:
+        return unavailable()
+
+
+@require_POST
+@csrf_protect
+@require_role('admin', 'staff')
+def recording_visibility(request, series_id, artifact_id):
+    try:
+        payload = json.loads(request.body)
+    except (ValueError, TypeError):
+        return JsonResponse({'error': 'A boolean hidden value is required.'}, status=400)
+    if not isinstance(payload, dict) or type(payload.get('hidden')) is not bool:
+        return JsonResponse({'error': 'A boolean hidden value is required.'}, status=400)
+    try:
+        with connections['default'].cursor() as cursor:
+            cursor.execute('''UPDATE curriculum.live_session_artifacts a
+                SET metadata=jsonb_set(coalesce(a.metadata::jsonb,'{}'::jsonb),
+                    '{lmsHiddenFromLearners}',%s::jsonb),updated_at=now()
+                FROM curriculum.live_session_occurrences o
+                WHERE a.id=%s AND a.occurrence_id=o.id AND o.live_session_id=%s
+                  AND a.artifact_type='recording' RETURNING a.id''',
+                [json.dumps(payload['hidden']), artifact_id, series_id])
+            if not cursor.fetchone():
+                return JsonResponse({'error': 'Recording not found.'}, status=404)
+        return JsonResponse({'id': artifact_id, 'hiddenFromLearners': payload['hidden']})
     except DatabaseError:
         return unavailable()
 
 
 @require_GET
 @require_role('admin', 'staff')
-def export_attendance(request, series_id, session_number):
+def export_attendance(request, series_id, session_number, file_format='csv'):
     try:
         series = read('SELECT * FROM curriculum.live_sessions WHERE id=%s', [series_id])
         sessions = result_rows(series[0], session_number=session_number) if series else []
         if not sessions:
             return JsonResponse({'error': 'Session not found.'}, status=404)
-        response = HttpResponse(attendance_csv(sessions[0]['attendance']), content_type='text/csv; charset=utf-8')
-        response['Content-Disposition'] = f'attachment; filename="attendance-session-{session_number}.csv"'
+        if file_format == 'pdf':
+            from .session_attendance_pdf import build_attendance_pdf
+            response = HttpResponse(build_attendance_pdf(sessions[0]), content_type='application/pdf')
+        else:
+            response = HttpResponse(attendance_csv(sessions[0]['attendance']), content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = f'attachment; filename="attendance-session-{session_number}.{file_format}"'
         response['Cache-Control'] = 'private, no-store'
         return response
     except DatabaseError:

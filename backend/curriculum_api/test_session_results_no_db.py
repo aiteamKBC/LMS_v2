@@ -21,8 +21,10 @@ package = types.ModuleType('curriculum_api')
 package.__path__ = [str(ROOT)]
 sys.modules['curriculum_api'] = package
 from curriculum_api.session_results_policy import (attendance_seconds, evidence_seconds, session_roster,
-    attendance_csv, archive_prefix, transcript_text, instant)
+    attendance_csv, archive_prefix, transcript_text, instant, session_runs)
 from curriculum_api.session_graph import collection
+from curriculum_api.session_media_policy import (hidden_artifact_ids, recordings_for_transcript,
+    recording_transcript_links, transcript_timing_ready, artifact_metadata)
 
 
 def functions(path, names, namespace):
@@ -41,6 +43,58 @@ class Response(dict):
 
 def visit(start, end):
     return {'joinDateTime': f'2026-09-16T09:{start}Z', 'leaveDateTime': f'2026-09-16T09:{end}Z'}
+
+
+class AuthoringIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.ns = {'json': json}
+        functions(ROOT / 'session_results.py', {'json_value'}, self.ns)
+        self.ns['as_json_value'] = self.ns['json_value']
+        tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
+        names = {'BASE_COMPONENT_SETTINGS', 'COMPONENT_SETTINGS_SCHEMA', 'LEGACY_SETTING_KEYS',
+                 'LIVE_SESSION_TRACKING_SETTING_KEYS'}
+        nodes = [node for node in tree.body if isinstance(node, ast.Assign)
+                 and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)]
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'authoring-settings', 'exec'), self.ns)
+        functions(ROOT / 'views.py', {'frontend_component_type', 'component_settings_defaults',
+            'allowed_component_setting_keys', 'normalise_component_settings_payload'}, self.ns)
+        self.normalize = self.ns['normalise_component_settings_payload']
+        self.tracking = {'teamsLiveSessionId': 'S1', 'teamsOccurrenceId': 'O6', 'teamsSessionNumber': 6,
+            'teamsOnlineMeetingId': 'MEETING-1', 'teamsMeetingUrl': 'https://teams.microsoft.com/meet/example',
+            'teamsWebLink': 'https://outlook.office.com/calendar/item/example',
+            'teamsStartDateTimeUtc': '2026-10-29T09:00:00Z', 'teamsDurationMinutes': 90,
+            'sessionDay': 'Thursday', 'sessionRescheduled': True}
+
+    def test_save_retains_exact_occurrence_and_shifted_calendar_fields(self):
+        for kind in ('live-session', 'live_session'):
+            with self.subTest(kind=kind):
+                saved = self.normalize(kind, self.tracking)
+                saved = self.normalize(kind, saved)
+                self.assertEqual({key: saved.get(key) for key in self.tracking}, self.tracking)
+                self.assertTrue(set(saved).issubset(self.ns['allowed_component_setting_keys'](kind)))
+                self.assertNotIn('legacySettings', saved)
+
+    def test_previous_legacy_identity_is_recovered_without_changing_other_fields(self):
+        saved = self.normalize('live-session', {'legacySettings': json.dumps(self.tracking),
+            'teamsAttendees': ['learner@example.invalid'], 'teamsRecording': 'record-transcribe',
+            'teamsLobbyBypass': 'organizer', 'preparationInstructions': 'Read the material'})
+        self.assertEqual({key: saved.get(key) for key in self.tracking}, self.tracking)
+        self.assertEqual(saved['teamsAttendees'], ['learner@example.invalid'])
+        self.assertEqual(saved['teamsRecording'], 'record-transcribe')
+        self.assertEqual(saved['teamsLobbyBypass'], 'organizer')
+        self.assertEqual(saved['preparationInstructions'], 'Read the material')
+
+    def test_explicit_clear_wins_and_missing_identity_is_not_invented(self):
+        saved = self.normalize('live-session', {'teamsSessionNumber': '', 'teamsOccurrenceId': '',
+            'legacySettings': json.dumps(self.tracking)})
+        self.assertEqual(saved['teamsSessionNumber'], '')
+        self.assertEqual(saved['teamsOccurrenceId'], '')
+        self.assertNotIn('teamsSessionNumber', self.normalize('live-session', {}))
+
+    def test_other_component_types_do_not_acquire_session_identity(self):
+        saved = self.normalize('reading', {'legacySettings': json.dumps(self.tracking)})
+        self.assertNotIn('teamsSessionNumber', saved)
+        self.assertEqual(json.loads(saved['legacySettings']), self.tracking)
 
 
 class EvidenceTests(unittest.TestCase):
@@ -231,11 +285,13 @@ class EndpointTests(unittest.TestCase):
             'authenticate_request': lambda req: req.account, '_unauthenticated': lambda req: Response(status=401),
             '_forbidden': lambda roles: Response(status=403), '_read_only_learner_view': lambda: Response(status=403),
             '_target_learner_id': lambda req, kwargs, **opts: kwargs.get('learner_id'),
-            'instant': instant, 'session_roster': session_roster, 'attendance_csv': attendance_csv,
+            'instant': instant, 'session_roster': session_roster, 'attendance_csv': attendance_csv, 'session_runs': session_runs,
+            'hidden_artifact_ids': hidden_artifact_ids, 'recording_transcript_links': recording_transcript_links,
+            'transcript_timing_ready': transcript_timing_ready, 'artifact_metadata': artifact_metadata,
             'timezone': types.SimpleNamespace(now=lambda: datetime(2026, 9, 16, 12, tzinfo=timezone.utc))}
         functions(ROOT.parent / 'login/permissions.py', {'require_role', '_learner_progress_gate', 'learner_self_or_staff'}, self.ns)
         functions(ROOT / 'session_results.py', {'json_value', 'result_rows', 'admin_session', 'learner_results', 'learner_content',
-            'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable', 'archive_schema_missing'}, self.ns)
+            'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable', 'archive_schema_missing', 'recording_visibility', 'export_attendance'}, self.ns)
         self.cursor = Mock(); self.cursor.__enter__ = Mock(return_value=self.cursor); self.cursor.__exit__ = Mock(return_value=False)
         self.ns['connections'] = {'default': types.SimpleNamespace(cursor=lambda: self.cursor)}
         self.ns['read'] = Mock(return_value=[])
@@ -256,6 +312,63 @@ class EndpointTests(unittest.TestCase):
             response = self.ns[endpoint](self.req('learner'), kind='commercial', learner_id=8, series_id='S', **params)
             self.assertEqual(response.status_code, 404)
         self.ns['read'].assert_not_called()
+
+    def test_visibility_requires_staff_and_boolean_and_scopes_the_recording(self):
+        for role in (None, 'learner', 'employer'):
+            response = self.ns['recording_visibility'](self.req(role, method='POST'), series_id='S', artifact_id='A')
+            self.assertIn(response.status_code, (401, 403))
+        self.cursor.execute.assert_not_called()
+        req = self.req('staff', method='POST'); req.body = b'{"hidden":"false"}'
+        self.assertEqual(self.ns['recording_visibility'](req, 'S', 'A').status_code, 400)
+        req.body = b'{"hidden":true}'
+        self.cursor.fetchone.return_value = None
+        self.assertEqual(self.ns['recording_visibility'](req, 'OTHER', 'A').status_code, 404)
+        self.cursor.fetchone.return_value = ('A',)
+        self.assertEqual(self.ns['recording_visibility'](req, 'S', 'A')['hiddenFromLearners'], True)
+        sql, params = self.cursor.execute.call_args.args
+        self.assertEqual(params, ['true', 'A', 'S'])
+        self.assertIn("o.live_session_id=%s", sql)
+        self.assertIn("a.artifact_type='recording'", sql)
+
+    def test_pdf_export_is_staff_only_and_uses_saved_session_evidence(self):
+        for role in (None, 'learner', 'employer'):
+            response = self.ns['export_attendance'](self.req(role), series_id='S', session_number=1, file_format='pdf')
+            self.assertIn(response.status_code, (401, 403))
+        self.ns['read'].assert_not_called()
+        self.ns['read'].return_value = [{'id': 'S'}]
+        saved = {'id': 'O', 'attendance': []}
+        self.ns['result_rows'] = Mock(return_value=[saved])
+        pdf = types.ModuleType('curriculum_api.session_attendance_pdf')
+        pdf.build_attendance_pdf = Mock(return_value=b'%PDF-synthetic')
+        with patch.dict(sys.modules, {'curriculum_api.session_attendance_pdf': pdf}):
+            response = self.ns['export_attendance'](self.req('staff'), series_id='S', session_number=1, file_format='pdf')
+        pdf.build_attendance_pdf.assert_called_once_with(saved)
+        self.assertEqual(response.content, b'%PDF-synthetic')
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        self.assertIn('.pdf', response['Content-Disposition'])
+        self.cursor.execute.assert_not_called()
+
+    def test_hidden_recording_and_transcript_downloads_are_denied_before_signing(self):
+        self.ns['learner_series'] = Mock(return_value=(object(), {'id': 'S'}))
+        self.ns['read'].return_value = [
+            {'id': 'V', 'artifact_type': 'recording', 'content_correlation_id': 'pair', 'metadata': {'lmsHiddenFromLearners': True}},
+            {'id': 'T', 'artifact_type': 'transcript', 'content_correlation_id': 'pair'},
+        ]
+        for kind in ('commercial', 'apprenticeship'):
+            for artifact in ('V', 'T', 'OTHER'):
+                response = self.ns['learner_content'](self.req('learner'), kind=kind, learner_id=7, series_id='S', artifact_id=artifact)
+                self.assertEqual(response.status_code, 404)
+
+    def test_hidden_media_is_removed_from_learner_result_payload(self):
+        self.ns['apply_recovery'] = lambda rows: None
+        self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 1, 'status': 'completed',
+            'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}], [], [
+            {'id': 'V', 'occurrence_id': 'O', 'artifact_type': 'recording', 'metadata': {'lmsHiddenFromLearners': True}},
+            {'id': 'T', 'occurrence_id': 'O', 'artifact_type': 'transcript', 'transcript_text': 'Private speech'},
+        ]]
+        rows = self.ns['result_rows']({'id': 'S'}, session_number=1, email='a@example.invalid')
+        self.assertEqual(rows[0]['artifacts'], [])
+        self.assertNotIn('Private speech', json.dumps(rows, default=str))
 
     def test_employer_cannot_access_private_results(self):
         self.assertEqual(self.ns['learner_results'](self.req('employer'), kind='apprenticeship', learner_id=7, series_id='S', session_number=1).status_code, 403)
@@ -364,6 +477,18 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(self.ns['read'].call_args.args[1], ['A', 'S'])
         storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240)
 
+    def test_timed_cues_are_read_from_database_without_signing_or_fetching_storage(self):
+        cues = [{'start': 1, 'end': 3, 'speaker': 'Speaker', 'text': 'Saved words'}]
+        self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'transcript',
+            'metadata': {'lmsTranscriptTimeline': {'version': 1, 'cues': cues}}}]
+        req = self.req(); req.GET = {'format': 'cues'}
+        response = self.ns['stored_content'](req, 'S', 'T')
+        self.assertEqual(response['cues'], cues)
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        self.cursor.execute.assert_not_called()
+        self.ns['read'].return_value[0]['metadata'] = {}
+        self.assertEqual(self.ns['stored_content'](req, 'S', 'T').status_code, 409)
+
     def test_expired_join_is_denied_without_launch_write(self):
         checks = types.ModuleType('curriculum_api.teams_calendar_checks'); checks.safe_teams_join_url = lambda value: True
         self.ns['learner_series'] = lambda *args: (types.SimpleNamespace(email='a@example.invalid'), {'id': 'S', 'status': 'active'})
@@ -415,20 +540,30 @@ class ArchiveWorkerTests(unittest.TestCase):
             'learner_api.evidence_storage': self.storage, 'curriculum_api.views': self.views})
         modules.start(); self.addCleanup(modules.stop)
 
-    def archive(self, *, state=None, exists=True, failure=False):
+    def archive(self, *, state=None, exists=True, failure=False, kind='recording', timed=False):
         blob = Mock(); blob.exists.return_value = exists
+        blob.download_blob.return_value.readall.return_value = b'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Speaker>Hello</v>'
         client = Mock(); client.get_blob_client.return_value = blob
-        response = Mock(); response.iter_bytes.return_value = [b'synthetic-', b'movie']
+        response = Mock()
+        response.iter_bytes.return_value = ([b'WEBVTT\n\n1\n00:01 --> 00:03\n<v Speaker>Hello</v>']
+            if kind == 'transcript' else [b'synthetic-', b'movie'])
         if failure:
             response.raise_for_status.side_effect = RuntimeError('synthetic private error')
-        http = Mock(); http.stream.return_value = nullcontext(response)
+        http = Mock()
+        def graph_content(_method, _url, *, headers):
+            if kind == 'transcript' and headers.get('Accept') != 'text/vtt':
+                raise RuntimeError('Graph requires a supported transcript content format')
+            return nullcontext(response)
+        http.stream.side_effect = graph_content
         self.ns = {'__name__': 'curriculum_api.session_archive', '__package__': 'curriculum_api',
             'read': Mock(side_effect=[[{'id': 'S', 'module_catalogue_id': 'M', 'module_title': 'Calculus',
                 'organizer_email': 'owner@example.invalid', 'online_meeting_id': 'meeting', 'join_url': 'https://teams.microsoft.com/meet/example'}],
                 [{'group_id': 'G', 'group_name': 'Group'}], [{'id': 'O', 'session_number': 1}],
-                [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': 'recording', 'graph_artifact_id': 'GRA', 'saved_status': state,
+                [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': kind, 'graph_artifact_id': 'GRA', 'saved_status': state,
                   'saved_name': 'existing/module/session/recording.mp4' if exists else None}]]),
             'storage_client': lambda: client, 'CONTAINER': 'session-recordings', 'archive_prefix': archive_prefix,
+            'transcript_text': transcript_text, 'transcript_timing_ready': lambda artifact: timed,
+            'save_transcript_timing': Mock(),
             'save_archive': Mock(), 'tempfile': tempfile, 'httpx': types.SimpleNamespace(Client=lambda **kwargs: nullcontext(http)),
             'quote': __import__('urllib.parse', fromlist=['quote']).quote,
             'ResourceExistsError': type('ResourceExistsError', (Exception,), {}),
@@ -441,6 +576,18 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.transport.microsoft_graph_token.assert_not_called()
         self.storage.upload_blob.assert_not_called(); blob.exists.assert_not_called()
+
+    def test_existing_transcript_backfills_timings_without_graph_or_any_reupload(self):
+        errors, blob = self.archive(state='ready', kind='transcript')
+        self.assertEqual(errors, [])
+        self.ns['save_transcript_timing'].assert_called_once()
+        self.transport.microsoft_graph_token.assert_not_called()
+        self.storage.upload_blob.assert_not_called()
+        blob.upload_blob.assert_not_called()
+        errors, blob = self.archive(state='ready', kind='transcript', timed=True)
+        self.assertEqual(errors, [])
+        blob.download_blob.assert_not_called()
+        self.ns['save_transcript_timing'].assert_not_called()
 
     def test_uploaded_file_after_crash_is_reused_at_original_path(self):
         errors, _ = self.archive()
@@ -464,6 +611,16 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertNotIn('synthetic private error', errors[0])
         self.assertEqual(self.ns['save_archive'].call_args.kwargs['state'], 'failed')
         self.storage.upload_blob.assert_not_called()
+
+    def test_transcript_requests_vtt_and_archives_readable_text(self):
+        captured = []
+        self.storage.upload_blob.side_effect = lambda stream, *args, **kwargs: captured.append((stream.read(), args))
+        errors, blob = self.archive(exists=False, kind='transcript')
+        self.assertEqual(errors, [])
+        self.assertTrue(captured[0][0].startswith(b'WEBVTT'))
+        self.assertEqual(captured[0][1][-1], 'text/vtt')
+        self.assertEqual(self.ns['save_archive'].call_args.kwargs['text'], 'Speaker: Hello')
+        blob.upload_blob.assert_called_once_with(b'Speaker: Hello', overwrite=True)
 
     def worker(self, *, queued=True, partial=False):
         cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)
@@ -496,6 +653,59 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertEqual(finish.args[1][0], 'complete')
         self.assertTrue(self.views.curriculum_teams_meeting_artifacts.call_args.args[0].session_result_force)
         ns['archive_series'].assert_called_once_with('S')
+
+    def test_targeted_worker_limits_both_queued_and_expired_jobs_to_requested_series(self):
+        command, ns, cursor = self.worker()
+        command.handle(limit=2, scheduled=False, provision_container=False, live_session_ids=[' S ', 'S'])
+        claim = cursor.execute.call_args_list[0]
+        self.assertEqual(claim.args[1], [['S']])
+        self.assertIn("interval '2 hours')) AND live_session_id=ANY(%s)", claim.args[0])
+        self.assertIn('FOR UPDATE SKIP LOCKED', claim.args[0])
+        ns['archive_series'].assert_called_once_with('S')
+
+    def test_targeted_scheduled_worker_queues_only_requested_series(self):
+        command, ns, cursor = self.worker(queued=False)
+        command.handle(limit=2, scheduled=True, provision_container=False, live_session_ids=['S'])
+        scheduled, claim = cursor.execute.call_args_list
+        self.assertIn('AND o.live_session_id=ANY(%s)', scheduled.args[0])
+        self.assertEqual(scheduled.args[1], [['S']])
+        self.assertEqual(claim.args[1], [['S']])
+        ns['archive_series'].assert_not_called()
+
+    def test_discovery_does_not_exclude_early_or_late_recordings_by_planned_date(self):
+        command, _, cursor = self.worker(queued=False)
+        command.handle(limit=2, scheduled=True, provision_container=False)
+        selection = cursor.execute.call_args_list[0].args[0]
+        self.assertNotIn('scheduled_end', selection)
+        self.assertIn("coalesce(s.online_meeting_id,'')<>''", selection)
+        self.assertIn('m.deleted_at IS NULL', selection)
+        self.assertIn("session_result_jobs.state='complete'", selection)
+        self.assertIn("interval '5 minutes'", selection)
+
+    def test_default_worker_keeps_processing_the_shared_queue(self):
+        command, _, cursor = self.worker(queued=False)
+        command.handle(limit=2, scheduled=False, provision_container=False)
+        claim = cursor.execute.call_args_list[0]
+        self.assertNotIn('live_session_id=ANY', claim.args[0])
+        self.assertEqual(claim.args[1], [])
+
+    def test_legacy_scheduler_passes_explicit_series_scope_to_worker(self):
+        cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)
+        queryset = Mock()
+        queryset.filter.return_value = queryset
+        queryset.order_by.return_value.values_list.return_value = ['S']
+        ns = {'BaseCommand': object, 'CommandError': RuntimeError, 'timedelta': timedelta,
+              'timezone': types.SimpleNamespace(now=lambda: datetime(2026, 9, 16, tzinfo=timezone.utc)),
+              'has_graph_credentials': lambda: True, 'call_command': Mock(),
+              'LiveSessionOccurrence': types.SimpleNamespace(objects=queryset),
+              'connections': {'default': types.SimpleNamespace(cursor=lambda: cursor)}}
+        tree = ast.parse((ROOT / 'management/commands/sync_teams_meeting_artifacts.py').read_text(encoding='utf-8'))
+        node = next(n for n in tree.body if isinstance(n, ast.ClassDef))
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'scheduler', 'exec'), ns)
+        command = ns['Command'](); command.stdout = Mock(); command.stderr = Mock()
+        command.handle(lookback_hours=168, limit=1, coach_limit=1, skip_coach_meetings=True, live_session_ids=['S'])
+        ns['call_command'].assert_called_once_with('process_session_results', limit=1, scheduled=True,
+            live_session_ids=['S'], stdout=command.stdout, stderr=command.stderr)
 
     def test_partial_graph_success_archives_available_files_and_schedules_retry(self):
         command, ns, cursor = self.worker(partial=True)

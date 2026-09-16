@@ -180,4 +180,25 @@ describe('normaliseComponentSettings week-template compatibility', () => {
     expect(liveSession.teamsRepeat).toBe('weekly');
     expect(liveSession.teamsRepeatOccurrences).toBe(6);
   });
+
+  it('keeps occurrence identity and shifted calendar metadata through repeated saves', () => {
+    const tracking = { teamsOccurrenceId: 'OCC-2', teamsSessionNumber: 2, teamsOnlineMeetingId: 'MEETING-2',
+      teamsMeetingUrl: 'https://teams.microsoft.com/l/meetup-join/shifted', teamsWebLink: 'https://outlook.office.com/calendar/item/example',
+      teamsStartDateTimeUtc: '2026-10-29T09:00:00Z', teamsDurationMinutes: 90, sessionDay: 'Thursday', sessionRescheduled: true };
+    const saved = normaliseComponentSettings('live-session', { ...tracking, teamsLiveSessionId: 'SERIES-1',
+      teamsPresenters: ['tutor@example.invalid'], teamsCoOrganizers: ['staff@example.invalid'] });
+    expect(normaliseComponentSettings('live-session', saved)).toMatchObject(tracking);
+    expect(saved.teamsPresenters).toEqual(['tutor@example.invalid']);
+    expect(saved.teamsCoOrganizers).toEqual(['staff@example.invalid']);
+    expect(validateComponentAuthoring({ title: 'Lesson', type: 'live-session', expectedOtjh: 1.5, points: 10,
+      reflectionRequired: false, workplaceEvidenceRequired: false, settings: saved })).toEqual([]);
+  });
+
+  it('preserves an explicit occurrence clear instead of restoring legacy values', () => {
+    const settings = normaliseComponentSettings('live-session', { teamsOccurrenceId: '', teamsSessionNumber: '',
+      legacySettings: JSON.stringify({ teamsOccurrenceId: 'OLD', teamsSessionNumber: 3 }) });
+    expect(settings.teamsOccurrenceId).toBe('');
+    expect(settings.teamsSessionNumber).toBe('');
+    expect(normaliseComponentSettings('live-session', {})).not.toHaveProperty('teamsSessionNumber');
+  });
 });

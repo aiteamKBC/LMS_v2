@@ -3365,7 +3365,7 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
     artifact_id = 'ART-' + hashlib.sha256(
         f"{occurrence['id']}|{artifact_type}|{graph_id}".encode('utf-8')
     ).hexdigest()[:32].upper()
-    authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], {
+    payload = {
         'id': artifact_id,
         'occurrence_id': occurrence['id'],
         'artifact_type': artifact_type,
@@ -3379,7 +3379,25 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
         'created_datetime': parse_graph_datetime(artifact.get('createdDateTime')),
         'end_datetime': parse_graph_datetime(artifact.get('endDateTime')),
         'metadata': json_db_value(artifact),
-    })
+    }
+    # Serialize against staff hide/restore. Graph refreshes must not overwrite
+    # LMS visibility, including a toggle committed while discovery was running.
+    with transaction.atomic(), connection.cursor() as cursor:
+        lock = ' FOR UPDATE' if connection.vendor == 'postgresql' else ''
+        cursor.execute(f'SELECT metadata FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
+                       'WHERE occurrence_id=%s AND artifact_type=%s AND graph_artifact_id=%s' + lock,
+                       [occurrence['id'], artifact_type, graph_id])
+        existing = cursor.fetchone()
+        metadata = dict(artifact)
+        metadata.pop('lmsHiddenFromLearners', None)
+        metadata.pop('lmsTranscriptTimeline', None)
+        if existing:
+            saved_metadata = parse_json_value(existing[0], {})
+            metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
+            if 'lmsTranscriptTimeline' in saved_metadata:
+                metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+        payload['metadata'] = json_db_value(metadata)
+        authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], payload)
     return True
 
 
@@ -13675,6 +13693,11 @@ COMPONENT_SETTINGS_SCHEMA = {
 
 
 LEGACY_SETTING_KEYS = {'legacySettings', 'legacySourceType', 'legacyUnsupportedSource', 'shortcode'}
+LIVE_SESSION_TRACKING_SETTING_KEYS = {
+    'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
+    'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
+    'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
+}
 
 
 class ModuleAuthoringValidationError(ValueError):
@@ -13707,6 +13730,13 @@ def component_settings_defaults(component_type):
     return COMPONENT_SETTINGS_SCHEMA.get(frontend_component_type(component_type), COMPONENT_SETTINGS_SCHEMA['reading'])
 
 
+def allowed_component_setting_keys(component_type):
+    allowed = set(component_settings_defaults(component_type)) | LEGACY_SETTING_KEYS
+    if frontend_component_type(component_type) == 'live-session':
+        allowed |= LIVE_SESSION_TRACKING_SETTING_KEYS
+    return allowed
+
+
 def normalise_component_settings_payload(component_type, settings):
     source = dict(settings) if isinstance(settings, dict) else {}
     stored_legacy = as_json_value(source.get('legacySettings'), {})
@@ -13734,7 +13764,7 @@ def normalise_component_settings_payload(component_type, settings):
         source['assignmentFileName'] = source.get('assignmentFileName') or source.get('uploadedFileName') or ''
         source['assignmentFileUrl'] = source.get('assignmentFileUrl') or source.get('uploadedFileUrl') or ''
     defaults = component_settings_defaults(component_type)
-    allowed = set(defaults.keys()) | LEGACY_SETTING_KEYS
+    allowed = allowed_component_setting_keys(component_type)
     normalised = dict(defaults)
     legacy = {}
     for key, value in source.items():
@@ -13761,7 +13791,7 @@ def validate_component_authoring_payload(component, path):
     component_type = frontend_component_type(component.get('type'))
     settings = normalise_component_settings_payload(component_type, component.get('settings'))
     component['settings'] = settings
-    allowed = set(component_settings_defaults(component_type).keys()) | LEGACY_SETTING_KEYS
+    allowed = allowed_component_setting_keys(component_type)
     title = clean_str(component.get('title'))
     status = clean_str(settings.get('contentStatus') or 'Draft')
     version = clean_str(settings.get('version') or '0.1')
