@@ -27,11 +27,11 @@ export function LearningHero({ map = false }: { map?: boolean }) {
   </header>;
 }
 
-export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, kind, learnerId, total, done, percent, deadlines = [], deadlinesLoading, deadlinesError, onRetryDeadlines }: {
+export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, kind, learnerId, total, done, percent, deadlines = [] }: {
   summary: UnifiedLearningSummary; search: string; onSearch: (value: string) => void; current?: Subject;
   renderCard: (subject: Subject) => ReactNode; onContinue: (subject: Subject) => void; kind?: string; learnerId?: string;
   total: number | string; done: number | string; percent: number | null;
-  deadlines?: OverviewWeek['deadlines']; deadlinesLoading?: boolean; deadlinesError?: string; onRetryDeadlines?: () => void;
+  deadlines?: OverviewWeek['deadlines'];
 }) {
   const [filter, setFilter] = useState('all');
   const [sort, setSort] = useState('current');
@@ -61,7 +61,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
     <div className={styles.catalogueMain}>
       <div className={styles.toolbar}>
         <label className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" placeholder="Search subjects or activities…" value={search} onChange={e => onSearch(e.target.value)} /></label>
-        <label className={styles.selectLabel}>Sort by<select value={sort} onChange={e => setSort(e.target.value)}><option value="current">Current module first</option><option value="name">Subject name</option><option value="progress">Highest progress</option></select></label>
+        <label className={styles.selectLabel}>Sort by<select value={sort} onChange={e => setSort(e.target.value)}><option value="current">Planned module first</option><option value="name">Subject name</option><option value="progress">Highest progress</option></select></label>
         <label className={styles.selectLabel}>Filter by progress<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All subjects</option><option value="started">In progress</option><option value="new">Not started</option><option value="complete">Completed</option></select></label>
         <div className={styles.viewToggle} role="group" aria-label="Subject layout"><button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')}><LayoutGrid size={16} />Grid</button><button type="button" aria-pressed={layout === 'list'} onClick={() => setLayout('list')}><List size={16} />List</button></div>
       </div>
@@ -72,8 +72,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
     <aside className={styles.catalogueAside} aria-label="Learning shortcuts">
       {continueSubject && <section className={styles.asidePanel}><h2><BookOpen size={21} />Continue learning</h2><div className={styles.continueSubject}><span className={styles.statIcon} data-tone="purple"><BookOpen size={26} /></span><div><strong>{continueSubject.title}</strong><p>{subjectPercent(continueSubject)}% complete</p></div></div><div className={styles.miniTrack}><span style={{ width: `${subjectPercent(continueSubject)}%` }} /></div><button type="button" className={styles.primaryButton} onClick={() => onContinue(continueSubject)}>Continue learning<ArrowRight size={17} /></button></section>}
       <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><CalendarDays size={21} />Upcoming deadlines</h2><Link to={assignmentsHref(kind, learnerId)} aria-label="View all assignments">View all<ArrowRight size={14} /></Link></div>
-        {deadlinesLoading ? <p className={styles.asideEmpty}>Loading upcoming deadlines…</p> : deadlinesError ? <p className={styles.asideEmpty}>Deadlines could not be loaded. <button onClick={onRetryDeadlines} className="underline">Try again</button></p>
-          : upcoming.length ? upcoming.map(item => <Link className={styles.deadline} key={item.id} to={deadlineHref(item, kind, learnerId)}><ClipboardList size={19} /><div><strong>{item.title}</strong><small>{summary.subjects.find(s => s.id === item.subjectId)?.title || (item.type === 'assignment' ? 'Assignment' : 'Checkpoint')}</small></div><time dateTime={item.date}>{learningDate(item.date)}</time></Link>) : <p className={styles.asideEmpty}>No upcoming deadlines. Keep exploring your subjects at your own pace.</p>}
+        {upcoming.length ? upcoming.map(item => <Link className={styles.deadline} key={item.id} to={deadlineHref(item, kind, learnerId)}><ClipboardList size={19} /><div><strong>{item.title}</strong><small>{summary.subjects.find(s => s.id === item.subjectId)?.title || (item.type === 'assignment' ? 'Assignment' : 'Checkpoint')}</small></div><time dateTime={item.date}>{learningDate(item.date)}</time></Link>) : <p className={styles.asideEmpty}>No upcoming deadlines. Keep exploring your subjects at your own pace.</p>}
       </section>
       <Link className={styles.mapShortcut} to={learningHref('map', kind, learnerId)}><Map size={25} /><div><strong>Learner’s Map</strong><span>See your learning week by week</span></div><ArrowRight size={18} /></Link>
       <div className={styles.encouragement}><Sprout size={33} strokeWidth={1.6} /><div><strong>You’re doing great!</strong><p>Consistency leads to progress. Keep going.</p></div></div>

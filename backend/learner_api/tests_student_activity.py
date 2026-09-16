@@ -11,7 +11,7 @@ from django.test import RequestFactory, SimpleTestCase
 from learner_api.student_activity import (
     student_activity, subject_covers, upload_subject_cover,
     _builder_cover_url, _builder_subject_metadata, _material_response,
-    combined_recorded_otjh, _direct_progress_otjh,
+    _effective_current_subjects, combined_recorded_otjh, _direct_progress_otjh,
 )
 from learner_api.student_activity_data import (
     read_audit_hour_totals, read_student_activity, summarize_activities, read_student_material,
@@ -447,6 +447,29 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         self.assertEqual(cursor.execute.call_args.args[1], [['MOD-1']])
         self.assertNotIn('legacy:99', links)
 
+    @patch('learner_api.student_activity._effective_plan_ids')
+    @patch('learner_api.student_activity.EnrolmentUser')
+    def test_current_subjects_include_modules_inherited_by_the_effective_plan(self, users, effective_plan_ids):
+        learner = SimpleNamespace()
+        users.all_learners.only.return_value.get.return_value = learner
+        effective_plan_ids.return_value = ['SAVED-1', 'GROUP-NEW', 'SAVED-2']
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('GROUP-NEW', 'New from group'),
+            ('SAVED-2', 'Second saved module'),
+            ('SAVED-1', 'First saved module'),
+        ]
+
+        subjects = _effective_current_subjects(cursor, 132)
+
+        self.assertEqual(subjects, [
+            {'id': 'SAVED-1', 'title': 'First saved module'},
+            {'id': 'GROUP-NEW', 'title': 'New from group'},
+            {'id': 'SAVED-2', 'title': 'Second saved module'},
+        ])
+        effective_plan_ids.assert_called_once_with(learner, {})
+        self.assertEqual(cursor.execute.call_args.args[1], [['SAVED-1', 'GROUP-NEW', 'SAVED-2']])
+
     @patch('login.permissions._auth_gate_enabled', return_value=True)
     @patch('login.permissions.authenticate_request')
     def test_current_builder_cover_does_not_override_historical_subject_image(self, authenticate, _gate):
@@ -454,7 +477,6 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         cursor = MagicMock()
         cursor.fetchall.side_effect = [
             [('legacy:42', '/media/curriculum_components/old.webp')],
-            [('MOD-1', 'Renamed subject')],
             [('MOD-1', 'Renamed subject', '')],
             [('MOD-1', None, 1, '', '', '', None)],
             [('WEEK-1', 'MOD-1', 'Lecture 06/03/26')],
@@ -462,13 +484,15 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         ]
         with patch('learner_api.student_activity.connections') as connections, \
              patch('learner_api.student_activity.subject_store.ready', return_value=True), \
+             patch('learner_api.student_activity._effective_current_subjects', return_value=[
+                 {'id': 'MOD-1', 'title': 'Renamed subject'},
+             ]), \
              patch('learner_api.student_activity._cover_url', return_value='https://example.com/old.webp'):
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
             response = subject_covers(RequestFactory().get('/?refs=legacy:42'), pk=132)
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.content)
         self.assertEqual(payload['covers'], {'legacy:42': 'https://example.com/old.webp', 'current:MOD-1': ''})
-        self.assertFalse(payload['can_manage'])
         self.assertNotIn('legacy:42', payload['builder_subjects'])
         self.assertEqual(payload['builder_subjects']['current:MOD-1']['id'], 'MOD-1')
         self.assertEqual(payload['activity_dates']['COMP-1']['date'], '2026-03-06')

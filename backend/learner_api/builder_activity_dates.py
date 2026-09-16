@@ -29,6 +29,10 @@ def _component_schedule(component, week_title):
                              section_source='builder_section_title')
 
 
+def _with_due_timing(schedule, settings):
+    return {**schedule, 'due_timing': str(settings.get('dueTiming') or '')}
+
+
 def read_builder_activity_dates(cursor, module_ids):
     """Use the same full week plan as Module Builder, never upload timestamps.
 
@@ -63,7 +67,8 @@ def read_builder_activity_dates(cursor, module_ids):
             'sessionDateTimeUtc',c.settings_json->>'sessionDateTimeUtc',
             'teamsStartDateTimeUtc',c.settings_json->>'teamsStartDateTimeUtc',
             'teamsLiveSessionId',c.settings_json->>'teamsLiveSessionId',
-            'teamsSessionNumber',c.settings_json->>'teamsSessionNumber')
+            'teamsSessionNumber',c.settings_json->>'teamsSessionNumber',
+            'dueTiming',c.settings_json->>'dueTiming')
         FROM curriculum.components c
         WHERE c.module_catalogue_id=ANY(%s)
           AND (c.deleted_at IS NULL OR c.COALESCE(deleted_via_parent, '') <> '')
@@ -78,7 +83,10 @@ def read_builder_activity_dates(cursor, module_ids):
         component = {'id': str(component_id), 'title': title,
                      'type': str(component_type or '').replace('_', '-'),
                      'settings': settings if isinstance(settings, dict) else {}}
-        dates[component['id']] = _component_schedule(component, week['title'] if week else '')
+        dates[component['id']] = _with_due_timing(
+            _component_schedule(component, week['title'] if week else ''),
+            component['settings'],
+        )
         if week is not None:
             week['components'].append(component)
 
@@ -98,5 +106,7 @@ def read_builder_activity_dates(cursor, module_ids):
                     continue
                 day = as_date(component['settings'].get('sessionDate')) or as_date(week.get('sessionDate'))
                 if day:
-                    dates[component['id']] = _dated_schedule(day, 'builder_week')
+                    dates[component['id']] = _with_due_timing(
+                        _dated_schedule(day, 'builder_week'), component['settings'],
+                    )
     return dates

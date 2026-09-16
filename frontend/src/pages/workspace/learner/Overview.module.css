@@ -9,7 +9,6 @@
   padding: clamp(1.25rem, 2.2cqi, 2.25rem);
   border-radius: 1.125rem;
   color: #fff;
-  background: var(--kbc-hero-gradient);
 }
 
 .heroArtwork {

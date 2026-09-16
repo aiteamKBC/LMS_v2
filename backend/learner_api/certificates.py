@@ -5,7 +5,7 @@ from datetime import datetime
 
 from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+from django.middleware.csrf import get_token
 
 from login.permissions import staff_only
 
@@ -43,6 +43,16 @@ def _template_dict(row):
         "minimumProgress": float(row[4]),
         "requireFinalTest": row[5],
         "layoutConfig": _json_dict(row[6]),
+    }
+
+
+def _template_summary(template):
+    """Fields the learner catalogue needs; never send embedded artwork there."""
+    if not template:
+        return None
+    return {
+        key: template[key]
+        for key in ("id", "version", "title", "minimumProgress", "requireFinalTest")
     }
 
 
@@ -406,7 +416,14 @@ def learner_certificate_template(request, kind, pk):
         return JsonResponse({"template": None, "configured": False})
     if not row:
         return JsonResponse({"template": None, "configured": True})
-    return JsonResponse({"configured": True, "template": _template_dict(row)})
+    template = _template_dict(row)
+    if request.GET.get("summary") == "1":
+        template = _template_summary(template)
+    return JsonResponse({
+        "configured": True,
+        "template": template,
+        "csrfToken": get_token(request),
+    })
 
 
 @staff_only(allow_own_learner="pk")
@@ -429,7 +446,6 @@ def learner_certificate_status(request, kind, pk):
     return JsonResponse({"configured": True, "template": template, "certificate": certificate, "eligibility": eligibility})
 
 
-@csrf_exempt
 @staff_only(allow_own_learner="pk")
 def issue_learner_certificate(request, kind, pk):
     if request.method != "POST":
@@ -530,7 +546,6 @@ def learner_module_certificate_status(request, kind, pk, module_ref):
     return JsonResponse({"configured": True, "template": template, "certificate": certificate, "eligibility": eligibility})
 
 
-@csrf_exempt
 @staff_only(allow_own_learner="pk")
 def issue_learner_module_certificate(request, kind, pk, module_ref):
     if request.method != "POST":

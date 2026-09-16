@@ -30,6 +30,7 @@ from .active_users import completed_hours_from_progress, fmt_hours, hydrate_sour
 from .identity import learner_profile_for_source
 from .aptem_status import programme_status
 from .learner_progression import access_gate, advance_learner
+from .learning_plan import effective_training_plan
 from .programme_access import learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
@@ -1748,6 +1749,7 @@ def build_learner_detail(source, pk, *, compact=False):
     # in the authored weeks/components before serialising the learner page,
     # which also repairs learners activated before this behaviour existed.
     hydrate_source_training_plan(source)
+    assigned_modules = effective_training_plan(source)
     learner_profile = _active_profile_for_source(source, pk)
 
     if learner_profile and not learner_profile.ksbs:
@@ -1769,7 +1771,7 @@ def build_learner_detail(source, pk, *, compact=False):
     # edits in Module Builder reflect here immediately (structured-plan learners).
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
         detail["modules"], detail["week"], detail["components"],
-        assigned_modules=get_training_plan(source),
+        assigned_modules=assigned_modules,
         **({"compact": True} if compact else {}),
     )
     detail["components"] = _apply_programme_assignment_template(
@@ -1777,7 +1779,7 @@ def build_learner_detail(source, pk, *, compact=False):
     )
     detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(detail["components"])
     detail["week"], detail["components"] = _append_week_quizzes(
-        detail["week"], detail["components"], assigned_modules=get_training_plan(source),
+        detail["week"], detail["components"], assigned_modules=assigned_modules,
     )
     snapshot = _live_otjh_snapshot(detail, learner_profile)
     _apply_live_otjh_snapshot(detail, snapshot)
@@ -1805,7 +1807,7 @@ def _reading_content(source, component_id):
     component id must never grant access to unassigned or deleted content.
     """
     module_ids = list(dict.fromkeys(
-        _s(module.get("moduleId")) for module in get_training_plan(source)
+        _s(module.get("moduleId")) for module in effective_training_plan(source)
         if isinstance(module, dict) and _s(module.get("moduleId"))
     ))
     if not module_ids or not component_id:
