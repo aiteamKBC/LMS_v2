@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LearnerPreview } from '../LearnerPreview';
 import { previewComponent } from '../learnerPreviewData';
 import type { ModuleCatalogueItem, ModuleComponent } from '../moduleAuthoringData';
+import { createLocalModuleDraft, recalculateModule } from '../moduleAuthoringData';
 
 vi.mock('@/pages/learner/video-watch/page', () => ({ ComponentBody: ({ component, preview }: { component: { title: string }; preview: boolean }) => <div data-testid="learner-body">{component.title} {preview ? 'preview enabled' : 'interactive'}</div> }));
 vi.mock('@/pages/learner/quiz-take/page', () => ({ QuestionInput: () => <input aria-label="Preview answer" /> }));
@@ -58,5 +59,23 @@ describe('Learner preview', () => {
     expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
     expect(screen.queryByRole('button', { name: 'Sync attendance & files' })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'attendance' })).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])('keeps saved occurrence identity through module loading (legacy: %s)', async legacy => {
+    const identity = { teamsSessionNumber: 6, teamsOccurrenceId: 'O6', teamsOnlineMeetingId: 'MEETING-1' };
+    const live = { ...component({ teamsLiveSessionId: 'S1', liveSessionUrl: 'https://teams.microsoft.com/l/meetup-join/example',
+      ...(legacy ? { legacySettings: JSON.stringify(identity) } : identity) }), type: 'live-session', title: 'Saved lesson' } as ModuleComponent;
+    const draft = createLocalModuleDraft({ programme: 'Example', title: 'Example module', description: '', weeks: 1, status: 'draft' });
+    const module = recalculateModule({ ...draft, weekStructure: [{ ...draft.weekStructure[0], components: [live] }] });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ sessions: [{
+      id: 'O6', seriesId: 'S1', sessionNumber: 6, reportReady: true, attendance: [],
+      artifacts: [{ id: 'A6', type: 'recording', state: 'ready' }],
+    }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<LearnerPreview module={module} onClose={vi.fn()} />);
+    expect(await screen.findByLabelText('Session recording 1')).toHaveAttribute('src', '/curriculum_api/curriculum/session-results/S1/artifacts/A6/');
+    expect(fetchMock.mock.calls[0][0]).toBe('/curriculum_api/curriculum/session-results/S1/sessions/6/');
+    expect(module.weekStructure[0].components[0].settings).toMatchObject(identity);
+    expect(screen.queryByText(/Link this component to a Teams session/)).not.toBeInTheDocument();
   });
 });

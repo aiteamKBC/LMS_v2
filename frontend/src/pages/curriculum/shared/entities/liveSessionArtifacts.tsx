@@ -1,13 +1,11 @@
 // The recording, transcript and attendance a live Teams session leaves behind.
 //
-// One panel, two doors: the programme's Sessions tab opens it under a completed
-// row, and the Live Teams Session component's own editor opens it under the
-// meeting it belongs to — so a tutor who authored the session can download its
-// recording (to split and re-upload as recorded components) without leaving the
-// builder. Everything here reads what the Graph sync service already captured;
-// nothing on this panel decides a status or a date of its own.
-import { Fragment, useCallback, useEffect, useState } from 'react';
+// The programme's Sessions tab uses the captured occurrence panel below.
+// Component editors use SessionResults for saved playback, transcripts and
+// attendance, matching the module workspace and learner's saved recordings.
+import { Fragment, useEffect, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { SessionResults } from '@/components/feature/SessionResults';
 import { formatSystemTimestamp, SYSTEM_TIME_ZONE, systemDateParts } from '@/lib/format';
 import {
   fetchLiveSessionArtifacts,
@@ -16,7 +14,6 @@ import {
   type LiveSessionAttendance,
   type LiveSessionArtifactOccurrence,
 } from '@/lib/curriculumApi';
-import { syncTeamsMeetingArtifacts } from '../../module-builder/moduleAuthoringData';
 
 /** What the panel needs to know about the session it is drawn for. Both the
  *  Sessions tab's `DeliverySession` and a live-session component satisfy it. */
@@ -445,10 +442,8 @@ export function CompletedSessionPanel({ session, state }: { session: LiveSession
 // ------------------------------------------------- component-editor entry point
 
 /**
- * The same panel, loading its own occurrence, for the Live Teams Session
- * component editor. The Sessions tab owns its artifact cache across a whole
- * tree of rows; a component editor shows exactly one meeting, so it fetches on
- * mount and offers the same manual Teams pull the Sessions tab offers.
+ * Load the component's saved session directly. Older components without a
+ * session number first resolve their occurrence from the saved series index.
  */
 export function LiveSessionArtifactsPanel({
   session,
@@ -456,109 +451,68 @@ export function LiveSessionArtifactsPanel({
   sessionNumber,
 }: {
   session: LiveSessionArtifactTarget;
-  /** The occurrence this component stands for, when either is known. Without
-   *  them the panel falls back to matching on the scheduled instant. */
+  /** Saved identity takes precedence over the component's editable schedule. */
   occurrenceId?: string;
   sessionNumber?: number;
 }) {
-  const [state, setState] = useState<ArtifactState>({ status: 'loading' });
-  const [syncing, setSyncing] = useState(false);
-  const [notice, setNotice] = useState('');
-
-  const load = useCallback(async (skipCache = false) => {
-    if (!session.liveSessionId) return null;
-    setState({ status: 'loading' });
-    try {
-      const response = await fetchLiveSessionArtifacts(session.liveSessionId, { skipCache });
-      const occurrence = matchArtifactOccurrence(response.occurrences, {
-        occurrenceId, sessionNumber, dateIso: session.dateIso,
-      });
-      setState({ status: 'ready', occurrence });
-      return occurrence;
-    } catch (error) {
-      setState({
-        status: 'error',
-        message: error instanceof Error ? error.message : 'Unable to load session details.',
-      });
-      return null;
-    }
-  }, [occurrenceId, sessionNumber, session.dateIso, session.liveSessionId]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const sync = useCallback(async () => {
-    if (!session.liveSessionId || syncing) return;
-    setSyncing(true);
-    setNotice('');
-    try {
-      const result = await syncTeamsMeetingArtifacts(session.liveSessionId);
-      if ('state' in result) {
-        setNotice(result.message);
-        return;
-      }
-      // Past the GET cache: the POST has just written rows this panel would
-      // otherwise redraw from the payload fetched before the pull.
-      const occurrence = await load(true);
-      if (result.partial || result.errors.length) {
-        setNotice(result.errors.join(' · ') || 'Some meeting files are not available from Microsoft yet.');
-      } else if (!occurrence) {
-        setNotice('Microsoft returned data for this Teams series, but none could be matched to this session.');
-      }
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Attendance, transcripts and recordings could not be synced.');
-    } finally {
-      setSyncing(false);
-    }
-  }, [load, session.liveSessionId, syncing]);
-
   if (!session.liveSessionId) return null;
+  if (typeof sessionNumber === 'number' && Number.isInteger(sessionNumber) && sessionNumber > 0) {
+    return <SessionResults key={`${session.liveSessionId}:${sessionNumber}`} seriesId={session.liveSessionId} sessionNumber={sessionNumber} />;
+  }
+  return <OccurrenceSessionResults key={`${session.liveSessionId}:${occurrenceId || session.dateIso}`} session={session} occurrenceId={occurrenceId} />;
+}
+
+function OccurrenceSessionResults({ session, occurrenceId }: {
+  session: LiveSessionArtifactTarget;
+  occurrenceId?: string;
+}) {
+  const [state, setState] = useState<ArtifactState>({ status: 'loading' });
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setState({ status: 'loading' });
+    fetchLiveSessionArtifacts(session.liveSessionId, { skipCache: revision > 0, signal: controller.signal })
+      .then(response => {
+        if (controller.signal.aborted) return;
+        const occurrence = matchArtifactOccurrence(response.occurrences.filter(item => item.live_session_id === session.liveSessionId), {
+          occurrenceId, dateIso: session.dateIso,
+        });
+        setState({ status: 'ready', occurrence });
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setState({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Unable to load session details.',
+        });
+      });
+    return () => controller.abort();
+  }, [occurrenceId, session.dateIso, session.liveSessionId, revision]);
+
+  const sessionNumber = state.status === 'ready' ? state.occurrence?.session_number : undefined;
+  if (typeof sessionNumber === 'number' && Number.isInteger(sessionNumber) && sessionNumber > 0) {
+    return <SessionResults seriesId={session.liveSessionId} sessionNumber={sessionNumber} />;
+  }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-background-200 bg-background-50/60">
-      <div className="flex flex-wrap items-center gap-3 border-b border-background-200 px-4 py-2.5">
-        <AppIcon className="ri-video-download-line text-primary-600"></AppIcon>
-        <span className="flex-1 text-[12px] font-bold text-foreground-800">Recording, transcript and attendance</span>
-        <button
-          type="button"
-          onClick={() => { void load(true); }}
-          disabled={syncing || state.status === 'loading'}
-          className="inline-flex h-7 shrink-0 items-center rounded-lg border border-background-200 px-2 text-[11px] font-bold text-foreground-700 disabled:opacity-60"
-        >
-          Refresh saved results
-        </button>
-        <button
-          type="button"
-          onClick={() => { void sync(); }}
-          disabled={syncing}
-          title="Queue attendance and file synchronization in the background."
-          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
-        >
-          <AppIcon className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
-          {syncing ? 'Syncing…' : 'Sync from Teams'}
-        </button>
-      </div>
-      {notice && <p role="status" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] font-semibold text-amber-800">{notice}</p>}
-      {state.status === 'ready' && !state.occurrence ? (
-        <p className="px-4 py-3 text-[12px] text-foreground-500">
-          Microsoft holds nothing for this session yet. It appears here once the meeting has run and been synced.
-        </p>
-      ) : (
-        <CompletedSessionPanel session={session} state={state} />
-      )}
+    <div className="space-y-3 rounded-xl border border-background-200 bg-background-50/60 p-4 text-sm">
+      {state.status === 'loading' ? <p role="status">Loading saved session…</p>
+        : state.status === 'error' ? <p role="alert" className="text-red-800">{state.message}</p>
+          : <p>Link this component to a Teams session to view its saved recording, transcript and attendance.</p>}
+      <button type="button" disabled={state.status === 'loading'} onClick={() => setRevision(value => value + 1)}
+        className="rounded-lg border px-3 py-2 font-semibold disabled:opacity-50">Refresh saved results</button>
     </div>
   );
 }
 
-/** Pick this component's occurrence out of the series' artifacts payload: its
- *  own id first, then its session number, then the instant it is scheduled for. */
+/** Never replace an explicit identity with another session sharing its date. */
 export function matchArtifactOccurrence(
   occurrences: LiveSessionArtifactOccurrence[],
   match: { occurrenceId?: string; sessionNumber?: number; dateIso?: string },
 ): LiveSessionArtifactOccurrence | null {
+  if (match.occurrenceId) return occurrences.find(item => item.id === match.occurrenceId) || null;
+  if (match.sessionNumber) return occurrences.find(item => item.session_number === match.sessionNumber) || null;
   const instant = Date.parse(match.dateIso || '');
-  return occurrences.find(item => (
-    (match.occurrenceId && item.id === match.occurrenceId)
-    || (match.sessionNumber && item.session_number === match.sessionNumber)
-    || (Number.isFinite(instant) && Date.parse(item.scheduled_start || '') === instant)
-  )) || null;
+  const matches = occurrences.filter(item => Number.isFinite(instant) && Date.parse(item.scheduled_start || '') === instant);
+  return matches.length === 1 ? matches[0] : null;
 }

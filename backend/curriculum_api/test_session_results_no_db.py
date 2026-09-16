@@ -43,6 +43,58 @@ def visit(start, end):
     return {'joinDateTime': f'2026-09-16T09:{start}Z', 'leaveDateTime': f'2026-09-16T09:{end}Z'}
 
 
+class AuthoringIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.ns = {'json': json}
+        functions(ROOT / 'session_results.py', {'json_value'}, self.ns)
+        self.ns['as_json_value'] = self.ns['json_value']
+        tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
+        names = {'BASE_COMPONENT_SETTINGS', 'COMPONENT_SETTINGS_SCHEMA', 'LEGACY_SETTING_KEYS',
+                 'LIVE_SESSION_TRACKING_SETTING_KEYS'}
+        nodes = [node for node in tree.body if isinstance(node, ast.Assign)
+                 and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)]
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'authoring-settings', 'exec'), self.ns)
+        functions(ROOT / 'views.py', {'frontend_component_type', 'component_settings_defaults',
+            'allowed_component_setting_keys', 'normalise_component_settings_payload'}, self.ns)
+        self.normalize = self.ns['normalise_component_settings_payload']
+        self.tracking = {'teamsLiveSessionId': 'S1', 'teamsOccurrenceId': 'O6', 'teamsSessionNumber': 6,
+            'teamsOnlineMeetingId': 'MEETING-1', 'teamsMeetingUrl': 'https://teams.microsoft.com/meet/example',
+            'teamsWebLink': 'https://outlook.office.com/calendar/item/example',
+            'teamsStartDateTimeUtc': '2026-10-29T09:00:00Z', 'teamsDurationMinutes': 90,
+            'sessionDay': 'Thursday', 'sessionRescheduled': True}
+
+    def test_save_retains_exact_occurrence_and_shifted_calendar_fields(self):
+        for kind in ('live-session', 'live_session'):
+            with self.subTest(kind=kind):
+                saved = self.normalize(kind, self.tracking)
+                saved = self.normalize(kind, saved)
+                self.assertEqual({key: saved.get(key) for key in self.tracking}, self.tracking)
+                self.assertTrue(set(saved).issubset(self.ns['allowed_component_setting_keys'](kind)))
+                self.assertNotIn('legacySettings', saved)
+
+    def test_previous_legacy_identity_is_recovered_without_changing_other_fields(self):
+        saved = self.normalize('live-session', {'legacySettings': json.dumps(self.tracking),
+            'teamsAttendees': ['learner@example.invalid'], 'teamsRecording': 'record-transcribe',
+            'teamsLobbyBypass': 'organizer', 'preparationInstructions': 'Read the material'})
+        self.assertEqual({key: saved.get(key) for key in self.tracking}, self.tracking)
+        self.assertEqual(saved['teamsAttendees'], ['learner@example.invalid'])
+        self.assertEqual(saved['teamsRecording'], 'record-transcribe')
+        self.assertEqual(saved['teamsLobbyBypass'], 'organizer')
+        self.assertEqual(saved['preparationInstructions'], 'Read the material')
+
+    def test_explicit_clear_wins_and_missing_identity_is_not_invented(self):
+        saved = self.normalize('live-session', {'teamsSessionNumber': '', 'teamsOccurrenceId': '',
+            'legacySettings': json.dumps(self.tracking)})
+        self.assertEqual(saved['teamsSessionNumber'], '')
+        self.assertEqual(saved['teamsOccurrenceId'], '')
+        self.assertNotIn('teamsSessionNumber', self.normalize('live-session', {}))
+
+    def test_other_component_types_do_not_acquire_session_identity(self):
+        saved = self.normalize('reading', {'legacySettings': json.dumps(self.tracking)})
+        self.assertNotIn('teamsSessionNumber', saved)
+        self.assertEqual(json.loads(saved['legacySettings']), self.tracking)
+
+
 class EvidenceTests(unittest.TestCase):
     def test_threshold(self):
         for seconds, expected in [(0, 0), (179, 0), (180, 0), (181, 1), (10000, 1)]:
@@ -415,20 +467,28 @@ class ArchiveWorkerTests(unittest.TestCase):
             'learner_api.evidence_storage': self.storage, 'curriculum_api.views': self.views})
         modules.start(); self.addCleanup(modules.stop)
 
-    def archive(self, *, state=None, exists=True, failure=False):
+    def archive(self, *, state=None, exists=True, failure=False, kind='recording'):
         blob = Mock(); blob.exists.return_value = exists
         client = Mock(); client.get_blob_client.return_value = blob
-        response = Mock(); response.iter_bytes.return_value = [b'synthetic-', b'movie']
+        response = Mock()
+        response.iter_bytes.return_value = ([b'WEBVTT\n\n1\n00:01 --> 00:03\n<v Speaker>Hello</v>']
+            if kind == 'transcript' else [b'synthetic-', b'movie'])
         if failure:
             response.raise_for_status.side_effect = RuntimeError('synthetic private error')
-        http = Mock(); http.stream.return_value = nullcontext(response)
+        http = Mock()
+        def graph_content(_method, _url, *, headers):
+            if kind == 'transcript' and headers.get('Accept') != 'text/vtt':
+                raise RuntimeError('Graph requires a supported transcript content format')
+            return nullcontext(response)
+        http.stream.side_effect = graph_content
         self.ns = {'__name__': 'curriculum_api.session_archive', '__package__': 'curriculum_api',
             'read': Mock(side_effect=[[{'id': 'S', 'module_catalogue_id': 'M', 'module_title': 'Calculus',
                 'organizer_email': 'owner@example.invalid', 'online_meeting_id': 'meeting', 'join_url': 'https://teams.microsoft.com/meet/example'}],
                 [{'group_id': 'G', 'group_name': 'Group'}], [{'id': 'O', 'session_number': 1}],
-                [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': 'recording', 'graph_artifact_id': 'GRA', 'saved_status': state,
+                [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': kind, 'graph_artifact_id': 'GRA', 'saved_status': state,
                   'saved_name': 'existing/module/session/recording.mp4' if exists else None}]]),
             'storage_client': lambda: client, 'CONTAINER': 'session-recordings', 'archive_prefix': archive_prefix,
+            'transcript_text': transcript_text,
             'save_archive': Mock(), 'tempfile': tempfile, 'httpx': types.SimpleNamespace(Client=lambda **kwargs: nullcontext(http)),
             'quote': __import__('urllib.parse', fromlist=['quote']).quote,
             'ResourceExistsError': type('ResourceExistsError', (Exception,), {}),
@@ -464,6 +524,16 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertNotIn('synthetic private error', errors[0])
         self.assertEqual(self.ns['save_archive'].call_args.kwargs['state'], 'failed')
         self.storage.upload_blob.assert_not_called()
+
+    def test_transcript_requests_vtt_and_archives_readable_text(self):
+        captured = []
+        self.storage.upload_blob.side_effect = lambda stream, *args, **kwargs: captured.append((stream.read(), args))
+        errors, blob = self.archive(exists=False, kind='transcript')
+        self.assertEqual(errors, [])
+        self.assertTrue(captured[0][0].startswith(b'WEBVTT'))
+        self.assertEqual(captured[0][1][-1], 'text/vtt')
+        self.assertEqual(self.ns['save_archive'].call_args.kwargs['text'], 'Speaker: Hello')
+        blob.upload_blob.assert_called_once_with(b'Speaker: Hello', overwrite=True)
 
     def worker(self, *, queued=True, partial=False):
         cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)

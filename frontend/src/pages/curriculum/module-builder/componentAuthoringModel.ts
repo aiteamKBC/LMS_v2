@@ -414,11 +414,20 @@ const WEEK_BUILDER_SHARED_KEYS = [
   'uploadSource',
 ] as const;
 
+// These are persisted per occurrence by the Teams attachment path. Keeping
+// them only in legacySettings disconnects previews and subsequent saves.
+const LIVE_SESSION_TRACKING_SETTING_KEYS = [
+  'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
+  'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
+  'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
+] as const;
+
 export function allowedSettingKeysForType(type: ModuleComponentType) {
   const definition = getComponentDefinition(type);
   return new Set([
     ...Object.keys(definition.defaultSettings),
     ...WEEK_BUILDER_SHARED_KEYS,
+    ...(type === 'live-session' ? LIVE_SESSION_TRACKING_SETTING_KEYS : []),
     'legacySettings',
     'legacySourceType',
     'legacyUnsupportedSource',

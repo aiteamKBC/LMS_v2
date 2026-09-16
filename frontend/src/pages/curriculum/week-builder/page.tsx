@@ -1573,10 +1573,8 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
         <Field label="Session outline" className="mt-4"><textarea value={s('sessionPurpose')} onChange={e => setSetting('sessionPurpose', e.target.value)} rows={3} placeholder="A short summary of what this session covers…" className={`${inputClass} resize-none`} /></Field>
       </Section>
 
-      {/* Once the meeting has run, its Teams recording, transcript and
-          attendance belong on the session that authored it — the same panel the
-          programme's Sessions tab opens — so the recording can be downloaded
-          here, split, and re-uploaded as recorded components. */}
+      {/* Read this component's saved results through the same archive-backed
+          panel used by the module workspace and learner preview. */}
       {teamsLiveSessionId && (
         <Section title="Recording & attendance">
           <LiveSessionArtifactsPanel
@@ -1589,6 +1587,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
               artifactsSyncedAt: '',
             }}
             sessionNumber={Number(s('teamsSessionNumber')) || undefined}
+            occurrenceId={s('teamsOccurrenceId') || undefined}
           />
         </Section>
       )}
