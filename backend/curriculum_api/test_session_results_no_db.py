@@ -567,6 +567,49 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertTrue(self.views.curriculum_teams_meeting_artifacts.call_args.args[0].session_result_force)
         ns['archive_series'].assert_called_once_with('S')
 
+    def test_targeted_worker_limits_both_queued_and_expired_jobs_to_requested_series(self):
+        command, ns, cursor = self.worker()
+        command.handle(limit=2, scheduled=False, provision_container=False, live_session_ids=[' S ', 'S'])
+        claim = cursor.execute.call_args_list[0]
+        self.assertEqual(claim.args[1], [['S']])
+        self.assertIn("interval '2 hours')) AND live_session_id=ANY(%s)", claim.args[0])
+        self.assertIn('FOR UPDATE SKIP LOCKED', claim.args[0])
+        ns['archive_series'].assert_called_once_with('S')
+
+    def test_targeted_scheduled_worker_queues_only_requested_series(self):
+        command, ns, cursor = self.worker(queued=False)
+        command.handle(limit=2, scheduled=True, provision_container=False, live_session_ids=['S'])
+        scheduled, claim = cursor.execute.call_args_list
+        self.assertIn('AND o.live_session_id=ANY(%s)', scheduled.args[0])
+        self.assertEqual(scheduled.args[1], [['S']])
+        self.assertEqual(claim.args[1], [['S']])
+        ns['archive_series'].assert_not_called()
+
+    def test_default_worker_keeps_processing_the_shared_queue(self):
+        command, _, cursor = self.worker(queued=False)
+        command.handle(limit=2, scheduled=False, provision_container=False)
+        claim = cursor.execute.call_args_list[0]
+        self.assertNotIn('live_session_id=ANY', claim.args[0])
+        self.assertEqual(claim.args[1], [])
+
+    def test_legacy_scheduler_passes_explicit_series_scope_to_worker(self):
+        cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)
+        queryset = Mock()
+        queryset.filter.return_value = queryset
+        queryset.order_by.return_value.values_list.return_value = ['S']
+        ns = {'BaseCommand': object, 'CommandError': RuntimeError, 'timedelta': timedelta,
+              'timezone': types.SimpleNamespace(now=lambda: datetime(2026, 9, 16, tzinfo=timezone.utc)),
+              'has_graph_credentials': lambda: True, 'call_command': Mock(),
+              'LiveSessionOccurrence': types.SimpleNamespace(objects=queryset),
+              'connections': {'default': types.SimpleNamespace(cursor=lambda: cursor)}}
+        tree = ast.parse((ROOT / 'management/commands/sync_teams_meeting_artifacts.py').read_text(encoding='utf-8'))
+        node = next(n for n in tree.body if isinstance(n, ast.ClassDef))
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'scheduler', 'exec'), ns)
+        command = ns['Command'](); command.stdout = Mock(); command.stderr = Mock()
+        command.handle(lookback_hours=168, limit=1, coach_limit=1, skip_coach_meetings=True, live_session_ids=['S'])
+        ns['call_command'].assert_called_once_with('process_session_results', limit=1, scheduled=False,
+            live_session_ids=['S'], stdout=command.stdout, stderr=command.stderr)
+
     def test_partial_graph_success_archives_available_files_and_schedules_retry(self):
         command, ns, cursor = self.worker(partial=True)
         with self.assertRaises(RuntimeError):

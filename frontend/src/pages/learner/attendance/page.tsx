@@ -7,6 +7,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -45,6 +46,7 @@ export default function AttendancePage() {
   const access = useLearnerWorkspaceAccess(learner.id);
   const navigate = useNavigate();
   const read = useLiveLearnerRead(learner.kind, learner.id, true, fetchAttendanceWorkspace, peekAttendanceWorkspace);
+  useRefreshOnReturn(read.refresh, { enabled: Boolean(learner.kind && learner.id) });
   const data = read.data;
   const [moduleId, setModuleId] = useState('all');
   const [filter, setFilter] = useState<AttendanceFilter>('all');
