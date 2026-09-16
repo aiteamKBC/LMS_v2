@@ -44,7 +44,7 @@ import {
   type CurriculumSessionPlanPreview,
 } from '@/lib/curriculumApi';
 import type { SelectOption } from '@/components/feature/SelectField';
-import { createNewModule, liveSessionNamesByNumber, loadModuleStructure } from '../../module-builder/moduleAuthoringData';
+import { createNewModule } from '../../module-builder/moduleAuthoringData';
 import {
   cleanText,
   cohortsForProgramme,
@@ -328,15 +328,6 @@ export function ModuleFormDrawer({
   // holds the save back: the end date is projected locally the moment the weeks
   // or the start date move, so a save can never carry the previous value's date.
   const [planLoading, setPlanLoading] = useState(false);
-  const [sessionPreviewOpen, setSessionPreviewOpen] = useState(false);
-  // Closed on a genuine open/close or a different module only -- never on the
-  // main seeding effect below, which also re-fires on a clean background
-  // refresh (a new `module` object identity with the same content). Sharing
-  // that reset used to yank the preview shut, and its session-names fetch,
-  // mid-flight; nothing then reopened it, so the names stayed "loading" forever.
-  useEffect(() => {
-    setSessionPreviewOpen(false);
-  }, [open, cleanText(module?.id)]);
   // What the drawer opened with, for the unsaved-changes check below.
   const baseline = useRef<Record<string, unknown>>({});
   const selectableProgrammes = useMemo(
@@ -650,59 +641,6 @@ export function ModuleFormDrawer({
   // Not a refusal -- a weekend or bank-holiday start is still saved -- just a
   // heads-up, since the module will not actually deliver on that day.
   const startDateNotice = useMemo(() => describeNonDeliveryDate(startDate, cohortHolidays), [startDate, cohortHolidays]);
-  const shiftedSessionCount = useMemo(
-    () => (plan?.sessions || []).filter(session => session.skippedHolidays?.length).length,
-    [plan],
-  );
-  const canOpenSessionPreview = scheduleComplete && planIsCurrent && Boolean(plan?.sessions?.length);
-
-  // A planned date is only half of a session; the other half is what is taught
-  // on it, which lives on the week's live-session component. The dates come
-  // from the plan preview, which knows nothing about this module, so the names
-  // are read from the module's authored weeks and matched by session number.
-  //
-  // Asked for when the preview is opened rather than when the drawer is: every
-  // other field here is editable without it, and the structure read is the
-  // module's whole authoring payload.
-  const moduleCatalogueId = cleanText(module?.id);
-  const [sessionNames, setSessionNames] = useState<Array<string | null>>([]);
-  const [sessionNamesLoading, setSessionNamesLoading] = useState(false);
-  // A failed read is not an unauthored week: the timeline has to say the names
-  // could not be read rather than report every session as missing one.
-  const [sessionNamesError, setSessionNamesError] = useState(false);
-  // Which module has already been asked for, held in a ref rather than in state
-  // on purpose. As state it had to be a dependency of the effect below, and the
-  // effect's own success set it -- so the re-render that followed re-ran the
-  // effect, and the cleanup marked the still-settling request stale before the
-  // handler that clears `sessionNamesLoading` had run. The flag stayed true and
-  // every row read "Reading the weeks..." for good. A ref keeps the effect's
-  // dependencies to things the effect does not itself write.
-  const sessionNamesRequestedFor = useRef('');
-  useEffect(() => {
-    if (!sessionPreviewOpen || !moduleCatalogueId) return undefined;
-    if (sessionNamesRequestedFor.current === moduleCatalogueId) return undefined;
-    sessionNamesRequestedFor.current = moduleCatalogueId;
-    let active = true;
-    setSessionNamesLoading(true);
-    setSessionNamesError(false);
-    loadModuleStructure(moduleCatalogueId)
-      .then(structure => {
-        if (!active) return;
-        setSessionNames(liveSessionNamesByNumber(structure));
-        setSessionNamesLoading(false);
-      })
-      .catch(() => {
-        if (!active) return;
-        // Cleared so re-opening the preview asks again: a failed read is worth
-        // retrying, an answered one is not.
-        sessionNamesRequestedFor.current = '';
-        setSessionNames([]);
-        setSessionNamesError(true);
-        setSessionNamesLoading(false);
-      });
-    return () => { active = false; };
-  }, [moduleCatalogueId, sessionPreviewOpen]);
-
   // ==========================================================================
   // Tutor availability, asked while the tutor is still being picked.
   //
@@ -1396,33 +1334,6 @@ export function ModuleFormDrawer({
           }
         />
       </div>
-      <div className="rounded-lg border border-background-200 bg-background-50 p-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Session dates</p>
-            <p className="mt-1 text-[12px] leading-5 text-foreground-500">
-              {canOpenSessionPreview
-                ? `${plan?.sessions.length || 0} planned session${(plan?.sessions.length || 0) === 1 ? '' : 's'}${shiftedSessionCount ? `, ${shiftedSessionCount} shifted by holidays` : ', no holiday shifts'}.`
-                : showSchedule
-                  ? !scheduleComplete ? `Choose ${sessionsPerWeek} delivery days to preview the sessions.` : plan?.warnings?.[0] || 'Choose delivery days and a start date to preview the sessions.'
-                  : `Counted as ${weeksEntered} weekly session${weeksEntered === 1 ? '' : 's'} for now. The real dates - on the group's delivery days, shifted around the cohort holidays - are set when you assign the module.`}
-            </p>
-          </div>
-          {/* Nothing to open without a group: the plan needs delivery days, so
-              the line above is the whole answer until the module is assigned. */}
-          {showSchedule && (
-            <button
-              type="button"
-              onClick={() => setSessionPreviewOpen(true)}
-              disabled={!canOpenSessionPreview}
-              className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:border-background-200 disabled:bg-background-100 disabled:text-foreground-300"
-            >
-              <AppIcon className="ri-calendar-schedule-line text-sm"></AppIcon>
-              View sessions
-            </button>
-          )}
-        </div>
-      </div>
       {showSchedule && (
         <>
           <FormField label="Tutor" required={Boolean(selectedGroups.length)} hint={tutorHint}>
@@ -1477,17 +1388,6 @@ export function ModuleFormDrawer({
           alt={`${name || 'Module'} cover`}
         />
       </FormField>
-      {sessionPreviewOpen && plan && (
-        <ModuleSessionPreview
-          moduleName={name || module?.name || 'Module'}
-          plan={plan}
-          holidays={cohortHolidays}
-          sessionNames={sessionNames}
-          sessionNamesLoading={sessionNamesLoading}
-          sessionNamesError={sessionNamesError}
-          onClose={() => setSessionPreviewOpen(false)}
-        />
-      )}
     </EntityDrawer>
   );
 }

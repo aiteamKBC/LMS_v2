@@ -199,6 +199,8 @@ export interface ModuleSlotHoliday {
   endDate: string;
   type?: string;
   notes?: string;
+  /** 'gov.uk' for a mirrored bank holiday, 'authored' for one entered here. */
+  source?: string;
 }
 
 /**
@@ -384,45 +386,35 @@ export function moduleWeekIdBySessionNumber(
 }
 
 /**
- * Where each holiday reading week sits among the authored weeks.
+ * Which authored weeks have a delivery day a ticked holiday falls on.
  *
- * A closed delivery slot is a real curriculum position with no live session in
- * it, and it belongs immediately ABOVE the authored week that delivers the next
- * open slot -- that week now holds the session the closure displaced. Reading
- * weeks after the final session have no week below them, so they come back in
- * `trailing`; a plan whose last slots are closed is not a thing the walk can
- * produce today, but a caller rendering the spine should not silently drop
- * them if it ever is.
+ * States the fact, decides nothing: the plan stays exactly as authored, every
+ * week keeps its own date, and what a week becomes -- a reading week, a live
+ * session that runs anyway, or something else -- is the author's call, made on
+ * the week itself. This is only where the rail hangs the warning.
  *
- * Returns empty maps when the plan carries no spine, so a screen talking to an
- * older payload renders exactly as it did before.
+ * Keyed by week id because one week can own more than one delivery day: a
+ * Mon+Fri week with only its Monday on a holiday is still a live week that has
+ * to say why one of its two days needs a look.
+ *
+ * Returns an empty map when the plan carries no spine, so a screen talking to
+ * an older payload renders exactly as it did before.
  */
-export function holidayReadingWeeksByWeekId(
+export function weeksTouchedByHoliday(
   module: ModuleCatalogueItem | null | undefined,
   plan: Pick<ModuleWeekSessionPlan, 'sessions' | 'slots'> | null | undefined,
-): { before: Map<string, ModuleSessionSlot[]>; trailing: ModuleSessionSlot[] } {
-  const before = new Map<string, ModuleSessionSlot[]>();
-  const trailing: ModuleSessionSlot[] = [];
+): Map<string, ModuleSessionSlot[]> {
+  const byWeekId = new Map<string, ModuleSessionSlot[]>();
   const slots = plan?.slots || [];
-  if (!module || !slots.length) return { before, trailing };
+  if (!module || !slots.length) return byWeekId;
   const weekIdBySessionNumber = moduleWeekIdBySessionNumber(module, plan?.sessions);
-  let pending: ModuleSessionSlot[] = [];
   slots.forEach(slot => {
-    if (slot.type === 'reading-week') {
-      pending.push(slot);
-      return;
-    }
-    if (!pending.length) return;
+    if (!slot.holidays?.length) return;
     const weekId = weekIdBySessionNumber.get(Number(slot.sessionNumber));
-    // A session no authored week claims (the plan is longer than the weeks
-    // written so far) has nowhere to hang the reading week above, so it waits
-    // for the next session that does.
     if (!weekId) return;
-    before.set(weekId, [...(before.get(weekId) || []), ...pending]);
-    pending = [];
+    byWeekId.set(weekId, [...(byWeekId.get(weekId) || []), slot]);
   });
-  trailing.push(...pending);
-  return { before, trailing };
+  return byWeekId;
 }
 
 /**
@@ -639,6 +631,16 @@ export interface ModuleCatalogueItem {
   qualificationOutcomes: string[];
   weekStructure: ModuleWeek[];
   sourceModule?: CurriculumModule;
+  /**
+   * The stored structure this copy was built from, as the backend fingerprints it.
+   *
+   * A save on this endpoint replaces every week and component, so it is only
+   * ever safe against the version the server holds. Sending this back as
+   * `expectedRevision` is what lets the server refuse a payload built before
+   * somebody else's write instead of performing it. Absent on a local draft
+   * that has never been stored.
+   */
+  structureRevision?: string;
 }
 
 export interface KsbOption {
@@ -1504,16 +1506,65 @@ export function flattenKsbEntries(entries: CurriculumKsbEntry[] = []): KsbOption
   }));
 }
 
-export async function saveModuleStructure(moduleCatalogueId: string, payload: ModuleCatalogueItem) {
+/**
+ * A save refused because the module moved on after this copy of it was read.
+ *
+ * Its own type rather than a status code the caller has to remember to check,
+ * because the two outcomes need opposite handling: an ordinary failure is worth
+ * retrying with the same payload, and this one is never worth retrying -- the
+ * payload replaces every week and component in the module, so re-sending it is
+ * precisely the destruction the refusal prevented.
+ */
+export class ModuleStructureConflictError extends Error {
+  /** What the server holds now, so the workspace can show it or re-open it. */
+  currentRevision: string;
+  serverModule: ModuleCatalogueItem | null;
+
+  constructor(message: string, currentRevision: string, serverModule: ModuleCatalogueItem | null) {
+    super(message);
+    this.name = 'ModuleStructureConflictError';
+    this.currentRevision = currentRevision;
+    this.serverModule = serverModule;
+    Object.setPrototypeOf(this, ModuleStructureConflictError.prototype);
+  }
+}
+
+/**
+ * Write a module's whole structure back.
+ *
+ * `expectedRevision` is the `structureRevision` that came with the copy being
+ * saved. The backend refuses the write if the stored material has moved since,
+ * which is the only thing standing between two open tabs and one of them
+ * silently replacing the other's weeks and components. Omitting it restores
+ * last-write-wins, so only a caller with nothing to have read -- a first save,
+ * an import -- should leave it out.
+ */
+export async function saveModuleStructure(
+  moduleCatalogueId: string,
+  payload: ModuleCatalogueItem,
+  options: { expectedRevision?: string } = {},
+) {
   const recalculated = recalculateModule(payload);
   // `weeksNumber` states the authored week count outright. `weeks` cannot carry
   // it: on this endpoint that name is the legacy alias for the week *list*, and
   // the backend rejects a number there.
-  const body = { ...recalculated, weeksNumber: recalculated.weekStructure.length || recalculated.weeks };
+  const body = {
+    ...recalculated,
+    weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
+    ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
+  };
   const saved = recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
     body: JSON.stringify(body),
     timeoutMs: 90000,
+  }).catch((err: unknown) => {
+    if (!(err instanceof ApiError) || err.status !== 409 || !err.data?.conflict) throw err;
+    const server = err.data.module as ModuleCatalogueItem | undefined;
+    throw new ModuleStructureConflictError(
+      typeof err.data.error === 'string' ? err.data.error : err.message,
+      String(err.data.currentRevision || ''),
+      server ? recalculateModule(server) : null,
+    );
   }));
   // `apiJson` writes go straight to the network, so nothing above invalidates
   // the read this save just made stale. `loadModuleStructure` is cached now, and
@@ -2085,11 +2136,21 @@ export function saveTeamsRecordingEvents(
 class ApiError extends Error {
   status: number;
   detail?: string;
+  /**
+   * The handler's own JSON body, when it sent one.
+   *
+   * `message` is flattened for display and loses everything structured with
+   * it. A refusal a caller has to ACT on rather than only show -- a 409 from
+   * the structure PATCH carries the current revision and the current module --
+   * needs the body itself.
+   */
+  data?: Record<string, unknown>;
 
-  constructor(status: number, message: string, detail?: string) {
+  constructor(status: number, message: string, detail?: string, data?: Record<string, unknown>) {
     super(message);
     this.status = status;
     this.detail = detail;
+    this.data = data;
   }
 }
 
@@ -2109,8 +2170,10 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
     });
     if (!response.ok) {
       let message = `Curriculum API returned ${response.status} for ${path}`;
+      let body: Record<string, unknown> | undefined;
       try {
         const payload = await response.json();
+        if (payload && typeof payload === 'object') body = payload as Record<string, unknown>;
         const validation = Array.isArray(payload?.validationErrors)
           ? payload.validationErrors.map((item: { message?: string }) => item.message).filter(Boolean).join('; ')
           : '';
@@ -2120,7 +2183,7 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
       } catch {
         // Ignore body parsing failures so the original status remains visible.
       }
-      throw new ApiError(response.status, message);
+      throw new ApiError(response.status, message, undefined, body);
     }
     return response.json();
   } catch (err) {

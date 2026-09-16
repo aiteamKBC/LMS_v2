@@ -14,7 +14,7 @@ import {
 } from '@/lib/curriculumApi';
 import {
   formatCalendarDateTime,
-  holidayReadingWeeksByWeekId,
+  weeksTouchedByHoliday,
   liveSessionNamesByNumber,
   moduleWeekSessionSlots,
   loadModuleStructure,
@@ -46,7 +46,7 @@ import {
 } from '../shared/entities/model';
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
 import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
-import { buildHolidayShiftPlan, CompactSchedulePreview, HolidayReadingWeekCard } from '../shared/entities/sessionShiftPreview';
+import { buildHolidayShiftPlan, CompactSchedulePreview, WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
 import {
   DetailRow,
   EntityEmptyState,
@@ -559,9 +559,9 @@ export default function ModuleWorkspacePage() {
   // structure rail, which has read the delivered date all along.
   const planSessionDates = (plan?.sessions || []).map(session => session.date);
   const weekSlotCounts = moduleWeekSessionSlots(structure, planSessionDates.length);
-  // Which closed delivery slots sit above which authored week. Each is a
-  // curriculum position with a holiday in it and no live session to attend.
-  const readingWeeks = holidayReadingWeeksByWeekId(structure, plan);
+  // Which authored weeks have a delivery day a ticked holiday falls on. The
+  // week keeps its own date and its own live session; this only flags it.
+  const weekHolidayNoticesByWeekId = weeksTouchedByHoliday(structure, plan);
   const weekDateByNumber = new Map<number, string>();
   let planDateCursor = 0;
   weekStructure.forEach((week, weekIndex) => {
@@ -914,9 +914,6 @@ export default function ModuleWorkspacePage() {
                   <div className="space-y-6">
                     {group.weeks.map(week => (
                       <Fragment key={`week-group-${week.id}`}>
-                      {(readingWeeks.before.get(week.id) || []).map(slot => (
-                        <HolidayReadingWeekCard key={`reading-week-${slot.date}`} slot={slot} />
-                      ))}
                       {(() => {
                       const components = week.components || [];
                       const weekOtjh = components.reduce((sum, component) => sum + (component.expectedOtjh || 0), 0);
@@ -966,6 +963,9 @@ export default function ModuleWorkspacePage() {
                               )}
                             </div>
                           </button>
+                          {(weekHolidayNoticesByWeekId.get(week.id) || []).map(slot => (
+                            <WeekHolidayNotice key={`holiday-${slot.date}`} slot={slot} />
+                          ))}
                           {!isCollapsed && (
                             components.length ? (
                               // Each component is its own card with air around it,
