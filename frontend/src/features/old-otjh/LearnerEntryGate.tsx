@@ -21,8 +21,8 @@ function StudentEntry({ children }: { children: ReactNode }) {
   const client = useQueryClient();
   const wasBlocked = useRef(false);
   const query = useQuery({ queryKey: ['learner-entry', auth.account?.id, pathname],
-    queryFn: ({ signal }) => fetchLearnerEntry(signal), retry: false, staleTime: 0,
-    refetchOnMount: 'always', refetchOnWindowFocus: 'always', refetchInterval: 15000 });
+    queryFn: ({ signal }) => fetchLearnerEntry(signal), retry: false, staleTime: Infinity,
+    refetchOnMount: 'always', refetchOnWindowFocus: false });
   useEffect(() => { if (query.data?.required) wasBlocked.current = true; }, [query.data]);
   useEffect(() => {
     const refresh = () => { void client.invalidateQueries({ queryKey: ['learner-entry', auth.account?.id] }); };
@@ -33,7 +33,7 @@ function StudentEntry({ children }: { children: ReactNode }) {
   if (pathname.startsWith('/old-otjh') && wasBlocked.current && !query.isFetching
       && !query.error && query.data?.canAccess) return <Navigate to="/learner/home" replace />;
   if (exempt) return children;
-  // Keep forms mounted during periodic revalidation, but suspend interaction.
+  // Keep forms mounted during save-triggered revalidation, but suspend interaction.
   if (!query.error && query.data?.canAccess) return <div inert={query.isFetching} aria-busy={query.isFetching || undefined}>{children}</div>;
   if (query.isPending) return <div className="grid min-h-screen place-content-center gap-4 bg-[#f4f0e9] p-8 text-center">
     <p role="status">Checking your learning access…</p>

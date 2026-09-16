@@ -242,6 +242,7 @@ describe('learner loading and recovery', () => {
 
   it.each([
     { present: 8, sessions: 10, fail: false, caption: '80% attendance', rate: '80' },
+    { present: 1, sessions: 3, fail: false, caption: '67% attendance', rate: '67' },
     { present: 0, sessions: 3, fail: false, caption: '0% attendance', rate: '0' },
     { present: 0, sessions: 0, fail: false, caption: 'No attendance records yet', rate: null },
     { present: null, sessions: null, fail: true, caption: 'Attendance unavailable', rate: null },
@@ -263,6 +264,43 @@ describe('learner loading and recovery', () => {
     expect(card.queryByText('90%')).not.toBeInTheDocument();
     if (rate == null) expect(card.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
     else expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow', rate);
+  });
+
+  it('renders the dashboard metrics returned with the weekly overview without a separate metrics request', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/overview-week/')) return new Response(JSON.stringify({
+        ...(payload(url) as Record<string, unknown>),
+        metrics: {
+          migrated: false,
+          programme: { completed: 36, total: 307, percent: 11.73, status: 'available' },
+          ksb: { completed: 14, total: 32, percent: 43.75, status: 'available', codes: [] },
+          otjh: { historical: 10, new: 62.7, actual: 72.7, planned: 564.75 },
+        },
+      }));
+      return new Response(JSON.stringify(payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+
+    const programme = within(await screen.findByRole('link', { name: 'Open Programme Progress' }));
+    await waitFor(() => expect(programme.getByText('Current').nextElementSibling).toHaveTextContent('11.73%'));
+    expect(programme.getByText('36/307 activities complete')).toBeVisible();
+    expect(programme.getByText('307 activities')).toBeVisible();
+
+    const otjh = within(screen.getByRole('link', { name: 'Open OTJ Hours' }));
+    expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('72.70 h');
+    expect(otjh.getByText('Target (TP Planned)').nextElementSibling).toHaveTextContent('564.75 h');
+    expect(otjh.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '13');
+
+    const ksb = within(screen.getByRole('link', { name: 'Open KSB Progress' }));
+    expect(ksb.getByText('Current').nextElementSibling).toHaveTextContent('43.75%');
+    expect(ksb.getByText('14 of 32 points achieved')).toBeVisible();
+
+    const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    expect(requests.filter(url => url.includes('/overview-week/'))).toHaveLength(1);
+    expect(requests.some(url => url.includes('section=dashboard'))).toBe(true);
+    expect(requests.some(url => url.includes('/metrics/'))).toBe(false);
   });
 
   it('shows unavailable header facts when the schedule fails instead of claiming the coach is unassigned', async () => {

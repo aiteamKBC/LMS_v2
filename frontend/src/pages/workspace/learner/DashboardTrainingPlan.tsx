@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { useDashboardPlan, type DashboardPlanState } from './useDashboardPlan';
+import type { DashboardPlanState } from './useDashboardPlan';
 import { dashboardPlanSubjects } from './dashboardPlan';
 import { TrainingPlanDetails } from '@/pages/learner/training-plan-timeline/TrainingPlanDetails';
 import { OverviewLearningPanels } from './OverviewLearningPanels';
@@ -9,9 +9,8 @@ import { DashboardRewards } from './DashboardRewards';
 import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */
-export function DashboardTrainingPlan({ kind, learnerId, plan: sharedPlan, canOpenActivities = true, programmeStartDate, canOpenRewards = true }: { kind: LearnerKind; learnerId: string; plan?: DashboardPlanState; canOpenActivities?: boolean; programmeStartDate?: string | null; canOpenRewards?: boolean }) {
-  const ownedPlan = useDashboardPlan(kind, learnerId, !sharedPlan);
-  const { data, subjects: summaries, loading, error, refresh, retryContract, week, schedule } = sharedPlan || ownedPlan;
+export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities = true, programmeStartDate, canOpenRewards = true }: { kind: LearnerKind; learnerId: string; plan: DashboardPlanState; canOpenActivities?: boolean; programmeStartDate?: string | null; canOpenRewards?: boolean }) {
+  const { data, subjects: summaries, loading, error, refresh, retryContract, week, schedule } = plan;
   const [params] = useSearchParams();
   const { hash } = useLocation();
   const initialSubjectId = params.get('subject') || '';

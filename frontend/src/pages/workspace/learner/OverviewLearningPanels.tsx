@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpen, CalendarDays, Clock3, Info, RefreshCw, Target, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { overviewSchedule, overviewWeek, type OverviewWeek } from '@/api/learnerOverview';
+import type { OverviewWeek } from '@/api/learnerOverview';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { useLiveLearnerRead, type LiveLearnerReadResult } from '@/hooks/useLiveLearnerRead';
+import type { LiveLearnerReadResult } from '@/hooks/useLiveLearnerRead';
 import { dateLabel, ukDate, ukTime, weekSessions } from './overviewSchedule';
 import styles from './OverviewLearningPanels.module.css';
 
@@ -13,13 +13,11 @@ const hours = (value: number | null | undefined) => value == null ? '—' : valu
 export function OverviewLearningPanels({ kind, learnerId, week: sharedWeek, schedule: sharedSchedule }: {
   kind: LearnerKind;
   learnerId: string;
-  week?: LiveLearnerReadResult<OverviewWeek>;
-  schedule?: LiveLearnerReadResult<TrainingPlanDashboard>;
+  week: LiveLearnerReadResult<OverviewWeek>;
+  schedule: LiveLearnerReadResult<TrainingPlanDashboard>;
 }) {
-  const ownedWeek = useLiveLearnerRead(kind, learnerId, !sharedWeek, overviewWeek.read, overviewWeek.peek);
-  const ownedSchedule = useLiveLearnerRead(kind, learnerId, !sharedSchedule, overviewSchedule.read, overviewSchedule.peek);
-  const week = sharedWeek || ownedWeek;
-  const schedule = sharedSchedule || ownedSchedule;
+  const week = sharedWeek;
+  const schedule = sharedSchedule;
   const [selection, setSelection] = useState<{ weekKey: string; subjectId: string } | null>(null);
   const [now, setNow] = useState(Date.now);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);

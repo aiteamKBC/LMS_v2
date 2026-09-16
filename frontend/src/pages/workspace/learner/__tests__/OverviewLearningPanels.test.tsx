@@ -3,8 +3,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { invalidateLearnerReads } from '@/api/learnerRead';
-import type { OverviewWeek } from '@/api/learnerOverview';
+import { overviewSchedule, overviewWeek, type OverviewWeek } from '@/api/learnerOverview';
 import type { PlanSession, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { OverviewLearningPanels } from '../OverviewLearningPanels';
 
 const fixture = (): OverviewWeek => ({ weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', undatedActivities: 0, expectedHours: 7.5, missingExpectedHours: 0,
@@ -19,7 +20,12 @@ function setup({ week = fixture(), failed = '', calendar = schedule } = {}) {
     return new Response(JSON.stringify(url.includes('overview-week') ? week : calendar));
   });
   vi.stubGlobal('fetch', fetch);
-  render(<MemoryRouter><OverviewLearningPanels kind="commercial" learnerId="125" /></MemoryRouter>);
+  function Subject() {
+    const weekRead = useLiveLearnerRead('commercial', '125', true, overviewWeek.read, overviewWeek.peek);
+    const scheduleRead = useLiveLearnerRead('commercial', '125', true, overviewSchedule.read, overviewSchedule.peek);
+    return <OverviewLearningPanels kind="commercial" learnerId="125" week={weekRead} schedule={scheduleRead} />;
+  }
+  render(<MemoryRouter><Subject /></MemoryRouter>);
   return fetch;
 }
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-12T10:00:00Z')); clearAllCachedResources(); });
@@ -110,8 +116,7 @@ describe('overview learning panels', () => {
     expect(screen.queryByText('Project planning')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open learning activities' })).toHaveAttribute('href', '/learner/modules/commercial/125?subject=current%3AM1');
   });
-  it('advances the week on polling even with unfinished activities and resets the selection', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+  it('advances the week after saved data invalidates the reads and resets the selection', async () => {
     vi.setSystemTime(new Date('2026-09-13T22:59:45Z'));
     const week = fixture();
     const fetch = setup({ week });
@@ -121,15 +126,14 @@ describe('overview learning panels', () => {
       { ...week.modules[0], id: 'current:NEXT', title: 'Next week module', weekLabels: ['Week 8'], completed: 0, percent: 0 },
       { ...week.modules[1], weekLabels: ['Week 8'], total: 3 },
     ] });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { invalidateLearnerReads(); });
     expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('current:NEXT');
     expect(screen.getByText(/14 Sept 2026.*20 Sept 2026/)).toBeVisible();
     expect(screen.queryByRole('option', { name: 'Managing Change' })).not.toBeInTheDocument();
     expect(screen.queryByText('0 of 2 activities complete')).not.toBeInTheDocument();
     expect(fetch.mock.calls.filter(([url]) => String(url).includes('overview-week'))).toHaveLength(2);
   });
-  it('refreshes weekly content and scopes live sessions to the selected weekly module', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+  it('refreshes saved weekly content and scopes live sessions to the selected weekly module', async () => {
     const week = fixture();
     const calendar = { ...schedule, moduleLinks: { 'legacy:2': { id: 'M2', title: 'Project planning' } }, sessions: [
       { id: 'first-session', moduleId: 'M1', title: 'First module session', start: '2026-09-13T13:00:00Z', end: null, minutes: 60, status: 'scheduled', joinUrl: null, attended: null },
@@ -142,7 +146,7 @@ describe('overview learning panels', () => {
     week.expectedHours = 5;
     week.otjh.actual = 2;
     calendar.sessions[1].start = '2026-09-13T15:00:00Z';
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { invalidateLearnerReads(); });
     const panel = within(screen.getByRole('region', { name: 'This week' }));
     expect(panel.getByRole('combobox')).toHaveValue('legacy:2');
     expect(panel.getByText('K99, S99')).toBeVisible();

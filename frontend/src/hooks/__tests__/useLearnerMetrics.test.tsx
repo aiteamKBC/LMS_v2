@@ -5,7 +5,6 @@ import { invalidateLearnerReads } from '@/api/learnerRead';
 import { fetchLearnerMetrics, type LearnerMetrics } from '@/api/learnerMetrics';
 import { useLearnerMetrics } from '../useLearnerMetrics';
 import { useLearnerAttendance } from '../useLearnerAttendance';
-import { LEARNER_TOTALS_REFRESH_MS } from '../useLiveLearnerRead';
 
 const metrics: LearnerMetrics = {
   migrated: true,
@@ -42,7 +41,7 @@ describe('shared learner metric fetching', () => {
   });
 
   it('recovers a failed request with refresh', async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(response(metrics, 503)).mockResolvedValueOnce(response());
+    const fetch = vi.fn().mockResolvedValueOnce(response(metrics, 400)).mockResolvedValueOnce(response());
     vi.stubGlobal('fetch', fetch);
     const { result } = renderHook(() => useLearnerMetrics('commercial', '125'));
     await waitFor(() => expect(result.current.error).not.toBe(''));
@@ -69,8 +68,7 @@ describe('shared learner metric fetching', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('replaces old and new source totals while the page stays open, including decreases', async () => {
-    vi.useFakeTimers();
+  it('replaces old and new source totals after a manual refresh, including decreases', async () => {
     const changed: LearnerMetrics = { ...metrics,
       programme: { completed: 2, total: 5, percent: 40, status: 'ready' },
       ksb: { completed: 4, total: 10, percent: 40, status: 'ready' },
@@ -78,10 +76,9 @@ describe('shared learner metric fetching', () => {
     const fetch = vi.fn().mockResolvedValueOnce(response()).mockResolvedValueOnce(response(changed));
     vi.stubGlobal('fetch', fetch);
     const { result } = renderHook(() => useLearnerMetrics('commercial', '125'));
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(result.current.data).toEqual(metrics);
-    await act(async () => { await vi.advanceTimersByTimeAsync(LEARNER_TOTALS_REFRESH_MS); });
-    expect(result.current.data).toEqual(changed);
+    await waitFor(() => expect(result.current.data).toEqual(metrics));
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.data).toEqual(changed));
     expect(result.current.loading).toBe(false);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
@@ -96,7 +93,7 @@ describe('shared learner metric fetching', () => {
     const first = renderHook(() => useLearnerMetrics('commercial', '125'));
     const second = renderHook(() => useLearnerMetrics('commercial', '125'));
     await waitFor(() => expect(second.result.current.data).toEqual(metrics));
-    act(() => window.dispatchEvent(new Event('focus')));
+    act(() => first.result.current.refresh());
     expect(first.result.current.data).toEqual(metrics);
     expect(first.result.current.loading).toBe(false);
     act(() => invalidateLearnerReads());
@@ -108,51 +105,48 @@ describe('shared learner metric fetching', () => {
     expect(fetch).toHaveBeenCalledTimes(3);
   });
 
-  it('pauses hidden polling, refreshes on return once, and cleans up on unmount', async () => {
+  it('does not refetch on timers, focus, online, or visibility changes', async () => {
     vi.useFakeTimers();
-    const fetch = vi.fn().mockImplementation(() => Promise.resolve(response()));
-    vi.stubGlobal('fetch', fetch);
-    const { result, unmount } = renderHook(() => useLearnerMetrics('commercial', '125'));
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(result.current.data).toEqual(metrics);
-    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
-    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
-    expect(fetch).toHaveBeenCalledTimes(1);
-    visibility.mockReturnValue('visible');
-    await act(async () => {
-      document.dispatchEvent(new Event('visibilitychange'));
-      window.dispatchEvent(new Event('focus'));
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    expect(fetch).toHaveBeenCalledTimes(2);
-    unmount();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(60_000);
-      window.dispatchEvent(new Event('focus'));
-      invalidateLearnerReads();
-    });
-    expect(fetch).toHaveBeenCalledTimes(2);
-  });
-
-  it('keeps the last totals during an outage and recovers in the background', async () => {
-    vi.useFakeTimers();
-    const changed = { ...metrics, otjh: { ...metrics.otjh, historical: 1172.34, actual: 1173.34 } };
-    const fetch = vi.fn().mockResolvedValueOnce(response()).mockResolvedValueOnce(response(metrics, 503)).mockResolvedValueOnce(response(changed));
+    const fetch = vi.fn().mockResolvedValue(response());
     vi.stubGlobal('fetch', fetch);
     const { result } = renderHook(() => useLearnerMetrics('commercial', '125'));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(result.current.data).toEqual(metrics);
-    await act(async () => { await vi.advanceTimersByTimeAsync(LEARNER_TOTALS_REFRESH_MS); });
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      window.dispatchEvent(new Event('online'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(90_000);
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleans up save invalidation on unmount', async () => {
+    const fetch = vi.fn().mockResolvedValue(response());
+    vi.stubGlobal('fetch', fetch);
+    const { result, unmount } = renderHook(() => useLearnerMetrics('commercial', '125'));
+    await waitFor(() => expect(result.current.data).toEqual(metrics));
+    unmount();
+    act(() => invalidateLearnerReads());
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the last totals after a failed refresh and recovers on the next refresh', async () => {
+    const changed = { ...metrics, otjh: { ...metrics.otjh, historical: 1172.34, actual: 1173.34 } };
+    const fetch = vi.fn().mockResolvedValueOnce(response()).mockResolvedValueOnce(response(metrics, 400)).mockResolvedValueOnce(response(changed));
+    vi.stubGlobal('fetch', fetch);
+    const { result } = renderHook(() => useLearnerMetrics('commercial', '125'));
+    await waitFor(() => expect(result.current.data).toEqual(metrics));
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.error).not.toBe(''));
     expect(result.current.data).toEqual(metrics);
     expect(result.current.loading).toBe(false);
-    expect(result.current.error).not.toBe('');
-    await act(async () => { await vi.advanceTimersByTimeAsync(LEARNER_TOTALS_REFRESH_MS); });
-    expect(result.current.data).toEqual(changed);
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.data).toEqual(changed));
     expect(result.current.error).toBe('');
   });
 
-  it('picks up new attendance and corrections after an initially empty register', async () => {
-    vi.useFakeTimers();
+  it('picks up new attendance and corrections after explicit refreshes', async () => {
     const attendance = { sessions: 3, present: 3, attendanceRate: 100, source: 'combined', sessionHistory: [] };
     const corrected = { ...attendance, sessions: 4, present: 2, attendanceRate: 50 };
     const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ attendance: null })))
@@ -160,13 +154,12 @@ describe('shared learner metric fetching', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ attendance: corrected })));
     vi.stubGlobal('fetch', fetch);
     const { result } = renderHook(() => useLearnerAttendance('commercial', '125'));
-    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    expect(result.current.loading).toBe(false);
+    await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.data).toBeNull();
-    await act(async () => { await vi.advanceTimersByTimeAsync(LEARNER_TOTALS_REFRESH_MS); });
-    expect(result.current.data?.attendanceRate).toBe(100);
-    await act(async () => { await vi.advanceTimersByTimeAsync(LEARNER_TOTALS_REFRESH_MS); });
-    expect(result.current.data?.attendanceRate).toBe(50);
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.data?.attendanceRate).toBe(100));
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.data?.attendanceRate).toBe(50));
     expect(result.current.data?.sessions).toBe(4);
   });
 });

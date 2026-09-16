@@ -2,9 +2,11 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
+import { invalidateLearnerReads } from '@/api/learnerRead';
 import type { OverviewWeek } from '@/api/learnerOverview';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { DashboardTrainingPlan } from '../DashboardTrainingPlan';
+import { useDashboardPlan } from '../useDashboardPlan';
 
 const week = (): OverviewWeek => ({
   weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', undatedActivities: 0,
@@ -32,7 +34,11 @@ function setup(calendar = schedule(), failed = '', overview = week()) {
       : url.includes('section=contract') ? { months: calendar.months, contractStatus: calendar.contractStatus } : calendar));
   });
   vi.stubGlobal('fetch', fetch);
-  render(<MemoryRouter><DashboardTrainingPlan kind="commercial" learnerId="125" /></MemoryRouter>);
+  function Subject() {
+    const plan = useDashboardPlan('commercial', '125');
+    return <DashboardTrainingPlan kind="commercial" learnerId="125" plan={plan} />;
+  }
+  render(<MemoryRouter><Subject /></MemoryRouter>);
   return fetch;
 }
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-12T10:00:00Z')); clearAllCachedResources(); });
@@ -73,7 +79,6 @@ describe('dashboard learning layout', () => {
   });
 
   it('refreshes bookings and cancellations in Reviews while preserving the selected tab and filters', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const calendar = schedule();
     const fetch = setup(calendar);
     fireEvent.click(await screen.findByRole('tab', { name: 'Reviews' }));
@@ -81,11 +86,11 @@ describe('dashboard learning layout', () => {
     const panel = within(screen.getByRole('region', { name: 'Programme reviews' }));
     expect(panel.getByRole('link', { name: 'Schedule' })).toHaveAttribute('href', '/learner/calendar?kind=commercial&learner=125&event=mcr%3A1&action=schedule');
     Object.assign(calendar.reviews[0], { status: 'scheduled', scheduledDate: '2026-09-28', scheduledTime: '14:00' });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { invalidateLearnerReads(); });
     expect(panel.getByText('Booking pending')).toBeVisible();
     expect(panel.getByText(/28 Sept.*14:00/)).toBeVisible();
     Object.assign(calendar.reviews[0], { scheduledDate: '2026-09-20', scheduledTime: '10:30', invited: true });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { invalidateLearnerReads(); });
     expect(panel.getByText('Booked')).toBeVisible();
     expect(panel.getByText(/20 Sept.*10:30/)).toBeVisible();
     expect(panel.getAllByRole('article')).toHaveLength(1);
@@ -93,7 +98,7 @@ describe('dashboard learning layout', () => {
     expect(screen.getByLabelText('Focus month')).toHaveValue('2026-09');
     expect(screen.getByRole('tab', { name: 'Reviews' })).toHaveAttribute('aria-selected', 'true');
     Object.assign(calendar.reviews[0], { status: 'cancelled' });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { invalidateLearnerReads(); });
     expect(panel.queryByRole('article')).not.toBeInTheDocument();
     expect(panel.getByText('Your reviews will appear here once planned.')).toBeVisible();
     expect(fetch.mock.calls.filter(([url]) => String(url).includes('section=overview')).length).toBeGreaterThanOrEqual(4);
