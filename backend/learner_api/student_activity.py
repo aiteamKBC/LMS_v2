@@ -6,6 +6,7 @@ from uuid import UUID
 
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
+from django.middleware.csrf import get_token
 from django.views.decorators.http import require_GET, require_POST
 
 from audit_api.last_audit_ledger_views import _connection, _is_completed

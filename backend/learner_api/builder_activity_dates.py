@@ -71,7 +71,7 @@ def read_builder_activity_dates(cursor, module_ids):
             'dueTiming',c.settings_json->>'dueTiming')
         FROM curriculum.components c
         WHERE c.module_catalogue_id=ANY(%s)
-          AND (c.deleted_at IS NULL OR c.COALESCE(deleted_via_parent, '') <> '')
+          AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
         ORDER BY c.module_catalogue_id,c.display_order,c.id''', [ids])
     dates = {}
     for component_id, module_id, week_id, title, component_type, settings in cursor.fetchall():
