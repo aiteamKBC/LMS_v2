@@ -62,7 +62,11 @@ export default function LearnerOverview() {
   const reviewingLearner = isStaffOrAdmin && !isOwnLearnerRecord(auth.account, kind, id);
   const knownLearner = real;
   const hasAssignedProgramme = canViewAssignedProgramme(kind, real?.accessGate);
-  const learningBlocked = !reviewingLearner && (real?.learningAccess?.blocked
+  // A start date still in the future no longer holds anything shut: the learner
+  // gets their normal working account and can open every assigned activity. The
+  // upcoming date is still worth saying out loud, so it is shown as a notice
+  // rather than used to disable anything.
+  const startDatePending = !reviewingLearner && (real?.learningAccess?.blocked
     ?? real?.accessGate?.reasons.includes('start-date-future') ?? false);
   // An assigned plan can be previewed before teaching starts.
   const isCommercialPreStart = isRealMode && kind === 'commercial'
@@ -296,12 +300,12 @@ export default function LearnerOverview() {
     >
       <PageContainer className={overviewStyles.overview}>
         {loadError && <LearnerLoadError error={loadError} onRetry={refresh} />}
-        {learningBlocked && (
+        {startDatePending && (
           <div role="status" className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-sm text-foreground-700">
             <p className="font-semibold">{real?.learningAccess?.startDate || real?.accessGate?.startDate
-              ? `Learning starts on ${formatProgrammeStartDate(real?.learningAccess?.startDate || real?.accessGate?.startDate)}`
+              ? `Your programme starts on ${formatProgrammeStartDate(real?.learningAccess?.startDate || real?.accessGate?.startDate)}`
               : 'Your cohort start date is awaiting confirmation'}</p>
-            <p>You can view your programme and training plan now. All assigned modules open when your cohort starts.</p>
+            <p>You can get started straight away — your programme, training plan and assigned modules are all open now.</p>
           </div>
         )}
         {reviewingLearner && real?.accessGate?.reasons.includes('invitation') && (
@@ -340,12 +344,12 @@ export default function LearnerOverview() {
                 <button
                   type="button"
                   onClick={() => navigate(continueLearningHref)}
-                  disabled={learningBlocked || scheduleRead.loading}
+                  disabled={scheduleRead.loading}
                   aria-busy={scheduleRead.loading}
                   className={`${overviewStyles.heroAction} ${overviewStyles.primaryAction}`}
                 >
                   <AppIcon className="ri-play-line" />
-                  {learningBlocked ? 'Learning opens on your start date' : 'Continue learning'}
+                  Continue learning
                 </button>
                 <button
                   type="button"
@@ -399,7 +403,7 @@ export default function LearnerOverview() {
         </div>
 
         {isRealMode && real && learnerKind && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
-        {isRealMode && learnerKind && id && <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} canOpenActivities={!learningBlocked}
+        {isRealMode && learnerKind && id && <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} canOpenActivities
           programmeStartDate={real?.learningAccess?.startDate ?? real?.programmeStartDate} canOpenRewards={!reviewingLearner} />}
       </PageContainer>
     </WorkspaceShell>

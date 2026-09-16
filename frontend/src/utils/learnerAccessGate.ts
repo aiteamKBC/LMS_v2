@@ -31,8 +31,20 @@ export interface LearnerLearningAccess {
   startDate: string;
 }
 
+/**
+ * Whether the learner's assigned programme is theirs to browse.
+ *
+ * Deliberately NOT conditional on the start date having arrived. A learner
+ * waiting for their cohort to begin still has a real programme attached, and
+ * hiding the workspace until the date lands left them with a single Dashboard
+ * tab and no way to see what they had enrolled on. The blockers that remain are
+ * the ones where there is genuinely nothing behind the menu yet: no learning
+ * plan assigned, no invitation sent, paperwork unsigned.
+ */
 export function canViewAssignedProgramme(kind: string | undefined, gate?: LearnerAccessGate): boolean {
-  return kind === 'commercial' && !!gate?.startDate
+  // No gate at all means the backend told us nothing about this learner's
+  // progression, which is not the same as telling us they are clear.
+  return kind === 'commercial' && !!gate
     && !gate.reasons.some(reason => reason === 'plan' || reason === 'invitation' || reason === 'documents');
 }
 
