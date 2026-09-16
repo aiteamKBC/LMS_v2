@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { overviewDashboard, overviewHome, overviewWeek } from '../learnerOverview';
+import { learningSchedule, overviewDashboard, overviewHome, overviewWeek } from '../learnerOverview';
 import { clearAllCachedResources } from '../cachedRequest';
 
 const week = { weekStart: '2026-09-07', modules: [], deadlines: [], otjh: {} };
@@ -46,5 +46,14 @@ describe('dashboard overview transport', () => {
   it('rejects a dashboard response without metrics', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(week)));
     await expect(overviewDashboard.read('commercial', '125')).rejects.toThrow('Could not load your overview');
+  });
+});
+
+describe('My Learning schedule transport', () => {
+  it('requests the lightweight learning section', async () => {
+    const schedule = { modules: [], moduleLinks: {}, generatedAt: '2026-09-16T00:00:00Z' };
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(schedule)));
+    await expect(learningSchedule.read('commercial', '125')).resolves.toEqual(schedule);
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('/training-plan-dashboard/commercial/125/?section=learning');
   });
 });

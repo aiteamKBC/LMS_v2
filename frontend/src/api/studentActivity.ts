@@ -24,6 +24,7 @@ export interface StudentActivityItem {
   month?: string;
   week_start?: string | null;
   week_end?: string | null;
+  due_timing?: string | null;
   position?: number;
   has_result?: boolean;
   best_score_percent?: number | null;
@@ -74,8 +75,6 @@ export interface StudentActivityResponse {
   activity_sources?: Record<string, { module_id: string; group_id: number; activity_id: number }>;
   subjects?: { id: number; name: string }[];
   covers?: Record<string, string>;
-  persistence_ready?: boolean;
-  can_manage_covers?: boolean;
 }
 
 export interface SubjectQuiz {
@@ -114,7 +113,9 @@ export interface SubjectMaterial {
     answers: { question_id: number; question_body: string; learner_answer: unknown; is_correct: boolean }[] };
 }
 
-export async function subjectRequest<T>(url: string, options: RequestInit & { revalidate?: boolean } = {}): Promise<T> {
+type SubjectRequestOptions = NonNullable<Parameters<typeof fetch>[1]> & { revalidate?: boolean };
+
+export async function subjectRequest<T>(url: string, options: SubjectRequestOptions = {}): Promise<T> {
   if (!options.method || options.method.toUpperCase() === 'GET') {
     const cacheable = url.includes('/subject-covers/');
     return readLearnerJson<T>(url, { ...options, ttlMs: cacheable ? 30_000 : 0 });

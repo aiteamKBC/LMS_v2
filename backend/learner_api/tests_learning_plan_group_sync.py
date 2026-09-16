@@ -44,6 +44,7 @@ class GroupSyncTests(SimpleTestCase):
         self.enterContext(
             patch("login.permissions.authenticate_request", return_value=SimpleNamespace(role="admin")),
         )
+        self.enterContext(patch("learner_api.learning_plan._meetings", return_value=([], "")))
 
     def _get(self, learner, preset):
         catalogue = [_module_payload(row) for row in MODULE_ROWS]
@@ -70,7 +71,13 @@ class GroupSyncTests(SimpleTestCase):
     def test_the_inherited_module_counts_towards_the_hours_being_agreed(self):
         body = self._get(_learner([{"moduleId": "MOD-1"}]), ["MOD-1", "MOD-2"])
 
-        self.assertEqual(body["totals"], {"moduleCount": 2, "totalHours": 12})
+        self.assertEqual(body["totals"], {
+            "moduleCount": 2,
+            "moduleHours": 12.0,
+            "meetingCount": 0,
+            "meetingHours": 0,
+            "totalHours": 12.0,
+        })
 
     def test_an_inherited_module_is_not_also_offered_by_the_picker(self):
         body = self._get(_learner([{"moduleId": "MOD-1"}]), ["MOD-1", "MOD-2"])

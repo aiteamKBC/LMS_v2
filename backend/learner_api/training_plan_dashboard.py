@@ -171,9 +171,9 @@ def read_dashboard(source, section=None):
     actual, modules, sessions = [], [], []
     historical = None
     contract = None
-    profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first() if section != 'contract' else None
+    profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first() if section not in ('contract', 'learning') else None
     with connections['enrolment'].cursor() as cur:
-        if aptem_id:
+        if aptem_id and section != 'learning':
             cur.execute('''SELECT l.learner_email,l.coach_name,l.coach_email
                 FROM "Last_audit".learners l
                 WHERE l.aptem_id=%s''', [aptem_id])
@@ -181,11 +181,11 @@ def read_dashboard(source, section=None):
             if len(candidates) > 1 or (candidates and (not email or email != str(candidates[0]['learner_email'] or '').strip().casefold())):
                 raise LookupError('The training plan is not linked to this learner.')
             historical = candidates[0] if candidates else None
-            if section != 'overview':
+            if section not in ('overview', 'learning'):
                 contract = find_contract(cur, aptem_id)
         if section == 'contract':
             return contract_plan(source, contract)
-        if aptem_id:
+        if aptem_id and section != 'learning':
             cur.execute('''SELECT month,group_id,sum(actual_hours) AS hours,count(*) AS activity_count
                 FROM structured_manual_activities.manual_learner_activities
                 WHERE aptem_id=%s AND accepted IS TRUE AND deleted_at IS NULL
@@ -229,24 +229,31 @@ def read_dashboard(source, section=None):
                         if text and text not in module['learning_outcomes']:
                             module['learning_outcomes'].append(text)
             attach_curriculum_slots(module_rows, by_id, week_counts)
-            cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
-                s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.repeat_pattern,s.status AS series_status,
-                o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url,o.status,
-                CASE WHEN o.attendance_report_id IS NULL OR o.attendance_report_id='' THEN NULL
-                     ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
-                         WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
-                FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
-                WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
-                  AND (o.id IS NULL OR lower(o.status) NOT IN ('cancelled','deleted','failed','superseded'))
-                ORDER BY coalesce(o.scheduled_start,s.start_datetime)''', [email, ids])
-            for row in rows(cur):
-                # Recurring dates come from actual occurrences; never manufacture them.
-                if not row['occurrence_id'] and row['repeat_pattern'] not in ('none', '', None):
-                    continue
-                start = row['scheduled_start'] or row['start_datetime']
-                if not start:
-                    continue
-                sessions.append(plan_session(row))
+            if section != 'learning':
+                cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
+                    s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.repeat_pattern,s.status AS series_status,
+                    o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url,o.status,
+                    CASE WHEN o.attendance_report_id IS NULL OR o.attendance_report_id='' THEN NULL
+                         ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
+                             WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
+                    FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
+                    WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
+                      AND (o.id IS NULL OR lower(o.status) NOT IN ('cancelled','deleted','failed','superseded'))
+                    ORDER BY coalesce(o.scheduled_start,s.start_datetime)''', [email, ids])
+                for row in rows(cur):
+                    # Recurring dates come from actual occurrences; never manufacture them.
+                    if not row['occurrence_id'] and row['repeat_pattern'] not in ('none', '', None):
+                        continue
+                    start = row['scheduled_start'] or row['start_datetime']
+                    if not start:
+                        continue
+                    sessions.append(plan_session(row))
+    if section == 'learning':
+        return {
+            'modules': modules,
+            'moduleLinks': links,
+            'generatedAt': datetime.now(timezone.utc).isoformat(),
+        }
     # The overview must never wait for an Azure PDF download. Older clients
     # still receive the complete response when no section was requested.
     contract_data = ({'months': {}, 'contractStatus': 'loading'} if section == 'overview'
@@ -279,7 +286,7 @@ def training_plan_dashboard(request, kind, pk):
     try:
         source = model.all_learners.get(pk=pk)
         section = request.GET.get('section')
-        if section not in (None, 'overview', 'contract'):
+        if section not in (None, 'overview', 'contract', 'learning'):
             return JsonResponse({'error': 'Invalid training plan section.'}, status=400)
         payload = read_dashboard(source, section=section)
     except model.DoesNotExist:

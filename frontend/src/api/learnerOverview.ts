@@ -57,3 +57,9 @@ export const overviewSchedule = resource<TrainingPlanDashboard>(
   (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=overview`,
   value => Array.isArray(value.sessions) && Array.isArray(value.reviews),
 );
+
+export type LearningSchedule = Pick<TrainingPlanDashboard, 'modules' | 'moduleLinks' | 'generatedAt'>;
+export const learningSchedule = resource<LearningSchedule>(
+  (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=learning`,
+  value => Array.isArray(value.modules) && !!value.moduleLinks,
+);

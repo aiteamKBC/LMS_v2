@@ -45,6 +45,28 @@ def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, spl
 
 
 class TrainingPlanDashboardTests(SimpleTestCase):
+    def test_learning_section_returns_only_module_selection_data(self):
+        source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [('M1',)]
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '', 'start_date': date(2026, 10, 5),
+                  'end_date': date(2027, 2, 11), 'weeks_number': 1, 'total_otjh': 10, 'sessions_number': 1,
+                  'session_week_day': 'Thursday', 'session_start_time': '09:00', 'session_end_time': '10:00',
+                  'coach_name': '', 'programme_name': '', 'cohort_name': '', 'group_name': ''}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {'current:M1': {'id': 'M1'}})), \
+             patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
+            result = read_dashboard(source, section='learning')
+        self.assertEqual(set(result), {'modules', 'moduleLinks', 'generatedAt'})
+        self.assertEqual(result['modules'][0]['id'], 'M1')
+        profiles.objects.filter.assert_not_called()
+        sql = ' '.join(str(call.args[0]) for call in cursor.execute.call_args_list)
+        self.assertNotIn('manual_learner_activities', sql)
+        self.assertNotIn('live_sessions', sql)
+
     def test_coach_fallback_uses_only_the_current_programme_cohort_and_group(self):
         source = SimpleNamespace(programme=' Marketing Level 4 ', cohort='October 2026', group='G1')
         current = {'programme_name': 'Marketing Level 4', 'cohort_name': 'October 2026', 'group_name': 'g1', 'coach_name': 'Omar'}
