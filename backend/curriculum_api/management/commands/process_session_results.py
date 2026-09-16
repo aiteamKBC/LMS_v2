@@ -16,7 +16,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--limit', type=int, default=10)
         parser.add_argument('--provision-container', action='store_true')
-        parser.add_argument('--scheduled', action='store_true', help='Queue recently ended sessions (last seven days).')
+        parser.add_argument('--scheduled', action='store_true', help='Discover files for linked meetings, including runs before their scheduled date.')
         parser.add_argument('--live-session-id', action='append', dest='live_session_ids', default=[],
                             help='Process only this series. May be supplied more than once.')
 
@@ -33,12 +33,14 @@ class Command(BaseCommand):
                 cursor.execute('''INSERT INTO curriculum.session_result_jobs(live_session_id)
                     SELECT DISTINCT o.live_session_id FROM curriculum.live_session_occurrences o
                     JOIN curriculum.live_sessions s ON s.id=o.live_session_id
-                    WHERE o.scheduled_end BETWEEN (now() AT TIME ZONE 'UTC')-interval '7 days' AND (now() AT TIME ZONE 'UTC')
+                    JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
+                    WHERE m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+                      AND coalesce(s.online_meeting_id,'')<>''
                       AND o.status NOT IN ('cancelled','deleted','superseded')
                       AND s.status NOT IN ('cancelled','deleted','superseded','failed')''' + scheduled_scope + '''
                     ON CONFLICT(live_session_id) DO UPDATE SET state='queued',requested_at=now(),next_attempt_at=now(),attempts=0,force_refresh=false
                     WHERE session_result_jobs.state='complete'
-                      AND session_result_jobs.finished_at < now()-interval '30 minutes' ''', scope_params)
+                      AND session_result_jobs.finished_at < now()-interval '5 minutes' ''', scope_params)
         processed, failed = 0, 0
         job_scope = ' AND live_session_id=ANY(%s)' if requested_ids else ''
         for _ in range(max(1, min(options['limit'], 100))):
