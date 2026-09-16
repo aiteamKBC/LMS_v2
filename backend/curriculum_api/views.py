@@ -3365,7 +3365,7 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
     artifact_id = 'ART-' + hashlib.sha256(
         f"{occurrence['id']}|{artifact_type}|{graph_id}".encode('utf-8')
     ).hexdigest()[:32].upper()
-    authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], {
+    payload = {
         'id': artifact_id,
         'occurrence_id': occurrence['id'],
         'artifact_type': artifact_type,
@@ -3379,7 +3379,25 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
         'created_datetime': parse_graph_datetime(artifact.get('createdDateTime')),
         'end_datetime': parse_graph_datetime(artifact.get('endDateTime')),
         'metadata': json_db_value(artifact),
-    })
+    }
+    # Serialize against staff hide/restore. Graph refreshes must not overwrite
+    # LMS visibility, including a toggle committed while discovery was running.
+    with transaction.atomic(), connection.cursor() as cursor:
+        lock = ' FOR UPDATE' if connection.vendor == 'postgresql' else ''
+        cursor.execute(f'SELECT metadata FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
+                       'WHERE occurrence_id=%s AND artifact_type=%s AND graph_artifact_id=%s' + lock,
+                       [occurrence['id'], artifact_type, graph_id])
+        existing = cursor.fetchone()
+        metadata = dict(artifact)
+        metadata.pop('lmsHiddenFromLearners', None)
+        metadata.pop('lmsTranscriptTimeline', None)
+        if existing:
+            saved_metadata = parse_json_value(existing[0], {})
+            metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
+            if 'lmsTranscriptTimeline' in saved_metadata:
+                metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+        payload['metadata'] = json_db_value(metadata)
+        authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], payload)
     return True
 
 

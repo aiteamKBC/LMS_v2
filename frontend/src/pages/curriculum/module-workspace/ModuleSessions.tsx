@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { loadModuleSessions, requestSessionSync, type ModuleSessionResults, type SessionResult } from '@/api/sessionResults';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { loadModuleSessions, requestSessionSync, type SessionResult } from '@/api/sessionResults';
 import { SessionResults } from '@/components/feature/SessionResults';
 import { formatSystemTimestamp } from '@/lib/format';
+import { useSavedSessionData } from '@/hooks/useSavedSessionData';
 
 export function SessionResultsDialog({ moduleId, onClose }: { moduleId: string; onClose: () => void }) {
   const dialog = useRef<HTMLDivElement>(null);
@@ -28,36 +29,36 @@ export function SessionResultsDialog({ moduleId, onClose }: { moduleId: string; 
 }
 
 export function ModuleSessions({ moduleId }: { moduleId: string }) {
-  const [data, setData] = useState<ModuleSessionResults>();
   const [selected, setSelected] = useState<SessionResult>();
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true); setError('');
-    loadModuleSessions(moduleId, controller.signal).then(value => { if (!controller.signal.aborted) setData(value); })
-      .catch(reason => { if (!controller.signal.aborted) setError(reason.message || 'Could not load sessions.'); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [moduleId, revision]);
-  useEffect(() => { setSelected(undefined); setNotice(''); setData(undefined); }, [moduleId]);
+  const load = useCallback((signal: AbortSignal) => loadModuleSessions(moduleId, signal), [moduleId]);
+  const saved = useSavedSessionData(load, !selected);
+  const { data, loading } = saved;
+  useEffect(() => { setSelected(undefined); setNotice(''); setError(''); }, [moduleId]);
   const sync = async (id: string) => {
     setBusy(id); setError('');
     try { const result = await requestSessionSync(id); setNotice(result.message); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not request synchronization.'); }
     finally { setBusy(''); }
   };
-  if (selected) return <div className="space-y-4"><button type="button" className="text-sm font-semibold text-primary-700" onClick={() => setSelected(undefined)}>← All sessions</button><SessionResults seriesId={selected.seriesId} sessionNumber={selected.sessionNumber} /></div>;
+  const otherSaved = data?.series.flatMap(series => series.sessions).filter(session =>
+    session.id !== selected?.id && (session.fileCount || 0) > 0) || [];
+  if (selected) return <div className="space-y-4"><button type="button" className="text-sm font-semibold text-primary-700" onClick={() => setSelected(undefined)}>← All sessions</button>
+    {otherSaved.length > 0 && <aside className="rounded-xl border bg-primary-50/40 p-3 text-sm" aria-label="Other sessions with saved files">
+      <p className="font-semibold">Other sessions with saved files</p><div className="mt-2 flex flex-wrap gap-2">{otherSaved.map(session =>
+        <button key={session.id} type="button" onClick={() => setSelected(session)} className="rounded-lg border bg-white px-3 py-2 text-primary-700">
+          Session {session.sessionNumber} · {formatSystemTimestamp(session.startsAt)} · {session.fileCount} files
+        </button>)}</div></aside>}
+    <SessionResults seriesId={selected.seriesId} sessionNumber={selected.sessionNumber} /></div>;
   return <section className="space-y-4" aria-label="Sessions and recordings">
     <header className="flex items-center justify-between gap-4"><div><h2 className="text-lg font-bold">Sessions & Recordings</h2><p className="mt-1 text-sm text-foreground-500">Open a session to review its recording, transcript and attendance.</p></div>
-      <button disabled={loading} onClick={() => setRevision(value => value + 1)} className="rounded-lg border bg-white px-3 py-2 text-sm">Refresh</button></header>
-    {error && <p role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-800">{error}</p>}
+      <button disabled={loading} onClick={saved.refresh} className="rounded-lg border bg-white px-3 py-2 text-sm">Refresh</button></header>
+    {(error || saved.error) && <p role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-800">{error || saved.error}</p>}
     {data?.warning && <p role="status" className="rounded-lg bg-amber-50 p-4 text-sm text-amber-900">{data.warning}</p>}
     {notice && <p role="status" className="rounded-lg bg-primary-50 p-4 text-sm">{notice}</p>}
-    {loading ? <p role="status">Loading saved sessions…</p> : !data?.series.length ? !error && <p className="rounded-xl border bg-white p-6 text-sm">No Teams sessions are linked to this module yet.</p> : data.series.map(series => <div key={series.id} className="overflow-hidden rounded-xl border bg-white">
+    {loading ? <p role="status">Loading saved sessions…</p> : !data?.series.length ? !error && !saved.error && <p className="rounded-xl border bg-white p-6 text-sm">No Teams sessions are linked to this module yet.</p> : data.series.map(series => <div key={series.id} className="overflow-hidden rounded-xl border bg-white">
       <div className="flex items-center justify-between gap-3 border-b bg-primary-50/40 p-4"><strong>{series.title}</strong><button disabled={Boolean(busy) || data.syncAvailable === false} onClick={() => void sync(series.id)} className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy === series.id ? 'Requesting…' : 'Sync attendance & files'}</button></div>
       {data.jobs.filter(job => job.live_session_id === series.id && job.state !== 'complete').map(job => <p key={job.live_session_id} role="status" className="bg-amber-50 px-4 py-3 text-sm">{job.state === 'failed' ? job.last_error || 'Sync needs retry.' : `Sync ${job.state}. Saved results remain available.`}</p>)}
       <ul className="divide-y">{series.sessions.map(session => <li key={session.id}><button onClick={() => setSelected(session)} className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-background-50"><span><strong className="block text-sm">Session {session.sessionNumber}</strong><span className="text-xs text-foreground-500">{formatSystemTimestamp(session.startsAt)}</span></span><span className="text-right text-xs"><span className="block font-semibold">{session.reportReady ? 'Attendance report saved' : 'Awaiting attendance report'}</span><span className="text-foreground-500">{session.fileCount || 0} files · Open session →</span></span></button></li>)}</ul>

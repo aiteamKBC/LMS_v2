@@ -18,6 +18,35 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', fetchMock); fetchM
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Saved session results', () => {
+  it('lets staff hide a recording without deleting it or requesting Teams sync', async () => {
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ hiddenFromLearners: true }) } as Response);
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Hide from learners' }));
+    await waitFor(() => expect(coachFetch).toHaveBeenCalledWith(
+      '/curriculum_api/curriculum/session-results/S1/artifacts/recording-1/visibility/',
+      expect.objectContaining({ method: 'POST', body: '{"hidden":true}' })));
+    expect(screen.getByLabelText('Session recording 1')).toBeInTheDocument();
+  });
+
+  it('keeps hidden recordings and transcripts out of learner preview', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session,
+      artifacts: session.artifacts.map(file => ({ ...file, hiddenFromLearners: true })) }] }));
+    render(<SessionResults seriesId="S1" sessionNumber={1} preview />);
+    await screen.findByText(/No recording is saved/);
+    expect(screen.queryByLabelText('Session recording 1')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /learners/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'transcripts' }));
+    expect(screen.queryByText('Speaker: Saved lesson.')).not.toBeInTheDocument();
+  });
+  it('labels the exact scheduled session separately from the recorded meeting date', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, title: 'Example lecture',
+      actualStartsAt: '2026-08-31T11:00:00Z', artifacts: [] }] }));
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    await screen.findByText('Example lecture');
+    expect(screen.getByText(/^Scheduled:/)).toHaveTextContent('1 Sept 2026');
+    expect(screen.getByText(/^Recorded meeting:/)).toHaveTextContent('31 Aug 2026');
+    expect(screen.getByText(/No recording is saved for this session/)).toBeInTheDocument();
+  });
   it('loads one saved session and embeds private playback without Graph sync', async () => {
     render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
     const video = await screen.findByLabelText('Session recording 1');
@@ -37,6 +66,7 @@ describe('Saved session results', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/learner_api/session-results/commercial/7/S1/sessions/1/');
     expect(screen.queryByRole('tab', { name: 'attendance' })).not.toBeInTheDocument();
     expect(screen.queryByText('Export attendance CSV')).not.toBeInTheDocument();
+    expect(screen.queryByText('Export attendance PDF')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Session recording 1')).toHaveAttribute('src', '/learner_api/session-results/commercial/7/S1/artifacts/recording-1/');
   });
 
@@ -72,7 +102,7 @@ describe('Saved session results', () => {
     expect(screen.queryByText('Learner One')).not.toBeInTheDocument();
   });
 
-  it('queues synchronization from the open admin session without reloading or polling', async () => {
+  it('queues synchronization without immediately reloading or waiting on Graph', async () => {
     vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ state: 'queued', message: 'Sync requested.' }) } as Response);
     render(<SessionResults seriesId="S1" sessionNumber={1} />);
     await screen.findByLabelText('Session recording 1');
@@ -80,6 +110,25 @@ describe('Saved session results', () => {
     expect(await screen.findByText('Sync requested.')).toBeInTheDocument();
     expect(coachFetch).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers the staff PDF for the exact session alongside the CSV', async () => {
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    await screen.findByLabelText('Session recording 1');
+    fireEvent.click(screen.getByRole('tab', { name: 'attendance' }));
+    expect(screen.getByRole('link', { name: 'Export attendance PDF' })).toHaveAttribute('href', '/curriculum_api/curriculum/session-results/S1/sessions/1/attendance.pdf');
+    expect(screen.getByRole('link', { name: 'Export attendance CSV' })).toHaveAttribute('href', expect.stringContaining('attendance.csv'));
+  });
+
+  it('refreshes saved results without replacing the playing video or enqueueing sync', async () => {
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    const video = await screen.findByLabelText('Session recording 1') as HTMLVideoElement;
+    video.currentTime = 42;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh saved results' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText('Session recording 1')).toBe(video);
+    expect(video.currentTime).toBe(42);
+    expect(coachFetch).not.toHaveBeenCalled();
   });
 
   it('keeps attendance visible with a precise setup warning when archive storage is missing', async () => {
@@ -112,6 +161,18 @@ describe('Module session index', () => {
   beforeEach(() => { fetchMock.mockImplementation((url: string) => ok(url.includes('/modules/')
     ? { series: [{ id: 'S1', title: 'Example module', sessions: [session] }], jobs: [] }
     : { sessions: [session] })); });
+
+  it('locates saved files in another occurrence without relinking either session', async () => {
+    fetchMock.mockImplementation((url: string) => ok(url.includes('/modules/')
+      ? { series: [{ id: 'S1', title: 'Example', sessions: [{ ...session, fileCount: 0 },
+        { ...session, id: 'O6', sessionNumber: 6, fileCount: 4 }] }], jobs: [] }
+      : { sessions: [{ ...session, artifacts: [] }] }));
+    render(<ModuleSessions moduleId="M1" />);
+    fireEvent.click(await screen.findByText('Session 1'));
+    fireEvent.click(screen.getByRole('button', { name: /Session 6.*4 files/ }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(call => call[0].endsWith('/sessions/6/'))).toBe(true));
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
 
   it('does not fetch session details until opened, then queues sync without waiting on Graph', async () => {
     vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ state: 'queued', message: 'Sync requested. Results will be saved in the background.' }) } as Response);
