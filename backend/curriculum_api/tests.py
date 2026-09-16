@@ -1542,9 +1542,11 @@ class CurriculumTeamsMeetingTests(TestCase):
             for week in weeks
         ]
         self.assertEqual([len(items) for items in live_sessions], [1, 1, 1, 1, 1, 1])
+        # A ticked holiday no longer displaces the session -- every week keeps
+        # its own Saturday, closed or not.
         self.assertEqual(
             [items[0]['settings']['sessionDate'] for items in live_sessions],
-            ['2026-12-12', '2027-01-02', '2027-01-09', '2027-01-16', '2027-01-23', '2027-01-30'],
+            ['2026-12-12', '2026-12-19', '2026-12-26', '2027-01-02', '2027-01-09', '2027-01-16'],
         )
         # Every one of them can be joined, and the created ones say when they
         # start and how long they run.
@@ -1588,10 +1590,11 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(plan['finalEndDate'], '2027-02-06')
 
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
-    def test_session_plan_moves_an_added_week_off_a_closed_holiday(self, _holidays):
-        # The whole point of asking the backend: the fourteenth Saturday of this
-        # module falls inside the Easter the cohort ticked, so the week added to
-        # reach it runs the Saturday after -- and says which day it was moved off.
+    def test_session_plan_keeps_an_added_week_on_its_own_saturday(self, _holidays):
+        # An added week runs on its own delivery day, ticked holiday or not: the
+        # fourteenth Saturday of this module is 13 March 2027, which is nowhere
+        # near the Easter the cohort ticked -- Christmas is what touches this
+        # run, on the second Saturday, which still delivers and simply names it.
         self._module_with_six_saturday_weeks()
 
         response = self.client.get(
@@ -1601,9 +1604,11 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         plan = response.json()
         self.assertEqual(len(plan['sessions']), 14)
-        self.assertEqual(plan['sessions'][-1]['date'], '2027-04-03')
-        self.assertEqual(plan['sessions'][-1]['skippedHolidays'], ['2027-03-27'])
-        self.assertEqual(plan['finalEndDate'], '2027-04-03')
+        self.assertEqual(plan['sessions'][-1]['date'], '2027-03-13')
+        self.assertEqual(plan['sessions'][-1]['skippedHolidays'], [])
+        self.assertEqual(plan['sessions'][1]['date'], '2026-12-19')
+        self.assertEqual(plan['sessions'][1]['skippedHolidays'], ['2026-12-19'])
+        self.assertEqual(plan['finalEndDate'], '2027-03-13')
 
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_falls_back_to_the_stored_session_count(self, _holidays):
@@ -4633,48 +4638,49 @@ class AuthoringModuleSessionHolidayTests(SimpleTestCase):
             self.HOLIDAY_ROWS,
         )
 
-    def test_sessions_step_over_the_bank_holidays(self):
+    def test_sessions_run_on_their_own_dates_holidays_or_not(self):
         sessions = views.build_sessions_from_authoring_modules(
             [self.MODULE], self.holidays_by_cohort(),
         )
-        # 28 Dec is Boxing Day, so session 2 lands on 4 Jan and the plan keeps
-        # all six sessions by running a week longer. Christmas Day and New
-        # Year's Day are both Fridays: they move nothing, because nothing
-        # delivers on a Friday here.
+        # A ticked holiday moves nothing: every session runs on its own weekly
+        # Monday, Boxing Day included. Christmas Day and New Year's Day are both
+        # Fridays and touch nothing here regardless, because nothing delivers on
+        # a Friday.
         self.assertEqual(
             [session['date'] for session in sessions],
-            ['2026-12-21', '2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25', '2027-02-01'],
+            ['2026-12-21', '2026-12-28', '2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25'],
         )
 
-    def test_the_shifted_session_carries_the_date_it_stepped_over(self):
+    def test_the_flagged_session_names_the_holiday_on_its_own_day(self):
         sessions = views.build_sessions_from_authoring_modules(
             [self.MODULE], self.holidays_by_cohort(),
         )
-        # The reader has to be able to see *why* a date moved, which is what the
-        # Teams page and the module form both render from this field.
+        # The reader has to be able to see the clash, which is what the Teams
+        # page and the module form both render from this field.
+        self.assertEqual(sessions[1]['date'], '2026-12-28')
         self.assertEqual(sessions[1]['skippedHolidays'], ['2026-12-28'])
         self.assertEqual(
             [session['skippedHolidays'] for session in sessions if session is not sessions[1]],
             [[], [], [], [], []],
         )
 
-    def test_a_plan_that_runs_past_the_cohort_end_still_skips(self):
+    def test_a_plan_that_runs_past_the_cohort_end_still_flags(self):
         """The reason the scheduling set has no end bound.
 
-        Every holiday a plan steps over pushes it a slot later, so a plan that
-        steps over enough of them finishes *after* the cohort's practical end
-        date. Resolving holidays only up to that date let the sessions that
-        overshot land straight back on a bank holiday -- here Easter Monday, on
-        the module's own delivery day, eleven days past the cohort end.
+        Nothing a plan runs over moves it any more, so a plan long enough
+        finishes *after* the cohort's practical end date on its own steady
+        pattern. Resolving holidays only up to that date would leave a session
+        that overshoots unable to say it landed on one -- here Easter Monday, on
+        the module's own delivery day, well past the cohort end.
         """
         cohort = {'id': 'COHORT-1', 'startDate': '2026-10-05', 'endDate': '2027-03-25'}
         holidays = views.cohort_selected_holidays_by_id([cohort], self.HOLIDAY_ROWS)['COHORT-1']
         plan = views.build_module_session_plan('2026-10-05', 26, 'Monday', holidays)
         dates = [session['date'] for session in plan['sessions']]
 
-        self.assertNotIn('2027-03-29', dates)
-        # Pushed off Easter Monday onto the following week, and saying so.
-        self.assertEqual(dates[-1], '2027-04-12')
+        # 26 straight Mondays from 5 Oct 2026, Easter Monday included.
+        self.assertIn('2027-03-29', dates)
+        self.assertEqual(dates[-1], '2027-03-29')
         self.assertIn(['2027-03-29'], [session['skippedHolidays'] for session in plan['sessions']])
 
     def test_the_cohort_itself_still_lists_only_its_own_period(self):
@@ -4713,20 +4719,21 @@ class AuthoringModuleSessionHolidayTests(SimpleTestCase):
         self.assertEqual(sessions[0]['date'], '2026-12-21')
         self.assertEqual(sessions[1]['date'], '2026-12-28')
 
-    def test_a_cohort_with_no_start_date_still_skips_every_bank_holiday(self):
-        """An imported cohort missing its dates must not deliver on Boxing Day.
+    def test_a_cohort_with_no_start_date_still_flags_every_bank_holiday(self):
+        """An imported cohort missing its dates still gets every applicable holiday.
 
         There is no period to resolve, so the whole calendar applies rather than
-        none of it. A holiday no session lands on costs nothing; a session
-        planned onto Christmas Day is a real timetable nobody can run.
+        none of it. A session still runs on its own day, ticked holiday or not --
+        it is flagged, not moved, so the author can see the clash.
         """
         holidays = views.cohort_selected_holidays_by_id([{'id': 'COHORT-1'}], self.HOLIDAY_ROWS)
         self.assertEqual(len(holidays['COHORT-1']), len(self.HOLIDAY_ROWS))
         sessions = views.build_sessions_from_authoring_modules([self.MODULE], holidays)
         self.assertEqual(
             [session['date'] for session in sessions],
-            ['2026-12-21', '2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25', '2027-02-01'],
+            ['2026-12-21', '2026-12-28', '2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25'],
         )
+        self.assertEqual(sessions[1]['skippedHolidays'], ['2026-12-28'])
 
 
 class CohortContractDateHolidayTests(SimpleTestCase):

@@ -310,31 +310,12 @@ describe('ModuleFormDrawer', () => {
     }));
   });
 
-  it('opens a session date preview and marks holiday shifts', async () => {
-    previewModuleSessionPlanMock.mockResolvedValueOnce({
-      sessions: [
-        { sessionNumber: 1, date: '2026-12-18', day: 'Friday', skippedHolidays: [] },
-        { sessionNumber: 2, date: '2027-01-08', day: 'Friday', skippedHolidays: ['2026-12-25', '2027-01-01'] },
-      ],
-      skippedHolidays: ['2026-12-25', '2027-01-01'],
-      finalEndDate: '2027-01-08',
-      warnings: [],
-    });
-
+  it('has no session date preview button any more -- the Session dates panel was removed', async () => {
     renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
 
-    const previewButton = await screen.findByRole('button', { name: /view sessions/i });
-    await waitFor(() => expect(previewButton).toBeEnabled());
-    await userEvent.click(previewButton);
-
-    expect(screen.getByRole('dialog', { name: /module/i })).toBeInTheDocument();
-    expect(screen.getByText('25 Dec 2026')).toBeInTheDocument();
-    expect(screen.getByText('01 Jan 2027')).toBeInTheDocument();
-    expect(screen.getByText('08 Jan 2027')).toBeInTheDocument();
-    expect(screen.getByText(/Blocked by Christmas Day; shifted to 01 Jan 2027, which was also closed/)).toBeInTheDocument();
-    expect(screen.getByText(/Blocked by New Year's Day; final replacement scheduled on 08 Jan 2027/)).toBeInTheDocument();
-    expect(screen.getAllByText('Shifted to replacement')).toHaveLength(2);
-    expect(screen.getByText('Replacement delivered')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('07/10/2026'));
+    expect(screen.queryByRole('button', { name: /view sessions/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Session dates')).not.toBeInTheDocument();
   });
 
   it('hides the placement and delivery fields once Assign later is chosen', async () => {
@@ -356,8 +337,7 @@ describe('ModuleFormDrawer', () => {
     expect(screen.queryByRole('combobox', { name: /^Tutor/ })).not.toBeInTheDocument();
     // The module's own shape stays: its name, how many weeks it runs and the
     // window it is planned for are true of the module with or without a
-    // placement. The Session dates panel stays to say why it is empty, but its
-    // View sessions button does not: there is no plan to open without a group.
+    // placement. There is no "View sessions" button here at all any more.
     expect(screen.getByPlaceholderText('e.g. Data Modelling')).toBeInTheDocument();
     expect(screen.getByRole('spinbutton')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: /^Start date/ })).toBeInTheDocument();

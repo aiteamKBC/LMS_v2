@@ -100,10 +100,19 @@ export function moduleVisualEnd(module: { end: string; detail?: { effectiveEndDa
   return delivered > module.end ? delivered : module.end;
 }
 
-/** One row of the learner's curriculum timeline: a taught slot, or a closed one. */
+/**
+ * One row of the learner's curriculum timeline: a taught slot, always.
+ *
+ * `holidays` names any ticked holiday landing on this slot's own day. It moves
+ * nothing -- the session still runs, and `holidays` is only a heads-up so the
+ * learner is not surprised by a quiet room on a day the calendar shows a
+ * closure. Empty for every ordinary slot.
+ */
 export type CurriculumRow =
   | { kind: 'session'; slotNumber: number; date: string; sessionNumber: number;
-      title: string; start: string | null; minutes: number | null; attended: boolean | null; joinUrl: string | null }
+      title: string; start: string | null; minutes: number | null; attended: boolean | null; joinUrl: string | null;
+      holidays: PlanSlotHoliday[] }
+  /** Kept for a payload from an older, genuinely closing scheduler; today's spine never emits one. */
   | { kind: 'reading-week'; slotNumber: number; date: string; holidays: PlanSlotHoliday[] };
 
 /**
@@ -147,6 +156,7 @@ export function buildCurriculumTimeline(
       minutes: session?.minutes ?? null,
       attended: session?.attended ?? null,
       joinUrl: session?.joinUrl || null,
+      holidays: slot.holidays || [],
     };
   });
 }

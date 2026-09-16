@@ -32,7 +32,11 @@ def _session_expected_emails(session: LiveSession) -> set[str]:
     the module afterwards stays invisible here until someone resends it.
     """
 
-    return {email for email in (_email(value) for value in (session.attendees or [])) if email}
+    # Lazily imported: curriculum_api.views imports this module's sync entry
+    # point, so a module-level import here would close the loop.
+    from curriculum_api.views import teams_series_email_list
+
+    return set(teams_series_email_list(session.attendees))
 
 
 def _local_datetime(value):
