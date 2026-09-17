@@ -17,9 +17,13 @@ from .views import (
     coach_monthly_activity,
     coach_review_instance_answers,
     coach_review_instance_complete,
+    coach_review_instance_progress,
     coach_review_instance_detail,
     coach_review_instance_for_event,
+    coach_review_instance_mark_in_progress_manually,
     coach_review_instance_signature,
+    coach_review_learner_addition_templates,
+    coach_review_learner_additions_create,
     coach_timetable_event_artifact_content,
     coach_timetable_event_artifacts,
     coach_timetable_event_summary,
@@ -60,9 +64,28 @@ urlpatterns = [
     # Review, saving its answers, signing and completing it -- the question
     # set/signature rules were resolved by Curriculum, not hard-coded here.
     path('coach/reviews/open', coach_review_instance_for_event, name='coach-review-instance-open'),
+    # Learner-specific additional Reviews (coach "Create session" -> Review):
+    # one canonical occurrence for ONE learner, never a standalone calendar
+    # row and never a new programme-wide template. Declared before the
+    # generic <str:instance_id> route below so 'learner-additions' is never
+    # swallowed as an instance id.
+    path(
+        'coach/reviews/learner-additions/templates',
+        coach_review_learner_addition_templates,
+        name='coach-review-learner-addition-templates',
+    ),
+    path('coach/reviews/learner-additions', coach_review_learner_additions_create, name='coach-review-learner-additions-create'),
     path('coach/reviews/<str:instance_id>', coach_review_instance_detail, name='coach-review-instance-detail'),
     path('coach/reviews/<str:instance_id>/answers', coach_review_instance_answers, name='coach-review-instance-answers'),
     path('coach/reviews/<str:instance_id>/complete', coach_review_instance_complete, name='coach-review-instance-complete'),
+    # Progress Review only: freeze this instance's learner-progress figures.
+    # An explicit coach action -- no other route ever recalculates them.
+    path('coach/reviews/<str:instance_id>/progress', coach_review_instance_progress, name='coach-review-instance-progress'),
+    path(
+        'coach/reviews/<str:instance_id>/mark-in-progress',
+        coach_review_instance_mark_in_progress_manually,
+        name='coach-review-instance-mark-in-progress',
+    ),
     path('coach/reviews/<str:instance_id>/signatures', coach_review_instance_signature, name='coach-review-instance-signature'),
     path('coach/reviews/<str:instance_id>/pdf', coach_mcm_pdf, name='coach-mcm-pdf'),
 ]

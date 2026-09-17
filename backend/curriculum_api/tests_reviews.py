@@ -48,6 +48,35 @@ class ReviewTemplateTestCase(TestCase):
             cursor.execute(f'delete from {views.authoring_table_name(review_types.REVIEW_TYPES_TABLE)}')
         review_types.seed_system_review_types()
 
+    def _sections_payload(self, **overrides):
+        payload = self._basic_payload()
+        payload.pop('fields', None)
+        payload['sections'] = [
+            {
+                'title': 'Learner Feedback on Teaching & Curriculum',
+                'estimatedMinutes': 5,
+                'fields': [
+                    {'title': 'Learner Feedback', 'fieldType': 'title_description', 'configuration': {'description': "I'd also like your feedback."}},
+                    {'title': 'The curriculum is well planned', 'fieldType': 'list_item', 'required': True, 'configuration': {'options': ['Strongly agree', 'Agree', 'Neutral', 'Disagree', 'Strongly disagree']}},
+                ],
+            },
+            {
+                'title': 'Meeting & Close',
+                'estimatedMinutes': 5,
+                'fields': [
+                    {
+                        'title': 'Please confirm that the next session has been booked',
+                        'fieldType': 'boolean_case_block',
+                        'required': True,
+                        'yesFields': [{'title': 'The date for the next coaching session is', 'fieldType': 'date', 'required': True}],
+                        'noFields': [{'title': 'Why?', 'fieldType': 'text', 'required': True}],
+                    },
+                ],
+            },
+        ]
+        payload.update(overrides)
+        return payload
+
     def _programme(self, programme_id='PROG-DATA', name='Data Technician'):
         views.insert_row('programmes', {
             'id': programme_id,
@@ -125,9 +154,12 @@ class ReviewCreateTests(ReviewTemplateTestCase):
         self.assertEqual(response.status_code, 200, response.content)
         review_id = response.json()['review']['id']
         self.assertTrue(review_id.startswith('REV-'))
-        # Same shape as every other curriculum id: PREFIX-<digits>.
+        # Same shape as every other curriculum id: PREFIX-<timestamp><uuid4 hex>.
+        # unique_prefixed_id (curriculum_api.views) mints
+        # <yyyymmddHHMMSSffffff> followed by 12 uppercase hex characters from a
+        # uuid4, so the suffix is not purely numeric -- it just starts that way.
         suffix = review_id.split('-', 1)[1]
-        self.assertTrue(suffix.isdigit())
+        self.assertRegex(suffix, r'^[0-9]{20}[0-9A-F]{12}$')
         self.assertGreaterEqual(len(suffix), 14)
 
     def test_review_ids_are_unique_across_creates(self):
@@ -176,7 +208,7 @@ class ReviewCreateTests(ReviewTemplateTestCase):
             {'title': '', 'fieldType': 'text', 'required': True},
         ]))
         self.assertEqual(response.status_code, 400)
-        self.assertIn('fields[0].title', response.json()['fields'])
+        self.assertIn('sections[0].fields[0].title', response.json()['fields'])
 
     def test_invalid_field_type_rejected(self):
         programme_id = self._programme()
@@ -184,7 +216,7 @@ class ReviewCreateTests(ReviewTemplateTestCase):
             {'title': 'Something', 'fieldType': 'not-a-real-type', 'required': True},
         ]))
         self.assertEqual(response.status_code, 400)
-        self.assertIn('fields[0].fieldType', response.json()['fields'])
+        self.assertIn('sections[0].fields[0].fieldType', response.json()['fields'])
 
     def test_list_item_requires_options(self):
         programme_id = self._programme()
@@ -192,7 +224,7 @@ class ReviewCreateTests(ReviewTemplateTestCase):
             {'title': 'Pick one', 'fieldType': 'list_item', 'required': True, 'configuration': {}},
         ]))
         self.assertEqual(response.status_code, 400)
-        self.assertIn('fields[0].configuration.options', response.json()['fields'])
+        self.assertIn('sections[0].fields[0].configuration.options', response.json()['fields'])
 
     def test_unknown_programme_status_rejected(self):
         programme_id = self._programme()
@@ -421,41 +453,14 @@ class ReviewCloneTests(ReviewTemplateTestCase):
 class ReviewSectionTests(ReviewTemplateTestCase):
     """Section -> Field -> optional conditional-child structure."""
 
-    def _sections_payload(self, **overrides):
-        payload = self._basic_payload()
-        payload.pop('fields', None)
-        payload['sections'] = [
-            {
-                'title': 'Learner Feedback on Teaching & Curriculum',
-                'estimatedMinutes': 5,
-                'fields': [
-                    {'title': 'Learner Feedback', 'fieldType': 'title_description', 'configuration': {'description': "I'd also like your feedback."}},
-                    {'title': 'The curriculum is well planned', 'fieldType': 'list_item', 'required': True, 'configuration': {'options': ['Strongly agree', 'Agree', 'Neutral', 'Disagree', 'Strongly disagree']}},
-                ],
-            },
-            {
-                'title': 'Meeting & Close',
-                'estimatedMinutes': 5,
-                'fields': [
-                    {
-                        'title': 'Please confirm that the next session has been booked',
-                        'fieldType': 'boolean_case_block',
-                        'required': True,
-                        'yesFields': [{'title': 'The date for the next coaching session is', 'fieldType': 'date', 'required': True}],
-                        'noFields': [{'title': 'Why?', 'fieldType': 'text', 'required': True}],
-                    },
-                ],
-            },
-        ]
-        payload.update(overrides)
-        return payload
-
     def test_review_section_id_uses_revs_prefix_and_curriculum_format(self):
         programme_id = self._programme()
         review = self._post(programme_id, self._sections_payload()).json()['review']
         section_id = review['sections'][0]['id']
         self.assertTrue(section_id.startswith('REVS-'))
-        self.assertTrue(section_id.split('-', 1)[1].isdigit())
+        # See test_create_review_generates_id_with_rev_prefix_and_curriculum_format
+        # for why this is not purely numeric.
+        self.assertRegex(section_id.split('-', 1)[1], r'^[0-9]{20}[0-9A-F]{12}$')
 
     def test_multiple_sections_created_in_order(self):
         programme_id = self._programme()
@@ -565,7 +570,15 @@ class ReviewSectionTests(ReviewTemplateTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertTrue(any('yesFields' in key for key in response.json()['fields']))
 
-    def test_nested_boolean_case_block_inside_conditional_child_rejected(self):
+    def test_nested_boolean_case_block_inside_conditional_child_is_allowed(self):
+        """Case blocks may nest inside case blocks -- see reviews.MAX_FIELD_NESTING_DEPTH.
+
+        This was rejected in an earlier version of the validator (a single
+        case block could not contain another). That restriction was
+        deliberately removed so authors can build multi-level conditional
+        forms; only pathological depth is now rejected (see the depth-cap
+        test below).
+        """
         programme_id = self._programme()
         payload = self._sections_payload()
         payload['sections'][1]['fields'][0]['yesFields'] = [{
@@ -573,8 +586,33 @@ class ReviewSectionTests(ReviewTemplateTestCase):
             'yesFields': [{'title': 'Too deep', 'fieldType': 'text', 'required': False}],
         }]
         response = self._post(programme_id, payload)
+        self.assertEqual(response.status_code, 200, response.content)
+        review = response.json()['review']
+        case_section = next(s for s in review['sections'] if s['title'] == 'Meeting & Close')
+        outer_case = case_section['fields'][0]
+        self.assertEqual(outer_case['fieldType'], 'boolean_case_block')
+        inner_case = outer_case['yesFields'][0]
+        self.assertEqual(inner_case['fieldType'], 'boolean_case_block')
+        self.assertEqual(inner_case['yesFields'][0]['title'], 'Too deep')
+
+    def test_boolean_case_block_nesting_beyond_max_depth_rejected(self):
+        """The recursion cap (reviews.MAX_FIELD_NESTING_DEPTH) still applies."""
+        programme_id = self._programme()
+        payload = self._sections_payload()
+
+        # Build a chain of nested boolean_case_block fields, MAX_FIELD_NESTING_DEPTH + 1
+        # levels deep under `yesFields`, so the innermost one exceeds the cap.
+        field = {'title': 'Leaf', 'fieldType': 'text', 'required': False}
+        for level in range(reviews.MAX_FIELD_NESTING_DEPTH + 1):
+            field = {
+                'title': f'Case {level}', 'fieldType': 'boolean_case_block', 'required': True,
+                'yesFields': [field],
+            }
+        payload['sections'][1]['fields'][0]['yesFields'] = [field]
+
+        response = self._post(programme_id, payload)
         self.assertEqual(response.status_code, 400)
-        self.assertTrue(any(key.endswith('.yesFields[0].fieldType') for key in response.json()['fields']))
+        self.assertTrue(any(key.endswith('.fieldType') and 'yesFields' in key for key in response.json()['fields']))
 
     def test_deleting_section_removes_it_from_active_read(self):
         programme_id = self._programme()

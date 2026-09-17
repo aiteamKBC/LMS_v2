@@ -3,6 +3,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
+import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
 import { fetchLearnerEventReviewInstance, type LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { flattenReviewFields } from '@/api/reviewInstances';
@@ -27,6 +28,29 @@ export interface LearnerReviewInstanceState {
   loading: boolean;
   error: string;
   refresh: () => void;
+}
+
+function savedLearnerSignatureKey(name: string): string {
+  return `learner-review-signature:${name.trim().toLowerCase() || 'learner'}`;
+}
+
+function readSavedLearnerSignature(name: string): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    const value = window.localStorage.getItem(savedLearnerSignatureKey(name)) || '';
+    return value.startsWith('data:image/') ? value : '';
+  } catch {
+    return '';
+  }
+}
+
+function writeSavedLearnerSignature(name: string, signature: string): void {
+  if (typeof window === 'undefined' || !signature.startsWith('data:image/')) return;
+  try {
+    window.localStorage.setItem(savedLearnerSignatureKey(name), signature);
+  } catch {
+    // The review signature itself is saved server-side. Reuse is best-effort.
+  }
 }
 
 /**
@@ -77,6 +101,8 @@ export function LearnerReviewInstanceForm({ definition, onSign, onDownload, sign
   const [signing, setSigning] = useState(false);
   const [signatureError, setSignatureError] = useState('');
   const [signatureOpen, setSignatureOpen] = useState(true);
+  const [savedSignature, setSavedSignature] = useState('');
+  const [drawingSignature, setDrawingSignature] = useState(false);
   const signingInFlight = useRef(false);
   const signatureSection = useRef<HTMLDivElement>(null);
 
@@ -93,6 +119,9 @@ export function LearnerReviewInstanceForm({ definition, onSign, onDownload, sign
     setSignatureError('');
     try {
       await onSign(signature);
+      writeSavedLearnerSignature(signatoryName, signature);
+      setSavedSignature(signature);
+      setDrawingSignature(false);
     } catch (reason) {
       setSignatureError(reason instanceof Error ? reason.message : 'Could not save your signature. Please try again.');
     } finally {
@@ -104,6 +133,11 @@ export function LearnerReviewInstanceForm({ definition, onSign, onDownload, sign
   useEffect(() => {
     setOpenSectionId(definition.sections.find((section) => section.enabled)?.id || '');
   }, [definition]);
+
+  useEffect(() => {
+    setSavedSignature(readSavedLearnerSignature(signatoryName));
+    setDrawingSignature(false);
+  }, [signatoryName]);
 
   // The renderer draws from `answers`, not from the field rows, so the saved
   // answers are seeded the same way ReviewInstanceModal seeds them.
@@ -153,6 +187,19 @@ export function LearnerReviewInstanceForm({ definition, onSign, onDownload, sign
         </button>
       </div>}
 
+      {/* The same frozen figures the coach calculated and the signed PDF
+          renders. Read-only here: a learner never calculates, and nothing on
+          this page recalculates against their current progress. */}
+      {definition.template.reviewTypeCode === 'progress_review' ? (
+        <ReviewProgressPanel
+          snapshot={definition.progressSnapshot}
+          ragHistory={definition.ragHistory}
+          canCalculate={false}
+          calculating={false}
+          onCalculate={() => undefined}
+        />
+      ) : null}
+
       <ReviewFormRenderer
         sections={definition.sections}
         answers={answers}
@@ -170,9 +217,29 @@ export function LearnerReviewInstanceForm({ definition, onSign, onDownload, sign
           <p className="mb-3 text-sm font-bold text-violet-950">Your signature is required</p>
           {signatureError && <p role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{signatureError} You can try signing again.</p>}
           {signing && <p role="status" className="mb-3 text-sm text-violet-900">Saving your signature…</p>}
-          <fieldset disabled={signing} className="min-w-0 border-0 p-0">
-            <SignaturePad signatoryName={signatoryName} onCommit={(signature) => { void saveSignature(signature); }} onCancel={() => setSignatureOpen(false)} />
-          </fieldset>
+          {savedSignature && !drawingSignature ? (
+            <div className="max-w-md rounded-xl border border-foreground-200 bg-white p-3">
+              <p className="text-[12px] text-foreground-700">Saved signature for</p>
+              <p className="mt-1 text-[13px] font-medium text-foreground-900">{signatoryName}</p>
+              <img src={savedSignature} alt="Your saved signature" className="mt-3 max-h-24 w-full rounded-lg border border-foreground-100 bg-white object-contain p-3" />
+              <p className="mt-3 text-[11px] text-foreground-500">Use this saved signature for this review, or draw a new one.</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button type="button" disabled={signing} onClick={() => { void saveSignature(savedSignature); }} className="rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50">
+                  Use saved signature
+                </button>
+                <button type="button" disabled={signing} onClick={() => setDrawingSignature(true)} className="rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50">
+                  Draw new signature
+                </button>
+                <button type="button" disabled={signing} onClick={() => setSignatureOpen(false)} className="rounded-xl border border-background-200 bg-white px-4 py-2.5 text-sm font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <fieldset disabled={signing} className="min-w-0 border-0 p-0">
+              <SignaturePad signatoryName={signatoryName} onCommit={(signature) => { void saveSignature(signature); }} onCancel={() => { setSignatureOpen(false); setDrawingSignature(false); }} />
+            </fieldset>
+          )}
         </div>
       ) : null}
       {canSign && !signatureOpen && <button type="button" onClick={showSignatures} className="rounded-xl bg-violet-700 px-4 py-3 text-sm font-semibold text-white hover:bg-violet-800">Review &amp; sign</button>}

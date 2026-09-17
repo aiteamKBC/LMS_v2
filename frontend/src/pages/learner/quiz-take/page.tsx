@@ -645,7 +645,7 @@ function isAnswered(value: QuizAnswerValue | undefined): boolean {
 /* ═══════════════════════════════════════════════════════
    QUESTION INPUT — dispatches by type
    ═══════════════════════════════════════════════════════ */
-function QuestionInput({ question, value, onChange }: {
+export function QuestionInput({ question, value, onChange }: {
   question: QuizQuestion;
   value: QuizAnswerValue | undefined;
   onChange: (v: QuizAnswerValue) => void;

@@ -118,6 +118,22 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * A brand-new review starts locked to the General step; Form Builder only
+ * unlocks after General/Schedule/Eligibility/Participants & Permissions each
+ * validate. Their non-General defaults are already valid, so satisfying
+ * General (name + review type) and stepping through with Next reaches it.
+ */
+async function fillGeneralAndReachFormBuilder(reviewTypeName = 'Progress Review') {
+  await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+  await userEvent.type(screen.getByLabelText(/Review name/), 'Progress Review');
+  await userEvent.click(screen.getByRole('combobox', { name: /Review type/ }));
+  await userEvent.click(await screen.findByRole('option', { name: reviewTypeName }));
+  for (let step = 0; step < 4; step += 1) {
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+  }
+}
+
 describe('ReviewsTab', () => {
   it('saves group applicability by stable ID', async () => {
     api.fetchReviewDetail.mockResolvedValue(detail);
@@ -199,18 +215,30 @@ describe('ReviewsTab', () => {
 });
 
 describe('ReviewFormModal', () => {
-  it('rejects saving with a blank review name', async () => {
+  it('rejects advancing past General with a blank review name', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
 
-    await userEvent.click(screen.getByRole('button', { name: /Create review/ }));
+    // A review type alone is not enough -- name is validated together with it
+    // on General, and the "Create review" button does not exist until the
+    // Form Builder step, so a blank name is caught by the Next gate instead.
+    await userEvent.click(screen.getByRole('combobox', { name: /Review type/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Progress Review' }));
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
 
     expect(await screen.findByText('Review name is required.')).toBeInTheDocument();
     expect(api.createReviewTemplate).not.toHaveBeenCalled();
+    // Still on General -- Schedule never unlocked.
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('lets the recurrence interval be entered and the repeat unit be selected', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: 'Schedule' }));
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+    await userEvent.type(screen.getByLabelText(/Review name/), 'Progress Review');
+    await userEvent.click(screen.getByRole('combobox', { name: /Review type/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Progress Review' }));
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
 
     const intervalInput = screen.getByLabelText(/Repeat interval/);
     await userEvent.clear(intervalInput);
@@ -224,9 +252,7 @@ describe('ReviewFormModal', () => {
 
   it('adds a section, adds a field inside it, and blocks save on an empty field title', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-
-    await userEvent.type(screen.getByLabelText(/Review name/), 'Progress Review');
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.type(screen.getByLabelText(/Section title/), 'Meeting & Close');
     await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
@@ -235,15 +261,21 @@ describe('ReviewFormModal', () => {
     const requiredCheckboxes = screen.getAllByRole('checkbox', { name: 'Required' });
     await userEvent.click(requiredCheckboxes[requiredCheckboxes.length - 1]);
 
-    await userEvent.click(screen.getByRole('button', { name: /Create review/ }));
-
-    expect(await screen.findByText("Title can't be empty.")).toBeInTheDocument();
+    // The field's title is still blank -- the save button disables itself
+    // rather than being clickable and then rejected (see the same pattern on
+    // "blocks a restricted review with no selected placement" above).
+    const createButton = screen.getByRole('button', { name: /Create review/ });
+    expect(createButton).toBeDisabled();
+    await userEvent.click(createButton);
     expect(api.createReviewTemplate).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByPlaceholderText('Question title'), 'Confirmed next session booked');
+    expect(screen.getByRole('button', { name: /Create review/ })).toBeEnabled();
   });
 
   it('removes a field and reorders remaining fields within a section with move up/down', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.type(screen.getByLabelText(/Section title/), 'Meeting & Close');
 
@@ -266,7 +298,7 @@ describe('ReviewFormModal', () => {
 
   it('selecting Boolean with case block reveals IF YES / IF NO branches, each accepting its own field', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.type(screen.getByLabelText(/Section title/), 'Meeting & Close');
     await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
@@ -284,7 +316,7 @@ describe('ReviewFormModal', () => {
 
   it('a plain Boolean field never shows conditional branches', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
 
@@ -297,7 +329,7 @@ describe('ReviewFormModal', () => {
 
   it('selecting List item reveals the option editor', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
 
@@ -308,9 +340,34 @@ describe('ReviewFormModal', () => {
     expect(screen.getByLabelText('New list option')).toBeInTheDocument();
   });
 
+  it('a list item can be marked as the RAG status question, and only a list item offers it', async () => {
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await fillGeneralAndReachFormBuilder();
+    await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
+
+    const ragLabel = /This is the RAG status question/;
+    expect(screen.queryByLabelText(ragLabel)).not.toBeInTheDocument();
+
+    const typeCombobox = screen.getByRole('combobox', { name: /Field type/ });
+    await userEvent.click(typeCombobox);
+    await userEvent.click(await screen.findByRole('option', { name: 'List item' }));
+
+    const ragCheckbox = screen.getByLabelText(ragLabel);
+    expect(ragCheckbox).not.toBeChecked();
+    await userEvent.click(ragCheckbox);
+    expect(screen.getByLabelText(ragLabel)).toBeChecked();
+
+    // Changing the field type clears the marker along with the rest of the
+    // field's configuration, so a non-list question can never carry it.
+    await userEvent.click(screen.getByRole('combobox', { name: /Field type/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Text' }));
+    expect(screen.queryByLabelText(ragLabel)).not.toBeInTheDocument();
+  });
+
   it('deleting a section with fields asks for confirmation', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
 
@@ -338,8 +395,7 @@ describe('ReviewFormModal', () => {
     api.createReviewTemplate.mockRejectedValue(new Error('Curriculum API returned 400 for /curriculum/programmes/PROG-DATA/reviews/'));
     const { showCurriculumAlert } = await import('@/components/feature/CurriculumSweetAlert');
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-
-    await userEvent.type(screen.getByLabelText(/Review name/), 'Progress Review');
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Create review/ }));
 
     expect(await vi.waitUntil(() => (showCurriculumAlert as ReturnType<typeof vi.fn>).mock.calls.length > 0)).toBeTruthy();

@@ -31,7 +31,9 @@ describe('dashboard rewards', () => {
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
   it('retries failed reads and distinguishes an empty catalogue from an unavailable one', async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(new Response('{}', { status: 503 }))
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
       .mockImplementation(async () => new Response(JSON.stringify({ points: payload().points, rewards: [] })));
     vi.stubGlobal('fetch', fetch);
     render(<MemoryRouter><DashboardRewards kind="commercial" learnerId="125" /></MemoryRouter>);

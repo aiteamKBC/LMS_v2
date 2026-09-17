@@ -35,6 +35,7 @@ from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
+from .session_overrides import apply_session_overrides, override_clock, session_overrides
 from .teams_calendar_checks import CalendarMismatch, calendar_targets, graph_calendar_time, local_calendar_recurrence, verify_calendar, publish_attendees, safe_teams_join_url, utc_datetime
 
 from learner_api.progress_rules import (
@@ -2805,6 +2806,10 @@ def launch_linked_live_occurrence(occurrences, timestamp, launches, report_id=''
     """
     if not occurrences or not timestamp:
         return None, None
+    if report_id:
+        stored = next((row for row in occurrences if clean_str(row.get('attendance_report_id')) == clean_str(report_id)), None)
+        if stored:
+            return stored, None
     by_id = {clean_str(row.get('id')): row for row in occurrences}
     report_id = clean_str(report_id)
     if report_id:
@@ -2880,15 +2885,8 @@ def attendance_display_name(record):
 
 
 def attendance_interval_seconds(intervals):
-    total = 0
-    for interval in intervals if isinstance(intervals, list) else []:
-        if not isinstance(interval, dict):
-            continue
-        start = parse_graph_datetime(interval.get('joinDateTime'))
-        end = parse_graph_datetime(interval.get('leaveDateTime'))
-        if start and end and end >= start:
-            total += int((end - start).total_seconds())
-    return total
+    from .session_results_policy import attendance_seconds
+    return attendance_seconds(intervals)
 
 
 def merge_attendance_intervals(*interval_groups):
@@ -2933,7 +2931,7 @@ def attendance_roster(series, actual_rows, include_absent=False):
         if email:
             actual_emails.add(email)
         intervals = row.get('intervals') if isinstance(row.get('intervals'), list) else []
-        row['attended'] = True
+        row['attended'] = int(row.get('total_attendance_seconds') or 0) > 180
         row['expected'] = bool(email and email in expected_roles)
         row['join_count'] = len(intervals)
         rows.append(row)
@@ -3367,7 +3365,7 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
     artifact_id = 'ART-' + hashlib.sha256(
         f"{occurrence['id']}|{artifact_type}|{graph_id}".encode('utf-8')
     ).hexdigest()[:32].upper()
-    authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], {
+    payload = {
         'id': artifact_id,
         'occurrence_id': occurrence['id'],
         'artifact_type': artifact_type,
@@ -3381,7 +3379,25 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
         'created_datetime': parse_graph_datetime(artifact.get('createdDateTime')),
         'end_datetime': parse_graph_datetime(artifact.get('endDateTime')),
         'metadata': json_db_value(artifact),
-    })
+    }
+    # Serialize against staff hide/restore. Graph refreshes must not overwrite
+    # LMS visibility, including a toggle committed while discovery was running.
+    with transaction.atomic(), connection.cursor() as cursor:
+        lock = ' FOR UPDATE' if connection.vendor == 'postgresql' else ''
+        cursor.execute(f'SELECT metadata FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
+                       'WHERE occurrence_id=%s AND artifact_type=%s AND graph_artifact_id=%s' + lock,
+                       [occurrence['id'], artifact_type, graph_id])
+        existing = cursor.fetchone()
+        metadata = dict(artifact)
+        metadata.pop('lmsHiddenFromLearners', None)
+        metadata.pop('lmsTranscriptTimeline', None)
+        if existing:
+            saved_metadata = parse_json_value(existing[0], {})
+            metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
+            if 'lmsTranscriptTimeline' in saved_metadata:
+                metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+        payload['metadata'] = json_db_value(metadata)
+        authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], payload)
     return True
 
 
@@ -3406,9 +3422,15 @@ def remove_artifact_from_wrong_occurrences(occurrences, target_occurrence, artif
 @csrf_exempt
 def curriculum_teams_meeting_artifacts(request, live_session_id):
     """Read the tracked lecture plan or pull completed artifacts from Graph."""
-    from coach_api.views import has_graph_credentials, microsoft_graph_request
+    from coach_api.views import has_graph_credentials, microsoft_graph_request, get_graph_settings
+    from .session_graph import collection
 
-    ensure_live_session_tracking_tables()
+    if request.method == 'POST' and not getattr(request, 'session_result_worker', False):
+        from .session_results import queue_sync
+        return queue_sync(request, live_session_id)
+    # Schema is provisioned by the operator, never repaired by a read or worker.
+    schema_gate.require_tables(LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE,
+        LIVE_SESSION_ATTENDANCE_TABLE, LIVE_SESSION_ARTIFACTS_TABLE, LIVE_SESSION_JOIN_LAUNCHES_TABLE)
     series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
     if not series_rows:
         return json_error('Live session series not found.', status=404)
@@ -3436,9 +3458,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                 series,
                 actual_attendance,
                 include_absent=bool(
-                    clean_str(occurrence.get('status')).lower() == 'completed'
-                    or occurrence.get('artifacts_synced_at')
-                    or occurrence.get('actual_start')
+                    occurrence.get('attendance_report_id') and occurrence.get('actual_end')
                 ),
             )
             occurrence['artifacts'] = authoring_fetch_all(
@@ -3447,7 +3467,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             for artifact in occurrence['artifacts']:
                 artifact['metadata'] = parse_json_value(artifact.get('metadata'), {})
         return JsonResponse({
-            'series': stamp_live_session_instants(series),
+            'series': {**stamp_live_session_instants(series), 'timeZoneIana': graph_timezone_iana(series)},
             'occurrences': [stamp_live_session_instants(occurrence) for occurrence in occurrences],
         })
     if request.method != 'POST':
@@ -3522,7 +3542,8 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     for base, group in live_session_meeting_groups(series, occurrences):
         launches = live_session_join_launches(group)
         try:
-            response = microsoft_graph_request('GET', f'{base}/attendanceReports')
+            response = {'value': collection(microsoft_graph_request, f'{base}/attendanceReports', get_graph_settings()['base_url'])}
+            stored_records = {row['id']: authoring_fetch_all(LIVE_SESSION_ATTENDANCE_TABLE, 'occurrence_id = %s', [row['id']]) for row in group}
             synced_ids_by_occurrence = defaultdict(set)
             returned_report_ids = set()
             assigned_reports_by_occurrence = defaultdict(set)
@@ -3541,66 +3562,81 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         {'attendance_report_id': report_id},
                     )
                     launch['attendance_report_id'] = report_id
+                stored_end = parse_graph_datetime(occurrence.get('actual_end'))
+                matching = [row for row in stored_records[occurrence['id']]
+                    if report_id in (parse_json_value(row.get('raw_data'), {}).get('sourceAttendanceReportIds') or [])]
+                expected_count = parse_int(report.get('totalParticipantCount'), -1)
+                if (not getattr(request, 'session_result_force', False) and stored_end
+                        and (now - stored_end.replace(tzinfo=None)).total_seconds() > 48 * 3600
+                        and clean_str(occurrence.get('attendance_report_id')) == report_id
+                        and expected_count >= 0 and len(matching) >= expected_count):
+                    continue
                 report_key = urllib_parse.quote(report_id, safe='')
                 detail = microsoft_graph_request('GET', f'{base}/attendanceReports/{report_key}?$expand=attendanceRecords')
-                records = detail.get('attendanceRecords') or []
-                returned_report_ids.add(report_id)
-                update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
-                    'attendance_report_id': report_id,
-                    'participant_count': int(detail.get('totalParticipantCount') or len(records)),
-                    'actual_start': parse_graph_datetime(detail.get('meetingStartDateTime')),
-                    'actual_end': parse_graph_datetime(detail.get('meetingEndDateTime')),
-                    'status': 'completed',
-                    'artifacts_synced_at': now,
-                    'last_sync_error': '',
-                })
-                for record in records:
-                    display_name, identity_id = attendance_identity(record)
-                    display_name = display_name or attendance_display_name(record)
-                    graph_record_id = clean_str(record.get('id') or identity_id or record.get('emailAddress'))
-                    stable_key = graph_record_id or uuid.uuid4().hex
-                    attendance_id = f'ATT-{uuid.uuid5(uuid.NAMESPACE_URL, occurrence["id"] + report_id + stable_key).hex.upper()}'
-                    synced_ids_by_occurrence[occurrence['id']].add(attendance_id)
-                    existing_rows = authoring_fetch_all(
-                        LIVE_SESSION_ATTENDANCE_TABLE, 'id = %s', [attendance_id]
-                    )
-                    existing = existing_rows[0] if existing_rows else {}
-                    existing_intervals = parse_json_value(existing.get('intervals'), [])
-                    merged_intervals = merge_attendance_intervals(
-                        existing_intervals,
-                        record.get('attendanceIntervals') or [],
-                    )
-                    existing_raw = parse_json_value(existing.get('raw_data'), {})
-                    report_ids = list(dict.fromkeys([
-                        *(
-                            existing_raw.get('sourceAttendanceReportIds')
-                            if isinstance(existing_raw.get('sourceAttendanceReportIds'), list)
-                            else []
-                        ),
-                        report_id,
-                    ]))
-                    merged_raw = {
-                        **record,
-                        'attendanceIntervals': merged_intervals,
-                        'sourceAttendanceReportIds': report_ids,
-                        'attendanceReportId': report_id,
-                        'attendanceReportStart': clean_str(detail.get('meetingStartDateTime') or report.get('meetingStartDateTime')),
-                        'attendanceReportEnd': clean_str(detail.get('meetingEndDateTime') or report.get('meetingEndDateTime')),
-                    }
-                    merged_raw = graph_item_with_occurrence_link(merged_raw, occurrence, launch)
-                    authoring_upsert(LIVE_SESSION_ATTENDANCE_TABLE, ['id'], {
-                        'id': attendance_id,
-                        'occurrence_id': occurrence['id'],
-                        'graph_record_id': graph_record_id,
-                        'email': clean_str(record.get('emailAddress')).lower(),
-                        'display_name': display_name,
-                        'role': clean_str(record.get('role')),
-                        'total_attendance_seconds': attendance_interval_seconds(merged_intervals),
-                        'intervals': json_db_value(merged_intervals),
-                        'raw_data': json_db_value(merged_raw),
+                records = collection(microsoft_graph_request, f'{base}/attendanceReports/{report_key}?$expand=attendanceRecords',
+                    get_graph_settings()['base_url'], first=detail, key='attendanceRecords') if 'attendanceRecords' in detail else collection(
+                    microsoft_graph_request, f'{base}/attendanceReports/{report_key}/attendanceRecords', get_graph_settings()['base_url'])
+                if not parse_graph_datetime(detail.get('meetingEndDateTime')):
+                    continue  # an ongoing report cannot establish absence
+                with transaction.atomic():
+                    returned_report_ids.add(report_id)
+                    update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
+                        'attendance_report_id': report_id,
+                        'participant_count': int(detail.get('totalParticipantCount') or len(records)),
+                        'actual_start': parse_graph_datetime(detail.get('meetingStartDateTime')),
+                        'actual_end': parse_graph_datetime(detail.get('meetingEndDateTime')),
+                        'status': 'completed',
+                        'artifacts_synced_at': now,
+                        'last_sync_error': '',
                     })
-                    synced['attendanceRecords'] += 1
-                synced['attendanceReports'] += 1
+                    for record in records:
+                        display_name, identity_id = attendance_identity(record)
+                        display_name = display_name or attendance_display_name(record)
+                        graph_record_id = clean_str(record.get('id') or identity_id or record.get('emailAddress'))
+                        stable_key = graph_record_id or uuid.uuid4().hex
+                        attendance_id = f'ATT-{uuid.uuid5(uuid.NAMESPACE_URL, occurrence["id"] + report_id + stable_key).hex.upper()}'
+                        synced_ids_by_occurrence[occurrence['id']].add(attendance_id)
+                        existing_rows = authoring_fetch_all(
+                            LIVE_SESSION_ATTENDANCE_TABLE, 'id = %s', [attendance_id]
+                        )
+                        existing = existing_rows[0] if existing_rows else {}
+                        existing_intervals = parse_json_value(existing.get('intervals'), [])
+                        merged_intervals = merge_attendance_intervals(
+                            existing_intervals,
+                            record.get('attendanceIntervals') or [],
+                        )
+                        existing_raw = parse_json_value(existing.get('raw_data'), {})
+                        report_ids = list(dict.fromkeys([
+                            *(
+                                existing_raw.get('sourceAttendanceReportIds')
+                                if isinstance(existing_raw.get('sourceAttendanceReportIds'), list)
+                                else []
+                            ),
+                            report_id,
+                        ]))
+                        merged_raw = {
+                            **record,
+                            'attendanceIntervals': merged_intervals,
+                            'sourceAttendanceReportIds': report_ids,
+                            'attendanceReportId': report_id,
+                            'attendanceReportStart': clean_str(detail.get('meetingStartDateTime') or report.get('meetingStartDateTime')),
+                            'attendanceReportEnd': clean_str(detail.get('meetingEndDateTime') or report.get('meetingEndDateTime')),
+                        }
+                        merged_raw = graph_item_with_occurrence_link(merged_raw, occurrence, launch)
+                        authoring_upsert(LIVE_SESSION_ATTENDANCE_TABLE, ['id'], {
+                            'id': attendance_id,
+                            'occurrence_id': occurrence['id'],
+                            'graph_record_id': graph_record_id,
+                            'email': clean_str(record.get('emailAddress')).lower(),
+                            'display_name': display_name,
+                            'role': clean_str(record.get('role')),
+                            'total_attendance_seconds': attendance_interval_seconds(merged_intervals) if merged_intervals else max(
+                                parse_int(existing.get('total_attendance_seconds'), 0), parse_int(record.get('totalAttendanceInSeconds'), 0)),
+                            'intervals': json_db_value(merged_intervals),
+                            'raw_data': json_db_value(merged_raw),
+                        })
+                        synced['attendanceRecords'] += 1
+                    synced['attendanceReports'] += 1
 
             # Replace legacy attendee-only rows after every report has been
             # persisted. Those rows merged the same Graph attendee id across
@@ -3634,13 +3670,17 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
 
         for artifact_type, endpoint in (('transcript', 'transcripts'), ('recording', 'recordings')):
             try:
-                response = microsoft_graph_request('GET', f'{base}/{endpoint}')
+                response = {'value': collection(microsoft_graph_request, f'{base}/{endpoint}', get_graph_settings()['base_url'])}
                 for artifact in response.get('value') or []:
                     timestamp = (
                         parse_graph_datetime(artifact.get('endDateTime'))
                         or parse_graph_datetime(artifact.get('createdDateTime'))
                     )
-                    occurrence, launch = launch_linked_live_occurrence(group, timestamp, launches)
+                    existing_artifacts = authoring_fetch_all(LIVE_SESSION_ARTIFACTS_TABLE,
+                        'artifact_type = %s AND graph_artifact_id = %s', [artifact_type, clean_str(artifact.get('id'))])
+                    existing_ids = {row['occurrence_id'] for row in existing_artifacts}
+                    stored = next((row for row in group if row['id'] in existing_ids), None)
+                    occurrence, launch = (stored, None) if stored else launch_linked_live_occurrence(group, timestamp, launches)
                     linked_artifact = graph_item_with_occurrence_link(artifact, occurrence, launch) if occurrence else artifact
                     if occurrence:
                         remove_artifact_from_wrong_occurrences(group, occurrence, artifact_type, linked_artifact)
@@ -3987,7 +4027,11 @@ def soft_delete_payload(table, *, via_parent='', deleted_by='system', extra=None
     payload = {
         'deleted_at': datetime.utcnow(),
         'deleted_by': clean_str(deleted_by) or 'system',
-        'deleted_via_parent': clean_str(via_parent) or '',
+        # NULL, not '', when nothing above took this row down. Readers tell a
+        # cascade from a standalone delete by this column, and an empty string
+        # reads as "deleted via a parent" to any SQL using `IS NOT NULL` --
+        # which kept individually-deleted content visible to assigned learners.
+        'deleted_via_parent': clean_str(via_parent) or None,
         'updated_at': datetime.utcnow(),
         **(extra or {}),
     }
@@ -4030,7 +4074,11 @@ def soft_delete_rows(table, where_sql, where_params=None, *, via_parent='', dele
     if not active_checks:
         active_checks.append('1 = 1')
     guarded_where = f'({where_sql}) and (' + ' and '.join(active_checks) + ')'
-    rows = update_rows(table, guarded_where, where_params or [], payload)
+    # `deleted_via_parent` is deliberately NULL for a standalone delete, and
+    # filtered_payload drops None unless the column is allowed to be nulled --
+    # without this the column would keep a stale value from an earlier cascade.
+    rows = update_rows(table, guarded_where, where_params or [], payload,
+                       allow_null_columns=['deleted_via_parent'])
     # Logged even when it matches nothing: a soft delete that hits zero rows is
     # almost always the interesting case (already archived, or wrong id).
     log_curriculum_storage(
@@ -6022,6 +6070,8 @@ def curriculum_teams_meeting_join(request, live_session_id, occurrence_id):
     occurrence = rows[0]
     series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
     series = series_rows[0] if series_rows else {}
+    if series.get('status') == 'cancelled' or occurrence.get('status') == 'cancelled':
+        return json_error('This Teams session has been cancelled.', status=410)
     join_url = clean_str(occurrence.get('join_url')) or clean_str(series.get('join_url'))
     parsed = urlparse(join_url)
     hostname = (parsed.hostname or '').lower()
@@ -9011,9 +9061,9 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
     ) if delivery_days else {}
     if plan.get('sessions'):
         for session in plan['sessions']:
-            clock, end, duration = module_session_clock(module, session_date=session.get('date'))
+            clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session.get('date'))
             session.update(startTime=clock, endTime=end, durationMinutes=duration)
-        return plan
+        return apply_session_overrides(plan, module)
     warnings = plan.get('warnings') or []
     if not start:
         return {'sessions': [], 'slots': [], 'skippedHolidays': [], 'finalEndDate': '', 'originalEndDate': '', 'warnings': warnings}
@@ -9037,7 +9087,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         }
         for index in range(fallback_count)
     ]
-    return {
+    return apply_session_overrides({
         'sessions': sessions,
         # No weekday to skip onto means no slot can ever be closed, so the
         # curriculum spine is the session list: one open slot each, no reading
@@ -9059,7 +9109,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         'finalEndDate': sessions[-1]['date'] if sessions else '',
         'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
-    }
+    }, module)
 
 
 def module_delivery_plan(module, session_count, start, holidays=None):
@@ -9344,6 +9394,7 @@ def module_session_dates(module, holiday_cache=None):
         clean_str(module.get('session_week_day')),
         clean_str(module.get('cohort_id')),
         len(module.get('holidays') or ()),
+        json.dumps(session_overrides(module), sort_keys=True),
     )
     cached = module.get('_session_dates')
     if cached and cached[0] == signature:
@@ -9567,6 +9618,9 @@ def module_session_clock(module_row, group_row=None, session_date=None):
     ones ``build_sessions_from_authoring_modules`` draws with, so a module with
     no authored time is timed here exactly as it is on the calendar.
     """
+    exception = override_clock(module_row, session_date)
+    if exception:
+        return exception
     start_time = clean_str((module_row or {}).get('session_start_time')) or clean_str((group_row or {}).get('session_start_time')) or DEFAULT_SESSION_START_TIME
     end_time = clean_str((module_row or {}).get('session_end_time')) or clean_str((group_row or {}).get('session_end_time')) or DEFAULT_SESSION_END_TIME
     day = parse_date(session_date)
@@ -9649,6 +9703,7 @@ def module_schedule_view(module, tutor_name=None):
         'session_week_day': ', '.join(slot['day'] for slot in weekly) or first('session_week_day', 'weekDays', 'week_days', 'delivery_days', 'deliveryDays'),
         'weekly_schedule': weekly,
         'session_holidays': parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), []),
+        'session_overrides': session_overrides(module),
         'session_start_time': first('session_start_time', 'startTime', 'start_time'),
         'session_end_time': first('session_end_time', 'endTime', 'end_time'),
     }
@@ -13828,10 +13883,14 @@ COMPONENT_SETTINGS_SCHEMA = {
         'teamsMeetingUrl': '',
         'teamsOnlineMeetingId': '',
         'teamsCalendarSeries': '',
-        # Empty, not 0, like every other Teams key here: these hold numbers once
+        # Empty, not 0, like every other Teams key here: this holds a number once
         # a calendar exists, and 0 would read as a real occurrence.
         'teamsDurationMinutes': '',
-        'teamsSessionNumber': '',
+        # `teamsSessionNumber` is deliberately NOT defaulted here. It is an
+        # occurrence identity, carried by LIVE_SESSION_TRACKING_SETTING_KEYS, so
+        # it still saves whenever Teams has actually assigned one -- but a
+        # component with no occurrence behind it must not be handed the key at
+        # all, empty or otherwise.
         'teamsMeetingOptionsUrl': '',
         'teamsOrganizerEmail': '',
         'teamsAttendees': [],
@@ -14001,6 +14060,11 @@ COMPONENT_SETTINGS_SCHEMA = {
 
 
 LEGACY_SETTING_KEYS = {'legacySettings', 'legacySourceType', 'legacyUnsupportedSource', 'shortcode'}
+LIVE_SESSION_TRACKING_SETTING_KEYS = {
+    'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
+    'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
+    'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
+}
 
 
 class ModuleAuthoringValidationError(ValueError):
@@ -14033,6 +14097,13 @@ def component_settings_defaults(component_type):
     return COMPONENT_SETTINGS_SCHEMA.get(frontend_component_type(component_type), COMPONENT_SETTINGS_SCHEMA['reading'])
 
 
+def allowed_component_setting_keys(component_type):
+    allowed = set(component_settings_defaults(component_type)) | LEGACY_SETTING_KEYS
+    if frontend_component_type(component_type) == 'live-session':
+        allowed |= LIVE_SESSION_TRACKING_SETTING_KEYS
+    return allowed
+
+
 def normalise_component_settings_payload(component_type, settings):
     source = dict(settings) if isinstance(settings, dict) else {}
     stored_legacy = as_json_value(source.get('legacySettings'), {})
@@ -14060,7 +14131,7 @@ def normalise_component_settings_payload(component_type, settings):
         source['assignmentFileName'] = source.get('assignmentFileName') or source.get('uploadedFileName') or ''
         source['assignmentFileUrl'] = source.get('assignmentFileUrl') or source.get('uploadedFileUrl') or ''
     defaults = component_settings_defaults(component_type)
-    allowed = set(defaults.keys()) | LEGACY_SETTING_KEYS
+    allowed = allowed_component_setting_keys(component_type)
     normalised = dict(defaults)
     legacy = {}
     for key, value in source.items():
@@ -14087,7 +14158,7 @@ def validate_component_authoring_payload(component, path):
     component_type = frontend_component_type(component.get('type'))
     settings = normalise_component_settings_payload(component_type, component.get('settings'))
     component['settings'] = settings
-    allowed = set(component_settings_defaults(component_type).keys()) | LEGACY_SETTING_KEYS
+    allowed = allowed_component_setting_keys(component_type)
     title = clean_str(component.get('title'))
     status = clean_str(settings.get('contentStatus') or 'Draft')
     version = clean_str(settings.get('version') or '0.1')
@@ -16396,8 +16467,10 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 # The one date this may not touch is an occurrence Microsoft has
                 # confirmed: that is where a meeting real people were invited to
                 # actually sits, and it moves through the reschedule endpoint,
-                # not silently underneath them. `sessionDateTimeUtc` is
-                # deliberately not part of that test -- it is written below on
+                # not silently underneath them -- unless a saved override has
+                # already rescheduled it, which is that endpoint's own record of
+                # the move and the one thing this follows. `sessionDateTimeUtc`
+                # is deliberately not part of that test -- it is written below on
                 # every stamp, so counting it froze every date this ever set.
                 #
                 # Mirrors `applyModuleWeekSessionPlan` in
@@ -16408,7 +16481,19 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                     clean_str(settings.get('teamsLiveSessionId'))
                     and parse_int(settings.get('teamsSessionNumber'), 0) > 0
                 )
-                if booked_at_microsoft:
+                # A component that already names a session number is matched to
+                # THAT session rather than to its position in the week, so a
+                # booked session keeps hold of its own plan entry when the weeks
+                # around it move. A number the plan no longer has falls back to
+                # the week's own slot: the week walk stays the answer of last
+                # resort, never `{}`, which would have left the session undated.
+                explicit_number = parse_int(settings.get('teamsSessionNumber'), 0)
+                if explicit_number:
+                    planned = next(
+                        (item for item in session_plan if item.get('sessionNumber') == explicit_number),
+                        planned,
+                    )
+                if booked_at_microsoft and not planned.get('rescheduled'):
                     continue
                 session_date = format_date(planned.get('date'))
                 if not session_date:
@@ -16431,6 +16516,8 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
+                if planned.get('rescheduled'):
+                    planned_settings['sessionRescheduled'] = True
                 component['settings'] = planned_settings
         # The week runs on the day its live session is delivered on. A closed
         # delivery slot is not this week -- it is a reading week of its own,
@@ -16446,6 +16533,8 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
         week['sessionDay'] = clean_str(first_planned.get('day'))
         week['sessionStartTime'] = session_start_time if session_date else ''
         week['sessionDurationMinutes'] = session_duration if session_date else 0
+        if first_planned.get('rescheduled'):
+            week['sessionRescheduled'] = True
     return weeks
 
 
@@ -27594,9 +27683,8 @@ def reset_schema_ready_flags():
     _review_types.reset_ready_flag()
     from . import review_instances as _review_instances
     _review_instances._TABLES_READY = False
-    with _SHARED_EPOCH_LOCK:
-        _SHARED_EPOCH_STATE['value'] = None
-        _SHARED_EPOCH_STATE['checked_at'] = 0.0
+    _review_instances._MANUAL_OVERRIDES_TABLE_READY = False
+    _review_instances._LEARNER_REVIEW_ADDITIONS_TABLE_READY = False
     _TABLE_COLUMNS_CACHE.clear()
     _TABLE_EXISTS_CACHE.clear()
     schema_gate.reset_verification_cache()

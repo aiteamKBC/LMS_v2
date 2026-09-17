@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchLearnerDetail,
@@ -16,10 +16,10 @@ import {
   sortEvents,
   statusLabel as calendarStatusLabel,
   type CoachCalendarEvent,
+  type CoachReviewGenerationIssue,
 } from '@/pages/coach/shared/calendarEvents';
 import { fetchStudentActivity } from '@/api/studentActivity';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
-import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
 import { coachFetch } from '@/lib/coachFetch';
 
@@ -128,18 +128,6 @@ export interface CoachAttendanceLearner {
   nextSession: string;
   consecutiveMissed: number | null;
   hasAttendance: boolean;
-  /** Session-level register from the learner workspace attendance endpoint. */
-  sessionHistory?: Array<{
-    id: string;
-    date: string;
-    title: string;
-    sessionType: string;
-    status: 'attended' | 'missed' | 'late';
-    startTime: string;
-    endTime: string;
-    module: string;
-    coach: string;
-  }>;
 }
 
 interface CoachAttendanceResponse {
@@ -198,6 +186,10 @@ export interface CaseFileUpcomingSession {
 
 export interface CaseFileReviewMeeting {
   id: string;
+  eventKey: string;
+  reviewInstanceId?: string | null;
+  source: string;
+  reviewTypeName: string;
   title: string;
   date: string;
   time: string;
@@ -207,9 +199,10 @@ export interface CaseFileReviewMeeting {
   isNext: boolean;
 }
 
-interface CaseFileReviewHistory {
-  progressReviews: CaseFileReviewMeeting[];
-  monthlyCoachMeetings: CaseFileReviewMeeting[];
+export interface CaseFileReviewGroup {
+  key: string;
+  title: string;
+  items: CaseFileReviewMeeting[];
 }
 
 export interface CoachLearnerCaseFileData {
@@ -250,6 +243,9 @@ export interface CoachLearnerCaseFileData {
   upcomingSessions: CaseFileUpcomingSession[];
   progressReviews: CaseFileReviewMeeting[];
   monthlyCoachMeetings: CaseFileReviewMeeting[];
+  reviewGroups: CaseFileReviewGroup[];
+  reviewGenerationIssues: CoachReviewGenerationIssue[];
+  reviewsLoading: boolean;
 }
 
 export interface CaseFileTabProps {
@@ -270,6 +266,8 @@ export function useCoachLearnerCaseFileData(args: {
   const [data, setData] = useState<CoachLearnerCaseFileData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const refresh = useCallback(() => setReloadToken(token => token + 1), []);
 
   useEffect(() => {
     const rawLearnerId = args.learnerId?.trim();
@@ -316,7 +314,6 @@ export function useCoachLearnerCaseFileData(args: {
         : null;
       let auditHours: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null = null;
       let liveAttendance: LearnerAttendance | null = null;
-      let reviewHistory: CaseFileReviewHistory | null = null;
 
       let detail: LearnerDetail | null = null;
       let resolvedKind: LearnerKind | null = null;
@@ -327,10 +324,9 @@ export function useCoachLearnerCaseFileData(args: {
           const detailResult = await directDetailPromise;
           detail = detailResult.detail;
           resolvedKind = detailResult.kind;
-          [auditHours, liveAttendance, reviewHistory] = await Promise.all([
+          [auditHours, liveAttendance] = await Promise.all([
             fetchAuditHours(resolvedKind, directEnrolmentId),
             fetchCaseFileAttendance(resolvedKind, directEnrolmentId),
-            detail.studentActivityAvailable ? fetchCaseFileReviewHistory(resolvedKind, directEnrolmentId) : Promise.resolve(null),
           ]);
 
           // Show the useful learner view as soon as its focused detail arrives.
@@ -344,9 +340,10 @@ export function useCoachLearnerCaseFileData(args: {
             detail,
             caseload: [],
             timetableEvents: [],
+            reviewGenerationIssues: [],
+            reviewsLoading: true,
             auditHours,
             liveAttendance,
-            reviewHistory,
           });
           if (!cancelled && initialData) {
             setData(initialData);
@@ -366,7 +363,10 @@ export function useCoachLearnerCaseFileData(args: {
       const caseload = caseloadResult.status === 'fulfilled' ? caseloadResult.value : [];
       const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : [];
       const marking = markingResult.status === 'fulfilled' ? markingResult.value : [];
-      const timetableEvents = timetableResult.status === 'fulfilled' ? timetableResult.value : [];
+      const timetable = timetableResult.status === 'fulfilled'
+        ? timetableResult.value
+        : { events: [], reviewGenerationIssues: [] };
+      const timetableEvents = timetable.events;
 
       const snapshot = resolveCaseloadLearner(caseload, rawLearnerId, rawLearnerName);
       const attendanceLearner = resolveAttendanceLearner(attendance, rawLearnerId, rawLearnerName);
@@ -394,19 +394,13 @@ export function useCoachLearnerCaseFileData(args: {
         }
       }
 
-      if (!auditHours || !liveAttendance || !reviewHistory) {
-        const [hours, attendanceRecord, reviews] = await Promise.all([
+      if (!auditHours || !liveAttendance) {
+        const [hours, attendanceRecord] = await Promise.all([
           auditHours ? Promise.resolve(auditHours) : fetchAuditHours(resolvedKind, resolvedEnrolmentId),
           liveAttendance ? Promise.resolve(liveAttendance) : fetchCaseFileAttendance(resolvedKind, resolvedEnrolmentId),
-          reviewHistory
-            ? Promise.resolve(reviewHistory)
-            : detail?.studentActivityAvailable
-              ? fetchCaseFileReviewHistory(resolvedKind, resolvedEnrolmentId)
-              : Promise.resolve(null),
         ]);
         auditHours = hours;
         liveAttendance = attendanceRecord;
-        reviewHistory = reviews;
       }
 
       if (cancelled) {
@@ -422,9 +416,10 @@ export function useCoachLearnerCaseFileData(args: {
         detail,
         caseload,
         timetableEvents,
+        reviewGenerationIssues: timetable.reviewGenerationIssues,
+        reviewsLoading: false,
         auditHours,
         liveAttendance,
-        reviewHistory,
       });
 
       if (!finalData) {
@@ -456,9 +451,9 @@ export function useCoachLearnerCaseFileData(args: {
     return () => {
       cancelled = true;
     };
-  }, [args.enabled, args.kind, args.learnerId, args.learnerName, args.enrolmentId]);
+  }, [args.enabled, args.kind, args.learnerId, args.learnerName, args.enrolmentId, reloadToken]);
 
-  return { data, loading, error };
+  return { data, loading, error, refresh };
 }
 
 export function flattenJourney(data: CoachLearnerCaseFileData) {
@@ -634,7 +629,10 @@ async function fetchCoachMarkingQueue(learnerId?: string, learnerName?: string) 
 
 async function fetchCoachTimetable() {
   const data = await fetchCoachCalendarEvents(undefined);
-  return data.events || [];
+  return {
+    events: data.events || [],
+    reviewGenerationIssues: data.reviewGenerationIssues || [],
+  };
 }
 
 /** The whole-programme OTJ hours the learner sees on their own workspace:
@@ -658,29 +656,14 @@ async function fetchAuditHours(kind: LearnerKind | null, enrolmentId: string | n
   }
 }
 
-/** KBC's live register, available only when the learner has an Aptem ID. */
+/** The learner's own attendance register, read through the same endpoint their
+ *  workspace uses so a coach and their learner never see different rates. */
 async function fetchCaseFileAttendance(kind: LearnerKind | null, enrolmentId: string | null) {
   if (!kind || !enrolmentId) return null;
   try {
-    return await fetchLearnerAttendance(kind, enrolmentId, undefined, false, 'kbc');
+    return await fetchLearnerAttendance(kind, enrolmentId);
   } catch {
     return null;
-  }
-}
-
-async function fetchCaseFileReviewHistory(kind: LearnerKind | null, enrolmentId: string | null): Promise<CaseFileReviewHistory | null> {
-  if (!kind || !enrolmentId) return null;
-  try {
-    const [progress, monthly] = await Promise.all([
-      fetchReviewHistory(kind, enrolmentId, 'progress-review'),
-      fetchReviewHistory(kind, enrolmentId, 'monthly-coaching'),
-    ]);
-    return {
-      progressReviews: buildImportedReviewItems(progress.reviews),
-      monthlyCoachMeetings: buildImportedReviewItems(monthly.reviews),
-    };
-  } catch {
-    return { progressReviews: [], monthlyCoachMeetings: [] };
   }
 }
 
@@ -830,60 +813,96 @@ function liveSessionMatchesLearner(
 function reviewEventMatchesLearner(
   event: CoachCalendarEvent,
   learner: Pick<CoachLearnerCaseFileData, 'learnerId' | 'displayName' | 'email' | 'programme' | 'cohort'>,
-  source: 'mcr' | 'progress-review',
 ) {
-  if (event.source !== source || event.status === 'cancelled') return false;
+  if (!isReviewCalendarEvent(event) || event.status === 'cancelled') {
+    return false;
+  }
 
   const learnerId = numericId(learner.learnerId) || String(learner.learnerId || '').trim();
   const eventLearnerId = String(event.learnerId || '').trim();
-  if (learnerId && eventLearnerId && learnerId === eventLearnerId) return true;
+  if (learnerId && eventLearnerId && learnerId === eventLearnerId) {
+    return true;
+  }
 
   const learnerEmail = normalizeEmailMatchValue(learner.email);
   const eventEmail = normalizeEmailMatchValue(event.email);
-  if (learnerEmail && eventEmail && learnerEmail === eventEmail) return true;
+  if (learnerEmail && eventEmail && learnerEmail === eventEmail) {
+    return true;
+  }
 
   const learnerName = normalizePersonName(learner.displayName);
   const eventLearnerName = normalizePersonName(event.learner);
-  if (!learnerName || !eventLearnerName || learnerName !== eventLearnerName) return false;
+  if (!learnerName || !eventLearnerName || learnerName !== eventLearnerName) {
+    return false;
+  }
 
   const learnerCohort = normalizeMatchValue(learner.cohort);
   const learnerProgramme = normalizeMatchValue(learner.programme);
   const eventCohort = normalizeMatchValue(event.cohort);
   const eventProgramme = normalizeMatchValue(event.programme);
-  return (!learnerCohort || !eventCohort || learnerCohort === eventCohort)
-    && (!learnerProgramme || !eventProgramme || learnerProgramme === eventProgramme);
+  if (learnerCohort && eventCohort && learnerCohort !== eventCohort) {
+    return false;
+  }
+  if (learnerProgramme && eventProgramme && learnerProgramme !== eventProgramme) {
+    return false;
+  }
+
+  return true;
+}
+
+function isReviewCalendarEvent(event: CoachCalendarEvent) {
+  return event.type === 'review'
+    || event.source === 'mcr'
+    || event.source === 'progress-review'
+    || event.source === 'review'
+    || Boolean(event.reviewTemplateId);
 }
 
 function sortLearnerScheduleEvents(events: CoachCalendarEvent[]) {
-  const upcoming = events.filter(isUpcomingCalendarEvent);
-  const past = events.filter((event) => !isUpcomingCalendarEvent(event));
+  const upcoming: CoachCalendarEvent[] = [];
+  const past: CoachCalendarEvent[] = [];
+
+  for (const event of events) {
+    if (isUpcomingCalendarEvent(event)) {
+      upcoming.push(event);
+    } else {
+      past.push(event);
+    }
+  }
+
   return [...sortEvents(upcoming), ...sortEvents(past).reverse()];
 }
 
 function buildReviewMeetingItems(
   learner: Pick<CoachLearnerCaseFileData, 'learnerId' | 'displayName' | 'email' | 'programme' | 'cohort'>,
   timetableEvents: CoachCalendarEvent[],
-  source: 'mcr' | 'progress-review',
 ): CaseFileReviewMeeting[] {
-  const fallbackTitle = source === 'progress-review' ? 'Progress Review' : 'Monthly Coaching';
-  const fallbackDetail = source === 'progress-review'
-    ? 'Progress review from the coach schedule.'
-    : 'Monthly coaching session from the coach schedule.';
+  const fallbackDetail = 'Review from the coach schedule.';
   const matchingEvents = sortLearnerScheduleEvents(
-    timetableEvents.filter((event) => reviewEventMatchesLearner(event, learner, source)),
-  ).slice(0, 6);
+    timetableEvents.filter((event) => reviewEventMatchesLearner(event, learner)),
+  );
+
   let nextFlagAssigned = false;
   return matchingEvents.map((event) => {
     const displayDate = eventDisplayDate(event);
     const isNext = !nextFlagAssigned && isUpcomingCalendarEvent(event);
-    if (isNext) nextFlagAssigned = true;
+    if (isNext) {
+      nextFlagAssigned = true;
+    }
+
+    const source = event.source || 'review';
+    const reviewTypeName = reviewTypeLabel(event);
     return {
       id: event.eventKey || event.id,
-      title: event.title || fallbackTitle,
+      eventKey: event.eventKey || event.id,
+      reviewInstanceId: event.reviewInstanceId,
+      source,
+      reviewTypeName,
+      title: event.title || reviewTypeName,
       date: formatCalendarDateLabel(displayDate),
       time: formatCalendarTimeLabel(event),
       detail: [
-        event.sequence ? (source === 'progress-review' ? `Review ${event.sequence}` : `Meeting ${event.sequence}`) : '',
+        event.sequence ? (source === 'mcr' ? `Meeting ${event.sequence}` : `Review ${event.sequence}`) : 'Additional review',
         event.meetingProvider || '',
         event.targetDate && event.scheduledDate && event.scheduledDate !== event.targetDate
           ? `Target ${formatCalendarDateLabel(event.targetDate)}`
@@ -896,36 +915,42 @@ function buildReviewMeetingItems(
   });
 }
 
-function buildImportedReviewItems(reviews: ImportedReview[]): CaseFileReviewMeeting[] {
-  return [...reviews]
-    .sort((left, right) => (right.completedDate || right.plannedDate || '').localeCompare(left.completedDate || left.plannedDate || ''))
-    .map((review) => {
-      const date = review.completedDate || review.plannedDate;
-      const status = normalizeImportedReviewStatus(review.status);
-      return {
-        id: `imported-review:${review.id}`,
-        title: review.name || review.type || 'Review',
-        date: date ? formatCalendarDateLabel(date) : '--',
-        time: review.plannedTime || '--',
-        detail: [review.type, review.reviewerName ? `Reviewer: ${review.reviewerName}` : '', review.managerName ? `Manager: ${review.managerName}` : '']
-          .filter(Boolean)
-          .join(' - ') || 'Imported review record.',
-        status,
-        statusLabel: importedReviewStatusLabel(status),
-        isNext: false,
-      };
-    });
+function reviewTypeLabel(event: CoachCalendarEvent) {
+  const metadataLabel = String(event.reviewTypeName || '').trim();
+  if (metadataLabel) return metadataLabel;
+  if (event.source === 'mcr') return 'Monthly Coaching Meeting';
+  if (event.source === 'progress-review') return 'Progress Review';
+  return 'Review';
 }
 
-function normalizeImportedReviewStatus(status: string): CoachCalendarEvent['status'] {
-  return (['completed', 'scheduled', 'in-progress', 'awaiting-signature', 'confirmed', 'pending', 'cancelled', 'not-scheduled'] as const)
-    .includes(status as CoachCalendarEvent['status'])
-    ? status as CoachCalendarEvent['status']
-    : 'pending';
+function buildReviewGroups(items: CaseFileReviewMeeting[]): CaseFileReviewGroup[] {
+  const groups = new Map<string, CaseFileReviewGroup>();
+  for (const item of items) {
+    const key = item.reviewTypeName.trim().toLowerCase() || 'review';
+    const existing = groups.get(key);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      groups.set(key, {
+        key,
+        title: item.reviewTypeName || 'Review',
+        items: [item],
+      });
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => {
+    const aSystemRank = reviewGroupRank(a.title);
+    const bSystemRank = reviewGroupRank(b.title);
+    return aSystemRank - bSystemRank || a.title.localeCompare(b.title);
+  });
 }
 
-function importedReviewStatusLabel(status: CoachCalendarEvent['status']) {
-  return status.split('-').map((word) => word ? `${word[0].toUpperCase()}${word.slice(1)}` : '').join(' ');
+function reviewGroupRank(title: string) {
+  const normalized = title.toLowerCase();
+  if (normalized === 'progress review') return 0;
+  if (normalized === 'monthly coaching meeting') return 1;
+  if (normalized === 'review') return 99;
+  return 10;
 }
 
 function buildUpcomingLiveSessions(
@@ -976,9 +1001,10 @@ function buildCaseFileData(args: {
   detail: LearnerDetail | null;
   caseload: CoachCaseloadLearner[];
   timetableEvents: CoachCalendarEvent[];
+  reviewGenerationIssues: CoachReviewGenerationIssue[];
+  reviewsLoading?: boolean;
   auditHours?: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null;
   liveAttendance?: LearnerAttendance | null;
-  reviewHistory?: CaseFileReviewHistory | null;
 }): CoachLearnerCaseFileData | null {
   const displayName = args.detail?.name || args.snapshot?.name || args.attendance?.learner || args.evidence?.learner || '';
   if (!displayName) {
@@ -1004,32 +1030,6 @@ function buildCaseFileData(args: {
     ),
   ).sort();
   const programme = args.detail?.programme || args.attendance?.programme || '';
-  const mergedAttendance = args.liveAttendance
-    ? args.attendance
-      ? {
-          ...args.attendance,
-        sessionHistory: args.liveAttendance?.sessionHistory || args.attendance.sessionHistory || [],
-        hasAttendance: true,
-        sessions: args.liveAttendance?.sessions ?? args.attendance.sessions,
-        present: args.liveAttendance?.present ?? args.attendance.present,
-        absent: args.liveAttendance?.absent ?? args.attendance.absent,
-        late: args.liveAttendance?.late ?? args.attendance.late,
-        catchup: args.liveAttendance?.catchup ?? args.attendance.catchup,
-        consecutiveMissed: args.liveAttendance?.consecutiveMissed ?? args.attendance.consecutiveMissed,
-        lastSessionDate: args.liveAttendance?.lastSessionDate ?? args.attendance.lastSessionDate,
-      }
-      : {
-          id: String(args.liveAttendance.learnerId), learner: args.liveAttendance.learnerName,
-          initials: getInitials(args.liveAttendance.learnerName), programme, cohort, group: '',
-          attendance: args.liveAttendance.attendanceRate, sessions: args.liveAttendance.sessions,
-          present: args.liveAttendance.present, absent: args.liveAttendance.absent, late: args.liveAttendance.late,
-          catchup: args.liveAttendance.catchup, trend: 'stable' as const, risk: null,
-          employer: '', overallProgress: 0, otjhCompleted: 0, otjhTarget: 0, ksbProgress: 0,
-          lastSession: '', lastSessionDate: args.liveAttendance.lastSessionDate, nextSession: '',
-          consecutiveMissed: args.liveAttendance.consecutiveMissed, hasAttendance: true,
-          sessionHistory: args.liveAttendance.sessionHistory,
-        }
-    : null;
   const group = args.detail?.group || args.snapshot?.group || args.attendance?.group || '';
   const email = args.detail?.email || args.snapshot?.email || args.attendance?.email || args.evidence?.email || '';
   const upcomingSessions = buildUpcomingLiveSessions(
@@ -1040,14 +1040,16 @@ function buildCaseFileData(args: {
     },
     args.timetableEvents,
   );
-  const reviewEventContext = { learnerId: args.learnerId, displayName, email, programme, cohort };
-  const usesImportedReviews = args.detail?.studentActivityAvailable === true;
-  const progressReviews = usesImportedReviews
-    ? args.reviewHistory?.progressReviews || []
-    : buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'progress-review');
-  const monthlyCoachMeetings = usesImportedReviews
-    ? args.reviewHistory?.monthlyCoachMeetings || []
-    : buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'mcr');
+  const reviewEventContext = {
+    learnerId: args.learnerId,
+    displayName,
+    email,
+    programme,
+    cohort,
+  };
+  const allReviewMeetings = buildReviewMeetingItems(reviewEventContext, args.timetableEvents);
+  const progressReviews = allReviewMeetings.filter(item => item.source === 'progress-review' || item.reviewTypeName === 'Progress Review');
+  const monthlyCoachMeetings = allReviewMeetings.filter(item => item.source === 'mcr' || item.reviewTypeName === 'Monthly Coaching Meeting');
   // The audit pair wins over learner-detail's training-plan reflection totals,
   // so the coach reads the same OTJ hours the learner sees on their own
   // workspace. `targetHours` paces the plan to the current week, so it is
@@ -1069,7 +1071,7 @@ function buildCaseFileData(args: {
     learnerId: args.learnerId,
     kind: args.kind,
     snapshot: args.snapshot,
-    attendance: mergedAttendance,
+    attendance: args.attendance,
     evidence: args.evidence,
     detail: args.detail,
     journey,
@@ -1107,6 +1109,11 @@ function buildCaseFileData(args: {
     upcomingSessions,
     progressReviews,
     monthlyCoachMeetings,
+    reviewGroups: buildReviewGroups(allReviewMeetings),
+    reviewGenerationIssues: args.reviewGenerationIssues.filter(
+      issue => String(issue.learnerId) === String(args.learnerId),
+    ),
+    reviewsLoading: Boolean(args.reviewsLoading),
   };
 }
 

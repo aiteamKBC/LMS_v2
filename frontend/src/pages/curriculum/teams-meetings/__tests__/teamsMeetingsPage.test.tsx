@@ -1,5 +1,8 @@
 import { finishTeamsCreation } from '../creationResult';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { syncTeamsCalendarState } from '../calendarState';
+import { calendarAction } from '../calendarActions';
+import { loadTeamsMeetingArtifacts } from '../../module-builder/moduleAuthoringData';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -139,6 +142,8 @@ import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature
 const confirmMock = vi.mocked(showCurriculumConfirm);
 const alertMock = vi.mocked(showCurriculumAlert);
 vi.mock('../creationResult', () => ({ finishTeamsCreation: vi.fn() }));
+vi.mock('../calendarState', () => ({ syncTeamsCalendarState: vi.fn() }));
+vi.mock('../calendarActions', () => ({ calendarAction: vi.fn() }));
 
 // Every week already has its live session unless a test says otherwise.
 const probeModuleTeamsAttachment = vi.fn(async () => 0);
@@ -225,6 +230,10 @@ function rowFor(name: string) {
 
 describe('Teams Meetings page', () => {
   beforeEach(() => {
+    vi.mocked(syncTeamsCalendarState).mockReset();
+    vi.mocked(syncTeamsCalendarState).mockResolvedValue({ changed: false, seriesStatus: 'active', cancelledSessions: [], errors: [] });
+    vi.mocked(loadTeamsMeetingArtifacts).mockReset();
+    vi.mocked(loadTeamsMeetingArtifacts).mockResolvedValue(artifacts as never);
     updateTeamsMeetingSchedule.mockClear();
     createTeamsMeeting.mockClear();
     restoreModuleTeamsMeeting.mockClear();
@@ -255,6 +264,102 @@ describe('Teams Meetings page', () => {
       expect.anything(),
       expect.objectContaining({ occurrenceDates: true }),
     );
+  });
+
+  it('opens cancellation review for the selected series without sending an action', async () => {
+    vi.mocked(calendarAction).mockClear();
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Cancel series' })).toBeEnabled());
+    await userEvent.click(dialog.getByRole('button', { name: 'Cancel series' }));
+    const actionDialog = within(await screen.findByRole('dialog'));
+    expect(actionDialog.getByText(/Data Foundations/)).toBeInTheDocument();
+    expect(actionDialog.getByText('The entire calendar series will be cancelled.')).toBeInTheDocument();
+    expect(actionDialog.getByRole('button', { name: 'Review changes' })).toBeInTheDocument();
+    expect(calendarAction).not.toHaveBeenCalled();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+  });
+
+  it('checks future calendars for cancellation without creating or updating Microsoft meetings', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-08-01T08:00:00Z'));
+    try {
+      await renderPage();
+      await waitFor(() => expect(syncTeamsCalendarState).toHaveBeenCalledWith('LIVE-4'));
+      expect(syncTeamsCalendarState).toHaveBeenCalledTimes(3);
+      expect(syncTeamsMeetingArtifacts).not.toHaveBeenCalled();
+      expect(createTeamsMeeting).not.toHaveBeenCalled();
+      expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+      expect(finishTeamsCreation).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); }
+  });
+
+  it('honours auto-sync off and lets a manual check close a cancelled series', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(syncTeamsCalendarState).not.toHaveBeenCalled();
+    vi.mocked(syncTeamsCalendarState).mockResolvedValueOnce({ changed: true, seriesStatus: 'cancelled', cancelledSessions: [1, 2], errors: [] });
+    fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.filter(item => item.liveSessionId !== 'LIVE-1'));
+    await userEvent.click(dialog.getByRole('button', { name: 'Sync calendar status' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(await screen.findByText('This calendar was cancelled in Microsoft and is now cancelled in the LMS.')).toBeInTheDocument();
+    expect(syncTeamsMeetingArtifacts).not.toHaveBeenCalled();
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+  });
+
+  it('rechecks cancellation at five minutes without polling on every render', async () => {
+    const start = Date.parse('2026-08-01T08:00:00Z');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+    let tick = () => {};
+    const realInterval = window.setInterval.bind(window);
+    const interval = vi.spyOn(window, 'setInterval').mockImplementation((handler, milliseconds, ...args) => {
+      if (milliseconds === 60000) tick = handler as () => void;
+      return realInterval(handler, milliseconds, ...args);
+    });
+    try {
+      await renderPage();
+      await waitFor(() => expect(syncTeamsCalendarState).toHaveBeenCalledTimes(3));
+      clock.mockReturnValue(start + 4 * 60000);
+      await act(async () => tick());
+      expect(syncTeamsCalendarState).toHaveBeenCalledTimes(3);
+      clock.mockReturnValue(start + 5 * 60000);
+      await act(async () => tick());
+      await waitFor(() => expect(syncTeamsCalendarState).toHaveBeenCalledTimes(6));
+    } finally { interval.mockRestore(); clock.mockRestore(); }
+  });
+
+  it('keeps a cancelled session on its own row without borrowing the next session join link', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-08-01T08:00:00Z'));
+    vi.mocked(loadTeamsMeetingArtifacts).mockResolvedValue({ ...artifacts, occurrences: [
+      { ...artifacts.occurrences[0], status: 'cancelled', participant_count: 0, artifacts: [], join_url: 'https://teams.microsoft.com/meet/cancelled' },
+      { ...artifacts.occurrences[0], id: 'OCC-2', session_number: 2, status: 'scheduled', scheduled_start: '2026-09-09T08:30:00Z', scheduled_end: '2026-09-09T10:30:00Z', participant_count: 0, artifacts: [], join_url: 'https://teams.microsoft.com/meet/second' },
+    ] } as never);
+    try {
+      await renderPage();
+      await screen.findByText('Data Foundations');
+      await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+      const dialog = within(await screen.findByRole('dialog'));
+      expect(await dialog.findByText('Cancelled')).toBeInTheDocument();
+      const joins = dialog.getAllByRole('link', { name: /^Join Teams$/ });
+      expect(joins).toHaveLength(1);
+      expect(joins[0]).toHaveAttribute('href', 'https://teams.microsoft.com/meet/second');
+    } finally { clock.mockRestore(); }
+  });
+
+  it('shows a failed calendar check without removing the series or sending changes', async () => {
+    vi.mocked(syncTeamsCalendarState).mockRejectedValue(new Error('Calendar status could not be checked.'));
+    await renderPage();
+    expect(await screen.findByText('Calendar status could not be checked.')).toBeInTheDocument();
+    expect(within(rowFor('Data Foundations')).getByText('In sync')).toBeInTheDocument();
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    expect(syncTeamsMeetingArtifacts).not.toHaveBeenCalled();
   });
 
   it('names the sessions whose Teams date no longer matches the module', async () => {
@@ -447,12 +552,14 @@ describe('Teams Meetings page', () => {
       .toBeInTheDocument();
   });
 
-  it('automatically syncs a tracked meeting after its end time', async () => {
+  it('checks calendar state but leaves artifact imports to the background worker', async () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-02T11:00:00Z'));
     try {
       await renderPage();
       expect(await screen.findByText('Data Foundations')).toBeInTheDocument();
-      await waitFor(() => expect(syncTeamsMeetingArtifacts).toHaveBeenCalledWith('LIVE-1'));
+      await waitFor(() => expect(syncTeamsCalendarState).toHaveBeenCalledWith('LIVE-1'));
+      // Artifact transfers moved to the worker: opening a page must never queue or run them.
+      expect(syncTeamsMeetingArtifacts).not.toHaveBeenCalled();
     } finally {
       clock.mockRestore();
     }
@@ -532,6 +639,18 @@ describe('Teams Meetings page', () => {
     const row = within(rowFor('Reporting Basics'));
     expect(row.getByText('Not created')).toBeInTheDocument();
     expect(row.getByRole('button', { name: 'Create Teams meetings calendar' })).toBeInTheDocument();
+  });
+
+  it('uses the Entra people picker for every meeting role', async () => {
+    await renderPage();
+    expect(await screen.findByText('Reporting Basics')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByRole('combobox', { name: 'Organizer' })).toHaveAttribute('placeholder', expect.stringContaining('Search'));
+    expect(dialog.getByRole('combobox', { name: 'Co-organizers' })).toHaveAttribute('placeholder', 'Search Entra by name or email...');
+    expect(dialog.getByRole('combobox', { name: 'Presenters' })).toHaveAttribute('placeholder', 'Search Entra by name or email...');
+    expect(dialog.getByRole('combobox', { name: 'Attendees' })).toHaveAttribute('placeholder', 'Search Entra by name or email...');
   });
 
   it('creates all 16 current session dates when the session cache still holds only three', async () => {

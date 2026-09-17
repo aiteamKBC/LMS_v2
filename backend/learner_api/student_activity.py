@@ -16,7 +16,8 @@ from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
-from .models import LearnerProfile
+from .models import EnrolmentUser, LearnerProfile
+from .learning_plan import _effective_plan_ids
 from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
                                     read_student_activity, read_student_material)
 from .student_activity_access import student_activity_available
@@ -43,7 +44,7 @@ CURRENT_SUBJECTS_SQL = '''
     )
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
-    WHERE (cm.deleted_at IS NULL OR cm.deleted_via_parent IS NOT NULL)
+    WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
 '''
 
 def _direct_progress_records(enrolment_id):
@@ -200,10 +201,8 @@ def student_activity(request, kind, pk):
         direct_otjh,
     )
     payload['direct_otjh_activities'] = direct_progress
-    payload['persistence_ready'] = saved['ready']
     allowed = {f"legacy:{item['group_id']}" for item in payload['activities']}
     payload['covers'] = {key: _cover_url(value) for key, value in saved['covers'].items() if key in allowed}
-    payload['can_manage_covers'] = False
     response = JsonResponse(payload)
     response["Cache-Control"] = "private, no-store"
     return response
@@ -415,7 +414,7 @@ def _builder_subject_metadata(cursor, refs):
     cursor.execute('''
         SELECT m.module_catalogue_id,m.title,m.cover_image_url
         FROM curriculum.modules m
-        WHERE (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)
+        WHERE (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
           AND m.module_catalogue_id=ANY(%s)
     ''', [native])
     covers, links = {}, {}
@@ -426,6 +425,34 @@ def _builder_subject_metadata(cursor, refs):
             covers[ref] = row['cover']
             links[ref] = {'id': row['id'], 'title': row['title']}
     return covers, links
+
+
+def _effective_current_subjects(cursor, learner_id):
+    """Return the same effective module set shown by the enrolment plan.
+
+    A saved plan can gain modules inherited from its group after it was last
+    agreed.  Reading only the stored JSON made My Learning omit those modules
+    until somebody saved the plan again, while the enrolment modal already
+    counted them.  Reuse the plan's effective-assignment rule so both screens
+    agree without writing anything during a learner read.
+    """
+    learner = EnrolmentUser.all_learners.only(
+        'programme', 'group', 'learning_plan', 'training_plan',
+    ).get(pk=learner_id)
+    module_ids = _effective_plan_ids(learner, {})
+    if not module_ids:
+        return []
+    cursor.execute('''
+        SELECT module_catalogue_id,title
+        FROM curriculum.modules
+        WHERE module_catalogue_id=ANY(%s)
+          AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)
+    ''', [module_ids])
+    titles = {module_id: title for module_id, title in cursor.fetchall()}
+    return [
+        {'id': module_id, 'title': titles[module_id]}
+        for module_id in module_ids if module_id in titles
+    ]
 
 
 @require_GET
@@ -441,16 +468,13 @@ def subject_covers(request, pk):
             if available:
                 cur.execute(f'SELECT subject_ref,storage_path FROM {subject_store.COVERS} WHERE subject_ref=ANY(%s)', [refs])
                 covers = {key: _cover_url(path) for key, path in cur.fetchall()}
-            cur.execute(CURRENT_SUBJECTS_SQL, [pk])
-            current_subjects = [{'id': module_id, 'title': title} for module_id, title in cur.fetchall()]
+            current_subjects = _effective_current_subjects(cur, pk)
             builder_covers, builder_subjects = _builder_subject_metadata(
                 cur, list(dict.fromkeys(refs + [f"current:{subject['id']}" for subject in current_subjects])),
             )
             covers.update(builder_covers)
             dates = read_builder_activity_dates(cur, [subject['id'] for subject in current_subjects])
-        return _private({'covers': covers, 'can_manage': False,
-                         'persistence_ready': available, 'csrf_token': get_token(request),
-                         'activity_dates': dates, 'current_subjects': current_subjects,
+        return _private({'covers': covers, 'activity_dates': dates, 'current_subjects': current_subjects,
                          'builder_subjects': builder_subjects})
     except DatabaseError:
         return _error('Could not load subject images.', 503)

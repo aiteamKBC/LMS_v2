@@ -71,6 +71,9 @@ it('creates from the module times and gives a Thursday component its own series 
     onClose={vi.fn()} onCreated={onCreated} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Create' })).toBeEnabled());
   expect(screen.getByRole('combobox', { name: /Teams series and links/ })).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Co-organizers' })).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Presenters' })).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Attendees' })).toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: 'Create' }));
   await waitFor(() => expect(onCreated).toHaveBeenCalled());
   expect(createTeamsMeeting).toHaveBeenCalledWith(expect.objectContaining({ seriesMode: 'auto', scheduledOccurrences: [

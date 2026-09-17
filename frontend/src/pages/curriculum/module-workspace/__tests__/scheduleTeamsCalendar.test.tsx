@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
+import { fetchModuleSessionPlan, loadModuleStructure, loadTeamsMeetingArtifacts } from '../../module-builder/moduleAuthoringData';
 import type {
   CurriculumCohort,
   CurriculumGroup,
@@ -141,6 +142,10 @@ const artifacts = {
 vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
   ...(await importOriginal<typeof import('../../module-builder/moduleAuthoringData')>()),
   loadModuleStructure: vi.fn(async () => structure),
+  // The module's own dated plan, read only to check the authored dates against.
+  // Nothing is rendered from it, so "no plan" is the quiet default: a plan the
+  // tab could not read is not a disagreement it can report.
+  fetchModuleSessionPlan: vi.fn(async () => null),
   loadTeamsMeetingConfiguration: vi.fn(async () => ({
     configured: true, defaultOrganizer: 'tutor@example.com',
     timeZone: 'GMT Standard Time', timeZoneIana: 'Europe/London',
@@ -176,6 +181,9 @@ async function renderSchedule() {
 
 describe('Module workspace — Schedule tab Teams calendar', () => {
   beforeEach(() => {
+    vi.mocked(fetchModuleSessionPlan).mockClear();
+    vi.mocked(loadTeamsMeetingArtifacts).mockReset();
+    vi.mocked(loadTeamsMeetingArtifacts).mockResolvedValue(artifacts as never);
     entityTeamsMeetings = teamsMeetings;
     updateTeamsMeetingSchedule.mockClear();
     createTeamsMeeting.mockClear();
@@ -202,6 +210,45 @@ describe('Module workspace — Schedule tab Teams calendar', () => {
     // the list, is not a fact anyone reads.
     expect(screen.queryByText(/No holiday clash/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Runs on its own day/)).not.toBeInTheDocument();
+  });
+
+  // The saved exception lives on the session itself now -- its own date, clock
+  // and length, authored on the component -- rather than in a plan generated
+  // from the group's timetable. The tab reads what the session holds, and
+  // reading it moves nothing at Microsoft.
+  it('shows the session its own authored clock instead of rebuilding the group one', async () => {
+    vi.mocked(loadModuleStructure).mockResolvedValueOnce({
+      ...structure,
+      weekStructure: [
+        {
+          ...structure.weekStructure[0],
+          components: [{
+            ...liveSession('COMP-1', 'WEEK-1', '2026-09-04'),
+            settings: { sessionDate: '2026-09-04', sessionTime: '12:00', durationMinutes: 90 },
+          }],
+        },
+        structure.weekStructure[1],
+      ],
+    } as never);
+    await renderSchedule();
+    await screen.findByText('Session 1');
+    // The plan is still read once, for the drift check and nothing else.
+    expect(fetchModuleSessionPlan).toHaveBeenCalledWith('MOD-1', 2, { timeoutMs: 30000 });
+    expect(screen.getByText(/4 Sept 2026, 12:00/)).toBeInTheDocument();
+    expect(screen.getByText('90–120 min')).toBeInTheDocument();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+  });
+
+  it('shows cancellation against its own session while preserving the next session and its evidence', async () => {
+    vi.mocked(loadTeamsMeetingArtifacts).mockResolvedValue({ ...artifacts, occurrences: [
+      { ...artifacts.occurrences[0], status: 'cancelled' },
+      { ...artifacts.occurrences[1], status: 'held', participant_count: 3 },
+    ] } as never);
+    await renderSchedule();
+    expect(await screen.findByText(/cancelled.*0 attended/)).toBeInTheDocument();
+    expect(screen.getAllByText(/held.*3 attended/)).toHaveLength(1);
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
   it('offers the meeting once, and gives each session its own status instead', async () => {

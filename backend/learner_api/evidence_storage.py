@@ -167,7 +167,7 @@ def delete_blob(container, blob_name):
     )
 
 
-def get_read_sas(container, blob_name, *, content_disposition=None) -> str:
+def get_read_sas(container, blob_name, *, content_disposition=None, ttl_minutes=None) -> str:
     """Build a short-lived read-only URL for an explicitly authorised blob."""
     token = generate_blob_sas(
         account_name=settings.AZURE_STORAGE_ACCOUNT,
@@ -175,7 +175,7 @@ def get_read_sas(container, blob_name, *, content_disposition=None) -> str:
         blob_name=blob_name,
         account_key=settings.AZURE_STORAGE_KEY,
         permission=BlobSasPermissions(read=True),
-        expiry=datetime.now(timezone.utc) + timedelta(minutes=settings.AZURE_SAS_TTL_MINUTES),
+        expiry=datetime.now(timezone.utc) + timedelta(minutes=settings.AZURE_SAS_TTL_MINUTES if ttl_minutes is None else min(720, max(1, int(ttl_minutes)))),
         content_disposition=content_disposition,
     )
     return f"{blob_url(container, blob_name)}?{token}"

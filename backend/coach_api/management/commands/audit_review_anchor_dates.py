@@ -1,11 +1,13 @@
 """READ-ONLY: which active learners cannot generate Curriculum Reviews.
 
 Review recurrence anchors strictly to the learner's own
-enrolment."Created_users"."Start_date" (see
-coach_api.views.resolve_review_anchor_date). A learner with no enrolment row,
-or one whose Start_date is blank or unparseable, generates no Reviews at all --
+enrolment."Created_users"."Learner_start_date" (see
+coach_api.views.resolve_review_anchor_date) -- a distinct column from
+"Created_users"."Start_date", which other scheduling legitimately reads but
+which is NOT the Review anchor. A learner with no enrolment row, or one whose
+Learner_start_date is blank or unparseable, generates no Reviews at all --
 deliberately, rather than silently inheriting their cohort's date from the
-"Learner"."learners" profile mirror.
+"Learner"."learners" profile mirror, or falling back to Start_date.
 
 This command lists exactly those learners so the data can be corrected. It
 writes NOTHING: no learner date is touched, no cohort date is touched, no
@@ -42,15 +44,15 @@ COLUMNS = [
     "programme",
     "cohort",
     "created_users_match",
-    "created_users_start_date",
+    "created_users_learner_start_date",
     "profile_start_date",
     "reason",
 ]
 
 REASON_HELP = {
     REVIEW_ANCHOR_MISSING_ROW: 'no enrolment."Created_users" row matches this profile email',
-    REVIEW_ANCHOR_MISSING_START: 'Created_users row found, but "Start_date" is null or blank',
-    REVIEW_ANCHOR_INVALID_START: 'Created_users."Start_date" is present but not a parseable date',
+    REVIEW_ANCHOR_MISSING_START: 'Created_users row found, but "Learner_start_date" is null or blank',
+    REVIEW_ANCHOR_INVALID_START: 'Created_users."Learner_start_date" is present but not a parseable date',
 }
 
 
@@ -101,7 +103,7 @@ class Command(BaseCommand):
                 "created_users_match": "yes" if source_row is not None else "no",
                 # The raw column value, unparsed -- this audit exists to show
                 # what is actually stored, including the unparseable ones.
-                "created_users_start_date": clean_text(getattr(source_row, "start_date", "")) if source_row else "",
+                "created_users_learner_start_date": clean_text(getattr(source_row, "learner_start_date", "")) if source_row else "",
                 "profile_start_date": profile.start_date.isoformat() if profile.start_date else "",
                 "reason": reason or "",
             })
@@ -125,7 +127,7 @@ class Command(BaseCommand):
         for reason, count in sorted(by_reason.items()):
             self.stdout.write(f"    {reason:<28} {count:>4}   ({REASON_HELP.get(reason, '')})")
         if not rows:
-            self.stdout.write(self.style.SUCCESS("\n  Every active learner has a usable Created_users.Start_date."))
+            self.stdout.write(self.style.SUCCESS("\n  Every active learner has a usable Created_users.Learner_start_date."))
             return
 
         widths = {column: max(len(column), *(len(str(row[column])) for row in rows)) for column in COLUMNS}
@@ -137,6 +139,6 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(line) if row["reason"] else line)
         self.stdout.write("")
         self.stdout.write(
-            "  Fix by correcting enrolment.\"Created_users\".\"Start_date\" for these learners. "
+            "  Fix by correcting enrolment.\"Created_users\".\"Learner_start_date\" for these learners. "
             "This command never writes; no learner or cohort date has been changed."
         )

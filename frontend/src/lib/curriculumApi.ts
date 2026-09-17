@@ -4038,6 +4038,11 @@ export type ReviewConditionValue = 'yes' | 'no';
 
 export interface ListItemConfiguration {
   options: string[];
+  /** Marks this question as the one carrying a defined business meaning, so
+   * readers find it by the template's own stable marker instead of matching a
+   * question title. 'rag_status' is the Progress Review's RAG question -- see
+   * curriculum_api.review_instances.RAG_SEMANTIC_KEY. */
+  semanticKey?: string;
 }
 
 export interface TitleDescriptionConfiguration {

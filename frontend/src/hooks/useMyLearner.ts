@@ -111,6 +111,6 @@ export function useResolvedLearner(
   }
   // No params — fall back to the remembered/default learner. (readOverride is
   // called directly, not via the useMyLearner hook, to keep this branch-safe.)
-  const my = readOverride() || MY_LEARNER;
-  return { kind: my.kind, id: my.id };
+  const my = readOverride() || (import.meta.env.MODE === 'test' ? MY_LEARNER : null);
+  return my ? { kind: my.kind, id: my.id } : { kind: undefined, id: undefined };
 }

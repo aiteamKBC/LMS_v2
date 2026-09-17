@@ -25,6 +25,17 @@ class BuilderActivityDatesTests(SimpleTestCase):
         ensure_tables.assert_not_called()
         return result
 
+    def test_component_visibility_query_qualifies_the_column_not_coalesce(self):
+        self.read([('W1', 'Week 1')], [
+            ('READING', 'W1', 'Reading', 'reading', {}),
+        ])
+        query = next(call.args[0] for call in self.cursor.execute.call_args_list
+                     if 'FROM curriculum.components c' in call.args[0])
+        # c.COALESCE is a schema-qualified function, so PostgreSQL raises
+        # InvalidSchemaName and both My Learning and the overview return 503.
+        self.assertNotRegex(query, r'(?i)\bc\s*\.\s*coalesce\s*\(')
+        self.assertIn("COALESCE(c.deleted_via_parent, '')", query)
+
     def test_all_345_components_follow_the_full_future_plan(self):
         weeks = [(f'W{i}', f'Week {i + 1}') for i in range(23)]
         kinds = ['reading', 'video', 'podcast', 'quiz', 'assignment']

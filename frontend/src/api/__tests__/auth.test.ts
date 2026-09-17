@@ -64,8 +64,8 @@ afterEach(() => {
 });
 
 /** The options object handed to fetch on the most recent call. */
-function lastInit(): RequestInit {
-  return fetchMock.mock.calls.at(-1)![1] as RequestInit;
+function lastInit(): globalThis.RequestInit {
+  return fetchMock.mock.calls.at(-1)![1] as globalThis.RequestInit;
 }
 
 function lastHeaders(): Record<string, string> {
@@ -167,7 +167,7 @@ describe('apiLogin', () => {
 describe('apiMe', () => {
   it('aborts a stalled shared lookup and allows a fresh retry', async () => {
     vi.useFakeTimers();
-    fetchMock.mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+    fetchMock.mockImplementationOnce((_url, init: globalThis.RequestInit) => new Promise((_resolve, reject) => {
       init.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
     }));
     const first = expect(apiMe()).rejects.toMatchObject({ status: 0, code: 'timeout' });
@@ -186,7 +186,7 @@ describe('apiMe', () => {
 
   it('also bounds a response whose headers arrive but body stalls', async () => {
     vi.useFakeTimers();
-    fetchMock.mockImplementationOnce(async (_url, init: RequestInit) => ({
+    fetchMock.mockImplementationOnce(async (_url, init: globalThis.RequestInit) => ({
       ...reply(200, {}),
       text: () => new Promise((_resolve, reject) => {
         init.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));

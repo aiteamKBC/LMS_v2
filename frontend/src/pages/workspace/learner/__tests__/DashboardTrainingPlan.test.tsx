@@ -2,15 +2,20 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
+import { invalidateLearnerReads } from '@/api/learnerRead';
 import type { OverviewWeek } from '@/api/learnerOverview';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { DashboardTrainingPlan } from '../DashboardTrainingPlan';
+import { useDashboardPlan } from '../useDashboardPlan';
 
 const week = (): OverviewWeek => ({
   weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', undatedActivities: 0,
   expectedHours: 5, missingExpectedHours: 0, deadlines: [],
   otjh: { actual: 2, historical: 0, new: 2, undatedHistoricalRows: 0 },
   modules: [{ id: 'current:M1', title: 'Marketing', weekLabels: ['Week 1'], completed: 1, total: 2, percent: 50, ksbCodes: ['K1'], ksbMappingMissing: false }],
+  metrics: { migrated: false, programme: { completed: 1, total: 2, percent: 50, status: 'ready' },
+    ksb: { completed: 1, total: 1, percent: 100, status: 'ready' },
+    otjh: { historical: 0, new: 2, actual: 2, planned: 5 } },
   planSubjects: [{ id: 'current:M1', title: 'Marketing', source: 'current', completed: 1, total: 2,
     dates: ['2026-09-07'], moduleIds: ['M1'], sessionTitles: [], activityCounts: { reading: 2 }, ksbCodes: ['K1'], ksbMappingMissing: false }],
 });
@@ -29,7 +34,11 @@ function setup(calendar = schedule(), failed = '', overview = week()) {
       : url.includes('section=contract') ? { months: calendar.months, contractStatus: calendar.contractStatus } : calendar));
   });
   vi.stubGlobal('fetch', fetch);
-  render(<MemoryRouter><DashboardTrainingPlan kind="commercial" learnerId="125" /></MemoryRouter>);
+  function Subject() {
+    const plan = useDashboardPlan('commercial', '125');
+    return <DashboardTrainingPlan kind="commercial" learnerId="125" plan={plan} />;
+  }
+  render(<MemoryRouter><Subject /></MemoryRouter>);
   return fetch;
 }
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-12T10:00:00Z')); clearAllCachedResources(); });
@@ -66,11 +75,10 @@ describe('dashboard learning layout', () => {
   it('retains weekly learning when the training plan cannot load', async () => {
     setup(schedule(), 'training-plan-dashboard');
     expect(await screen.findByRole('progressbar', { name: "This week's activity progress" })).toHaveAttribute('aria-valuenow', '50');
-    expect(screen.getByRole('button', { name: 'Retry monthly learning' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Retry monthly learning' })).toBeVisible();
   });
 
   it('refreshes bookings and cancellations in Reviews while preserving the selected tab and filters', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const calendar = schedule();
     const fetch = setup(calendar);
     fireEvent.click(await screen.findByRole('tab', { name: 'Reviews' }));
@@ -78,11 +86,11 @@ describe('dashboard learning layout', () => {
     const panel = within(screen.getByRole('region', { name: 'Programme reviews' }));
     expect(panel.getByRole('link', { name: 'Schedule' })).toHaveAttribute('href', '/learner/calendar?kind=commercial&learner=125&event=mcr%3A1&action=schedule');
     Object.assign(calendar.reviews[0], { status: 'scheduled', scheduledDate: '2026-09-28', scheduledTime: '14:00' });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { invalidateLearnerReads(); });
     expect(panel.getByText('Booking pending')).toBeVisible();
     expect(panel.getByText(/28 Sept.*14:00/)).toBeVisible();
     Object.assign(calendar.reviews[0], { scheduledDate: '2026-09-20', scheduledTime: '10:30', invited: true });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { invalidateLearnerReads(); });
     expect(panel.getByText('Booked')).toBeVisible();
     expect(panel.getByText(/20 Sept.*10:30/)).toBeVisible();
     expect(panel.getAllByRole('article')).toHaveLength(1);
@@ -90,7 +98,7 @@ describe('dashboard learning layout', () => {
     expect(screen.getByLabelText('Focus month')).toHaveValue('2026-09');
     expect(screen.getByRole('tab', { name: 'Reviews' })).toHaveAttribute('aria-selected', 'true');
     Object.assign(calendar.reviews[0], { status: 'cancelled' });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { invalidateLearnerReads(); });
     expect(panel.queryByRole('article')).not.toBeInTheDocument();
     expect(panel.getByText('Your reviews will appear here once planned.')).toBeVisible();
     expect(fetch.mock.calls.filter(([url]) => String(url).includes('section=overview')).length).toBeGreaterThanOrEqual(4);

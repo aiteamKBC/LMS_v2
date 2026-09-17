@@ -1,20 +1,14 @@
-import json
-from datetime import timedelta
-
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
-from django.test import RequestFactory
-from django.utils import timezone
+from django.db import connections
 
 from coach_api.views import has_graph_credentials
-from curriculum_api.models import LiveSessionOccurrence
-from curriculum_api.views import curriculum_teams_meeting_artifacts
 
 
 class Command(BaseCommand):
     help = (
         'Pull Microsoft Teams attendance, transcripts and recordings for '
-        'meetings that ended recently. Run this command every five minutes.'
+        'linked curriculum meetings and recently ended coach meetings. Run every five minutes.'
     )
 
     def add_arguments(self, parser):
@@ -22,7 +16,7 @@ class Command(BaseCommand):
             '--lookback-hours',
             type=int,
             default=24,
-            help='Retry meetings that ended within this many hours (default: 24).',
+            help='Coach meeting lookback in hours (default: 24); curriculum discovery includes early runs.',
         )
         parser.add_argument(
             '--limit',
@@ -57,86 +51,25 @@ class Command(BaseCommand):
         limit = max(1, int(options['limit']))
         coach_limit = max(1, int(options['coach_limit']))
         requested_ids = [value.strip() for value in options['live_session_ids'] if value.strip()]
-        now = timezone.now()
         should_sync_coach_meetings = not options['skip_coach_meetings'] and not requested_ids
-
-        queryset = LiveSessionOccurrence.objects.filter(
-            scheduled_end__lte=now,
-            scheduled_end__gte=now - timedelta(hours=lookback_hours),
-        )
-        if requested_ids:
-            queryset = queryset.filter(live_session_id__in=requested_ids)
-
-        # A series may contain several occurrences. Sync it once: the existing
-        # endpoint asks Graph for every meeting/occurrence group and upserts all
-        # returned rows using stable ids, so retries are safe and idempotent.
-        live_session_ids = list(dict.fromkeys(
-            queryset.order_by('scheduled_end').values_list('live_session_id', flat=True)
-        ))[:limit]
-        if not live_session_ids:
-            self.stdout.write('No recently ended live-session Teams meetings need checking.')
+        # The existing scheduler entrypoint also drains UI-requested jobs.
+        # One lease protects a series across concurrent command invocations.
+        with connections['default'].cursor() as cursor:
+            for series_id in dict.fromkeys(requested_ids):
+                cursor.execute("""INSERT INTO curriculum.session_result_jobs(live_session_id,force_refresh)
+                    SELECT id,%s FROM curriculum.live_sessions WHERE id=%s
+                    ON CONFLICT(live_session_id) DO UPDATE
+                    SET state='queued',requested_at=now(),next_attempt_at=now(),attempts=0,force_refresh=EXCLUDED.force_refresh
+                    WHERE session_result_jobs.state NOT IN ('queued','running')
+                      AND (EXCLUDED.force_refresh OR (session_result_jobs.state='complete'
+                           AND session_result_jobs.finished_at<now()-interval '30 minutes'))""",
+                    [True, series_id])
+        try:
+            call_command('process_session_results', limit=limit, scheduled=True,
+                         live_session_ids=requested_ids, stdout=self.stdout, stderr=self.stderr)
+        finally:
             if should_sync_coach_meetings:
                 self._sync_coach_meeting_snapshots(lookback_hours, coach_limit)
-            return
-
-        factory = RequestFactory()
-        succeeded = 0
-        partial = 0
-        failed = 0
-        totals = {
-            'attendanceReports': 0,
-            'attendanceRecords': 0,
-            'transcripts': 0,
-            'recordings': 0,
-            'reportingRows': 0,
-        }
-
-        for live_session_id in live_session_ids:
-            request = factory.post(
-                f'/curriculum/teams-meetings/{live_session_id}/artifacts/',
-                data=b'',
-                content_type='application/json',
-            )
-            try:
-                response = curriculum_teams_meeting_artifacts(request, live_session_id)
-                payload = json.loads(response.content.decode('utf-8'))
-            except Exception as exc:  # keep the other series moving
-                failed += 1
-                self.stderr.write(self.style.ERROR(f'{live_session_id}: {exc}'))
-                continue
-
-            if response.status_code >= 300 and response.status_code != 207:
-                failed += 1
-                self.stderr.write(self.style.ERROR(
-                    f'{live_session_id}: HTTP {response.status_code} '
-                    f'{payload.get("error") or payload.get("detail") or "sync failed"}'
-                ))
-                continue
-
-            synced = payload.get('synced') or {}
-            for key in totals:
-                totals[key] += int(synced.get(key) or 0)
-            if payload.get('partial'):
-                partial += 1
-                self.stderr.write(self.style.WARNING(
-                    f'{live_session_id}: partial sync; ' + '; '.join(payload.get('errors') or [])
-                ))
-            else:
-                succeeded += 1
-
-        if should_sync_coach_meetings:
-            self._sync_coach_meeting_snapshots(lookback_hours, coach_limit)
-
-        self.stdout.write(self.style.SUCCESS(
-            'Teams artifact sync finished: '
-            f'{succeeded} succeeded, {partial} partial, {failed} failed; '
-            f'{totals["attendanceRecords"]} attendance records, '
-            f'{totals["transcripts"]} transcripts, '
-            f'{totals["recordings"]} recordings, '
-            f'{totals["reportingRows"]} learner reporting rows.'
-        ))
-        if failed:
-            raise CommandError(f'{failed} Teams meeting series failed to sync.')
 
     def _sync_coach_meeting_snapshots(self, lookback_hours: int, limit: int) -> None:
         self.stdout.write('Checking recently ended coach meetings for Teams artifacts and attendance...')

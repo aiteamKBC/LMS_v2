@@ -1,3 +1,5 @@
+import { LearnerPreview } from '../module-builder/LearnerPreview';
+import { ModuleSessions } from './ModuleSessions';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -76,7 +78,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // tutor-assignment notification firing.
 // ============================================================================
 
-type Tab = 'overview' | 'schedule' | 'components' | 'ksbs' | 'achievement';
+type Tab = 'sessions' | 'overview' | 'schedule' | 'components' | 'ksbs' | 'achievement';
 
 // The same categorical palette the Week Builder authors components with
 // (driven by each type's own `tone` in the authoring model) — a component
@@ -157,6 +159,7 @@ export default function ModuleWorkspacePage() {
   const rawInitialTab = searchParams.get('tab');
   const initialTab = (rawInitialTab === 'teams' ? 'schedule' : (rawInitialTab as Tab)) || 'overview';
   const [tab, setTab] = useState<Tab>(initialTab);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [structure, setStructure] = useState<ModuleCatalogueItem | null>(null);
   const [structureError, setStructureError] = useState<string | null>(null);
   const [structureLoading, setStructureLoading] = useState(true);
@@ -471,16 +474,18 @@ export default function ModuleWorkspacePage() {
   const plannedOccurrences = useMemo(
     () => (plan?.sessions || []).map((session, index) => ({
       sessionNumber: session.sessionNumber || index + 1,
-      startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${sessionStartTime}`),
-      durationMinutes: sessionDurationMinutes,
+      startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || sessionStartTime}`),
+      durationMinutes: session.durationMinutes || sessionDurationMinutes,
     })),
     [plan, sessionDurationMinutes, sessionStartTime],
   );
+  const scheduleDurations = [...new Set((plan?.sessions || []).map(session => session.durationMinutes || sessionDurationMinutes))];
 
   /** What Teams holds today, session number first and position as the fallback. */
   const teamsOccurrenceFor = useCallback((sessionNumber: number, index: number) => {
-    const occurrences = onCalendarOccurrences(teams?.occurrences);
-    return occurrences.find(occurrence => Number(occurrence.session_number) === sessionNumber) || occurrences[index];
+    const occurrences = teams?.occurrences || [];
+    return occurrences.find(occurrence => Number(occurrence.session_number) === sessionNumber)
+      || (occurrences.every(occurrence => !occurrence.session_number) ? occurrences[index] : undefined);
   }, [teams]);
 
   // A preview session carries the ISO dates it stepped over, not their names.
@@ -508,7 +513,9 @@ export default function ModuleWorkspacePage() {
   // a warning under it. The shift/replacement half of this is parked -- nothing
   // moves a session any more.
   const scheduleShiftPlan = useMemo(
-    () => buildHolidayShiftPlan(plan?.sessions || [], holidayLabelFor, plan?.originalEndDate),
+    // No original end date to pass: nothing shifts a session any more, so the
+    // authored plan has no "before the holidays" end date to be measured from.
+    () => buildHolidayShiftPlan(plan?.sessions || [], holidayLabelFor),
     [plan, holidayLabelFor],
   );
   // One row per session, and the date printed once. The Teams calendar's own
@@ -533,14 +540,12 @@ export default function ModuleWorkspacePage() {
       session,
       name: sessionNames[sessionNumber - 1] || '',
       plannedUtc: plannedOccurrences[index]?.startDateTimeUtc || '',
-      durationMinutes: sessionDurationMinutes,
+      durationMinutes: session.durationMinutes || sessionDurationMinutes,
       shift: scheduleShiftPlan.shifts[index],
       actions: teamsSummary ? (
         <>
           {occurrence ? (
-            <span>
-              {formatCalendarDateTime(occurrence.scheduled_start)} · {cleanText(occurrence.status, 'scheduled')} · {occurrence.participant_count || occurrence.attendance?.filter(record => record.attended !== false).length || 0} attended
-            </span>
+            <MeetingChip status={cleanText(occurrence.status, 'scheduled')} attended={attended} />
           ) : (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">
               {teamsLoading ? 'Loading…' : 'Not on the calendar'}
@@ -569,6 +574,13 @@ export default function ModuleWorkspacePage() {
     };
   }), [openMeetings, plan, plannedOccurrences, scheduleShiftPlan, sessionDurationMinutes, sessionNames, teamsLoading, teamsOccurrenceFor, teamsSummary, toggleMeeting]);
 
+  const weekStructure = useMemo(() => structure?.weekStructure || [], [structure?.weekStructure]);
+
+  useEffect(() => {
+    if (!catalogueId || !weekStructure.length || collapsedWeeksInitRef.current === catalogueId) return;
+    collapsedWeeksInitRef.current = catalogueId;
+    setCollapsedWeeks(new Set(weekStructure.map(week => week.id)));
+  }, [catalogueId, weekStructure]);
   // Not found only once both readings have come back empty: the overview knows
   // nothing about an unattached module, and the structure is what settles it.
   if (!loading && loaded && !structureLoading && !module) {
@@ -593,13 +605,6 @@ export default function ModuleWorkspacePage() {
     );
   }
 
-  const weekStructure = structure?.weekStructure || [];
-
-  useEffect(() => {
-    if (!catalogueId || !weekStructure.length || collapsedWeeksInitRef.current === catalogueId) return;
-    collapsedWeeksInitRef.current = catalogueId;
-    setCollapsedWeeks(new Set(weekStructure.map(week => week.id)));
-  }, [catalogueId, weekStructure]);
   const componentCount = weekStructure.reduce((sum, week) => sum + (week.components?.length || 0), 0);
   const totalOtjh = structure?.totalOtjh ?? 0;
 
@@ -653,6 +658,7 @@ export default function ModuleWorkspacePage() {
   const tabs = [
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'schedule', label: 'Schedule & Teams meeting', icon: 'ri-calendar-line' },
+    { key: 'sessions', label: 'Sessions & Recordings', icon: 'ri-video-line' },
     { key: 'components', label: 'Weeks & Components', icon: 'ri-layout-4-line', count: componentCount },
     { key: 'ksbs', label: 'KSBs', icon: 'ri-node-tree', count: ksbMappingCount },
     { key: 'achievement', label: 'Achievement KSBs', icon: 'ri-medal-line' },
@@ -750,6 +756,9 @@ export default function ModuleWorkspacePage() {
         )}
 
         <WorkspaceTabs tabs={tabs} active={tab} onChange={key => setTab(key as Tab)} />
+        {structure && <button type="button" onClick={() => setPreviewId('')} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">Preview module as learner</button>}
+        {previewId !== null && structure && <LearnerPreview module={structure} initialComponentId={previewId || undefined} onClose={() => setPreviewId(null)} />}
+        {tab === 'sessions' && <ModuleSessions moduleId={catalogueId} />}
 
         {/* ------------------------------------------------------- Overview */}
         {tab === 'overview' && (
@@ -914,7 +923,8 @@ export default function ModuleWorkspacePage() {
                       fact anyone reads. */}
                   <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <ScheduleStat icon="ri-calendar-check-line" tone="blue" label="Sessions" value={plan.sessions.length} />
-                    <ScheduleStat icon="ri-time-line" tone="teal" label="Each session" value={`${sessionDurationMinutes} min`} />
+                    <ScheduleStat icon="ri-time-line" tone="teal" label={scheduleDurations.length > 1 ? 'Session durations' : 'Each session'}
+                      value={scheduleDurations.length > 1 ? `${Math.min(...scheduleDurations)}–${Math.max(...scheduleDurations)} min` : `${scheduleDurations[0] || sessionDurationMinutes} min`} />
                     <ScheduleStat icon="ri-flag-line" tone="violet" label="Final session" value={formatDateLabel(plan.finalEndDate)} />
                     {/* Not "skipped": the sessions on these dates are still
                         in the plan and still run. This counts the dates a
@@ -935,7 +945,7 @@ export default function ModuleWorkspacePage() {
                     <CompactSchedulePreview
                       occurrences={scheduleOccurrences}
                       formatLabel={(plannedUtc, date) => (plannedUtc ? formatCalendarDateTime(plannedUtc) : formatDateLabel(date))}
-                      showDuration={false}
+                      showDuration={scheduleDurations.length > 1}
                     />
                   </div>
                   {teamsSummary && (
@@ -1074,6 +1084,7 @@ export default function ModuleWorkspacePage() {
                                         <p className="truncate text-[13px] font-semibold text-foreground-900">
                                           {component.title || 'Untitled component'}
                                         </p>
+                                        <button type="button" onClick={() => setPreviewId(component.id)} className="mt-1 text-xs font-semibold text-primary-700 underline">View as learner</button>
                                         <span className={`mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone.chip}`}>
                                           {definition.label}
                                         </span>
@@ -1348,13 +1359,7 @@ function MeetingChip({ status, attended }: { status: string; attended: number })
       : 'bg-background-100 text-foreground-600';
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${tone}`}>
-      {status}
-      {attended > 0 && (
-        <span className="inline-flex items-center gap-1">
-          <AppIcon className="ri-team-line text-[11px]"></AppIcon>
-          {attended}
-        </span>
-      )}
+      {key === 'scheduled' && attended === 0 ? status : `${status} · ${attended} attended`}
     </span>
   );
 }

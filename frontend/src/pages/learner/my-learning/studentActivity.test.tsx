@@ -6,9 +6,9 @@ import type { StudentActivityResponse, SubjectMaterial, SubjectAttemptResult } f
 import type { LearnerDetail } from '@/api/learnerDetail';
 import * as api from '@/api/studentActivity';
 import * as reads from '@/api/learnerRead';
-import { ModulesTab, StudentActivityPanel } from './page';
+import { ModulesTab, QuizzesTab, StudentActivityPanel } from './page';
 import { StudentMaterial } from './StudentMaterial';
-import { buildUnifiedLearningSummary, SubjectOverview, subjectsFrom, useSubjectMetadata } from './SubjectWorkspace';
+import { buildUnifiedLearningSummary, subjectsFrom, useSubjectMetadata } from './SubjectWorkspace';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);
@@ -59,7 +59,7 @@ describe('learner subject cards', () => {
       covers: { 'legacy:1': image }, can_manage: true, persistence_ready: true,
       builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Updated Leadership' } },
     });
-    const { container } = render(<StudentActivityPanel data={{ ...data, can_manage_covers: true }} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    const { container } = render(<StudentActivityPanel data={data} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     expect(await screen.findByRole('img', { name: 'Updated Leadership cover' })).toHaveAttribute('src', image);
     expect(screen.getByText('1 of 2 completed')).toBeInTheDocument();
     expect(container.querySelector('input[type="file"]')).toBeNull();
@@ -138,6 +138,15 @@ describe('learner subject cards', () => {
   });
 });
 
+describe('quiz recovery', () => {
+  it('offers retry when the learner detail request fails', () => {
+    const retry = vi.fn();
+    render(<QuizzesTab real={null} loading={false} loadError="Could not load quizzes" kind="commercial" id="132" canTake navigate={vi.fn()} onRetry={retry} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
 const linkedMetadata = {
   covers: {},
   current_subjects: [{ id: 'MOD-1', title: 'Leadership' }],
@@ -159,6 +168,23 @@ const linkedReal = {
 
 describe('subjects shared with Module Builder', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('counts effective-plan modules even when newly inherited modules have no activities yet', () => {
+    const summary = buildUnifiedLearningSummary(null, null, {
+      covers: {},
+      current_subjects: [
+        { id: 'SAVED-1', title: 'Saved module' },
+        { id: 'GROUP-NEW-1', title: 'New from group one' },
+        { id: 'GROUP-NEW-2', title: 'New from group two' },
+      ],
+    });
+
+    expect(summary.subjectCount).toBe(3);
+    expect(summary.subjects.map(subject => subject.id)).toEqual([
+      'current:GROUP-NEW-1', 'current:GROUP-NEW-2', 'current:SAVED-1',
+    ]);
+    expect(summary.activityCount).toBe(0);
+  });
 
   it('uses verified activity lineage from the activity API when the cover response has none', () => {
     const summary = buildUnifiedLearningSummary({ ...data, activity_sources: linkedMetadata.activity_sources }, linkedReal,
@@ -364,7 +390,6 @@ describe('subjects shared with Module Builder', () => {
       subjectCount: 1,
       activityCount: 3,
       completedActivityCount: 2,
-      completedSubjectCount: 0,
       percent: 66.67,
     });
   });
@@ -426,14 +451,6 @@ describe('subjects shared with Module Builder', () => {
     expect(request).toHaveBeenCalledOnce();
   });
 
-  it('uses the same merged totals in Overview', async () => {
-    vi.spyOn(api, 'fetchStudentActivity').mockResolvedValue(data);
-    vi.spyOn(api, 'subjectRequest').mockResolvedValue(linkedMetadata);
-    render(<SubjectOverview real={linkedReal} kind="commercial" learnerId="132" onOpen={vi.fn()} />);
-    expect(await screen.findByText('2 of 3 completed')).toBeInTheDocument();
-    expect(screen.getByText('Across 1 subjects')).toBeInTheDocument();
-  });
-
   it('does not apply metadata from a previous learner when responses arrive out of order', async () => {
     let first!: (value: typeof linkedMetadata) => void;
     let second!: (value: typeof linkedMetadata) => void;
@@ -469,7 +486,7 @@ const activityMaterial: SubjectMaterial = {
 const completeResult: SubjectAttemptResult = { score_percent: null, passed: null, completed: true };
 
 function mockMaterialRequests(material = activityMaterial, save: () => Promise<SubjectAttemptResult> = async () => completeResult) {
-  return vi.spyOn(api, 'subjectRequest').mockImplementation(async <T,>(url: string, options?: RequestInit): Promise<T> => {
+  return vi.spyOn(api, 'subjectRequest').mockImplementation(async <T,>(url: string, options?: Parameters<typeof fetch>[1]): Promise<T> => {
     if (url.includes('/subject-covers/')) return { covers: {} } as T;
     if (options?.method !== 'POST') return material as T;
     if (url.endsWith('/attempts/')) return { attempt_id: 'attempt-1', definition: { quiz: material.quiz } } as T;

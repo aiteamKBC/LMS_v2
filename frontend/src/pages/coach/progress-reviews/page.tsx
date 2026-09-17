@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { type EvidenceRecord } from '@/api/evidence';
 import { type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -42,6 +42,7 @@ import {
   isScheduledEvent,
   isCompletedEvent,
   meetingUrl,
+  navigateMeetingWindow,
   needsScheduling,
   parseLocalDate,
   runCoachCalendarAction,
@@ -57,6 +58,7 @@ import {
 } from './components/ProgressReviewSlidesModal';
 import ProgressReviewPptxModal from './components/ProgressReviewPptxModal';
 import { bulkGenerateProgressReviews, fetchLatestRun } from '@/api/progressReviews';
+import { markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
 import {
   buildKsbProgress,
   completedComponentIds,
@@ -187,6 +189,29 @@ function addDays(value: Date, days: number) {
   const next = new Date(value);
   next.setDate(next.getDate() + days);
   return next;
+}
+
+function startOfMonth(value = new Date()) {
+  return new Date(value.getFullYear(), value.getMonth(), 1);
+}
+
+function monthKey(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthFromQuery(value: string | null) {
+  if (!value || !/^\d{4}-\d{2}$/.test(value)) return startOfMonth();
+  const [year, month] = value.split('-').map(Number);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return startOfMonth();
+  return new Date(year, month - 1, 1);
+}
+
+function addMonths(value: Date, offset: number) {
+  return new Date(value.getFullYear(), value.getMonth() + offset, 1);
+}
+
+function monthLabel(value: Date) {
+  return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(value);
 }
 
 function currentTimestampLabel() {
@@ -947,9 +972,11 @@ export function buildProgressReviewSlidesDeck(
 export default function CoachProgressReviews() {
   const coach = useCoachIdentity();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<ReviewTab>('this-month');
   const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState(() => monthFromQuery(searchParams.get('month')));
   const [expanded, setExpanded] = useState<string | null>(null);
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
   const [ownerName, setOwnerName] = useState('Coach');
@@ -963,6 +990,18 @@ export default function CoachProgressReviews() {
   const [pptxModalReview, setPptxModalReview] = useState<CoachCalendarEvent | null>(null);
   const [generatedReviewKeys, setGeneratedReviewKeys] = useState<Set<string>>(new Set());
   const [bulkGenerating, setBulkGenerating] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams);
+    if (monthKey(selectedMonth) === monthKey(startOfMonth())) {
+      params.delete('month');
+    } else {
+      params.set('month', monthKey(selectedMonth));
+    }
+    setSearchParams(params, { replace: true });
+    // Only the selected month belongs to this sync. Other page state is local.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMonth, setSearchParams]);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -996,7 +1035,11 @@ export default function CoachProgressReviews() {
     return () => controller.abort();
   }, [coach.email, coach.isInitialized, coach.name]);
 
-  const thisMonthEvents = events.filter(event => isEventThisMonth(event));
+  const selectedMonthLabel = monthLabel(selectedMonth);
+  const selectedMonthIsCurrent = monthKey(selectedMonth) === monthKey(startOfMonth());
+  const monthTabLabel = selectedMonthIsCurrent ? FILTER_COPY['this-month'].label : selectedMonthLabel;
+  const monthTabDescription = `Progress reviews with a target or scheduled date inside ${selectedMonthLabel}, excluding completed reviews.`;
+  const selectedMonthEvents = events.filter(event => isEventThisMonth(event, selectedMonth));
   const overdueEvents = events.filter(event => isAtRiskProgressReview(event));
   const dueSoonEvents = events.filter(event => isDueSoonEvent(event));
   const scheduledEvents = events.filter(event => isScheduledEvent(event));
@@ -1004,12 +1047,12 @@ export default function CoachProgressReviews() {
   const awaitingSignatureEvents = events.filter(event => isAwaitingSignatureEvent(event));
   const completedEvents = events.filter(event => isCompletedEvent(event));
   const needsScheduleEvents = events.filter(needsScheduling);
-  const thisMonth = thisMonthEvents.length;
+  const thisMonth = selectedMonthEvents.length;
   const overdue = overdueEvents.length;
   const dueSoon = dueSoonEvents.length;
   const pendingSchedule = needsScheduleEvents.length;
   const data = tab === 'this-month'
-    ? thisMonthEvents
+    ? selectedMonthEvents
     : tab === 'overdue'
       ? overdueEvents
       : tab === 'due-soon'
@@ -1077,6 +1120,13 @@ export default function CoachProgressReviews() {
     setExpanded(null);
   };
 
+  const changeMonth = (nextMonth: Date) => {
+    setSelectedMonth(startOfMonth(nextMonth));
+    setTab('this-month');
+    setCurrentPage(1);
+    setExpanded(null);
+  };
+
   const handleSearchChange = (value: string) => {
     setSearchTerm(value);
     setCurrentPage(1);
@@ -1128,7 +1178,7 @@ export default function CoachProgressReviews() {
     }
   };
 
-  const handleAction = async (event: CoachCalendarEvent, action: CalendarAction) => {
+  const handleAction = async (event: CoachCalendarEvent, action: CalendarAction, meetingWindow: Window | null = null) => {
     setBusyEventId(eventIdentity(event));
     setActionError(null);
     setActionNotice(null);
@@ -1137,26 +1187,67 @@ export default function CoachProgressReviews() {
       updateEvent(data.event);
       if (data.warning) setActionNotice(data.warning);
       const url = meetingUrl(data.event);
-      if (action === 'start' && url) window.open(url, '_blank', 'noopener,noreferrer');
+      if (action === 'start' && url) navigateMeetingWindow(meetingWindow, url);
+      if (action === 'start' && !url && meetingWindow && !meetingWindow.closed) meetingWindow.close();
     } catch (err) {
+      if (meetingWindow && !meetingWindow.closed) meetingWindow.close();
       setActionError(err instanceof Error ? err.message : 'Unable to update review.');
     } finally {
       setBusyEventId(null);
     }
   };
 
-  const handleJoin = async (event: CoachCalendarEvent) => {
-    if (event.status === 'scheduled') {
-      await handleAction(event, 'start');
-      return;
-    }
+  const handleJoin = (event: CoachCalendarEvent) => {
     const url = meetingUrl(event);
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  const openCompletionForm = (event: CoachCalendarEvent) => {
+  const openCompletionForm = async (event: CoachCalendarEvent) => {
     setActionError(null);
+    if (event.reviewTemplateId) {
+      setBusyEventId(eventIdentity(event));
+      try {
+        const instanceId = event.reviewInstanceId || (await openReviewInstanceForEvent(eventIdentity(event))).instanceId;
+        setCompletionEvent({ ...event, reviewInstanceId: instanceId });
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : 'Unable to open this review form.');
+      } finally {
+        setBusyEventId(null);
+      }
+      return;
+    }
     setCompletionEvent(event);
+  };
+
+  const markReviewInProgress = async (event: CoachCalendarEvent) => {
+    if (!event.reviewTemplateId) {
+      openCompletionForm(event);
+      return;
+    }
+    const confirmation = await Swal.fire({
+      icon: 'question',
+      title: 'Mark review in progress?',
+      text: 'Use this when the meeting has started but Teams attendance cannot confirm it automatically.',
+      showCancelButton: true,
+      confirmButtonText: 'OK',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#6d28d9',
+    });
+    if (!confirmation.isConfirmed) return;
+    try {
+      setBusyEventId(eventIdentity(event));
+      setActionError(null);
+      setActionNotice(null);
+      const instanceId = event.reviewInstanceId || (await openReviewInstanceForEvent(eventIdentity(event))).instanceId;
+      const updated = await markReviewInstanceInProgressManually(instanceId, {
+        reasonCode: 'coach-confirmed-live-start',
+      });
+      updateEvent({ ...event, reviewInstanceId: instanceId, status: updated.instance.status as CoachCalendarEvent['status'] });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to mark this review in progress.');
+    } finally {
+      setBusyEventId(null);
+    }
   };
 
   const handleCreateSlides = (event: CoachCalendarEvent) => {
@@ -1217,7 +1308,7 @@ export default function CoachProgressReviews() {
   };
 
   const tabItems: PageTabItem[] = [
-    { value: 'this-month', label: FILTER_COPY['this-month'].label, count: thisMonth },
+    { value: 'this-month', label: monthTabLabel, count: thisMonth },
     { value: 'overdue', label: FILTER_COPY.overdue.label, count: overdue, tone: 'critical' },
     { value: 'due-soon', label: FILTER_COPY['due-soon'].label, count: dueSoon, tone: 'upcoming' },
     { value: 'needs-schedule', label: FILTER_COPY['needs-schedule'].label, count: pendingSchedule, tone: 'caution' },
@@ -1273,9 +1364,46 @@ export default function CoachProgressReviews() {
 
         <Panel padding="none">
           <div className="border-b border-foreground-100 p-4">
-            <div className="mb-3">
-              <h3 className="text-[15px] font-semibold text-foreground-900">{FILTER_COPY[tab].label} reviews</h3>
-              <p className="mt-0.5 max-w-3xl text-[12px] leading-relaxed text-foreground-500">{FILTER_COPY[tab].description}</p>
+            <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <h3 className="text-[15px] font-semibold text-foreground-900">
+                  {tab === 'this-month' ? selectedMonthLabel : FILTER_COPY[tab].label} reviews
+                </h3>
+                <p className="mt-0.5 max-w-3xl text-[12px] leading-relaxed text-foreground-500">
+                  {tab === 'this-month' ? monthTabDescription : FILTER_COPY[tab].description}
+                </p>
+              </div>
+              <div className="inline-flex w-full flex-wrap items-center gap-2 rounded-xl border border-foreground-100 bg-white p-1.5 shadow-sm sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => changeMonth(addMonths(selectedMonth, -1))}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-primary-700 transition hover:bg-primary-50"
+                  aria-label="Previous month"
+                >
+                  <AppIcon className="ri-arrow-left-s-line text-lg"></AppIcon>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeMonth(startOfMonth())}
+                  className={cn(
+                    'inline-flex h-9 items-center justify-center rounded-lg px-3 text-[12px] font-bold transition',
+                    selectedMonthIsCurrent ? 'bg-primary-600 text-white shadow-sm' : 'bg-primary-50 text-primary-700 hover:bg-primary-100',
+                  )}
+                >
+                  Today
+                </button>
+                <span className="inline-flex h-9 min-w-36 items-center justify-center gap-2 rounded-lg px-3 text-[12px] font-bold text-foreground-900">
+                  {selectedMonthLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => changeMonth(addMonths(selectedMonth, 1))}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-primary-700 transition hover:bg-primary-50"
+                  aria-label="Next month"
+                >
+                  <AppIcon className="ri-arrow-right-s-line text-lg"></AppIcon>
+                </button>
+              </div>
             </div>
 
             <FilterToolbar
@@ -1335,13 +1463,18 @@ export default function CoachProgressReviews() {
                       {joinAvailable ? (
                         <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={isBusy} onClick={() => { handleJoin(review); }} />
                       ) : null}
+                      {review.status === 'scheduled' && review.reviewTemplateId ? (
+                        <RowAction label="Mark In Progress" icon="ri-play-circle-line" disabled={isBusy} onClick={() => { void markReviewInProgress(review); }} />
+                      ) : null}
                       <RowAction
                         label={hasSlides ? 'View slides' : 'Create slides'}
                         icon={hasSlides ? 'ri-slideshow-2-line' : 'ri-slideshow-line'}
                         disabled={!reviewHasLearnerReference(review)}
                         onClick={() => { handleCreateSlides(review); }}
                       />
-                      {review.status === 'in-progress' ? (
+                      {(review.status === 'scheduled' || review.status === 'in-progress') && review.reviewTemplateId ? (
+                        <RowAction label="Open form" icon="ri-file-edit-line" disabled={isBusy} onClick={() => { void openCompletionForm(review); }} />
+                      ) : review.status === 'in-progress' ? (
                         <RowAction
                           label="Open form"
                           icon="ri-file-edit-line"
@@ -1402,6 +1535,9 @@ export default function CoachProgressReviews() {
                           {joinAvailable ? (
                             <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" onClick={() => { handleJoin(review); }} disabled={isBusy} />
                           ) : null}
+                          {review.status === 'scheduled' && review.reviewTemplateId ? (
+                            <RowAction label="Mark In Progress" icon="ri-play-circle-line" disabled={isBusy} onClick={() => { void markReviewInProgress(review); }} />
+                          ) : null}
                           <RowAction
                             label={hasSlides ? 'View slides' : 'Create slides'}
                             icon={hasSlides ? 'ri-slideshow-2-line' : 'ri-slideshow-line'}
@@ -1415,7 +1551,9 @@ export default function CoachProgressReviews() {
                             disabled={isBusy}
                             onClick={() => { handleSchedule(review); }}
                           />
-                          {review.status === 'in-progress' ? (
+                          {(review.status === 'scheduled' || review.status === 'in-progress') && review.reviewTemplateId ? (
+                            <RowAction label="Open form" icon="ri-file-edit-line" disabled={isBusy} onClick={() => { void openCompletionForm(review); }} />
+                          ) : review.status === 'in-progress' ? (
                             <RowAction label="Submit Review" icon="ri-send-plane-line" disabled={isBusy} onClick={() => openCompletionForm(review)} />
                           ) : null}
                         </div>
@@ -1467,8 +1605,12 @@ export default function CoachProgressReviews() {
             event={completionEvent}
             instanceId={completionEvent.reviewInstanceId}
             onClose={() => setCompletionEvent(null)}
-            onStatusChange={(status) => {
+            onStatusChanged={(status) => {
               updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
+            }}
+            onCompleted={(status) => {
+              updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
+              setCompletionEvent(null);
             }}
           />
         ) : null}

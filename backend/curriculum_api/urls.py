@@ -2,9 +2,21 @@ from django.urls import path
 
 from . import learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 from .teams_schedule_delivery import schedule_email
+from .teams_calendar_state import sync_calendar_state
+from .teams_directory import search_teams_directory
+from .teams_calendar_actions import calendar_action
+from . import session_results
 
 
 urlpatterns = [
+    path('curriculum/modules/<str:module_id>/session-results/', session_results.module_results),
+    path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
+    path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/', session_results.admin_content),
+    path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/visibility/', session_results.recording_visibility),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance.csv', session_results.export_attendance),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance.pdf', session_results.export_attendance, {'file_format': 'pdf'}),
+    path('curriculum/teams-directory/', search_teams_directory, name='curriculum-teams-directory'),
     path('curriculum/cohorts/<str:identifier>/learner-assignments/', learner_assignments.cohort_learner_assignments, name='curriculum-cohort-learner-assignments'),
     path('curriculum/modules/<str:identifier>/learner-assignments/', learner_assignments.module_learner_assignments, name='curriculum-module-learner-assignments'),
     path('curriculum/programmes/<str:programme_id>/reviews/', reviews.curriculum_programme_review_collection, name='curriculum-programme-reviews'),
@@ -83,6 +95,8 @@ urlpatterns = [
     path('curriculum/live-sessions/occurrences/', views.curriculum_live_session_occurrences, name='curriculum-live-session-occurrences'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule/', views.curriculum_teams_meeting_schedule, name='curriculum-teams-meeting-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
+    path('curriculum/teams-meetings/<str:live_session_id>/calendar-state/', sync_calendar_state, name='curriculum-teams-calendar-state'),
+    path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<int:session_number>/schedule/', views.curriculum_teams_meeting_occurrence_schedule, name='curriculum-teams-meeting-occurrence-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<str:occurrence_id>/join/', views.curriculum_teams_meeting_join, name='curriculum-teams-meeting-join'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/', views.curriculum_teams_meeting_artifacts, name='curriculum-teams-meeting-artifacts'),

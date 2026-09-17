@@ -53,6 +53,11 @@ const ROLE_LABEL: Record<ReviewParticipantRole, string> = {
 };
 const RECURRENCE_UNITS: ReviewRecurrenceUnit[] = ['days', 'weeks', 'months'];
 
+/** Mirrors curriculum_api.review_instances.RAG_SEMANTIC_KEY -- the marker a
+ *  Progress Review's RAG question carries so its answer is found by the
+ *  template's own configuration, never by matching a question title. */
+const RAG_SEMANTIC_KEY = 'rag_status';
+
 // A "Post code and Address" field always collects this fixed set of lines
 // together, as one answer -- there is nothing to configure, this is shown
 // purely so the person building the form can see what it captures.
@@ -247,6 +252,7 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
   const atMaxDepth = depth >= MAX_FIELD_NESTING_DEPTH;
   const description = (field.configuration as TitleDescriptionConfiguration | undefined)?.description || '';
   const options = (field.configuration as ListItemConfiguration | undefined)?.options || [];
+  const isRagQuestion = (field.configuration as ListItemConfiguration | undefined)?.semanticKey === RAG_SEMANTIC_KEY;
   const branchFieldCount = countFields(field.yesFields) + countFields(field.noFields);
 
   const handleTypeChange = (nextType: ReviewFieldType) => {
@@ -365,6 +371,25 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
               onChange={nextOptions => onChange({ ...field, configuration: { ...field.configuration, options: nextOptions } })}
             />
           </FormField>
+          {/* How a Progress Review's RAG question identifies itself. The
+              answer is stored like any other, and its history is read back
+              through this marker rather than by matching a question title, so
+              renaming the question never loses a completed review's RAG. */}
+          <label className="mt-2 flex items-center gap-2 text-[12px] font-semibold text-foreground-700">
+            <input
+              type="checkbox"
+              checked={isRagQuestion}
+              onChange={event => {
+                const { semanticKey: _dropped, ...rest } = (field.configuration as ListItemConfiguration | undefined) || {} as ListItemConfiguration;
+                onChange({
+                  ...field,
+                  configuration: event.target.checked ? { ...rest, semanticKey: RAG_SEMANTIC_KEY } : rest,
+                });
+              }}
+              className="h-4 w-4 rounded border-background-300 text-primary-600 focus:ring-primary-300"
+            />
+            This is the RAG status question
+          </label>
         </div>
       )}
 

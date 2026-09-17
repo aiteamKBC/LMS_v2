@@ -62,6 +62,18 @@ logger = logging.getLogger(__name__)
 REVIEW_INSTANCES_TABLE = 'review_instances'
 REVIEW_INSTANCE_ANSWERS_TABLE = 'review_instance_answers'
 REVIEW_INSTANCE_SIGNATURES_TABLE = 'review_instance_signatures'
+#: Manual scheduled -> in-progress overrides ONLY (see
+#: mark_review_instance_in_progress_manually). Never written for a Teams-
+#: attendance transition, a completion, or a signature -- one row per manual
+#: override, and nothing else.
+REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE = 'review_instance_manual_overrides'
+#: One row per coach-created additional Review for a single learner (see
+#: create_learner_review_addition). Deliberately NOT
+#: review_occurrence_overrides -- that table is skip-only (a hard CHECK
+#: constraint), with no concept of adding a date; see
+#: sql/2026-09-15_curriculum_learner_review_additions.sql for why this is a
+#: separate table instead of an extension.
+LEARNER_REVIEW_ADDITIONS_TABLE = 'learner_review_additions'
 OVERRIDES_TABLE = review_schedule.OCCURRENCE_OVERRIDES_TABLE
 
 STATUS_NOT_SCHEDULED = 'not-scheduled'
@@ -69,6 +81,21 @@ STATUS_SCHEDULED = 'scheduled'
 STATUS_IN_PROGRESS = 'in-progress'
 STATUS_AWAITING_SIGNATURE = 'awaiting-signature'
 STATUS_COMPLETED = 'completed'
+
+#: review_instances.occurrence_source values -- see
+#: sql/2026-09-15_curriculum_learner_review_additions.sql for the identity
+#: design this backs (occurrence_ref, not occurrence_number, is what lets a
+#: generated and a manual occurrence coexist for the same learner+template).
+OCCURRENCE_SOURCE_GENERATED = 'generated'
+OCCURRENCE_SOURCE_MANUAL = 'manual'
+
+#: Reason codes a coach may give for a learner-specific addition. Free text
+#: is also captured (reason) -- these are for reporting/filtering, and the
+#: DB enforces the same list via a CHECK constraint.
+LEARNER_REVIEW_ADDITION_REASON_CODES = (
+    'additional-coaching', 'learner-request', 'employer-request',
+    'performance-concern', 'safeguarding-follow-up', 'other',
+)
 
 SIGNATURE_ROLES = reviews.PARTICIPANT_ROLES
 
@@ -86,6 +113,117 @@ def ensure_review_instance_tables():
         _TABLES_READY = True
         return
     provision_review_instance_tables()
+
+
+#: Set once this process has provisioned/verified the manual-overrides table,
+#: separately from _TABLES_READY (the three core tables) -- see
+#: ensure_review_instance_manual_overrides_table for why this stays its own
+#: gate rather than joining ensure_review_instance_tables().
+_MANUAL_OVERRIDES_TABLE_READY = False
+
+
+def ensure_review_instance_manual_overrides_table():
+    """Verify/provision review_instance_manual_overrides on its own, narrower
+    gate than ensure_review_instance_tables().
+
+    Deliberately not folded into the three core tables' gate: those three are
+    required before ANY review-instance operation (schedule, save an answer,
+    complete, sign), so adding this one there would mean a plain Teams-
+    attendance transition -- which never touches this table -- starts failing
+    in production the moment this code deploys, if the new table's SQL
+    (sql/<date>_curriculum_review_instance_manual_overrides.sql) has not been
+    run against Neon yet. Keeping it separate means only the manual-override
+    action itself is affected by that ordering, not the rest of the review
+    engine.
+    """
+    global _MANUAL_OVERRIDES_TABLE_READY
+    if _MANUAL_OVERRIDES_TABLE_READY:
+        return
+    if not schema_gate.runtime_bootstrap_allowed():
+        schema_gate.require_tables(REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE)
+        _MANUAL_OVERRIDES_TABLE_READY = True
+        return
+    _provision_review_instance_manual_overrides_table()
+    _MANUAL_OVERRIDES_TABLE_READY = True
+
+
+def _provision_review_instance_manual_overrides_table():
+    """Mirrors sql/<date>_curriculum_review_instance_manual_overrides.sql for
+    sqlite/local dev. NOT for production request paths -- see
+    ensure_review_instance_manual_overrides_table/schema_gate."""
+    from django.db import connection
+    with connection.cursor() as cursor:
+        if connection.vendor == 'postgresql':
+            cursor.execute(f'create schema if not exists {curriculum_views.quote_ident(curriculum_views.CURRICULUM_SCHEMA)}')
+        cursor.execute(f'''
+            create table if not exists {curriculum_views.authoring_table_name(REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE)} (
+                id varchar(128) primary key,
+                review_instance_id varchar(128) not null,
+                calendar_event_id integer,
+                previous_status varchar(32) not null,
+                new_status varchar(32) not null,
+                reason_code varchar(64) not null,
+                note text not null default '',
+                changed_by varchar(255) not null,
+                changed_at timestamp not null default current_timestamp,
+                manual_started_at timestamp
+            )
+        ''')
+        cursor.execute(f'''
+            create index if not exists review_instance_manual_overrides_instance_idx
+            on {curriculum_views.authoring_table_name(REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE)} (review_instance_id, changed_at desc)
+        ''')
+
+
+#: Set once this process has provisioned/verified learner_review_additions,
+#: separately from _TABLES_READY for the same reason
+#: ensure_review_instance_manual_overrides_table is its own gate: this table
+#: is only needed by the learner-specific-addition feature, not by every
+#: existing review-instance operation.
+_LEARNER_REVIEW_ADDITIONS_TABLE_READY = False
+
+
+def ensure_learner_review_additions_table():
+    global _LEARNER_REVIEW_ADDITIONS_TABLE_READY
+    if _LEARNER_REVIEW_ADDITIONS_TABLE_READY:
+        return
+    if not schema_gate.runtime_bootstrap_allowed():
+        schema_gate.require_tables(LEARNER_REVIEW_ADDITIONS_TABLE)
+        _LEARNER_REVIEW_ADDITIONS_TABLE_READY = True
+        return
+    _provision_learner_review_additions_table()
+    _LEARNER_REVIEW_ADDITIONS_TABLE_READY = True
+
+
+def _provision_learner_review_additions_table():
+    """Mirrors sql/2026-09-15_curriculum_learner_review_additions.sql for
+    sqlite/local dev. NOT for production request paths -- see
+    ensure_learner_review_additions_table/schema_gate."""
+    from django.db import connection
+    with connection.cursor() as cursor:
+        if connection.vendor == 'postgresql':
+            cursor.execute(f'create schema if not exists {curriculum_views.quote_ident(curriculum_views.CURRICULUM_SCHEMA)}')
+        cursor.execute(f'''
+            create table if not exists {curriculum_views.authoring_table_name(LEARNER_REVIEW_ADDITIONS_TABLE)} (
+                id varchar(128) primary key,
+                review_template_id varchar(128) not null,
+                programme_id varchar(255) not null,
+                learner_id integer not null,
+                target_date date not null,
+                reason_code varchar(64) not null default '',
+                reason varchar(1000) not null default '',
+                created_by varchar(255) not null default '',
+                created_at timestamp not null default current_timestamp,
+                updated_by varchar(255) not null default '',
+                updated_at timestamp not null default current_timestamp,
+                deleted_at timestamp,
+                deleted_by varchar(255)
+            )
+        ''')
+        cursor.execute(f'''
+            create index if not exists learner_review_additions_learner_idx
+            on {curriculum_views.authoring_table_name(LEARNER_REVIEW_ADDITIONS_TABLE)} (learner_id)
+        ''')
 
 
 def provision_review_instance_tables():
@@ -106,11 +244,14 @@ def provision_review_instance_tables():
                 learner_id integer not null,
                 learner_kind varchar(32) not null default '',
                 programme_id varchar(255) not null,
-                occurrence_number integer not null,
+                occurrence_number integer,
+                occurrence_source varchar(16) not null default 'generated',
+                occurrence_ref varchar(160),
                 target_date date not null,
                 coach_email varchar(255) not null default '',
                 calendar_event_id integer,
                 definition_snapshot {json_type} not null,
+                progress_snapshot {json_type},
                 status varchar(32) not null default 'not-scheduled',
                 started_at timestamp,
                 completed_at timestamp,
@@ -216,6 +357,8 @@ def resolve_programme_review_occurrences(
     # once per template, and never per learner.
     type_index = review_types.review_type_index()
 
+    templates_by_id = {template_row.get('id'): template_row for template_row in template_cache[programme_id]}
+
     occurrences = []
     for template_row in template_cache[programme_id]:
         if not review_applies_to_placement(template_row, learner_scope):
@@ -239,7 +382,175 @@ def resolve_programme_review_occurrences(
             occurrence['reviewTypeCode'] = curriculum_views.clean_str((type_row or {}).get('code'))
             occurrence['reviewTypeName'] = curriculum_views.clean_str((type_row or {}).get('name'))
             occurrence['reviewTypeIsSystem'] = bool((type_row or {}).get('is_system'))
+            occurrence['occurrenceSource'] = OCCURRENCE_SOURCE_GENERATED
+            occurrence['occurrenceRef'] = f"{OCCURRENCE_SOURCE_GENERATED}:{occurrence['occurrenceNumber']}"
             occurrences.append(occurrence)
+
+    # Learner-specific additions (coach "Add Review") merge in alongside the
+    # generated occurrences -- same learner, same window -- without touching
+    # programme recurrence, other learners, or occurrence numbering in any
+    # way. See resolve_learner_manual_occurrences: each is tagged
+    # occurrenceSource='manual' and never carries an occurrenceNumber.
+    for occurrence in resolve_learner_manual_occurrences(
+        programme_id, learner_id, window_start=window_start, window_end=window_end,
+        templates_by_id=templates_by_id, type_index=type_index,
+    ):
+        occurrences.append(occurrence)
+
+    occurrences.sort(key=lambda item: item['targetDate'])
+    return occurrences
+
+
+# ------------------------------------------------- learner-specific additions
+
+def find_active_learner_review_addition(review_template_id, learner_id, target_date):
+    ensure_learner_review_additions_table()
+    rows = curriculum_views.fetch_all(
+        f'select * from {curriculum_views.table_name(LEARNER_REVIEW_ADDITIONS_TABLE)} '
+        f'where review_template_id = %s and learner_id = %s and target_date = %s and deleted_at is null',
+        [review_template_id, learner_id, target_date],
+    )
+    return rows[0] if rows else None
+
+
+def get_learner_review_addition(addition_id):
+    ensure_learner_review_additions_table()
+    rows = curriculum_views.fetch_all(
+        f'select * from {curriculum_views.table_name(LEARNER_REVIEW_ADDITIONS_TABLE)} where id = %s',
+        [addition_id],
+    )
+    return rows[0] if rows else None
+
+
+def list_active_learner_review_additions(programme_id, learner_id):
+    ensure_learner_review_additions_table()
+    return curriculum_views.fetch_all(
+        f'select * from {curriculum_views.table_name(LEARNER_REVIEW_ADDITIONS_TABLE)} '
+        f'where programme_id = %s and learner_id = %s and deleted_at is null',
+        [programme_id, learner_id],
+    )
+
+
+def create_learner_review_addition(
+    *, review_template_id, programme_id, learner_id, target_date, reason_code='', reason='', actor='system',
+):
+    """Idempotent get-or-create for one learner's one additional Review on
+    one date -- a repeated request for the exact same
+    (review_template_id, learner_id, target_date) returns the SAME addition
+    rather than creating a duplicate (see the partial unique index in
+    sql/2026-09-15_curriculum_learner_review_additions.sql). This is the ONLY
+    way a learner-specific occurrence is created -- it never touches
+    review_occurrence_overrides (skip-only) or review_templates (programme-
+    wide) at all.
+    """
+    ensure_learner_review_additions_table()
+    existing = find_active_learner_review_addition(review_template_id, learner_id, target_date)
+    if existing:
+        return existing
+
+    addition_id = curriculum_views.unique_prefixed_id('LRA')
+    with transaction.atomic():
+        try:
+            row = curriculum_views.insert_row(LEARNER_REVIEW_ADDITIONS_TABLE, {
+                'id': addition_id,
+                'review_template_id': review_template_id,
+                'programme_id': programme_id,
+                'learner_id': learner_id,
+                'target_date': target_date,
+                'reason_code': reason_code or '',
+                'reason': reason or '',
+                'created_by': actor,
+                'updated_by': actor,
+                'created_at': datetime.utcnow(),
+                'updated_at': datetime.utcnow(),
+            })
+        except Exception:
+            # Lost the race with a concurrent identical request -- the unique
+            # index rejected the insert. The row that won is what we want.
+            existing = find_active_learner_review_addition(review_template_id, learner_id, target_date)
+            if existing:
+                return existing
+            raise
+    return row
+
+
+def resolve_learner_manual_occurrences(
+    programme_id, learner_id, *, window_start=None, window_end=None, templates_by_id=None, type_index=None,
+):
+    """Every active learner-specific addition for this learner's programme,
+    shaped exactly like a generated occurrence dict (same keys consumers
+    already read) so both calendars can merge the two lists with no special
+    casing beyond occurrenceSource/occurrenceRef.
+
+    An addition whose template is no longer enabled is silently excluded --
+    the same rule a disabled template already applies to its generated
+    occurrences (see list_enabled_review_templates) -- rather than raising,
+    since this runs on every calendar read.
+
+    Fails safe to [] on any error (including
+    schema_gate.SchemaNotProvisioned before
+    sql/2026-09-15_curriculum_learner_review_additions.sql has been applied in
+    production) -- exactly like resolve_curriculum_review_occurrences already
+    does for the rest of Curriculum: a problem reading manual additions must
+    never blank a learner's GENERATED occurrences, and this feature deploying
+    ahead of its own migration must never break every existing calendar read.
+    """
+    if not programme_id or not learner_id:
+        return []
+    try:
+        return _resolve_learner_manual_occurrences(
+            programme_id, learner_id, window_start=window_start, window_end=window_end,
+            templates_by_id=templates_by_id, type_index=type_index,
+        )
+    except Exception:
+        logger.warning(
+            'Could not resolve learner-specific Review additions for programme %s learner %s',
+            programme_id, learner_id, exc_info=True,
+        )
+        return []
+
+
+def _resolve_learner_manual_occurrences(
+    programme_id, learner_id, *, window_start, window_end, templates_by_id, type_index,
+):
+    if templates_by_id is None:
+        templates_by_id = {row.get('id'): row for row in list_enabled_review_templates(programme_id)}
+    if type_index is None:
+        type_index = review_types.review_type_index()
+
+    occurrences = []
+    for addition in list_active_learner_review_additions(programme_id, learner_id):
+        template_row = templates_by_id.get(addition.get('review_template_id'))
+        if not template_row:
+            continue
+        raw_target_date = addition.get('target_date')
+        if isinstance(raw_target_date, datetime):
+            target_date = raw_target_date.date()
+        elif isinstance(raw_target_date, date):
+            target_date = raw_target_date
+        else:
+            target_date = date.fromisoformat(curriculum_views.clean_str(raw_target_date)[:10])
+        if window_start and target_date < window_start:
+            continue
+        if window_end and target_date > window_end:
+            continue
+        type_row = type_index.get(curriculum_views.clean_str(template_row.get('review_type_id')))
+        occurrences.append({
+            'reviewTemplateId': template_row.get('id'),
+            'reviewName': template_row.get('name') or '',
+            'occurrenceNumber': None,
+            'targetDate': target_date,
+            'recurrenceLabel': 'Additional review',
+            'reviewTypeId': curriculum_views.clean_str(template_row.get('review_type_id')),
+            'reviewTypeCode': curriculum_views.clean_str((type_row or {}).get('code')),
+            'reviewTypeName': curriculum_views.clean_str((type_row or {}).get('name')),
+            'reviewTypeIsSystem': bool((type_row or {}).get('is_system')),
+            'occurrenceSource': OCCURRENCE_SOURCE_MANUAL,
+            'occurrenceRef': f'{OCCURRENCE_SOURCE_MANUAL}:{addition.get("id")}',
+            'additionId': addition.get('id'),
+            'reasonCode': curriculum_views.clean_str(addition.get('reason_code')),
+            'reason': curriculum_views.clean_str(addition.get('reason')),
+        })
     return occurrences
 
 
@@ -284,8 +595,32 @@ def review_calendar_event_key(learner_id, template_id, occurrence_number):
     return f'review:{learner_id}:{template_id}:{occurrence_number}'
 
 
+def review_calendar_event_key_manual(learner_id, template_id, addition_id):
+    """A learner-specific additional Review's event key -- identity-based and
+    date-independent, like the generated form above, but keyed by the
+    learner_review_additions row rather than a calendar-derived occurrence
+    number (a manual addition has none -- see
+    sql/2026-09-15_curriculum_learner_review_additions.sql). Never contains
+    target_date, so rescheduling or editing the addition's own record never
+    changes the row's identity."""
+    return f'review:{learner_id}:{template_id}:manual:{addition_id}'
+
+
 def reconcile_review_event_keys(events, records):
-    """Keep existing booking keys, matching legacy keys only when unambiguous."""
+    """Keep existing booking keys, matching legacy keys only when unambiguous.
+
+    Identity-tuple matching (by_identity) is scoped to events/records that
+    carry a real occurrenceNumber -- i.e. GENERATED occurrences only. A
+    manual (learner-specific addition) occurrence has no occurrence_number by
+    design (occurrence_ref is its identity instead -- see
+    curriculum.review_instances.occurrence_ref), so it is deliberately
+    excluded from this dict rather than falling back to record.sequence:
+    that fallback would collide a manual review with a generated occurrence
+    that happens to carry the same sequence value for the same
+    learner+template. A manual occurrence is still matched correctly below,
+    via its own stable, unique event_key (by_key) -- it never needs the
+    identity-tuple path at all.
+    """
     by_identity = {}
     by_key = {record.event_key: record for record in records}
     legacy_candidates = {}
@@ -294,13 +629,15 @@ def reconcile_review_event_keys(events, records):
         legacy_candidates.setdefault(legacy_key, []).append(event)
     for record in records:
         template_id = getattr(record, 'review_template_id', '')
-        if template_id:
-            identity = (str(record.learner_id), template_id, getattr(record, 'occurrence_number', None) or record.sequence)
+        occurrence_number = getattr(record, 'occurrence_number', None)
+        if template_id and occurrence_number is not None:
+            identity = (str(record.learner_id), template_id, occurrence_number)
             by_identity[identity] = record
     matched = {}
     for event in events:
-        identity = (str(event['learnerId']), event.get('reviewTemplateId'), event['sequence'])
-        record = by_identity.get(identity) or by_key.get(event['eventKey'])
+        occurrence_number = event.get('occurrenceNumber')
+        identity = (str(event['learnerId']), event.get('reviewTemplateId'), occurrence_number) if occurrence_number is not None else None
+        record = (by_identity.get(identity) if identity is not None else None) or by_key.get(event['eventKey'])
         if record is None:
             legacy_key = f"{event['source']}:{event['learnerId']}:{event['sequence']}:{event['targetDate']}"
             candidate = by_key.get(legacy_key)
@@ -471,9 +808,11 @@ def existing_review_instance_ids():
     return [row.get('id') for row in rows]
 
 
-def get_review_instance(instance_id):
+def get_review_instance(instance_id, *, for_update=False):
+    # Booking callers hold a transaction while checking the linked lifecycle.
+    lock = ' for update' if for_update and curriculum_views.connection.vendor == 'postgresql' else ''
     rows = curriculum_views.fetch_all(
-        f'select * from {curriculum_views.table_name(REVIEW_INSTANCES_TABLE)} where id = %s',
+        f'select * from {curriculum_views.table_name(REVIEW_INSTANCES_TABLE)} where id = %s{lock}',
         [instance_id],
     )
     return rows[0] if rows else None
@@ -484,6 +823,20 @@ def find_review_instance(review_template_id, learner_id, occurrence_number):
         f'select * from {curriculum_views.table_name(REVIEW_INSTANCES_TABLE)} '
         f'where review_template_id = %s and learner_id = %s and occurrence_number = %s',
         [review_template_id, learner_id, occurrence_number],
+    )
+    return rows[0] if rows else None
+
+
+def find_review_instance_by_ref(review_template_id, learner_id, occurrence_ref):
+    """Identity lookup for a MANUAL (learner-specific addition) occurrence --
+    the generated-occurrence identity (find_review_instance, by
+    occurrence_number) is untouched and remains the lookup generated rows
+    use. See review_instances_occurrence_ref_uniq in
+    sql/2026-09-15_curriculum_learner_review_additions.sql."""
+    rows = curriculum_views.fetch_all(
+        f'select * from {curriculum_views.table_name(REVIEW_INSTANCES_TABLE)} '
+        f'where review_template_id = %s and learner_id = %s and occurrence_ref = %s',
+        [review_template_id, learner_id, occurrence_ref],
     )
     return rows[0] if rows else None
 
@@ -530,18 +883,40 @@ def build_definition_snapshot(template_row):
 
 def ensure_review_instance(
     template_row, *, learner_id, learner_kind, programme_id, occurrence_number, target_date,
-    coach_email='', actor='system',
+    coach_email='', actor='system', occurrence_source=OCCURRENCE_SOURCE_GENERATED, occurrence_ref=None,
 ):
     """Idempotent get-or-create for one learner's one occurrence.
 
-    Identity is (review_template_id, learner_id, occurrence_number) -- see
-    the unique index in the SQL migration. A repeated call (the caseload
-    timetable is recomputed on every page load) always returns the same row
-    rather than creating a duplicate.
+    Identity for a GENERATED occurrence (occurrence_source, the default) is
+    (review_template_id, learner_id, occurrence_number) -- see the unique
+    index in the SQL migration -- and is completely unchanged by the
+    occurrence_source/occurrence_ref parameters below: every existing caller
+    passes neither, so its behaviour, lookup and stored values are identical
+    to before this parameter pair existed.
+
+    Identity for a MANUAL (learner-specific addition) occurrence is instead
+    (review_template_id, learner_id, occurrence_ref) -- occurrence_number is
+    stored as NULL for these rows (see
+    sql/2026-09-15_curriculum_learner_review_additions.sql for why a manual
+    occurrence cannot safely share the generated numbering space). Callers
+    creating a manual instance MUST pass occurrence_source='manual' and an
+    explicit occurrence_ref (see review_calendar_event_key_manual for the
+    matching event key).
+
+    A repeated call (the caseload timetable is recomputed on every page
+    load) always returns the same row rather than creating a duplicate.
     """
     ensure_review_instance_tables()
     review_template_id = template_row.get('id')
-    existing = find_review_instance(review_template_id, learner_id, occurrence_number)
+    is_manual = occurrence_source == OCCURRENCE_SOURCE_MANUAL
+    ref = occurrence_ref or f'{OCCURRENCE_SOURCE_GENERATED}:{occurrence_number}'
+
+    def _existing():
+        if is_manual:
+            return find_review_instance_by_ref(review_template_id, learner_id, ref)
+        return find_review_instance(review_template_id, learner_id, occurrence_number)
+
+    existing = _existing()
     if existing:
         return existing
 
@@ -554,7 +929,9 @@ def ensure_review_instance(
                 'learner_id': learner_id,
                 'learner_kind': learner_kind or '',
                 'programme_id': programme_id,
-                'occurrence_number': occurrence_number,
+                'occurrence_number': None if is_manual else occurrence_number,
+                'occurrence_source': occurrence_source,
+                'occurrence_ref': ref,
                 'target_date': target_date,
                 'coach_email': coach_email or '',
                 'definition_snapshot': curriculum_views.json_db_value(build_definition_snapshot(template_row)),
@@ -567,7 +944,7 @@ def ensure_review_instance(
         except Exception:
             # Lost the race with a concurrent identical request -- the unique
             # index rejected the insert. The row that won is what we want.
-            existing = find_review_instance(review_template_id, learner_id, occurrence_number)
+            existing = _existing()
             if existing:
                 return existing
             raise
@@ -578,6 +955,232 @@ def set_review_instance_status(instance_id, status, *, actor='system', extra=Non
     payload = {'status': status, 'updated_by': actor, 'updated_at': datetime.utcnow(), **(extra or {})}
     rows = curriculum_views.update_rows(REVIEW_INSTANCES_TABLE, 'id = %s', [instance_id], payload)
     return rows[0] if rows else None
+
+
+def mark_review_instance_scheduled(instance_id, *, actor='system'):
+    """not-scheduled -> scheduled, once a real booking (date/time) exists on
+    the linked CoachCalendarEvent -- see coach_api.views
+    persist_calendar_sync_reservation, which calls this for both new and
+    already-linked bookings. Guarded in the UPDATE
+    itself (``and status = 'not-scheduled'``) rather than read-then-write, so
+    it is atomic and a repeat call is a no-op instead of a race.
+    """
+    rows = curriculum_views.update_rows(
+        REVIEW_INSTANCES_TABLE, 'id = %s and status = %s', [instance_id, STATUS_NOT_SCHEDULED],
+        {'status': STATUS_SCHEDULED, 'updated_by': actor, 'updated_at': datetime.utcnow()},
+    )
+    return rows[0] if rows else None
+
+
+def mark_review_instance_in_progress_from_attendance(instance_id, *, started_at, actor='attendance-sync'):
+    """The ONLY writer of review_instances.status -> in-progress that reflects
+    a real, Microsoft-Graph-confirmed Teams join by an expected coach or
+    learner (see coach_api.views.apply_teams_attendance_status_transition for
+    how the caller established that, and where it is invoked from). Never
+    call this because a form was opened, a draft was saved, a "Start" button
+    was clicked, or the scheduled time has passed.
+
+    Strictly monotonic and idempotent: the UPDATE only ever matches a row
+    still at exactly ``scheduled`` (guarded in the WHERE clause, not by a
+    separate read first, so there is no race and no possibility of
+    regressing an instance already at awaiting-signature/completed/
+    not-scheduled back to in-progress). A second sync pass that finds the
+    same attendance again is a no-op -- ``started_at`` is not rewritten and no
+    duplicate transition is recorded.
+    """
+    rows = curriculum_views.update_rows(
+        REVIEW_INSTANCES_TABLE, 'id = %s and status = %s', [instance_id, STATUS_SCHEDULED],
+        {'status': STATUS_IN_PROGRESS, 'started_at': started_at, 'updated_by': actor, 'updated_at': datetime.utcnow()},
+    )
+    return rows[0] if rows else None
+
+
+#: Stable, machine-readable reasons for a manual scheduled -> in-progress
+#: override (Phase 4). The frontend maps these to friendly labels; the
+#: backend never accepts free text as the reason itself.
+MANUAL_OVERRIDE_REASON_CODES = (
+    'coach-confirmed-live-start',
+    'teams-link-issue',
+    'graph-unavailable',
+    'attendance-not-detected',
+    'meeting-held-outside-teams',
+    'scheduler-delay',
+    'other',
+)
+
+_manual_override_logger = logging.getLogger('curriculum_api.review_instance_manual_override')
+
+
+def _manual_override_status_rejection(current_status):
+    if current_status == STATUS_IN_PROGRESS:
+        return 'This review is already in progress.'
+    if current_status == STATUS_AWAITING_SIGNATURE:
+        return 'This review has already been submitted and is awaiting signature.'
+    if current_status == STATUS_COMPLETED:
+        return 'This review has already been completed.'
+    if current_status == STATUS_NOT_SCHEDULED:
+        return 'This review has not been scheduled yet.'
+    return 'This review cannot be manually marked in progress from its current status.'
+
+
+def _log_manual_in_progress_override(*, review_instance_id, calendar_event_id, reason_code, note, changed_by):
+    """Operational log line for a manual override -- useful for debugging,
+    but NOT the authoritative record. curriculum.review_instance_manual_
+    overrides (record_review_instance_manual_override, below) is the
+    persistent business record; this log may still be handy for
+    operational debugging alongside it."""
+    _manual_override_logger.info(
+        'review_instance_manual_in_progress_override',
+        extra={
+            'review_instance_id': review_instance_id,
+            'calendar_event_id': calendar_event_id,
+            'previous_status': STATUS_SCHEDULED,
+            'new_status': STATUS_IN_PROGRESS,
+            'source': 'manual',
+            'reason_code': reason_code,
+            'note': note,
+            'changed_by': changed_by,
+            'changed_at': datetime.utcnow().isoformat(),
+        },
+    )
+
+
+def record_review_instance_manual_override(
+    *, review_instance_id, calendar_event_id, previous_status, new_status,
+    reason_code, note, changed_by, manual_started_at,
+):
+    """Persist ONE row in curriculum.review_instance_manual_overrides.
+
+    Append-only, and ONLY ever called for a manual scheduled -> in-progress
+    override that has already succeeded (see
+    mark_review_instance_in_progress_manually, its sole caller). Never called
+    for a Teams-attendance transition, a completion, a signature, or any
+    other lifecycle event -- those are not manual overrides and must never
+    appear in this table.
+    """
+    ensure_review_instance_manual_overrides_table()
+    return curriculum_views.insert_row(REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE, {
+        'id': curriculum_views.unique_prefixed_id('REVIOV'),
+        'review_instance_id': review_instance_id,
+        'calendar_event_id': calendar_event_id,
+        'previous_status': previous_status,
+        'new_status': new_status,
+        'reason_code': reason_code,
+        'note': note,
+        'changed_by': changed_by,
+        'changed_at': datetime.utcnow(),
+        'manual_started_at': manual_started_at,
+    })
+
+
+def list_review_instance_manual_overrides(review_instance_id):
+    """This instance's manual-override history, most recent first. Empty for
+    every instance that has never had a manual override (i.e. almost all of
+    them) -- this table has no rows for a normal Teams-attendance-driven
+    lifecycle."""
+    ensure_review_instance_manual_overrides_table()
+    return curriculum_views.fetch_all(
+        f'select * from {curriculum_views.table_name(REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE)} '
+        f'where review_instance_id = %s order by changed_at desc',
+        [review_instance_id],
+    )
+
+
+def latest_review_instance_manual_override(review_instance_id):
+    """The most recent manual override for this instance, or None. Cheap
+    convenience for a UI that only ever wants to show the latest one."""
+    rows = list_review_instance_manual_overrides(review_instance_id)
+    return rows[0] if rows else None
+
+
+def mark_review_instance_in_progress_manually(instance_row, *, reason_code, note='', started_at=None, actor='system'):
+    """Authorised fallback for scheduled -> in-progress when Microsoft Teams
+    attendance cannot be detected (Graph outage, a delayed attendance report,
+    a meeting held on another channel, a scheduler failure, or another
+    exceptional operational problem). This is the EXCEPTION path --
+    apply_teams_attendance_status_transition (a confirmed Teams join) remains
+    the normal one. Never touches Teams identifiers, review answers,
+    signatures, target_date, or scheduled_date/time.
+
+    Authorization (the assigned coach, or a super-admin acting through the
+    existing view-as/attributed-write mechanism) is the CALLER's
+    responsibility -- see
+    coach_api.views.coach_review_instance_mark_in_progress_manually. This
+    function only enforces the lifecycle/data rules:
+
+    * a valid reason code, with a required note when the reason is "other"
+    * the instance is currently exactly `scheduled` (atomic compare-and-swap,
+      same pattern as mark_review_instance_in_progress_from_attendance --
+      cannot regress not-scheduled/awaiting-signature/completed, and a
+      second call after a successful override is rejected, not a silent
+      no-op, so a repeat click can't be mistaken for success)
+    * started_at: an already-set value is never overwritten; otherwise the
+      caller's optional actual-start-time, otherwise now. This value is
+      never presented as Teams attendance evidence -- the instance's own
+      audit trail (see _log_manual_in_progress_override) records that the
+      source was manual, and that is not overwritten by a later attendance
+      sync (mark_review_instance_in_progress_from_attendance's own guard
+      already refuses to fire once status has moved past `scheduled`).
+
+    Returns (ok, errors_or_row): errors is {'reason': [...]}, {'note': [...]}
+    or {'status': [...]} depending on which check failed.
+    """
+    reason_code = curriculum_views.clean_str(reason_code).lower()
+    note = curriculum_views.clean_str(note)
+    if reason_code not in MANUAL_OVERRIDE_REASON_CODES:
+        return False, {'reason': ['Choose a valid reason for this manual override.']}
+    if reason_code == 'other' and not note:
+        return False, {'note': ['Add details when the reason is "Other".']}
+
+    current_status = instance_row.get('status')
+    if current_status != STATUS_SCHEDULED:
+        return False, {'status': [_manual_override_status_rejection(current_status)]}
+
+    effective_started_at = instance_row.get('started_at') or started_at or datetime.utcnow()
+
+    # Provisioned here, before the transaction below opens -- a lazy
+    # first-time CREATE TABLE run *inside* transaction.atomic() interacts
+    # badly with sqlite (DDL there implicitly ends the surrounding
+    # transaction underneath Django's savepoint bookkeeping, which then
+    # leaves the following pragma/column-lookup reading against a
+    # connection state Django still thinks is mid-transaction). Every other
+    # table's provisioning call already runs outside any atomic() block for
+    # the same reason; this one is no different, it is just triggered lazily
+    # instead of from a test's setUp().
+    ensure_review_instance_manual_overrides_table()
+
+    # The status UPDATE and the audit INSERT happen inside one transaction on
+    # the same ('default') connection review_instances itself already lives
+    # on (curriculum_views.update_rows/insert_row both go through
+    # django.db.connection, never 'enrolment') -- so either both apply or,
+    # on any error, neither does. A rejected attempt (wrong status, bad
+    # reason, lost race) never reaches this block, so no row is ever written
+    # for one.
+    with transaction.atomic():
+        updated = curriculum_views.update_rows(
+            REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
+            [instance_row.get('id'), STATUS_SCHEDULED],
+            {
+                'status': STATUS_IN_PROGRESS, 'started_at': effective_started_at,
+                'updated_by': actor, 'updated_at': datetime.utcnow(),
+            },
+        )
+        if not updated:
+            return False, {'status': ['This review is no longer scheduled. Reload it and try again.']}
+
+        row = updated[0]
+        record_review_instance_manual_override(
+            review_instance_id=row.get('id'), calendar_event_id=row.get('calendar_event_id'),
+            previous_status=STATUS_SCHEDULED, new_status=STATUS_IN_PROGRESS,
+            reason_code=reason_code, note=note, changed_by=actor,
+            manual_started_at=effective_started_at,
+        )
+
+    _log_manual_in_progress_override(
+        review_instance_id=row.get('id'), calendar_event_id=row.get('calendar_event_id'),
+        reason_code=reason_code, note=note, changed_by=actor,
+    )
+    return True, row
 
 
 def link_calendar_event(instance_id, calendar_event_id, *, actor='system'):
@@ -697,10 +1300,35 @@ def review_instance_form_definition(instance_row):
             }
             for role in SIGNATURE_ROLES
         },
+        # None for the overwhelming majority of instances -- only ever set
+        # for one that was moved to in-progress by an authorised manual
+        # override rather than real Teams attendance (Phase 5).
+        'manualOverride': _serialize_manual_override(latest_review_instance_manual_override(instance_row.get('id'))),
+        # What a coach last calculated for THIS instance, exactly as it was
+        # stored -- never recomputed while reading, so an instance that was
+        # never calculated reads as None and a signed one keeps its figures.
+        'progressSnapshot': review_instance_progress_snapshot(instance_row),
     }
+    if result['template']['reviewTypeCode'] == review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW:
+        # Only this Review Type presents a RAG history, and only from the
+        # learner's own completed Progress Reviews -- each row showing the RAG
+        # that review itself recorded, never the learner's current coach_rag.
+        result['ragHistory'] = progress_review_rag_history(instance_row.get('learner_id'))
     from .review_pdf import pdf_availability
     result['pdf'] = pdf_availability(result)
     return result
+
+
+def _serialize_manual_override(row):
+    if not row:
+        return None
+    return {
+        'reasonCode': row.get('reason_code'),
+        'note': row.get('note') or '',
+        'changedBy': row.get('changed_by'),
+        'changedAt': curriculum_views.format_created_at(row.get('changed_at')),
+        'manualStartedAt': curriculum_views.format_created_at(row.get('manual_started_at')),
+    }
 
 
 def _visible_required_unanswered_fields(sections, answers_by_field):
@@ -772,15 +1400,150 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
                     **payload,
                 })
 
-        if instance_row.get('status') == STATUS_NOT_SCHEDULED or not instance_row.get('started_at'):
-            set_review_instance_status(
-                instance_row.get('id'),
-                STATUS_IN_PROGRESS,
-                actor=actor,
-                extra={'started_at': instance_row.get('started_at') or datetime.utcnow()},
-            )
+        # Saving a draft answer is not evidence the meeting started -- it used
+        # to flip status to in-progress here, which is exactly the "opened/
+        # edited the form" trigger Phase 2 removes. The real trigger is a
+        # confirmed Microsoft Teams attendance signal; see
+        # mark_review_instance_in_progress_from_attendance and
+        # coach_api.views.apply_teams_attendance_status_transition.
 
     return review_instance_form_definition(get_review_instance(instance_row.get('id')))
+
+
+# ------------------------------------------------- progress + RAG snapshots
+
+#: The instance's own frozen copy of what a coach calculated (see
+#: learner_api.review_progress_snapshot for what goes in it). Kept beside
+#: definition_snapshot rather than inside it: that one freezes the QUESTION
+#: SET at creation time and is written exactly once, this one is written when
+#: a coach presses Calculate and may be replaced until signing begins.
+PROGRESS_SNAPSHOT_COLUMN = 'progress_snapshot'
+
+#: How a Curriculum-authored question declares itself to BE the RAG question,
+#: so the RAG value is found by the template's own stable marker rather than
+#: by matching a question's title. Set in the field's configuration, frozen
+#: per instance with the rest of the definition, so a historical review is
+#: always read through the marker IT was created with.
+RAG_SEMANTIC_KEY = 'rag_status'
+
+
+def review_instance_progress_snapshot(instance_row):
+    """What was frozen the last time a coach pressed Calculate, or None.
+
+    Never recalculated on read: an instance with no snapshot reads as None so
+    the caller can say "not calculated yet", rather than quietly substituting
+    the learner's current figures into a historical review.
+    """
+    return curriculum_views.as_json_value(instance_row.get(PROGRESS_SNAPSHOT_COLUMN), None)
+
+
+def save_review_instance_progress_snapshot(instance_row, snapshot, *, actor='system'):
+    """Freeze (or replace) this instance's calculated progress.
+
+    Same lifecycle rule the answers themselves follow: once the instance has
+    reached awaiting-signature/completed, the figures a party is about to sign
+    -- or has already signed -- can no longer move underneath them. Guarded in
+    the UPDATE's own WHERE clause as well as checked up front, so a Calculate
+    racing a completion cannot slip in after the transition.
+    """
+    if instance_row.get('status') in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
+        raise ValueError('Progress cannot be recalculated after the signature step begins.')
+    if PROGRESS_SNAPSHOT_COLUMN not in curriculum_views.column_names(REVIEW_INSTANCES_TABLE):
+        # filtered_payload would otherwise drop the snapshot silently and the
+        # write would look like it succeeded. Fail loudly instead, naming the
+        # migration that adds the column.
+        raise ValueError(
+            'This deployment cannot store a Progress Review snapshot yet: run '
+            'sql/2026-09-16_curriculum_review_instance_progress_snapshot.sql.'
+        )
+
+    rows = curriculum_views.update_rows(
+        REVIEW_INSTANCES_TABLE,
+        'id = %s and status not in (%s, %s)',
+        [instance_row.get('id'), STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED],
+        {
+            PROGRESS_SNAPSHOT_COLUMN: curriculum_views.json_db_value(json_safe(snapshot)),
+            'updated_by': actor,
+            'updated_at': datetime.utcnow(),
+        },
+    )
+    if not rows:
+        raise ValueError('Progress cannot be recalculated after the signature step begins.')
+    return rows[0]
+
+
+def _rag_field_ids(snapshot):
+    return [
+        field.get('id')
+        for field in _flatten_snapshot_fields(snapshot.get('sections', []))
+        if (field.get('configuration') or {}).get('semanticKey') == RAG_SEMANTIC_KEY
+    ]
+
+
+def review_instance_rag_value(instance_row):
+    """This instance's own recorded RAG answer, or ''.
+
+    Read from the answer saved against this instance, located through the
+    RAG marker in the definition THIS instance froze -- never from the
+    learner's current/live coach_rag, which a coach can change at any time and
+    which would otherwise rewrite the history of an already-signed review.
+    """
+    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+    field_ids = _rag_field_ids(snapshot)
+    if not field_ids:
+        return ''
+    answers = get_review_instance_answers(instance_row.get('id'))
+    for field_id in field_ids:
+        saved = answers.get(field_id)
+        value = curriculum_views.as_json_value(saved.get('answer'), None) if saved else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ''
+
+
+def list_learner_review_instances(learner_id, review_type_code, *, statuses=(STATUS_COMPLETED,)):
+    """This learner's own instances of one Review Type, newest target date
+    first. Scoped by the Review Type's stable code -- never by template name --
+    so a Progress Review history can never pick up a Monthly Coaching Meeting
+    or any other Review the programme happens to run."""
+    ensure_review_instance_tables()
+    type_row = review_types.get_review_type_by_code(review_type_code)
+    if not type_row or not learner_id:
+        return []
+    placeholders = ', '.join(['%s'] * len(statuses)) if statuses else ''
+    status_clause = f' and i.status in ({placeholders})' if statuses else ''
+    return curriculum_views.fetch_all(
+        f'select i.* from {curriculum_views.table_name(REVIEW_INSTANCES_TABLE)} i '
+        f'join {curriculum_views.table_name(reviews.REVIEW_TEMPLATES_TABLE)} t '
+        f'on t.id = i.review_template_id '
+        f'where i.learner_id = %s and t.review_type_id = %s{status_clause} '
+        f'order by i.target_date desc, i.occurrence_number desc',
+        [learner_id, type_row.get('id'), *statuses],
+    )
+
+
+def progress_review_rag_history(learner_id, *, limit=8):
+    """Completed Progress Reviews for this learner, newest first, each with the
+    RAG answer IT recorded.
+
+    A review that never captured a RAG value contributes an empty rag rather
+    than being dropped, so the history shows the occurrence took place -- the
+    same way the legacy export shows an entry with no RAG against it.
+    """
+    history = []
+    for row in list_learner_review_instances(learner_id, review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW):
+        template = reviews.get_review_template_row(row.get('review_template_id'), include_deleted=True)
+        history.append({
+            'reviewInstanceId': row.get('id'),
+            'reviewName': (template or {}).get('name') or '',
+            'occurrenceNumber': row.get('occurrence_number'),
+            'targetDate': curriculum_views.format_date(row.get('target_date')),
+            'completedAt': curriculum_views.format_created_at(row.get('completed_at')),
+            'rag': review_instance_rag_value(row),
+        })
+        if len(history) >= limit:
+            break
+    return history
 
 
 def _all_required_signatures_present(instance_id, snapshot):
@@ -839,14 +1602,37 @@ def record_review_instance_signature(instance_row, role, *, signed_by, signed_na
     return review_instance_form_definition(get_review_instance(instance_row.get('id')))
 
 
+def _complete_review_instance_status_rejection(current_status):
+    if current_status in (STATUS_NOT_SCHEDULED, STATUS_SCHEDULED):
+        return 'This review cannot be completed until attendance has been confirmed for the scheduled Teams meeting.'
+    if current_status == STATUS_AWAITING_SIGNATURE:
+        return 'This review has already been submitted and is awaiting signature.'
+    if current_status == STATUS_COMPLETED:
+        return 'This review has already been completed.'
+    return 'This review cannot be completed from its current status.'
+
+
 def complete_review_instance(instance_row, *, actor='system'):
     """Finishes the form: validates every visible required field is
     answered, then moves the instance to Awaiting Signature (if the
     Curriculum template requires any signature) or straight to Completed (if
-    it requires none). Returns (ok, errors) -- errors only ever names unmet
-    FIELD requirements; a still-outstanding signature is not a reason this
-    call fails, it is the next step.
+    it requires none). Returns (ok, errors).
+
+    The only valid transition is in-progress -> awaiting-signature/completed
+    (Phase 3). Completion is not a client-side button-visibility rule: this
+    is the backend enforcement, so an API call cannot skip attendance by
+    calling this directly. The DB write itself is guarded on the instance
+    still being in-progress (an atomic compare-and-swap, not a read-then-
+    write), so a concurrent completion attempt or an out-of-order request
+    can't silently move the same instance twice or race a legitimate
+    transition -- ``errors`` names the reason as ``{'fields': [...]}`` for
+    unmet field requirements (as before), or ``{'status': [...]}`` for an
+    invalid status transition, so callers can tell the two apart.
     """
+    current_status = instance_row.get('status')
+    if current_status != STATUS_IN_PROGRESS:
+        return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
+
     definition = review_instance_form_definition(instance_row)
     answers_by_field = get_review_instance_answers(instance_row.get('id'))
     missing_fields = _visible_required_unanswered_fields(definition['sections'], answers_by_field)
@@ -856,10 +1642,22 @@ def complete_review_instance(instance_row, *, actor='system'):
     snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
     requires_signature = any(bool(snapshot.get('signatures', {}).get(role)) for role in SIGNATURE_ROLES)
     if requires_signature:
-        set_review_instance_status(instance_row.get('id'), STATUS_AWAITING_SIGNATURE, actor=actor)
-    else:
-        set_review_instance_status(
-            instance_row.get('id'), STATUS_COMPLETED, actor=actor,
-            extra={'completed_at': datetime.utcnow()},
+        updated = curriculum_views.update_rows(
+            REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
+            [instance_row.get('id'), STATUS_IN_PROGRESS],
+            {'status': STATUS_AWAITING_SIGNATURE, 'updated_by': actor, 'updated_at': datetime.utcnow()},
         )
+    else:
+        updated = curriculum_views.update_rows(
+            REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
+            [instance_row.get('id'), STATUS_IN_PROGRESS],
+            {
+                'status': STATUS_COMPLETED, 'completed_at': datetime.utcnow(),
+                'updated_by': actor, 'updated_at': datetime.utcnow(),
+            },
+        )
+    if not updated:
+        # Lost a race: something else (another completion attempt) moved this
+        # instance off in-progress between the caller's read and this write.
+        return False, {'status': ['This review is no longer in progress. Reload it and try again.']}
     return True, None

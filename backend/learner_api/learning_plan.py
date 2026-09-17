@@ -39,11 +39,12 @@ from django.db import DatabaseError, connection
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from audit_api.last_audit_ledger_views import _connection as _audit_connection
 from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .learner_progression import advance_learner
-from .mappers import _s, stored_training_plan, training_plan_field
+from .mappers import _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,70 @@ def _all_modules():
         _module_payload(r)
         for r in _rows(_LIVE_MODULE_SQL + " ORDER BY programme_name, group_name, title", [])
     ]
+
+
+def _modules_by_id(module_ids):
+    """Live catalogue rows for specific module ids, whatever programme they sit on.
+
+    ``_programme_modules`` is scoped to the learner's own programme, so a module
+    authored without a programme (or borrowed from another one) finds no match
+    there and would fall back to the plan's saved snapshot -- showing whatever
+    hours were stored when the plan was agreed, typically 0h, instead of the
+    module's real ``total_otjh``. Looking the ids up directly keeps those rows
+    live like every other row on the plan.
+    """
+    ids = [i for i in dict.fromkeys(_s(i) for i in module_ids) if i]
+    if not ids:
+        return {}
+    rows = _rows(_LIVE_MODULE_SQL + " AND module_catalogue_id = ANY(%s)", [ids])
+    return {m["moduleId"]: m for m in (_module_payload(r) for r in rows) if m["moduleId"]}
+
+
+def _aptem_subject_modules(learner):
+    """Live curriculum modules for the subjects an imported learner is enrolled
+    in via Aptem, keyed by module id.
+
+    Learners imported from the Aptem snapshot (``enrolment."Created_users"`` rows
+    carrying an ``aptem_id``) had their subjects injected through
+    ``"Last_audit".group_learners`` and never written to the plan column, so the
+    learning-plan modal showed one module -- or none -- while the learner's own
+    My Learning page listed every subject they are actually taught.
+
+    Their subjects are group memberships in the audit mirror, matched to the
+    authoring catalogue on title: the two systems share no module ids, and the
+    import reused the subject name verbatim. Matching is case/whitespace
+    insensitive, and a title with no live module is skipped rather than guessed
+    at. Programme is deliberately NOT filtered on -- these modules are routinely
+    filed under a different programme name ("Marketing Manager" vs "Marketing
+    Manager Level 6") than the learner sits on, which is precisely why the
+    programme-scoped picker never offered them.
+
+    Never raises: the audit database is a separate, optional connection, and a
+    plan must still open when it is unreachable.
+    """
+    aptem_id = _s(getattr(learner, "aptem_id", ""))
+    if not aptem_id:
+        return {}
+    try:
+        with _audit_connection().cursor() as cursor:
+            cursor.execute(
+                'SELECT g.group_name FROM "Last_audit".group_learners gl '
+                'JOIN "Last_audit".groups g ON g.group_id = gl.group_id '
+                'JOIN "Last_audit".learners l ON l.learner_id = gl.learner_id '
+                'WHERE l.aptem_id = %s',
+                [aptem_id],
+            )
+            titles = [_s(row[0]) for row in cursor.fetchall() if _s(row[0])]
+    except DatabaseError:
+        logger.warning("Could not read Last_audit subjects for learner %s.", getattr(learner, "pk", "?"))
+        return {}
+    if not titles:
+        return {}
+    rows = _rows(
+        _LIVE_MODULE_SQL + " AND lower(btrim(title)) = ANY(%s)",
+        [[t.strip().lower() for t in dict.fromkeys(titles)]],
+    )
+    return {m["moduleId"]: m for m in (_module_payload(r) for r in rows) if m["moduleId"]}
 
 
 def _programmes(modules):
@@ -439,8 +504,17 @@ def _serialize(learner):
         # current values. Entries with no catalogue match are kept (the module
         # may have been retired) but normalised to the same shape — plans saved
         # by the older wizard carry weeks/components and no hours at all.
+        # Modules on the plan that this programme's catalogue does not list --
+        # authored without a programme, or borrowed from another one. They are
+        # still live modules, so their hours and title come from master rather
+        # than from the plan's saved snapshot.
+        off_programme = _modules_by_id(
+            _s(m.get("moduleId")) for m in saved if _s(m.get("moduleId")) not in by_id
+        )
         plan = [
-            {**(by_id.get(_s(m.get("moduleId"))) or _orphan_module(m)),
+            {**(by_id.get(_s(m.get("moduleId")))
+                or off_programme.get(_s(m.get("moduleId")))
+                or _orphan_module(m)),
              **({'assignmentMode': 'explicit'} if m.get('assignmentMode') == 'explicit' else {})}
             for m in saved
         ]
@@ -467,9 +541,33 @@ def _serialize(learner):
             if plan and not any(m.get('assignmentMode') == 'explicit' for m in saved) else []
         )
         plan = plan + [dict(by_id[i], inherited=True) for i in inherited]
+        # Subjects an Aptem-imported learner is taught that never reached their
+        # plan column. Same additive contract as the group preset above: shown
+        # so staff can see what the learner actually studies, flagged, and only
+        # persisted if someone saves. An explicit curriculum assignment still
+        # wins -- that marks a deliberately limited set.
+        #
+        # Unlike the group preset this also applies to an EMPTY plan: for these
+        # learners an empty column means "nothing was ever imported here",
+        # not "staff decided this learner is taught nothing".
+        if not any(m.get('assignmentMode') == 'explicit' for m in saved):
+            planned = {_s(m.get("moduleId")) for m in plan}
+            plan = plan + [
+                dict(module, fromAptem=True)
+                for module_id, module in _aptem_subject_modules(learner).items()
+                if module_id not in planned
+            ]
     else:
         inherited = []
-        plan = preset
+        # A learner with no saved plan at all still gets their imported
+        # subjects, for the same reason -- their group preset is empty because
+        # the Aptem import populated the audit mirror, not the curriculum group.
+        aptem = _aptem_subject_modules(learner)
+        preset_ids_set = {_s(m.get("moduleId")) for m in preset}
+        plan = preset + [
+            dict(module, fromAptem=True)
+            for module_id, module in aptem.items() if module_id not in preset_ids_set
+        ]
 
     chosen = {_s(m.get("moduleId")) for m in plan}
     everything = _all_modules()
@@ -708,6 +806,29 @@ def _effective_plan_ids(learner, preset_cache):
         return ids
     planned = set(ids)
     return ids + [i for i in _preset_ids_for(learner, preset_cache) if i not in planned]
+
+
+def effective_training_plan(learner, preset_cache=None):
+    """Read-only plan snapshot including modules newly inherited from a group.
+
+    The stored plan remains the agreement record and is never changed here.
+    Learner-facing reads still need the effective assignment shown by the
+    enrolment modal, so append minimal id-bearing entries for newly inherited
+    modules. Module Builder remains authoritative for their live titles, weeks
+    and components.
+    """
+    plan = list(get_training_plan(learner) or [])
+    effective_ids = _effective_plan_ids(
+        learner, preset_cache if preset_cache is not None else {},
+    )
+    represented = {
+        _s(entry.get('moduleId')) for entry in plan
+        if isinstance(entry, dict) and _s(entry.get('moduleId'))
+    }
+    return plan + [
+        {'moduleId': module_id}
+        for module_id in effective_ids if module_id not in represented
+    ]
 
 
 def _learner_picker_row(learner, module_id, preset_cache):

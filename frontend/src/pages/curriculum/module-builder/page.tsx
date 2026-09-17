@@ -49,6 +49,8 @@ import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
+import { LearnerPreview } from './LearnerPreview';
+import { SessionResultsDialog } from '../module-workspace/ModuleSessions';
 import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
 // The holiday notice, shared with the module workspace so a week touched by a
 // ticked holiday reads the same wherever the curriculum is shown.
@@ -376,6 +378,7 @@ export default function ModuleBuilder() {
   const [duplicatingModule, setDuplicatingModule] = useState<ModuleCatalogueItem | null>(null);
   const [duplicatingModuleComplete, setDuplicatingModuleComplete] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [sessionResultsOpen, setSessionResultsOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   // Which list the catalogue is showing. Nothing is read until the archive is
   // opened; see useCurriculumArchive, which Cohorts and Groups share.
@@ -2155,6 +2158,11 @@ export default function ModuleBuilder() {
             }}
           />
 
+          <div className="flex flex-wrap justify-end gap-2 py-3">
+            <button type="button" onClick={() => setPreviewOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">Preview as learner</button>
+            <button type="button" onClick={() => setSessionResultsOpen(true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">Sessions & Recordings</button>
+          </div>
+          {sessionResultsOpen && <SessionResultsDialog moduleId={workingModule.catalogueId || workingModule.id} onClose={() => setSessionResultsOpen(false)} />}
           {(saving || (actionMessage && !deletingModuleId)) && (
             <SaveStatusPanel
               saving={saving}
@@ -2366,7 +2374,7 @@ export default function ModuleBuilder() {
             await reload({ silent: true });
           }}
         />
-        {previewOpen && <PreviewModal module={workingModule} onClose={() => setPreviewOpen(false)} />}
+        {previewOpen && <LearnerPreview module={workingModule} initialComponentId={selectedComponent?.id} onClose={() => setPreviewOpen(false)} />}
         {sessionKsbMappingOpen && (
           <SessionKsbMappingModal
             module={workingModule}
@@ -2929,7 +2937,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
   // "Save now" while the workspace is saving itself, because the button is then
   // for not waiting out the quiet period. With auto save off it is the only way
   // the module is written at all, so it says the plain thing.
-  const saveButtonLabel = saving ? 'Saving...' : saved ? 'Saved' : autoSave ? 'Save now' : 'Save';
+  const saveButtonLabel = saving ? 'Saving module changes...' : saved ? 'Module saved' : autoSave ? 'Save module now' : 'Save module changes';
   // One sentence for the whole save pipeline. "Saved" is shown only for a write
   // the backend has confirmed — `saved` comes from the stored snapshot, which
   // moves on a successful reply and nothing else.
@@ -2953,7 +2961,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
               ? ARCHIVED_PROGRAMME_BUILDER_NOTICE
               : autoSave
                 ? 'Auto save is on. Edits are saved a moment after you stop typing.'
-                : 'Auto save is off. Your edits are kept here until you press Save.'}
+                : 'Auto save is off. Your edits are kept here until you press Save module changes.'}
             className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border px-3 text-[12px] font-semibold transition-smooth disabled:cursor-not-allowed disabled:opacity-70 whitespace-nowrap ${autoSave
               ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
               : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
@@ -5624,34 +5632,6 @@ function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeO
           </div>
         )}
       </form>
-    </div>
-  );
-}
-
-function PreviewModal({ module, onClose }: { module: ModuleCatalogueItem; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="w-full max-w-3xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
-        <div className="px-5 py-4 bg-primary-950 text-white flex items-center justify-between">
-          <h3 className="text-sm font-heading font-bold text-white">Preview</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
-        </div>
-        <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
-          <div>
-            <h2 className="text-lg font-heading font-bold text-foreground-950">{module.title}</h2>
-            <p className="text-[12px] text-foreground-500">{module.description || 'No short description set.'}</p>
-          </div>
-          {module.weekStructure.map(week => (
-            <div key={week.id} className="rounded-xl border border-background-200 bg-background-100/50 p-4">
-              <h3 className="text-sm font-bold text-foreground-900">Week {week.weekNumber}: {week.title}</h3>
-              <p className="text-[11px] text-foreground-500 mt-1">{week.summary}</p>
-              <div className="mt-3 space-y-2">
-                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {component.expectedOtjh} OTJH - {component.points} pts</div>)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }

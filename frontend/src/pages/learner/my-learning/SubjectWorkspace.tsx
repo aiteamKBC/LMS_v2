@@ -5,18 +5,16 @@ import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
 import { fetchStudentActivity, peekStudentActivity, subjectRequest, type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
 import { peekLearnerJson } from '@/api/learnerRead';
-import { fetchLearnerCertificateTemplate, fetchLearnerModuleCertificateStatus, issueLearnerModuleCertificate } from '@/api/learnerCertificates';
-import type { CertificateTemplate } from '@/api/platformAdmin';
+import { fetchLearnerCertificateTemplate, issueLearnerModuleCertificate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
 import { completedComponentIds, isComponentComplete, hasComponentContent, formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
 import styles from './SubjectWorkspace.module.css';
 import { LearningCatalogue } from './LearningCatalogue';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
-import { learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity } from './subjectLearning';
-import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import type { OverviewWeek } from '@/api/learnerOverview';
+import { certificateEligible, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity } from './subjectLearning';
+import type { LearningSchedule } from '@/api/learnerOverview';
 
-type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'>;
+type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
 export type Subject = { id: string; title: string; source: 'legacy' | 'current'; activities: SubjectEntry[] };
 type BuilderSubject = { id: string; title: string };
@@ -27,7 +25,6 @@ export type UnifiedLearningSummary = {
   subjectCount: number;
   activityCount: number;
   completedActivityCount: number;
-  completedSubjectCount: number;
   percent: number;
 };
 
@@ -37,10 +34,6 @@ function subjectRefs(data: StudentActivityResponse | null, real: LearnerDetail |
     ...(data?.activities || []).map(activity => `legacy:${activity.group_id}`),
     ...(real?.components || []).flatMap(component => component.moduleId ? [`current:${component.moduleId}`] : []),
   ])].sort().join(',');
-}
-
-export function fetchSubjectMetadata(data: StudentActivityResponse | null, real: LearnerDetail | null, learnerId: string, signal?: AbortSignal) {
-  return subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(learnerId)}/?refs=${encodeURIComponent(subjectRefs(data, real))}`, { signal });
 }
 
 export function useSubjectMetadata(data: StudentActivityResponse | null, real: LearnerDetail | null, kind?: string, learnerId?: string, enabled = true, assignedOnly = false) {
@@ -191,6 +184,8 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
       previous.bestScorePercent = knownScores.length ? Math.max(...knownScores) : null;
       previous.native = component;
       previous.week = item.week || undefined;
+      const currentSchedule = nativeActivitySchedule(dates[id], component.sessionDate);
+      if (currentSchedule.date && !currentSchedule.date_needs_review) previous.schedule = currentSchedule;
       continue;
     }
     if (!subject.activities.some((entry) => entry.id === id)) subject.activities.push({
@@ -223,15 +218,11 @@ export function buildUnifiedLearningSummary(
     (sum, subject) => sum + subject.activities.filter((entry) => entry.completed).length,
     0,
   );
-  const completedSubjectCount = subjects.filter(
-    (subject) => subject.activities.length > 0 && subject.activities.every((entry) => entry.completed),
-  ).length;
   return {
     subjects,
     subjectCount: subjects.length,
     activityCount,
     completedActivityCount,
-    completedSubjectCount,
     percent: activityCount ? Math.round(completedActivityCount / activityCount * 10000) / 100 : 0,
   };
 }
@@ -339,17 +330,6 @@ function ActivityGroup({ title, label = title, activities, level, children }: {
   </section>;
 }
 
-export function SubjectOverview({ real, kind, learnerId, onOpen }: { real: LearnerDetail | null; kind?: LearnerKind; learnerId?: string; onOpen: () => void }) {
-  const { summary, loading, error, retry } = useUnifiedLearningSummary(real, kind, learnerId);
-  return <section aria-label="Subject learning progress" className="space-y-4 rounded-2xl border border-foreground-200 bg-white p-5">
-    <h2 className="text-sm font-bold text-foreground-900">Overall subject progress</h2>
-    {error ? <p role="alert" className="text-sm">{error} <button onClick={retry} className="font-semibold text-primary-700 underline">Try again</button></p>
-      : loading || !summary ? <p role="status" className="text-sm text-foreground-500">Loading progress…</p>
-        : <><Progress done={summary.completedActivityCount} total={summary.activityCount} /><p className="text-xs text-foreground-500">Across {summary.subjectCount} subjects</p></>}
-    <button onClick={onOpen} className="flex items-center gap-2 text-sm font-semibold text-primary-700">Open your subjects<ChevronRight size={16} /></button>
-  </section>;
-}
-
 const SUBJECT_CARD_TONES = ['purple', 'navy', 'green', 'gold', 'blue', 'rose'] as const;
 type SubjectCardTone = typeof SUBJECT_CARD_TONES[number];
 
@@ -366,31 +346,26 @@ function Cover({ title, url, large = false }: { title: string; url?: string; lar
 
 function SubjectCertificateAction({
   subject,
-  completed,
-  total,
   template,
+  csrfToken,
   kind,
   learnerId,
 }: {
   subject: Subject;
-  completed: number;
-  total: number;
-  template: CertificateTemplate | null;
+  template: CertificateTemplateSummary | null;
+  csrfToken: string;
   kind?: string;
   learnerId?: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [cachedHref, setCachedHref] = useState('');
-  const supportedSubject = subject.id.startsWith('current:') || subject.id.startsWith('unlinked:');
-  const percent = total ? Math.round(completed / total * 10000) / 100 : 0;
-  const ready = !!template && !!kind && !!learnerId && total > 0 && supportedSubject && percent >= Number(template.minimumProgress || 0);
+  const ready = !!kind && !!learnerId && certificateEligible(subject, template);
   const cacheKey = ready && template && kind && learnerId
     ? `learner-certificate:${kind}:${learnerId}:${subject.id}:v${template.version}`
     : '';
 
   useEffect(() => {
-    let cancelled = false;
     setCachedHref('');
     if (!ready || !kind || !learnerId || !cacheKey) return;
     try {
@@ -402,23 +377,8 @@ function SubjectCertificateAction({
     } catch {
       // Local storage can be unavailable in private or locked-down contexts.
     }
-    void fetchLearnerModuleCertificateStatus(kind, learnerId, subject.id)
-      .then((result) => {
-        const href = result.certificate?.verificationUrl || '';
-        if (!href || cancelled) return;
-        setCachedHref(href);
-        try {
-          window.localStorage.setItem(cacheKey, href);
-        } catch {
-          // Non-critical cache.
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setCachedHref('');
-      });
-    return () => {
-      cancelled = true;
-    };
+    // Existing certificates are resolved by the idempotent issue endpoint on
+    // click. Avoid one status request (and an eligibility rebuild) per card.
   }, [ready, kind, learnerId, subject.id, cacheKey]);
 
   if (!ready) return null;
@@ -438,7 +398,7 @@ function SubjectCertificateAction({
     setBusy(true);
     setMessage('');
     try {
-      const result = await issueLearnerModuleCertificate(kind, learnerId, subject.id);
+      const result = await issueLearnerModuleCertificate(kind, learnerId, subject.id, csrfToken);
       const href = result.certificate?.verificationUrl;
       if (href) {
         setCachedHref(href);
@@ -473,20 +433,20 @@ function SubjectCertificateAction({
   </div>;
 }
 
-function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, kind, learnerId }: {
+function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId }: {
   subject: Subject;
   cover?: string;
   tone?: SubjectCardTone;
   onOpen: () => void;
-  template: CertificateTemplate | null;
+  template: CertificateTemplateSummary | null;
+  csrfToken: string;
   kind?: string;
   learnerId?: string;
 }) {
   const total = subject.activities.length;
   const completed = subject.activities.filter((activity) => activity.completed).length;
   const isComplete = total > 0 && completed === total;
-  const percent = total ? Math.round(completed / total * 10000) / 100 : 0;
-  const certificateReady = !!template && total > 0 && percent >= Number(template.minimumProgress || 0) && (subject.id.startsWith('current:') || subject.id.startsWith('unlinked:'));
+  const certificateReady = certificateEligible(subject, template);
   const status = isComplete ? 'Completed' : completed > 0 ? 'In progress' : total ? 'Not started' : 'No activities yet';
   const next = nextLearningWeek(subject)?.activities.find(entry => !entry.completed);
   return <article className={`group ${styles.card} ${styles.subjectTheme}`} data-tone={tone}>
@@ -509,7 +469,7 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, kind, 
         <span className={styles.cardAction}>Open subject<ArrowRight size={16} aria-hidden="true" /></span>
       </div>
     </button>
-    <SubjectCertificateAction subject={subject} completed={completed} total={total} template={template} kind={kind} learnerId={learnerId} />
+    <SubjectCertificateAction subject={subject} template={template} csrfToken={csrfToken} kind={kind} learnerId={learnerId} />
   </article>;
 }
 
@@ -558,12 +518,11 @@ function ActivityRow({ entry, kind, learnerId, onProgress }: { entry: SubjectEnt
   </div>;
 }
 
-export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false, deadlines, deadlinesLoading, deadlinesError, onRetryDeadlines }: {
+export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false }: {
   kind?: string; learnerId?: string; real?: LearnerDetail | null; data: StudentActivityResponse | null;
   loading: boolean; error: string | null; onRetry: () => void; onProgress?: () => void;
   metrics?: LearnerMetrics | null;
-  view?: 'catalogue' | 'map'; schedule?: TrainingPlanDashboard | null; scheduleLoading?: boolean;
-  deadlines?: OverviewWeek['deadlines']; deadlinesLoading?: boolean; deadlinesError?: string; onRetryDeadlines?: () => void;
+  view?: 'catalogue' | 'map'; schedule?: LearningSchedule | null; scheduleLoading?: boolean;
 }) {
   const [search, setSearch] = useState('');
   const location = useLocation();
@@ -580,7 +539,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     navigate({ pathname: location.pathname, search: params.toString() });
   };
   const identity = `${kind}:${learnerId}`;
-  const [certificateTemplate, setCertificateTemplate] = useState<CertificateTemplate | null>(null);
+  const [certificateConfig, setCertificateConfig] = useState<{ template: CertificateTemplateSummary | null; csrfToken: string }>({ template: null, csrfToken: '' });
   const { metadata: incomingMetadata, error: imageError, retry: retryMetadata } = useSubjectMetadata(incomingData, incomingReal, kind, learnerId, !error, true);
   const ready = !loading && !error && (!learnerId || !!incomingMetadata);
   const [snapshot, setSnapshot] = useState<{
@@ -602,13 +561,14 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const hasProgrammeOtjh = data?.audit_lms_actual != null || data?.audit_tp_planned != null;
   const [savedProgress, setSavedProgress] = useState<{ identity: string; activities: Record<string, SubjectAttemptResult> }>({ identity, activities: {} });
   useEffect(() => {
-    if (!kind || !learnerId) return;
+    setCertificateConfig({ template: null, csrfToken: '' });
+    if (view !== 'catalogue' || !kind || !learnerId) return;
     let cancelled = false;
     fetchLearnerCertificateTemplate(kind, learnerId)
-      .then((result) => { if (!cancelled) setCertificateTemplate(result.template); })
-      .catch(() => { if (!cancelled) setCertificateTemplate(null); });
+      .then((result) => { if (!cancelled) setCertificateConfig({ template: result.template, csrfToken: result.csrfToken || '' }); })
+      .catch(() => { if (!cancelled) setCertificateConfig({ template: null, csrfToken: '' }); });
     return () => { cancelled = true; };
-  }, [kind, learnerId]);
+  }, [view, kind, learnerId]);
   const updatedData = useMemo(() => {
     if (!data || savedProgress.identity !== identity) return data;
     return { ...data, activities: data.activities.map((item) => {
@@ -629,6 +589,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   };
   const summary = useMemo(() => buildUnifiedLearningSummary(updatedData, real, metadata), [updatedData, real, metadata]);
   const subjects = summary.subjects;
+  const deadlines = useMemo(() => learningDeadlines(subjects), [subjects]);
   // Assign colours from the full ID-sorted set, before display filters or sorts,
   // so finding, completing or renaming a subject does not change its colour.
   const subjectTones = useMemo(() => new Map([...subjects]
@@ -638,7 +599,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const term = search.trim().toLocaleLowerCase();
   const planSelection = learningPlanSelection(subjects, real, metadata, schedule);
   const planLabel = planSelection.status === 'current' ? 'Current module' : planSelection.status === 'next' ? 'Next module' : planSelection.status === 'previous' ? 'Previous module' : 'Dates pending';
-  const currentSubject = planSelection.status === 'current' ? planSelection.entries[0]?.subject : undefined;
+  const currentSubject = recommendedLearningSubject(subjects, real, metadata, schedule);
   const defaultSubject = planSelection.status !== 'undated' ? planSelection.entries[0]?.subject : undefined;
   const continuedSubject = continueCurrentWeek ? defaultSubject || subjects.find(subject => currentLearningWeek(subject)) : undefined;
   const active = resolveLearningSubject(subjects, selected, metadata, schedule)
@@ -692,9 +653,9 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
       : view === 'map' ? (active ? <SubjectTimeline subject={active} weeks={weeks} search={search} onOpen={week => { setSearch(''); select(active.id, week); }} /> : !selected && <div className={styles.empty}>{noScheduledModule}</div>)
       : !active ? <>
       <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={currentSubject} total={total} done={done} percent={percent} kind={kind} learnerId={learnerId}
-        deadlines={deadlines} deadlinesLoading={deadlinesLoading} deadlinesError={deadlinesError} onRetryDeadlines={onRetryDeadlines}
+        deadlines={deadlines}
         onContinue={subject => { setSearch(''); select(subject.id, 'current'); }}
-        renderCard={subject => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateTemplate} kind={kind} learnerId={learnerId} />} />
+        renderCard={subject => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} />} />
       {(data || metrics) && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals include accepted historical hours and new recorded learning. Planned hours come from your training plan.</p>}</>}
     </> : <>
       <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>

@@ -189,6 +189,46 @@ describe('Attendance lecture workspace', () => {
     expect(screen.getByText('K9')).toBeInTheDocument();
   });
 
+  it('keeps saved lectures visible during one refresh when the connection and tab return together', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    mount(); await screen.findByText('First lecture');
+    const initialRequests = vi.mocked(fetch).mock.calls.length;
+    let finishRefresh!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>(resolve => { finishRefresh = resolve; }));
+    await act(async () => {
+      window.dispatchEvent(new Event('online'));
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(fetch).toHaveBeenCalledTimes(initialRequests + 1);
+    expect(screen.getByText('First lecture')).toBeInTheDocument();
+    await act(async () => {
+      finishRefresh(new Response(JSON.stringify({ ...payload, lectures: [lecture({ title: 'Updated lecture' })] })));
+    });
+    expect(await screen.findByText('Updated lecture')).toBeInTheDocument();
+    expect(screen.queryByText('First lecture')).not.toBeInTheDocument();
+    expect(posts).toEqual([]);
+  });
+
+  it('waits until the tab is visible before automatically refreshing saved lectures', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    mount(); await screen.findByText('First lecture');
+    const initialRequests = vi.mocked(fetch).mock.calls.length;
+    payload = { ...payload, lectures: [lecture({ title: 'Updated lecture' })] };
+    visibility.mockReturnValue('hidden');
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(fetch).toHaveBeenCalledTimes(initialRequests);
+    expect(screen.getByText('First lecture')).toBeInTheDocument();
+    visibility.mockReturnValue('visible');
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    expect(await screen.findByText('Updated lecture')).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(initialRequests + 1);
+    expect(posts).toEqual([]);
+  });
+
   it('offers working support and module destinations', async () => {
     mount(); await screen.findByText('First lecture');
     expect(screen.getByRole('link', { name: /Book a Support Session/ })).toHaveAttribute('href', '/learner/calendar?book=student-support');

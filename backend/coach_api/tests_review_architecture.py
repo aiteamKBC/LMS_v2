@@ -113,9 +113,13 @@ class CoachReviewArchitectureTestCase(TestCase):
         return row['id']
 
     def _enrolment_row(self, start_date=LEARNER_START):
+        raw = start_date.isoformat() if start_date else ''
         return SimpleNamespace(
             id=101, pk=101, email='learner@example.com', learner_type='commercial',
-            start_date=start_date.isoformat() if start_date else '',
+            # learner_start_date is the Review recurrence anchor; start_date is
+            # kept in step too since resolve_schedule_window's WINDOW bound
+            # still reads it.
+            learner_start_date=raw, start_date=raw,
             end_date=WINDOW_END.isoformat(),
             practical_period_end_date='', apprenticeship_end_date='',
         )

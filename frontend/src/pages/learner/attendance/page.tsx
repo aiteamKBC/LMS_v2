@@ -1,3 +1,5 @@
+import { coachFetch } from '@/lib/coachFetch';
+import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -5,6 +7,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -43,6 +46,7 @@ export default function AttendancePage() {
   const access = useLearnerWorkspaceAccess(learner.id);
   const navigate = useNavigate();
   const read = useLiveLearnerRead(learner.kind, learner.id, true, fetchAttendanceWorkspace, peekAttendanceWorkspace);
+  useRefreshOnReturn(read.refresh, { enabled: Boolean(learner.kind && learner.id) });
   const data = read.data;
   const [moduleId, setModuleId] = useState('all');
   const [filter, setFilter] = useState<AttendanceFilter>('all');
@@ -107,6 +111,20 @@ export default function AttendancePage() {
     } catch (error) { setAttendError(error instanceof Error ? error.message : 'Could not save attendance. Please try again.'); }
     finally { attendInFlight.current = false; setAttendBusy(false); }
   };
+  const saveCatchup = async () => {
+    if (!catchup?.absenceReport || !catchupBooking) return;
+    setBookingBusy(true); setAttendError('');
+    try {
+      const response = await coachFetch(`/learner_api/session-catchup/${learner.kind}/${learner.id}/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportId: catchup.absenceReport.id, eventKey: catchupBooking.eventKey }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not link catch-up.');
+      invalidateLearnerReads(); setAttendNotice(result.message); setCatchup(null); read.refresh();
+    } catch (reason) { setAttendError(reason instanceof Error ? reason.message : 'Could not link catch-up.'); }
+    finally { setBookingBusy(false); }
+  };
   const selectCatchupBooking = useCallback((event: LearnerCalendarEvent | null) => {
     setCatchupBooking(event);
   }, []);
@@ -149,7 +167,7 @@ export default function AttendancePage() {
             <AttendanceLectureList key={selectedModule} lectures={lectures} moduleId={selectedModule} onModuleChange={setModuleId}
               filter={filter} onFilterChange={setFilter} tabs={tabs} onOpen={openActivities} onReport={setReport}
               onCatchup={row => { setCatchup(row); setCatchupBooking(null); }} />
-            <p className={styles.learningNote}><AppIcon className="ri-information-line" />Complete the activities linked to missed lectures to cover your learning. Catch-up is tracked separately from live attendance.</p>
+            <p className={styles.learningNote}><AppIcon className="ri-information-line" />An approved excuse remains an absence until your coach confirms the linked catch-up session is complete. Watching a recording does not change live attendance.</p>
           </div>
           <aside className={styles.sidebar}>
             <AttendanceModePanel mode={data.mode} busy={modeBusy} error={modeError} notice={modeNotice} onChange={changeMode} />
@@ -185,7 +203,10 @@ export default function AttendancePage() {
       <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
         sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
         onSelect={selectCatchupBooking} onBusyChange={setBookingBusy} standalone />
-      <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Done</button>
+      {attendError && <p role="alert">{attendError}</p>}
+      {catchup.absenceReport ? <button type="button" className={styles.catchupDone} disabled={bookingBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
+        : <p className="mt-3 text-sm">Submit an absence report to link your catch-up booking. Attendance changes after approval and coach-confirmed completion.</p>}
+      <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Close</button>
     </AbsenceReportDialog>}
   </WorkspaceShell>;
 }
