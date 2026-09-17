@@ -234,7 +234,7 @@ class ReviewProgressEndpointTestCase(TestCase):
             with self.subTest(status=status):
                 instance = self._instance(occurrence_number=10 + len(status))
                 self._calculate(instance['id'])
-                review_instances.set_review_instance_status(instance['id'], status, actor='test')
+                review_instances.force_review_instance_status_for_tests(instance['id'], status, actor='test')
 
                 response, _builder = self._calculate(
                     instance['id'], snapshot={**CANNED_SNAPSHOT, 'calculatedAt': '2027-01-01T00:00:00'})

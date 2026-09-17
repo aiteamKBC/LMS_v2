@@ -5380,6 +5380,10 @@ class ReviewTemplateUnavailableError(Exception):
     """
 
 
+class LegacyReviewReconciliationRequiredError(ReviewTemplateUnavailableError):
+    code = "LEGACY_REVIEW_RECONCILIATION_REQUIRED"
+
+
 def require_review_template_for_first_linkage(review_template_id: str) -> dict:
     """Look up the Review Engine template a review-driven event is about to
     be linked to for the first time. Raises ReviewTemplateUnavailableError
@@ -5407,6 +5411,20 @@ def ensure_review_instance_for_calendar_record(record: CoachCalendarEvent, base_
     row, since an already-linked instance must keep working even after its
     template is later archived/deleted.
     """
+    if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+        if record.status in {
+            CoachCalendarEvent.STATUS_IN_PROGRESS,
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+            CoachCalendarEvent.STATUS_COMPLETED,
+        }:
+            raise LegacyReviewReconciliationRequiredError(
+                "LEGACY_REVIEW_RECONCILIATION_REQUIRED: this historical review "
+                "has already advanced and cannot be given a newly scheduled instance."
+            )
+        raise ReviewTemplateUnavailableError(
+            "A Review Instance can only be linked when the calendar review is scheduled."
+        )
+
     template_row = require_review_template_for_first_linkage(record.review_template_id)
     occurrence_source = (base_event or {}).get('occurrenceSource', curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED)
     is_manual = occurrence_source == curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL
@@ -7319,18 +7337,94 @@ def coach_timetable_event_summary(request, event_key):
 
 
 def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCalendarEvent, str]:
-    """Persist cancellation intent before deleting the external Graph event."""
+    """Cancel local booking state atomically, then reconcile Graph externally."""
     with transaction.atomic():
         current = CoachCalendarEvent.objects.select_for_update().get(pk=record.pk)
+        instance = None
+        if clean_text(current.review_instance_id):
+            instance = curriculum_review_instances.get_review_instance(
+                current.review_instance_id, for_update=True,
+            )
+            if (
+                not instance
+                or instance.get("calendar_event_id") != current.pk
+                or instance.get("learner_id") != current.learner_id
+                or clean_text(instance.get("review_template_id"))
+                != clean_text(current.review_template_id)
+                or clean_email(instance.get("coach_email"))
+                != clean_email(current.owner_email)
+            ):
+                raise LearnerCalendarConflict(
+                    "This booking's review link is inconsistent. Please contact support."
+                )
+            if instance.get("status") in {
+                curriculum_review_instances.STATUS_IN_PROGRESS,
+                curriculum_review_instances.STATUS_AWAITING_SIGNATURE,
+                curriculum_review_instances.STATUS_COMPLETED,
+            }:
+                raise LearnerCalendarConflict(
+                    "A review that has started, been submitted or completed cannot be cancelled."
+                )
+            if instance.get("status") not in {
+                curriculum_review_instances.STATUS_SCHEDULED,
+                curriculum_review_instances.STATUS_NOT_SCHEDULED,
+            }:
+                raise LearnerCalendarConflict(
+                    "This review cannot be cancelled from its current status."
+                )
+        elif (
+            current.event_type in {"mcr", "progress-review", "review"}
+            and current.status in {
+                CoachCalendarEvent.STATUS_IN_PROGRESS,
+                CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+                CoachCalendarEvent.STATUS_COMPLETED,
+            }
+        ):
+            raise LearnerCalendarConflict(
+                "LEGACY_REVIEW_RECONCILIATION_REQUIRED: this historical review "
+                "cannot be cancelled without an authoritative Review Instance."
+            )
+
+        # The additional advanced-state protection is for Review lifecycle
+        # rows only.  Catch-up and other non-Review sessions retain their
+        # historical cancellation semantics.
+        if (
+            (instance or current.event_type in {"mcr", "progress-review", "review"})
+            and current.status in {
+                CoachCalendarEvent.STATUS_IN_PROGRESS,
+                CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+                CoachCalendarEvent.STATUS_COMPLETED,
+            }
+        ):
+            raise LearnerCalendarConflict(
+                "A review that has started, been submitted or completed cannot be cancelled."
+            )
+
+        if instance:
+            transitioned = curriculum_review_instances.mark_review_instance_not_scheduled(
+                instance["id"],
+                calendar_event_id=current.pk,
+                learner_id=current.learner_id,
+                review_template_id=current.review_template_id,
+                coach_email=current.owner_email,
+                actor=current.owner_email or "calendar-cancel",
+            )
+            if not transitioned:
+                raise LearnerCalendarConflict(
+                    "The review status changed. Reload it before cancelling."
+                )
+
+        current.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        current.scheduled_date = None
+        current.scheduled_time = None
         current.sync_state = CoachCalendarEvent.SYNC_CANCELLED
-        current.save(update_fields=["sync_state", "updated_at"])
+        current.save(update_fields=[
+            "status", "scheduled_date", "scheduled_time", "sync_state", "updated_at",
+        ])
 
     warning = delete_calendar_event_from_graph(current)
     with transaction.atomic():
         current = CoachCalendarEvent.objects.select_for_update().get(pk=record.pk)
-        current.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
-        current.scheduled_date = None
-        current.scheduled_time = None
         current.last_graph_sync_error = public_graph_sync_warning(warning)
         if warning:
             # Retain the external identifiers so an operator/retry can reconcile
@@ -9274,7 +9368,10 @@ def coach_timetable_event_action(request):
         elif action == "complete":
             catchup_record.status = CoachCalendarEvent.STATUS_COMPLETED
         elif action == "cancel":
-            catchup_record, warning = cancel_reserved_calendar_event(catchup_record)
+            try:
+                catchup_record, warning = cancel_reserved_calendar_event(catchup_record)
+            except LearnerCalendarConflict as exc:
+                return JsonResponse({"detail": str(exc)}, status=409)
 
         catchup_record.owner_name = owner_name or catchup_record.owner_name
         catchup_record.last_graph_sync_error = public_graph_sync_warning(warning)
@@ -9499,13 +9596,14 @@ def coach_timetable_event_action(request):
             record.review_responses = review_responses
             record.review_completed_at = timezone.now()
     elif action == "sign" and record.review_instance_id:
-        # Linked row: same principle as "complete" above -- record the
-        # signature only against the canonical review_instances engine (which
-        # already flips the instance, and this calendar row via the sync
-        # below, to Completed once every signature its Curriculum template
-        # requires is present). The legacy manager_signed_at/by columns are
-        # left untouched so they never disagree with
-        # review_instance_signatures for a linked row.
+        # Linked row: record the signature only against the canonical
+        # review_instances engine, which flips the instance to Completed once
+        # every signature its Curriculum template requires is present AND
+        # projects that onto this calendar row inside the same transaction
+        # (see _mirror_linked_calendar_after_signature). No second status write
+        # here -- one canonical transition, one mirror. The legacy
+        # manager_signed_at/by columns are left untouched so they never
+        # disagree with review_instance_signatures for a linked row.
         instance_row = curriculum_review_instances.get_review_instance(record.review_instance_id)
         if not instance_row:
             return JsonResponse({"detail": "This review's canonical record could not be found."}, status=404)
@@ -9517,8 +9615,6 @@ def coach_timetable_event_action(request):
             )
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=400)
-        instance_row = curriculum_review_instances.get_review_instance(record.review_instance_id)
-        _sync_calendar_record_to_review_instance_status(instance_row)
         record.refresh_from_db()
         record.owner_name = owner_name
     elif action == "sign":
@@ -9526,7 +9622,10 @@ def coach_timetable_event_action(request):
         record.manager_signed_at = timezone.now()
         record.manager_signed_by = clean_text(payload.get("managerName")) or "Line Manager"
     elif action == "cancel":
-        record, warning = cancel_reserved_calendar_event(record)
+        try:
+            record, warning = cancel_reserved_calendar_event(record)
+        except LearnerCalendarConflict as exc:
+            return JsonResponse({"detail": str(exc)}, status=409)
 
     record.last_graph_sync_error = public_graph_sync_warning(warning)
     record.save()
@@ -11391,32 +11490,82 @@ def coach_review_instance_for_event(request):
         target_date = target_date.date()
 
     is_manual = base_event.get("occurrenceSource") == curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL
+
+    if record:
+        # Advanced unlinked Review rows are historical data.  Refuse to create
+        # a fabricated not-scheduled instance; legacy review_responses remain
+        # readable through the calendar summary/read path.
+        record.review_template_id = review_template_id
+        record.occurrence_number = None if is_manual else parse_int(
+            base_event.get("occurrenceNumber"), record.sequence,
+        )
+        if record.status in {
+            CoachCalendarEvent.STATUS_IN_PROGRESS,
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+            CoachCalendarEvent.STATUS_COMPLETED,
+        } and not clean_text(record.review_instance_id):
+            try:
+                ensure_review_instance_for_calendar_record(record, base_event)
+            except LegacyReviewReconciliationRequiredError as exc:
+                return JsonResponse({
+                    "detail": str(exc),
+                    "code": exc.code,
+                }, status=409)
+        elif record.status == CoachCalendarEvent.STATUS_SCHEDULED:
+            try:
+                ensure_review_instance_for_calendar_record(record, base_event)
+            except ReviewTemplateUnavailableError as exc:
+                return JsonResponse({"detail": str(exc)}, status=409)
+        else:
+            instance = curriculum_review_instances.ensure_review_instance(
+                template_row,
+                learner_id=int(base_event["learnerId"]),
+                learner_kind='',
+                programme_id=template_row.get("programme_id"),
+                occurrence_number=None if is_manual else parse_int(
+                    base_event.get("occurrenceNumber"),
+                    int(base_event.get("sequence") or 1),
+                ),
+                target_date=target_date,
+                coach_email=owner_email,
+                actor=owner_email or "coach",
+                occurrence_source=base_event.get(
+                    "occurrenceSource",
+                    curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
+                ),
+                occurrence_ref=base_event.get("occurrenceRef") if is_manual else None,
+            )
+            if not instance:
+                return JsonResponse({"detail": "This review could not be opened."}, status=400)
+            record.review_instance_id = instance.get("id")
+            record.save(update_fields=[
+                "review_template_id", "occurrence_number", "review_instance_id", "updated_at",
+            ])
+            curriculum_review_instances.link_calendar_event(
+                instance.get("id"), record.pk, actor=owner_email or "coach",
+            )
+        record.refresh_from_db()
+        return JsonResponse({"instanceId": clean_text(record.review_instance_id)})
+
     instance = curriculum_review_instances.ensure_review_instance(
         template_row,
         learner_id=int(base_event["learnerId"]),
         learner_kind='',
         programme_id=template_row.get("programme_id"),
-        occurrence_number=None if is_manual else parse_int(base_event.get("occurrenceNumber"), int(base_event.get("sequence") or 1)),
+        occurrence_number=None if is_manual else parse_int(
+            base_event.get("occurrenceNumber"), int(base_event.get("sequence") or 1),
+        ),
         target_date=target_date,
         coach_email=owner_email,
         actor=owner_email or "coach",
-        occurrence_source=base_event.get("occurrenceSource", curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED),
+        occurrence_source=base_event.get(
+            "occurrenceSource",
+            curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
+        ),
         occurrence_ref=base_event.get("occurrenceRef") if is_manual else None,
     )
     if not instance:
         return JsonResponse({"detail": "This review could not be opened."}, status=400)
-
-    if record:
-        record.review_template_id = review_template_id
-        record.occurrence_number = None if is_manual else parse_int(base_event.get("occurrenceNumber"), record.sequence)
-        record.review_instance_id = instance.get("id")
-        record.save(update_fields=["review_template_id", "occurrence_number", "review_instance_id", "updated_at"])
-        curriculum_review_instances.link_calendar_event(instance.get("id"), record.pk, actor=owner_email or "coach")
-        if record.status == CoachCalendarEvent.STATUS_SCHEDULED:
-            curriculum_review_instances.mark_review_instance_scheduled(
-                instance.get("id"), actor=owner_email or "coach",
-            )
-
     return JsonResponse({"instanceId": instance.get("id")})
 
 
@@ -11631,7 +11780,9 @@ def coach_review_instance_signature(request, instance_id):
         )
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
-    _sync_calendar_record_to_review_instance_status(curriculum_review_instances.get_review_instance(instance_row["id"]))
+    # No mirror call here: record_review_instance_signature owns the calendar
+    # projection for every signature, in the same transaction as the status
+    # change. One canonical transition, one mirror.
     return JsonResponse(result)
 
 
@@ -11645,11 +11796,40 @@ def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:
         return
     status = instance_row.get("status")
     if status == curriculum_review_instances.STATUS_COMPLETED:
-        CoachCalendarEvent.objects.filter(pk=calendar_event_id).update(
+        updated = CoachCalendarEvent.objects.filter(
+            pk=calendar_event_id,
+            status__in={
+                CoachCalendarEvent.STATUS_IN_PROGRESS,
+                CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+                CoachCalendarEvent.STATUS_COMPLETED,
+            },
+        ).update(
             status=CoachCalendarEvent.STATUS_COMPLETED, review_completed_at=instance_row.get("completed_at") or datetime.utcnow(),
         )
+        if not updated:
+            logger.warning(
+                "review_calendar_status_mirror_rejected",
+                extra={"calendar_event_id": calendar_event_id,
+                       "review_instance_id": instance_row.get("id"),
+                       "requested_status": status,
+                       "reason": "incompatible_calendar_status_or_missing_row"},
+            )
     elif status == curriculum_review_instances.STATUS_AWAITING_SIGNATURE:
-        CoachCalendarEvent.objects.filter(pk=calendar_event_id).update(status=CoachCalendarEvent.STATUS_AWAITING_SIGNATURE)
+        updated = CoachCalendarEvent.objects.filter(
+            pk=calendar_event_id,
+            status__in={
+                CoachCalendarEvent.STATUS_IN_PROGRESS,
+                CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+            },
+        ).update(status=CoachCalendarEvent.STATUS_AWAITING_SIGNATURE)
+        if not updated:
+            logger.warning(
+                "review_calendar_status_mirror_rejected",
+                extra={"calendar_event_id": calendar_event_id,
+                       "review_instance_id": instance_row.get("id"),
+                       "requested_status": status,
+                       "reason": "incompatible_calendar_status_or_missing_row"},
+            )
     elif status == curriculum_review_instances.STATUS_IN_PROGRESS:
         # Only ever reached via apply_teams_attendance_status_transition (a
         # real Teams join), never by this instance simply being opened/
@@ -11657,6 +11837,14 @@ def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:
         # mirror is monotonic on that side too -- it can never regress a
         # calendar row that has already moved on (e.g. completed through some
         # other path) back down to in-progress.
-        CoachCalendarEvent.objects.filter(
+        updated = CoachCalendarEvent.objects.filter(
             pk=calendar_event_id, status=CoachCalendarEvent.STATUS_SCHEDULED,
         ).update(status=CoachCalendarEvent.STATUS_IN_PROGRESS)
+        if not updated:
+            logger.warning(
+                "review_calendar_status_mirror_rejected",
+                extra={"calendar_event_id": calendar_event_id,
+                       "review_instance_id": instance_row.get("id"),
+                       "requested_status": status,
+                       "reason": "calendar_not_scheduled_or_missing_row"},
+            )

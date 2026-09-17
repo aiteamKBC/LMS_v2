@@ -71,7 +71,7 @@ class ReviewInstancesTestCase(TestCase):
         .apply_teams_attendance_status_transition) for tests that only care
         about field validation/completion, not the attendance transition
         itself."""
-        review_instances.set_review_instance_status(instance['id'], review_instances.STATUS_IN_PROGRESS, actor='test')
+        review_instances.force_review_instance_status_for_tests(instance['id'], review_instances.STATUS_IN_PROGRESS, actor='test')
         return review_instances.get_review_instance(instance['id'])
 
     def _programme(self, programme_id='PROG-DATA', name='Data Technician'):

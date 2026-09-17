@@ -303,7 +303,7 @@ class AttendanceInProgressTestCase(TestCase):
 
     def test_awaiting_signature_is_never_moved_back_to_in_progress(self):
         record = self._scheduled_linked_row()
-        review_instances.set_review_instance_status(
+        review_instances.force_review_instance_status_for_tests(
             record.review_instance_id, review_instances.STATUS_AWAITING_SIGNATURE, actor='test',
         )
         records = [{
@@ -316,7 +316,7 @@ class AttendanceInProgressTestCase(TestCase):
 
     def test_completed_is_never_moved_back_to_in_progress(self):
         record = self._scheduled_linked_row()
-        review_instances.set_review_instance_status(
+        review_instances.force_review_instance_status_for_tests(
             record.review_instance_id, review_instances.STATUS_COMPLETED, actor='test',
             extra={'completed_at': curriculum_views.datetime.utcnow()},
         )
