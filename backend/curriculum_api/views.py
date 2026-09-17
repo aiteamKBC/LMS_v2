@@ -16598,6 +16598,94 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
     return weeks
 
 
+def persist_group_module_session_dates(module_rows, group_row):
+    """Persist a group's new delivery dates onto its unbooked live sessions.
+
+    The group PATCH updates the module rows that own the session plan.  Learner
+    delivery, however, reads the concrete ``sessionDate`` stored on each live
+    component, so leaving those copies behind makes Curriculum say Friday while
+    the learner still says Thursday.  Reuse the same planner the structure
+    readers use, then write only settings that actually moved.
+
+    ``apply_module_session_plan_to_weeks`` deliberately leaves a Microsoft-
+    confirmed occurrence alone.  Those meetings continue through the explicit
+    Teams reschedule flow (and the group PATCH response still reports their
+    calendars as stale), so this helper cannot silently move an invitation.
+    """
+    modules = [row for row in (module_rows or []) if clean_str(row.get('module_catalogue_id'))]
+    if not modules:
+        return 0
+
+    holidays_by_cohort = cohort_selected_holidays_by_cohort([
+        clean_str(row.get('cohort_id'))
+        for row in modules
+        if clean_str(row.get('cohort_id'))
+    ])
+    now = datetime.utcnow()
+    updated = 0
+
+    for module in modules:
+        catalogue_id = clean_str(module.get('module_catalogue_id'))
+        week_rows = active_week_rows(authoring_fetch_all(
+            AUTHORING_WEEKS_TABLE,
+            'module_catalogue_id = %s',
+            [catalogue_id],
+            'display_order, week_number, id',
+        ))
+        component_rows = active_component_rows(authoring_fetch_all(
+            AUTHORING_COMPONENTS_TABLE,
+            'module_catalogue_id = %s',
+            [catalogue_id],
+            'display_order, id',
+        ))
+
+        components_by_week = defaultdict(list)
+        stored_settings = {}
+        for row in component_rows:
+            if frontend_component_type(row.get('type')) != 'live-session':
+                continue
+            component_id = clean_str(row.get('id'))
+            settings = as_json_value(row.get('settings_json'), {})
+            settings = settings if isinstance(settings, dict) else {}
+            stored_settings[component_id] = settings
+            components_by_week[clean_str(row.get('week_id'))].append({
+                'id': component_id,
+                'type': 'live-session',
+                'settings': settings,
+            })
+
+        weeks = [{
+            'id': clean_str(row.get('id')),
+            'weekNumber': parse_int(row.get('week_number'), index + 1),
+            'components': components_by_week.get(clean_str(row.get('id')), []),
+        } for index, row in enumerate(week_rows)]
+        apply_module_session_plan_to_weeks(
+            module,
+            group_row or {},
+            weeks,
+            holidays=holidays_by_cohort.get(clean_str(module.get('cohort_id'))) or [],
+        )
+
+        for week in weeks:
+            for component in week.get('components') or []:
+                component_id = clean_str(component.get('id'))
+                planned_settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
+                if planned_settings == stored_settings.get(component_id, {}):
+                    continue
+                update_authoring_rows(
+                    AUTHORING_COMPONENTS_TABLE,
+                    'id = %s',
+                    [component_id],
+                    {
+                        'settings_json': json_db_value(planned_settings),
+                        'updated_at': now,
+                    },
+                )
+                updated += 1
+
+    return updated
+
+
 # ---------------------------------------------------------------------------
 # Structure revisions
 #
@@ -25672,6 +25760,14 @@ def curriculum_group_detail(request, identifier):
                 resync_group_module_delivery_counts(previous_module_rows, {
                     'session_week_day': module_delivery_updates['session_week_day'],
                 })
+            # The module row now owns the new plan, but learner delivery reads
+            # each component's concrete date.  Persist the planner's answer for
+            # unbooked sessions now; confirmed Teams occurrences are left for
+            # the explicit calendar-update flow advertised in this response.
+            persist_group_module_session_dates(
+                authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id]),
+                updated_group,
+            )
         next_cohort_id = clean_str(updated_group.get('cohort_id'))
         if next_cohort_id and next_cohort_id != previous_cohort_id:
             if previous_cohort_id:

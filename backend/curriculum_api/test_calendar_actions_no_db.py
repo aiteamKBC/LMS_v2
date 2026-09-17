@@ -416,6 +416,59 @@ class PureTests(unittest.TestCase):
         self.assertEqual(first['custom'], 'keep')
         self.assertEqual(weeks[1]['components'][0]['settings']['sessionDate'], '2026-10-15')
 
+    def test_group_schedule_persists_unbooked_dates_but_not_confirmed_teams_occurrences(self):
+        module = {
+            'module_catalogue_id': 'MODULE-1', 'cohort_id': 'COHORT-1',
+            'sessions_number': 2, 'weeks_number': 2,
+        }
+        weeks = [
+            {'id': 'WEEK-1', 'week_number': 1, 'display_order': 1},
+            {'id': 'WEEK-2', 'week_number': 2, 'display_order': 2},
+        ]
+        components = [
+            {'id': 'OPEN', 'week_id': 'WEEK-1', 'type': 'live_session', 'display_order': 1,
+             'settings_json': {'sessionDate': '2026-09-10', 'sessionTime': '09:00', 'custom': 'keep'}},
+            {'id': 'BOOKED', 'week_id': 'WEEK-2', 'type': 'live_session', 'display_order': 1,
+             'settings_json': {'sessionDate': '2026-09-17', 'sessionTime': '09:00',
+                               'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 2}},
+        ]
+        writes = []
+
+        def fetch(table, *_args):
+            return copy.deepcopy(weeks if table == 'weeks' else components if table == 'components' else [])
+
+        def update(table, where, params, values):
+            writes.append((table, where, params, copy.deepcopy(values)))
+
+        plan = {'sessions': [
+            {'sessionNumber': 1, 'weekNumber': 1, 'date': '2026-09-11', 'day': 'Friday'},
+            {'sessionNumber': 2, 'weekNumber': 2, 'date': '2026-09-18', 'day': 'Friday'},
+        ]}
+        ns = {
+            'AUTHORING_WEEKS_TABLE': 'weeks', 'AUTHORING_COMPONENTS_TABLE': 'components',
+            'authoring_fetch_all': fetch, 'active_week_rows': lambda rows: rows,
+            'active_component_rows': lambda rows: rows, 'frontend_component_type': lambda value: str(value).replace('_', '-'),
+            'as_json_value': lambda value, fallback: value if isinstance(value, dict) else fallback,
+            'clean_str': lambda value: str(value or '').strip(),
+            'parse_int': lambda value, default=0: int(value or default),
+            'cohort_selected_holidays_by_cohort': lambda _ids: {'COHORT-1': []},
+            'module_session_plan_for_weeks': lambda *_args, **_kwargs: copy.deepcopy(plan),
+            'module_session_clock': lambda *_args, **_kwargs: ('09:00', '11:00', 120),
+            'calendar_clock_to_utc_iso': lambda day, clock: f'{day}T{clock}:00Z',
+            'format_date': lambda value: str(value or ''), 'defaultdict': defaultdict,
+            'datetime': Frozen, 'json_db_value': lambda value: value,
+            'update_authoring_rows': update,
+        }
+        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks', 'persist_group_module_session_dates'], ns)
+
+        updated = ns['persist_group_module_session_dates']([module], {})
+
+        self.assertEqual(updated, 1)
+        self.assertEqual([row[2] for row in writes], [['OPEN']])
+        settings = writes[0][3]['settings_json']
+        self.assertEqual((settings['sessionDate'], settings['sessionDay']), ('2026-09-11', 'Friday'))
+        self.assertEqual(settings['custom'], 'keep')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
