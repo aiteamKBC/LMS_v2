@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from './AppIcon';
 import { SessionRecordingPlayer } from './SessionRecordingPlayer';
+import { SessionSyncStatus } from './SessionSyncStatus';
 import { formatSystemTimestamp } from '@/lib/format';
 import {
   loadSessionResult, requestSessionSync, sessionAttendanceUrl, sessionFileUrl, setRecordingVisibility,
@@ -27,7 +28,7 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
   const load = useCallback((signal: AbortSignal) =>
     loadSessionResult(seriesId, sessionNumber, kind && learnerId ? { kind, id: learnerId } : undefined, signal),
   [seriesId, sessionNumber, kind, learnerId]);
-  const saved = useSavedSessionData(load);
+  const saved = useSavedSessionData(load, true, data => ['queued', 'running'].includes(data?.job?.state || ''));
   const session = saved.data?.sessions[0];
   const loading = saved.loading;
   useEffect(() => {
@@ -40,7 +41,7 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
   const own = learner ? session?.attendance?.[0] : undefined;
   const sync = async () => {
     setSyncing(true); setError(''); setNotice('');
-    try { setNotice((await requestSessionSync(seriesId)).message); }
+    try { setNotice((await requestSessionSync(seriesId)).message); saved.refresh(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not request synchronization.'); }
     finally { setSyncing(false); }
   };
@@ -60,11 +61,12 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
         <p className="mt-1 text-xs text-foreground-500">{session?.syncedAt ? `Last saved ${formatSystemTimestamp(session.syncedAt)}` : 'No saved results for this session yet.'}</p></div>
       <div className="flex flex-wrap gap-2">
         {!learner && !preview && <button type="button" disabled={loading || syncing || !session || session.archiveReady === false} onClick={() => void sync()} className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{syncing ? 'Requesting…' : 'Sync attendance & files'}</button>}
-        <button type="button" disabled={loading} onClick={saved.refresh} className="rounded-lg border px-3 py-2 text-sm font-semibold">Refresh saved results</button>
+        <button type="button" disabled={loading || saved.refreshing} aria-busy={saved.refreshing} onClick={saved.refresh} className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-60">{saved.refreshing && !loading ? 'Refreshing…' : 'Refresh saved results'}</button>
       </div>
     </header>
     {(error || saved.error) && <p role="alert" className="m-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error || saved.error}</p>}
-    {notice && <p role="status" className="m-4 rounded-lg bg-primary-50 p-3 text-sm">{notice}</p>}
+    {notice && !saved.data?.job && <p role="status" className="m-4 rounded-lg bg-primary-50 p-3 text-sm">{notice}</p>}
+    {!learner && !preview && <SessionSyncStatus job={saved.data?.job} />}
     {session?.archiveReady === false && <p role="status" className="m-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{learner || preview
       ? 'Saved recordings and transcripts are not ready for playback yet. Please contact your tutor.'
       : 'Recording storage needs setup. Saved attendance is available below; synchronization and playback are unavailable until setup is complete.'}</p>}
