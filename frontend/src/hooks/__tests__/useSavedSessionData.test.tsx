@@ -6,6 +6,23 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 const tick = async (ms = 0) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
 
 describe('saved session refresh', () => {
+  it('polls active sync every five seconds then returns to normal without clearing saved content', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    const load = vi.fn().mockResolvedValueOnce('running').mockResolvedValue('complete');
+    const { result } = renderHook(() => useSavedSessionData<string>(load, true, value => value === 'running'));
+    await tick();
+    await tick(4_999);
+    expect(load).toHaveBeenCalledTimes(1);
+    await tick(1);
+    expect(result.current.data).toBe('complete');
+    expect(result.current.loading).toBe(false);
+    await tick(29_999);
+    expect(load).toHaveBeenCalledTimes(2);
+    await tick(1);
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+
   it('discovers new saved results while retaining data and suppressing overlapping reads', async () => {
     vi.useFakeTimers();
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
@@ -17,10 +34,12 @@ describe('saved session refresh', () => {
     await tick(30_000);
     expect(result.current.data).toBe(1);
     expect(result.current.loading).toBe(false);
+    expect(result.current.refreshing).toBe(true);
     act(() => { result.current.refresh(); window.dispatchEvent(new Event('focus')); });
     expect(load).toHaveBeenCalledTimes(2);
     await act(async () => finish(2));
     expect(result.current.data).toBe(2);
+    expect(result.current.refreshing).toBe(false);
   });
 
   it('pauses in a hidden tab, refreshes on return and keeps saved data on failure', async () => {

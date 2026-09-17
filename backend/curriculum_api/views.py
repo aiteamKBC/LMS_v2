@@ -2004,10 +2004,25 @@ GRAPH_WINDOWS_TO_IANA = {
 
 def graph_timezone_iana(graph_settings):
     """IANA id for the calendar's timezone, for the wizard to schedule against."""
+    if graph_settings.get('_schedule_timezone_iana'):
+        return graph_settings['_schedule_timezone_iana']
     override = clean_str(os.environ.get('MICROSOFT_GRAPH_TIMEZONE_IANA'))
     if override:
         return override
     return GRAPH_WINDOWS_TO_IANA.get(clean_str(graph_settings.get('timezone')), 'Europe/London')
+
+
+def teams_schedule_settings(graph_settings, payload=None, series=None):
+    """A new calendar's chosen clock, or an existing calendar's saved clock."""
+    selected = clean_str((payload or {}).get('scheduleTimeZone'))
+    if selected and selected not in ('Africa/Cairo', 'Europe/London'):
+        raise ValueError('Choose Egypt or England as the schedule time zone.')
+    stored = clean_str((series or {}).get('timezone'))
+    zone = GRAPH_WINDOWS_TO_IANA.get(stored) if stored else selected
+    if not zone:
+        return graph_settings
+    windows = next((key for key, value in GRAPH_WINDOWS_TO_IANA.items() if value == zone), stored)
+    return {**graph_settings, 'timezone': windows, '_schedule_timezone_iana': zone}
 
 
 def teams_shifted_occurrence_targets(payload, default_duration):
@@ -2602,6 +2617,7 @@ def curriculum_teams_meeting(request):
         )
 
     try:
+        graph_settings = teams_schedule_settings(graph_settings, payload)
         weekday_groups = calendar_groups(payload, graph_settings)
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
@@ -2737,6 +2753,18 @@ def curriculum_teams_meeting(request):
             'warnings': json_db_value([]), 'online_meeting_id': meeting_id,
             'meeting_options_url': meeting_options_url, 'join_url': join_url, 'updated_at': datetime.utcnow(),
         })
+        # Persist component links before returning, even if the browser has
+        # stopped waiting. Only verified occurrences may be attached.
+        if resolved_catalogue_id:
+            try:
+                saved = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])[0]
+                attach_teams_meeting_to_module_weeks(
+                    resolved_catalogue_id, saved, live_session_row_to_component_settings(saved), occurrence_rows,
+                )
+            except Exception:
+                logger.exception('The Teams calendar was saved but its component links could not be attached.')
+                return json_error('The calendar is saved, but its component links could not be saved. Use Restore Teams sessions & links.',
+                                  status=502, meetingCreated=True, liveSessionId=live_session_id)
     except RuntimeError as exc:
         update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
             'warnings': json_db_value([*warnings, str(exc)]), 'updated_at': datetime.utcnow(),
@@ -3037,12 +3065,20 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if not isinstance(payload, dict):
         return json_error('A valid JSON body is required.')
     series = series_rows[0]
+    # Omitted options retain their saved values for schedule-only callers.
+    option_fields = {'recording': 'recording', 'lobbyBypass': 'lobby_bypass', 'spokenLanguage': 'spoken_language'}
+    option_updates = {column: clean_str(payload[key]) for key, column in option_fields.items() if key in payload}
+    if ('recording' in option_updates and option_updates['recording'] not in ('none', 'record', 'record-transcribe')) or (
+        'lobby_bypass' in option_updates and option_updates['lobby_bypass'] not in TEAMS_LOBBY_VALUES
+    ) or ('spoken_language' in option_updates and option_updates['spoken_language'] not in ('en-GB', 'en-US', 'ar-EG', 'fr-FR')):
+        return json_error('Choose valid recording, lobby and language options.', status=400)
     try:
-        weekday_groups = [] if payload.get('peopleOnly') else calendar_groups(payload, get_graph_settings())
+        graph_settings = teams_schedule_settings(get_graph_settings(), series=series)
+        weekday_groups = [] if payload.get('peopleOnly') else calendar_groups(payload, graph_settings)
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
     if stored_calendar_series(series) or weekday_groups:
-        return save_weekday_calendar(payload, get_graph_settings(), series)
+        return save_weekday_calendar(payload, graph_settings, series)
 
     # The stored organizer, never the caller's. This event already exists on one
     # mailbox, and asking Graph for it on another is a 404 that would strand a
@@ -3055,7 +3091,6 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if not organizer or not event_id:
         return json_error('This Teams meeting is missing organizer or calendar event identifiers.', status=409)
 
-    graph_settings = get_graph_settings()
     title = teams_calendar_subject(payload, series)
     local_start_raw = clean_str(payload.get('localStartDateTime'))
     utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
@@ -3160,9 +3195,9 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
 
     meeting_options = {
         'organizer': organizer,
-        'recording': clean_str(series.get('recording')).lower() or 'none',
-        'lobby_bypass': clean_str(series.get('lobby_bypass')).lower() or 'invited',
-        'spoken_language': clean_str(series.get('spoken_language')) or 'en-GB',
+        'recording': option_updates.get('recording', clean_str(series.get('recording')).lower() or 'none'),
+        'lobby_bypass': option_updates.get('lobby_bypass', clean_str(series.get('lobby_bypass')).lower() or 'invited'),
+        'spoken_language': option_updates.get('spoken_language', clean_str(series.get('spoken_language')) or 'en-GB'),
         'presenters': presenters,
         'co_organizers': co_organizers,
     }
@@ -3217,6 +3252,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     )
     persist_recreated_occurrence_details(live_session_id, recreated_details)
     series_update = {
+        **option_updates,
         'hide_attendees': True,
         'warnings': json_db_value([]),
         'online_meeting_id': clean_str(graph_meeting.get('id')) or clean_str(series.get('online_meeting_id')),
@@ -3237,6 +3273,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         series_update['presenters'] = json_db_value(presenters)
         series_update['co_organizers'] = json_db_value(co_organizers)
     update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], series_update)
+    module_id = clean_str(series.get('module_catalogue_id'))
+    if module_id:
+        saved = {**series, **series_update}
+        attach_teams_meeting_to_module_weeks(module_id, saved, live_session_row_to_component_settings(saved), occurrence_rows)
     return JsonResponse({
         'updated': True,
         'meeting': {
@@ -3478,7 +3518,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             for artifact in occurrence['artifacts']:
                 artifact['metadata'] = parse_json_value(artifact.get('metadata'), {})
         return JsonResponse({
-            'series': {**stamp_live_session_instants(series), 'timeZoneIana': graph_timezone_iana(series)},
+            'series': {**stamp_live_session_instants(series), 'timeZoneIana': graph_timezone_iana(teams_schedule_settings({}, series=series))},
             'occurrences': [stamp_live_session_instants(occurrence) for occurrence in occurrences],
         })
     if request.method != 'POST':
@@ -8797,8 +8837,13 @@ def authoring_session_links_by_catalogue(module_catalogue_ids):
                 # the caller reads as "take this position's planned slot".
                 'date': format_date(settings.get('sessionDate')),
                 'startTime': clean_str(settings.get('sessionTime')),
+                'timeZone': clean_str(settings.get('sessionTimeZone')),
                 'durationMinutes': parse_int(
                     settings.get('durationMinutes') or settings.get('teamsDurationMinutes'), 0,
+                ),
+                'bookedAtMicrosoft': bool(
+                    clean_str(settings.get('teamsLiveSessionId'))
+                    and parse_int(settings.get('teamsSessionNumber'), 0) > 0
                 ),
             })
     return dict(links_by_catalogue)
@@ -9225,7 +9270,7 @@ def cohort_holiday_period_end(cohort):
     return format_date(calculate_cohort_end_date(start_date, months))
 
 
-def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_cohort=None):
+def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_cohort=None, groups_by_id=None):
     """The live sessions each authored module delivers, from its own structure.
 
     **One live-session component is one session.** The course structure decides
@@ -9286,17 +9331,10 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
         for index, link in enumerate(live_links):
             session_date = parse_date(link.get('date'))
             iso_date = session_date.isoformat()
-            # The module's clock stands in for the time of day only, and only
-            # because a module-wide slot is a real stored value the author set
-            # on the module -- not a guess. The DATE is never stood in for.
-            clock_start, clock_end, _clock_duration = module_session_clock(module, session_date=iso_date)
-            component_start = clean_str(link.get('startTime'))
-            component_duration = parse_int(link.get('durationMinutes'), 0)
-            start_time = component_start or clock_start
-            end_time = (
-                clock_time_plus_minutes(start_time, component_duration)
-                if component_start and component_duration > 0
-                else clock_end
+            start_time, end_time, _duration = module_live_session_clock(
+                module, link.get('startTime'), link.get('durationMinutes'),
+                booked=link.get('bookedAtMicrosoft', False), session_date=iso_date,
+                group_row=(groups_by_id or {}).get(clean_str(module.get('group_id'))),
             )
             sessions.append({
                 'id': f'module-{catalogue_id}-session-{index + 1}',
@@ -9318,6 +9356,7 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
                 'day': session_date.strftime('%A'),
                 'startTime': start_time,
                 'endTime': end_time,
+                'timeZone': clean_str(link.get('timeZone')),
                 'tutor': tutor,
                 'group': group_name,
                 'cohort': cohort_name,
@@ -9696,7 +9735,29 @@ def module_session_clock(module_row, group_row=None, session_date=None):
     return start_time, end_time, duration if duration > 0 else 60
 
 
-def calendar_clock_to_utc_iso(date_value, time_value):
+def module_live_session_clock(module_row, start_time='', duration_minutes=0, *, booked=False, group_row=None, session_date=None):
+    """Unbooked sessions inherit delivery times; confirmed bookings keep theirs.
+
+    Component settings from imports and old defaults are not schedule overrides.
+    Explicit per-session reschedules and per-weekday slots still take precedence.
+    This only resolves values for readers; it performs no storage or Graph writes.
+    """
+    slot_start, slot_end, slot_duration = module_session_clock(module_row, group_row, session_date)
+    if override_clock(module_row, session_date):
+        return slot_start, slot_end, slot_duration
+    has_schedule = bool(module_weekly_schedule(module_row)) or any(
+        clean_str((row or {}).get(key))
+        for row in (module_row, group_row)
+        for key in ('session_start_time', 'session_end_time')
+    )
+    if has_schedule and not booked:
+        return slot_start, slot_end, slot_duration
+    start = clean_str(start_time) or slot_start
+    duration = parse_int(duration_minutes, 0) or slot_duration
+    return start, clock_time_plus_minutes(start, duration), duration
+
+
+def calendar_clock_to_utc_iso(date_value, time_value, time_zone=None):
     """A calendar-zone wall clock as the instant it names.
 
     Session dates and times are stored as the local clock the timetable is read
@@ -9709,7 +9770,7 @@ def calendar_clock_to_utc_iso(date_value, time_value):
         return ''
     naive = datetime(day.year, day.month, day.day) + timedelta(minutes=minutes)
     try:
-        zone = ZoneInfo(graph_timezone_iana({}))
+        zone = ZoneInfo(time_zone or graph_timezone_iana({}))
     except Exception:
         logger.debug('Unknown calendar timezone; falling back to UTC.', exc_info=True)
         zone = timezone.utc
@@ -10250,6 +10311,9 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         authoring_sessions = build_sessions_from_authoring_modules(
             authoring_modules,
             cohort_selected_holidays_by_id(cohorts, rows.get('holidays', [])),
+            groups_by_id={group['id']: {
+                'session_start_time': group.get('startTime'), 'session_end_time': group.get('endTime'),
+            } for group in groups},
         )
         sessions = prefer_authoring_module_sessions(
             training_sessions,
@@ -15533,6 +15597,7 @@ def live_session_row_to_component_settings(row):
         'teamsDurationMinutes': parse_int(row.get('duration_minutes'), 60),
         'durationMinutes': parse_int(row.get('duration_minutes'), 60),
         'teamsProvider': clean_str(row.get('provider')) or 'Microsoft Teams',
+        'sessionTimeZone': GRAPH_WINDOWS_TO_IANA.get(clean_str(row.get('timezone')), graph_timezone_iana({})),
         'teamsRepeat': clean_str(row.get('repeat_pattern')) or 'none',
         'teamsRepeatOccurrences': parse_int(row.get('repeat_occurrences'), 1),
         'teamsLobbyBypass': clean_str(row.get('lobby_bypass')) or 'invited',
@@ -15671,6 +15736,16 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         if not occurrence and stored_calendar_series(series_row):
             return {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
         session_settings = live_occurrence_component_settings(occurrence, series_settings)
+        # Imported defaults may still be stored on an unbooked component even
+        # though Create used its group's current clock. Stamp the verified clock
+        # when first attaching; subsequent restores keep confirmed overrides.
+        if occurrence and not (clean_str(existing_settings.get('teamsLiveSessionId'))
+                               and parse_int(existing_settings.get('teamsSessionNumber'), 0) > 0):
+            start = parse_graph_datetime(occurrence.get('scheduled_start'))
+            if start:
+                zone = ZoneInfo(series_settings.get('sessionTimeZone') or graph_timezone_iana({}))
+                local = start.replace(tzinfo=start.tzinfo or timezone.utc).astimezone(zone)
+                session_settings['sessionTime'] = local.strftime('%H:%M')
         shared_series_settings = {
             key: value
             for key, value in series_settings.items()
@@ -15695,7 +15770,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             # Only when the calendar holds no instant of its own for this
             # session: the occurrence's start is the one Teams will really run.
             if not clean_str(session_settings.get('sessionDateTimeUtc')):
-                planned_instant = calendar_clock_to_utc_iso(session_date, slot_time)
+                planned_instant = calendar_clock_to_utc_iso(session_date, slot_time, series_settings.get('sessionTimeZone'))
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
@@ -15825,6 +15900,10 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
         [clean_str(sessions[0].get('id'))],
         'session_number asc',
     )
+    verification_pending = bool(parse_json_value(sessions[0].get('warnings'), [])) or not occurrence_rows
+    if request.method == 'POST' and verification_pending:
+        return json_error('The calendar is saved, but verification is still incomplete. Review the existing calendar before restoring its links.',
+                          status=409, code='teams_calendar_verification_pending')
     # Opt-in, because this endpoint is also the silent restore the Module Builder
     # runs when it opens a module whose saved join link has gone missing. That
     # path must never author anything: only a person pressing "re-attach" may.
@@ -15859,9 +15938,21 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     payload = get_authoring_structure_payload(resolved_id)
     body = {
         'restored': request.method == 'POST',
+        'verificationPending': verification_pending,
         'updatedComponents': updated_components,
         'createdComponents': created_components,
         'meeting': settings_update,
+        'calendar': {
+            'title': clean_str(sessions[0].get('module_title')),
+            'seriesMode': 'per_day' if stored_calendar_series(sessions[0]) else 'shared',
+            'occurrences': [{
+                'sessionNumber': row['session_number'],
+                'startDateTimeUtc': utc_iso_value(row.get('scheduled_start')),
+                'durationMinutes': int((parse_graph_datetime(row['scheduled_end']) - parse_graph_datetime(row['scheduled_start'])).total_seconds() / 60),
+                'joinUrl': clean_str(row.get('join_url')) or settings_update['teamsMeetingUrl'],
+                'eventId': clean_str(row.get('graph_event_id')),
+            } for row in occurrence_rows],
+        },
         # Stamped the same way the structure GET stamps it. A POST here rewrote
         # the module's live-session components, so the revision the Module
         # Builder is holding is now behind -- and the Builder opens a module by
@@ -15933,7 +16024,6 @@ def module_expected_teams_occurrence_keys(module_row, holidays=None, group_row=N
         len(dated),
         holidays=holidays,
     )
-    fallback_start, _end_time, _duration = module_session_clock(module_row, group_row)
     keys = []
     # The same walk `build_sessions_from_authoring_modules` makes, over the same
     # rows, with the same clock fallback. Any drift between the two reappears as
@@ -15941,11 +16031,11 @@ def module_expected_teams_occurrence_keys(module_row, holidays=None, group_row=N
     # is why neither of them may invent a session the other does not have.
     for link in dated:
         session_date = format_date(link.get('date'))
-        clock_start, _clock_end, _clock_duration = module_session_clock(
-            module_row, group_row, session_date=session_date,
+        start_time, _end_time, _duration = module_live_session_clock(
+            module_row, link.get('startTime'), link.get('durationMinutes'),
+            booked=link.get('bookedAtMicrosoft', False), group_row=group_row, session_date=session_date,
         )
-        start_time = clean_str(link.get('startTime')) or clock_start or fallback_start
-        key = teams_calendar_minute_key(calendar_clock_to_utc_iso(session_date, start_time))
+        key = teams_calendar_minute_key(calendar_clock_to_utc_iso(session_date, start_time, link.get('timeZone')))
         if key:
             keys.append(key)
     return keys, plan
@@ -16269,6 +16359,7 @@ def curriculum_teams_meeting_summary(request):
             'eventId': clean_str(row.get('graph_event_id')),
             'onlineMeetingId': clean_str(row.get('online_meeting_id')),
             'organizerEmail': clean_str(row.get('organizer_email')),
+            'timeZone': GRAPH_WINDOWS_TO_IANA.get(clean_str(row.get('timezone')), graph_timezone_iana({})),
             'presenters': teams_series_email_list(row.get('presenters')),
             'coOrganizers': teams_series_email_list(row.get('co_organizers')),
             'attendees': teams_series_email_list(row.get('attendees')),
@@ -16558,21 +16649,19 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 session_date = format_date(planned.get('date'))
                 if not session_date:
                     continue
-                slot_time, _slot_end, slot_duration = module_session_clock(module, group_row, session_date)
-                # Only the day is the plan's to decide. A clock and a length the
-                # author set on this session stay theirs; the module's own slot
-                # fills them in where nothing has yet.
-                authored_time = clean_str(settings.get('sessionTime'))
-                authored_duration = parse_int(settings.get('durationMinutes'), 0)
+                slot_time, _slot_end, slot_duration = module_live_session_clock(
+                    module, settings.get('sessionTime'), settings.get('durationMinutes'),
+                    booked=booked_at_microsoft, group_row=group_row, session_date=session_date,
+                )
                 planned_settings = {
                     **settings,
                     'sessionDate': session_date,
                     'sessionDay': clean_str(planned.get('day')),
-                    'sessionTime': authored_time or slot_time,
-                    'durationMinutes': authored_duration or slot_duration,
-                    'teamsDurationMinutes': authored_duration or slot_duration,
+                    'sessionTime': slot_time,
+                    'durationMinutes': slot_duration,
+                    'teamsDurationMinutes': slot_duration,
                 }
-                planned_instant = calendar_clock_to_utc_iso(session_date, authored_time or slot_time)
+                planned_instant = calendar_clock_to_utc_iso(session_date, slot_time, settings.get('sessionTimeZone'))
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
@@ -21188,6 +21277,13 @@ def curriculum_module_session_plan(request, module_catalogue_id):
             # with an empty plan would read as "these weeks have no dates".
             return json_error('Module not found.', status=404)
         module_row = module_rows[0]
+        if (module_row.get('group_id') and not module_weekly_schedule(module_row)
+                and not all(module_row.get(key) for key in ('session_start_time', 'session_end_time'))):
+            group_row = fetch_group_row(module_row['group_id']) or {}
+            module_row = {**module_row, **{
+                key: module_row.get(key) or group_row.get(key)
+                for key in ('session_start_time', 'session_end_time')
+            }}
         requested_sessions = max(0, parse_int(request.GET.get('sessions'), 0))
         requested_weeks = max(0, parse_int(request.GET.get('weeks'), 0))
         if requested_sessions:

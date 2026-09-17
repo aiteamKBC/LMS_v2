@@ -102,6 +102,18 @@ describe('review before sending', () => {
     expect(fetchMock.mock.calls[0][1]?.method).toBeUndefined();
   });
 
+  it('reviews the changed meeting options and sends them to the existing calendar', async () => {
+    const values = { ...input(), recording: 'none', lobbyBypass: 'organizer', spokenLanguage: 'ar-EG' };
+    await updateTeamsMeetingSchedule('LIVE-SYNTHETIC', values);
+    const options = vi.mocked(Swal.fire).mock.calls[0][0] as unknown as SweetAlertOptions;
+    expect(options.html).toContain('Arabic (Egypt)');
+    expect(options.html).toContain('Only organizers');
+    expect(options.html).toContain('Do not start automatically');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ recording: 'none', lobbyBypass: 'organizer', spokenLanguage: 'ar-EG' });
+    expect(fetchMock.mock.calls[1][0]).toContain('/teams-meetings/LIVE-SYNTHETIC/schedule/');
+    expect(fetchMock.mock.calls[1][1].method).toBe('PATCH');
+  });
+
   it('reviews serialized invitation fields and each saved duration when saving people', async () => {
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ series: {
       organizer_email: 'organizer@example.invalid', join_url: 'https://teams.microsoft.com/meet/synthetic',
@@ -148,7 +160,8 @@ describe('AM/PM input and labels', () => {
     const payload = buildTeamsCalendarInput({ catalogueId: 'MOD-SYNTHETIC', name: 'Synthetic', durationMinutes: 60,
       plannedStarts: [], teamsStarts: [], sessions: [{ id: 'one', date: '2026-09-17', startTime: '03:00 PM', endTime: '05:00 PM' }] as never,
     }, { ...emptyTeamsCalendarForm(), organizerEmail: 'organizer@example.invalid' });
-    expect(payload.startDateTimeUtc).toBe('2026-09-17T14:00:00.000Z');
+    expect(payload.scheduleTimeZone).toBe('Africa/Cairo');
+    expect(payload.startDateTimeUtc).toBe('2026-09-17T12:00:00.000Z');
     expect(payload.durationMinutes).toBe(120);
     expect(payload.hideAttendees).toBe(true);
   });

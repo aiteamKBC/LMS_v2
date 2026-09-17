@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { isTeamsReviewCancelled } from '../teams-meetings/calendarReview';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Modal } from '@/pages/users/components/Modal';
@@ -11,7 +12,9 @@ import { cleanText, formatDateLabel } from '../shared/entities/model';
 import { InlineError } from '../shared/entities/ui';
 import {
   buildTeamsCalendarInput,
+  DEFAULT_DURATION_MINUTES,
   emptyTeamsCalendarForm,
+  minutesBetween,
   sessionNaiveLocal,
   TeamsCalendarFormBody,
   type TeamsCalendarForm,
@@ -19,18 +22,23 @@ import {
 } from '../teams-meetings/createCalendarForm';
 import {
   createTeamsMeeting,
+  ApiError,
+  CurriculumRequestTimeout,
+  readModuleTeamsMeeting,
   fetchModuleMeetingInvitees,
   fetchModuleSessionPlan,
   loadTeamsMeetingConfiguration,
   moduleLiveSessionDateDrift,
   moduleTeamsPlannedSessions,
   restoreModuleTeamsMeeting,
+  updateTeamsMeetingSchedule,
   utcIsoToCalendarParts,
   zonedNaiveToUtcIso,
   type LiveSessionDateDrift,
   type ModuleCatalogueItem,
   type ModuleComponent,
   type ModuleTeamsPlannedSession,
+  type SavedModuleTeamsMeeting,
   type TeamsMeetingInput,
   type TeamsMeetingResult,
 } from './moduleAuthoringData';
@@ -48,7 +56,7 @@ export type TeamsMeetingModuleContext = ModuleCatalogueItem & {
 };
 
 /**
- * Create a module's Teams calendar, from a live-session component or from the
+ * Create or update a module's Teams calendar, from a live-session component or from the
  * module itself.
  *
  * The form itself is the Teams Meetings page's form — same dates preview, same
@@ -68,6 +76,7 @@ export function TeamsMeetingModal({
   unsavedChanges = false,
   onClose,
   onCreated,
+  onRestored,
 }: {
   component?: ModuleComponent;
   module: TeamsMeetingModuleContext;
@@ -87,6 +96,7 @@ export function TeamsMeetingModal({
   unsavedChanges?: boolean;
   onClose: () => void;
   onCreated: (result: TeamsMeetingResult, input: TeamsMeetingInput) => void;
+  onRestored?: (module: ModuleCatalogueItem) => void;
 }) {
   const settings = component?.settings ?? {};
   const storedEmails = (key: string) => (Array.isArray(settings[key])
@@ -117,6 +127,11 @@ export function TeamsMeetingModal({
   const [invitedPrefilling, setInvitedPrefilling] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [creationUncertain, setCreationUncertain] = useState(false);
+  const [existingCalendar, setExistingCalendar] = useState<SavedModuleTeamsMeeting | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(true);
+  const [calendarLoadError, setCalendarLoadError] = useState('');
+  const [calendarReadAttempt, setCalendarReadAttempt] = useState(0);
   // A module's saved schedule already knows when it runs, holiday shifts and
   // all. Those dates are the ones the calendar has to sit on — exactly as the
   // Teams Meetings page builds the series — so the meeting is created on them
@@ -137,6 +152,52 @@ export function TeamsMeetingModal({
   // reading it from a ref keeps a keystroke in the builder behind the dialog
   // from re-planning the dates under them.
   const openedWith = useRef(module);
+
+  useEffect(() => {
+    let active = true;
+    setCalendarLoading(true);
+    setCalendarLoadError('');
+    readModuleTeamsMeeting(module.catalogueId).then(saved => {
+      if (!active) return;
+      const held = saved.meeting;
+      if (!held?.teamsLiveSessionId || !held.teamsOrganizerEmail || !saved.calendar) {
+        throw new Error('The saved calendar details are incomplete. Reload them before updating.');
+      }
+      const zone = held.sessionTimeZone;
+      if (zone !== 'Africa/Cairo' && zone !== 'Europe/London') {
+        throw new Error('The saved calendar time zone could not be loaded. Review it in Teams Meetings.');
+      }
+      if (!Array.isArray(saved.calendar.occurrences) || saved.calendar.occurrences.some(item => (
+        !Number.isFinite(Date.parse(item.startDateTimeUtc)) || !Number.isInteger(item.sessionNumber) || item.sessionNumber < 1
+        || !Number.isFinite(item.durationMinutes) || item.durationMinutes <= 0
+      )) || (!saved.verificationPending && !saved.calendar.occurrences.length)) {
+        throw new Error('The saved calendar dates could not be loaded. Review them in Teams Meetings.');
+      }
+      const emails = (key: string) => {
+        if (!Array.isArray(held[key])) throw new Error('The saved invitation lists could not be loaded.');
+        return (held[key] as string[]).join('\n');
+      };
+      const attendeeFields = { attendees: emails('teamsAttendees'), presenters: emails('teamsPresenters'), coOrganizers: emails('teamsCoOrganizers') };
+      setExistingCalendar(saved);
+      setForm(current => ({ ...current, ...attendeeFields,
+        title: saved.calendar.title || module.title,
+        organizerEmail: String(held.teamsOrganizerEmail),
+        scheduleTimeZone: zone, seriesMode: saved.calendar.seriesMode,
+        durationMinutes: '', details: '',
+        lobbyBypass: String(held.teamsLobbyBypass || 'invited'),
+        recording: String(held.teamsRecording || 'none'),
+        spokenLanguage: String(held.teamsSpokenLanguage || 'en-GB'),
+        meetingType: String(held.teamsMeetingType || 'live-session'),
+      }));
+    }).catch(failure => {
+      if (!active) return;
+      // Only a confirmed absence allows Create. A failed read must never offer
+      // another calendar for a module whose saved meeting is still unknown.
+      if (failure instanceof ApiError && failure.status === 404 && !component?.settings.teamsLiveSessionId) return;
+      setCalendarLoadError(failure instanceof Error ? failure.message : 'Unable to load the saved Teams calendar.');
+    }).finally(() => { if (active) setCalendarLoading(false); });
+    return () => { active = false; };
+  }, [module.catalogueId, module.title, component?.settings.teamsLiveSessionId, calendarReadAttempt]);
 
   useEffect(() => {
     let active = true;
@@ -213,15 +274,26 @@ export function TeamsMeetingModal({
     return cleanText(match?.label);
   }, [holidays]);
 
+  const displayedSessions = existingCalendar ? existingCalendar.calendar.occurrences.map(occurrence => {
+    const start = utcIsoToCalendarParts(occurrence.startDateTimeUtc, form.scheduleTimeZone);
+    const end = utcIsoToCalendarParts(new Date(Date.parse(occurrence.startDateTimeUtc) + occurrence.durationMinutes * 60000).toISOString(), form.scheduleTimeZone);
+    return { ...occurrence, date: start.date, startTime: start.time, endTime: end.time, timeZone: form.scheduleTimeZone };
+  }) : sessions;
   const row: TeamsCalendarTarget = {
     catalogueId: cleanText(module.catalogueId),
     name: cleanText(component?.title) || cleanText(module.title) || 'Live session',
-    sessions,
-    plannedStarts: sessions.map(session => zonedNaiveToUtcIso(sessionNaiveLocal(session))),
-    // Nothing is on the Teams calendar yet — this dialog only ever opens for a
-    // module that has no series.
-    teamsStarts: [],
-    durationMinutes: Math.max(15, Number(form.durationMinutes) || 60),
+    sessions: displayedSessions,
+    plannedStarts: existingCalendar ? existingCalendar.calendar.occurrences.map(item => item.startDateTimeUtc)
+      : sessions.map(session => zonedNaiveToUtcIso(sessionNaiveLocal(session), form.scheduleTimeZone)),
+    teamsStarts: existingCalendar?.calendar.occurrences.map(item => item.startDateTimeUtc) || [],
+    // The module's own length, not the form's. Duration is an override applied
+    // on top of these rows, so reading it back in here made the fallback follow
+    // whatever the reader had just picked and the preview could never disagree
+    // with the payload -- or agree with the module.
+    durationMinutes: Math.max(
+      15,
+      existingCalendar?.calendar.occurrences[0]?.durationMinutes || minutesBetween(sessions[0]?.startTime || '', sessions[0]?.endTime || '') || DEFAULT_DURATION_MINUTES,
+    ),
   };
 
   // Presenters/Attendees derived from the module itself: its assigned tutor as
@@ -240,30 +312,71 @@ export function TeamsMeetingModal({
     }
   };
 
+  const recoverLinks = async () => {
+    const saved = await readModuleTeamsMeeting(row.catalogueId);
+    if (saved.verificationPending) {
+      throw new Error('The calendar is saved, but verification is still incomplete. Review the existing calendar in Teams Meetings, then check its links again.');
+    }
+    const restored = await restoreModuleTeamsMeeting(row.catalogueId);
+    if (!restored.module) throw new Error('The saved component links could not be loaded.');
+    onRestored?.(restored.module);
+    onClose();
+  };
+
   const submit = async () => {
     setError('');
+    if (calendarLoading || calendarLoadError || existingCalendar?.verificationPending) return;
     // The button is already disabled for this, but the refusal lives here too:
     // creating the calendar writes to real calendars, so it must not depend on
     // one piece of UI state being right.
     if (unsavedChanges) {
-      setError('Save the module before creating its Teams calendar. These dates are not stored yet.');
+      setError('Save the module before saving its Teams calendar. These dates are not stored yet.');
       return;
     }
     if (!form.organizerEmail.trim()) {
       setError('Enter the Microsoft 365 organizer email.');
       return;
     }
-    if (!sessions.length) {
+    if (!row.sessions.length) {
       setError('This module has no dated live sessions, so there is nothing to put on a calendar. A meeting is created for each live-session component in the Course structure, on that component’s own date — add them, or give the ones it has a date, and save.');
       return;
     }
     setSaving(true);
     try {
+      if (creationUncertain) {
+        await recoverLinks();
+        return;
+      }
       const input = buildTeamsCalendarInput(row, form);
+      if (existingCalendar) {
+        const held = existingCalendar.meeting;
+        const peopleOnly = input.scheduledOccurrences?.every((item, index) => item.durationMinutes === existingCalendar.calendar.occurrences[index].durationMinutes);
+        const result = await updateTeamsMeetingSchedule(String(held.teamsLiveSessionId), {
+          title: input.title, organizerEmail: String(held.teamsOrganizerEmail), eventId: String(held.teamsEventId || ''),
+          localStartDateTime: input.localStartDateTime, startDateTimeUtc: input.startDateTimeUtc,
+          durationMinutes: input.durationMinutes, repeat: (held.teamsRepeat || input.repeat) as TeamsMeetingInput['repeat'],
+          repeatOccurrences: input.repeatOccurrences, scheduledOccurrences: input.scheduledOccurrences,
+          seriesMode: existingCalendar.calendar.seriesMode, peopleOnly,
+          attendees: input.attendees, presenters: input.presenters, coOrganizers: input.coOrganizers,
+          lobbyBypass: input.lobbyBypass, recording: input.recording, spokenLanguage: input.spokenLanguage,
+        });
+        if (!result.updated) throw new Error('Microsoft did not confirm the calendar update.');
+        if (result.warnings?.length) throw new Error(result.warnings.map(item => item.message).join(' '));
+        try {
+          const restored = await restoreModuleTeamsMeeting(row.catalogueId);
+          if (!restored.module) throw new Error('Missing component links.');
+          onRestored?.(restored.module);
+        } catch {
+          throw new Error('The calendar was updated, but its component links could not be refreshed. Use Restore Teams sessions & links.');
+        }
+        onClose();
+        return;
+      }
       const result = await createTeamsMeeting(input);
       let attachmentWarning = '';
+      let restoredModule: ModuleCatalogueItem | undefined;
       try {
-        await restoreModuleTeamsMeeting(row.catalogueId);
+        restoredModule = (await restoreModuleTeamsMeeting(row.catalogueId)).module;
       } catch {
         attachmentWarning = 'The calendar was created, but its component links could not be refreshed. Use Restore Teams sessions & links.';
       }
@@ -275,7 +388,7 @@ export function TeamsMeetingModal({
         ? sessions.findIndex(session => session.componentId === component.id || session.date === component.settings.sessionDate)
         : -1;
       const scheduled = component ? input.scheduledOccurrences?.[Math.max(0, selectedIndex)] : undefined;
-      const selectedDate = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc).date : '';
+      const selectedDate = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc, input.scheduleTimeZone).date : '';
       const day = selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${selectedDate}T12:00:00Z`)) : '';
       const daySeries = result.meeting.calendarSeries?.find(series => series.day === day);
       onCreated({ ...result, meeting: {
@@ -283,11 +396,24 @@ export function TeamsMeetingModal({
         ...(daySeries ? { joinUrl: daySeries.joinUrl, eventId: daySeries.eventId, onlineMeetingId: daySeries.onlineMeetingId || '' } : {}),
         ...(scheduled ? { startDateTimeUtc: scheduled.startDateTimeUtc, durationMinutes: scheduled.durationMinutes } : {}),
       } }, input);
+      if (restoredModule) onRestored?.(restoredModule);
       onClose();
       await finishTeamsCreation(result, input, attachmentWarning);
     } catch (err) {
       if (isTeamsReviewCancelled(err)) return;
-      setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');
+      if (!existingCalendar && (err instanceof CurriculumRequestTimeout || (err instanceof ApiError && (
+        err.data?.code === 'teams_calendar_already_exists' || err.data?.meetingCreated || err.data?.partial
+      )))) {
+        setCreationUncertain(true);
+        try {
+          await recoverLinks();
+          return;
+        } catch (recoveryError) {
+          setError(recoveryError instanceof Error ? recoveryError.message : 'The saved calendar could not be checked.');
+          return;
+        }
+      }
+      setError(err instanceof Error ? err.message : 'Microsoft Teams could not save the meeting.');
     } finally {
       setSaving(false);
     }
@@ -313,14 +439,14 @@ export function TeamsMeetingModal({
         <button
           type="button"
           onClick={() => void submit()}
-          disabled={saving || configurationLoading || sessionsLoading || !graphConfigured || !sessions.length || unsavedChanges}
+          disabled={saving || configurationLoading || sessionsLoading || calendarLoading || Boolean(calendarLoadError) || existingCalendar?.verificationPending || !graphConfigured || !row.sessions.length || unsavedChanges}
           title={unsavedChanges
             ? 'Save the module first. These dates are not stored yet, so Teams would be given a date the module does not have.'
-            : "Create one Teams meeting on each of this module's stored session dates."}
+            : existingCalendar ? 'Update the existing Teams calendar.' : "Create one Teams meeting on each of this module's stored session dates."}
           className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <AppIcon className={saving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-calendar-check-line text-sm'}></AppIcon>
-          Create
+          {calendarLoading ? 'Loading calendar…' : creationUncertain ? 'Check saved calendar & restore links' : existingCalendar ? 'Update' : calendarLoadError ? 'Calendar unavailable' : 'Create'}
         </button>
       )}
     >
@@ -339,7 +465,7 @@ export function TeamsMeetingModal({
             <span className="font-bold">This module has unsaved changes. </span>
             The dates below include them, but a Teams meeting invites real people and is linked back to the
             module&rsquo;s saved sessions — so a session that only exists in this tab would leave Teams holding
-            a date the module does not have. Close this, press <span className="font-bold">Save</span>, then create the calendar.
+            a date the module does not have. Close this, press <span className="font-bold">Save</span>, then reopen the calendar.
           </p>
         </div>
       )}
@@ -374,10 +500,16 @@ export function TeamsMeetingModal({
           </div>
         </div>
       )}
-      {sessionsLoading ? (
+      {existingCalendar?.verificationPending && <p role="alert" className="mb-4 text-sm text-amber-800">
+        This calendar exists, but verification is incomplete. <Link className="underline" to={`/curriculum/teams-meetings?module=${encodeURIComponent(row.catalogueId)}`}>Review it in Teams Meetings</Link> before updating its saved bookings.
+      </p>}
+      {calendarLoadError ? <div role="alert" className="space-y-2 text-sm text-red-700">
+        <p>{calendarLoadError}</p>
+        <button type="button" className="font-semibold underline" onClick={() => setCalendarReadAttempt(value => value + 1)}>Retry loading calendar</button>
+      </div> : sessionsLoading || calendarLoading ? (
         <p className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-3 text-[11px] font-semibold text-foreground-500">
           <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-          Loading this module's session dates…
+          Loading this module's calendar and session dates…
         </p>
       ) : (
         <TeamsCalendarFormBody
@@ -388,6 +520,7 @@ export function TeamsMeetingModal({
           prefilling={invitedPrefilling}
           onPrefill={() => void prefillInvitees()}
           timeZoneLabel={graphTimeZone}
+          existingCalendar={Boolean(existingCalendar)}
         />
       )}
       {error && <div className="mt-4"><InlineError message={error} /></div>}

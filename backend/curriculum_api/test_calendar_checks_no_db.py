@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib import parse as urllib_parse
 from zoneinfo import ZoneInfo
 
@@ -36,16 +36,20 @@ class CalendarChecksTests(unittest.TestCase):
         self.events, self.instances, self.calls, self.series, self.tracked = {}, [], [], [], []
         self.instances_by_master = {}
         self.options_ok = True
+        self.attach = Mock()
         self.corrupt = ''
         self.payload = self.make_payload()
         self.v = types.ModuleType('curriculum_api.views')
         self.v.__dict__.update(datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo,
                               escape=escape, re=re, urllib_parse=urllib_parse, logger=logging.getLogger('calendar-test'),
                               TEAMS_REPEAT_VALUES={'none', 'weekly', 'daily', 'weekdays'},
-                              TEAMS_LOBBY_VALUES={'invited'}, LIVE_SESSIONS_TABLE='series', LIVE_SESSION_OCCURRENCES_TABLE='occurrences',
+                              TEAMS_LOBBY_VALUES={'invited', 'organizer'}, LIVE_SESSIONS_TABLE='series', LIVE_SESSION_OCCURRENCES_TABLE='occurrences',
                               csrf_exempt=lambda fn: fn, JsonResponse=Response,
                               json_error=lambda message, status=400, **kwargs: Response({'error': message, **kwargs}, status),
-                              graph_timezone_iana=lambda _: 'Europe/London', teams_calendar_subject=lambda payload, series=None: payload.get('title', 'Synthetic'),
+                              graph_timezone_iana=lambda settings: settings.get('_schedule_timezone_iana') or 'Europe/London', teams_calendar_subject=lambda payload, series=None: payload.get('title', 'Synthetic'),
+                              GRAPH_WINDOWS_TO_IANA={'GMT Standard Time': 'Europe/London', 'Egypt Standard Time': 'Africa/Cairo'},
+                              attach_teams_meeting_to_module_weeks=self.attach,
+                              live_session_row_to_component_settings=lambda row: {'liveSessionUrl': row['join_url']},
                               calendar_targets=checks.calendar_targets, local_calendar_recurrence=checks.local_calendar_recurrence,
                               CalendarMismatch=checks.CalendarMismatch, safe_teams_join_url=checks.safe_teams_join_url,
                               utc_datetime=checks.utc_datetime, graph_calendar_time=checks.graph_calendar_time,
@@ -65,7 +69,7 @@ class CalendarChecksTests(unittest.TestCase):
         names = {'clean_str', 'parse_graph_datetime', 'teams_attendee_emails', 'teams_event_body_html',
                  'teams_event_payload', 'teams_calendar_minute_key', 'teams_shifted_occurrence_targets',
                  'apply_teams_occurrence_shifts', 'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule',
-                 'reschedule_single_live_session_occurrence'}
+                 'reschedule_single_live_session_occurrence', 'teams_schedule_settings'}
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         self.assertEqual(len(nodes), len(names))
@@ -102,7 +106,8 @@ class CalendarChecksTests(unittest.TestCase):
         self.series = [{'id': 'LIVE-SYNTHETIC', 'graph_event_id': event['id'], 'organizer_email': organizer,
                         'join_url': event['onlineMeeting']['joinUrl'], 'attendees': attendees, 'presenters': presenters,
                         'co_organizers': [], 'duration_minutes': 120, 'repeat_pattern': 'weekly', 'repeat_occurrences': 12,
-                        'hide_attendees': True, 'warnings': warnings}]
+                        'hide_attendees': True, 'warnings': warnings, 'timezone': settings.get('timezone'),
+                        'module_catalogue_id': payload.get('moduleCatalogueId')}]
         self.assertFalse(kwargs['persist_occurrences'])
         return 'LIVE-SYNTHETIC', 0
 
@@ -116,7 +121,8 @@ class CalendarChecksTests(unittest.TestCase):
 
     def expand(self, event):
         self.instances = []
-        start = checks.event_instant(event, 'start').astimezone(ZoneInfo('Europe/London'))
+        zone = self.v.GRAPH_WINDOWS_TO_IANA.get(event['start'].get('timeZone'), 'Europe/London')
+        start = checks.event_instant(event, 'start').astimezone(ZoneInfo(zone))
         duration = checks.event_instant(event, 'end') - checks.event_instant(event, 'start')
         recurrence = event.get('recurrence')
         count = recurrence['range']['numberOfOccurrences'] if recurrence else 1
@@ -165,6 +171,41 @@ class CalendarChecksTests(unittest.TestCase):
 
     def create(self):
         return self.v.curriculum_teams_meeting(types.SimpleNamespace(method='POST'))
+
+    def test_verified_shared_calendar_attaches_before_response_without_browser_restore(self):
+        result = self.create()
+        self.assertEqual(result.status_code, 201, result)
+        module_id, saved, settings, occurrences = self.attach.call_args.args
+        self.assertEqual(module_id, 'MOD-SYNTHETIC')
+        self.assertEqual(saved['id'], 'LIVE-SYNTHETIC')
+        self.assertEqual(settings['liveSessionUrl'], result['meeting']['joinUrl'])
+        self.assertEqual(len(occurrences), 12)
+        self.assertTrue(all(event['attendees'] for event in self.events.values()))
+
+    def test_unverified_calendar_does_not_attach_links(self):
+        self.options_ok = False
+        self.assertEqual(self.create().status_code, 502)
+        self.attach.assert_not_called()
+
+    def test_cairo_clock_is_used_for_graph_and_saved_for_future_updates(self):
+        starts = [datetime.fromisoformat(day + 'T09:00:00').replace(tzinfo=ZoneInfo('Africa/Cairo')).astimezone(timezone.utc)
+                  for day in ['2026-10-23', '2026-10-30', '2026-11-06']]
+        self.payload.update(scheduleTimeZone='Africa/Cairo', localStartDateTime='2026-10-23T09:00:00',
+                            startDateTimeUtc=starts[0].isoformat(), repeatOccurrences=3,
+                            scheduledOccurrences=[{'sessionNumber': i + 1, 'startDateTimeUtc': start.isoformat(), 'durationMinutes': 120}
+                                                  for i, start in enumerate(starts)])
+        result = self.create()
+        self.assertEqual(result.status_code, 201, result)
+        self.assertEqual(self.events['event-1']['start'], {'dateTime': '2026-10-23T09:00:00', 'timeZone': 'Egypt Standard Time'})
+        self.assertEqual(self.series[0]['timezone'], 'Egypt Standard Time')
+        settings = self.v.teams_schedule_settings({'timezone': 'GMT Standard Time'}, series=self.series[0])
+        self.assertEqual(settings['_schedule_timezone_iana'], 'Africa/Cairo')
+        self.assertEqual([checks.event_instant(item, 'start') for item in self.instances], starts)
+
+    def test_invalid_schedule_zone_is_refused_before_graph(self):
+        self.payload['scheduleTimeZone'] = 'Invalid/Zone'
+        self.assertEqual(self.create().status_code, 400)
+        self.assertEqual(self.calls, [])
 
     def test_midnight_dst_uses_one_weekday_and_publishes_after_cleanup(self):
         result = self.create()
@@ -234,6 +275,43 @@ class CalendarChecksTests(unittest.TestCase):
         self.calls.clear()
         self.assertEqual(self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC').status_code, 200)
         self.assertFalse([call for call in self.calls if call[0] == 'PATCH'])
+
+    def test_existing_calendar_options_update_preserves_identity_dates_and_invitation_body(self):
+        self.assertEqual(self.create().status_code, 201)
+        before = copy.deepcopy(self.events['event-1'])
+        self.payload.update(peopleOnly=True, recording='record', lobbyBypass='organizer', spokenLanguage='ar-EG')
+        self.v.apply_teams_meeting_options = Mock(return_value=(True, {'id': 'online-1'}, []))
+        self.calls.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 200, result)
+        self.assertEqual(self.events['event-1'], before)
+        self.assertFalse([call for call in self.calls if call[0] in ('POST', 'DELETE')])
+        self.assertEqual(self.series[0]['recording'], 'record')
+        self.assertEqual(self.series[0]['lobby_bypass'], 'organizer')
+        self.assertEqual(self.series[0]['spoken_language'], 'ar-EG')
+        options = self.v.apply_teams_meeting_options.call_args.kwargs
+        self.assertEqual((options['recording'], options['lobby_bypass'], options['spoken_language']), ('record', 'organizer', 'ar-EG'))
+        for key in ('recording', 'lobbyBypass', 'spokenLanguage'):
+            self.payload.pop(key)
+        self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(self.v.apply_teams_meeting_options.call_args.kwargs, options)
+
+    def test_invalid_options_do_not_reach_microsoft(self):
+        self.assertEqual(self.create().status_code, 201)
+        self.payload['recording'] = 'invalid'
+        self.calls.clear()
+        self.assertEqual(self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC').status_code, 400)
+        self.assertEqual(self.calls, [])
+
+    def test_rejected_option_update_does_not_claim_saved_options_or_success(self):
+        self.assertEqual(self.create().status_code, 201)
+        self.series[0]['recording'] = 'none'
+        self.payload.update(peopleOnly=True, recording='record')
+        self.options_ok = False
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 502)
+        self.assertTrue(result['partial'])
+        self.assertEqual(self.series[0]['recording'], 'none')
 
     def test_people_only_does_not_split_a_shared_calendar_with_mixed_durations(self):
         self.assertEqual(self.create().status_code, 201)
@@ -305,6 +383,21 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 502, result)
         self.assertEqual(len(self.events), 2)
         self.assertTrue(all(not event['attendees'] for event in self.events.values()))
+
+    def test_weekday_option_update_keeps_each_existing_calendar_and_saves_options(self):
+        self.prepare_weekday_path()
+        self.assertEqual(self.create().status_code, 201)
+        identities = {key: event['onlineMeeting']['joinUrl'] for key, event in self.events.items()}
+        self.payload.update(peopleOnly=True, recording='record', lobbyBypass='organizer', spokenLanguage='ar-EG')
+        self.v.stored_calendar_series = lambda series: series.get('calendar_series') or []
+        self.calls.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 200, result)
+        self.assertEqual({key: event['onlineMeeting']['joinUrl'] for key, event in self.events.items()}, identities)
+        self.assertFalse([call for call in self.calls if call[0] in ('POST', 'DELETE')])
+        self.assertEqual(self.series[0]['recording'], 'record')
+        self.assertEqual(self.series[0]['lobby_bypass'], 'organizer')
+        self.assertEqual(self.series[0]['spoken_language'], 'ar-EG')
 
     def test_pending_invites_resume_without_recreating_or_rewriting_dates(self):
         self.options_ok = False

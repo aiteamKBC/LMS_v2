@@ -73,7 +73,7 @@ def upload_to_quarantine(file_obj, blob_name, content_type):
 
 def upload_blob(
     file_obj, container, blob_name, content_type, overwrite=True,
-    upload_block_bytes=None, max_concurrency=2, retry_total=None,
+    upload_block_bytes=None, max_concurrency=2, retry_total=None, progress_hook=None,
 ):
     """Write directly to `container`, bypassing the quarantine lifecycle.
 
@@ -92,6 +92,7 @@ def upload_blob(
         max_concurrency=max_concurrency,
         connection_timeout=AZURE_UPLOAD_CONNECTION_TIMEOUT_SECONDS,
         read_timeout=AZURE_UPLOAD_READ_TIMEOUT_SECONDS,
+        **({'progress_hook': progress_hook} if progress_hook is not None else {}),
     )
     return blob_name
 

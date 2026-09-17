@@ -66,7 +66,10 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
       <td class="teams-review-number"><span>${session.sessionNumber}</span></td>
       <td class="teams-review-date">${escapeHtml(start.date)}${previous && Date.parse(previous) !== Date.parse(session.startDateTimeUtc) ? `<small class="teams-review-previous">Previously saved: ${escapeHtml(reviewDateLabel(previous, zone))}</small>` : ''}</td>
       <td class="teams-review-time"><time datetime="${escapeHtml(session.startDateTimeUtc)}" aria-label="${escapeHtml(start.full)}">${escapeHtml(start.clock)}</time><span class="teams-review-time-arrow" aria-hidden="true">–</span><time datetime="${endIso}" aria-label="${escapeHtml(end.full)}">${escapeHtml(end.clock)}</time>${start.date !== end.date ? `<small>Ends ${escapeHtml(end.date)}</small>` : ''}</td>
-      <td class="teams-review-duration">${session.durationMinutes} min</td>
+      <td class="teams-review-duration">${session.durationMinutes} min
+        <small class="block">Egypt: ${escapeHtml(reviewDateLabel(session.startDateTimeUtc, 'Africa/Cairo'))} – ${escapeHtml(reviewDateLabel(endIso, 'Africa/Cairo'))}</small>
+        <small class="block">England: ${escapeHtml(reviewDateLabel(session.startDateTimeUtc, 'Europe/London'))} – ${escapeHtml(reviewDateLabel(endIso, 'Europe/London'))}</small>
+      </td>
       ${separateLinks ? `<td class="teams-review-day">${escapeHtml(day)} series</td>` : ''}
     </tr>`;
   }).join('');
@@ -83,7 +86,7 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
     <div class="teams-review-layout"><div class="teams-review-main">
       <section class="teams-review-card" aria-labelledby="teams-review-schedule-heading">
         <div class="teams-review-card-heading">${icon('calendar')}<h3 id="teams-review-schedule-heading">Session schedule</h3><span class="teams-review-count">${sessions.length} session${sessions.length === 1 ? '' : 's'}</span></div>
-        <p class="teams-review-time-help">All times in ${escapeHtml(zone)} · <strong>12 AM</strong> is midnight; <strong>12 PM</strong> is noon.</p>
+        <p class="teams-review-time-help">Primary times use ${escapeHtml(zone)}. Egypt and England show the same meeting in each country. <strong>12 AM</strong> is midnight; <strong>12 PM</strong> is noon.</p>
         <div class="teams-review-schedule-scroll" role="region" aria-label="All session dates" tabindex="0"><table class="teams-review-table" role="table"><caption class="teams-review-sr-only">${sessions.length} reviewed session${sessions.length === 1 ? '' : 's'}</caption><thead><tr><th scope="col">Session</th><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Duration</th>${separateLinks ? '<th scope="col">Meeting</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>
       </section>
       <section class="teams-review-card teams-review-links" aria-labelledby="teams-review-link-heading"><div class="teams-review-card-heading">${icon('link')}<h3 id="teams-review-link-heading">Meeting link${separateLinks ? 's' : ''}</h3></div><div class="teams-review-card-content"><p class="teams-review-series">${escapeHtml(input.seriesMode === 'per_day' ? 'Separate series and link for each delivery day' : input.seriesMode === 'shared' ? 'One shared series and join link' : 'One shared link when all days have the same time and duration; otherwise a series per day')}</p>${links}</div></section>

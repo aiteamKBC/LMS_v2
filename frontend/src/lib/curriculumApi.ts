@@ -1223,6 +1223,7 @@ export interface CurriculumGroup {
 }
 
 export interface CurriculumSession {
+  timeZone?: string;
   id: string;
   trainingPlanId: number | string;
   programmeId?: string;
@@ -1265,6 +1266,7 @@ export interface CurriculumSession {
  * full week structure just to inspect a live-session component's settings.
  */
 export interface CurriculumTeamsMeetingSummary {
+  timeZone?: string;
   moduleCatalogueId: string;
   liveSessionId: string;
   status: string;
@@ -1658,6 +1660,12 @@ export interface CurriculumAuditEvent {
   snapshot: Record<string, unknown> | null;
   viaParent?: string;
   href: string;
+  /**
+   * Only set by the per-person activity read: true when the backend could
+   * place this save on a page the person was recorded as having open. The
+   * change feed never sets it, because it has no pages to place against.
+   */
+  placed?: boolean;
 }
 
 /** Someone who changed something in the window, for the actor filter. */
@@ -1699,6 +1707,144 @@ export interface CurriculumAuditTrail {
   actorTypes: CurriculumAuditActorType[];
   actors: CurriculumAuditActor[];
   events: CurriculumAuditEvent[];
+}
+
+/**
+ * Who used Curriculum Studio, as opposed to what they changed.
+ *
+ * Three sources sit behind these shapes and the page has to be able to tell
+ * them apart, which is why each is flagged separately rather than merged into
+ * one silent total:
+ *
+ * * `visitsRecorded` - `curriculum.activity_events` exists, so pages opened and
+ *   read actions are being recorded. False means the table has not been created
+ *   yet and the reading half of the trail is simply not there. It is never
+ *   retroactive: nothing was recorded before the table existed.
+ * * `changesRecorded` - the revision log exists, so saves can be named.
+ * * `signInsRecorded` - `login."Login_audit"` could be read. Sign-ins are
+ *   account-wide, not curriculum-only, and are labelled as such.
+ */
+export interface CurriculumActivityPerson {
+  email: string;
+  name: string;
+  /** Their role at the time the activity was recorded. Empty if unknown. */
+  role: string;
+  firstSeen: string;
+  lastSeen: string;
+  /** Distinct browser sittings in the window. */
+  visits: number;
+  pageViews: number;
+  readActions: number;
+  /** How many DIFFERENT curriculum pages they opened, not how many times. */
+  pagesOpened: number;
+  /** Saves recorded against them in the revision log. */
+  changes: number;
+  signIns: number;
+  lastPageKey: string;
+  lastPageLabel: string;
+}
+
+export interface CurriculumActivityPeople {
+  generatedAt: string;
+  windowDays: number;
+  since: string;
+  visitsRecorded: boolean;
+  changesRecorded: boolean;
+  signInsRecorded: boolean;
+  truncated: boolean;
+  totals: {
+    people: number;
+    visits: number;
+    pageViews: number;
+    readActions: number;
+    changes: number;
+    signIns: number;
+  };
+  people: CurriculumActivityPerson[];
+}
+
+/** One thing done on a page that was not a save. */
+export interface CurriculumActivityAction {
+  id: string;
+  at: string;
+  kind: string;
+  /** "Searched", "Exported" - `kind` in words, resolved server-side. */
+  label: string;
+  targetType: string;
+  targetId: string;
+  targetLabel: string;
+  /** Short descriptive context: the term searched, the filter changed. */
+  detail: Record<string, string>;
+}
+
+/** One page opened during a visit, and everything that happened on it. */
+export interface CurriculumActivityPage {
+  id: string;
+  at: string;
+  /** When the last thing on this page happened, not when it was closed. */
+  endedAt: string;
+  path: string;
+  pageKey: string;
+  pageLabel: string;
+  targetType: string;
+  targetId: string;
+  targetLabel: string;
+  /** How long it was open. Null when the tab closed before it could be sent. */
+  durationMs: number | null;
+  actions: CurriculumActivityAction[];
+  /** Recorded saves that happened while this page was open. */
+  changes: CurriculumAuditEvent[];
+}
+
+/** One sitting in one browser tab. */
+export interface CurriculumActivityVisit {
+  id: string;
+  startedAt: string;
+  endedAt: string;
+  ip: string;
+  userAgent: string;
+  pages: CurriculumActivityPage[];
+  pageCount: number;
+  actionCount: number;
+  changeCount: number;
+}
+
+export interface CurriculumActivitySignIn {
+  at: string;
+  ip: string;
+  userAgent: string;
+}
+
+export interface CurriculumPersonActivity {
+  generatedAt: string;
+  windowDays: number;
+  since: string;
+  visitsRecorded: boolean;
+  changesRecorded: boolean;
+  signInsRecorded: boolean;
+  person: {
+    email: string;
+    name: string;
+    role: string;
+    firstSeen: string;
+    lastSeen: string;
+  };
+  counts: {
+    visits: number;
+    pageViews: number;
+    readActions: number;
+    changes: number;
+    /**
+     * How many of their changes could be placed on a page they were recorded
+     * as having open. The rest are still listed - a save whose navigation was
+     * never recorded is still a save.
+     */
+    changesOnAPage: number;
+    signIns: number;
+  };
+  visits: CurriculumActivityVisit[];
+  signIns: CurriculumActivitySignIn[];
+  changes: CurriculumAuditEvent[];
 }
 
 export type CurriculumVersionEntityType = 'module' | 'week' | 'component';
@@ -3350,6 +3496,40 @@ export function fetchCurriculumAuditTrail(
     skipCache: options.skipCache,
     timeoutMs: 30000,
   });
+}
+
+/**
+ * Everyone who used Curriculum Studio in the window, one row each.
+ *
+ * Never cached: this is an audit read, and an answer from a minute ago is a
+ * different answer. `skipCache` is passed through for the page's own Refresh.
+ */
+export function fetchCurriculumActivityPeople(
+  options: { days?: number; search?: string; signal?: AbortSignal; skipCache?: boolean } = {},
+): Promise<CurriculumActivityPeople> {
+  const query = new URLSearchParams();
+  if (options.days) query.set('days', String(options.days));
+  if (options.search) query.set('search', options.search);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumActivityPeople>(`/curriculum/activity/people/${suffix}`, {
+    signal: options.signal,
+    skipCache: true,
+    timeoutMs: 30000,
+  });
+}
+
+/** One person: their visits, the pages in each, and what they did there. */
+export function fetchCurriculumPersonActivity(
+  email: string,
+  options: { days?: number; signal?: AbortSignal; skipCache?: boolean } = {},
+): Promise<CurriculumPersonActivity> {
+  const query = new URLSearchParams();
+  if (options.days) query.set('days', String(options.days));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumPersonActivity>(
+    `/curriculum/activity/people/${encodeURIComponent(email)}/${suffix}`,
+    { signal: options.signal, skipCache: true, timeoutMs: 30000 },
+  );
 }
 
 function postJson<T>(path: string, body: unknown): Promise<T> {

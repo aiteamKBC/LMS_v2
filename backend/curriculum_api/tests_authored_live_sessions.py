@@ -137,7 +137,10 @@ class AuthoredLiveSessionSourceTests(SimpleTestCase):
         # is looking at rather than a synthetic `MOD-1-week-N`.
         self.assertEqual([session['weekId'] for session in sessions], ['WEEK-1', 'WEEK-1', 'WEEK-2'])
 
-    def test_a_session_keeps_its_own_clock_and_closes_on_its_own_duration(self):
+    def test_a_booked_session_keeps_its_own_clock_and_closes_on_its_own_duration(self):
+        self.components[1]['settings_json'] = {
+            **self.components[1]['settings_json'], 'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 2,
+        }
         self.assertEqual(
             [(session['startTime'], session['endTime']) for session in self.sessions()],
             [('09:00', '11:00'), ('14:00', '15:30'), ('09:00', '11:00')],
@@ -194,7 +197,10 @@ class AuthoredLiveSessionSourceTests(SimpleTestCase):
         self.assertEqual(len(keys), 3)
         self.assertEqual([key[:10] for key in keys], ['2026-09-17', '2026-09-18', '2026-09-24'])
 
-    def test_the_expected_instants_follow_each_components_own_clock(self):
+    def test_the_expected_instants_keep_a_booked_components_own_clock(self):
+        self.components[1]['settings_json'] = {
+            **self.components[1]['settings_json'], 'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 2,
+        }
         keys, _plan = views.module_expected_teams_occurrence_keys(MODULE, [], {}, self.links())
         # 09:00 and 14:00 in the business zone during BST.
         self.assertEqual([key[11:] for key in keys], ['08:00', '13:00', '08:00'])
@@ -298,12 +304,12 @@ class LiveSessionFollowsItsWeekTests(SimpleTestCase):
         settings, _week = self._apply({'sessionDate': '2026-10-08', 'sessionTime': '09:00'})
         self.assertTrue(settings['sessionDateTimeUtc'].startswith('2026-09-17'))
 
-    def test_a_clock_the_author_set_survives_the_move(self):
-        # Only the day is the plan's to decide.
+    def test_an_unbooked_session_inherits_the_delivery_clock_when_moved(self):
+        # New meetings follow the assigned schedule, including old component defaults.
         settings, _week = self._apply({'sessionDate': '2026-10-08', 'sessionTime': '19:00', 'durationMinutes': 45})
         self.assertEqual(settings['sessionDate'], '2026-09-17')
-        self.assertEqual(settings['sessionTime'], '19:00')
-        self.assertEqual(settings['durationMinutes'], 45)
+        self.assertEqual(settings['sessionTime'], '09:00')
+        self.assertEqual(settings['durationMinutes'], 120)
 
     def test_a_meeting_microsoft_has_confirmed_is_not_moved(self):
         settings, _week = self._apply({
