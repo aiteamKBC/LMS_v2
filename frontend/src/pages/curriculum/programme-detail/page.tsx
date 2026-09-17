@@ -1244,13 +1244,16 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     ksbCount: number;
     lessons: number;
     quizzes: number;
-    assignments: number;
+    /** Absent from a compact module list; see CurriculumModule. Unread here. */
+    assignments?: number;
     status: string;
-    author: string;
+    /** Absent from a compact module list; see CurriculumModule. Unread here. */
+    author?: string;
     lastUpdated: string;
     color: string;
     notes: string;
-    sessionNames: string[];
+    /** Absent from a compact module list; see CurriculumModule. Unread here. */
+    sessionNames?: string[];
     ksbCodes: string[];
     weekStructure?: Array<{ id?: string; weekNumber?: number; number?: number; title?: string; displayOrder?: number }>;
     startDate?: string;

@@ -6,6 +6,7 @@ the fixture rejects socket connections, including accidental Graph/DB access.
 import copy
 import functools
 import hashlib
+from collections import defaultdict
 import json
 import re
 import sys
@@ -398,6 +399,11 @@ class PureTests(unittest.TestCase):
         ns = {'module_week_delivery_days': lambda *_: 1, 'module_stored_session_count': lambda *_: 2,
             'module_structure_uses_session_rows': lambda *_: False, 'module_structure_live_session_counts': lambda _: [1, 1],
             'module_session_plan_for_count': lambda *_args, **_kwargs: plan,
+            # The reader numbers the plan into calendar weeks now, and buckets it
+            # by `weekNumber`; these plan entries carry none, so every component
+            # is matched by the session number it already names.
+            'module_session_plan_for_weeks': lambda *_args, **_kwargs: plan,
+            'defaultdict': defaultdict,
             'module_session_clock': lambda module, group=None, session_date=None: override_clock(module, session_date) or ('09:00', '11:00', 120),
             'clean_str': lambda v: str(v or '').strip(), 'parse_int': lambda v, default=0: int(v or default),
             'format_date': lambda v: str(v or ''),
