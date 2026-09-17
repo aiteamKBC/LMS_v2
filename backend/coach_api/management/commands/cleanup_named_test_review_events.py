@@ -50,7 +50,7 @@ APPROVED_TEST_EVENTS = {
     },
     144: {
         "learner_id": 248,
-        "event_key": "mcr:248:1:2026-10-05",
+        "event_key": "mcr:248:3:2026-10-05",
         "target_date": "2026-10-05",
         "scheduled_date": "2026-09-29",
         "scheduled_time": "06:30:00",

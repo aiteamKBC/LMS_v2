@@ -39,6 +39,10 @@ class NamedTestReviewCleanupTests(SimpleTestCase):
     def test_allowlist_is_exact_and_preserves_official_events(self):
         self.assertEqual(set(module.APPROVED_TEST_EVENTS), {128, 137, 144})
         self.assertEqual(module.OFFICIAL_EVENTS_TO_PRESERVE, {154, 160})
+        self.assertEqual(
+            module.APPROVED_TEST_EVENTS[144]["event_key"],
+            "mcr:248:3:2026-10-05",
+        )
         self.command._guard_approved_identity(self.records)
 
     def test_identity_change_aborts(self):
