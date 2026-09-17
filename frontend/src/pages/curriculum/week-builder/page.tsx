@@ -59,6 +59,7 @@ import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/Liv
 import { LiveSessionArtifactsPanel } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
 import { formatDateLabel } from '@/pages/curriculum/shared/entities/model';
+import { showFullTextWhenTruncated } from '@/pages/curriculum/shared/entities/truncationTitle';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
@@ -922,7 +923,7 @@ function RailNodeCard({ component, index, selected, issues, weekSessionDate, hol
         <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
         <span className="flex-1 min-w-0">
           <span className="flex items-center gap-2">
-            <span className="text-[13px] font-bold text-foreground-900 truncate">{component.title || weekTypeLabel(component.type)}</span>
+            <span onMouseEnter={showFullTextWhenTruncated} className="text-[13px] font-bold text-foreground-900 truncate">{component.title || weekTypeLabel(component.type)}</span>
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
@@ -1506,7 +1507,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
         <span className={`grid place-items-center w-11 h-11 rounded-xl text-white ${tone.marker}`}><AppIcon className={`${definition.icon} text-xl`}></AppIcon></span>
         <div className="flex-1 min-w-0">
           <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${tone.text}`}>{definition.group}</p>
-          <p className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{component.title || weekTypeLabel(component.type)}</p>
+          <p onMouseEnter={showFullTextWhenTruncated} className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{component.title || weekTypeLabel(component.type)}</p>
         </div>
         <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${issues.length ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
           <AppIcon className={issues.length ? 'ri-error-warning-fill' : 'ri-checkbox-circle-fill'}></AppIcon>{issues.length ? `${issues.length} to fix` : 'Valid'}
