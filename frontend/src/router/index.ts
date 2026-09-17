@@ -5,6 +5,7 @@ import { RouteLoadingSkeleton } from "@/components/feature/RouteLoadingSkeleton"
 import { useAuth } from "@/hooks/useAuth";
 import routes from "./config";
 import { installLearnerRoutePreloading } from './preload';
+import { recordCurriculumPageView } from '@/lib/curriculumActivity';
 import { OldOtjhProvider } from '@/features/old-otjh/hooks';
 
 let navigateResolver: (navigate: ReturnType<typeof useNavigate>) => void;
@@ -39,6 +40,16 @@ export function AppRoutes() {
     window.REACT_APP_NAVIGATE = navigate;
     navigateResolver(window.REACT_APP_NAVIGATE);
   }, [navigate]);
+
+  // Curriculum Studio records who opened which page, for the Audit Trail's
+  // People view. Mounted here rather than in WorkspaceShell because this is the
+  // one place every route passes through, so a curriculum page that renders its
+  // own chrome is not quietly missing from the trail. The recorder ignores any
+  // path outside /curriculum and swallows its own failures, so no other
+  // workspace is affected and no navigation can fail because of it.
+  useEffect(() => {
+    recordCurriculumPageView(pathname);
+  }, [pathname]);
 
   // These provisioned learner accounts intentionally have a two-screen UI:
   // their material list and the content runner. Quiz and video URLs

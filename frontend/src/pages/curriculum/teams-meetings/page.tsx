@@ -6,7 +6,7 @@ import { syncTeamsCalendarState } from './calendarState';
 import { EntraPeopleInput } from './EntraPeopleInput';
 import { CalendarActionDialog, type CalendarActionTarget } from './CalendarActionDialog';
 import { calendarAction, type ActionResult } from './calendarActions';
-import { calendarInputError } from './calendarTime';
+import { calendarInputError, normalizedClock } from './calendarTime';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -19,6 +19,7 @@ import {
   fetchCurriculumScopeLearnerRoster,
   fetchCurriculumSessions,
   fetchCurriculumTeamsMeetingSummaries,
+  type CurriculumGroup,
   type CurriculumModule,
   type CurriculumSession,
   type CurriculumTeamsMeetingSummary,
@@ -70,6 +71,7 @@ import {
   sessionNaiveLocal,
   teamsCalendarOccurrences,
   TeamsCalendarFormBody,
+  type GroupDeliveryPattern,
   type TeamsCalendarForm,
 } from './createCalendarForm';
 import {
@@ -82,9 +84,7 @@ import {
   FormField,
   InlineError,
   PlainCell,
-  SelectControl,
   StackedCell,
-  TextAreaControl,
   TextControl,
 } from '../shared/entities/ui';
 import { useDrawerState } from '../shared/entities/useDrawerState';
@@ -194,8 +194,38 @@ interface MeetingRow {
   /** What Teams holds today, in order, when it has been asked for. */
   teamsStarts: string[];
   durationMinutes: number;
+  /** The weekly slot this module's group runs to — where a session's length comes from. */
+  groupPattern?: GroupDeliveryPattern;
   state: CalendarState;
   differingSessions: number;
+}
+
+/**
+ * The weekly slot a group runs to, ready to be shown.
+ *
+ * The group is where a session's length actually comes from — "Friday, 12:00 PM
+ * to 2:00 PM" is a two-hour session — so the create dialog states it rather than
+ * leaving a list of mixed lengths unexplained. Times are normalised rather than
+ * trusted: rows written before the group schedule was split into its own columns
+ * kept a 12-hour clock. One that cannot be read comes back empty and is reported
+ * as missing, never as midnight.
+ */
+function groupDeliveryPattern(group: CurriculumGroup | undefined, name: string): GroupDeliveryPattern | undefined {
+  if (!group) return undefined;
+  const readClock = (value: unknown) => {
+    try { return normalizedClock(value); } catch { return ''; }
+  };
+  const startTime = readClock(group.startTime);
+  const endTime = readClock(group.endTime);
+  const days = cleanText(group.weekDays);
+  if (!days && !startTime && !endTime) return undefined;
+  return {
+    name: cleanText(group.name) || name || 'This group',
+    days,
+    startTime,
+    endTime,
+    durationMinutes: Math.max(0, minutesBetween(startTime, endTime)),
+  };
 }
 
 /**
@@ -536,20 +566,6 @@ interface PeopleForm {
   coOrganizers: string;
 }
 
-interface CreateForm {
-  title: string;
-  organizerEmail: string;
-  attendees: string;
-  presenters: string;
-  coOrganizers: string;
-  details: string;
-  durationMinutes: string;
-  lobbyBypass: string;
-  recording: string;
-  spokenLanguage: string;
-  meetingType: string;
-}
-
 export default function CurriculumTeamsMeetingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { programmes, cohorts, groups, modules, tutors, holidays, loading, loaded, refreshing, error, reload } = useCurriculumEntities({ includeHolidays: true, includeStaff: true });
@@ -576,7 +592,11 @@ export default function CurriculumTeamsMeetingsPage() {
   const [calendarActionTarget, setCalendarActionTarget] = useState<CalendarActionTarget | null>(null);
 
   const [busy, setBusy] = useState('');
-  const [notice, setNotice] = useState<{ tone: 'info' | 'warning' | 'error'; text: string } | null>(null);
+  // `moduleId` is the module the message is about, when it is about one in
+  // particular. Background checks run across every calendar on the page, so a
+  // message with no owner cannot be told apart from one about the module the
+  // reader has open.
+  const [notice, setNotice] = useState<{ tone: 'info' | 'warning' | 'error'; text: string; moduleId?: string } | null>(null);
   const [detail, setDetail] = useState<TeamsMeetingArtifactsResult | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -613,11 +633,9 @@ export default function CurriculumTeamsMeetingsPage() {
   }, [autoSyncEnabled]);
 
   const peopleDrawer = useDrawerState<PeopleForm>({ attendees: '', presenters: '', coOrganizers: '' });
-  const createDrawer = useDrawerState<CreateForm>({
-    title: '', organizerEmail: '', attendees: '', presenters: '', coOrganizers: '', details: '',
-    durationMinutes: String(DEFAULT_DURATION_MINUTES),
-    lobbyBypass: 'invited', recording: 'record-transcribe', spokenLanguage: 'en-GB', meetingType: 'live-session',
-  });
+  // The shared form's own empty state, rather than a second copy of its fields
+  // that has to be kept in step by hand.
+  const createDrawer = useDrawerState<TeamsCalendarForm>(emptyTeamsCalendarForm());
   const [drawerTarget, setDrawerTarget] = useState<MeetingRow | null>(null);
   const [invitedPrefilling, setInvitedPrefilling] = useState(false);
   // Guards a fetchModuleMeetingInvitees() response against landing after the
@@ -732,13 +750,18 @@ export default function CurriculumTeamsMeetingsPage() {
       const context = resolveModuleContext(module, groups, cohorts, programmes);
       const summary = summaryByModule.get(key);
       const moduleSessions = sessionsByModule.get(key) || [];
-      const plannedStarts = moduleSessions.map(session => zonedNaiveToUtcIso(sessionNaiveLocal(session)));
+      const plannedStarts = moduleSessions.map(session => zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || summary?.timeZone));
       const teamsStarts = summary?.occurrenceDates || [];
       const firstSession = moduleSessions[0];
+      const groupPattern = groupDeliveryPattern(context.group, context.groupName);
       const durationMinutes = Math.max(
         15,
         minutesBetween(firstSession?.startTime || '', firstSession?.endTime || '')
           || summary?.durationMinutes
+          // The group's weekly slot before a hardcoded hour: a module with no
+          // usable session clock still belongs to a group that states one, and
+          // 60 minutes was a guess that read as a fact.
+          || groupPattern?.durationMinutes
           || DEFAULT_DURATION_MINUTES,
       );
 
@@ -768,11 +791,23 @@ export default function CurriculumTeamsMeetingsPage() {
         plannedStarts,
         teamsStarts,
         durationMinutes,
+        groupPattern,
         state,
         differingSessions,
       };
     });
   }, [cohorts, groups, modules, programmes, sessionsByModule, summaryByModule]);
+
+  // A background status check runs for every calendar this page can see, so its
+  // verdict has to be able to name the module it belongs to. Unnamed, a warning
+  // about one module reads as a verdict on whichever dialog happens to be open.
+  const moduleByLiveSession = useMemo(() => {
+    const map = new Map<string, { catalogueId: string; name: string }>();
+    rows.forEach(row => {
+      if (row.summary) map.set(row.summary.liveSessionId, { catalogueId: row.catalogueId, name: row.name });
+    });
+    return map;
+  }, [rows]);
 
   // The tutor is the module's own assignment (a name, from `enrolment.Staff_users`
   // by way of the curriculum staff directory), so the meeting's presenter is
@@ -1004,18 +1039,31 @@ export default function CurriculumTeamsMeetingsPage() {
         await loadTeamsState();
       }
       if (source === 'manual' || result.changed || result.errors.length) {
+        const owner = moduleByLiveSession.get(liveSessionId);
+        const body = result.errors.length ? result.errors.join(' ')
+          : result.seriesStatus === 'cancelled' ? 'This calendar was cancelled in Microsoft and is now cancelled in the LMS.'
+            : result.cancelledSessions.length ? `Cancelled sessions updated: ${result.cancelledSessions.join(', ')}.`
+              : 'Calendar status is up to date.';
         setNotice({
           tone: result.errors.length ? 'warning' : 'info',
-          text: result.errors.length ? result.errors.join(' ')
-            : result.seriesStatus === 'cancelled' ? 'This calendar was cancelled in Microsoft and is now cancelled in the LMS.'
-              : result.cancelledSessions.length ? `Cancelled sessions updated: ${result.cancelledSessions.join(', ')}.`
-                : 'Calendar status is up to date.',
+          moduleId: owner?.catalogueId,
+          // Named, because this check reads Microsoft for one calendar and the
+          // automatic sweep can land its verdict while a different module is
+          // open. "Session 11 could not be matched" says nothing about whose
+          // session 11 it means.
+          text: owner?.name ? `${owner.name} — ${body}` : body,
         });
       }
       return result.seriesStatus;
     } catch (error) {
+      const owner = moduleByLiveSession.get(liveSessionId);
+      const body = error instanceof Error ? error.message : 'Calendar status could not be checked.';
       calendarSyncStatuses.current.delete(liveSessionId);
-      setNotice({ tone: 'warning', text: error instanceof Error ? error.message : 'Calendar status could not be checked.' });
+      setNotice({
+        tone: 'warning',
+        moduleId: owner?.catalogueId,
+        text: owner?.name ? `${owner.name} — ${body}` : body,
+      });
       return undefined;
     } finally {
       calendarSyncInFlight.current.delete(liveSessionId);
@@ -1025,7 +1073,7 @@ export default function CurriculumTeamsMeetingsPage() {
         return next;
       });
     }
-  }, [loadDetail, loadTeamsState]);
+  }, [loadDetail, loadTeamsState, moduleByLiveSession]);
 
   // Check cancellations for future calendars too, before syncing evidence.
   // Graph publishes attendance, transcripts and recordings after the meeting,
@@ -1625,7 +1673,20 @@ export default function CurriculumTeamsMeetingsPage() {
                 {/* Only the actions this module can actually take: a footer of
                     greyed-out buttons reads as broken rather than as guidance.
                     Closing is the title bar's X — no second Close down here. */}
-                {notice && <p role="status" className="mb-4 rounded-lg border bg-primary-50 p-3 text-sm">{notice.text}</p>}
+                {/* Background checks also finish while another module is open.
+                    Keep their warnings on the page, with their module name. */}
+                {notice && (!notice.moduleId || notice.moduleId === selected.catalogueId) && (
+                  <p role="status" className={`mb-4 w-full rounded-lg border p-3 text-sm ${
+                    notice.tone === 'error'
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : notice.tone === 'warning'
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-primary-100 bg-primary-50 text-primary-700'
+                  }`}
+                  >
+                    {notice.text}
+                  </p>
+                )}
             {selected.summary ? (
                   <>
                     <button type="button" onClick={() => openCalendarAction('reschedule')}
@@ -1936,135 +1997,26 @@ export default function CurriculumTeamsMeetingsPage() {
             ) : (
               /* No calendar yet, so this dialog *is* the create form: the dates
                  it will be built on, the settings Teams needs, and one Create
-                 at the end. There is no second drawer to step through. */
+                 at the end. There is no second drawer to step through.
+
+                 The form itself is the shared one, not a copy of it. This page
+                 and the Module Builder are two doors onto the same record, and
+                 while each kept its own field list they drifted -- this one lost
+                 the "keep each session's own length" duration option and the
+                 series-and-links choice, so a length picked here silently
+                 overrode every session with no way back. */
               <div className="space-y-4">
-                <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/60 px-4 py-3">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
-                    <AppIcon className="ri-microsoft-teams-line text-base"></AppIcon>
-                  </span>
-                  <p className="text-[12px] text-foreground-600">
-                    {selected.sessions.length
-                      ? `Create puts one Teams meeting on each of the ${selected.sessions.length} session date${selected.sessions.length === 1 ? '' : 's'} below and writes the join link into this module’s live-session components. The dates come from the module, not from this form.`
-                      : 'This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.'}
-                  </p>
-                </div>
-
-                {Boolean(selected.sessions.length) && (
-                  <>
-                    <ModuleSessionSchedulePreview
-                      row={selected}
-                      title="Dates the calendar will be created on"
-                      holidayLabelFor={holidayLabelFor}
-                    />
-
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <FormField
-                        label="Organizer Microsoft 365 email"
-                        required
-                        hint="The calendar this series is created in. The selected account must allow this app to manage Teams meetings."
-                      >
-                        <EntraPeopleInput single label="Organizer"
-                          value={createDrawer.form.organizerEmail}
-                          onChange={value => createDrawer.patch({ organizerEmail: value })}
-                        />
-                      </FormField>
-                      <FormField
-                        label="Co-organizers"
-                        hint="Internal Microsoft 365 users who can manage the meeting. They are invited automatically."
-                      >
-                        <EntraPeopleInput label="Co-organizers"
-                          value={createDrawer.form.coOrganizers}
-                          onChange={value => createDrawer.patch({ coOrganizers: value })}
-                        />
-                      </FormField>
-                      <FormField
-                        label="Duration"
-                        hint={`First session ${calendarLabel(selected.plannedStarts[0])}.`}
-                      >
-                        <SelectControl
-                          value={createDrawer.form.durationMinutes}
-                          onChange={value => createDrawer.patch({ durationMinutes: value })}
-                          options={[
-                            { value: '30', label: '30 minutes' },
-                            { value: '45', label: '45 minutes' },
-                            { value: '60', label: '1 hour' },
-                            { value: '90', label: '1 hour 30 minutes' },
-                            { value: '120', label: '2 hours' },
-                            { value: '180', label: '3 hours' },
-                          ]}
-                        />
-                      </FormField>
-                      <FormField label="Who can bypass the lobby?">
-                        <SelectControl
-                          value={createDrawer.form.lobbyBypass}
-                          onChange={value => createDrawer.patch({ lobbyBypass: value })}
-                          options={[
-                            { value: 'invited', label: 'People invited to this meeting' },
-                            { value: 'organization', label: 'People in my organization' },
-                            { value: 'organization-excluding-guests', label: 'Organization, excluding guests' },
-                            { value: 'everyone', label: 'Everyone' },
-                            { value: 'organizer', label: 'Only organizers' },
-                          ]}
-                        />
-                      </FormField>
-                      <FormField label="Recording">
-                        <SelectControl
-                          value={createDrawer.form.recording}
-                          onChange={value => createDrawer.patch({ recording: value })}
-                          options={[
-                            { value: 'none', label: 'Do not start automatically' },
-                            { value: 'record', label: 'Record automatically' },
-                            { value: 'record-transcribe', label: 'Record and transcribe' },
-                          ]}
-                        />
-                      </FormField>
-                      <FormField label="Spoken language">
-                        <SelectControl
-                          value={createDrawer.form.spokenLanguage}
-                          onChange={value => createDrawer.patch({ spokenLanguage: value })}
-                          options={[
-                            { value: 'en-GB', label: 'English (UK)' },
-                            { value: 'en-US', label: 'English (US)' },
-                            { value: 'ar-EG', label: 'Arabic (Egypt)' },
-                            { value: 'fr-FR', label: 'French' },
-                          ]}
-                        />
-                      </FormField>
-                      <FormField label="Details" hint="Optional. Included in the calendar invitation.">
-                        <TextAreaControl
-                          value={createDrawer.form.details}
-                          onChange={value => createDrawer.patch({ details: value })}
-                          rows={2}
-                        />
-                      </FormField>
-                      <div className="sm:col-span-2 -mb-2 flex items-center justify-end">
-                        <button
-                          type="button"
-                          disabled={invitedPrefilling}
-                          onClick={() => void prefillInvitees(selected, createDrawer.patch)}
-                          className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:underline disabled:opacity-50"
-                        >
-                          <AppIcon className="ri-refresh-line text-sm"></AppIcon>
-                          {invitedPrefilling ? 'Loading…' : "Prefill from the module's tutor and learner plans"}
-                        </button>
-                      </div>
-                      <FormField label="Presenters" hint="These people can share and record.">
-                        <EntraPeopleInput label="Presenters"
-                          value={createDrawer.form.presenters}
-                          onChange={value => createDrawer.patch({ presenters: value })}
-                        />
-                      </FormField>
-                      <FormField label="Attendees" hint="Presenters are invited automatically.">
-                        <EntraPeopleInput label="Attendees"
-                          value={createDrawer.form.attendees}
-                          onChange={value => createDrawer.patch({ attendees: value })}
-                        />
-                      </FormField>
-                    </div>
-
-                    {createDrawer.error && <InlineError message={createDrawer.error} />}
-                  </>
-                )}
+                {/* The Microsoft time zone is already stated once at the top of
+                    the page, so it is not repeated inside the dialog. */}
+                <TeamsCalendarFormBody
+                  row={selected}
+                  form={createDrawer.form}
+                  patch={createDrawer.patch}
+                  holidayLabelFor={holidayLabelFor}
+                  prefilling={invitedPrefilling}
+                  onPrefill={() => void prefillInvitees(selected, createDrawer.patch)}
+                />
+                {createDrawer.error && <InlineError message={createDrawer.error} />}
               </div>
             )}
           </Modal>
