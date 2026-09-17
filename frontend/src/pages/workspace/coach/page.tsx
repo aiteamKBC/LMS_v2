@@ -1,9 +1,8 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 import { setCoachViewAs, withCoachViewAs } from '@/lib/coachViewAs';
 import { useAuth } from '@/hooks/useAuth';
@@ -15,17 +14,16 @@ import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
 import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE, formatHoursMinutes } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
-import { WorkspaceDashboardLayout } from '@/components/feature/WorkspaceDashboardLayout';
+import styles from './dashboard.module.css';
 import { SectionHeader, SectionLabel } from '@/components/ui/SectionHeader';
-import { MetricCard, CompactMetric, MetricRow } from '@/components/ui/MetricCard';
+import { CompactMetric } from '@/components/ui/MetricCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ActionRow } from '@/components/ui/ActionRow';
 import { Panel } from '@/components/ui/Panel';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { FilterChip } from '@/components/ui/FilterToolbar';
 import type { ImportedReview } from '@/api/reviewHistory';
-import { LearnerAvatar, ReasonLine } from '@/pages/coach/shared/LearnerIdentity';
+import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import {
   type CoachCalendarEvent,
   eventDisplayDate,
@@ -960,26 +958,6 @@ function formatWeekRangeLabel() {
   return `${format.format(start)} - ${format.format(end)}`;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   Scroll Reveal
-   ═══════════════════════════════════════════════════════════ */
-function SectionReveal({ children, className = '', delay = 0 }: { children: React.ReactNode; className?: string; delay?: number }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting) { setTimeout(() => setVisible(true), delay); obs.disconnect(); } }, { threshold: 0.04, rootMargin: '0px 0px -12px 0px' });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [delay]);
-  return (
-    <div ref={ref} className={`transition-all duration-[420ms] ease-out ${className} ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}>
-      {children}
-    </div>
-  );
-}
-
 function LoadingBlock({ className = '' }: { className?: string }) {
   return <div aria-hidden="true" className={`animate-pulse rounded-lg bg-background-100/90 ${className}`}></div>;
 }
@@ -1335,10 +1313,10 @@ export default function CoachDashboard() {
       : attentionQueue;
   }, [attentionQueue, enrichedLearners, kpiFilterPredicate, priorityFilter, priorityMap]);
 
-  const attentionPanelTitle = kpiFilter ? KPI_FILTER_LABEL[kpiFilter] : 'Learners Requiring Attention';
+  const attentionPanelTitle = kpiFilter ? KPI_FILTER_LABEL[kpiFilter] : 'Learners at Risk';
   const attentionPanelSubtitle = kpiFilter
-    ? 'Filtered from the KPI cards above, ordered by priority'
-    : 'At Risk → Overdue Review → Poor Attendance → Missing Evidence';
+    ? 'Filtered from the KPI cards, ordered by priority'
+    : 'Learners who may need additional support.';
   const attentionHasOverflow = attentionRows.length > AT_RISK_SCROLL_THRESHOLD;
 
   const schedulePanelLoading = (calendarLoading || liveSessionsLoading) && !upcomingScheduleEvents.length;
@@ -1361,28 +1339,6 @@ export default function CoachDashboard() {
     setKpiFilter(null);
     setPriorityFilter(current => (current === key ? null : key));
   };
-
-  const allActionItems: ActionItem[] = [
-    {
-      id: 'today-sessions',
-      label: "Today's schedule",
-      hint: todayEvents.length === 1 ? '1 session or review today' : `${todayEvents.length} sessions or reviews today`,
-      count: todayEvents.length,
-      icon: 'ri-calendar-schedule-line',
-      tone: 'warning',
-      onClick: () => navigate('/coach/timetable', {
-        state: {
-          focusEvent: {
-            date: toIsoDate(new Date()),
-          },
-        },
-      }),
-    },
-  ];
-  const actionItems = allActionItems.filter(item => item.count > 0);
-  // The number that answers "how much is on me today" for the KPI strip —
-  // a straight sum of the same counts the action list below already shows.
-  const needsActionCount = actionItems.reduce((total, item) => total + item.count, 0);
 
   // An administrator reaches this page with no caseload of their own. Rather
   // than a dashboard of zeros, they pick whose workspace to open; the selection
@@ -1413,14 +1369,144 @@ export default function CoachDashboard() {
   return (
     <WorkspaceShell
       role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel}
-      pageTitle="Coach Dashboard" pageSubtitle="Who needs attention, what needs doing today, what is coming next"
+      pageTitle="Coach Dashboard" pageSubtitle="Support learners. Track progress. Make a difference."
+      hideBreadcrumbs
       userName={ownerName} userRole="Progress Coach"
     >
-      <WorkspaceDashboardLayout className="coach-dashboard" overview={<div className="space-y-5">
-          <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary-100 text-primary-600"><AppIcon className="ri-user-heart-line h-5 w-5" /></span>
-            <div className="min-w-0"><p className="break-words text-sm font-semibold text-foreground-900">{ownerName}</p><p className="mt-0.5 text-xs text-foreground-500">Coach overview</p></div>
+      <div className={styles.dashboard}>
+        <h1 className="sr-only">Coach Dashboard</h1>
+        {(loading || loadWarning) && (
+          <div className={styles.notice} role={loadWarning ? 'alert' : 'status'}>
+            {loading ? 'Loading live coach dashboard data...' : loadWarning}
           </div>
+        )}
+
+        <section className={styles.metrics} aria-label="Coach dashboard metrics">
+          <DashboardMetric label="Total learners" value={loading || loadWarning ? undefined : totalCaseload} icon="ri-group-line" onClick={() => setSelectedKpi('caseload')} />
+          <DashboardMetric label="Learners engagement" icon="ri-bar-chart-line" />
+          <DashboardMetric label="OTJH at risk" value={loading || loadWarning ? undefined : atRiskCount} note={loading || loadWarning ? undefined : `${needAttentionLearners.length} need attention`} icon="ri-alarm-warning-line" tone="critical" onClick={() => setSelectedKpi('at-risk')} />
+          <DashboardMetric label="PR 12-week" icon="ri-focus-3-line" />
+          <DashboardMetric label="Evidence pending" value={loading || loadWarning ? undefined : pendingEvidence} note="Awaiting review" icon="ri-file-list-3-line" onClick={() => setSelectedKpi('evidence')} />
+          <DashboardMetric label="Referred closure" icon="ri-team-line" />
+          <DashboardMetric label="MCM 4-week" icon="ri-history-line" />
+        </section>
+
+        <div className={styles.riskLayout}>
+          <div id="learner-caseload" className="min-w-0 scroll-mt-4">
+            <Panel className={styles.panel}>
+              <SectionHeader icon="ri-group-line" title={attentionPanelTitle} description={attentionPanelSubtitle}
+                actions={<>
+                  <button type="button" className={styles.iconButton} onClick={() => setCaseloadExpanded(current => !current)}
+                    aria-expanded={caseloadExpanded} aria-controls="coach-caseload-content" aria-label={`${caseloadExpanded ? 'Collapse' : 'Expand'} caseload panel`}>
+                    <AppIcon name={caseloadExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} />
+                  </button>
+                  <Link to="/coach/caseload" className={styles.textButton}>View all learners <AppIcon name="ri-arrow-right-s-line" /></Link>
+                </>} />
+              {caseloadExpanded && (
+                <div id="coach-caseload-content">
+                  <div className={styles.filters}>
+                    {kpiFilter ? (
+                      <FilterChip label="Filter" value={KPI_FILTER_LABEL[kpiFilter]} onRemove={() => setKpiFilter(null)} />
+                    ) : (
+                      <PageTabs label="Filter learners by priority" value={priorityFilter ?? 'all'}
+                        onChange={next => next === 'all' ? setPriorityFilter(null) : applyPriorityFilter(next as PriorityKey)}
+                        items={priorityTabItems(attentionQueue.length, priorityCounts)} />
+                    )}
+                  </div>
+                  {loading && !attentionRows.length && <AttentionSkeleton />}
+                  {!loading && attentionRows.length > 0 && (
+                    <div className={styles.tableScroll} data-overflow={attentionHasOverflow} tabIndex={0} role="region" aria-label="Learners requiring support">
+                      <table className={`${styles.table} ${styles.learnersTable}`}>
+                        <caption className="sr-only">Learners requiring support, ordered by priority</caption>
+                        <thead><tr><th scope="col">Learner name</th><th scope="col">Risk type</th><th scope="col">OTJH status</th><th scope="col">Last contact</th><th scope="col">Action</th></tr></thead>
+                        <tbody>{attentionRows.map(entry => (
+                          <AttentionLearnerRow key={entry.learner.id} learner={entry.learner} priority={entry.priority}
+                            onOpen={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(entry.learner.id)}`, {
+                              state: {
+                                learnerId: entry.learner.id, learnerName: entry.learner.name,
+                                ...(entry.learner.learnerType ? { kind: entry.learner.learnerType } : {}),
+                                ...(entry.learner.enrolmentId ? { enrolmentId: entry.learner.enrolmentId } : {}),
+                              },
+                            })} />
+                        ))}</tbody>
+                      </table>
+                    </div>
+                  )}
+                  {!loading && !attentionRows.length && (
+                    <EmptyState variant={kpiFilter || priorityFilter ? 'no-matches' : 'empty'}
+                      icon={kpiFilter || priorityFilter ? undefined : 'ri-shield-check-line'}
+                      title={kpiFilter || priorityFilter ? 'No learners match this filter' : 'No learners need attention'}
+                      description={kpiFilter || priorityFilter ? 'Clear the filter to see the full priority queue.' : 'Everyone on your caseload is on track for hours, attendance and reviews.'} />
+                  )}
+                </div>
+              )}
+            </Panel>
+          </div>
+          <aside className={styles.charts} aria-label="Learner risk insights">
+            <Panel className={styles.panel}>
+              <SectionHeader title="Risk Distribution" icon="ri-pie-chart-line" actions={<span className={styles.chartPeriod}>By main reason</span>} />
+              <RiskDistribution priorities={attentionQueue.map(entry => entry.priority)} unavailable={loading || Boolean(loadWarning)} />
+            </Panel>
+            <Panel className={styles.panel}>
+              <SectionHeader title="Monthly Learners at Risk" icon="ri-calendar-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
+              <div className={styles.unavailableChart}>
+                <AppIcon name="ri-bar-chart-line" aria-hidden="true" />
+                <p>History not available</p><span>Monthly risk data is not available yet.</span>
+              </div>
+            </Panel>
+          </aside>
+        </div>
+
+        <Panel className={styles.panel}>
+          <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
+            description={`Your scheduled meetings and live sessions - next ${COACHING_CALENDAR_WINDOW_DAYS} days`}
+            actions={<>
+              <button type="button" className={styles.iconButton} onClick={() => setScheduleExpanded(current => !current)}
+                aria-expanded={scheduleExpanded} aria-controls="coach-schedule-content" aria-label={`${scheduleExpanded ? 'Collapse' : 'Expand'} upcoming schedule`}>
+                <AppIcon name={scheduleExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} />
+              </button>
+              <Link to="/coach/timetable" className={styles.textButton}>Calendar <AppIcon name="ri-calendar-line" /></Link>
+              <Link to="/coach/meetings" className={styles.textButton}>View all meetings <AppIcon name="ri-arrow-right-s-line" /></Link>
+            </>} />
+          {scheduleExpanded && (
+            <div id="coach-schedule-content">
+              {schedulePanelLoading && <ScheduleSkeleton />}
+              {!schedulePanelLoading && upcomingScheduleGroups.length > 0 && (
+                <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Upcoming meetings and live sessions">
+                  <table className={`${styles.table} ${styles.meetingsTable}`}>
+                    <caption className="sr-only">Meetings and live sessions in the next seven days</caption>
+                    <thead><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Learner / session</th><th scope="col">Meeting type</th><th scope="col">Action</th></tr></thead>
+                    <tbody>{upcomingScheduleGroups.flatMap(group => group.events.map(event => (
+                      <tr key={event.eventKey || event.id}>
+                        <td className={styles.dateCell}>{formatCalendarWeekday(group.date)}, {formatDateLabel(group.date)}</td>
+                        <td className={styles.dateCell}>{scheduleEventTime(event)}</td>
+                        <td><span className={styles.identityName}>{scheduleEventTitle(event)}</span></td>
+                        <td>{scheduleEventMeta(event)}</td>
+                        <td><Link to="/coach/timetable" state={buildTimetableFocusState(event)} className={`${styles.textButton} ${styles.primaryButton}`} aria-label={`View ${scheduleEventTitle(event)} in calendar`}><AppIcon name="ri-calendar-line" /> View in calendar</Link></td>
+                      </tr>
+                    )))}</tbody>
+                  </table>
+                </div>
+              )}
+              {!schedulePanelLoading && !upcomingScheduleGroups.length && (
+                <EmptyState size="sm" icon="ri-calendar-check-line" title="Nothing scheduled" description={calendarError || liveSessionsError || `Nothing scheduled in the next ${COACHING_CALENDAR_WINDOW_DAYS} days.`} />
+              )}
+            </div>
+          )}
+        </Panel>
+        <section className={styles.caseloadSummary} aria-label="Caseload health">
+          <h2>Caseload health</h2>
+          {([
+            ['caseload', 'Caseload', totalCaseload], ['active', 'Active', activeLearners.length],
+            ['on-break', 'Paused', onBreakLearners.length], ['completed', 'Completed', completedLearners.length],
+            ['epa', 'EPA', epaLearners.length],
+          ] as const).map(([key, label, count]) => (
+            <button key={key} type="button" onClick={() => setSelectedKpi(key)} aria-label={`Open ${label} details`}>
+              {label} <strong>{loading || loadWarning ? EMPTY_VALUE : count}</strong><AppIcon name="ri-arrow-right-s-line" className="h-3 w-3" />
+            </button>
+          ))}
+        </section>
+        <div className={styles.secondary}>
           <section id="today-actions" className="scroll-mt-4 border-t border-[var(--kbc-border)] pt-5">
             <SectionHeader
               icon="ri-calendar-schedule-line"
@@ -1554,290 +1640,8 @@ export default function CoachDashboard() {
                 )}
               </div>
             </section>
-        </div>}>
-
-        {/* ═══════════════════════════════════════════════════
-            1. CASELOAD HEALTH — the 3-4 numbers that matter, not
-               eight equally-loud tiles.
-            ═══════════════════════════════════════════════════ */}
-        {/* The coach dashboard uses the same opening rhythm as the Super Admin
-            dashboard: a welcome row followed by the shared control hero. */}
-        <div className="flex flex-col justify-between gap-3 min-[1800px]:flex-row min-[1800px]:items-end">
-          <div>
-            <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, {ownerName}</h1>
-            <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor your caseload health, learner progress and coaching actions in real time.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link
-              to="/coach/timetable"
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40"
-            >
-              <AppIcon className="ri-calendar-line text-sm text-foreground-500"></AppIcon>
-              <span>{formatWeekRangeLabel()}</span>
-              <AppIcon className="ri-arrow-right-s-line text-xs text-foreground-400"></AppIcon>
-            </Link>
-            <button
-              type="button"
-              onClick={scrollToAttention}
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40"
-            >
-              <AppIcon className="ri-filter-3-line text-sm text-foreground-500"></AppIcon>
-              <span>Filters</span>
-            </button>
-          </div>
         </div>
-
-        <WorkspaceHeroBanner
-          eyebrow="Coaching"
-          title="Coach Control"
-          description="Caseload health, learner progress and coaching actions"
-          icon="ri-user-heart-line"
-          stats={[
-            { label: 'Caseload', value: String(totalCaseload) },
-            { label: 'At risk', value: String(atRiskCount) },
-            { label: 'Need action', value: String(needsActionCount) },
-          ]}
-        />
-
-        {/* ═══════════════════════════════════════════════════
-            2. TODAY & NEEDS ACTION — overdue reviews, at-risk
-               learners, evidence and unscheduled sessions.
-            ═══════════════════════════════════════════════════ */}
-
-
-        {(loading || loadWarning) && (
-          <div className={`rounded-lg border px-3.5 py-2.5 text-[12.5px] ${loadWarning ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-foreground-200/60 bg-background-50 text-foreground-500'}`}>
-            {loading ? 'Loading live coach dashboard data...' : loadWarning}
-          </div>
-        )}
-
-        {/* ═══════════════════════════════════════════════════
-            CASELOAD HEALTH
-            ═══════════════════════════════════════════════════ */}
-        <SectionReveal delay={70}>
-          <div className="min-w-0">
-            <div className="space-y-3">
-              <SectionHeader icon="ri-heart-pulse-line" title="Caseload health" />
-              <div className="grid grid-cols-2 gap-3 min-[1600px]:grid-cols-5">
-                <FilterMetricCard
-                  label="Caseload"
-                  value={totalCaseload}
-                  note={`${onTrackCount} on track`}
-                  tone="brand"
-                  icon="ri-group-line"
-                  active={kpiFilter === 'caseload'}
-                  onFilter={() => setSelectedKpi('caseload')}
-                />
-                <FilterMetricCard
-                  label="Active"
-                  value={activeLearners.length}
-                  note="Currently active"
-                  tone="positive"
-                  icon="ri-user-follow-line"
-                  active={kpiFilter === 'active'}
-                  onFilter={() => setSelectedKpi('active')}
-                />
-                <FilterMetricCard
-                  label="Paused"
-                  value={onBreakLearners.length}
-                  note="Programme paused"
-                  tone="caution"
-                  icon="ri-pause-line"
-                  active={kpiFilter === 'on-break'}
-                  onFilter={() => setSelectedKpi('on-break')}
-                />
-                <FilterMetricCard
-                  label="Completed"
-                  value={completedLearners.length}
-                  note="Finished the programme"
-                  tone="positive"
-                  icon="ri-verified-badge-line"
-                  active={kpiFilter === 'completed'}
-                  onFilter={() => setSelectedKpi('completed')}
-                />
-                <FilterMetricCard
-                  label="EPA"
-                  value={epaLearners.length}
-                  note="At EPA stage"
-                  tone="info"
-                  icon="ri-medal-line"
-                  active={kpiFilter === 'epa'}
-                  onFilter={() => setSelectedKpi('epa')}
-                />
-              </div>
-            </div>
-
-
-          </div>
-        </SectionReveal>
-
-        {/* ═══════════════════════════════════════════════════
-            3. LEARNERS REQUIRING ATTENTION  +  4. UPCOMING SCHEDULE
-            ═══════════════════════════════════════════════════ */}
-        <SectionReveal delay={100}>
-          <div className="grid grid-cols-1 items-stretch gap-4 min-[1800px]:grid-cols-3">
-
-            <div id="learner-caseload" className="scroll-mt-4 min-[1800px]:col-span-2">
-            <Panel className="flex h-full flex-col" padding="lg">
-              <SectionHeader
-                icon="ri-user-search-line"
-                title={attentionPanelTitle}
-                description={attentionPanelSubtitle}
-                actions={
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setCaseloadExpanded(current => !current)}
-                      aria-expanded={caseloadExpanded}
-                      aria-controls="coach-caseload-content"
-                      aria-label={`${caseloadExpanded ? 'Collapse' : 'Expand'} caseload panel`}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-200/70 bg-background-50 text-foreground-400 transition-colors hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                    >
-                      <AppIcon className={`${caseloadExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-base`}></AppIcon>
-                    </button>
-                    <Link
-                      to="/coach/caseload"
-                      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-primary-100 bg-primary-50 px-3 py-1.5 text-[12px] font-semibold text-primary-700 transition-colors hover:bg-primary-100"
-                    >
-                      <AppIcon className="ri-group-line text-[13px]"></AppIcon>
-                      All learners
-                    </Link>
-                  </>
-                }
-              />
-
-              {caseloadExpanded && (
-                <div id="coach-caseload-content">
-                  {/* Priority queue filters */}
-                  <div className="mt-3.5">
-                    {kpiFilter ? (
-                      <FilterChip label="Filter" value={KPI_FILTER_LABEL[kpiFilter]} onRemove={() => setKpiFilter(null)} />
-                    ) : (
-                      <PageTabs
-                        label="Filter learners by priority"
-                        value={priorityFilter ?? 'all'}
-                        onChange={(next) => (next === 'all' ? setPriorityFilter(null) : applyPriorityFilter(next as PriorityKey))}
-                        items={priorityTabItems(attentionQueue.length, priorityCounts)}
-                      />
-                    )}
-                  </div>
-
-                  <div className={cn('mt-3.5 min-h-0 space-y-2.5', attentionHasOverflow && 'max-h-[36rem] overflow-y-auto pr-1.5')}>
-                    {loading && !attentionRows.length && <AttentionSkeleton />}
-                    {!loading && attentionRows.map((entry, index) => (
-                      <AttentionLearnerRow
-                        key={entry.learner.id}
-                        rank={index + 1}
-                        learner={entry.learner}
-                        priority={entry.priority}
-                        onOpen={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(entry.learner.id)}`, {
-                          state: {
-                            learnerId: entry.learner.id,
-                            learnerName: entry.learner.name,
-                            ...(entry.learner.learnerType ? { kind: entry.learner.learnerType } : {}),
-                            ...(entry.learner.enrolmentId ? { enrolmentId: entry.learner.enrolmentId } : {}),
-                          },
-                        })}
-                      />
-                    ))}
-                    {!loading && !attentionRows.length && (
-                      <EmptyState
-                        variant={kpiFilter || priorityFilter ? 'no-matches' : 'empty'}
-                        icon={kpiFilter || priorityFilter ? undefined : 'ri-shield-check-line'}
-                        title={kpiFilter || priorityFilter ? 'No learners match this filter' : 'No learners need attention'}
-                        description={kpiFilter || priorityFilter
-                          ? 'Clear the filter to see the full priority queue.'
-                          : 'Everyone on your caseload is on track for hours, attendance and reviews.'}
-                      />
-                    )}
-                  </div>
-                </div>
-              )}
-            </Panel>
-            </div>
-
-            {/* ── Upcoming Schedule (live sessions + calendar, merged) ── */}
-            <Panel className="coach-upcoming-schedule flex flex-col" padding="lg">
-              <SectionHeader
-                className="coach-upcoming-schedule__header"
-                icon="ri-calendar-schedule-line"
-                title="Upcoming schedule"
-                description={`Next ${COACHING_CALENDAR_WINDOW_DAYS} days · live, coaching & reviews`}
-                actions={
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setScheduleExpanded(current => !current)}
-                      aria-expanded={scheduleExpanded}
-                      aria-controls="coach-schedule-content"
-                      aria-label={`${scheduleExpanded ? 'Collapse' : 'Expand'} upcoming schedule`}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-200/70 bg-background-50 text-foreground-400 transition-colors hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                    >
-                      <AppIcon className={`${scheduleExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-base`}></AppIcon>
-                    </button>
-                    <Link
-                      to="/coach/timetable"
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary-100 bg-primary-50 px-3 py-1.5 text-[12px] font-semibold text-primary-700 transition-colors hover:bg-primary-100"
-                    >
-                      <AppIcon className="ri-calendar-line text-[13px]"></AppIcon>
-                      Calendar
-                    </Link>
-                  </>
-                }
-              />
-
-              {scheduleExpanded && (
-                <div id="coach-schedule-content" className={cn('coach-upcoming-schedule__content mt-3.5 overflow-y-auto', !schedulePanelLoading && !upcomingScheduleGroups.length ? 'flex-1 justify-center' : 'max-h-[36rem] pr-1.5')}>
-                  {schedulePanelLoading && <ScheduleSkeleton />}
-                  {!schedulePanelLoading && upcomingScheduleGroups.map(group => (
-                    <div key={`schedule-group-${group.date}`} className="coach-upcoming-schedule__group rounded-lg border border-foreground-200/60 bg-background-100/40 p-3">
-                      <div className="coach-upcoming-schedule__group-header grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-foreground-100 pb-2.5">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <span className="shrink-0 text-[17px] font-bold leading-none tabular-nums text-foreground-900">{formatCalendarDayNumber(group.date)}</span>
-                          <span className="min-w-0 truncate text-[12px] font-semibold leading-tight text-foreground-700">{formatUpcomingLiveSessionDayLabel(group.date)}</span>
-                          <span className="shrink-0 text-[12px] leading-tight text-foreground-400">{formatCalendarWeekday(group.date)} &middot; {formatCalendarMonth(group.date)}</span>
-                        </div>
-                        <span className="coach-upcoming-schedule__count shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[12px] font-semibold leading-5 tabular-nums text-foreground-500">{group.events.length}</span>
-                      </div>
-                      <div className="coach-upcoming-schedule__events">
-                        {group.events.map(event => {
-                          const classes = eventStatusClasses(event);
-                          return (
-                            <Link
-                              key={event.eventKey || event.id}
-                              to="/coach/timetable"
-                              state={buildTimetableFocusState(event)}
-                              className="coach-upcoming-schedule__event group flex min-w-0 items-start gap-2.5 rounded-lg px-1.5 py-2 transition-colors hover:bg-background-50 hover:text-primary-800"
-                            >
-                              <span className={cn('flex h-7 w-[5.75rem] shrink-0 items-center justify-center rounded-md px-2 text-center text-[12px] font-bold leading-none tabular-nums whitespace-nowrap', classes.badge)}>
-                                {scheduleEventTime(event)}
-                              </span>
-                              <AppIcon className={cn('mt-1 flex h-4 w-4 shrink-0 items-center justify-center text-[14px] transition-transform group-hover:translate-x-0.5', classes.icon)}></AppIcon>
-                              <span className="min-w-0 flex-1 pt-0.5">
-                                <span className="block whitespace-normal break-words text-[13px] font-semibold leading-tight text-foreground-900">{scheduleEventTitle(event)}</span>
-                                <span className="mt-1 block min-w-0 truncate text-[12px] leading-tight text-foreground-400">{scheduleEventMeta(event)}</span>
-                              </span>
-                            </Link>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                  {!schedulePanelLoading && !upcomingScheduleGroups.length && (
-                    <EmptyState
-                      size="sm"
-                      icon="ri-calendar-check-line"
-                      title="Nothing scheduled"
-                      description={calendarError || liveSessionsError || `Nothing scheduled in the next ${COACHING_CALENDAR_WINDOW_DAYS} days.`}
-                    />
-                  )}
-                </div>
-              )}
-            </Panel>
-          </div>
-        </SectionReveal>
-
-      </WorkspaceDashboardLayout>
+      </div>
 
       {selectedKpi && (
         <KpiDetailModal
@@ -1858,68 +1662,55 @@ export default function CoachDashboard() {
   );
 }
 
-/* ═══════════════════════════════════════════════════════════
-   Metric cards — MetricCard/CompactMetric only filter the list
-   below when clicked, per the shared component's contract. The
-   overlay button adds the one thing that contract doesn't cover
-   for this page: a corner control that opens the KPI drill-down
-   modal without turning the whole card into a nested button.
-   ═══════════════════════════════════════════════════════════ */
-function FilterMetricCard({ label, value, note, tone, icon, active, onFilter }: {
+function DashboardMetric({ label, value, note, icon, tone, onClick }: {
   label: string;
-  value: number;
+  value?: number;
   note?: string;
-  tone: StatusTone;
   icon: string;
-  active: boolean;
-  onFilter: () => void;
+  tone?: StatusTone;
+  onClick?: () => void;
 }) {
-  return (
-    <div className="relative">
-      <MetricCard
-        label={label}
-        value={value}
-        valuePosition="end"
-        note={note}
-        tone={tone}
-        icon={icon}
-        iconClassName="!bg-primary-100/60 !text-primary-600"
-        active={active}
-        className={cn(
-          'border border-transparent transition-all',
-          active ? 'border-primary-300 bg-primary-50/60 shadow-md ring-2 ring-primary-300/70' : '',
-        )}
-      />
-      <button
-        type="button"
-        onClick={onFilter}
-        aria-pressed={active}
-        aria-label={`Open ${label} details`}
-        title={`Open ${label} details`}
-        className="absolute inset-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-      />
-      <span className="pointer-events-none absolute right-2 top-2 z-10 text-foreground-400">
-        <AppIcon className="ri-arrow-right-up-line text-[14px]"></AppIcon>
-      </span>
-    </div>
+  const unavailable = value === undefined;
+  const content = <>
+    <span className={styles.metricIcon}><AppIcon name={icon} aria-hidden="true" /></span>
+    <span className={styles.metricLabel}>{label}</span>
+    <span className={styles.metricValue}>{unavailable ? EMPTY_VALUE : value}</span>
+    <span className={styles.metricNote}>{unavailable ? 'Data not available' : note || 'Your caseload'}</span>
+  </>;
+  return onClick ? (
+    <button type="button" className={styles.metric} data-tone={tone} data-unavailable={unavailable} onClick={onClick} aria-label={`Open ${label} details`}>{content}</button>
+  ) : (
+    <div className={styles.metric} data-unavailable={unavailable}>{content}</div>
   );
 }
 
-/* ═══════════════════════════════════════════════════════════
-   Today / Needs Action row
-   ═══════════════════════════════════════════════════════════ */
-interface ActionItem {
-  id: string;
-  label: string;
-  hint: string;
-  count: number;
-  icon: string;
-  tone: 'danger' | 'warning';
-  to?: string;
-  onClick?: () => void;
+function RiskDistribution({ priorities, unavailable }: { priorities: LearnerPriority[]; unavailable: boolean }) {
+  const colors = ['#6634d5', '#f1b72b', '#9b79e8', '#c4adef'];
+  const total = priorities.length;
+  let cursor = 0;
+  const segments = PRIORITY_ORDER.map((key, index) => {
+    const count = priorities.filter(priority => priority.primary?.key === key).length;
+    const percent = total ? count / total * 100 : 0;
+    const start = cursor;
+    cursor += percent;
+    return { key, count, percent, color: colors[index], stop: `${colors[index]} ${start}% ${cursor}%` };
+  });
+  return <>
+    <div className={styles.distribution}>
+      <div className={styles.donut} style={{ background: unavailable || !total ? 'var(--kbc-border)' : `conic-gradient(${segments.map(segment => segment.stop).join(', ')})` }} aria-hidden="true">
+        <div className={styles.donutCenter}><strong>{unavailable ? EMPTY_VALUE : total}</strong><span>need support</span></div>
+      </div>
+      <ul className={styles.legend} aria-label="Learners by main support reason">
+        {segments.map(segment => <li key={segment.key}>
+          <span className={styles.legendDot} style={{ background: segment.color }} aria-hidden="true" />
+          <span>{PRIORITY_META[segment.key].label}</span>
+          <strong>{unavailable ? EMPTY_VALUE : `${segment.count} (${Math.round(segment.percent)}%)`}</strong>
+        </li>)}
+      </ul>
+    </div>
+    <p className={styles.chartNote}>{unavailable ? 'Risk data is not available.' : `${total} learners requiring support. Each learner is counted once, by their highest-priority reason.`}</p>
+  </>;
 }
-
-const ACTION_TONE: Record<ActionItem['tone'], StatusTone> = { danger: 'critical', warning: 'caution' };
 
 /* ═══════════════════════════════════════════════════════════
    Priority filter tabs — "All" plus the five ranked reasons,
@@ -1939,60 +1730,44 @@ function priorityTabItems(totalCount: number, counts: Record<PriorityKey, number
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Learners Requiring Attention — one row per learner: rank,
-   who, why, and the four figures a coach checks before opening
-   the case file.
+   Compact learner rows retain the support reasons and four
+   existing metrics inside keyboard-accessible details.
    ═══════════════════════════════════════════════════════════ */
-function AttentionLearnerRow({ rank, learner, priority, onOpen }: {
-  rank: number;
+function AttentionLearnerRow({ learner, priority, onOpen }: {
   learner: CoachLearner;
   priority: LearnerPriority;
   onOpen: () => void;
 }) {
   const primary = priority.primary;
   const tone = primary ? PRIORITY_TONE[primary.key] : 'neutral';
-  const extraReasons = Math.max(priority.reasons.length - 1, 0);
-
+  const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
   const otjhPercent = otjhPercentFor(learner);
-  const otjhLabel = learner.otjhTarget > 0 ? `${formatHours(learner.otjhCompleted)} / ${formatHours(learner.otjhTarget)}` : EMPTY_VALUE;
-  const progressLabel = learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE;
-  const attendanceLabel = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
   const review = nextReviewCell(learner);
-  const programmeLine = learner.group !== EMPTY_VALUE ? learner.group : learner.programme;
-
-  const detail = [
-    primary?.detail,
-    programmeLine !== EMPTY_VALUE ? programmeLine : null,
-    extraReasons > 0 ? `+${extraReasons} more reason${extraReasons === 1 ? '' : 's'}` : null,
-  ].filter(Boolean).join(' · ') || undefined;
-
   return (
-    <ActionRow
-      tone={tone}
-      onClick={onOpen}
-      leading={<LearnerAvatar name={learner.name} initials={learner.initials} tone={tone} />}
-      title={
-        <span className="flex items-center gap-2">
-          <span className="hidden text-[12px] font-semibold text-foreground-300 lg:inline">{rank}</span>
-          {learner.name}
-        </span>
-      }
-      status={primary ? <StatusBadge tone={tone} label={PRIORITY_META[primary.key].label} size="sm" /> : null}
-      subtitle={
-        primary
-          ? <ReasonLine icon={PRIORITY_META[primary.key].icon} label={primary.label} detail={detail} tone={tone} />
-          : 'On track across hours, attendance and reviews'
-      }
-      meta={
-        <div className="grid grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-4">
-          <CompactMetric label="Progress" value={progressLabel} tone={percentTone(learner.overallProgressAvailable ? learner.overallProgress : null, 40, 75)} />
-          <CompactMetric label="OTJH" value={otjhLabel} tone={percentTone(otjhPercent, 45, 75)} />
-          <CompactMetric label="Attendance" value={attendanceLabel} tone={percentTone(learner.attendanceRateAvailable ? learner.attendanceRate : null, ATTENDANCE_MINIMUM_RATE, ATTENDANCE_EXPECTED_RATE)} />
-          <CompactMetric label="Next review" value={review.value} tone={review.tone} />
-        </div>
-      }
-      actions={<AppIcon className="ri-arrow-right-s-line text-[15px] text-foreground-300"></AppIcon>}
-    />
+    <tr>
+      <td><div className={styles.identity}>
+        <LearnerAvatar name={learner.name} initials={learner.initials} tone={tone} />
+        <span><span className={styles.identityName}>{learner.name}</span><span className={styles.subtle}>{learner.group !== EMPTY_VALUE ? learner.group : learner.programme}</span></span>
+      </div></td>
+      <td>
+        <details className={styles.rowDetails}>
+          <summary aria-label={`Show support details for ${learner.name}`}>
+            <StatusBadge tone={tone} label={primary ? PRIORITY_META[primary.key].label : 'On track'} size="sm" />
+          </summary>
+          {priority.reasons.map(reason => <p key={reason.key}>{reason.label}{reason.detail ? ` - ${reason.detail}` : ''}</p>)}
+          {!primary && <p>On track across hours, attendance and reviews</p>}
+          <div className={styles.detailMetrics}>
+            <CompactMetric label="Progress" value={learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE} tone={percentTone(learner.overallProgressAvailable ? learner.overallProgress : null, 40, 75)} />
+            <CompactMetric label="OTJH" value={learner.otjhTarget > 0 ? `${formatHours(learner.otjhCompleted)} / ${formatHours(learner.otjhTarget)}` : EMPTY_VALUE} tone={percentTone(otjhPercent, 45, 75)} />
+            <CompactMetric label="Attendance" value={learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE} tone={percentTone(learner.attendanceRateAvailable ? learner.attendanceRate : null, ATTENDANCE_MINIMUM_RATE, ATTENDANCE_EXPECTED_RATE)} />
+            <CompactMetric label="Next review" value={review.value} tone={review.tone} />
+          </div>
+        </details>
+      </td>
+      <td><StatusBadge tone={status.tone} label={status.label} size="sm" /></td>
+      <td>{displayValue(learner.lastContact)}</td>
+      <td><button type="button" className={styles.textButton} onClick={onOpen} aria-label={`View learner ${learner.name}`}>View Learner</button></td>
+    </tr>
   );
 }
 
