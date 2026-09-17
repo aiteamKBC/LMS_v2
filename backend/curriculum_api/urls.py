@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 from .teams_schedule_delivery import schedule_email
 from .teams_calendar_state import sync_calendar_state
 from .teams_directory import search_teams_directory
@@ -56,6 +56,12 @@ urlpatterns = [
     path('curriculum/programmes/<str:identifier>/restore/', views.curriculum_programme_restore, name='curriculum-programme-restore'),
     path('curriculum/programmes/<str:identifier>/', views.curriculum_programme_detail, name='curriculum-programme-detail'),
     path('curriculum/quality/audit-trail/', quality.curriculum_quality_audit_trail, name='curriculum-quality-audit-trail'),
+    # Who used the Curriculum, as opposed to what they changed. The record
+    # endpoint is written to by the browser on navigation; the two reads
+    # answer the Audit Trail's People view.
+    path('curriculum/activity/record/', activity.curriculum_activity_record, name='curriculum-activity-record'),
+    path('curriculum/activity/people/', activity.curriculum_activity_people, name='curriculum-activity-people'),
+    path('curriculum/activity/people/<str:email>/', activity.curriculum_activity_person, name='curriculum-activity-person'),
     path('curriculum/quality/versions/', quality.curriculum_quality_versions, name='curriculum-quality-versions'),
     path('curriculum/quality/versions/<str:entity_type>/<path:entity_id>/', quality.curriculum_quality_record_history, name='curriculum-quality-record-history'),
     path('curriculum/standards/', views.curriculum_standards, name='curriculum-standards'),

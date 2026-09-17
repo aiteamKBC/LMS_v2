@@ -73,6 +73,7 @@ const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/pa
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
+const CurriculumAuditTrailPersonPage = lazyRoute(() => import("../pages/curriculum/audit-trail/person/page"));
 const CurriculumCohorts = lazyRoute(() => import("../pages/curriculum/cohorts/page"));
 const CurriculumCohortWorkspace = lazyRoute(() => import("../pages/curriculum/cohort-workspace/page"));
 const CurriculumGroups = lazyRoute(() => import("../pages/curriculum/groups/page"));
@@ -1126,6 +1127,13 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/audit-trail",
     element: <CurriculumAuditTrailPage />,
+  },
+  {
+    // One person's own page rather than a panel over the list: an audit finding
+    // is something people send each other, and a link to it has to survive
+    // being pasted into a message.
+    path: "/curriculum/audit-trail/people/:email",
+    element: <CurriculumAuditTrailPersonPage />,
   },
   {
     path: "/curriculum/published",

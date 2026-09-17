@@ -83,7 +83,7 @@ export async function pushModulePlanToTeams({
   );
   const occurrences = planned.map((session, index) => ({
     sessionNumber: index + 1,
-    startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${normalizedClock(session.startTime || time)}`),
+    startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${normalizedClock(session.startTime || time)}`, summary.timeZone),
     durationMinutes: session.durationMinutes || minutesBetween(session.startTime || time, session.endTime || '') || duration,
   }));
 

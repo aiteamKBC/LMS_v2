@@ -12,6 +12,7 @@ import {
 } from '@/pages/curriculum/shared/componentUploadPolicy';
 import { hoursToRoundedMinutes, roundedMinutesToHours } from '@/lib/format';
 import { reviewCalendar } from '../teams-meetings/calendarReview';
+import { normalizedClock } from '../teams-meetings/calendarTime';
 import {
   componentTypeGroups,
   componentTypes,
@@ -188,7 +189,7 @@ export interface ModuleWeekSessionPlan {
    * an authored week: week N owns the sessions stamped N, however many that is.
    * Absent on payloads generated before weeks were calendar weeks.
    */
-  sessions: Array<{ sessionNumber: number; weekNumber?: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; slotDate?: string; slotDay?: string; skippedHolidays: string[] }>;
+  sessions: Array<{ sessionNumber: number; weekNumber?: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; rescheduled?: boolean; slotDate?: string; slotDay?: string; skippedHolidays: string[] }>;
   /** The curriculum spine: every delivery slot, open or closed. See `ModuleSessionSlot`. */
   slots?: ModuleSessionSlot[];
   skippedHolidays: string[];
@@ -413,6 +414,48 @@ function trimmed(value: unknown): string {
 /** The length a live session falls back to when nothing stored says otherwise. */
 const FALLBACK_SESSION_MINUTES = 60;
 
+/** Resolve the delivery slot without changing an already booked occurrence. */
+function liveSessionClock(
+  module: ModuleCatalogueItem,
+  settings: ComponentSettings,
+  date: string,
+  week?: ModuleWeek,
+  planned?: ModuleWeekSessionPlan['sessions'][number],
+): { startTime: string; durationMinutes: number } {
+  const booked = Boolean(settings.teamsLiveSessionId && Number(settings.teamsSessionNumber || 0) > 0);
+  if (!booked && (!settings.sessionRescheduled || planned?.rescheduled)) {
+    const day = new Date(`${date}T12:00:00Z`);
+    const weekday = !Number.isNaN(day.getTime())
+      ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(day)
+      : '';
+    const weekly = module.weeklySchedule?.length ? module.weeklySchedule : module.sourceModule?.weeklySchedule;
+    const slot = weekly?.find(item => item.day.toLowerCase() === weekday.toLowerCase());
+    const candidates = [
+      planned,
+      slot,
+      { startTime: module.startTime || module.deliveryMetadata?.startTime || module.sourceModule?.startTime,
+        endTime: module.endTime || module.deliveryMetadata?.endTime || module.sourceModule?.endTime },
+      // A week's header only describes its first delivery day.
+      ...(week?.sessionDate === date ? [{ startTime: week.sessionStartTime, durationMinutes: week.sessionDurationMinutes }] : []),
+    ];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        const startTime = normalizedClock(candidate.startTime);
+        const endTime = 'endTime' in candidate && candidate.endTime ? normalizedClock(candidate.endTime) : '';
+        const minutes = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+        const durationMinutes = endTime ? minutes(endTime) - minutes(startTime)
+          : ('durationMinutes' in candidate ? Number(candidate.durationMinutes) : 0);
+        if (Number.isFinite(durationMinutes) && durationMinutes > 0) return { startTime, durationMinutes };
+      } catch { /* An incomplete slot falls back to the next stored source. */ }
+    }
+  }
+  return {
+    startTime: trimmed(settings.sessionTime) || trimmed(week?.sessionStartTime),
+    durationMinutes: Number(settings.durationMinutes || settings.teamsDurationMinutes || week?.sessionDurationMinutes || 0) || 0,
+  };
+}
+
 /** `HH:MM` plus a number of minutes, wrapped inside the same day. */
 function clockPlusMinutes(startTime: string, minutes: number): string {
   const match = trimmed(startTime).match(/^(\d{1,2}):(\d{2})$/);
@@ -424,6 +467,7 @@ function clockPlusMinutes(startTime: string, minutes: number): string {
 
 /** One dated live session, in the shape the Teams create form reads. */
 export interface ModuleTeamsPlannedSession {
+  timeZone?: string;
   componentId: string;
   date: string;
   startTime: string;
@@ -439,8 +483,9 @@ export interface ModuleTeamsPlannedSession {
  * component with its own `sessionDate`, `sessionTime` and `durationMinutes`
  * from `module_session_clock` when it serves the structure, and dates the weeks
  * from the same planner -- so this is that stored schedule, not a second one
- * worked out in the browser. `plan` fills in a component the author has not
- * dated individually, and names the holidays landing on a date.
+ * worked out in the browser. Unbooked sessions use the delivery slot's clock
+ * and duration; confirmed bookings retain their own. `plan` also fills missing
+ * dates and names the holidays landing on a date.
  *
  * An undated session is kept with an empty clock rather than dropped:
  * `calendarInputError` is what tells the reader a session has no time, and a
@@ -469,14 +514,14 @@ export function moduleTeamsPlannedSessions(
       const settings = component.settings || {};
       const date = trimmed(settings.sessionDate) || weekDates[taken] || trimmed(week.sessionDate);
       taken += 1;
-      const startTime = trimmed(settings.sessionTime) || trimmed(week.sessionStartTime);
-      const duration = Number(settings.durationMinutes || settings.teamsDurationMinutes || week.sessionDurationMinutes || 0)
-        || FALLBACK_SESSION_MINUTES;
+      const planned = plan?.sessions.find(session => session.date === date);
+      const { startTime, durationMinutes } = liveSessionClock(module, settings, date, week, planned);
       sessions.push({
         componentId: component.id,
+        timeZone: trimmed(settings.sessionTimeZone),
         date,
         startTime,
-        endTime: clockPlusMinutes(startTime, duration),
+        endTime: clockPlusMinutes(startTime, durationMinutes || FALLBACK_SESSION_MINUTES),
         skippedHolidays: closuresByDate.get(date),
       });
     });
@@ -515,19 +560,20 @@ export interface AuthoredLiveSession {
  * module that was never finished would quietly get a calendar entry and a Teams
  * meeting on a day no author ever chose.
  *
- * Mirrors `authoring_session_links_by_catalogue` in curriculum_api/views.py,
- * which is what the backend dates the session list and the Teams occurrences
- * from. Any drift between the two shows up as a Teams calendar that reports
- * itself permanently out of sync.
+ * Dates mirror `authoring_session_links_by_catalogue` in curriculum_api/views.py.
+ * Clocks follow the same delivery/booking rule as `module_live_session_clock`,
+ * so the module, session list and Teams preview agree.
  */
 export function moduleAuthoredLiveSessions(
   module: ModuleCatalogueItem | null | undefined,
 ): AuthoredLiveSession[] {
+  if (!module) return [];
   const sessions: AuthoredLiveSession[] = [];
-  (module?.weekStructure || []).forEach(week => {
+  (module.weekStructure || []).forEach(week => {
     (week.components || []).forEach(component => {
       if (component.type !== 'live-session') return;
       const settings = component.settings || {};
+      const clock = liveSessionClock(module, settings, trimmed(settings.sessionDate), week);
       sessions.push({
         componentId: component.id,
         weekId: week.id,
@@ -535,8 +581,8 @@ export function moduleAuthoredLiveSessions(
         date: trimmed(settings.sessionDate),
         // The week's slot time is the module's own stored value, not a guess,
         // so it may stand in for the time of day. The DATE never may.
-        startTime: trimmed(settings.sessionTime) || trimmed(week.sessionStartTime),
-        durationMinutes: Number(settings.durationMinutes || settings.teamsDurationMinutes || 0) || 0,
+        startTime: clock.startTime,
+        durationMinutes: clock.durationMinutes,
       });
     });
   });
@@ -714,10 +760,8 @@ export function applyModuleWeekSessionPlan(
           settings.teamsLiveSessionId && Number(settings.teamsSessionNumber || 0) > 0,
         );
         if (bookedAtMicrosoft) return component;
-        // Only the day is the plan's to decide. A clock and a length the author
-        // set stay theirs; the plan fills them in when nothing has yet.
-        const startTime = trimmed(settings.sessionTime) || trimmed(planned.startTime);
-        const instant = startTime ? zonedNaiveToUtcIso(`${planned.date}T${startTime}`) : '';
+        const { startTime, durationMinutes } = liveSessionClock(module, settings, planned.date, week, planned);
+        const instant = startTime ? zonedNaiveToUtcIso(`${planned.date}T${startTime}`, trimmed(settings.sessionTimeZone) || undefined) : '';
         // Compared as instants, not as strings. The backend writes this stamp
         // with Python's `+00:00` and this writes it with `.000Z`; the same
         // moment spelled two ways would otherwise read as a change on every
@@ -727,6 +771,9 @@ export function applyModuleWeekSessionPlan(
         if (
           trimmed(settings.sessionDate) === planned.date
           && trimmed(settings.sessionDay) === (planned.day || '')
+          && trimmed(settings.sessionTime) === startTime
+          && Number(settings.durationMinutes || 0) === durationMinutes
+          && Number(settings.teamsDurationMinutes || durationMinutes) === durationMinutes
           && sameInstant
         ) return component;
         componentsMoved = true;
@@ -738,7 +785,8 @@ export function applyModuleWeekSessionPlan(
             sessionDate: planned.date,
             sessionDay: planned.day || '',
             ...(startTime ? { sessionTime: startTime } : {}),
-            ...(planned.durationMinutes && !settings.durationMinutes ? { durationMinutes: planned.durationMinutes } : {}),
+            ...(durationMinutes ? { durationMinutes, teamsDurationMinutes: durationMinutes } : {}),
+            ...(planned.rescheduled ? { sessionRescheduled: true } : {}),
             // Re-derived, never left behind: the learner timeline and the
             // programme calendar read this instant, so a stale one would keep
             // pointing at the old day after the date above had moved.
@@ -828,6 +876,8 @@ export function resequenceWeekSessionDates(weeks: ModuleWeek[]): ModuleWeek[] {
 }
 
 export interface ModuleCatalogueItem {
+  startTime?: string;
+  endTime?: string;
   weeklySchedule?: CurriculumModule['weeklySchedule'];
   sessionHolidays?: CurriculumModule['sessionHolidays'];
   deliveryWeeks?: number;
@@ -2033,6 +2083,7 @@ export async function uploadComponentResource(input: { moduleCatalogueId: string
 }
 
 export interface TeamsMeetingInput {
+  scheduleTimeZone?: 'Africa/Cairo' | 'Europe/London';
   seriesMode?: 'auto' | 'shared' | 'per_day';
   title: string;
   organizerEmail: string;
@@ -2292,6 +2343,25 @@ export function restoreModuleTeamsMeeting(moduleCatalogueId: string, options: { 
   });
 }
 
+export interface SavedModuleTeamsMeeting {
+  verificationPending: boolean;
+  module: ModuleCatalogueItem;
+  meeting: Record<string, unknown>;
+  calendar: {
+    title: string;
+    seriesMode: 'shared' | 'per_day';
+    occurrences: Array<{ sessionNumber: number; startDateTimeUtc: string; durationMinutes: number; joinUrl: string; eventId: string }>;
+  };
+}
+
+/** Read this module's saved calendar without creating or sending invitations. */
+export function readModuleTeamsMeeting(moduleCatalogueId: string) {
+  return apiJson<SavedModuleTeamsMeeting>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/`,
+    { timeoutMs: 15000 },
+  );
+}
+
 /**
  * How many weeks re-attaching would give a live-session component to.
  *
@@ -2325,7 +2395,7 @@ export function fetchModuleMeetingInvitees(moduleCatalogueId: string) {
 export async function createTeamsMeeting(input: TeamsMeetingInput) {
   // Review and send the same snapshot, even if a background refresh changes the form.
   const reviewed: TeamsMeetingInput = JSON.parse(JSON.stringify({ ...input, hideAttendees: true }));
-  await reviewCalendar({ ...reviewed, summaryEmail: true }, getCalendarTimeZone());
+  await reviewCalendar({ ...reviewed, summaryEmail: true }, reviewed.scheduleTimeZone || getCalendarTimeZone());
   return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
     method: 'POST',
     body: JSON.stringify(reviewed),
@@ -2345,7 +2415,7 @@ export async function createTeamsMeeting(input: TeamsMeetingInput) {
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean }) {
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean }) {
   const reviewed = JSON.parse(JSON.stringify(input)) as typeof input;
   const { series: rawSeries, occurrences } = await loadTeamsMeetingArtifacts(liveSessionId);
   const series = calendarSeriesForReview(rawSeries);
@@ -2363,10 +2433,10 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   await reviewCalendar({ ...reviewed, organizerEmail: series.organizer_email, joinUrl: series.join_url,
     attendees: reviewed.attendees ?? series.attendees, presenters: reviewed.presenters ?? series.presenters,
     coOrganizers: reviewed.coOrganizers ?? series.co_organizers,
-    recording: series.recording, lobbyBypass: series.lobby_bypass, spokenLanguage: series.spoken_language,
+    recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
     calendarSeries: series.calendar_series, previousOccurrences: occurrences,
     seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
-  }, getCalendarTimeZone());
+  }, series.timeZoneIana || getCalendarTimeZone());
   return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify(reviewed),
@@ -2566,7 +2636,7 @@ export function saveTeamsRecordingEvents(
   );
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   detail?: string;
   /**
@@ -2621,11 +2691,17 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
     return response.json();
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error('The curriculum request is taking too long. It was stopped so you can retry without waiting indefinitely.');
+      throw new CurriculumRequestTimeout();
     }
     throw err;
   } finally {
     if (timeout) window.clearTimeout(timeout);
+  }
+}
+
+export class CurriculumRequestTimeout extends Error {
+  constructor() {
+    super('The response timed out. The server may still be processing this request. Check its saved status before retrying.');
   }
 }
 
