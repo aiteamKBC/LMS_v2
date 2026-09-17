@@ -55,15 +55,29 @@ class NamedTestReviewCleanupTests(SimpleTestCase):
         with self.assertRaisesMessage(CommandError, "cannot be cancelled safely"):
             self.command._guard_external_addressability(self.records)
 
+    @patch.object(module, "connections")
+    def test_confirmed_test_dependencies_are_reported_not_blocked(self, connections):
+        self.records[0].review_responses = {"test": True}
+        cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
+        fetches = []
+        for index, relation in enumerate(module.DEPENDENT_RELATIONS):
+            fetches.extend([(relation,), (6 if index == 0 else 0,)])
+        cursor.fetchone.side_effect = fetches
+
+        result = self.command._report_test_dependencies(self.records, "default")
+
+        self.assertEqual(result["inline_event_ids"], [128])
+        self.assertEqual(sum(result["dependent_counts"].values()), 6)
+
     @patch.object(module.Command, "_report", return_value=[])
-    @patch.object(module.Command, "_guard_no_recorded_activity")
+    @patch.object(module.Command, "_report_test_dependencies")
     @patch.object(module.Command, "_guard_no_curriculum_linkage")
     @patch.object(module.Command, "_guard_approved_identity")
     @patch.object(module.Command, "_candidates")
     @patch.object(module.Command, "_cancel_external")
     @patch.object(module.Command, "_delete_local")
     def test_dry_run_never_calls_graph_or_deletes(
-        self, delete_local, cancel_external, candidates, identity, linkage, activity, report
+        self, delete_local, cancel_external, candidates, identity, linkage, dependencies, report
     ):
         candidates.return_value = self.records
         self.command.handle(dry_run=True, cancel_external=False, apply=False)
@@ -71,7 +85,7 @@ class NamedTestReviewCleanupTests(SimpleTestCase):
         delete_local.assert_not_called()
 
     @patch.object(module.Command, "_report")
-    @patch.object(module.Command, "_guard_no_recorded_activity")
+    @patch.object(module.Command, "_report_test_dependencies")
     @patch.object(module.Command, "_guard_no_curriculum_linkage")
     @patch.object(module.Command, "_guard_approved_identity")
     @patch.object(module.Command, "_candidates")
@@ -79,7 +93,7 @@ class NamedTestReviewCleanupTests(SimpleTestCase):
     @patch.object(module.Command, "_cancel_external")
     @patch.object(module.Command, "_delete_local")
     def test_graph_failure_prevents_local_delete(
-        self, delete_local, cancel_external, backup, candidates, identity, linkage, activity, report
+        self, delete_local, cancel_external, backup, candidates, identity, linkage, dependencies, report
     ):
         candidates.return_value = self.records
         report.return_value = self.records
