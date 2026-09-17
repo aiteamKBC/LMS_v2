@@ -18,6 +18,30 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', fetchMock); fetchM
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Saved session results', () => {
+  it('shows refresh feedback while keeping the saved video mounted', async () => {
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    const video = await screen.findByLabelText('Session recording 1');
+    let finish!: (response: unknown) => void;
+    fetchMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh saved results' }));
+    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled();
+    expect(screen.getByLabelText('Session recording 1')).toBe(video);
+    finish({ ok: true, json: async () => ({ sessions: [session] }) });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh saved results' })).toBeEnabled());
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
+
+  it('shows series transfer progress in the module index without loading rosters', async () => {
+    fetchMock.mockImplementationOnce(() => ok({ series: [{ id: 'S1', title: 'Example', sessions: [session] }],
+      jobs: [{ live_session_id: 'S1', state: 'running', progress: { filesReady: 0, totalFiles: 2,
+        transfer: { phase: 'uploading', bytesTransferred: 25, totalBytes: 100, updatedAt: new Date().toISOString(),
+          type: 'recording', sessionNumber: 1 } } }] }));
+    render(<ModuleSessions moduleId="M" />);
+    expect(await screen.findByRole('progressbar', { name: 'Uploading recording to Azure' })).toHaveAttribute('aria-valuenow', '25');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
+
   it('lets staff hide a recording without deleting it or requesting Teams sync', async () => {
     vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ hiddenFromLearners: true }) } as Response);
     render(<SessionResults seriesId="S1" sessionNumber={1} />);
@@ -102,14 +126,39 @@ describe('Saved session results', () => {
     expect(screen.queryByText('Learner One')).not.toBeInTheDocument();
   });
 
-  it('queues synchronization without immediately reloading or waiting on Graph', async () => {
+  it('requests immediate processing and refreshes saved status without waiting on Graph', async () => {
     vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ state: 'queued', message: 'Sync requested.' }) } as Response);
     render(<SessionResults seriesId="S1" sessionNumber={1} />);
     await screen.findByLabelText('Session recording 1');
     fireEvent.click(screen.getByRole('button', { name: 'Sync attendance & files' }));
     expect(await screen.findByText('Sync requested.')).toBeInTheDocument();
     expect(coachFetch).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows running and failed worker status while retaining saved playback', async () => {
+    let state = 'running';
+    fetchMock.mockImplementation(() => ok({ sessions: [session],
+      job: { live_session_id: 'S1', state, last_error: state === 'failed' ? 'Recording storage needs retry.' : '' } }));
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    const video = await screen.findByLabelText('Session recording 1');
+    expect(screen.getByText(/Sync in progress/)).toBeInTheDocument();
+    state = 'failed';
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh saved results' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Recording storage needs retry.');
+    expect(screen.getByLabelText('Session recording 1')).toBe(video);
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
+
+  it('replaces the request notice with the actual completed status', async () => {
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ state: 'queued', message: 'Sync requested.' }) } as Response);
+    fetchMock.mockImplementationOnce(() => ok({ sessions: [session] }))
+      .mockImplementation(() => ok({ sessions: [session], job: { live_session_id: 'S1', state: 'complete', last_error: '' } }));
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    await screen.findByLabelText('Session recording 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Sync attendance & files' }));
+    expect(await screen.findByText(/Sync finished/)).toBeInTheDocument();
+    expect(screen.queryByText('Sync requested.')).not.toBeInTheDocument();
   });
 
   it('offers the staff PDF for the exact session alongside the CSV', async () => {
@@ -174,7 +223,7 @@ describe('Module session index', () => {
     expect(coachFetch).not.toHaveBeenCalled();
   });
 
-  it('does not fetch session details until opened, then queues sync without waiting on Graph', async () => {
+  it('refreshes sync status immediately while keeping session details lazy', async () => {
     vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ state: 'queued', message: 'Sync requested. Results will be saved in the background.' }) } as Response);
     render(<ModuleSessions moduleId="M1" />);
     await screen.findByText('Session 1');
@@ -182,10 +231,11 @@ describe('Module session index', () => {
     fireEvent.click(screen.getByText('Sync attendance & files'));
     await screen.findByText('Sync requested. Results will be saved in the background.');
     expect(coachFetch).toHaveBeenCalledWith('/curriculum_api/curriculum/session-results/S1/sync/', { method: 'POST' });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls.every(call => call[0].includes('/modules/'))).toBe(true);
     fireEvent.click(screen.getByText('Session 1'));
     await screen.findByLabelText('Session recording 1');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('clears the previously selected session when the module changes', async () => {

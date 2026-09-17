@@ -19,16 +19,20 @@ only ever linked to a real occurrence Curriculum's own engine produced.
 
 Usage, in order:
 
-    python manage.py reconcile_legacy_review_events --event-id 146 --event-id 148 \\
-        --event-id 149 --event-id 150 --event-id 151 --dry-run
+    python manage.py reconcile_legacy_review_events --event-id 152 \\
+        --event-id 156 --dry-run
 
-    python manage.py reconcile_legacy_review_events --event-id 146 --event-id 148 \\
-        --event-id 149 --event-id 150 --event-id 151 --apply
+    python manage.py reconcile_legacy_review_events --event-id 152 \\
+        --event-id 156 --apply
 
 Default is --dry-run (read-only). Every id must be on ALLOWED_EVENT_IDS
 below -- this command refuses to touch anything else, so it can never become
-a general-purpose backfill by accident.
+a general-purpose backfill by accident. The approved rows predate canonical
+Curriculum target dates, so APPROVED_LEGACY_MAPPINGS records the one reviewed
+occurrence each row is allowed to use when its old target date does not match.
 """
+from datetime import date
+
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
@@ -40,14 +44,51 @@ from coach_api.views import (
     resolve_caseload_source_row,
 )
 
-#: The only ids this command will ever act on -- five confirmed-real MCM
+#: The only ids this command will ever act on -- seven confirmed-real MCM
 #: bookings created before the generic-request linkage guard existed. Every
 #: other legacy unlinked row (the test/demo set handled by
 #: cleanup_legacy_reviews) is out of scope here on purpose.
-ALLOWED_EVENT_IDS = frozenset({146, 148, 149, 150, 151})
+ALLOWED_EVENT_IDS = frozenset({146, 148, 149, 150, 151, 152, 156})
+
+# These assignment-created bookings stored the learner-selected booking date
+# as target_date. Each override points only to the October MCM occurrence 1
+# that production's Curriculum engine returned during the owner-reviewed
+# dry-run. It is deliberately guarded by that exact legacy target date; a
+# changed row falls back to normal exact matching and is never silently
+# remapped.
+APPROVED_LEGACY_MAPPINGS = {
+    146: {
+        "legacy_target_date": "2026-10-05", "source": "mcr",
+        "canonical_target_date": "2026-10-15", "occurrence_number": 1,
+    },
+    148: {
+        "legacy_target_date": "2026-10-26", "source": "mcr",
+        "canonical_target_date": "2026-10-15", "occurrence_number": 1,
+    },
+    149: {
+        "legacy_target_date": "2026-10-28", "source": "mcr",
+        "canonical_target_date": "2026-10-15", "occurrence_number": 1,
+    },
+    150: {
+        "legacy_target_date": "2026-10-27", "source": "mcr",
+        "canonical_target_date": "2026-10-15", "occurrence_number": 1,
+    },
+    151: {
+        "legacy_target_date": "2026-10-27", "source": "mcr",
+        "canonical_target_date": "2026-10-15", "occurrence_number": 1,
+    },
+    152: {
+        "legacy_target_date": "2026-10-29", "source": "mcr",
+        "canonical_target_date": "2026-10-15", "occurrence_number": 1,
+    },
+    156: {
+        "legacy_target_date": "2026-10-30", "source": "mcr",
+        "canonical_target_date": "2026-10-16", "occurrence_number": 1,
+    },
+}
 
 #: Review event types this command understands. Matches CoachCalendarEvent's
-#: own review-driven vocabulary; the five allowlisted rows are all 'mcr'.
+#: own review-driven vocabulary; the seven allowlisted rows are all 'mcr'.
 RECONCILABLE_EVENT_TYPES = ("mcr", "progress-review")
 
 
@@ -122,10 +163,34 @@ class Command(BaseCommand):
         reconciliation spec: 0 -> NO_MATCH, >1 -> AMBIGUOUS, exactly 1 -> safe.
         """
         target_iso = record.target_date.isoformat() if record.target_date else None
-        return [
+        exact_matches = [
             occurrence for occurrence in generated
             if occurrence.get("source") == record.event_type
             and occurrence.get("targetDate") == target_iso
+        ]
+        if exact_matches:
+            return exact_matches
+
+        approved = APPROVED_LEGACY_MAPPINGS.get(record.id)
+        if (
+            not approved
+            or target_iso != approved["legacy_target_date"]
+            or record.event_type != approved["source"]
+        ):
+            return []
+
+        return [
+            {
+                **occurrence,
+                "legacyReconciliation": {
+                    "legacyTargetDate": target_iso,
+                    "canonicalTargetDate": approved["canonical_target_date"],
+                },
+            }
+            for occurrence in generated
+            if occurrence.get("source") == approved["source"]
+            and occurrence.get("targetDate") == approved["canonical_target_date"]
+            and occurrence.get("occurrenceNumber") == approved["occurrence_number"]
         ]
 
     # ------------------------------------------------------------- one row
@@ -232,6 +297,11 @@ class Command(BaseCommand):
             fresh.review_template_id = matched["reviewTemplateId"]
             fresh.occurrence_number = matched["occurrenceNumber"]
             try:
+                # The calendar row keeps its audited legacy target date. Only
+                # the Review Instance receives Curriculum's canonical date;
+                # ensure_review_instance_for_calendar_record does not persist
+                # target_date in its calendar update_fields.
+                fresh.target_date = date.fromisoformat(matched["targetDate"])
                 ensure_review_instance_for_calendar_record(fresh, matched)
             except ReviewTemplateUnavailableError as exc:
                 # Raising inside transaction.atomic() rolls back everything
@@ -262,6 +332,13 @@ class Command(BaseCommand):
                 f"name={matched.get('title')!r} reviewTypeCode={matched.get('reviewTypeCode')} "
                 f"occurrenceNumber={matched['occurrenceNumber']} canonicalTargetDate={matched['targetDate']}"
             )
+            legacy_mapping = matched.get("legacyReconciliation")
+            if legacy_mapping:
+                w(
+                    "  approved legacy mapping: "
+                    f"legacyTargetDate={legacy_mapping['legacyTargetDate']} -> "
+                    f"canonicalTargetDate={legacy_mapping['canonicalTargetDate']}"
+                )
             existing = details.get("existing_instance")
             if existing:
                 w(

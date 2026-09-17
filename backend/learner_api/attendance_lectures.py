@@ -185,6 +185,18 @@ def lecture_register(source):
             row = {**row, 'attendance_status': 'upcoming'}
         result.append({**row, 'updated_at': _aware(row.get('updated_at'))})
     result.extend(by_occurrence.values())
+    # Once a Teams occurrence has ended, an unresolved attendance record is a
+    # missed session until stronger evidence (a Teams report or a saved
+    # confirmation) says otherwise. Keep live and future occurrences pending.
+    result = [
+        {**row, 'attendance_status': 'absent'}
+        if row.get('source') == 'microsoft-teams'
+        and row.get('attendance_status') == 'pending'
+        and row.get('scheduled_end')
+        and _aware(row['scheduled_end']) <= now
+        else row
+        for row in result
+    ]
     from .attendance_confirmation import apply_confirmations, read_confirmations
     return apply_confirmations(result, read_confirmations(source.id))
 

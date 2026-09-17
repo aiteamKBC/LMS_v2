@@ -13,6 +13,7 @@ from .session_results import read, result_rows
 from .session_results_policy import archive_prefix, attendance_csv, transcript_text
 from .session_media_policy import transcript_timing_ready
 from .session_transcripts import parse_vtt_cues
+from .session_transfer_progress import TransferProgress, byte_count
 
 log = logging.getLogger(__name__)
 CONTAINER = os.environ.get('AZURE_SESSION_RECORDINGS_CONTAINER', 'session-recordings')
@@ -50,7 +51,7 @@ def save_archive(artifact, name, *, text=None, state='ready', error=''):
             [artifact['id'], artifact['occurrence_id'], CONTAINER, name, state, text, error])
 
 
-def archive_series(series_id):
+def archive_series(series_id, *, lease_id=None):
     from coach_api.views import get_graph_settings, microsoft_graph_token
     from learner_api.evidence_storage import upload_blob
     from .views import teams_online_meeting_owner_id
@@ -85,6 +86,8 @@ def archive_series(series_id):
         prefix = archive_prefix(series, occurrence, modules[0] if modules else {})
         name = artifact['saved_name'] or f"{prefix}/{kind}-{artifact['id']}.{'mp4' if kind == 'recording' else 'vtt'}"
         save_archive(artifact, name, state='pending')
+        progress = TransferProgress(series_id, artifact['id'], lease_id)
+        progress.update('preparing')
         try:
             blob = client.get_blob_client(CONTAINER, name)
             text = None
@@ -101,10 +104,17 @@ def archive_series(series_id):
                     headers['Accept'] = 'text/vtt'
                 # Disk-backed, bounded memory. No video buffers or transfer in a web request.
                 with tempfile.TemporaryFile() as stream, httpx.Client(follow_redirects=True, timeout=120) as transport:
+                    progress.update('downloading')
                     with transport.stream('GET', f'{base}/{path}', headers=headers) as response:
                         response.raise_for_status()
+                        total = None if response.headers.get('Content-Encoding') not in (None, '', 'identity') else byte_count(response.headers.get('Content-Length')) or None
+                        downloaded = 0
+                        progress.update('downloading', 0, total, force=True)
                         for chunk in response.iter_bytes(1024 * 1024):
                             stream.write(chunk)
+                            downloaded += len(chunk)
+                            progress.update('downloading', downloaded, total)
+                    progress.update('downloading', downloaded, total, force=True)
                     stream.seek(0)
                     if kind == 'transcript':
                         raw = stream.read(16 * 1024 * 1024 + 1)
@@ -113,10 +123,13 @@ def archive_series(series_id):
                         text = transcript_text(raw.decode('utf-8-sig', errors='replace'))
                         stream.seek(0)
                     try:
+                        progress.update('uploading', 0, downloaded)
                         upload_blob(stream, CONTAINER, name, 'video/mp4' if kind == 'recording' else 'text/vtt', overwrite=False,
-                                    upload_block_bytes=4 * 1024 * 1024, max_concurrency=2)
+                                    upload_block_bytes=4 * 1024 * 1024, max_concurrency=2,
+                                    progress_hook=progress.uploaded)
                     except ResourceExistsError:
                         pass  # a previous completed upload can outlive its worker lease
+            progress.update('finalizing')
             if kind == 'transcript':
                 if text is None:
                     raw = blob.download_blob(offset=0, length=16 * 1024 * 1024 + 1).readall()

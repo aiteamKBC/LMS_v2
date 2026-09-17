@@ -71,7 +71,11 @@ htmlcov/
 node_modules/
 jspm_packages/
 .pnp.*
+.npm/
+.pnpm-store/
 .yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
 .yarn/install-state.gz
 
 # Build output (Vite outDir is "out"; "dist"/"build" covered by the Python
@@ -168,11 +172,13 @@ pgpass.conf
 # Editors / IDEs
 # ---------------------------------------------------------------------------
 .vscode/
+.vscode-test/
 .idea/
 .fleet/
 .zed/
 .history/
 nbproject/
+*.code-workspace
 *.sublime-project
 *.sublime-workspace
 *.swp
@@ -184,9 +190,7 @@ nbproject/
 # ---------------------------------------------------------------------------
 /CLAUDE.md
 CLAUDE.local.md
-/.claude/*
-# Shared policy loader; all other Claude configuration and scratch state stay local.
-!/.claude/CLAUDE.md
+/.claude/
 .cursor/
 .codex/
 .continue/
@@ -300,3 +304,15 @@ $RECYCLE.BIN/
 /SECURITY_AUDIT.md
 /M2_PLAN.md
 /HANDOVER_M2_TO_NEXT.md
+
+# ---------------------------------------------------------------------------
+# Repository root allowlist
+# ---------------------------------------------------------------------------
+# Keep the public repository focused on the application, its main README, and
+# the shared working policy. Everything else at the repository root is local.
+/*
+!/.gitignore
+!/AGENTS.md
+!/README.md
+!/backend/
+!/frontend/

@@ -11,7 +11,7 @@ import sys
 import types
 import unittest
 from collections import defaultdict
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -23,6 +23,7 @@ sys.modules['curriculum_api'] = package
 from curriculum_api.session_results_policy import (attendance_seconds, evidence_seconds, session_roster,
     attendance_csv, archive_prefix, transcript_text, instant, session_runs)
 from curriculum_api.session_graph import collection
+from curriculum_api.session_transfer_progress import byte_count
 from curriculum_api.session_media_policy import (hidden_artifact_ids, recordings_for_transcript,
     recording_transcript_links, transcript_timing_ready, artifact_metadata)
 
@@ -296,6 +297,22 @@ class EndpointTests(unittest.TestCase):
         self.ns['connections'] = {'default': types.SimpleNamespace(cursor=lambda: self.cursor)}
         self.ns['read'] = Mock(return_value=[])
         self.ns['launch_expectations'] = lambda *args: (defaultdict(set), defaultdict(set))
+        self.ns['start_requested_sync'] = Mock(return_value=True)
+        self.ns['add_sync_progress'] = Mock()
+        callbacks = []
+
+        @contextmanager
+        def atomic():
+            try:
+                yield
+            except Exception:
+                callbacks.clear()
+                raise
+            pending = list(callbacks)
+            callbacks.clear()
+            for callback in pending:
+                callback()
+        self.ns['transaction'] = types.SimpleNamespace(atomic=atomic, on_commit=callbacks.append)
 
     def req(self, role='admin', subject_id=7, method='GET'):
         return types.SimpleNamespace(account=types.SimpleNamespace(role=role, subject_id=subject_id) if role else None, GET={}, method=method)
@@ -405,10 +422,45 @@ class EndpointTests(unittest.TestCase):
 
     def test_queue_returns_202_without_graph_and_deduplicates(self):
         self.ns['read'].return_value = [{'id': 'S'}]
+        self.cursor.execute.side_effect = lambda *args: self.ns['start_requested_sync'].assert_not_called()
         self.assertEqual(self.ns['queue_sync'](self.req(method='POST'), series_id='S').status_code, 202)
         query, params = self.cursor.execute.call_args.args
         self.assertIn("state NOT IN ('running','queued')", query)
         self.assertEqual(params, ['S'])
+        self.ns['start_requested_sync'].assert_called_once_with('S')
+
+    def test_request_start_failure_is_not_reported_as_success(self):
+        self.ns['read'].return_value = [{'id': 'S'}]
+        self.ns['start_requested_sync'].side_effect = RuntimeError('Cannot start thread')
+        with self.assertLogs('test', level='ERROR'):
+            response = self.ns['queue_sync'](self.req(method='POST'), series_id='S')
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response['code'], 'session_sync_start_failed')
+        self.assertNotIn('state', response)
+
+    def test_only_staff_can_wake_requested_worker(self):
+        for role in (None, 'learner', 'employer'):
+            response = self.ns['queue_sync'](self.req(role, method='POST'), series_id='S')
+            self.assertIn(response.status_code, (401, 403))
+        self.ns['start_requested_sync'].assert_not_called()
+        self.cursor.execute.assert_not_called()
+
+    def test_session_status_reads_only_its_series_without_starting_work(self):
+        job = {'live_session_id': 'S', 'state': 'failed', 'last_error': 'Retry required'}
+        self.ns['read'].side_effect = [[{'id': 'S'}], [job]]
+        self.ns['result_rows'] = Mock(return_value=[{'id': 'O', 'sessionNumber': 12}])
+        response = self.ns['admin_session'](self.req(), series_id='S', session_number=12)
+        self.assertEqual(response['job'], job)
+        self.assertEqual(self.ns['read'].call_args.args[1], ['S'])
+        self.ns['result_rows'].assert_called_once_with({'id': 'S'}, session_number=12)
+        self.ns['start_requested_sync'].assert_not_called()
+
+    def test_missing_job_table_does_not_hide_saved_session(self):
+        self.ns['read'].side_effect = [[{'id': 'S'}], self.missing_archive()]
+        self.ns['result_rows'] = Mock(return_value=[{'id': 'O'}])
+        response = self.ns['admin_session'](self.req(), series_id='S', session_number=1)
+        self.assertEqual(response['sessions'], [{'id': 'O'}])
+        self.assertIsNone(response['job'])
 
     def missing_archive(self):
         cause = Exception('Missing archive table')
@@ -461,6 +513,7 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response['code'], 'session_archive_setup_required')
         self.assertNotIn('state', response)
+        self.ns['start_requested_sync'].assert_not_called()
 
     def test_pending_file_cannot_be_downloaded(self):
         self.ns['read'].return_value = [{'status': 'pending'}]
@@ -540,7 +593,7 @@ class ArchiveWorkerTests(unittest.TestCase):
             'learner_api.evidence_storage': self.storage, 'curriculum_api.views': self.views})
         modules.start(); self.addCleanup(modules.stop)
 
-    def archive(self, *, state=None, exists=True, failure=False, kind='recording', timed=False):
+    def archive(self, *, state=None, exists=True, failure=False, kind='recording', timed=False, headers=None):
         blob = Mock(); blob.exists.return_value = exists
         blob.download_blob.return_value.readall.return_value = b'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Speaker>Hello</v>'
         client = Mock(); client.get_blob_client.return_value = blob
@@ -554,6 +607,7 @@ class ArchiveWorkerTests(unittest.TestCase):
             if kind == 'transcript' and headers.get('Accept') != 'text/vtt':
                 raise RuntimeError('Graph requires a supported transcript content format')
             return nullcontext(response)
+        response.headers = headers or {}
         http.stream.side_effect = graph_content
         self.ns = {'__name__': 'curriculum_api.session_archive', '__package__': 'curriculum_api',
             'read': Mock(side_effect=[[{'id': 'S', 'module_catalogue_id': 'M', 'module_title': 'Calculus',
@@ -563,13 +617,13 @@ class ArchiveWorkerTests(unittest.TestCase):
                   'saved_name': 'existing/module/session/recording.mp4' if exists else None}]]),
             'storage_client': lambda: client, 'CONTAINER': 'session-recordings', 'archive_prefix': archive_prefix,
             'transcript_text': transcript_text, 'transcript_timing_ready': lambda artifact: timed,
-            'save_transcript_timing': Mock(),
+            'save_transcript_timing': Mock(), 'TransferProgress': Mock(), 'byte_count': byte_count,
             'save_archive': Mock(), 'tempfile': tempfile, 'httpx': types.SimpleNamespace(Client=lambda **kwargs: nullcontext(http)),
             'quote': __import__('urllib.parse', fromlist=['quote']).quote,
             'ResourceExistsError': type('ResourceExistsError', (Exception,), {}),
             'result_rows': lambda series: [], 'log': Mock()}
         functions(ROOT / 'session_archive.py', {'archive_series'}, self.ns)
-        return self.ns['archive_series']('S'), blob
+        return self.ns['archive_series']('S', lease_id='owned-lease'), blob
 
     def test_ready_recording_does_not_redownload_or_reupload(self):
         errors, blob = self.archive(state='ready')
@@ -603,7 +657,25 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(captured[0][0], b'synthetic-movie')
         self.assertEqual(captured[0][1][0], 'session-recordings')
-        self.assertEqual(captured[0][2], {'overwrite': False, 'upload_block_bytes': 4194304, 'max_concurrency': 2})
+        self.assertEqual(captured[0][2], {'overwrite': False, 'upload_block_bytes': 4194304, 'max_concurrency': 2,
+            'progress_hook': self.ns['TransferProgress'].return_value.uploaded})
+
+    def test_reports_actual_download_bytes_then_upload_phase_without_invented_total(self):
+        errors, _ = self.archive(exists=False)
+        self.assertEqual(errors, [])
+        reporter = self.ns['TransferProgress'].return_value
+        reporter.update.assert_any_call('downloading', 15, None, force=True)
+        reporter.update.assert_any_call('uploading', 0, 15)
+        self.assertEqual(reporter.update.call_args.args, ('finalizing',))
+
+    def test_known_download_size_and_encoded_response_do_not_share_a_false_percentage(self):
+        for headers, total in [({'Content-Length': '15'}, 15),
+                               ({'Content-Length': '10', 'Content-Encoding': 'gzip'}, None),
+                               ({'Content-Length': 'invalid'}, None)]:
+            with self.subTest(headers=headers):
+                errors, _ = self.archive(exists=False, headers=headers)
+                self.assertEqual(errors, [])
+                self.ns['TransferProgress'].return_value.update.assert_any_call('downloading', 15, total, force=True)
 
     def test_archive_failure_is_visible_and_never_marked_ready(self):
         errors, _ = self.archive(exists=False, failure=True)
@@ -652,7 +724,7 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertIn('requested_at>started_at', finish.args[0])
         self.assertEqual(finish.args[1][0], 'complete')
         self.assertTrue(self.views.curriculum_teams_meeting_artifacts.call_args.args[0].session_result_force)
-        ns['archive_series'].assert_called_once_with('S')
+        ns['archive_series'].assert_called_once_with('S', lease_id=queries[1].args[1][0])
 
     def test_targeted_worker_limits_both_queued_and_expired_jobs_to_requested_series(self):
         command, ns, cursor = self.worker()
@@ -661,7 +733,7 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertEqual(claim.args[1], [['S']])
         self.assertIn("interval '2 hours')) AND live_session_id=ANY(%s)", claim.args[0])
         self.assertIn('FOR UPDATE SKIP LOCKED', claim.args[0])
-        ns['archive_series'].assert_called_once_with('S')
+        ns['archive_series'].assert_called_once_with('S', lease_id=cursor.execute.call_args_list[1].args[1][0])
 
     def test_targeted_scheduled_worker_queues_only_requested_series(self):
         command, ns, cursor = self.worker(queued=False)
@@ -711,7 +783,7 @@ class ArchiveWorkerTests(unittest.TestCase):
         command, ns, cursor = self.worker(partial=True)
         with self.assertRaises(RuntimeError):
             command.handle(limit=2, scheduled=False, provision_container=False)
-        ns['archive_series'].assert_called_once_with('S')
+        ns['archive_series'].assert_called_once_with('S', lease_id=cursor.execute.call_args_list[1].args[1][0])
         finish = next(call for call in cursor.execute.call_args_list if 'finished_at=now()' in call.args[0])
         self.assertEqual(finish.args[1][0], 'failed')
 

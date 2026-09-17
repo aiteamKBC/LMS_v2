@@ -2985,6 +2985,37 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
         self.assertTrue(all(item['startTime'] == '13:00' for item in module_sessions))
         self.assertTrue(all(item['endTime'] == '15:00' for item in module_sessions))
 
+    def test_editing_group_delivery_slot_persists_the_unbooked_live_session_date(self):
+        payload = self.tree_payload()
+        payload['cohorts'][0]['groups'][0]['modules'][0]['weekStructure'][0]['components'] = [{
+            'id': 'COMP-LIVE-1',
+            'type': 'live-session',
+            'title': 'Live Teams Session 1',
+            'settings': {
+                'sessionDate': '2026-09-02',
+                'sessionDay': 'Wednesday',
+                'sessionTime': '10:00',
+                'durationMinutes': 120,
+                'customSetting': 'preserve-me',
+            },
+        }]
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+
+        response = self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {
+            'weekDays': 'Friday',
+            'startTime': '13:00',
+            'endTime': '15:00',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+
+        component = self.row(views.AUTHORING_COMPONENTS_TABLE, 'id', 'COMP-LIVE-1')
+        settings = views.as_json_value(component['settings_json'], {})
+        self.assertEqual(settings['sessionDate'], '2026-09-04')
+        self.assertEqual(settings['sessionDay'], 'Friday')
+        # A component-specific clock is an authored override, not group data.
+        self.assertEqual(settings['sessionTime'], '10:00')
+        self.assertEqual(settings['customSetting'], 'preserve-me')
+
     def test_id_edits_preserve_parent_relationships(self):
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
         self.patch_json('/curriculum_api/curriculum/cohorts/COHORT-DATA-1/', {'name': 'Renamed Cohort'})

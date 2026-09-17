@@ -25,7 +25,7 @@ from django.core.cache import cache
 from django.db import DatabaseError, IntegrityError, close_old_connections, connections, router, transaction
 from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
-from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 
@@ -728,6 +728,7 @@ def build_catchup_template_event_key(owner_email: str, learner_id: int) -> str:
 # it is referenced in a few serializers, but it is no longer the source of truth
 # for "learner booked this" behaviour.
 BOOKED_EVENT_TITLES = {
+    "first-session": "First Session",
     "catch-up": "Catch-up Session",
     "student-support": "Student Support",
     "mcr": "Monthly Coaching",
@@ -754,7 +755,7 @@ LEARNER_BOOKED_EVENT_TYPES = {
 }
 
 # Session types the coach can book from their own timetable page.
-COACH_BOOKABLE_EVENT_TYPES = ("catch-up", "student-support")
+COACH_BOOKABLE_EVENT_TYPES = ("catch-up", "student-support", "first-session")
 
 # Calendar colour/type vocabulary for the booked types above.
 BOOKED_EVENT_JSON_TYPES = {
@@ -850,7 +851,17 @@ def microsoft_graph_token() -> str:
     return access_token
 
 
-def microsoft_graph_request(method: str, path: str, *, payload: dict | None = None) -> dict:
+def microsoft_graph_request(
+    method: str, path: str, *, payload: dict | None = None,
+    extra_headers: dict | None = None,
+) -> dict:
+    """Call Microsoft Graph as the application.
+
+    ``extra_headers`` carries request-scoped Graph preferences, notably
+    ``Prefer: outlook.send-invitations="none"`` -- without it Graph emails every
+    attendee on each write to a meeting, which turns a routine per-instance
+    reconciliation into one message per instance per person.
+    """
     started = perf_counter()
     settings = get_graph_settings()
     try:
@@ -868,6 +879,11 @@ def microsoft_graph_request(method: str, path: str, *, payload: dict | None = No
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
     }
+    for header_name, header_value in (extra_headers or {}).items():
+        name = clean_text(header_name)
+        # Never let a caller override authentication.
+        if name and name.lower() not in {"authorization"}:
+            headers[name] = str(header_value)
     body = None
     if payload is not None:
         headers["Content-Type"] = "application/json"
@@ -5050,7 +5066,9 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
     scheduled_date_label = format_date(record.scheduled_date)
     scheduled_time_label = record.scheduled_time.strftime("%H:%M")
     duration_label = f"{record.duration_minutes or TIMETABLE_DEFAULT_DURATION_MINUTES} minutes"
-    subject = f"{title} - {learner_name}"
+    subject = (f"first session with {coach_name}-{learner_name}"
+               if clean_text(record.event_type).lower() == "first-session"
+               else f"{title} - {learner_name}")
 
     details = [
         ("Session", title),
@@ -5126,9 +5144,9 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
     attendees = []
     organizer = clean_email(graph_organizer_mailbox(record, base_event))
 
-    def add_required_attendee(email_value: str, name_value: str) -> None:
+    def add_required_attendee(email_value: str, name_value: str, *, allow_organizer: bool = False) -> None:
         email = clean_email(email_value)
-        if not email or email == organizer:
+        if not email or (email == organizer and not allow_organizer):
             return
         if any(clean_email(a["emailAddress"]["address"]) == email for a in attendees):
             return
@@ -5145,6 +5163,12 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
     add_required_attendee(learner_email, learner_name)
     if source == "progress-review":
         add_required_attendee(employer_email, employer_name)
+    # Graph never emails the organizer, so the coach would otherwise only ever
+    # find the session sitting on their calendar -- no invitation, nothing to
+    # accept, and nothing to notice if the calendar view is not in front of
+    # them. Inviting the coach alongside themselves is what actually sends the
+    # mail, and every session type the coach organizes needs that.
+    add_required_attendee(record.owner_email, coach_name, allow_organizer=True)
 
     if attendees:
         payload["attendees"] = attendees
@@ -6388,6 +6412,13 @@ def stored_coach_meeting_transcript(record: CoachCalendarEvent, artifact_id: str
         logger.exception("Unable to read stored coach Teams transcript for event_key=%s", record.event_key)
         return None
     if not row:
+        # Offloaded to blob storage: the column is cleared once the VTT is
+        # archived, so an empty column is not the same as no transcript.
+        from coach_api.recording_archive import archived_transcript_vtt
+
+        archived = archived_transcript_vtt(record.event_key, clean_text(artifact_id), database)
+        if archived:
+            return {"transcript_vtt": archived, "transcript_content_type": "text/vtt"}
         return None
     return {
         "transcript_vtt": row[0],
@@ -7104,6 +7135,18 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
             )
             response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
             return response
+
+    if artifact_type == "recording":
+        # Prefer the archived copy: Graph is an availability risk and deletes
+        # recordings on its own retention schedule, so once a recording is in
+        # the container that is the copy worth serving. Redirecting hands the
+        # bytes straight from Azure with range requests intact, instead of
+        # streaming hundreds of megabytes back through Django.
+        from coach_api.recording_archive import archived_recording_url
+
+        archived_url = archived_recording_url(event_key, artifact_id)
+        if archived_url:
+            return HttpResponseRedirect(archived_url)
 
     if not has_graph_credentials():
         return JsonResponse({"detail": "Microsoft Graph credentials are not configured."}, status=503)

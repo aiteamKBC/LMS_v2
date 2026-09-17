@@ -27,7 +27,7 @@ from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.core.serializers.json import DjangoJSONEncoder
-from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModified, JsonResponse, StreamingHttpResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModified, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
@@ -1654,6 +1654,14 @@ def teams_attendee_emails(value):
     return emails
 
 
+# Reconciling a holiday-shifted series rewrites each instance in turn, and Graph
+# emails every attendee on each write. On a 12-session series with 24 invitees
+# that is 288 messages for changes nobody needs told about individually -- the
+# original series invitation already carries the final dates. This header applies
+# the change to everyone's calendar and sends nothing.
+GRAPH_SILENT_INVITE_HEADERS = {'Prefer': 'outlook.send-invitations="none"'}
+
+
 def teams_recurrence_weekdays(payload, local_start):
     """The weekdays a weekly Graph recurrence has to fire on.
 
@@ -2151,7 +2159,7 @@ def apply_teams_occurrence_shifts(
                 microsoft_graph_request('PATCH', f'users/{owner_key}/events/{instance_key}', payload={
                     'start': {'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
                     'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
-                })
+                }, extra_headers=GRAPH_SILENT_INVITE_HEADERS)
             except RuntimeError as exc:
                 protected_instances.add(instance_id)
                 warnings.append({
@@ -2167,7 +2175,10 @@ def apply_teams_occurrence_shifts(
                 continue
             current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
             if current_key and current_key not in target_by_key and instance_id not in protected_instances:
-                microsoft_graph_request('DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}')
+                microsoft_graph_request(
+                    'DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}',
+                    extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+                )
     except RuntimeError as exc:
         logger.warning('Unable to reconcile individual Teams event instances: %s', exc)
         warnings.append({
@@ -3774,6 +3785,20 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     if not endpoint:
         return json_error('Unsupported meeting artifact.', status=400)
 
+    if artifact_type == 'recording':
+        # Prefer the archived copy. Graph is an availability risk and deletes
+        # recordings on its own retention schedule; once a recording is in the
+        # container that is the copy worth serving, and redirecting hands the
+        # bytes straight from Azure with range requests intact.
+        from coach_api.recording_archive import archived_live_session_recording_url
+
+        archived_url = archived_live_session_recording_url(
+            clean_str(artifact.get('occurrence_id')),
+            clean_str(artifact.get('graph_artifact_id')),
+        )
+        if archived_url:
+            return HttpResponseRedirect(archived_url)
+
     # A recreated session's transcript and recording live under its own meeting,
     # so the identifiers come from the occurrence the artifact belongs to and fall
     # back to the series only for the sessions that share the series' meeting.
@@ -3885,6 +3910,41 @@ def parse_client_event_time(value):
 
 
 @csrf_exempt
+def live_session_recording_graph_base(occurrence_id):
+    """Graph path prefix for one live-session occurrence's online meeting.
+
+    Returns ``(base, error)``. Used by the archive command, which works from an
+    occurrence id alone and has no request or series context to hand.
+    A recreated session carries its own meeting, so the occurrence's own
+    identifiers win and the series is only a fallback.
+    """
+    occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence_id])
+    if not occurrences:
+        return '', 'Occurrence not found.'
+    occurrence = occurrences[0]
+
+    series_rows = authoring_fetch_all(
+        LIVE_SESSIONS_TABLE, 'id = %s', [clean_str(occurrence.get('live_session_id'))]
+    )
+    series = series_rows[0] if series_rows else {}
+
+    occurrence_meeting_id = clean_str(occurrence.get('online_meeting_id'))
+    meeting_id = occurrence_meeting_id or clean_str(series.get('online_meeting_id'))
+    join_url = (
+        (clean_str(occurrence.get('join_url')) if occurrence_meeting_id else '')
+        or clean_str(series.get('join_url'))
+    )
+    organizer = clean_str(series.get('organizer_email'))
+    owner_id = teams_online_meeting_owner_id(organizer, join_url)
+    if not owner_id or not meeting_id:
+        return '', 'The occurrence is missing its Graph identifiers.'
+
+    return (
+        f'users/{urllib_parse.quote(owner_id, safe="")}/onlineMeetings/'
+        f'{urllib_parse.quote(meeting_id, safe="")}'
+    ), ''
+
+
 def curriculum_teams_recording_events(request, live_session_id, artifact_id):
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
@@ -16627,6 +16687,94 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
     return weeks
 
 
+def persist_group_module_session_dates(module_rows, group_row):
+    """Persist a group's new delivery dates onto its unbooked live sessions.
+
+    The group PATCH updates the module rows that own the session plan.  Learner
+    delivery, however, reads the concrete ``sessionDate`` stored on each live
+    component, so leaving those copies behind makes Curriculum say Friday while
+    the learner still says Thursday.  Reuse the same planner the structure
+    readers use, then write only settings that actually moved.
+
+    ``apply_module_session_plan_to_weeks`` deliberately leaves a Microsoft-
+    confirmed occurrence alone.  Those meetings continue through the explicit
+    Teams reschedule flow (and the group PATCH response still reports their
+    calendars as stale), so this helper cannot silently move an invitation.
+    """
+    modules = [row for row in (module_rows or []) if clean_str(row.get('module_catalogue_id'))]
+    if not modules:
+        return 0
+
+    holidays_by_cohort = cohort_selected_holidays_by_cohort([
+        clean_str(row.get('cohort_id'))
+        for row in modules
+        if clean_str(row.get('cohort_id'))
+    ])
+    now = datetime.utcnow()
+    updated = 0
+
+    for module in modules:
+        catalogue_id = clean_str(module.get('module_catalogue_id'))
+        week_rows = active_week_rows(authoring_fetch_all(
+            AUTHORING_WEEKS_TABLE,
+            'module_catalogue_id = %s',
+            [catalogue_id],
+            'display_order, week_number, id',
+        ))
+        component_rows = active_component_rows(authoring_fetch_all(
+            AUTHORING_COMPONENTS_TABLE,
+            'module_catalogue_id = %s',
+            [catalogue_id],
+            'display_order, id',
+        ))
+
+        components_by_week = defaultdict(list)
+        stored_settings = {}
+        for row in component_rows:
+            if frontend_component_type(row.get('type')) != 'live-session':
+                continue
+            component_id = clean_str(row.get('id'))
+            settings = as_json_value(row.get('settings_json'), {})
+            settings = settings if isinstance(settings, dict) else {}
+            stored_settings[component_id] = settings
+            components_by_week[clean_str(row.get('week_id'))].append({
+                'id': component_id,
+                'type': 'live-session',
+                'settings': settings,
+            })
+
+        weeks = [{
+            'id': clean_str(row.get('id')),
+            'weekNumber': parse_int(row.get('week_number'), index + 1),
+            'components': components_by_week.get(clean_str(row.get('id')), []),
+        } for index, row in enumerate(week_rows)]
+        apply_module_session_plan_to_weeks(
+            module,
+            group_row or {},
+            weeks,
+            holidays=holidays_by_cohort.get(clean_str(module.get('cohort_id'))) or [],
+        )
+
+        for week in weeks:
+            for component in week.get('components') or []:
+                component_id = clean_str(component.get('id'))
+                planned_settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
+                if planned_settings == stored_settings.get(component_id, {}):
+                    continue
+                update_authoring_rows(
+                    AUTHORING_COMPONENTS_TABLE,
+                    'id = %s',
+                    [component_id],
+                    {
+                        'settings_json': json_db_value(planned_settings),
+                        'updated_at': now,
+                    },
+                )
+                updated += 1
+
+    return updated
+
+
 # ---------------------------------------------------------------------------
 # Structure revisions
 #
@@ -25708,6 +25856,14 @@ def curriculum_group_detail(request, identifier):
                 resync_group_module_delivery_counts(previous_module_rows, {
                     'session_week_day': module_delivery_updates['session_week_day'],
                 })
+            # The module row now owns the new plan, but learner delivery reads
+            # each component's concrete date.  Persist the planner's answer for
+            # unbooked sessions now; confirmed Teams occurrences are left for
+            # the explicit calendar-update flow advertised in this response.
+            persist_group_module_session_dates(
+                authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id]),
+                updated_group,
+            )
         next_cohort_id = clean_str(updated_group.get('cohort_id'))
         if next_cohort_id and next_cohort_id != previous_cohort_id:
             if previous_cohort_id:
