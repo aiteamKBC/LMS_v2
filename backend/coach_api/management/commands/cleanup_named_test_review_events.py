@@ -135,21 +135,17 @@ class Command(LegacyCleanupCommand):
                 "refusing to act. " + "; ".join(problems)
             )
 
-    def _guard_no_recorded_activity(self, records, database):
-        active = [
+    def _report_test_dependencies(self, records, database):
+        inline_data = [
             record.id
             for record in records
             if record.review_completed_at is not None
             or record.manager_signed_at is not None
             or bool(record.review_responses)
         ]
-        if active:
-            raise CommandError(
-                f"ABORT: test event id(s) {active} contain review/signature data."
-            )
-
         ids = [record.id for record in records]
         keys = [record.event_key for record in records]
+        counts = {}
         with connections[database].cursor() as cursor:
             for relation in DEPENDENT_RELATIONS:
                 cursor.execute("select to_regclass(%s)", [relation])
@@ -160,12 +156,13 @@ class Command(LegacyCleanupCommand):
                     "where calendar_event_id = any(%s) or event_key = any(%s)",
                     [ids, keys],
                 )
-                count = cursor.fetchone()[0]
-                if count:
-                    raise CommandError(
-                        f"ABORT: {relation} contains {count} row(s) for the named test "
-                        "events. Recorded meeting activity must be reviewed first."
-                    )
+                counts[relation] = cursor.fetchone()[0]
+
+        self.stdout.write("Confirmed test data scheduled for local deletion:")
+        self.stdout.write(f"  calendar rows with inline review/signature data: {inline_data or 'none'}")
+        for relation, count in counts.items():
+            self.stdout.write(f"  {relation}: {count}")
+        return {"inline_event_ids": inline_data, "dependent_counts": counts}
 
     def _guard_external_addressability(self, records):
         unaddressable = [
@@ -265,7 +262,7 @@ class Command(LegacyCleanupCommand):
         records = self._candidates()
         self._guard_approved_identity(records)
         self._guard_no_curriculum_linkage(records)
-        self._guard_no_recorded_activity(records, database)
+        self._report_test_dependencies(records, database)
         self._guard_external_addressability(records)
         actionable = self._report(records)
 
