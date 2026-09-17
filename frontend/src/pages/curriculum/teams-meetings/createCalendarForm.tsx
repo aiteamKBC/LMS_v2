@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import type { CurriculumSession } from '@/lib/curriculumApi';
 import {
   formatCalendarDateTime,
   getCalendarTimeZone,
@@ -45,8 +44,28 @@ export function minuteKey(value: unknown): string {
   return Number.isNaN(instant.getTime()) ? '' : instant.toISOString().slice(0, 16);
 }
 
+/**
+ * The little a session has to say for a calendar to be built on it.
+ *
+ * `CurriculumSession` satisfies this, so the Teams Meetings page passes its own
+ * rows unchanged. It is stated separately because the Module Builder reads the
+ * same dates off the structure it is already holding -- the backend stamps them
+ * onto each live-session component from the same planner -- rather than reading
+ * the whole curriculum's session collection back to find one module's.
+ */
+export interface TeamsPlannedSession {
+  /** `YYYY-MM-DD` in the business zone. */
+  date: string;
+  startTime: string;
+  endTime: string;
+  /** Dates a ticked cohort holiday lands on, named above the list. */
+  skippedHolidays?: string[];
+  /** The live-session component this date belongs to, when the caller knows it. */
+  componentId?: string;
+}
+
 /** `YYYY-MM-DDTHH:mm` for a stored session — the wall clock the group meets on. */
-export function sessionNaiveLocal(session: CurriculumSession): string {
+export function sessionNaiveLocal(session: TeamsPlannedSession): string {
   // Keep incomplete legacy rows renderable. Creation validates the original
   // values before any request, so this display fallback can never be sent.
   let time = DEFAULT_START_TIME;
@@ -107,55 +126,49 @@ export function teamsGapNote(plannedUtc: string, teamsUtc: string, hasCalendar: 
 }
 
 /**
- * The cascade in words, above the dates that prove it.
+ * The holidays inside this module's dates, named above the dates themselves.
  *
- * Shown the moved dates alone, a reader guesses "one session slipped" when the
- * whole tail did. The rule and its outcome are stated here instead — which
- * holiday closed which dates, how far the plan rolled, and the end date it
- * rolled to.
+ * A warning and nothing else. The cascade it used to describe -- a session
+ * landing on a closed date moving to the next delivery day and dragging the
+ * whole tail of the run with it -- is parked: no session moves, none is
+ * dropped, and the module still ends where its own delivery pattern says it
+ * ends. What to do about these dates is the author's call, made on the week.
+ *
+ * Parked with that rule, alongside the cascade paragraph itself:
+ *   const endMoved = Boolean(plan.originalEndDate) && Boolean(plan.shiftedEndDate)
+ *     && plan.originalEndDate !== plan.shiftedEndDate;
+ *   {Boolean(plan.movedCount) && (
+ *     <p>{plan.movedRangeLabel} {plan.movedCount === 1 ? 'runs' : 'run'} later
+ *       {endMoved && <>, so the module now ends {plan.shiftedEndDate} instead of
+ *       {plan.originalEndDate}</>}.</p>
+ *   )}
  */
-function HolidayCascadeNote({ plan }: { plan: HolidayShiftPlan }) {
+function HolidayWarningNote({ plan }: { plan: HolidayShiftPlan }) {
   if (!plan.closures.length) return null;
   const names = Array.from(new Set(plan.closures.map(closure => closure.label).filter(Boolean)));
   // One holiday named twice reads as two, so the dates only carry their own
-  // label when more than one holiday closed them.
+  // label when more than one holiday falls on them.
   const closureList = plan.closures
     .map(closure => (names.length > 1 && closure.label
       ? `${formatDateLabel(closure.date)} (${closure.label})`
       : formatDateLabel(closure.date)))
     .join(', ');
-  const endMoved = Boolean(plan.originalEndDate)
-    && Boolean(plan.shiftedEndDate)
-    && plan.originalEndDate !== plan.shiftedEndDate;
   return (
     <div className="flex items-start gap-2.5 border-b border-amber-200 bg-amber-50/70 px-3 py-2.5">
-      <AppIcon className="ri-calendar-close-line mt-0.5 shrink-0 text-sm text-amber-700"></AppIcon>
+      <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-sm text-amber-700"></AppIcon>
       <div className="space-y-1 text-[11px] leading-relaxed text-amber-900">
         <p>
+          <span className="font-bold">Heads up: </span>
           <span className="font-bold">{names.length ? names.join(', ') : 'A cohort holiday'}</span>
-          {' closes '}
+          {' falls on '}
           <span className="font-semibold">{closureList}</span>
           {' inside this module’s dates.'}
         </p>
         <p>
-          Sessions run to their normal pattern until one lands on a closed date. That session is not
-          dropped — it moves to the next delivery day, and moves again if that day is closed too. Every
-          session after it moves along by the same amount.
+          Nothing is changed by that. Every session keeps its own date, none is moved or dropped, and
+          the module ends where its delivery pattern says it ends — whether these sessions run is
+          yours to decide on the week itself.
         </p>
-        {Boolean(plan.movedCount) && (
-          <p className="font-semibold">
-            {plan.movedRangeLabel} {plan.movedCount === 1 ? 'runs' : 'run'} later
-            {endMoved && (
-              <>
-                {', so the module now ends '}
-                <span className="font-bold">{formatDateLabel(plan.shiftedEndDate)}</span>
-                {' instead of '}
-                {formatDateLabel(plan.originalEndDate)}
-              </>
-            )}
-            .
-          </p>
-        )}
       </div>
     </div>
   );
@@ -169,7 +182,7 @@ function HolidayCascadeNote({ plan }: { plan: HolidayShiftPlan }) {
  */
 export interface TeamsSchedulePreviewRow {
   name: string;
-  sessions: CurriculumSession[];
+  sessions: TeamsPlannedSession[];
   /** The module's own session dates, as the UTC instants Teams would hold. */
   plannedStarts: string[];
   /** What Teams holds today, in order, when it has been asked for. */
@@ -201,7 +214,7 @@ export function ModuleSessionSchedulePreview({
   // A meeting can outlive the module's stored dates. When that happens the
   // calendar entries are still the rows worth showing, so they are listed
   // against the date Teams holds rather than dropped for an empty state.
-  const sessionRows: Array<CurriculumSession | undefined> = row.sessions.length
+  const sessionRows: Array<TeamsPlannedSession | undefined> = row.sessions.length
     ? row.sessions
     : row.teamsStarts.map(() => undefined);
   const occurrences = sessionRows.map((session, index) => {
@@ -255,12 +268,17 @@ export function ModuleSessionSchedulePreview({
               {uniformDuration} min each
             </span>
           )}
-          <span className={`rounded-full border px-2.5 py-1 ${plan.movedCount ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-            {plan.movedCount ? `${plan.movedCount} moved by holidays` : 'No holiday shifts'}
+          {/* Counts the dates a holiday lands on, not dates a holiday moved:
+              nothing moves. Parked with the clash rule:
+                {plan.movedCount ? `${plan.movedCount} moved by holidays` : 'No holiday shifts'} */}
+          <span className={`rounded-full border px-2.5 py-1 ${plan.closures.length ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+            {plan.closures.length
+              ? `${plan.closures.length} session${plan.closures.length === 1 ? '' : 's'} on a holiday`
+              : 'No holiday clashes'}
           </span>
         </div>
       </div>
-      <HolidayCascadeNote plan={plan} />
+      <HolidayWarningNote plan={plan} />
       {occurrences.length ? (
         <>
           <CompactSchedulePreview
@@ -279,9 +297,19 @@ export function ModuleSessionSchedulePreview({
           )}
         </>
       ) : (
-        <p className="px-3 py-4 text-[12px] font-semibold text-foreground-500">
-          No stored session dates yet. Save the module schedule first.
-        </p>
+        <div className="border-t border-amber-200 bg-amber-50/70 px-3 py-3.5">
+          {/* Names the missing work rather than implying a saved schedule is
+              all that is needed: a meeting exists per live-session component,
+              so a module with none has nothing to put on a calendar. */}
+          <p className="flex items-center gap-1.5 text-[12px] font-bold text-amber-900">
+            <AppIcon className="ri-error-warning-line shrink-0 text-sm text-amber-600"></AppIcon>
+            This module has no dated live sessions
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-amber-900">
+            One live-session component in the Course structure is one meeting, on that component&rsquo;s own
+            date. Add them in the Module Builder, or give the ones it already has a date, and save.
+          </p>
+        </div>
       )}
     </div>
   );
@@ -369,6 +397,11 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
     details: form.details,
     requestResponses: true,
     allowNewTimeProposals: true,
+    // A cohort mixes learners with staff from unrelated employers, and Graph
+    // puts the full attendee list in the invitation it sends each of them.
+    // Hiding it means every invitee sees only themselves, so one module's
+    // invitation stops disclosing everyone's address to everyone else.
+    // Organizer and co-organizers still see the full list.
     hideAttendees: true,
     // Keeps retries and double-clicks for the same module idempotent at Graph
     // as well as at our own API and database boundary.

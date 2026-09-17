@@ -70,8 +70,14 @@ class BookableSessionTypeTests(SimpleTestCase):
             self.assertIn(session_type, CANCELLABLE_TYPES, session_type)
 
     def test_the_coach_side_picker_is_left_alone(self):
-        """Coaches book from their own timetable; that list is separate."""
-        self.assertEqual(COACH_BOOKABLE_EVENT_TYPES, ("catch-up", "student-support"))
+        """Coaches book from their own timetable; that list is separate.
+
+        First Session is the one type deliberately on both pickers: a coach
+        books it for a new learner just as often as the learner books it.
+        """
+        self.assertEqual(
+            COACH_BOOKABLE_EVENT_TYPES, ("catch-up", "student-support", "first-session")
+        )
 
     def test_onboarding_reviews_stay_out_of_the_coach_session_list(self):
         """They are booked against the case owner before a coach exists."""

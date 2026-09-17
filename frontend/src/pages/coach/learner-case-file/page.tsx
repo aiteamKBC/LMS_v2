@@ -1072,6 +1072,7 @@ function ReferenceReviewsContent({
   onChanged: () => void;
 }) {
   const [addOpen, setAddOpen] = useState(false);
+  const reviewsLoading = data.reviewsLoading && data.reviewGroups.length === 0;
 
   return (
     <div className="space-y-5">
@@ -1098,7 +1099,13 @@ function ReferenceReviewsContent({
           </div>
         </div>
       ))}
-      {data.reviewGroups.length === 0 ? (
+      {reviewsLoading ? (
+        <ReferencePanel title="Reviews" icon="ri-file-chart-line" tone="primary">
+          <div className="p-2">
+            <RowsSkeleton rows={3} avatar={false} />
+          </div>
+        </ReferencePanel>
+      ) : data.reviewGroups.length === 0 ? (
         <ReferencePanel title="Reviews" icon="ri-file-chart-line" tone="primary">
           <ProfileEmpty text="No review or coaching meeting records are available." />
         </ReferencePanel>

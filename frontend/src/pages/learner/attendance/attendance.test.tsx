@@ -145,6 +145,12 @@ describe('Attendance lecture workspace', () => {
     expect(screen.getByText('No completed attendance records yet')).toBeInTheDocument();
   });
 
+  it('shows 67 percent when two of three finalised lectures were attended', () => {
+    const lectures = [lecture({ id: 'first' }), lecture({ id: 'second' }),
+      lecture({ id: 'missed', status: 'absent' })];
+    expect(lectureCounts(lectures)).toEqual({ all: 3, attended: 2, absent: 1, covered: 0, upcoming: 0, rate: 67 });
+  });
+
   it('opens the same attendance source in Monthly Logs and searches KSBs', async () => {
     mount();
     const row = await screen.findByRole('article', { name: 'Missed lecture' });

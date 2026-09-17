@@ -25,7 +25,7 @@ from django.core.cache import cache
 from django.db import DatabaseError, IntegrityError, close_old_connections, connections, router, transaction
 from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
-from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 
@@ -112,7 +112,9 @@ from curriculum_api.views import (
     teams_online_meeting_from_join_url,
 )
 from curriculum_api import review_instances as curriculum_review_instances
+from curriculum_api import review_types as curriculum_review_types
 from curriculum_api import reviews as curriculum_reviews
+from learner_api.review_progress_snapshot import build_progress_snapshot
 
 
 logger = logging.getLogger(__name__)
@@ -726,6 +728,7 @@ def build_catchup_template_event_key(owner_email: str, learner_id: int) -> str:
 # it is referenced in a few serializers, but it is no longer the source of truth
 # for "learner booked this" behaviour.
 BOOKED_EVENT_TITLES = {
+    "first-session": "First Session",
     "catch-up": "Catch-up Session",
     "student-support": "Student Support",
     "mcr": "Monthly Coaching",
@@ -752,7 +755,7 @@ LEARNER_BOOKED_EVENT_TYPES = {
 }
 
 # Session types the coach can book from their own timetable page.
-COACH_BOOKABLE_EVENT_TYPES = ("catch-up", "student-support")
+COACH_BOOKABLE_EVENT_TYPES = ("catch-up", "student-support", "first-session")
 
 # Calendar colour/type vocabulary for the booked types above.
 BOOKED_EVENT_JSON_TYPES = {
@@ -848,7 +851,17 @@ def microsoft_graph_token() -> str:
     return access_token
 
 
-def microsoft_graph_request(method: str, path: str, *, payload: dict | None = None) -> dict:
+def microsoft_graph_request(
+    method: str, path: str, *, payload: dict | None = None,
+    extra_headers: dict | None = None,
+) -> dict:
+    """Call Microsoft Graph as the application.
+
+    ``extra_headers`` carries request-scoped Graph preferences, notably
+    ``Prefer: outlook.send-invitations="none"`` -- without it Graph emails every
+    attendee on each write to a meeting, which turns a routine per-instance
+    reconciliation into one message per instance per person.
+    """
     started = perf_counter()
     settings = get_graph_settings()
     try:
@@ -866,6 +879,11 @@ def microsoft_graph_request(method: str, path: str, *, payload: dict | None = No
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
     }
+    for header_name, header_value in (extra_headers or {}).items():
+        name = clean_text(header_name)
+        # Never let a caller override authentication.
+        if name and name.lower() not in {"authorization"}:
+            headers[name] = str(header_value)
     body = None
     if payload is not None:
         headers["Content-Type"] = "application/json"
@@ -5048,7 +5066,9 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
     scheduled_date_label = format_date(record.scheduled_date)
     scheduled_time_label = record.scheduled_time.strftime("%H:%M")
     duration_label = f"{record.duration_minutes or TIMETABLE_DEFAULT_DURATION_MINUTES} minutes"
-    subject = f"{title} - {learner_name}"
+    subject = (f"first session with {coach_name}-{learner_name}"
+               if clean_text(record.event_type).lower() == "first-session"
+               else f"{title} - {learner_name}")
 
     details = [
         ("Session", title),
@@ -5124,9 +5144,9 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
     attendees = []
     organizer = clean_email(graph_organizer_mailbox(record, base_event))
 
-    def add_required_attendee(email_value: str, name_value: str) -> None:
+    def add_required_attendee(email_value: str, name_value: str, *, allow_organizer: bool = False) -> None:
         email = clean_email(email_value)
-        if not email or email == organizer:
+        if not email or (email == organizer and not allow_organizer):
             return
         if any(clean_email(a["emailAddress"]["address"]) == email for a in attendees):
             return
@@ -5143,6 +5163,12 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
     add_required_attendee(learner_email, learner_name)
     if source == "progress-review":
         add_required_attendee(employer_email, employer_name)
+    # Graph never emails the organizer, so the coach would otherwise only ever
+    # find the session sitting on their calendar -- no invitation, nothing to
+    # accept, and nothing to notice if the calendar view is not in front of
+    # them. Inviting the coach alongside themselves is what actually sends the
+    # mail, and every session type the coach organizes needs that.
+    add_required_attendee(record.owner_email, coach_name, allow_organizer=True)
 
     if attendees:
         payload["attendees"] = attendees
@@ -6386,6 +6412,13 @@ def stored_coach_meeting_transcript(record: CoachCalendarEvent, artifact_id: str
         logger.exception("Unable to read stored coach Teams transcript for event_key=%s", record.event_key)
         return None
     if not row:
+        # Offloaded to blob storage: the column is cleared once the VTT is
+        # archived, so an empty column is not the same as no transcript.
+        from coach_api.recording_archive import archived_transcript_vtt
+
+        archived = archived_transcript_vtt(record.event_key, clean_text(artifact_id), database)
+        if archived:
+            return {"transcript_vtt": archived, "transcript_content_type": "text/vtt"}
         return None
     return {
         "transcript_vtt": row[0],
@@ -7102,6 +7135,18 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
             )
             response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
             return response
+
+    if artifact_type == "recording":
+        # Prefer the archived copy: Graph is an availability risk and deletes
+        # recordings on its own retention schedule, so once a recording is in
+        # the container that is the copy worth serving. Redirecting hands the
+        # bytes straight from Azure with range requests intact, instead of
+        # streaming hundreds of megabytes back through Django.
+        from coach_api.recording_archive import archived_recording_url
+
+        archived_url = archived_recording_url(event_key, artifact_id)
+        if archived_url:
+            return HttpResponseRedirect(archived_url)
 
     if not has_graph_credentials():
         return JsonResponse({"detail": "Microsoft Graph credentials are not configured."}, status=503)
@@ -8530,8 +8575,48 @@ class CalendarSyncInProgress(RuntimeError):
     pass
 
 
-def persist_calendar_sync_reservation(candidate: CoachCalendarEvent) -> CoachCalendarEvent:
-    """Persist scheduling inputs and mark pending before Graph network I/O."""
+def sync_scheduled_review_instance(record: CoachCalendarEvent) -> CoachCalendarEvent:
+    """Validate the booking link and advance only an unstarted review.
+
+    Also used by unchanged reschedule requests, without touching Graph or its
+    sync state. Both rows are read under lock, including on retry.
+    """
+    if not clean_text(record.review_instance_id):
+        return record
+    with transaction.atomic():
+        record = CoachCalendarEvent.objects.select_for_update().get(pk=record.pk)
+        instance = curriculum_review_instances.get_review_instance(record.review_instance_id, for_update=True)
+        if (
+            not instance
+            or instance.get('calendar_event_id') != record.pk
+            or instance.get('learner_id') != record.learner_id
+            or clean_email(instance.get('coach_email')) != clean_email(record.owner_email)
+            or clean_text(instance.get('review_template_id')) != clean_text(record.review_template_id)
+        ):
+            raise LearnerCalendarConflict("This booking's review link is inconsistent. Please contact support.")
+        if (
+            record.status != CoachCalendarEvent.STATUS_SCHEDULED
+            or instance.get('status') not in {
+                curriculum_review_instances.STATUS_NOT_SCHEDULED,
+                curriculum_review_instances.STATUS_SCHEDULED,
+            }
+        ):
+            raise LearnerCalendarConflict("Only an unstarted review can be scheduled or rescheduled.")
+        if record.scheduled_date is None or record.scheduled_time is None:
+            raise LearnerCalendarConflict("A review booking must have a scheduled date and time.")
+        if instance['status'] == curriculum_review_instances.STATUS_NOT_SCHEDULED:
+            updated = curriculum_review_instances.mark_review_instance_scheduled(
+                instance['id'], actor=record.owner_email or 'coach',
+            )
+            if not updated:
+                raise LearnerCalendarConflict("The review status changed. Reload it before scheduling again.")
+        return record
+
+
+def persist_calendar_sync_reservation(
+    candidate: CoachCalendarEvent, *, review_event: dict | None = None,
+) -> CoachCalendarEvent:
+    """Save booking inputs, review linkage and lifecycle before Graph I/O."""
     mutable_fields = (
         "owner_email",
         "owner_name",
@@ -8564,6 +8649,12 @@ def persist_calendar_sync_reservation(candidate: CoachCalendarEvent) -> CoachCal
             CoachCalendarEvent.SYNC_RECONCILIATION,
         }:
             raise CalendarSyncInProgress("Calendar event synchronization is already in progress.")
+        if (record.review_instance_id or candidate.review_template_id) and record.status in {
+            CoachCalendarEvent.STATUS_IN_PROGRESS,
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+            CoachCalendarEvent.STATUS_COMPLETED,
+        }:
+            raise LearnerCalendarConflict("Only an unstarted review can be scheduled or rescheduled.")
         if (
             candidate.scheduled_date
             and candidate.scheduled_time
@@ -8590,10 +8681,14 @@ def persist_calendar_sync_reservation(candidate: CoachCalendarEvent) -> CoachCal
                 exclude_record_id=candidate.pk,
             )
         for field in mutable_fields:
+            if record.review_instance_id and field in {"review_template_id", "occurrence_number"}:
+                continue
             setattr(record, field, getattr(candidate, field))
         record.sync_state = CoachCalendarEvent.SYNC_PENDING
         record.save(update_fields=[*mutable_fields, "sync_state", "updated_at"])
-        return record
+        if review_event is not None and record.review_template_id and not record.review_instance_id:
+            ensure_review_instance_for_calendar_record(record, review_event)
+        return sync_scheduled_review_instance(record)
 
 
 def synchronize_reserved_calendar_event(
@@ -8959,7 +9054,9 @@ def coach_timetable_schedule_event(request):
         )
 
     try:
-        record = persist_calendar_sync_reservation(record)
+        record = persist_calendar_sync_reservation(record, review_event=base_event)
+    except ReviewTemplateUnavailableError as exc:
+        return JsonResponse({"detail": str(exc)}, status=409)
     except LearnerCalendarConflict as exc:
         return JsonResponse({"detail": str(exc)}, status=409)
     except CalendarSyncInProgress:
@@ -8969,12 +9066,6 @@ def coach_timetable_schedule_event(request):
             message="Calendar event synchronization is already in progress.",
             status=409,
         )
-
-    if first_time_linkage:
-        try:
-            ensure_review_instance_for_calendar_record(record, base_event)
-        except ReviewTemplateUnavailableError as exc:
-            return JsonResponse({"detail": str(exc)}, status=409)
 
     record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
     if not calendar_record_has_launch_url(record):
@@ -11363,6 +11454,78 @@ def coach_review_instance_answers(request, instance_id):
     except ValueError as exc:
         return JsonResponse({'detail': str(exc)}, status=409)
     return JsonResponse(result)
+
+
+@coach_access_required
+def coach_review_instance_progress(request, instance_id):
+    """Calculate (or recalculate) and FREEZE this Progress Review's learner
+    progress figures.
+
+    Explicit action only. Nothing recalculates on open, reload, completion or
+    PDF download -- a stored snapshot is returned as it was stored, and only
+    this endpoint ever replaces it.
+
+    The calculation window is the individual learner's own programme start
+    date (resolve_review_anchor_date -- enrolment."Created_users".
+    "Learner_start_date", never Start_date, never the cohort-stamped profile
+    mirror, never a group/cohort/programme/module date) up to this server's own
+    clock right now. A timestamp sent by the browser is ignored.
+
+    Authorization is the same gate every other review-instance endpoint uses:
+    the assigned coach only, via _authorized_review_instance.
+    """
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+
+    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    if definition["template"].get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW:
+        # Identified by the Review Type's stable code, never by the template's
+        # name -- another Review Type simply has no progress snapshot.
+        return JsonResponse({"detail": "Calculating progress is only available on a Progress Review."}, status=404)
+
+    learner_profile = LearnerProfile.objects.filter(pk=instance_row.get("learner_id")).first()
+    if learner_profile is None:
+        return JsonResponse({"detail": "This review's learner record could not be found."}, status=404)
+
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows([learner_profile])
+    learner_start_date, anchor_reason = resolve_review_anchor_date(
+        int(learner_profile.id), commercial_rows, enrolment_rows,
+    )
+    if learner_start_date is None:
+        # Never fall back to a cohort/group/programme date: an absent
+        # learner-specific start date means this cannot be calculated at all.
+        return JsonResponse({
+            "detail": "This learner has no individual programme start date, so progress cannot be calculated.",
+            "errors": {"learnerStartDate": [anchor_reason or REVIEW_ANCHOR_MISSING_START]},
+        }, status=409)
+
+    source = commercial_rows.get(int(learner_profile.id)) or enrolment_rows.get(int(learner_profile.id))
+    owner_email = authenticated_coach_email(request)
+    try:
+        snapshot = build_progress_snapshot(
+            source or learner_profile, learner_profile,
+            learner_start_date=learner_start_date,
+            # The authoritative calculated_at: this server's clock, taken here.
+            calculated_at=datetime.utcnow(),
+            calculated_by=owner_email,
+        )
+        curriculum_review_instances.save_review_instance_progress_snapshot(
+            instance_row, snapshot, actor=owner_email,
+        )
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=409)
+    except DatabaseError:
+        logger.warning("Progress Review snapshot failed for instance %s", instance_id, exc_info=True)
+        return JsonResponse({"detail": "Progress could not be calculated. Please try again."}, status=503)
+
+    return JsonResponse(
+        curriculum_review_instances.review_instance_form_definition(
+            curriculum_review_instances.get_review_instance(instance_row["id"]),
+        )
+    )
 
 
 @coach_access_required

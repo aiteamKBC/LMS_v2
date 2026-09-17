@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { overviewDashboard, overviewSchedule } from '@/api/learnerOverview';
+import { overviewSchedule, overviewWeek } from '@/api/learnerOverview';
 import { fetchTrainingPlanContract, type TrainingPlanContract } from '@/api/trainingPlanDashboard';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 
 export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true) {
   const active = enabled && !!kind && !!id;
-  const week = useLiveLearnerRead(kind, id, active, overviewDashboard.read, overviewDashboard.peek);
+  const week = useLiveLearnerRead(kind, id, active, overviewWeek.read, overviewWeek.peek);
   const schedule = useLiveLearnerRead(kind, id, active, overviewSchedule.read, overviewSchedule.peek);
   const identity = `${kind}:${id}`;
   const [attempt, setAttempt] = useState(0);

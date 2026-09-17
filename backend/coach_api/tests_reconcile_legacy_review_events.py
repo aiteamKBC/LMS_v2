@@ -261,6 +261,102 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.review_template_id, template["id"])
         self.assertTrue(row.review_instance_id)
 
+    def test_approved_legacy_target_links_to_reviewed_canonical_occurrence(self):
+        template = self.template(
+            name="Monthly Learner Catch-up",
+            type_code=review_types.REVIEW_TYPE_CODE_MCM,
+        )
+        legacy_target = date(2026, 10, 5)
+        canonical_target = date(2026, 10, 15)
+        scheduled = date(2026, 10, 22)
+        row = self.make_legacy_row(
+            event_id=146,
+            target_date=legacy_target,
+            scheduled_date=scheduled,
+            scheduled_time=time(14, 0),
+        )
+        generated = [{
+            "source": "mcr",
+            "targetDate": canonical_target.isoformat(),
+            "reviewTemplateId": template["id"],
+            "occurrenceNumber": 1,
+            "title": "Monthly Learner Catch-up",
+            "reviewTypeCode": review_types.REVIEW_TYPE_CODE_MCM,
+        }]
+
+        with patch.object(cmd_module, "generated_occurrences", return_value=generated):
+            output = _run("--event-id", "146", "--apply")
+
+        self.assertIn("approved legacy mapping", output)
+        self.assertIn("LINKED", output)
+        row.refresh_from_db()
+        self.assertEqual(row.event_key, f"mcr:{MIRROR_ID}:1:{legacy_target.isoformat()}")
+        self.assertEqual(row.target_date, legacy_target)
+        self.assertEqual(row.scheduled_date, scheduled)
+        self.assertEqual(row.scheduled_time, time(14, 0))
+        self.assertEqual(row.meeting_link, "https://teams.microsoft.com/l/meetup-join/existing")
+        instance = review_instances.get_review_instance(row.review_instance_id)
+        self.assertEqual(str(instance["target_date"]), canonical_target.isoformat())
+        self.assertEqual(instance["status"], review_instances.STATUS_SCHEDULED)
+
+    def test_approved_mapping_refuses_an_unreviewed_legacy_target(self):
+        template = self.template(
+            name="Monthly Learner Catch-up",
+            type_code=review_types.REVIEW_TYPE_CODE_MCM,
+        )
+        row = self.make_legacy_row(event_id=146, target_date=date(2026, 10, 6))
+        generated = [{
+            "source": "mcr",
+            "targetDate": "2026-10-15",
+            "reviewTemplateId": template["id"],
+            "occurrenceNumber": 1,
+            "title": "Monthly Learner Catch-up",
+            "reviewTypeCode": review_types.REVIEW_TYPE_CODE_MCM,
+        }]
+
+        with patch.object(cmd_module, "generated_occurrences", return_value=generated):
+            output = _run("--event-id", "146", "--apply")
+
+        self.assertIn("NO_MATCH", output)
+        row.refresh_from_db()
+        self.assertEqual(row.review_template_id, "")
+        self.assertEqual(row.review_instance_id, "")
+
+    def test_additional_approved_mappings_use_their_reviewed_canonical_dates(self):
+        cases = (
+            (152, date(2026, 10, 29), "2026-10-15"),
+            (156, date(2026, 10, 30), "2026-10-16"),
+        )
+
+        for event_id, legacy_target, canonical_target in cases:
+            with self.subTest(event_id=event_id):
+                row = self.make_legacy_row(
+                    event_id=event_id,
+                    target_date=legacy_target,
+                )
+                generated = [{
+                    "source": "mcr",
+                    "targetDate": canonical_target,
+                    "reviewTemplateId": f"REVT-{event_id}",
+                    "occurrenceNumber": 1,
+                    "title": "Monthly Learner Catch-up",
+                    "reviewTypeCode": review_types.REVIEW_TYPE_CODE_MCM,
+                }]
+
+                with patch.object(
+                    cmd_module, "generated_occurrences", return_value=generated,
+                ):
+                    output = _run("--event-id", str(event_id), "--dry-run")
+
+                self.assertIn("approved legacy mapping", output)
+                self.assertIn(
+                    f"canonicalTargetDate={canonical_target}", output,
+                )
+                self.assertIn("SAFE_TO_LINK", output)
+                row.refresh_from_db()
+                self.assertEqual(row.review_template_id, "")
+                self.assertEqual(row.review_instance_id, "")
+
 
 class IdempotencyTests(ReconcileLegacyReviewEventsTestCase):
     def test_16_second_run_is_a_no_op(self):

@@ -266,17 +266,23 @@ describe('learner loading and recovery', () => {
     else expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow', rate);
   });
 
-  it('renders the dashboard metrics returned with the weekly overview without a separate metrics request', async () => {
+  it('uses the same canonical metrics response as My Learning when the weekly overview disagrees', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
       if (url.includes('/overview-week/')) return new Response(JSON.stringify({
         ...(payload(url) as Record<string, unknown>),
         metrics: {
           migrated: false,
-          programme: { completed: 36, total: 307, percent: 11.73, status: 'available' },
-          ksb: { completed: 14, total: 32, percent: 43.75, status: 'available', codes: [] },
-          otjh: { historical: 10, new: 62.7, actual: 72.7, planned: 564.75 },
+          programme: { completed: 1, total: 1, percent: 100, status: 'available' },
+          ksb: { completed: 1, total: 1, percent: 100, status: 'available', codes: [] },
+          otjh: { historical: 10, new: 62.7, actual: 72.7, planned: 533.75 },
         },
+      }));
+      if (url.includes('/metrics/')) return new Response(JSON.stringify({
+        migrated: false,
+        programme: { completed: 36, total: 307, percent: 11.73, status: 'available' },
+        ksb: { completed: 14, total: 32, percent: 43.75, status: 'available', codes: [] },
+        otjh: { historical: 10, new: 62.7, actual: 72.7, planned: 527.75 },
       }));
       return new Response(JSON.stringify(payload(url)));
     }));
@@ -290,8 +296,8 @@ describe('learner loading and recovery', () => {
 
     const otjh = within(screen.getByRole('link', { name: 'Open OTJ Hours' }));
     expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('72.70 h');
-    expect(otjh.getByText('Target (TP Planned)').nextElementSibling).toHaveTextContent('564.75 h');
-    expect(otjh.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '13');
+    expect(otjh.getByText('Target (TP Planned)').nextElementSibling).toHaveTextContent('527.75 h');
+    expect(otjh.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '14');
 
     const ksb = within(screen.getByRole('link', { name: 'Open KSB Progress' }));
     expect(ksb.getByText('Current').nextElementSibling).toHaveTextContent('43.75%');
@@ -299,8 +305,8 @@ describe('learner loading and recovery', () => {
 
     const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(requests.filter(url => url.includes('/overview-week/'))).toHaveLength(1);
-    expect(requests.some(url => url.includes('section=dashboard'))).toBe(true);
-    expect(requests.some(url => url.includes('/metrics/'))).toBe(false);
+    expect(requests.some(url => url.includes('section=dashboard'))).toBe(false);
+    expect(requests.filter(url => url.includes('/metrics/'))).toHaveLength(1);
   });
 
   it('shows unavailable header facts when the schedule fails instead of claiming the coach is unassigned', async () => {
@@ -420,7 +426,7 @@ describe('learner loading and recovery', () => {
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
     await waitFor(() => {
       const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-      expect(requests.some(url => url.includes('/metrics/'))).toBe(false);
+      expect(requests.some(url => url.includes('/metrics/'))).toBe(true);
       expect(requests.some(url => url.includes('/attendance/'))).toBe(true);
       expect(requests.some(url => url.includes('/overview-week/'))).toBe(true);
     });
@@ -486,7 +492,7 @@ describe('learner loading and recovery', () => {
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     await waitFor(() => {
       const paths = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-      expect(paths.some(url => url.includes('/metrics/'))).toBe(false);
+      expect(paths.some(url => url.includes('/metrics/'))).toBe(true);
       expect(paths.some(url => url.includes('/attendance/'))).toBe(true);
       expect(paths.some(url => url.includes('/overview-week/'))).toBe(true);
       expect(paths.some(url => url.includes('/training-plan-dashboard/'))).toBe(true);
@@ -497,7 +503,7 @@ describe('learner loading and recovery', () => {
     const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(requests.filter(url => /learner-detail|student-activity|subject-covers/.test(url))).toEqual([]);
     expect(requests.filter(url => url.includes('overview-week'))).toHaveLength(1);
-    expect(requests.some(url => url.includes('section=dashboard'))).toBe(true);
+    expect(requests.some(url => url.includes('section=dashboard'))).toBe(false);
     expect(requests.filter(url => url.includes('section=overview'))).toHaveLength(1);
     expect(screen.queryByTestId('page-crash')).not.toBeInTheDocument();
   });
