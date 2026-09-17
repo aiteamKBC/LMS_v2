@@ -71,7 +71,11 @@ htmlcov/
 node_modules/
 jspm_packages/
 .pnp.*
+.npm/
+.pnpm-store/
 .yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
 .yarn/install-state.gz
 
 # Build output (Vite outDir is "out"; "dist"/"build" covered by the Python
@@ -168,11 +172,13 @@ pgpass.conf
 # Editors / IDEs
 # ---------------------------------------------------------------------------
 .vscode/
+.vscode-test/
 .idea/
 .fleet/
 .zed/
 .history/
 nbproject/
+*.code-workspace
 *.sublime-project
 *.sublime-workspace
 *.swp
@@ -185,8 +191,9 @@ nbproject/
 /CLAUDE.md
 CLAUDE.local.md
 /.claude/*
-# Shared policy loader; all other Claude configuration and scratch state stay local.
+# Shared policy loader and attribution policy; all other Claude state stays local.
 !/.claude/CLAUDE.md
+!/.claude/settings.json
 .cursor/
 .codex/
 .continue/

@@ -1,215 +1,172 @@
 <div align="center">
-  <img src="frontend/public/kbc-logo.png" alt="Kent Business College logo" width="280" />
+  <img src="frontend/public/kbc-logo.png" alt="Kent Business College" width="260" />
 
   <h1>KBC LearningOS</h1>
 
-  <p><strong>The apprenticeship operating system for connected, evidence-led delivery.</strong></p>
+  <p><strong>A connected, evidence-led operating system for apprenticeship delivery.</strong></p>
 
   <p>
-    One platform for learning, coaching, curriculum, compliance, quality assurance,<br />
-    employer engagement, and operational insight.
+    Learning · Coaching · Curriculum · Compliance · Quality assurance · Reporting
   </p>
 
   <p>
-    <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white" />
-    <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white" />
-    <img alt="Django" src="https://img.shields.io/badge/Django-6.0-092E20?logo=django&logoColor=white" />
-    <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Ready-4169E1?logo=postgresql&logoColor=white" />
-    <img alt="Status" src="https://img.shields.io/badge/Status-Active%20Development-7C3AED" />
+    <img alt="React 19" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white" />
+    <img alt="TypeScript 5.8" src="https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white" />
+    <img alt="Django 6" src="https://img.shields.io/badge/Django-6-092E20?logo=django&logoColor=white" />
+    <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Neon-4169E1?logo=postgresql&logoColor=white" />
+    <img alt="Project status" src="https://img.shields.io/badge/Status-Active%20Development-7C3AED" />
   </p>
 </div>
 
 ---
 
-<img src="frontend/public/hero-clean.png" alt="KBC LearningOS — connected apprenticeship delivery" width="100%" />
+<img src="frontend/public/hero-clean.png" alt="KBC LearningOS platform overview" width="100%" />
 
 ## Contents
 
-- [Project at a Glance](#project-at-a-glance)
 - [Overview](#overview)
-- [Why LearningOS?](#why-learningos)
-- [Platform Capabilities](#platform-capabilities)
-- [Users and Workspaces](#users-and-workspaces)
+- [Platform capabilities](#platform-capabilities)
+- [Users and workspaces](#users-and-workspaces)
 - [Architecture](#architecture)
-- [Technology Stack](#technology-stack)
-- [Repository Structure](#repository-structure)
-- [Getting Started](#getting-started)
+- [Technology stack](#technology-stack)
+- [Repository structure](#repository-structure)
+- [Local development](#local-development)
 - [Configuration](#configuration)
-- [Development Commands](#development-commands)
-- [API Overview](#api-overview)
-- [Quality and Security](#quality-and-security)
+- [Development commands](#development-commands)
+- [API surface](#api-surface)
+- [Quality and security](#quality-and-security)
+- [Contributing](#contributing)
 - [Documentation](#documentation)
-
-## Project at a Glance
-
-| | |
-| --- | --- |
-| **Product** | Enterprise apprenticeship management and learning platform |
-| **Organisation** | Kent Business College |
-| **Architecture** | React single-page application with Django REST and WebSocket services |
-| **Primary users** | Learners, delivery staff, employers, operations, quality, and leadership teams |
-| **Data services** | PostgreSQL/Neon, Redis, Azure Blob Storage, and local SQLite fallback |
-| **Lifecycle** | Active development |
+- [Ownership](#ownership)
 
 ## Overview
 
-**KBC LearningOS** is an enterprise learning management and apprenticeship delivery platform developed for **Kent Business College**. It connects every stage of the apprenticeship journey—from onboarding and programme delivery to evidence validation, gateway readiness, and audit preparation.
+**KBC LearningOS** is Kent Business College's apprenticeship management and
+learning platform. It connects onboarding, programme delivery, learner support,
+evidence, attendance, progress reviews, quality assurance, and operational
+reporting in one role-aware system.
 
-The platform gives each stakeholder a focused, role-aware workspace while maintaining a shared operational view of learner progress, risk, compliance, and quality. Its evidence-first approach helps delivery teams turn day-to-day activity into clear, inspection-ready records.
+The platform is designed around a shared learner record. Each workspace exposes
+the information and actions appropriate to its role while preserving ownership,
+audit history, and programme context across the learner journey.
 
-> [!NOTE]
-> KBC LearningOS is under active development. The current application combines production-oriented Django APIs with demonstration data used to validate selected workflows and the wider product experience.
+> [!IMPORTANT]
+> This repository is under active development and contains integrations with
+> managed databases, Microsoft services, Azure Storage, and AI providers. Use
+> approved development credentials only, and never run schema or live-integration
+> commands against a shared environment without the project owner's approval.
 
-## Why LearningOS?
+## Platform capabilities
 
-Apprenticeship delivery typically spans disconnected learning tools, spreadsheets, evidence stores, communication channels, and compliance systems. LearningOS brings those workflows together around a single learner journey.
-
-| Challenge | LearningOS response |
+| Area | Capabilities |
 | --- | --- |
-| Fragmented learner records | A unified learner profile, training plan, timeline, and evidence history |
-| Limited visibility of risk | Attendance, engagement, progress, and intervention signals in role-based dashboards |
-| Manual evidence administration | Structured upload, review, approval, KSB mapping, and audit trails |
-| Disconnected delivery teams | Shared workflows for learners, coaches, tutors, employers, QA, MIS, and compliance |
-| Inspection preparation overhead | Evidence-led reporting with traceable decisions and quality controls |
+| Learning delivery | Personalised learning plans, modules, activities, videos, assignments, quizzes, and KSB progression |
+| Coaching | Caseload management, progress reviews, action plans, intervention queues, and learner communication |
+| Curriculum | Programme, cohort, group, module, week, component, holiday, and session planning |
+| Evidence and compliance | Evidence upload and review, OTJH validation, signatures, audit trails, and gateway readiness |
+| Attendance and meetings | Session calendars, Microsoft Teams meetings, attendance, recordings, and transcripts |
+| Quality and operations | QA sampling, compliance workflows, enrolment, reports, dashboards, and data reconciliation |
+| Engagement | Risk signals, outreach, rewards, claims, notifications, and re-engagement workflows |
+| Communication | Real-time chat, role-aware notifications, email, calendar, and file integrations |
 
-## Platform Capabilities
-
-### Learning and progress
-
-- Personalised training plans and weekly learning pathways
-- Module, activity, video, assignment, and quiz delivery
-- Knowledge, Skills, and Behaviours (KSB) progression
-- Off-the-job-hours recording and validation
-- Gateway and end-point assessment readiness
-- Learner rewards, badges, and engagement features
-
-### Coaching and delivery
-
-- Coach and tutor caseload workspaces
-- Learner reviews, action plans, and intervention queues
-- Coaching calendars and scheduled sessions
-- Assignment marking and feedback workflows
-- Evidence, KSB, and OTJH validation
-- Attendance, absence, and catch-up management
-
-### Curriculum and quality
-
-- Programme, module, week, and component builders
-- Curriculum-to-KSB mapping and coverage analysis
-- Cohort, group, session, and staff assignment management
-- Quality assurance, sampling, and audit workspaces
-- Compliance, enrolment, and document workflows
-- Inspection-ready reporting and evidence trails
-
-### Organisation and communication
-
-- Role-based workspaces and permission-aware navigation
-- Employer and engagement management
-- Real-time direct messaging using WebSockets
-- Leadership, finance, MIS, administration, and auditor views
-- Internationalisation-ready user interface
-- AI-assisted reflection, transcription, moderation, and staff support
-
-## Users and Workspaces
-
-LearningOS supports the wider apprenticeship delivery ecosystem:
+## Users and workspaces
 
 | Workspace | Primary focus |
 | --- | --- |
-| Learner | Learning activities, evidence, progress, attendance, and support |
-| Coach | Caseload oversight, reviews, actions, risk, and learner communication |
-| Tutor | Teaching sessions, marking, feedback, and validation queues |
-| Employer | Learner oversight, evidence confirmation, and workplace engagement |
-| Engagement | Attendance risk, outreach, intervention, and re-engagement |
-| Curriculum | Programme design, learning structure, KSB mapping, and scheduling |
-| Compliance & MIS | Onboarding, documentation, data quality, cohorts, and reporting |
-| QA & Auditor | Sampling, assurance, traceability, and inspection evidence |
-| Leadership & Finance | Operational intelligence, performance, budgets, and oversight |
-| Administrator | Users, roles, permissions, tenants, integrations, and system settings |
+| Learner | Learning, evidence, progress, attendance, reviews, and support |
+| Coach | Caseload oversight, coaching activity, actions, risk, and reviews |
+| Tutor | Teaching sessions, marking, feedback, attendance, and validation |
+| Employer | Learner oversight, workplace evidence, and review participation |
+| Curriculum | Programme design, KSB coverage, cohorts, groups, and scheduling |
+| Engagement | Attendance risk, outreach, intervention, and rewards |
+| Compliance and MIS | Enrolment, documentation, data quality, and reporting |
+| QA and auditor | Sampling, assurance, traceability, and inspection evidence |
+| Leadership and finance | Performance, operational insight, and oversight |
+| Administrator | Accounts, roles, permissions, tenants, and integrations |
 
 ## Architecture
 
 ```text
-┌─────────────────────────────────────────────────────────────────┐
-│                    React + TypeScript Client                    │
-│  Role workspaces · Learning journey · Curriculum · Reporting   │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ REST + WebSocket
-┌──────────────────────────────▼──────────────────────────────────┐
-│                       Django Application                        │
-│  Learner · Coach · Curriculum · Quiz · Engagement · Audit · Chat│
-└──────────────┬──────────────────────┬──────────────────┬────────┘
-               │                      │                  │
-       ┌───────▼────────┐     ┌───────▼────────┐  ┌─────▼─────────┐
-       │ PostgreSQL /   │     │ Redis Channels │  │ Azure Storage │
-       │ Neon / SQLite  │     │ Real-time chat │  │ Evidence files│
-       └────────────────┘     └────────────────┘  └───────────────┘
-                                      │
-                              ┌───────▼────────┐
-                              │ OpenAI services│
-                              │ AI assistance  │
-                              └────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                    React + TypeScript client                       │
+│  Role workspaces · Learning journey · Curriculum · Reporting      │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │ REST + WebSocket
+┌───────────────────────────────▼────────────────────────────────────┐
+│                         Django application                         │
+│ Login · Learner · Coach · Curriculum · Quiz · Audit · Chat · MIS  │
+└───────────────┬──────────────────────┬────────────────────┬────────┘
+                │                      │                    │
+       ┌────────▼────────┐    ┌────────▼────────┐   ┌──────▼─────────┐
+       │ PostgreSQL /    │    │ Redis / Django │   │ Azure Storage  │
+       │ Neon            │    │ Channels       │   │ Evidence files │
+       └─────────────────┘    └─────────────────┘   └────────────────┘
+                                │
+                    ┌───────────▼────────────┐
+                    │ Microsoft + AI services│
+                    └────────────────────────┘
 ```
 
-The Vite development server proxies REST, media, and WebSocket traffic to Django. Django REST Framework provides the application APIs, while Django Channels and Redis support real-time messaging. PostgreSQL is the primary production data store; SQLite provides a lightweight local fallback.
+The Vite development server proxies API, media, and WebSocket traffic to the
+Django application. Django REST Framework serves the HTTP APIs, Django Channels
+provides real-time communication, and PostgreSQL/Neon is the primary connected
+data store. Redis supports Channels and shared caching when configured.
 
-## Technology Stack
+## Technology stack
 
 | Layer | Technologies |
 | --- | --- |
-| Frontend | React 19, TypeScript, Vite 8, React Router, Tailwind CSS |
-| Data visualisation | Recharts |
-| Internationalisation | i18next, react-i18next |
-| Backend | Python 3.12+, Django 6, Django REST Framework |
-| Real-time services | Django Channels, Redis |
-| Data | PostgreSQL, Neon, SQLite for local development |
-| Cloud and AI | Azure Blob Storage, Microsoft integrations, OpenAI API |
-| Testing | Vitest, Testing Library, Django test framework |
+| Frontend | React 19, TypeScript 5.8, Vite 8, React Router, TanStack Query, Tailwind CSS |
+| UI and visualisation | Radix UI, Lucide, Recharts, SweetAlert2 |
+| Backend | Python 3.12+, Django 6, Django REST Framework, Django Channels |
+| Data | PostgreSQL/Neon, Redis, SQLite for isolated local and test scenarios |
+| Storage and integrations | Azure Blob Storage, Microsoft Graph, OpenAI, Aptem-connected workflows |
+| Testing | Vitest, Testing Library, Playwright, and Django test tooling |
 
-## Repository Structure
+## Repository structure
 
 ```text
-LMS/
-├── backend/                    Django application and APIs
-│   ├── audit_api/              Audit evidence and reporting
-│   ├── chat/                   Messaging and WebSocket services
-│   ├── coach_api/              Coaching, calendars, and absence workflows
-│   ├── config/                 Django project configuration
-│   ├── curriculum_api/         Programmes, modules, sessions, and KSBs
-│   ├── engagement_api/         Engagement monitoring and rewards
-│   ├── enrolment_api/          Enrolment, onboarding, and agreements
-│   ├── learner_api/            Learner data, evidence, and attendance
-│   ├── manual_audit_api/       Manual audit rows and classification
-│   └── quiz_api/               Quiz delivery and configuration
-├── frontend/                   React and TypeScript client
-│   └── src/
-│       ├── api/                Typed API clients
-│       ├── components/         Shared and feature-level components
-│       ├── hooks/              Reusable application hooks
-│       ├── mocks/              Demonstration datasets
-│       ├── pages/              Feature and role workspaces
-│       └── router/             Route definitions
-└── reports/                    Data reconciliation and audit outputs
+LMS_v2/
+├── backend/                    Django application and domain APIs
+│   ├── config/                 Settings, routing, ASGI, caching, and middleware
+│   ├── login/                  Platform sessions, roles, invitations, and access
+│   ├── learner_api/            Learner journey, evidence, attendance, and calendar
+│   ├── coach_api/              Coaching, reviews, bookings, and interventions
+│   ├── curriculum_api/         Programmes, modules, sessions, KSBs, and Teams
+│   ├── enrolment_api/          Onboarding, agreements, and learner records
+│   ├── progress_reviews_api/   Review workflows and supporting records
+│   ├── audit_api/              Hours, evidence, reconciliation, and reporting
+│   ├── manual_audit_api/       Manual audit classification and review
+│   ├── engagement_api/         Engagement, rewards, claims, and notifications
+│   ├── quiz_api/               Quiz delivery, attempts, and configuration
+│   └── chat/                   Persisted chat and WebSocket services
+├── frontend/                   React single-page application
+│   ├── public/                 Static brand and application assets
+│   └── src/                    Features, pages, components, APIs, hooks, and tests
+├── docs/                       Supporting technical and product documentation
+├── reports/                    Versioned reconciliation and audit outputs
+├── AGENTS.md                   Shared repository working policy
+└── README.md                   Project overview and developer guide
 ```
 
-## Getting Started
+## Local development
 
 ### Prerequisites
 
 - Python 3.12 or later
 - Node.js 20.19+ or 22.12+
 - npm
-- Redis for real-time messaging (optional for basic UI development)
-- PostgreSQL for connected platform data (optional when using SQLite)
+- Access to an approved database environment for connected workflows
+- Redis when testing real-time chat or shared-cache behaviour
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/aiteamKBC/LMS.git
-cd LMS
+git clone https://github.com/aiteamKBC/LMS_v2.git
+cd LMS_v2
 ```
 
-### 2. Start the backend
+### 2. Prepare the backend
 
 ```bash
 cd backend
@@ -228,261 +185,136 @@ Activate the virtual environment:
 source .venv/bin/activate
 ```
 
-Install dependencies, apply migrations, and start Django:
+Install the pinned dependencies and start Django:
 
 ```bash
-pip install -r requirements.txt
-python manage.py migrate
+python -m pip install -r requirements.txt
 python manage.py runserver
 ```
 
-The backend runs at **http://127.0.0.1:8000**.
+The backend listens on `http://127.0.0.1:8000` by default.
 
-### 3. Start the frontend
+> [!CAUTION]
+> Database provisioning and schema commands are environment-specific. Do not run
+> migrations, bootstrap commands, seeders, or repair scripts against a shared
+> database. Obtain the approved environment and setup procedure from the project
+> owner first.
 
-In a second terminal:
+### 3. Prepare the frontend
+
+Open a second terminal at the repository root:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-The application runs at **http://localhost:3000**. Vite proxies local API, media, and WebSocket requests to the Django server on port `8000`.
+The frontend runs at `http://localhost:3000` and proxies local requests to the
+Django server. To use a different backend address, set `VITE_API_TARGET` in a
+local environment file.
 
 ## Configuration
 
-Django loads local configuration from `backend/.env`. Environment files are excluded from version control and must never contain committed credentials.
+Django reads local values from `backend/.env`. Vite reads its standard
+environment files from `frontend/`. All real environment files are ignored by
+Git; commit only sanitized examples.
 
-SQLite is used automatically when no database URL is provided. A connected development environment can be configured as follows:
-
-```dotenv
-# Application
-DJANGO_DEBUG=true
-DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
-
-# Data
-DATABASE_URL=postgresql://user:password@host:5432/database
-ENROLMENT_DATABASE_URL=postgresql://user:password@host:5432/enrolment_database
-
-# Real-time messaging
-CHAT_REDIS_URL=redis://127.0.0.1:6379/1
-CHAT_DEMO_BOOTSTRAP_ENABLED=true
-
-# Shared API cache (use the deployment's Redis service in production)
-CACHE_URL=redis://127.0.0.1:6379/2
-CACHE_KEY_PREFIX=kbc-lms
-CACHE_DEFAULT_TIMEOUT=300
-
-# Optional API profiling. Adds Server-Timing and X-DB-Query-Count headers and
-# logs requests slower than the configured threshold.
-PERFORMANCE_DIAGNOSTICS=false
-SLOW_REQUEST_THRESHOLD_MS=750
-
-# AI services
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4.1-mini
-OPENAI_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
-OPENAI_REFLECTION_MODEL=gpt-4o-mini
-OPENAI_MODERATION_MODEL=omni-moderation-latest
-
-# Secure evidence storage
-AZURE_STORAGE_ACCOUNT=
-AZURE_STORAGE_KEY=
-AZURE_QUARANTINE_CONTAINER=evidence-quarantine
-AZURE_APPROVED_CONTAINER=evidence-approved
-AZURE_REJECTED_CONTAINER=evidence-rejected
-AZURE_SAS_TTL_MINUTES=15
-```
-
-Frontend proxy targets can also be overridden:
-
-```dotenv
-VITE_API_TARGET=http://127.0.0.1:8000
-VITE_API_PROXY=http://127.0.0.1:8000
-VITE_API_BASE_URL=/curriculum_api
-VITE_CHAT_API_BASE_URL=/api/chat
-VITE_CHAT_WS_BASE_URL=ws://127.0.0.1:8000
-```
-
-Microsoft Graph, attendance, enrolment, and audit integrations require additional credentials. They are not required for basic local UI development.
-
-## Development Commands
-
-### Frontend
-
-Run these commands from `frontend/`:
-
-| Command | Description |
+| Area | Common variables |
 | --- | --- |
-| `npm run dev` | Start the Vite development server |
-| `npm run build` | Create a production build in `frontend/out` |
-| `npm run preview` | Preview the production build locally |
-| `npm run lint` | Run ESLint with zero warnings allowed |
-| `npm run type-check` | Validate TypeScript types |
-| `npm test` | Run the Vitest suite once |
-| `npm run test:watch` | Run Vitest in watch mode |
+| Django | `DJANGO_DEBUG`, `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `SYSTEM_TIME_ZONE` |
+| Database | `DATABASE_URL`, `ENROLMENT_DATABASE_URL`, `AUDIT_DATABASE_URL` |
+| Redis | `CHAT_REDIS_URL`, `CACHE_URL`, `CACHE_KEY_PREFIX` |
+| Frontend proxy | `VITE_API_TARGET` or `VITE_API_PROXY` |
+| Azure Storage | `AZURE_STORAGE_ACCOUNT`, `AZURE_STORAGE_KEY`, container settings |
+| Microsoft integration | Tenant, client, organizer, mail, calendar, and Graph settings |
+| AI services | `OPENAI_API_KEY` and the feature-specific model settings |
 
-### Backend
+Never commit credentials, database URLs, learner data, exported evidence, or
+tenant identifiers. See the integration guides in [Documentation](#documentation)
+for the required provider-specific settings.
 
-Run these commands from `backend/`:
+## Development commands
 
-| Command | Description |
+Run frontend commands from the repository root:
+
+| Command | Purpose |
 | --- | --- |
-| `python manage.py runserver` | Start the Django development server |
-| `python manage.py migrate` | Apply database migrations |
-| `python manage.py createsuperuser` | Create a Django administrator |
-| `python manage.py test` | Run the backend test suite |
-| `python manage.py test_login --fast` | Run the authentication unit tests that need no database (~0.5s) |
-| `python manage.py test_login` | Run the full authentication suite, 125 tests (provisions the unmanaged Neon test tables) |
-| `python manage.py apply_login_tables` | Create the `login` schema and its authentication tables |
-| `python manage.py seed_demo_admin` | Create or reset the demo administrator account |
-| `python manage.py create_calendar_busy_slots_table` | Create the learner personal-calendar busy-slot cache |
-| `python manage.py sync_calendar_busy_slots` | Refresh connected learner calendars (defaults to the next 90 days) |
-| `python manage.py sync_teams_meeting_artifacts` | Pull Teams attendance, transcripts and recordings for recently ended live sessions and coach meetings |
-| `python manage.py sync_coach_meeting_snapshots --recent` | Pull Teams artifacts/attendance for recently ended coach MCM, PR, catch-up and support meetings only |
+| `npm --prefix frontend run dev` | Start the Vite development server |
+| `npm --prefix frontend run type-check` | Validate TypeScript types |
+| `npm --prefix frontend run lint` | Run ESLint with zero warnings allowed |
+| `npm --prefix frontend test` | Run the Vitest suite once |
+| `npm --prefix frontend run test:teams` | Run the protected Teams regression baseline |
+| `npm --prefix frontend run test:learner` | Run learner-focused regression tests |
+| `npm --prefix frontend run build` | Create the production bundle in `frontend/out` |
 
-Run `sync_calendar_busy_slots` every 10–15 minutes in the deployment scheduler. Example cron entry:
+Backend management commands must be run from `backend/` with the virtual
+environment active. Verify the target database and external-service side effects
+before running any command. Backend suites that create tables or fixtures require
+an approved isolated test environment.
 
-```cron
-*/15 * * * * cd /path/to/LMS/backend && .venv/bin/python manage.py sync_calendar_busy_slots
-```
+## API surface
 
-Run `sync_teams_meeting_artifacts` every five minutes to keep Microsoft Teams
-attendance, recordings and transcripts fresh. The command now also checks
-recently ended coach meetings (MCM, progress reviews, catch-ups and support
-sessions) unless `--skip-coach-meetings` is supplied.
-
-```cron
-*/5 * * * * cd /path/to/LMS/backend && .venv/bin/python manage.py sync_teams_meeting_artifacts --lookback-hours 24 --limit 100 --coach-limit 100
-```
-
-The cache stores only start/end times and never stores personal event titles, descriptions, attendees, or locations. Booking endpoints still perform a live provider check before confirming a session.
-
-Set `DJANGO_USE_SQLITE=true` to run backend tests against the isolated SQLite
-configuration. PostgreSQL-only `chat` and `coach_api` migration histories are
-skipped in that mode; Django creates their current test models directly, while
-production continues to use the complete PostgreSQL migration history.
-
-For production, set `DJANGO_DEBUG=false`, use the pooled PostgreSQL/Neon
-connection URL for `DATABASE_URL`, and configure `CACHE_URL` so all Django
-workers share the same curriculum cache. `GZipMiddleware` compresses large JSON
-responses automatically when compression has not already been applied by the
-reverse proxy.
-
-After deploying, create the project-wide query indexes (the command safely
-skips schemas/tables that are not present and can be run repeatedly):
-
-```bash
-python manage.py apply_performance_indexes --dry-run
-python manage.py apply_performance_indexes
-```
-
-Curriculum module and component collections support opt-in server pagination:
-`?page=1&page_size=50`. Module collections also accept `programme_id`,
-`cohort_id`, `group_id`, `status`, and `compact=true`; component collections
-accept `module_catalogue_ids=MOD-1,MOD-2`. Existing clients remain unpaginated
-unless they send pagination parameters.
-
-## API Overview
-
-| Endpoint | Responsibility |
+| Prefix | Responsibility |
 | --- | --- |
-| `/learner_api/` | Learner profiles, attendance, evidence, quizzes, and reflections |
-| `/coach_api/` | Coaching workflows, calendar events, messages, and absences |
-| `/curriculum_api/` | Programmes, modules, sessions, staff, and KSB mappings |
-| `/quiz_api/` | Quiz settings, content, and course links |
-| `/engagement_api/` | Engagement monitoring and reward data |
-| `/enrolment_api/` | Enrolment, onboarding, and agreement workflows |
-| `/audit_api/` | Audit evidence and reporting |
-| `/manual_audit_api/` | Manual audit rows and evidence classification |
+| `/login_api/` | Sign-in, sessions, invitations, resets, and platform access |
+| `/learner_api/` | Learner profiles, journey, evidence, attendance, and calendar |
+| `/coach_api/` | Coaching workflows, bookings, reviews, and interventions |
+| `/curriculum_api/` | Programmes, modules, sessions, KSBs, and Teams management |
+| `/enrolment_api/` | Enrolment, onboarding, agreements, and documents |
+| `/api/progress-reviews/` | Progress-review workflows and supporting records |
+| `/quiz_api/` | Quiz configuration, delivery, attempts, and results |
+| `/engagement_api/` | Engagement, rewards, claims, and notifications |
+| `/audit_api/` | Hours, evidence, reconciliation, and reports |
+| `/manual_audit_api/` | Manual audit rows and classification |
 | `/api/chat/` | Conversations and persisted messages |
-| `/api/calendar/` | Learner personal-calendar integration |
-| `/api/batch/` | Batched GET requests for reduced round-trips |
+| `/api/calendar/` | Personal-calendar integration |
+| `/api/batch/` | Batched read requests |
 | `/ws/chat/<conversation_id>/` | Real-time conversation channel |
-| `/login_api/` | Sign-in, sessions, invitations, and password resets |
-| `/admin/` | Django administration |
+| `/django_admin/` | Django administration |
 
-## Authentication
+## Quality and security
 
-Platform sign-in lives in the `login` app. Credentials are stored in a dedicated
-`login` schema on the Neon database, beside the people they identify — learners
-in `enrolment."Created_users"`, employers in `enrolment."Employers"`, and staff
-in `enrolment."Staff_users"`. An account is linked to its person by
-`(Subject_type, Subject_id)` and carries one of four roles: `admin`, `staff`,
-`employer`, `learner`.
+- Authorization and record ownership are enforced server-side.
+- Session cookies are server-managed and configured for secure deployment.
+- Evidence follows quarantine, review, approval, or rejection workflows.
+- Approved cloud downloads use short-lived, read-only access URLs.
+- Production builds do not publish frontend source maps.
+- Tests must use mocked external providers unless live validation is explicitly
+  approved for a designated test environment.
+- Teams meeting identity, attendees, options, dates, attendance, and recordings
+  are protected regression boundaries throughout the platform.
 
-Install it on a new environment:
+## Contributing
 
-```bash
-python manage.py apply_login_tables   # create the login schema and its tables
-python manage.py seed_demo_admin      # optional: a known admin credential
-```
+1. Read [`AGENTS.md`](AGENTS.md) before investigating or changing the project.
+2. Keep each change focused and preserve unrelated work in the shared tree.
+3. Never commit secrets, personal learner data, local exports, generated media,
+   or environment-specific configuration.
+4. Attribute commits to the people who authored the work. Automated assistants
+   must not be added as commit co-authors or repository contributors.
+5. Run the Teams baseline and the affected feature checks before handoff.
+6. Leave commits, pushes, pulls, and pull requests to the project owner unless
+   the team's process explicitly assigns them to you.
 
-How it works:
-
-- **Sessions** are server-side. The browser holds an `HttpOnly`, `SameSite=Lax`
-  cookie containing a random token; the database stores only its SHA-256, so a
-  database dump yields no usable cookies and sign-out takes effect immediately.
-- **Passwords** are hashed with Argon2id (`argon2-cffi`), falling back to
-  Django's PBKDF2 if it is not installed. Policy is length-led, and rejects
-  common passwords and anything containing the user's own name or address.
-- **Invitations** are how everyone gets their first password. Ticking "Invite to
-  platform" on any of the three creation forms emails a single-use link; the
-  account cannot be signed into until that link is used.
-- **Who may invite** is enforced in `login/services.py`, at the point the
-  credential is minted rather than only on the endpoint: anonymous callers are
-  refused, only staff and admins can invite at all, and **only an admin can
-  create another admin**. This matters because the three `learner_api` creation
-  endpoints are `@csrf_exempt` with no auth decorator of their own — without the
-  check, an unauthenticated POST naming `position: "Admin"` would mint an admin
-  credential and email the set-password link to any address it chose.
-- **Resets** work the same way and revoke every existing session on completion.
-- Both token types are stored only as a SHA-256, are single-use, expire (7 days
-  for invitations, 1 hour for resets), and are superseded when re-issued.
-- **Brute force** is bounded twice: per-account lockout with escalating backoff,
-  and a per-IP sliding window that catches a spray across many accounts.
-- Sign-in failures are deliberately indistinguishable — a wrong password and an
-  unknown address return the same response, so the endpoint cannot be used to
-  enumerate who has an account.
-- Every attempt, invitation, and reset is recorded in `login."Login_audit"`.
-
-- **Console writes require a session.** The `learner_api` creation and edit
-  endpoints are gated by `login.permissions.staff_only(writes_only=True)`:
-  POST/PATCH require an authenticated staff or admin account. Reads are still open
-  while the remaining unauthenticated frontend fetches are migrated. Set
-  `LEARNER_API_REQUIRE_AUTH=0` for local development only.
-
-The suite is 132 backend tests plus 63 frontend tests covering the credential,
-session, invitation and reset paths; [backend/LOGIN_TESTS.md](backend/LOGIN_TESTS.md)
-documents what each one pins down and what is deliberately not covered.
-
-Outbound email goes through Microsoft Graph. **Until an Azure app registration
-is configured, links are logged to the Django console instead of being sent** —
-the flows are fully usable, but nothing is delivered. See
-[backend/AZURE_SETUP.md](backend/AZURE_SETUP.md) for exactly what to create and
-which `.env` keys to add. Check readiness at any time with:
-
-```bash
-curl http://localhost:8000/login_api/health/
-```
-
-## Quality and Security
-
-- API credentials, database URLs, and cloud storage keys must remain outside version control.
-- Learner evidence follows a quarantine, validation, approval, or rejection lifecycle.
-- Approved evidence downloads use short-lived, read-only Azure SAS URLs.
-- Production deployments must disable Django debug mode and use a securely managed secret key.
-- Production traffic should be served over HTTPS with explicit allowed hosts, trusted origins, and restricted cloud storage access.
-- Frontend production builds do not publish source maps.
+The shared repository configuration disables automatic AI attribution in commit
+messages and pull-request descriptions. Personal tool state remains local and is
+excluded by `.gitignore`.
 
 ## Documentation
 
-- [`frontend/project_plan.md`](frontend/project_plan.md) — product vision, workspaces, and feature roadmap
+- [`AGENTS.md`](AGENTS.md) — repository policy, scope controls, and validation gates
+- [`frontend/project_plan.md`](frontend/project_plan.md) — product vision and workspace roadmap
+- [`backend/AZURE_SETUP.md`](backend/AZURE_SETUP.md) — Azure mail and storage setup
+- [`backend/MICROSOFT_SSO_SETUP.md`](backend/MICROSOFT_SSO_SETUP.md) — Microsoft SSO setup
+- [`MICROSOFT_TEAMS_ADMIN_REQUEST.md`](MICROSOFT_TEAMS_ADMIN_REQUEST.md) — Teams tenant requirements
+- [`backend/LOGIN_TESTS.md`](backend/LOGIN_TESTS.md) — authentication test coverage
+- [`backend/progress_reviews_api/README.md`](backend/progress_reviews_api/README.md) — progress-review API notes
 
 ## Ownership
 
-KBC LearningOS is proprietary software developed for Kent Business College. All rights reserved unless otherwise stated by the project owner.
+KBC LearningOS is proprietary software developed for Kent Business College.
+All rights are reserved unless the project owner states otherwise.
 
 ---
 
