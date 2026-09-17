@@ -141,7 +141,9 @@ const definitions: ComponentAuthoringDefinition[] = [
       teamsMeetingType: 'live-session',
       teamsRequestResponses: true,
       teamsAllowTimeProposals: true,
-      teamsHideAttendees: false,
+      // Default to not disclosing every invitee's address to every other
+      // invitee; a cohort mixes learners with staff from unrelated employers.
+      teamsHideAttendees: true,
       preparationInstructions: '',
       reflectionQuestions: '',
       attendanceRequired: true,

@@ -811,6 +811,44 @@ AZURE_PROGRESS_REVIEW_CONTAINER = (
     os.environ.get("AZURE_PROGRESS_REVIEW_CONTAINER") or "progress-review-decks"
 )
 
+# Teams meeting recordings, copied out of Microsoft Graph and kept here.
+# Graph is the only copy otherwise, and it is not always reachable -- an outage
+# or an expired application access policy takes every past recording with it.
+# Platform-generated like the decks above: no quarantine/scan step, private
+# container, read access only ever through a short-lived SAS.
+AZURE_MEETING_RECORDINGS_CONTAINER = (
+    os.environ.get("AZURE_MEETING_RECORDINGS_CONTAINER") or "meeting-recordings"
+)
+
+# One container per meeting type, so recordings can be governed separately:
+# a progress review and a wellbeing support call carry very different
+# sensitivity, and retention, access review and deletion are all set per
+# container in Azure. Anything not listed falls back to the container above.
+AZURE_RECORDING_CONTAINERS_BY_TYPE = {
+    "mcr": os.environ.get("AZURE_RECORDINGS_MCM_CONTAINER") or "recordings-monthly-coaching",
+    "progress-review": os.environ.get("AZURE_RECORDINGS_PR_CONTAINER") or "recordings-progress-review",
+    "first-session": os.environ.get("AZURE_RECORDINGS_FIRST_SESSION_CONTAINER") or "recordings-first-session",
+    "catch-up": os.environ.get("AZURE_RECORDINGS_CATCHUP_CONTAINER") or "recordings-catch-up",
+    "student-support": os.environ.get("AZURE_RECORDINGS_SUPPORT_CONTAINER") or "recordings-student-support",
+    "gateway": os.environ.get("AZURE_RECORDINGS_GATEWAY_CONTAINER") or "recordings-gateway",
+    "review": os.environ.get("AZURE_RECORDINGS_REVIEW_CONTAINER") or "recordings-review",
+    "eligibility-review": os.environ.get("AZURE_RECORDINGS_ELIGIBILITY_CONTAINER") or "recordings-eligibility-review",
+    "workspace": os.environ.get("AZURE_RECORDINGS_WORKSPACE_CONTAINER") or "recordings-workspace",
+    "training-plan": os.environ.get("AZURE_RECORDINGS_TRAINING_PLAN_CONTAINER") or "recordings-training-plan",
+    "other": os.environ.get("AZURE_RECORDINGS_OTHER_CONTAINER") or "recordings-other",
+    # Curriculum live sessions are taught classes, not one-to-one coaching.
+    "live-session": os.environ.get("AZURE_RECORDINGS_LIVE_SESSION_CONTAINER") or "recordings-live-session",
+}
+
+# Full WebVTT transcripts, which carry a timestamp cue per line and dominate the
+# row. The readable plain text stays in the database so transcripts remain
+# searchable in SQL; only the verbose cue file moves out here, which keeps the
+# table small enough to back up and restore quickly at thousands of two-hour
+# sessions a year.
+AZURE_TRANSCRIPTS_CONTAINER = (
+    os.environ.get("AZURE_TRANSCRIPTS_CONTAINER") or "meeting-transcripts"
+)
+
 # --- Platform authentication (the `login` app) -------------------------------
 # Django's CSRF cookie follows the same environment-aware transport policy as
 # the platform session: local HTTP remains usable, while deployed environments

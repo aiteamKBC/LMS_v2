@@ -131,7 +131,7 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
-const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review', 'review', 'gateway', 'other']);
+const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'first-session', 'mcr', 'progress-review', 'review', 'gateway', 'other']);
 const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review', 'review']);
 
 const CALENDAR_PROVIDERS: Array<{ provider: PersonalCalendarProvider; title: string; subtitle: string; icon: string }> = [
@@ -465,6 +465,8 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
       return 'Student Support';
     case 'catch-up':
       return 'Catch-up';
+    case 'first-session':
+      return 'First Session';
     case 'other':
       return 'Other';
     case 'gateway':
@@ -1357,16 +1359,18 @@ function LearnerCalendarBody() {
                   {([
                     { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
                     { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
+                    { value: 'first-session' as BookableSessionType, label: 'First Session', icon: 'ri-hand-heart-line', desc: 'Your first session with your coach' },
                     { value: 'progress-review' as BookableSessionType, label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
                     { value: 'mcr' as BookableSessionType, label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
                     { value: 'gateway' as BookableSessionType, label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
                     { value: 'other' as BookableSessionType, label: 'Other', icon: 'ri-more-line', desc: 'Request another session type' },
-                  ]).map((t) => (
+                  ]).map((t, index, list) => (
                     <button key={t.value} type="button" onClick={() => {
                       setBookType(t.value);
                       setBookError(null);
                     }}
-                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
+                      /* A lone trailing tile leaves a visible gap, so let it span the row. */
+                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${index === list.length - 1 && list.length % 2 === 1 ? 'col-span-2' : ''} ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
                       <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${bookType === t.value ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={t.icon}></AppIcon></span>
                       <p className="text-sm font-semibold text-foreground-900">{t.label}</p>
                       <p className="text-xs text-foreground-400 mt-0.5">{t.desc}</p>

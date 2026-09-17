@@ -71,6 +71,25 @@ class Command(BaseCommand):
             if should_sync_coach_meetings:
                 self._sync_coach_meeting_snapshots(lookback_hours, coach_limit)
 
+        # Whatever the sync just discovered exists only inside Graph until it is
+        # copied out, so archiving runs in the same pass rather than waiting for
+        # a separate schedule someone has to remember to set up. It is
+        # best-effort: a storage problem must not fail the artifact sync that
+        # already succeeded.
+        self._archive_new_recordings()
+
+    def _archive_new_recordings(self) -> None:
+        """Copy newly discovered recordings and transcripts into Azure Blob."""
+        from coach_api.recording_archive import archive_configured
+
+        if not archive_configured():
+            return
+        self.stdout.write('Archiving new Teams recordings into Azure Blob...')
+        try:
+            call_command('archive_meeting_recordings', verbosity=0)
+        except Exception as exc:
+            self.stderr.write(self.style.WARNING(f'Recording archive pass failed: {exc}'))
+
     def _sync_coach_meeting_snapshots(self, lookback_hours: int, limit: int) -> None:
         self.stdout.write('Checking recently ended coach meetings for Teams artifacts and attendance...')
         call_command(
