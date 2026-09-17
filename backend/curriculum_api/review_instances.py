@@ -951,7 +951,25 @@ def ensure_review_instance(
     return row
 
 
-def set_review_instance_status(instance_id, status, *, actor='system', extra=None):
+def force_review_instance_status_for_tests(instance_id, status, *, actor='system', extra=None):
+    """TEST FIXTURES ONLY -- an UNGUARDED status write. NEVER call from runtime code.
+
+    This is the one writer in this module with no compare-and-swap and no
+    transition rules: ``where id = %s`` and nothing else. It exists purely so a
+    test can arrange an instance into a starting lifecycle state in one step.
+
+    It had exactly one runtime caller (signature completion). That caller now
+    performs a guarded ``awaiting-signature -> completed`` CAS inside the same
+    transaction as its Calendar mirror -- see
+    ``record_review_instance_signature`` -- so nothing in the application calls
+    this any more, and nothing should. The deliberately alarming name is the
+    isolation: every legitimate runtime transition already has a guarded writer
+    (``mark_review_instance_scheduled``, ``mark_review_instance_not_scheduled``,
+    ``mark_review_instance_in_progress_from_attendance``,
+    ``mark_review_instance_in_progress_manually``, ``complete_review_instance``,
+    ``record_review_instance_signature``). If you need a new transition, add a
+    guarded writer beside those -- do not reach for this.
+    """
     payload = {'status': status, 'updated_by': actor, 'updated_at': datetime.utcnow(), **(extra or {})}
     rows = curriculum_views.update_rows(REVIEW_INSTANCES_TABLE, 'id = %s', [instance_id], payload)
     return rows[0] if rows else None
@@ -970,6 +988,65 @@ def mark_review_instance_scheduled(instance_id, *, actor='system'):
         {'status': STATUS_SCHEDULED, 'updated_by': actor, 'updated_at': datetime.utcnow()},
     )
     return rows[0] if rows else None
+
+
+def mark_review_instance_not_scheduled(
+    instance_id,
+    *,
+    calendar_event_id,
+    learner_id,
+    review_template_id,
+    coach_email,
+    actor='system',
+):
+    """Cancel an unstarted linked review without weakening its lifecycle.
+
+    The only write this function can make is ``scheduled -> not-scheduled``.
+    Link identity and current status are all predicates in the UPDATE itself,
+    so a stale request cannot cancel a different learner's review or regress
+    an instance that attendance, completion or signatures already advanced.
+    Returning the already-not-scheduled row makes cancellation retries
+    idempotent; every other no-op returns ``None`` for the caller to reject.
+    """
+    where = (
+        'id = %s and status = %s and calendar_event_id = %s '
+        'and learner_id = %s and review_template_id = %s '
+        'and lower(trim(coach_email)) = lower(trim(%s))'
+    )
+    identity = [
+        instance_id,
+        STATUS_SCHEDULED,
+        calendar_event_id,
+        learner_id,
+        review_template_id,
+        coach_email,
+    ]
+    rows = curriculum_views.update_rows(
+        REVIEW_INSTANCES_TABLE,
+        where,
+        identity,
+        {
+            'status': STATUS_NOT_SCHEDULED,
+            'updated_by': actor,
+            'updated_at': datetime.utcnow(),
+        },
+    )
+    if rows:
+        return rows[0]
+
+    current = get_review_instance(instance_id)
+    if not current or current.get('status') != STATUS_NOT_SCHEDULED:
+        return None
+    if (
+        current.get('calendar_event_id') != calendar_event_id
+        or current.get('learner_id') != learner_id
+        or curriculum_views.clean_str(current.get('review_template_id'))
+        != curriculum_views.clean_str(review_template_id)
+        or curriculum_views.clean_str(current.get('coach_email')).lower()
+        != curriculum_views.clean_str(coach_email).lower()
+    ):
+        return None
+    return current
 
 
 def mark_review_instance_in_progress_from_attendance(instance_id, *, started_at, actor='attendance-sync'):
@@ -1554,14 +1631,83 @@ def _all_required_signatures_present(instance_id, snapshot):
     return all(signatures_by_role.get(role, {}).get('signed_at') for role in required_roles)
 
 
+
+def _mirror_linked_calendar_after_signature(instance_row, *, status, completed_at=None):
+    """Project a signature-owned status onto its linked Calendar row atomically."""
+    calendar_event_id = instance_row.get('calendar_event_id')
+    if not calendar_event_id:
+        return
+
+    # Import lazily: coach_api.views imports this module at application start.
+    from coach_api.models import CoachCalendarEvent
+
+    calendar = CoachCalendarEvent.objects.select_for_update().filter(
+        pk=calendar_event_id,
+    ).first()
+    if calendar is None:
+        raise ValueError(
+            'The linked Calendar event is missing; review reconciliation is required.'
+        )
+
+    instance_id = curriculum_views.clean_str(instance_row.get('id'))
+    if curriculum_views.clean_str(calendar.review_instance_id) != instance_id:
+        raise ValueError(
+            'The linked Calendar event does not point back to this Review Instance; '
+            'review reconciliation is required.'
+        )
+    if str(calendar.learner_id) != str(instance_row.get('learner_id')):
+        raise ValueError(
+            'The linked Calendar event belongs to a different learner; '
+            'review reconciliation is required.'
+        )
+    template_id = curriculum_views.clean_str(instance_row.get('review_template_id'))
+    calendar_template_id = curriculum_views.clean_str(calendar.review_template_id)
+    if template_id and calendar_template_id and template_id != calendar_template_id:
+        raise ValueError(
+            'The linked Calendar event has a different Review template; '
+            'review reconciliation is required.'
+        )
+    coach_email = curriculum_views.clean_str(instance_row.get('coach_email')).lower()
+    owner_email = curriculum_views.clean_str(calendar.owner_email).lower()
+    if coach_email and owner_email and coach_email != owner_email:
+        raise ValueError(
+            'The linked Calendar event has a different coach; '
+            'review reconciliation is required.'
+        )
+
+    if status == STATUS_AWAITING_SIGNATURE:
+        allowed = {
+            CoachCalendarEvent.STATUS_IN_PROGRESS,
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+        }
+        if calendar.status not in allowed:
+            raise ValueError(
+                'The linked Calendar event cannot enter awaiting-signature from its '
+                f'current status ({calendar.status}).'
+            )
+        if calendar.status != CoachCalendarEvent.STATUS_AWAITING_SIGNATURE:
+            calendar.status = CoachCalendarEvent.STATUS_AWAITING_SIGNATURE
+            calendar.save(update_fields=['status', 'updated_at'])
+        return
+
+    if status == STATUS_COMPLETED:
+        allowed = {
+            CoachCalendarEvent.STATUS_IN_PROGRESS,
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+            CoachCalendarEvent.STATUS_COMPLETED,
+        }
+        if calendar.status not in allowed:
+            raise ValueError(
+                'The linked Calendar event cannot enter completed from its '
+                f'current status ({calendar.status}).'
+            )
+        calendar.status = CoachCalendarEvent.STATUS_COMPLETED
+        calendar.review_completed_at = completed_at or datetime.utcnow()
+        calendar.save(update_fields=['status', 'review_completed_at', 'updated_at'])
+
+
 def record_review_instance_signature(instance_row, role, *, signed_by, signed_name, signature, actor='system'):
-    """Records one party's sign-off. Existing preserved behaviour: signing is
-    the LAST step, after the form itself is finished -- matching the current
-    Coach flow (finish the form -> Awaiting Signature -> a party signs ->
-    Completed), not a precondition of finishing the form. Once every
-    signature this Review's Curriculum definition requires is present, the
-    instance itself flips to Completed here.
-    """
+    """Record one party's sign-off and mirror its lifecycle status atomically."""
     if role not in SIGNATURE_ROLES:
         raise ValueError(f'Unknown signature role "{role}".')
     snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
@@ -1570,35 +1716,71 @@ def record_review_instance_signature(instance_row, role, *, signed_by, signed_na
     if instance_row.get('status') not in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
         raise ValueError('This review must be finished before it can be signed.')
 
-    existing_rows = curriculum_views.fetch_all(
-        f'select * from {curriculum_views.table_name(REVIEW_INSTANCE_SIGNATURES_TABLE)} '
-        f'where review_instance_id = %s and role = %s',
-        [instance_row.get('id'), role],
-    )
-    payload = {
-        'signed_by': signed_by or '', 'signed_name': signed_name or '',
-        'signature': signature or '', 'signed_at': datetime.utcnow() if signature else None,
-        'updated_at': datetime.utcnow(),
-    }
-    if existing_rows:
-        curriculum_views.update_rows(
-            REVIEW_INSTANCE_SIGNATURES_TABLE, 'id = %s', [existing_rows[0]['id']], payload,
-            allow_null_columns=['signed_at'],
+    with transaction.atomic():
+        existing_rows = curriculum_views.fetch_all(
+            f'select * from {curriculum_views.table_name(REVIEW_INSTANCE_SIGNATURES_TABLE)} '
+            f'where review_instance_id = %s and role = %s',
+            [instance_row.get('id'), role],
         )
-    else:
-        curriculum_views.insert_row(REVIEW_INSTANCE_SIGNATURES_TABLE, {
-            'id': curriculum_views.unique_prefixed_id('REVIS'),
-            'review_instance_id': instance_row.get('id'),
-            'role': role,
-            'created_at': datetime.utcnow(),
-            **payload,
-        })
+        signed_at = datetime.utcnow() if signature else None
+        payload = {
+            'signed_by': signed_by or '', 'signed_name': signed_name or '',
+            'signature': signature or '', 'signed_at': signed_at,
+            'updated_at': datetime.utcnow(),
+        }
+        if existing_rows:
+            curriculum_views.update_rows(
+                REVIEW_INSTANCE_SIGNATURES_TABLE, 'id = %s', [existing_rows[0]['id']], payload,
+                allow_null_columns=['signed_at'],
+            )
+        else:
+            curriculum_views.insert_row(REVIEW_INSTANCE_SIGNATURES_TABLE, {
+                'id': curriculum_views.unique_prefixed_id('REVIS'),
+                'review_instance_id': instance_row.get('id'),
+                'role': role,
+                'created_at': datetime.utcnow(),
+                **payload,
+            })
 
-    if _all_required_signatures_present(instance_row.get('id'), snapshot):
-        set_review_instance_status(
-            instance_row.get('id'), STATUS_COMPLETED, actor=actor,
-            extra={'completed_at': datetime.utcnow()},
-        )
+        current_status = instance_row.get('status')
+        if _all_required_signatures_present(instance_row.get('id'), snapshot):
+            completed_at = datetime.utcnow()
+            if current_status == STATUS_AWAITING_SIGNATURE:
+                updated = curriculum_views.update_rows(
+                    REVIEW_INSTANCES_TABLE,
+                    'id = %s and status = %s',
+                    [instance_row.get('id'), STATUS_AWAITING_SIGNATURE],
+                    {
+                        'status': STATUS_COMPLETED, 'completed_at': completed_at,
+                        'updated_by': actor, 'updated_at': completed_at,
+                    },
+                )
+                if not updated:
+                    raise ValueError(
+                        'This review status changed while the signature was being recorded. '
+                        'Reload it and try again.'
+                    )
+                completed_at = updated[0].get('completed_at') or completed_at
+            elif current_status != STATUS_COMPLETED:
+                raise ValueError('This review must be awaiting signature before it can be completed.')
+            _mirror_linked_calendar_after_signature(
+                instance_row, status=STATUS_COMPLETED, completed_at=completed_at,
+            )
+        else:
+            # A completed instance is terminal even if a legacy/concurrent
+            # signature row is being backfilled. Keep its Calendar projection
+            # completed instead of trying to regress it to awaiting-signature.
+            if current_status == STATUS_COMPLETED:
+                _mirror_linked_calendar_after_signature(
+                    instance_row,
+                    status=STATUS_COMPLETED,
+                    completed_at=instance_row.get('completed_at'),
+                )
+            else:
+                _mirror_linked_calendar_after_signature(
+                    instance_row, status=STATUS_AWAITING_SIGNATURE,
+                )
+
     return review_instance_form_definition(get_review_instance(instance_row.get('id')))
 
 

@@ -203,7 +203,7 @@ class ReviewOtjhTestCase(TestCase):
 
     def _complete_occurrence(self, template, occurrence_number, target_date):
         row = self._instance(template, occurrence_number, target_date)
-        review_instances.set_review_instance_status(
+        review_instances.force_review_instance_status_for_tests(
             row.get('id'), review_instances.STATUS_COMPLETED, actor='test',
         )
         return row

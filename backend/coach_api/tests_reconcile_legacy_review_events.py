@@ -512,3 +512,26 @@ class DryRunNeverWritesTests(ReconcileLegacyReviewEventsTestCase):
 
         row.refresh_from_db()
         self.assertEqual(row.review_template_id, "")
+
+
+class AdvancedAndConfirmedTestGuards(ReconcileLegacyReviewEventsTestCase):
+    def test_advanced_unlinked_row_is_never_given_a_new_instance(self):
+        row = self.make_legacy_row(
+            event_id=146,
+            target_date=date(2026, 10, 5),
+        )
+        row.status = CoachCalendarEvent.STATUS_COMPLETED
+        row.save(update_fields=["status", "updated_at"])
+
+        output = _run("--event-id", "146", "--apply")
+
+        self.assertIn("SKIPPED_ADVANCED_STATUS", output)
+        row.refresh_from_db()
+        self.assertEqual(row.review_template_id, "")
+        self.assertEqual(row.review_instance_id, "")
+
+    def test_confirmed_ayman_test_ids_are_rejected_before_lookup(self):
+        for event_id in (129, 130, 133, 138):
+            with self.subTest(event_id=event_id):
+                with self.assertRaisesRegex(CommandError, "confirmed Test data"):
+                    _run("--event-id", str(event_id), "--dry-run")

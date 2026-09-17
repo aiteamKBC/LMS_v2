@@ -237,5 +237,22 @@ class AssignmentBookingTests(unittest.TestCase):
         self.coach.ensure_review_instance_for_calendar_record.assert_called_once()
 
 
+class LearnerReviewCancellationWiringTests(unittest.TestCase):
+    def test_cancel_view_imports_conflict_and_shared_review_cancel_helper(self):
+        tree = ast.parse((ROOT / 'calendar.py').read_text(encoding='utf-8-sig'))
+        cancel_view = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == 'learner_calendar_cancel'
+        )
+        imported = {
+            alias.name
+            for node in ast.walk(cancel_view)
+            if isinstance(node, ast.ImportFrom) and node.module == 'coach_api.views'
+            for alias in node.names
+        }
+        self.assertIn('LearnerCalendarConflict', imported)
+        self.assertIn('cancel_reserved_calendar_event', imported)
+
+
 if __name__ == '__main__':
     unittest.main()
