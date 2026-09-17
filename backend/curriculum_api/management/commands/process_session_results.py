@@ -66,7 +66,7 @@ class Command(BaseCommand):
                 errors = ['Teams returned incomplete results. Check worker logs.'] if result.get('errors') else []
                 if response.status_code >= 300:
                     errors.append('Teams sync could not complete.')
-                errors.extend(archive_series(series_id))
+                errors.extend(archive_series(series_id, lease_id=lease))
                 error = '; '.join(errors)
             except Exception as failure:
                 logging.getLogger(__name__).warning('Session job %s failed: %s', series_id, type(failure).__name__)

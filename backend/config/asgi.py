@@ -19,11 +19,12 @@ from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
 
 from chat.routing import websocket_urlpatterns
+from curriculum_api.session_sync_runtime import SessionSyncASGI
 
 
 application = ProtocolTypeRouter(
     {
-        'http': django_application,
+        'http': SessionSyncASGI(django_application),
         'websocket': AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
     }
 )

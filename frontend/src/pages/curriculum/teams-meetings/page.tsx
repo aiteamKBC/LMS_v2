@@ -1027,12 +1027,9 @@ export default function CurriculumTeamsMeetingsPage() {
     }
   }, [loadDetail, loadTeamsState]);
 
-  // Check cancellations for future calendars too, before syncing evidence.
-  // Graph publishes attendance, transcripts and recordings after the meeting,
-  // sometimes several minutes apart. Try immediately once an occurrence ends,
-  // then retry recent meetings every five minutes while this page is open.
-  // Historical unsynced meetings get one recovery attempt per page load so a
-  // long-running deployment does not poll its entire archive forever.
+  // Calendar checks remain independent of the server's automatic evidence
+  // worker, which keeps processing after this page closes. Manual Sync wakes
+  // that same durable queue immediately without transferring videos here.
   useEffect(() => {
     if (!autoSyncEnabled || !graphConfigured || teamsLoading) return undefined;
     const candidates = rows.filter(row => row.summary);

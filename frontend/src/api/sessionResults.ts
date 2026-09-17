@@ -27,7 +27,19 @@ export interface ModuleSessionResults {
   syncAvailable?: boolean;
   warning?: string;
   series: { id: string; title: string; sessions: SessionResult[] }[];
-  jobs: { live_session_id: string; state: string; last_error: string; finished_at?: string }[];
+  jobs: SessionSyncJob[];
+}
+export interface SessionSyncJob {
+  live_session_id: string; state: string; last_error: string;
+  started_at?: string | null; finished_at?: string | null;
+  progress?: {
+    filesReady: number; totalFiles: number;
+    transfer: {
+      phase: 'preparing' | 'downloading' | 'uploading' | 'finalizing';
+      bytesTransferred: number; totalBytes: number | null; updatedAt: string;
+      type: 'recording' | 'transcript'; sessionNumber: number;
+    } | null;
+  };
 }
 export interface SessionLearner { kind: LearnerKind; id: string }
 const adminBase = '/curriculum_api/curriculum/session-results';
@@ -44,7 +56,7 @@ async function read<T>(url: string, signal?: AbortSignal): Promise<T> {
 export const loadModuleSessions = (moduleId: string, signal?: AbortSignal) =>
   read<ModuleSessionResults>(`/curriculum_api/curriculum/modules/${encodeURIComponent(moduleId)}/session-results/`, signal);
 export const loadSessionResult = (seriesId: string, number: number, learner?: SessionLearner, signal?: AbortSignal) =>
-  read<{ sessions: SessionResult[] }>(`${sessionBase(seriesId, learner)}/sessions/${number}/`, signal);
+  read<{ sessions: SessionResult[]; job?: SessionSyncJob | null }>(`${sessionBase(seriesId, learner)}/sessions/${number}/`, signal);
 export const sessionFileUrl = (seriesId: string, file: SessionFile, learner?: SessionLearner, text = false) =>
   `${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/${text ? '?format=txt' : ''}`;
 export const loadTranscriptCues = (seriesId: string, artifactId: string, learner?: SessionLearner, signal?: AbortSignal) =>
