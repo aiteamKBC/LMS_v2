@@ -1343,6 +1343,101 @@ export function copyComponentToWeek(
   };
 }
 
+/**
+ * A week's twin, inserted directly beneath it in the same module.
+ *
+ * Everything the author wrote comes across in full — title, summary, learning
+ * outcomes, week KSBs, and every component with its own description, settings,
+ * KSB mappings, OTJH, points and assurance flags — as an independent snapshot.
+ * Every id is regenerated and every settings object is deep-copied, so editing
+ * or deleting the twin never reaches back into the week it came from, and vice
+ * versa (the same convention as `copyComponentToWeek`, which is why the
+ * components carry `copiedFromId` for provenance).
+ *
+ * The live session comes across too, but as authoring only: its purpose, its
+ * clock, its duration, its organizer mailbox and its meeting options are things
+ * somebody typed, and a copy that dropped them would only have to be typed
+ * again. What it does NOT bring is the booking — the meeting ids and the join
+ * link, stripped by `independentCopySettings`. A copy holding
+ * `teamsLiveSessionId` is not a second meeting, it is the SAME meeting named
+ * twice: one join link, one set of occurrences, one attendance record and one
+ * recording, now claimed by two weeks, so editing the copy would reach into the
+ * calendar of the week it was copied from. The twin's session is therefore
+ * planned but not booked, and `isUnbookedCopiedLiveSession` is how the rail says
+ * so until somebody books it.
+ *
+ * Dates do not come across either. They belong to the module's dated session
+ * plan, not to the week being copied, so the twin arrives undated and
+ * `applyModuleWeekSessionPlan` re-dates the run around it — exactly what already
+ * happens when a week is dragged up the rail.
+ *
+ * Weeks after the insertion point are renumbered, and a title that only ever
+ * repeated its own number ("Week 5") is renumbered with it; an authored title is
+ * left alone apart from the copy's own " copy" suffix.
+ */
+export function duplicateWeekInModule(module: ModuleCatalogueItem, weekId: string): ModuleCatalogueItem {
+  const sourceIndex = module.weekStructure.findIndex(week => week.id === weekId);
+  if (sourceIndex < 0) return module;
+  const source = module.weekStructure[sourceIndex];
+  const copyId = makeAuthoringId('WEEK');
+  const copy: ModuleWeek = {
+    ...source,
+    id: copyId,
+    moduleId: source.moduleId || module.id,
+    title: weekAuthoredTitle(source) ? `${String(source.title).trim()} copy` : source.title,
+    sessionDate: '',
+    sessionDay: '',
+    summary: source.summary || '',
+    learningOutcomes: [...(source.learningOutcomes || [])],
+    ksbMappings: (source.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
+    components: (source.components || []).map(component => ({
+      ...component,
+      id: makeAuthoringId('COMP'),
+      copiedFromId: component.id,
+      moduleId: module.id,
+      weekId: copyId,
+      ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
+      settings: independentCopySettings(structuredClone(component.settings || {})),
+    })),
+  };
+  const weekStructure = [
+    ...module.weekStructure.slice(0, sourceIndex + 1),
+    copy,
+    ...module.weekStructure.slice(sourceIndex + 1),
+  ].map((week, index) => ({
+    ...week,
+    weekNumber: index + 1,
+    // Only a title that IS its own number gets renumbered. A week whose title
+    // the author cleared stays cleared — filling one in here would write over a
+    // decision, not follow one.
+    title: String(week.title || '').trim() && !weekAuthoredTitle(week) ? `Week ${index + 1}` : week.title,
+  }));
+  // `weeks`, `sessionsNumber` and the derived totals are `recalculateModule`'s
+  // to fill in -- the twin's own live session is one more authored session, and
+  // the reloaded plan dates it from the module's own start date.
+  return { ...module, weekStructure };
+}
+
+/**
+ * A live session that was copied and has not been booked in its own right.
+ *
+ * `duplicateWeekInModule` hands the twin a live session with everything the
+ * author wrote and nothing Microsoft made: no meeting id, no join link. That is
+ * the only safe copy — sharing the booking would share one meeting between two
+ * weeks — but it leaves a session that looks completely ordinary while having
+ * nowhere for anybody to join, which is not something a reader can see. This is
+ * the test the Course structure rail prints its note from, and it stops being
+ * true the moment the week's meeting is created.
+ */
+export function isUnbookedCopiedLiveSession(component: ModuleComponent): boolean {
+  if (component.type !== 'live-session') return false;
+  if (!String(component.copiedFromId || '').trim()) return false;
+  const settings = component.settings || {};
+  return !String(settings.teamsLiveSessionId || '').trim()
+    && !String(settings.teamsMeetingUrl || '').trim()
+    && !String(settings.liveSessionUrl || '').trim();
+}
+
 export async function deleteModuleStructure(moduleCatalogueId: string) {
   await apiJson<{ deleted?: boolean; archived?: boolean; deletedAuthoring?: boolean; id?: string }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/`, {
     method: 'DELETE',

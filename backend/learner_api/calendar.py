@@ -50,6 +50,7 @@ EVENT_TITLES = {
     "other": "Other",
     "catch-up": "Catch-up Session",
     "student-support": "Student Support",
+    "first-session": "First Session",
     # Onboarding reviews (see ONBOARDING_REVIEW_LABELS below).
     "eligibility-review": "Eligibility Review & FS Discussion",
     "workspace": "RPL And Experience",
@@ -65,6 +66,7 @@ EVENT_JSON_TYPES = {
     "other": "coaching",
     "catch-up": "coaching",
     "student-support": "welfare",
+    "first-session": "coaching",
     "eligibility-review": "review",
     "workspace": "review",
     "training-plan": "review",
@@ -73,7 +75,7 @@ EVENT_JSON_TYPES = {
 # What a learner can book for themselves. Monthly coaching and progress reviews
 # must be booked against a generated programme-cycle eventKey so the learner and
 # coach see the same official calendar row.
-BOOKABLE_TYPES = ("catch-up", "student-support", "mcr", "progress-review", "review", "gateway", "other")
+BOOKABLE_TYPES = ("catch-up", "student-support", "first-session", "mcr", "progress-review", "review", "gateway", "other")
 
 # The Microsoft Graph invite subject uses the same wording as the page — see
 # coach_api.BOOKED_EVENT_TITLES, which mirrors EVENT_TITLES above.

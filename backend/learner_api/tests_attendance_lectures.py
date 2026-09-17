@@ -76,7 +76,8 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(assignment_params, [12])
         schedule_sql, schedule_params = cur.execute.call_args_list[1].args
         self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module'],
-                                           'learner@example.test', 'learner@example.test'])
+                                           'learner@example.test', 'learner@example.test',
+                                           'learner@example.test'])
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
         self.assertIn('jsonb_array_elements_text', schedule_sql)
         self.assertIn('curriculum.live_session_attendance', schedule_sql)
@@ -241,13 +242,28 @@ class AttendanceLectureTests(SimpleTestCase):
     def test_native_schedule_deduplicates_reports_and_excludes_cancelled(self, combined, scheduled):
         now = timezone.now()
         ended = register_row(source='microsoft-teams', session_id='occ-1',
-                             scheduled_start=now-timedelta(hours=2), scheduled_end=now-timedelta(hours=1))
+                             attendance_status='pending', scheduled_start=now-timedelta(hours=2),
+                             scheduled_end=now-timedelta(hours=1))
         scheduled.return_value = [{**ended, 'attendance_status': 'pending'}]
         combined.return_value = [ended, {**ended, 'session_id': 'cancelled'}]
         source = SimpleNamespace(id=12)
         result = lecture_register(source)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['attendance_status'], 'absent')
+
+    @patch('learner_api.attendance_lectures.read_native_occurrences')
+    @patch('learner_api.attendance_lectures.combined_attendance_rows')
+    def test_only_ended_pending_teams_sessions_become_absent(self, combined, scheduled):
+        now = timezone.now()
+        ended = register_row(source='microsoft-teams', session_id='ended', attendance_status='pending',
+                             scheduled_start=now-timedelta(hours=2), scheduled_end=now-timedelta(hours=1))
+        active = register_row(source='microsoft-teams', session_id='active', attendance_status='in_progress',
+                              scheduled_start=now-timedelta(minutes=30), scheduled_end=now+timedelta(minutes=30))
+        attended = {**ended, 'session_id': 'attended', 'attendance_status': 'present'}
+        scheduled.return_value = [ended, active, attended]
+        combined.return_value = [ended, active, attended]
+        result = {row['session_id']: row['attendance_status'] for row in lecture_register(SimpleNamespace(id=12))}
+        self.assertEqual(result, {'ended': 'absent', 'active': 'in_progress', 'attended': 'present'})
 
     @patch('learner_api.attendance_lectures.read_native_occurrences')
     @patch('learner_api.attendance_lectures.combined_attendance_rows')

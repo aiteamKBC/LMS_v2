@@ -55,6 +55,7 @@ import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type Sav
 // The holiday notice, shared with the module workspace so a week touched by a
 // ticked holiday reads the same wherever the curriculum is shown.
 import { WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
+import { showFullTextWhenTruncated } from '../shared/entities/truncationTitle';
 import { permanentlyDeleteModuleWithConfirm, restoreModuleWithConfirm } from '../shared/entities/archive';
 import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
@@ -71,6 +72,8 @@ import {
   deleteModuleStructure,
   curriculumModuleToCatalogue,
   duplicateModuleStructure,
+  duplicateWeekInModule,
+  isUnbookedCopiedLiveSession,
   flattenKsbEntries,
   getDefaultStructure,
   getDefaultComponentSettings,
@@ -1419,6 +1422,24 @@ export default function ModuleBuilder() {
     setReusePickerWeekId(null);
   }, [updateWorkingModule]);
 
+  // Clone a week in place: the twin lands directly beneath its source, carrying
+  // every component in full except the live session (`duplicateWeekInModule`
+  // says why). Client state only -- the normal module save writes the whole week
+  // structure, so a per-week write here would only be undone by it.
+  const duplicateWeek = useCallback((weekId: string) => {
+    let copyId = '';
+    updateWorkingModule(module => {
+      const next = duplicateWeekInModule(module, weekId);
+      const sourceIndex = module.weekStructure.findIndex(week => week.id === weekId);
+      if (sourceIndex >= 0) copyId = next.weekStructure[sourceIndex + 1]?.id || '';
+      return next;
+    });
+    if (!copyId) return;
+    // Open it straight away: the point of a clone is the edit you make to it.
+    setExpandedWeekIds(prev => new Set(prev).add(copyId));
+    setSelection({ kind: 'week', weekId: copyId });
+  }, [updateWorkingModule]);
+
   const confirmDeleteWeek = async (weekId: string) => {
     if (!workingModule) return;
     const week = workingModule.weekStructure.find(item => item.id === weekId);
@@ -2205,6 +2226,7 @@ export default function ModuleBuilder() {
               onDeleteWeek={weekId => {
                 void confirmDeleteWeek(weekId);
               }}
+              onDuplicateWeek={duplicateWeek}
               onDropReorder={targetWeekId => {
                 if (!dragState) return;
                 // Reordering moves what is taught, not when the module meets, so
@@ -2990,7 +3012,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, onCreateTeamsMeeting, pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onReuseComponents, onCreateTeamsMeeting, pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -3000,6 +3022,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onAddWeek: () => void;
   onAddWeekFromTemplate: () => void;
   onDeleteWeek: (weekId: string) => void;
+  onDuplicateWeek: (weekId: string) => void;
   onDropReorder: (targetWeekId: string) => void;
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
   onReuseComponents: (weekId: string) => void;
@@ -3286,6 +3309,9 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           const monthId = monthGroupIdByWeekId.get(week.id);
           const monthCollapsed = Boolean(monthId && collapsedMonthIds.has(monthId));
           const weekHolidayNotices = holidayNoticesByWeekId.get(week.id) || [];
+          // A copied live session carries no meeting of its own, and nothing
+          // about the row says so -- so the week says it, until it is booked.
+          const unbookedCopiedSessions = week.components.filter(isUnbookedCopiedLiveSession).length;
           return (
             <Fragment key={week.id}>
             {monthHeading && (
@@ -3325,7 +3351,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 </button>
                 <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold shadow-sm ${active ? 'bg-primary-500 text-white ring-4 ring-primary-100' : 'bg-background-200 text-foreground-600'}`}>{index + 1}</span>
                 <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
-                  <p className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
+                  <p onMouseEnter={showFullTextWhenTruncated} className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
                     <span>{week.components.length} components</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
@@ -3337,6 +3363,24 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       </>
                     )}
                   </p>
+                </button>
+                {/* Duplicating copies the week's components in full. The live
+                    session comes too, but without the booking behind it -- a
+                    copied meeting id is the ORIGINAL's meeting, not a second one
+                    (see `duplicateWeekInModule`) -- so the twin's card carries
+                    the note above until its own meeting is created. */}
+                <button
+                  type="button"
+                  onMouseDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation();
+                    onDuplicateWeek(week.id);
+                  }}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-600 group-hover/week:opacity-100"
+                  title="Duplicate week — copies every component; the live session comes without its Teams meeting"
+                  aria-label={`Duplicate ${week.title || `Week ${week.weekNumber}`}`}
+                >
+                  <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
                 </button>
                 <button
                   type="button"
@@ -3364,6 +3408,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
               {weekHolidayNotices.map(slot => (
                 <WeekHolidayNotice key={`holiday-${slot.date}`} slot={slot} weekDate={week.sessionDate} compact />
               ))}
+              {unbookedCopiedSessions > 0 && <CopiedLiveSessionNotice count={unbookedCopiedSessions} />}
               {expanded && (
                 <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
                   {/* `holidayDates` is drawn from the same slots the week's
@@ -3394,6 +3439,37 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
         </div>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The note a duplicated week carries until its live session is booked.
+ *
+ * Duplicating copies the session's authoring and none of its booking, because a
+ * copied `teamsLiveSessionId` is not a second meeting -- it is the original's
+ * meeting, its join link and its attendance, claimed by a second week. What that
+ * leaves behind is a session that reads as completely ordinary and has nowhere
+ * to join, so the week says so plainly rather than letting a reader find out on
+ * the day. It is stated on the week's card, in the same strip the holiday notice
+ * uses, and it disappears by itself once the meeting exists.
+ */
+function CopiedLiveSessionNotice({ count }: { count: number }) {
+  return (
+    <div data-testid="copied-live-session-notice" className="relative border-t border-sky-200 bg-sky-50/70 px-2.5 py-1.5">
+      <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-sky-400"></span>
+      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] font-semibold text-sky-900">
+        <AppIcon className="ri-information-line shrink-0 text-sm text-sky-600"></AppIcon>
+        <span>
+          {count === 1
+            ? 'Copied live session: no Teams meeting yet'
+            : `${count} copied live sessions: no Teams meeting yet`}
+        </span>
+      </p>
+      <p className="mt-0.5 text-[10px] leading-snug text-sky-900">
+        Everything else was copied. Use <span className="font-bold">Create Teams meeting</span> to book
+        {count === 1 ? ' it' : ' them'} and give learners a join link.
+      </p>
+    </div>
   );
 }
 
@@ -4676,7 +4752,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Week readiness</p>
-              <h3 className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h3>
+              <h3 onMouseEnter={showFullTextWhenTruncated} className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h3>
             </div>
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${readyPercent === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
               {readyPercent}%
@@ -4729,7 +4805,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Component readiness</p>
-            <h3 className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{readableComponentTitle(component.title) || 'Selected component'}</h3>
+            <h3 onMouseEnter={showFullTextWhenTruncated} className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{readableComponentTitle(component.title) || 'Selected component'}</h3>
           </div>
           <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${componentReadyPercent === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
             {componentReadyPercent}%

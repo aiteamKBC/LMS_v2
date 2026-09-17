@@ -27,7 +27,7 @@ from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.core.serializers.json import DjangoJSONEncoder
-from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModified, JsonResponse, StreamingHttpResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModified, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
@@ -1654,6 +1654,14 @@ def teams_attendee_emails(value):
     return emails
 
 
+# Reconciling a holiday-shifted series rewrites each instance in turn, and Graph
+# emails every attendee on each write. On a 12-session series with 24 invitees
+# that is 288 messages for changes nobody needs told about individually -- the
+# original series invitation already carries the final dates. This header applies
+# the change to everyone's calendar and sends nothing.
+GRAPH_SILENT_INVITE_HEADERS = {'Prefer': 'outlook.send-invitations="none"'}
+
+
 def teams_recurrence_weekdays(payload, local_start):
     """The weekdays a weekly Graph recurrence has to fire on.
 
@@ -2136,7 +2144,7 @@ def apply_teams_occurrence_shifts(
                 microsoft_graph_request('PATCH', f'users/{owner_key}/events/{instance_key}', payload={
                     'start': {'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
                     'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
-                })
+                }, extra_headers=GRAPH_SILENT_INVITE_HEADERS)
             except RuntimeError as exc:
                 protected_instances.add(instance_id)
                 warnings.append({
@@ -2152,7 +2160,10 @@ def apply_teams_occurrence_shifts(
                 continue
             current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
             if current_key and current_key not in target_by_key and instance_id not in protected_instances:
-                microsoft_graph_request('DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}')
+                microsoft_graph_request(
+                    'DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}',
+                    extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+                )
     except RuntimeError as exc:
         logger.warning('Unable to reconcile individual Teams event instances: %s', exc)
         warnings.append({
@@ -3734,6 +3745,20 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     if not endpoint:
         return json_error('Unsupported meeting artifact.', status=400)
 
+    if artifact_type == 'recording':
+        # Prefer the archived copy. Graph is an availability risk and deletes
+        # recordings on its own retention schedule; once a recording is in the
+        # container that is the copy worth serving, and redirecting hands the
+        # bytes straight from Azure with range requests intact.
+        from coach_api.recording_archive import archived_live_session_recording_url
+
+        archived_url = archived_live_session_recording_url(
+            clean_str(artifact.get('occurrence_id')),
+            clean_str(artifact.get('graph_artifact_id')),
+        )
+        if archived_url:
+            return HttpResponseRedirect(archived_url)
+
     # A recreated session's transcript and recording live under its own meeting,
     # so the identifiers come from the occurrence the artifact belongs to and fall
     # back to the series only for the sessions that share the series' meeting.
@@ -3845,6 +3870,41 @@ def parse_client_event_time(value):
 
 
 @csrf_exempt
+def live_session_recording_graph_base(occurrence_id):
+    """Graph path prefix for one live-session occurrence's online meeting.
+
+    Returns ``(base, error)``. Used by the archive command, which works from an
+    occurrence id alone and has no request or series context to hand.
+    A recreated session carries its own meeting, so the occurrence's own
+    identifiers win and the series is only a fallback.
+    """
+    occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence_id])
+    if not occurrences:
+        return '', 'Occurrence not found.'
+    occurrence = occurrences[0]
+
+    series_rows = authoring_fetch_all(
+        LIVE_SESSIONS_TABLE, 'id = %s', [clean_str(occurrence.get('live_session_id'))]
+    )
+    series = series_rows[0] if series_rows else {}
+
+    occurrence_meeting_id = clean_str(occurrence.get('online_meeting_id'))
+    meeting_id = occurrence_meeting_id or clean_str(series.get('online_meeting_id'))
+    join_url = (
+        (clean_str(occurrence.get('join_url')) if occurrence_meeting_id else '')
+        or clean_str(series.get('join_url'))
+    )
+    organizer = clean_str(series.get('organizer_email'))
+    owner_id = teams_online_meeting_owner_id(organizer, join_url)
+    if not owner_id or not meeting_id:
+        return '', 'The occurrence is missing its Graph identifiers.'
+
+    return (
+        f'users/{urllib_parse.quote(owner_id, safe="")}/onlineMeetings/'
+        f'{urllib_parse.quote(meeting_id, safe="")}'
+    ), ''
+
+
 def curriculum_teams_recording_events(request, live_session_id, artifact_id):
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)

@@ -397,6 +397,11 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
     details: form.details,
     requestResponses: true,
     allowNewTimeProposals: true,
+    // A cohort mixes learners with staff from unrelated employers, and Graph
+    // puts the full attendee list in the invitation it sends each of them.
+    // Hiding it means every invitee sees only themselves, so one module's
+    // invitation stops disclosing everyone's address to everyone else.
+    // Organizer and co-organizers still see the full list.
     hideAttendees: true,
     // Keeps retries and double-clicks for the same module idempotent at Graph
     // as well as at our own API and database boundary.
