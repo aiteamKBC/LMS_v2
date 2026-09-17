@@ -143,8 +143,7 @@ LMS_v2/
 ├── frontend/                   React single-page application
 │   ├── public/                 Static brand and application assets
 │   └── src/                    Features, pages, components, APIs, hooks, and tests
-├── docs/                       Supporting technical and product documentation
-├── reports/                    Versioned reconciliation and audit outputs
+├── .gitignore                  Repository allowlist and local-file exclusions
 ├── AGENTS.md                   Shared repository working policy
 └── README.md                   Project overview and developer guide
 ```
@@ -297,9 +296,9 @@ an approved isolated test environment.
 6. Leave commits, pushes, pulls, and pull requests to the project owner unless
    the team's process explicitly assigns them to you.
 
-The shared repository configuration disables automatic AI attribution in commit
-messages and pull-request descriptions. Personal tool state remains local and is
-excluded by `.gitignore`.
+Configure local AI tools to disable automatic attribution in commit messages and
+pull-request descriptions. Personal tool state remains local and is excluded by
+`.gitignore`.
 
 ## Documentation
 
@@ -307,7 +306,6 @@ excluded by `.gitignore`.
 - [`frontend/project_plan.md`](frontend/project_plan.md) — product vision and workspace roadmap
 - [`backend/AZURE_SETUP.md`](backend/AZURE_SETUP.md) — Azure mail and storage setup
 - [`backend/MICROSOFT_SSO_SETUP.md`](backend/MICROSOFT_SSO_SETUP.md) — Microsoft SSO setup
-- [`MICROSOFT_TEAMS_ADMIN_REQUEST.md`](MICROSOFT_TEAMS_ADMIN_REQUEST.md) — Teams tenant requirements
 - [`backend/LOGIN_TESTS.md`](backend/LOGIN_TESTS.md) — authentication test coverage
 - [`backend/progress_reviews_api/README.md`](backend/progress_reviews_api/README.md) — progress-review API notes
 
