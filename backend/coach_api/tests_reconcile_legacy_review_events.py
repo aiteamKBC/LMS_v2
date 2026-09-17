@@ -322,6 +322,41 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.review_template_id, "")
         self.assertEqual(row.review_instance_id, "")
 
+    def test_additional_approved_mappings_use_their_reviewed_canonical_dates(self):
+        cases = (
+            (152, date(2026, 10, 29), "2026-10-15"),
+            (156, date(2026, 10, 30), "2026-10-16"),
+        )
+
+        for event_id, legacy_target, canonical_target in cases:
+            with self.subTest(event_id=event_id):
+                row = self.make_legacy_row(
+                    event_id=event_id,
+                    target_date=legacy_target,
+                )
+                generated = [{
+                    "source": "mcr",
+                    "targetDate": canonical_target,
+                    "reviewTemplateId": f"REVT-{event_id}",
+                    "occurrenceNumber": 1,
+                    "title": "Monthly Learner Catch-up",
+                    "reviewTypeCode": review_types.REVIEW_TYPE_CODE_MCM,
+                }]
+
+                with patch.object(
+                    cmd_module, "generated_occurrences", return_value=generated,
+                ):
+                    output = _run("--event-id", str(event_id), "--dry-run")
+
+                self.assertIn("approved legacy mapping", output)
+                self.assertIn(
+                    f"canonicalTargetDate={canonical_target}", output,
+                )
+                self.assertIn("SAFE_TO_LINK", output)
+                row.refresh_from_db()
+                self.assertEqual(row.review_template_id, "")
+                self.assertEqual(row.review_instance_id, "")
+
 
 class IdempotencyTests(ReconcileLegacyReviewEventsTestCase):
     def test_16_second_run_is_a_no_op(self):
