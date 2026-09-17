@@ -8,7 +8,7 @@
  * the file itself, so the real <video> element plays it and can seek.
  */
 import { describe, expect, it } from 'vitest';
-import { parseVideoUrl } from '../VideoPlayer';
+import { embeddedSrc, framingRefusedHost, parseVideoUrl } from '../VideoPlayer';
 
 describe('parseVideoUrl', () => {
   it('sends every shape of Drive link through the media proxy', () => {
@@ -53,5 +53,51 @@ describe('parseVideoUrl', () => {
     expect(parseVideoUrl('https://example.test/watch/abc')).toMatchObject({
       kind: 'vimeo', src: 'https://example.test/watch/abc',
     });
+  });
+
+  it('plays the src of a pasted embed snippet, not the markup around it', () => {
+    // SharePoint/Stream's "Copy embed code" hands the author a whole tag. Used
+    // verbatim it is not an address at all: the browser resolved it against the
+    // current route, so the learner got a 404 instead of the recording.
+    const embed = '<iframe src="https://example.sharepoint.com/sites/Team/_layouts/15/embed.aspx'
+      + '?UniqueId=d7609e36-b14f-4047-b095-3b6ee5e54a48&amp;referrer=StreamWebApp"'
+      + ' width="640" height="360" frameborder="0" allowfullscreen title="Lecture"></iframe>';
+    expect(parseVideoUrl(embed)).toMatchObject({
+      kind: 'vimeo',
+      // &amp; decoded back to &, or the provider drops the query parameters.
+      src: 'https://example.sharepoint.com/sites/Team/_layouts/15/embed.aspx'
+        + '?UniqueId=d7609e36-b14f-4047-b095-3b6ee5e54a48&referrer=StreamWebApp',
+    });
+  });
+
+  it('still recognises the provider inside an embed snippet', () => {
+    // Unwrapping happens before classification, so a YouTube embed keeps the
+    // real player (and therefore real duration/progress), not a bare iframe.
+    expect(parseVideoUrl("<iframe src='https://www.youtube.com/embed/t5zkilpisI4'></iframe>"))
+      .toMatchObject({ kind: 'youtube', youTubeId: 't5zkilpisI4' });
+  });
+
+  it('names the host when a provider refuses to be framed', () => {
+    // SharePoint answers with frame-ancestors listing Microsoft's surfaces only,
+    // so the LMS gets "refused to connect" rather than a player. Caught while
+    // authoring; no code of ours can override the responding server's header.
+    expect(framingRefusedHost('<iframe src="https://kentbusinesscollege.sharepoint.com/sites/T/_layouts/15/embed.aspx?UniqueId=d76"></iframe>'))
+      .toBe('kentbusinesscollege.sharepoint.com');
+    expect(framingRefusedHost('https://web.microsoftstream.com/video/abc')).toBe('web.microsoftstream.com');
+    // Providers that do allow embedding, and input too incomplete to judge.
+    expect(framingRefusedHost('https://www.youtube.com/watch?v=t5zkilpisI4')).toBe('');
+    expect(framingRefusedHost('https://example.sharepoint.com.evil.test/x')).toBe('');
+    expect(framingRefusedHost('')).toBe('');
+    expect(framingRefusedHost('not a url yet')).toBe('');
+  });
+
+  it('leaves a plain address and unparseable markup alone', () => {
+    expect(embeddedSrc('https://example.test/watch/abc')).toBe('https://example.test/watch/abc');
+    // No src to salvage — keep the original so the caller can still report it
+    // rather than silently turning the component into an empty player.
+    expect(embeddedSrc('<iframe></iframe>')).toBe('<iframe></iframe>');
+    // Not the iframe's own src: a lazy-loading attribute must not be mistaken for it.
+    expect(embeddedSrc('<iframe data-src="https://example.test/a"></iframe>'))
+      .toBe('<iframe data-src="https://example.test/a"></iframe>');
   });
 });

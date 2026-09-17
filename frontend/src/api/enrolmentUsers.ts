@@ -98,6 +98,27 @@ export interface CreateEnrolmentUserInput extends AptemUserFields {
   lineManager?: string;
   phone?: string;
   dob?: string;
+  /**
+   * The first session, booked with the case owner as the learner is created.
+   * Date is YYYY-MM-DD and time HH:MM, both UK business time. Create only, and
+   * skipped server-side for learners imported from Aptem — they already have a
+   * start date. Supplying one sets the learner's start date to that day.
+   */
+  firstSessionDate?: string;
+  firstSessionTime?: string;
+}
+
+/** What became of the first-session booking, reported alongside the new row. */
+export interface FirstSessionResult {
+  /** True only when the booking itself was reserved. */
+  booked: boolean;
+  /** 'aptem' when the learner was skipped as an Aptem import. */
+  skipped?: string;
+  /** The booking exists but Microsoft has not confirmed the meeting yet. */
+  warning?: string;
+  error?: string;
+  scheduledDate?: string;
+  scheduledTime?: string;
 }
 
 /**

@@ -69,6 +69,30 @@ export interface UserListRow {
    * invitation's outcome is reported separately — see backend/login/services.py.
    */
   invitation?: InvitationOutcome;
+  /**
+   * Present on create when a first session was requested. Reported separately
+   * from the record for the same reason the invitation is: the learner is saved
+   * whether or not the booking and its Teams meeting got as far as existing.
+   */
+  firstSession?: FirstSessionOutcome;
+}
+
+/** What became of the first session booked while the learner was created. */
+export interface FirstSessionOutcome {
+  /** True only when the booking itself was reserved. */
+  booked: boolean;
+  /** 'aptem' when the learner was skipped — they already have a start date. */
+  skipped?: string;
+  /**
+   * The booking exists and is recoverable, but Microsoft has not confirmed the
+   * meeting, so nobody has been invited to it yet. Not the same as a failure,
+   * and must not be reported as a confirmed meeting.
+   */
+  warning?: string;
+  /** Why nothing was booked, when nothing was. */
+  error?: string;
+  scheduledDate?: string;
+  scheduledTime?: string;
 }
 
 /** Result of an invitation attempt attached to a just-created record. */

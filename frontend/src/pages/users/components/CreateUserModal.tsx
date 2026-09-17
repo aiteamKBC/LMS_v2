@@ -36,7 +36,7 @@ import { inputClass, btnPrimary, btnSecondary } from './ui';
 
 type LearnerKind = 'apprenticeship' | 'commercial';
 
-type FieldType = 'text' | 'email' | 'tel' | 'date' | 'select' | 'radio' | 'checkbox' | 'textarea';
+type FieldType = 'text' | 'email' | 'tel' | 'date' | 'time' | 'select' | 'radio' | 'checkbox' | 'textarea';
 
 interface FieldDef {
   name: string;
@@ -180,7 +180,9 @@ const SECTIONS: SectionDef[] = [
     title: 'Delivery & employer',
     icon: 'ri-building-line',
     fields: [
-      { name: 'caseOwner', label: 'Case owner', type: 'select', lookup: 'caseOwner' },
+      // Required: the first session below is booked with this person, and a
+      // learner cannot be enrolled without someone to hold it.
+      { name: 'caseOwner', label: 'Case owner', type: 'select', lookup: 'caseOwner', required: true },
       { name: 'learningProvider', label: 'Learning provider', type: 'select', options: PROVIDER_OPTIONS },
       // Picked from enrolment."Employers" — choosing one auto-fills the
       // organisation below it from that employer's Employer Group.
@@ -198,6 +200,35 @@ const SECTIONS: SectionDef[] = [
       },
       { name: 'referenceNumber', label: 'Reference number', type: 'text', placeholder: 'refnumber' },
       { name: 'extendedBreak', label: 'Extended break', type: 'text' },
+    ],
+  },
+  {
+    // Last, because it is the one thing here that reaches outside the record:
+    // creating the learner books a real meeting with their case owner. Only on
+    // create — an existing learner's session is managed from their calendar.
+    title: 'First learning session',
+    icon: 'ri-calendar-schedule-line',
+    fields: [
+      {
+        name: 'firstSessionDate',
+        label: 'Session date',
+        type: 'date',
+        required: true,
+        phase: 'create',
+        hint: 'Booked with the case owner. Weekends and UK bank holidays are not available.',
+      },
+      {
+        // The browser draws this picker in the viewer's own locale, so it may
+        // show AM/PM rather than a 24-hour clock. Whatever it looks like, the
+        // value is read as UK time — the label says so, because the control
+        // itself cannot.
+        name: 'firstSessionTime',
+        label: 'Session time (UK)',
+        type: 'time',
+        required: true,
+        phase: 'create',
+        hint: 'UK time, whatever your computer’s clock format shows. The learner’s programme start date is set to this session.',
+      },
     ],
   },
 ];
@@ -479,7 +510,15 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
       // One table, one endpoint: the learner-type switch is just a field now, so
       // both kinds take the same path and the response already carries the row's
       // learnerType/source.
-      const row = await createEnrolmentUser({ ...shared, learnerType: kind });
+      // The first session is sent on create only: the server books it with the
+      // case owner and sets the learner's start date from it. An existing
+      // learner's session is changed from their calendar, not from this form.
+      const row = await createEnrolmentUser({
+        ...shared,
+        learnerType: kind,
+        firstSessionDate: formData.firstSessionDate,
+        firstSessionTime: formData.firstSessionTime,
+      });
       const label = kind === 'commercial' ? 'Commercial learner' : 'Apprenticeship learner';
 
       // Every learner is invited now, so the invitation's fate is always worth
@@ -518,6 +557,20 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
         );
       } else {
         success(`${label} created and invited`, `${row.name || name} was emailed a link to set their password.`);
+      }
+
+      // The booking is reported separately from the invitation because it can
+      // fail on its own, and the two failures need different actions. A warning
+      // means the booking is real but Microsoft has not confirmed the meeting —
+      // saying nothing there would imply an invite nobody has received.
+      const session = row.firstSession;
+      if (session && !session.booked && session.error) {
+        error('First session not booked', session.error);
+      } else if (session?.warning) {
+        error(
+          'First session booked, Teams meeting pending',
+          `${session.warning} Check the learner's calendar before telling them it is confirmed.`,
+        );
       }
       onCreated(row);
       onClose();
