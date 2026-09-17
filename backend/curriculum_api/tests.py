@@ -3366,6 +3366,49 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
             payload = views.build_curriculum_payload_from_rows(rows, compact=True)
         self.assertEqual(payload['sessions'], [])
 
+    def test_compact_module_list_is_whitelisted_not_subtracted(self):
+        """`/curriculum/modules/?compact=true` returns the whitelist, nothing else.
+
+        A field added to a module row later must not reach compact callers until
+        somebody puts it in COMPACT_MODULE_LIST_FIELDS deliberately -- that is the
+        whole point of projecting onto an allowlist rather than deleting keys.
+        """
+        module = {
+            'id': 'MOD-1', 'name': 'Module', 'programmeId': 'PROG-1', 'programme': 'Programme',
+            'weeks': 4, 'ksbCount': 2, 'notes': 'Notes', 'color': '#6941c6',
+            'weeklySchedule': [{'week': 1}], 'sessionHolidays': [], 'deliveryWeeks': 4,
+            # None of these may survive the projection.
+            'weekStructure': [{'id': 'WEEK-1', 'components': [{'id': 'COMP-1'}]}],
+            'sessionNames': ['Week 1', 'Week 2', 'Week 3'],
+            'deliveryMetadata': {'teamsMeetingUrl': 'https://teams.example.invalid/x'},
+            'author': '', 'assignments': 0, 'qualityScore': 72, 'sourceType': 'authoring',
+            'deliveryRowId': 17, 'legacyModuleId': 'old', 'invalidModuleCatalogueId': 'bad',
+            'somethingAddedNextYear': 'must not leak',
+        }
+
+        compact = views.compact_module_list_rows([module])[0]
+
+        self.assertEqual(
+            set(compact),
+            (set(module) & views.COMPACT_MODULE_LIST_FIELDS) | {'sessionNamesCount'},
+        )
+        # The fields the edit form reopens a module with survive: dropping these
+        # would not just blank a screen, the next save would write the blank back.
+        for field in ('weeklySchedule', 'sessionHolidays', 'deliveryWeeks', 'notes', 'color'):
+            self.assertEqual(compact[field], module[field])
+        # sessionNames goes, but its count stays -- four callers read `.length`.
+        self.assertNotIn('sessionNames', compact)
+        self.assertEqual(compact['sessionNamesCount'], 3)
+        # Teams meeting identity is not in a list response at all.
+        self.assertNotIn('deliveryMetadata', compact)
+        # The source row is untouched: it is shared with the non-compact response.
+        self.assertIn('weekStructure', module)
+
+    def test_compact_module_list_keeps_every_field_its_filters_read(self):
+        """The endpoint filters after projecting, so the filter keys must survive."""
+        for field in ('programmeId', 'cohortId', 'groupId', 'status'):
+            self.assertIn(field, views.COMPACT_MODULE_LIST_FIELDS)
+
     def test_pagination_is_opt_in_and_reports_total_count(self):
         request = RequestFactory().get('/curriculum/modules/', {'page': 2, 'page_size': 2})
         results, metadata = views.paginate_curriculum_results(request, ['a', 'b', 'c', 'd', 'e'])
@@ -4621,6 +4664,11 @@ class AuthoringModuleSessionHolidayTests(SimpleTestCase):
     A cohort's holidays are the England bank holidays inside its own dates, so
     the map these tests build is keyed off the cohort's period, not off any
     stored selection.
+
+    The dates themselves are now the module's own authored live sessions -- one
+    component per session, each carrying its date -- stubbed in ``setUp``. What
+    is under test here is what a ticked holiday does to them, which is: name
+    itself on the session whose day it falls on, and nothing else.
     """
 
     #: Real England bank holidays around the 2026 Christmas period. 26 December
@@ -4649,6 +4697,36 @@ class AuthoringModuleSessionHolidayTests(SimpleTestCase):
         'session_start_time': '09:00',
         'session_end_time': '11:00',
     }
+
+    #: The six Mondays this module delivers on, authored as six live sessions --
+    #: one per week, each carrying its own date. They are what the module
+    #: delivers now: `sessions_number` generates nothing, so a module with no
+    #: authored live sessions publishes no sessions at all and these tests would
+    #: have nothing to assert about. See tests_authored_live_sessions.py.
+    SESSION_DATES = ['2026-12-21', '2026-12-28', '2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25']
+
+    def setUp(self):
+        self._real_fetch_all = views.authoring_fetch_all
+        views.authoring_fetch_all = self._fetch_all
+        self.addCleanup(setattr, views, 'authoring_fetch_all', self._real_fetch_all)
+
+    def _fetch_all(self, table, where_sql='', params=None, order_sql='', **kwargs):
+        if table == views.AUTHORING_WEEKS_TABLE:
+            return [
+                {'id': f'WEEK-{index + 1}', 'module_catalogue_id': 'MOD-1',
+                 'display_order': index + 1, 'week_number': index + 1, 'title': f'W{index + 1}'}
+                for index in range(len(self.SESSION_DATES))
+            ]
+        if table == views.AUTHORING_COMPONENTS_TABLE:
+            return [
+                {'id': f'COMP-{index + 1}', 'week_id': f'WEEK-{index + 1}',
+                 'module_catalogue_id': 'MOD-1', 'type': 'live_session',
+                 'title': f'Live {index + 1}', 'display_order': 1,
+                 'settings_json': {'sessionDate': date, 'sessionTime': '09:00', 'durationMinutes': 120},
+                 'live_sessions_link': ''}
+                for index, date in enumerate(self.SESSION_DATES)
+            ]
+        return []
 
     def holidays_by_cohort(self, start_date='2026-12-01', end_date='2027-02-28'):
         return views.cohort_selected_holidays_by_id(
@@ -4728,14 +4806,22 @@ class AuthoringModuleSessionHolidayTests(SimpleTestCase):
             ['2027-03-29'],
         )
 
-    def test_a_module_with_no_delivery_day_still_lists_its_weeks(self):
-        # No weekday means no slot to skip onto, so this stays a plain count of
-        # weeks rather than losing its dates entirely.
+    def test_the_planner_with_no_delivery_day_still_dates_a_plain_run_of_weeks(self):
+        # No weekday means no slot to skip onto, so the planner stays a plain
+        # count of weeks rather than losing its dates entirely.
+        #
+        # Asked of the planner rather than of the session list: the session list
+        # is the authored live sessions and generates nothing, so a delivery day
+        # it never reads cannot change it. The planner is still what dates a
+        # module's weeks in the builder, so the fallback is pinned there.
         module = {**self.MODULE, 'session_week_day': ''}
-        sessions = views.build_sessions_from_authoring_modules([module], self.holidays_by_cohort())
-        self.assertEqual(len(sessions), 6)
-        self.assertEqual(sessions[0]['date'], '2026-12-21')
-        self.assertEqual(sessions[1]['date'], '2026-12-28')
+        plan = views.module_delivery_session_plan(
+            module, 6, views.parse_date('2026-12-21'), self.holidays_by_cohort()['COHORT-1'],
+        )
+        dates = [session['date'] for session in plan['sessions']]
+        self.assertEqual(len(dates), 6)
+        self.assertEqual(dates[0], '2026-12-21')
+        self.assertEqual(dates[1], '2026-12-28')
 
     def test_a_cohort_with_no_start_date_still_flags_every_bank_holiday(self):
         """An imported cohort missing its dates still gets every applicable holiday.

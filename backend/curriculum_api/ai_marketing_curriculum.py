@@ -10,6 +10,7 @@ from decimal import Decimal
 from django.db import connection, transaction
 
 from curriculum_api import programme_audit
+from curriculum_api import versioning
 from curriculum_api import views
 
 
@@ -239,7 +240,17 @@ def sync_projection():
         "is_programme_deleted": False, "deleted_at": None,
         "deleted_by": None, "deleted_via_parent": None,
     }
-    with transaction.atomic():
+    # A projection of the audit table, not an authored edit -- so the trail says
+    # the system imported it. Without this the wholesale delete-and-rewrite below
+    # reads as though a person deleted every component and typed them back.
+    with transaction.atomic(), versioning.audit_context(
+        actor_type=versioning.ACTOR_SYSTEM,
+        source='import',
+        metadata={
+            'import_type': 'ai-in-marketing-projection',
+            'row_count': len(components),
+        },
+    ):
         views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ["module_catalogue_id"], module)
         views.authoring_upsert(views.AUTHORING_WEEKS_TABLE, ["id"], week)
         # This audit table is authoritative, so stale rows from an earlier sync

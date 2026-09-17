@@ -71,3 +71,83 @@ describe('WeekComponentRail add flow', () => {
     expect(screen.queryByRole('dialog', { name: 'Add a component' })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * A ticked holiday landing on a live session is a WARNING and nothing else.
+ * The row says so and is otherwise completely ordinary: same date, same week,
+ * same component, still scheduled and still pushed to Teams. The Course
+ * structure rail in the Module Builder passes the week's closed delivery days
+ * in, so the warning on the week and the warning on its live session always
+ * name the same day.
+ */
+describe('WeekComponentRail holiday warning', () => {
+  function liveSession(sessionDate: string) {
+    return {
+      id: 'COMP-LIVE',
+      weekId: 'WEEK-1',
+      type: 'live-session' as const,
+      title: 'L5:Adtech',
+      description: '',
+      expectedOtjh: 2,
+      points: 0,
+      reflectionRequired: false,
+      reflectionQuestion: '',
+      workplaceEvidenceRequired: false,
+      tutorValidationRequired: false,
+      coachValidationRequired: false,
+      ksbMappings: [],
+      settings: { sessionDate },
+    };
+  }
+
+  function renderRail(holidayDates?: string[]) {
+    return render(
+      <WeekComponentRail
+        weekId="WEEK-1"
+        components={[liveSession('2027-05-03')]}
+        selectedId={null}
+        onSelectId={vi.fn()}
+        onChange={vi.fn()}
+        pointsByType={{}}
+        holidayDates={holidayDates}
+      />,
+    );
+  }
+
+  it('marks a live session whose day a holiday falls on', () => {
+    renderRail(['2027-05-03']);
+
+    expect(screen.getByText('Holiday')).toBeInTheDocument();
+    // The session is untouched next to its warning: same date on the row.
+    expect(screen.getByText(/3 May 2027/)).toBeInTheDocument();
+  });
+
+  it('stays quiet on a live session with no holiday on its day', () => {
+    renderRail(['2027-05-10']);
+
+    expect(screen.queryByText('Holiday')).not.toBeInTheDocument();
+    expect(screen.getByText(/3 May 2027/)).toBeInTheDocument();
+  });
+
+  it('stays quiet for a caller that has no session plan to pass', () => {
+    renderRail();
+
+    expect(screen.queryByText('Holiday')).not.toBeInTheDocument();
+  });
+
+  it('never marks a component that is not a live session', () => {
+    render(
+      <WeekComponentRail
+        weekId="WEEK-1"
+        components={[{ ...liveSession('2027-05-03'), id: 'COMP-READ', type: 'reading' as const }]}
+        selectedId={null}
+        onSelectId={vi.fn()}
+        onChange={vi.fn()}
+        pointsByType={{}}
+        holidayDates={['2027-05-03']}
+      />,
+    );
+
+    expect(screen.queryByText('Holiday')).not.toBeInTheDocument();
+  });
+});

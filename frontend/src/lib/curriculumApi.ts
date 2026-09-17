@@ -292,12 +292,20 @@ export interface CurriculumModule {
   ksbProfileSourceId?: string;
   lessons: number;
   quizzes: number;
-  assignments: number;
+  /**
+   * Always 0 out of every module builder -- nothing counts assignments on a
+   * module row yet. Omitted from a `?compact=true` list for that reason.
+   */
+  assignments?: number;
   status: 'published' | 'draft' | 'review' | string;
   authoringStatus?: 'published' | 'draft' | 'review' | string;
   sourceType?: string;
   deliveryStatus?: string;
-  author: string;
+  /**
+   * Always blank: no module builder has ever set it. Omitted from a
+   * `?compact=true` list.
+   */
+  author?: string;
   tutor?: string;
   coach?: string;
   lastUpdated: string;
@@ -311,7 +319,16 @@ export interface CurriculumModule {
    */
   coverImage?: string;
   notes: string;
-  sessionNames: string[];
+  /**
+   * Every authored week and live-session title on the module.
+   *
+   * Absent from a `?compact=true` list: a full catalogue of these strings is
+   * what dominates that response once `weekStructure` is gone, and nothing
+   * renders them from a list read. Take the count from `sessionNamesCount`.
+   */
+  sessionNames?: string[];
+  /** How many `sessionNames` the module has. Compact responses only. */
+  sessionNamesCount?: number;
   ksbCodes: string[];
   moduleKsbMappings?: CurriculumComponent['ksbMappings'];
 }
@@ -1543,27 +1560,111 @@ export interface CurriculumStaffProfile {
   [key: string]: unknown;
 }
 
-export type CurriculumAuditAction = 'created' | 'updated' | 'archived';
+export type CurriculumAuditAction =
+  | 'created'
+  | 'updated'
+  | 'archived'
+  | 'restored'
+  | 'deleted'
+  | 'moved'
+  | 'reordered'
+  /** Already existed when history started; its real author is unknown. */
+  | 'recorded'
+  | 'file_uploaded'
+  | 'file_replaced'
+  | 'file_removed'
+  /** The system worked this out from something else that moved. */
+  | 'recalculated'
+  | 'imported';
+
+/**
+ * How a save arrived. Never an action: an auto-saved edit is still an edit.
+ * These are the stored machine-readable values; `sourceLabel` is the words.
+ */
+export type CurriculumAuditSource =
+  | 'manual' | 'auto-save' | 'module-builder' | 'tree-save' | 'import' | 'upload'
+  | 'duplicate' | 'wizard' | 'recalculation' | 'scheduled-job' | 'system' | 'api' | '';
+
+/**
+ * Who acted. `system` is the LMS on its own account - a cascade, a
+ * recalculation - and is never a claim about intent, only the honest reading of
+ * a write no person directly made.
+ */
+export type CurriculumAuditActorType = 'user' | 'system' | 'integration' | 'job' | '';
+
+/** One field that moved, ready to render: `label` is what a reader should see. */
+export interface CurriculumAuditChange {
+  field: string;
+  label: string;
+  before: string;
+  after: string;
+  truncated?: boolean;
+}
 
 export interface CurriculumAuditEvent {
   id: string;
   /** ISO stamp of the write itself, not a display date. */
   at: string;
   action: CurriculumAuditAction;
+  /** "Edited", "Archived" - what the row leads with, instead of the event name. */
+  actionLabel: string;
   entity: 'programme' | 'module' | 'week' | 'component' | 'cohort' | 'group' | string;
   entityLabel: string;
   entityId: string;
+  revisionNo: number;
   title: string;
-  /** The record's parent - a programme name, or a module catalogue id. */
+  /** The record's ancestry as one line, from the names it was saved with. */
   context: string;
+  /** Those same ancestors as ids and names, as they were at the time. */
+  parents: Record<string, string>;
+  moduleCatalogueId: string;
+  parentId: string;
+  versionLabel: string;
+  contentStatus: string;
+  /** The signed-in account that made the change. Empty when none was recorded. */
+  actorName: string;
+  actorEmail: string;
+  actorType: CurriculumAuditActorType;
+  /** "Person", "System", "Scheduled job" - `actorType` in words. */
+  actorTypeLabel: string;
   /**
-   * The write handler's reason code on an archive (`component-delete`,
-   * `programme-archive`). It is NOT a person: no authoring table records an
-   * author, which is what `authorRecorded: false` states.
+   * Who caused a SYSTEM action. Empty for a person's own edit - they are the
+   * actor, not the trigger - and empty for a scheduled run, where there is no
+   * person and naming one would be a fabrication.
+   */
+  triggeredByEmail: string;
+  triggeredByName: string;
+  /** `auto-save`, `tree-save`, ... - what KIND of save, never the action itself. */
+  source: CurriculumAuditSource;
+  /** The same thing in words, for display. */
+  sourceLabel: string;
+  /**
+   * Small descriptive context about the write: the file an upload attached, the
+   * batch an import belonged to. Allowlisted server-side, so it never carries
+   * content, credentials or a signed URL.
+   */
+  metadata: Record<string, string | number | boolean | null>;
+  /**
+   * The write handler's code (`component-delete`). It is NOT a person; the
+   * person is `actorName`.
    */
   reason: string;
-  viaParent: string;
+  /** Only the fields that actually moved. Empty for a create. */
+  changes: CurriculumAuditChange[];
+  /**
+   * The stored record, carried inline only for a create (where it is the
+   * "after") and a delete (where it is the "before", and the only copy left).
+   */
+  snapshot: Record<string, unknown> | null;
+  viaParent?: string;
   href: string;
+}
+
+/** Someone who changed something in the window, for the actor filter. */
+export interface CurriculumAuditActor {
+  email: string;
+  name: string;
+  changes: number;
 }
 
 export interface CurriculumAuditTrail {
@@ -1577,8 +1678,26 @@ export interface CurriculumAuditTrail {
   entityCounts: Record<string, number>;
   /** Entities whose table could not be read, so the page can name the gap. */
   unreadable: string[];
-  /** Always false today: the authoring tables carry no author column. */
+  /**
+   * True when the trail is read from the revision log, which records the
+   * signed-in account on every write. False when it falls back to reading record
+   * timestamps, which cannot name anyone — the page says which it is looking at
+   * rather than showing an empty column.
+   */
   authorRecorded: boolean;
+  /** `revisions` (who + before/after) or `timestamps` (what + when only). */
+  source: 'revisions' | 'timestamps';
+  /**
+   * True once the audit metadata lives in its own columns rather than being
+   * parsed out of the legacy `reason` string. The page only offers the source
+   * and actor-type filters when this is true, because before the Phase 2 SQL
+   * has run there is no column to filter on.
+   */
+  structuredMetadata: boolean;
+  /** The source and actor-type values the server recognises, for the filters. */
+  sources: CurriculumAuditSource[];
+  actorTypes: CurriculumAuditActorType[];
+  actors: CurriculumAuditActor[];
   events: CurriculumAuditEvent[];
 }
 
@@ -2708,10 +2827,16 @@ async function fetchCollection<T>(path: string, init?: CurriculumRequestInit): P
   return payload.results;
 }
 
-// `compact` drops weekStructure (~94% of this payload) server-side. Only pass it
-// from callers that read module identity/metadata alone: anything that reads
-// weekStructure, its nested components, or ranks duplicate modules by component
-// count must keep the full response. See fetchCurriculumModules callers.
+// `compact` asks the server for a whitelist of fields rather than the whole
+// module: see COMPACT_MODULE_LIST_FIELDS in backend/curriculum_api/views.py for
+// the set, and COMPACT_MODULE_LIST_DROPPED beside it for why each omission is
+// safe. The whitelist was traced from this function's callers, so adding a
+// caller that reads a field outside it means widening the set server-side --
+// the field will not simply appear. Dropped today: weekStructure and its nested
+// components, sessionNames (use `sessionNamesCount`), deliveryMetadata,
+// qualityScore, author, assignments, sourceType, deliveryRowId, legacyModuleId
+// and invalidModuleCatalogueId. Anything that reads one of those must take the
+// full response.
 export function fetchCurriculumModules(signal?: AbortSignal, options: {
   compact?: boolean;
   programmeId?: string;
@@ -3117,8 +3242,19 @@ export function fetchEnglandHolidays(signal?: AbortSignal, options: { skipCache?
   return fetchCollection<EnglandHoliday>('/curriculum/england-holidays/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
+// `compact` skips the collections a structure read does not need (sessions,
+// holidays, staff, authoring details) and, on each module, drops `sessionNames`
+// in favour of `sessionNamesCount` -- the same projection
+// `fetchCurriculumModules` applies. Nothing that reads this endpoint renders
+// those titles; the module workspace derives its own from the authored week
+// structure. A caller that needs them must take the full response.
 export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumOverview> {
-  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs });
+  // Every other collection fetcher below (modules, tutors, coaches) caps itself at
+  // 30s so a slow backend fails into its own error+Retry banner instead of hanging
+  // on the browser's own multi-minute default. This one was missing that default,
+  // so a slow overview rebuild could sit open for minutes -- and every one of its
+  // callers inherited the gap, since none of them pass their own timeoutMs.
+  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 30000 });
 }
 
 export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumProgrammeDetail> {
@@ -3182,6 +3318,15 @@ export function fetchCurriculumAuditTrail(
     entity?: string;
     action?: string;
     search?: string;
+    /** Email of one person, to see only their changes. */
+    actor?: string;
+    /** How the save arrived: `auto-save`, `import`, `recalculation`, ... */
+    source?: string;
+    /** `user` for people only, `system` for what the LMS did on its own. */
+    actorType?: string;
+    /** Narrow to one branch of the curriculum, as it was at the time. */
+    scope?: 'programme' | 'cohort' | 'group' | 'module';
+    scopeId?: string;
     signal?: AbortSignal;
     skipCache?: boolean;
   } = {},
@@ -3192,6 +3337,13 @@ export function fetchCurriculumAuditTrail(
   if (options.entity && options.entity !== 'all') query.set('entity', options.entity);
   if (options.action && options.action !== 'all') query.set('action', options.action);
   if (options.search) query.set('search', options.search);
+  if (options.actor) query.set('actor', options.actor);
+  if (options.source && options.source !== 'all') query.set('source', options.source);
+  if (options.actorType && options.actorType !== 'all') query.set('actorType', options.actorType);
+  if (options.scope && options.scopeId) {
+    query.set('scope', options.scope);
+    query.set('scopeId', options.scopeId);
+  }
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumAuditTrail>(`/curriculum/quality/audit-trail/${suffix}`, {
     signal: options.signal,
@@ -3887,9 +4039,9 @@ export type ReviewConditionValue = 'yes' | 'no';
 export interface ListItemConfiguration {
   options: string[];
   /** Marks this question as the one carrying a defined business meaning, so
-   *  readers find it by the template's own stable marker instead of matching a
-   *  question title. 'rag_status' is the Progress Review's RAG question -- see
-   *  curriculum_api.review_instances.RAG_SEMANTIC_KEY. */
+   * readers find it by the template's own stable marker instead of matching a
+   * question title. 'rag_status' is the Progress Review's RAG question -- see
+   * curriculum_api.review_instances.RAG_SEMANTIC_KEY. */
   semanticKey?: string;
 }
 
