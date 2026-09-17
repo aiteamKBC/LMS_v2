@@ -252,3 +252,151 @@ describe('reordering the weeks of a dated module', () => {
     expect(resequenced[6].sessionDate).toBeUndefined();
   });
 });
+
+/**
+ * A plan as the backend now generates it: every delivery day stamped with the
+ * Monday-to-Sunday window it falls in, counting the module's own starting week
+ * as week 1.
+ */
+function mondayWeekPlan(
+  entries: Array<{ date: string; weekNumber: number; day?: string }>,
+): ModuleWeekSessionPlan {
+  return {
+    sessions: entries.map((entry, index) => ({
+      sessionNumber: index + 1,
+      weekNumber: entry.weekNumber,
+      date: entry.date,
+      day: entry.day || 'Monday',
+      skippedHolidays: [],
+    })),
+    skippedHolidays: [],
+    finalEndDate: entries[entries.length - 1]?.date || '',
+    warnings: [],
+  };
+}
+
+/** A module of `weekCount` empty weeks, each carrying `liveSessions` of them. */
+function weeksCarryingLiveSessions(weekCount: number, liveSessions: number[]): ModuleCatalogueItem {
+  const draft = createLocalModuleDraft({
+    programme: 'Monday Anchor',
+    title: 'Mon+Fri',
+    description: '',
+    weeks: weekCount,
+    status: 'draft',
+  });
+  return recalculateModule({
+    ...draft,
+    weeklySchedule: [
+      { day: 'Monday', startTime: '09:00', endTime: '11:00' },
+      { day: 'Friday', startTime: '09:00', endTime: '11:00' },
+    ],
+    weekStructure: Array.from({ length: weekCount }, (_, index) => {
+      const week = createEmptyWeek(draft.id, index + 1);
+      return {
+        ...week,
+        components: Array.from(
+          { length: liveSessions[index] ?? 0 },
+          (_unused, offset) => createEmptyComponent(week.id, 'live-session', offset + 1),
+        ),
+      };
+    }),
+  });
+}
+
+describe('an authored week is a calendar week', () => {
+  it('gives a week only the delivery days inside its own Monday-to-Sunday window', () => {
+    // Mon+Fri, starting Monday 3 August 2026. Two full weeks, two dates each.
+    const module = weeksCarryingLiveSessions(2, [2, 2]);
+    const plan = mondayWeekPlan([
+      { date: '2026-08-03', weekNumber: 1, day: 'Monday' },
+      { date: '2026-08-07', weekNumber: 1, day: 'Friday' },
+      { date: '2026-08-10', weekNumber: 2, day: 'Monday' },
+      { date: '2026-08-14', weekNumber: 2, day: 'Friday' },
+    ]);
+
+    expect(moduleWeekSessionDates(module, plan.sessions)).toEqual([
+      ['2026-08-03', '2026-08-07'],
+      ['2026-08-10', '2026-08-14'],
+    ]);
+  });
+
+  it('leaves a mid-week start with a short first week instead of sliding the run', () => {
+    // The same Mon+Fri group, but the module starts on Wednesday 5 August. The
+    // Monday of that week is before the module began, so week 1 delivers on the
+    // Friday alone -- and week 2 still starts on ITS own Monday rather than
+    // borrowing the date week 1 never had.
+    const module = weeksCarryingLiveSessions(2, [1, 2]);
+    const plan = mondayWeekPlan([
+      { date: '2026-08-07', weekNumber: 1, day: 'Friday' },
+      { date: '2026-08-10', weekNumber: 2, day: 'Monday' },
+      { date: '2026-08-14', weekNumber: 2, day: 'Friday' },
+    ]);
+
+    expect(moduleWeekSessionDates(module, plan.sessions)).toEqual([
+      ['2026-08-07'],
+      ['2026-08-10', '2026-08-14'],
+    ]);
+    // Week 2's first live session runs on week 2's own Monday, not on the
+    // Friday that week 1 delivered.
+    const dated = applyModuleWeekSessionPlan(module, plan);
+    expect(dated.weekStructure[1].components[0].settings.sessionDate).toBe('2026-08-10');
+  });
+
+  it('dates a live session added to a week from that week alone', () => {
+    // Week 2 gains its second live session. It takes week 2's second delivery
+    // day -- never week 3's, and never a date already spoken for.
+    const plan = mondayWeekPlan([
+      { date: '2026-08-03', weekNumber: 1, day: 'Monday' },
+      { date: '2026-08-07', weekNumber: 1, day: 'Friday' },
+      { date: '2026-08-10', weekNumber: 2, day: 'Monday' },
+      { date: '2026-08-14', weekNumber: 2, day: 'Friday' },
+    ]);
+
+    const before = applyModuleWeekSessionPlan(weeksCarryingLiveSessions(2, [2, 1]), plan);
+    expect(before.weekStructure[1].components.map(c => c.settings.sessionDate)).toEqual(['2026-08-10']);
+
+    const after = applyModuleWeekSessionPlan(weeksCarryingLiveSessions(2, [2, 2]), plan);
+    expect(after.weekStructure[1].components.map(c => c.settings.sessionDate))
+      .toEqual(['2026-08-10', '2026-08-14']);
+  });
+
+  it('leaves a live session over-authored beyond its week undated', () => {
+    // Three live sessions in a week the group delivers twice. There is no third
+    // date to give it, and inventing one would put a real Teams meeting on a
+    // day nobody chose.
+    const plan = mondayWeekPlan([
+      { date: '2026-08-03', weekNumber: 1, day: 'Monday' },
+      { date: '2026-08-07', weekNumber: 1, day: 'Friday' },
+      { date: '2026-08-10', weekNumber: 2, day: 'Monday' },
+      { date: '2026-08-14', weekNumber: 2, day: 'Friday' },
+    ]);
+
+    const dated = applyModuleWeekSessionPlan(weeksCarryingLiveSessions(2, [3, 2]), plan);
+
+    // The third one keeps the empty date it was created with, which is the
+    // "No date" the rail reports and the reason it is not sent to Teams.
+    expect(dated.weekStructure[0].components.map(c => c.settings.sessionDate))
+      .toEqual(['2026-08-03', '2026-08-07', '']);
+    // The extra session did not eat week 2's Monday.
+    expect(dated.weekStructure[1].components[0].settings.sessionDate).toBe('2026-08-10');
+  });
+
+  it('gives a week the group never delivers in no dates at all', () => {
+    // The group pauses for week 2. That week is still a week -- its reading and
+    // its assignment stand -- it simply delivers no live session, and week 3
+    // keeps its own dates rather than moving up into the gap.
+    const module = weeksCarryingLiveSessions(3, [1, 0, 1]);
+    const plan = mondayWeekPlan([
+      { date: '2026-08-03', weekNumber: 1, day: 'Monday' },
+      { date: '2026-08-17', weekNumber: 3, day: 'Monday' },
+    ]);
+
+    expect(moduleWeekSessionDates(module, plan.sessions)).toEqual([
+      ['2026-08-03'],
+      [],
+      ['2026-08-17'],
+    ]);
+    const dated = applyModuleWeekSessionPlan(module, plan);
+    expect(dated.weekStructure[2].components[0].settings.sessionDate).toBe('2026-08-17');
+  });
+});

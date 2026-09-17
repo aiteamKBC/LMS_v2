@@ -250,3 +250,74 @@ class PreferAuthoringModuleSessionsTests(SimpleTestCase):
         # previous behaviour rather than breaking outright.
         sessions = views.prefer_authoring_module_sessions([self.TRAINING_SESSION], [])
         self.assertEqual(sessions, [self.TRAINING_SESSION])
+
+
+class LiveSessionFollowsItsWeekTests(SimpleTestCase):
+    """A live session runs on the day its week runs on.
+
+    The date stored on a live-session component is a copy of the plan's, not a
+    second opinion, so it follows the plan whenever the plan moves -- a changed
+    ``start_date``, a week dragged up the rail, a week inserted ahead of it.
+    Keeping the first-stamped date instead let a week headed 09 Oct hold a
+    session dated 30 Oct, and the session's date is the one
+    ``authoring_session_links_by_catalogue`` hands to the calendar and to Teams.
+
+    The one date this may not move is an occurrence Microsoft has confirmed.
+    Real people hold an invitation to it, so it changes by asking Microsoft
+    through the reschedule endpoint, never by a planner rewriting it underneath
+    them.
+
+    Mirrors ``applyModuleWeekSessionPlan`` in
+    ``module-builder/moduleAuthoringData.ts``; the two walks must agree, or the
+    builder's first render silently rewrites what this just sent.
+    """
+
+    # Thursdays. Week 1 of a module starting 2026-09-17 runs on 2026-09-17.
+    MODULE = dict(MODULE)
+
+    def _weeks(self, settings):
+        return [{
+            'id': 'WEEK-1', 'weekNumber': 1, 'title': 'W1',
+            'components': [{'id': 'COMP-1', 'type': 'live-session', 'settings': dict(settings)}],
+        }]
+
+    def _apply(self, settings):
+        weeks = views.apply_module_session_plan_to_weeks(self.MODULE, None, self._weeks(settings), holidays=[])
+        return weeks[0]['components'][0]['settings'], weeks[0]
+
+    def test_a_session_left_on_an_old_date_is_moved_onto_its_week(self):
+        settings, week = self._apply({'sessionDate': '2026-10-08', 'sessionTime': '09:00'})
+        self.assertEqual(settings['sessionDate'], '2026-09-17')
+        # The week and the session name the same day: the disagreement that
+        # started all of this is what this asserts away.
+        self.assertEqual(settings['sessionDate'], week['sessionDate'])
+
+    def test_the_stored_instant_is_re_derived_rather_than_left_behind(self):
+        # Learner timelines and the programme calendar read this, so a stale one
+        # goes on pointing at the old day after the date above has moved.
+        settings, _week = self._apply({'sessionDate': '2026-10-08', 'sessionTime': '09:00'})
+        self.assertTrue(settings['sessionDateTimeUtc'].startswith('2026-09-17'))
+
+    def test_a_clock_the_author_set_survives_the_move(self):
+        # Only the day is the plan's to decide.
+        settings, _week = self._apply({'sessionDate': '2026-10-08', 'sessionTime': '19:00', 'durationMinutes': 45})
+        self.assertEqual(settings['sessionDate'], '2026-09-17')
+        self.assertEqual(settings['sessionTime'], '19:00')
+        self.assertEqual(settings['durationMinutes'], 45)
+
+    def test_a_meeting_microsoft_has_confirmed_is_not_moved(self):
+        settings, _week = self._apply({
+            'sessionDate': '2026-10-08', 'sessionTime': '09:00',
+            'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 1,
+        })
+        self.assertEqual(settings['sessionDate'], '2026-10-08')
+
+    def test_the_instant_this_writes_itself_is_not_mistaken_for_a_booking(self):
+        # This stamp is written on every date this sets, so counting it as proof
+        # of a Teams booking froze every date the planner had ever written --
+        # which is exactly how the stale dates survived.
+        settings, _week = self._apply({
+            'sessionDate': '2026-10-08', 'sessionTime': '09:00',
+            'sessionDateTimeUtc': '2026-10-08T08:00:00Z',
+        })
+        self.assertEqual(settings['sessionDate'], '2026-09-17')

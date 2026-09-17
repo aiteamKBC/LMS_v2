@@ -292,12 +292,20 @@ export interface CurriculumModule {
   ksbProfileSourceId?: string;
   lessons: number;
   quizzes: number;
-  assignments: number;
+  /**
+   * Always 0 out of every module builder -- nothing counts assignments on a
+   * module row yet. Omitted from a `?compact=true` list for that reason.
+   */
+  assignments?: number;
   status: 'published' | 'draft' | 'review' | string;
   authoringStatus?: 'published' | 'draft' | 'review' | string;
   sourceType?: string;
   deliveryStatus?: string;
-  author: string;
+  /**
+   * Always blank: no module builder has ever set it. Omitted from a
+   * `?compact=true` list.
+   */
+  author?: string;
   tutor?: string;
   coach?: string;
   lastUpdated: string;
@@ -311,7 +319,16 @@ export interface CurriculumModule {
    */
   coverImage?: string;
   notes: string;
-  sessionNames: string[];
+  /**
+   * Every authored week and live-session title on the module.
+   *
+   * Absent from a `?compact=true` list: a full catalogue of these strings is
+   * what dominates that response once `weekStructure` is gone, and nothing
+   * renders them from a list read. Take the count from `sessionNamesCount`.
+   */
+  sessionNames?: string[];
+  /** How many `sessionNames` the module has. Compact responses only. */
+  sessionNamesCount?: number;
   ksbCodes: string[];
   moduleKsbMappings?: CurriculumComponent['ksbMappings'];
 }
@@ -2810,10 +2827,16 @@ async function fetchCollection<T>(path: string, init?: CurriculumRequestInit): P
   return payload.results;
 }
 
-// `compact` drops weekStructure (~94% of this payload) server-side. Only pass it
-// from callers that read module identity/metadata alone: anything that reads
-// weekStructure, its nested components, or ranks duplicate modules by component
-// count must keep the full response. See fetchCurriculumModules callers.
+// `compact` asks the server for a whitelist of fields rather than the whole
+// module: see COMPACT_MODULE_LIST_FIELDS in backend/curriculum_api/views.py for
+// the set, and COMPACT_MODULE_LIST_DROPPED beside it for why each omission is
+// safe. The whitelist was traced from this function's callers, so adding a
+// caller that reads a field outside it means widening the set server-side --
+// the field will not simply appear. Dropped today: weekStructure and its nested
+// components, sessionNames (use `sessionNamesCount`), deliveryMetadata,
+// qualityScore, author, assignments, sourceType, deliveryRowId, legacyModuleId
+// and invalidModuleCatalogueId. Anything that reads one of those must take the
+// full response.
 export function fetchCurriculumModules(signal?: AbortSignal, options: {
   compact?: boolean;
   programmeId?: string;
@@ -3219,6 +3242,12 @@ export function fetchEnglandHolidays(signal?: AbortSignal, options: { skipCache?
   return fetchCollection<EnglandHoliday>('/curriculum/england-holidays/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
+// `compact` skips the collections a structure read does not need (sessions,
+// holidays, staff, authoring details) and, on each module, drops `sessionNames`
+// in favour of `sessionNamesCount` -- the same projection
+// `fetchCurriculumModules` applies. Nothing that reads this endpoint renders
+// those titles; the module workspace derives its own from the authored week
+// structure. A caller that needs them must take the full response.
 export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumOverview> {
   // Every other collection fetcher below (modules, tutors, coaches) caps itself at
   // 30s so a slow backend fails into its own error+Retry banner instead of hanging

@@ -4733,15 +4733,35 @@ def holiday_details_by_date(holidays):
     return by_date
 
 
-def build_module_session_plan(start_value, number_of_sessions, delivery_days, holidays=None):
+def build_module_session_plan(start_value, number_of_sessions, delivery_days, holidays=None, week_count=0):
+    """The module's delivery days, numbered into Monday-to-Sunday weeks.
+
+    A week here is a CALENDAR week, not a slice of the session list. Week 1 is
+    the Monday-to-Sunday window the module starts in, week 2 the one after it,
+    and every delivery day the group runs is stamped with the window it falls
+    in. So "which dates does authored week 4 own" is answered by the calendar --
+    the group's delivery days inside week 4's Mon-Sun window -- and never by
+    dividing a session count by a week count.
+
+    A module starting mid-week owns only the delivery days from its start date
+    on: the Monday and Tuesday before a Wednesday start are inside week 1's
+    window but before the module began, so they belong to nobody and week 1 is
+    simply shorter than the weeks after it.
+
+    ``week_count`` asks for whole weeks: the plan runs to the end of that many
+    Mon-Sun windows, however many delivery days that turns out to be. Callers
+    that still want a fixed number of dates pass ``number_of_sessions`` as
+    before; one of the two must be positive.
+    """
     start = parse_date(start_value)
     session_count = parse_int(number_of_sessions, 0)
+    week_target = max(0, parse_int(week_count, 0))
     days = parse_delivery_days(delivery_days)
     warnings = []
 
     if not start:
         warnings.append('Set module start date before calculating module end date.')
-    if session_count <= 0:
+    if session_count <= 0 and week_target <= 0:
         warnings.append('Set a positive number of sessions before calculating module end date.')
     if not days:
         warnings.append('Set group delivery day/time before calculating module end date.')
@@ -4757,7 +4777,14 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
 
     selected_holidays = holiday_date_set(holidays)
     holidays_by_date = holiday_details_by_date(holidays)
-    guard_days = max(3650, session_count * 21)
+    guard_days = max(3650, max(session_count, week_target * 7) * 21)
+
+    # Monday of the week the module starts in. Every week number below is
+    # measured from here, which is what makes an authored week a calendar week
+    # rather than a run of dates that can straddle two of them.
+    anchor_monday = start - timedelta(days=start.weekday())
+    # The first day past the last week asked for, when asking by weeks.
+    week_limit = anchor_monday + timedelta(days=week_target * 7) if week_target else None
 
     # The curriculum spine: every delivery day the module passes through, in
     # calendar order, one per authored delivery slot.
@@ -4781,14 +4808,23 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     sessions = []
     skipped = []
     cursor = start
-    while len(curriculum_slots) < session_count and guard_days > 0:
+    while guard_days > 0:
+        if week_limit is not None:
+            if cursor >= week_limit:
+                break
+        elif len(curriculum_slots) >= session_count:
+            break
         if cursor.weekday() in days:
             closed_by = holidays_by_date.get(cursor) or []
             closed = cursor in selected_holidays
             if closed:
                 skipped.append(cursor.isoformat())
+            # Which Mon-Sun window this delivery day falls in, counting the
+            # module's own starting week as week 1.
+            week_number = (cursor - anchor_monday).days // 7 + 1
             sessions.append({
                 'sessionNumber': len(sessions) + 1,
+                'weekNumber': week_number,
                 'date': cursor.isoformat(),
                 'day': cursor.strftime('%A'),
                 'slotDate': cursor.isoformat(),
@@ -4797,6 +4833,7 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
             })
             curriculum_slots.append({
                 'slotNumber': len(curriculum_slots) + 1,
+                'weekNumber': week_number,
                 'date': cursor.isoformat(),
                 'day': cursor.strftime('%A'),
                 # Still a live-session slot: a holiday marks the day, it does
@@ -4810,7 +4847,7 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
         cursor += timedelta(days=1)
         guard_days -= 1
 
-    if len(sessions) < session_count:
+    if week_limit is None and len(sessions) < session_count:
         warnings.append('Could not generate the full session plan from the supplied delivery pattern.')
 
     return {
@@ -8949,13 +8986,16 @@ def build_sessions_basic(training_rows, module_rows, program_configs=None, holid
     return sessions
 
 
-def module_delivery_session_plan(module, session_count, start, holidays=None):
+def module_delivery_session_plan(module, session_count, start, holidays=None, week_count=0):
     """The dated plan one module actually runs to, holiday shifts included.
 
     ``holidays`` is the parent cohort's ticked selection, nothing wider: an empty
     selection skips nothing, which is the cohort holiday rule. Passing it here is
     what keeps the session list, the Teams calendar and the module form's own
     preview on the same dates -- they all end in ``build_module_session_plan``.
+
+    ``week_count`` asks for whole Monday-to-Sunday weeks rather than a fixed
+    number of dates; see ``build_module_session_plan``.
 
     The weekly-from-start fallback below only runs for a module with no delivery
     day at all. There is no weekday to skip onto in that case, so it stays a
@@ -8966,7 +9006,9 @@ def module_delivery_session_plan(module, session_count, start, holidays=None):
     # A module-specific closure must not change other modules in its cohort.
     own_holidays = parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), [])
     applied_holidays = [*(holidays or []), *(own_holidays if isinstance(own_holidays, list) else [])]
-    plan = build_module_session_plan(start, session_count, delivery_days, applied_holidays) if delivery_days else {}
+    plan = build_module_session_plan(
+        start, session_count, delivery_days, applied_holidays, week_count=week_count,
+    ) if delivery_days else {}
     if plan.get('sessions'):
         for session in plan['sessions']:
             clock, end, duration = module_session_clock(module, session_date=session.get('date'))
@@ -8975,9 +9017,13 @@ def module_delivery_session_plan(module, session_count, start, holidays=None):
     warnings = plan.get('warnings') or []
     if not start:
         return {'sessions': [], 'slots': [], 'skippedHolidays': [], 'finalEndDate': '', 'originalEndDate': '', 'warnings': warnings}
+    # One session a week from the start date, so session N is week N -- asking
+    # by weeks and asking by sessions are the same request on this path.
+    fallback_count = max(0, parse_int(session_count, 0)) or max(0, parse_int(week_count, 0))
     sessions = [
         {
             'sessionNumber': index + 1,
+            'weekNumber': index + 1,
             'date': (start + timedelta(days=index * 7)).isoformat(),
             'day': (start + timedelta(days=index * 7)).strftime('%A'),
             # No weekday to skip onto, so nothing is ever displaced: the week's
@@ -8989,7 +9035,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None):
             'endTime': module_session_clock(module)[1],
             'durationMinutes': module_session_clock(module)[2],
         }
-        for index in range(session_count)
+        for index in range(fallback_count)
     ]
     return {
         'sessions': sessions,
@@ -8999,6 +9045,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None):
         'slots': [
             {
                 'slotNumber': index + 1,
+                'weekNumber': session['weekNumber'],
                 'date': session['date'],
                 'day': session['day'],
                 'type': 'live-session',
@@ -9407,6 +9454,29 @@ def module_session_plan_for_count(module_row, session_count, holidays=None):
         module_cohort_selected_holidays(module_row) if holidays is None else (holidays or [])
     )
     return module_delivery_session_plan(module_row, count, start, applied_holidays)
+
+
+def module_session_plan_for_weeks(module_row, week_count, holidays=None):
+    """One module's dated plan across a number of Monday-to-Sunday weeks.
+
+    The counterpart to ``module_session_plan_for_count`` and now the one the
+    week walk uses. A week owns the group's delivery days that fall inside its
+    own Mon-Sun window, so how many dates a run holds is a fact about the
+    calendar and the group's delivery pattern -- not ``sessions_number`` divided
+    by ``weeks_number``, which could only ever give every week the same number
+    and so could not describe a module that starts mid-week.
+
+    Returns the full ``build_module_session_plan`` shape, every session stamped
+    with the ``weekNumber`` it belongs to.
+    """
+    weeks = max(0, parse_int(week_count, 0))
+    start = parse_date((module_row or {}).get('start_date'))
+    if weeks <= 0 or not start:
+        return {'sessions': [], 'slots': [], 'skippedHolidays': [], 'finalEndDate': '', 'originalEndDate': '', 'warnings': []}
+    applied_holidays = (
+        module_cohort_selected_holidays(module_row) if holidays is None else (holidays or [])
+    )
+    return module_delivery_session_plan(module_row, 0, start, applied_holidays, week_count=weeks)
 
 
 def delivery_days_per_week(module_row):
@@ -11335,6 +11405,129 @@ def matches_curriculum_identifier(value, identifier):
     return expected in curriculum_identifier_candidates(value)
 
 
+# Dropped from a module in any `?compact=true` response.
+COMPACT_MODULE_OMITTED_KEYS = frozenset({'weekStructure', 'sessionNames'})
+
+
+def compact_module_rows(modules):
+    """The compact projection of a list of module dicts.
+
+    `weekStructure` is ~94% of an enriched module, and `sessionNames` -- the
+    title of every authored week and live session on it, ~60 strings for a
+    34-week module -- is most of what is left. No caller of a compact response
+    renders either: the four that touch `sessionNames` read `.length` off it as a
+    fallback for a week or lesson count, which `sessionNamesCount` answers.
+
+    Copies rather than edits. The payload this projects is the *cached* one, held
+    under `overview:<visibility>:compact` and handed unchanged to
+    curriculum_programmes(), curriculum_modules(), the KSB endpoints and the cache
+    warmer -- and enrich_modules_with_authoring() reads `sessionNames` off those
+    same dicts. Stripping the key in place, or inside build_curriculum_payload(),
+    would take it away from them too.
+    """
+    return [
+        {
+            **{
+                key: value for key, value in module.items()
+                if key not in COMPACT_MODULE_OMITTED_KEYS
+            },
+            'sessionNamesCount': len(module.get('sessionNames') or []),
+        }
+        for module in modules
+    ]
+
+
+# The whitelist for a module in a `/curriculum/modules/?compact=true` response.
+#
+# Derived from an audit of every caller of that endpoint, not from guesswork
+# about what looks big. There are three, and between them they decide this set:
+#
+#   * `module-builder/page.tsx` -- the only page that lists this endpoint. Every
+#     row goes through `curriculumModuleToCatalogue()`, and the catalogue item it
+#     returns keeps the whole response row on `sourceModule`, so a field can be
+#     read a long way from the fetch. `moduleFormTargetFromCatalogue()` is the
+#     one that constrains this list hardest: it fills the module edit form from
+#     `sourceModule`, and the form saves what it was opened with. Dropping
+#     `weeklySchedule`, `sessionHolidays`, `deliveryWeeks`, `weekDays`,
+#     `startTime`, `endTime`, `notes`, `color` or `coverImage` would not just
+#     blank a screen, it would write the blank back on the next save.
+#   * `programmes/page.tsx` -- the KSB source cascade, twice (the page's own
+#     compact module list, and a direct fetch when that list is empty). It
+#     re-saves `name`, `color` and `notes` on every module in the programme, so
+#     those three are write-back fields here as well.
+#
+# Everything outside this set was traced to no reader at all. See
+# COMPACT_MODULE_LIST_DROPPED below for what that means field by field.
+COMPACT_MODULE_LIST_FIELDS = frozenset({
+    # Identity and deep links. `moduleDeepLinkIdentifiers()` and
+    # `moduleKsbCascadeId()` between them read every one of these.
+    'id', 'moduleId', 'moduleCatalogueId', 'deliveryModuleId', 'structureId',
+    'sourceId', 'catalogueId', 'relatedCatalogueIds', 'name',
+    # Scope. Filters, the programme/cohort/group chain on the card, and the
+    # `moduleBelongsToVisibleProgramme()` gate.
+    'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
+    'isProgrammeDeleted',
+    # Counts the catalogue card and the OTJH input render.
+    'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes',
+    'totalOtjh', 'declaredTotalOtjh',
+    # Status badges and the delivery label.
+    'status', 'authoringStatus', 'deliveryStatus',
+    # Read into the module edit form and saved back out of it. Not display-only.
+    'startDate', 'endDate', 'weeklySchedule', 'sessionHolidays', 'deliveryWeeks',
+    'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
+    # Staffing shown on the row.
+    'tutor', 'coach',
+    # KSB mapping and the programme KSB map modal.
+    'ksbCodes', 'ksbProfileSourceId',
+    # No reader on this endpoint's own callers, but the entity pages sort by
+    # `lastUpdated` off the *other* compact list and these are ~25 bytes each.
+    # Kept rather than argued about.
+    'lastUpdated', 'createdAt',
+})
+
+
+# Dropped by the whitelist above, with the reason each one is safe to drop.
+# Here so the next person editing the set does not have to redo the trace.
+COMPACT_MODULE_LIST_DROPPED = {
+    'weekStructure': "Every week and component on the module -- the bulk of the row. The list renders counts, and the builder re-reads the structure from the module's own endpoint when one is opened.",
+    'sessionNames': 'Replaced by sessionNamesCount below. Four callers read `.length` off it; none renders the titles.',
+    'deliveryMetadata': 'Not on the CurriculumModule TypeScript type at all, so nothing can read it off a response row. Every `deliveryMetadata` read in the frontend is of the object curriculumModuleToCatalogue() builds locally. Carries the Teams join URL, organiser and the attendee/presenter/co-organiser lists, so dropping it takes real attendee addresses out of a list response as well.',
+    'qualityScore': 'Not on the CurriculumModule type; the catalogue item hardcodes 0.',
+    'author': "Always '' out of build_modules() and authoring_summary_catalogue_item(). No reader.",
+    'assignments': 'Always 0. No reader on a module row.',
+    'legacyModuleId': 'No reference anywhere in the frontend.',
+    'invalidModuleCatalogueId': 'No reference anywhere in the frontend. Read server-side by enrich_modules_with_authoring(), which runs before this projection.',
+    'deliveryRowId': 'No reference on a module row (the one `deliveryRowId` read in the frontend is on a session).',
+    'sourceType': 'No reader on a module row; curriculumModuleToCatalogue() explicitly sets its own to undefined. Read server-side before this projection.',
+}
+
+
+def compact_module_list_rows(modules):
+    """Project module dicts onto COMPACT_MODULE_LIST_FIELDS.
+
+    Whitelist-driven: the key set above is the contract, and a field added to a
+    module row later stays out of this response until somebody puts it in that
+    set deliberately.
+
+    It projects an already-built row rather than building a smaller one from
+    scratch, because the rows it is handed are not private to this endpoint. They
+    come out of the `modules:<visibility>:enriched` cache, which the non-compact
+    response serves verbatim, so assembling them differently for compact callers
+    would mean either a second enrichment pass or changing what every other
+    caller gets. Copies rather than edits, for the same reason.
+    """
+    return [
+        {
+            **{
+                key: value for key, value in module.items()
+                if key in COMPACT_MODULE_LIST_FIELDS
+            },
+            'sessionNamesCount': len(module.get('sessionNames') or []),
+        }
+        for module in modules
+    ]
+
+
 @require_GET
 def curriculum_overview(request):
     visibility = curriculum_visibility(request)
@@ -11351,7 +11544,10 @@ def curriculum_overview(request):
     # out of a payload cache built before the write. `force` travels down to the
     # rows read as well, or the rebuilt payload would be assembled from rows
     # cached before the same write.
-    return JsonResponse(cached_curriculum_value(cache_key, build_overview, force=force))
+    payload = cached_curriculum_value(cache_key, build_overview, force=force)
+    if compact:
+        payload = {**payload, 'modules': compact_module_rows(payload['modules'])}
+    return JsonResponse(payload)
 
 
 def get_cached_payload(request, compact=False):
@@ -13608,6 +13804,16 @@ COMPONENT_SETTINGS_SCHEMA = {
         **BASE_COMPONENT_SETTINGS,
         'sessionPurpose': '',
         'sessionDate': '',
+        # The weekday `sessionDate` falls on, which
+        # `apply_module_session_plan_to_weeks` stamps beside it. Declared
+        # because it is written: an undeclared key is moved into
+        # `legacySettings` here and rejected outright by the browser's copy of
+        # this schema, so the module the backend just served could not be saved
+        # back. This list and the one in
+        # `module-builder/componentAuthoringModel.ts` must agree, except for
+        # `selectedGroupKeys`/`selectedGroupNames`, which group assignment
+        # deletes outright and the browser deliberately does not declare.
+        'sessionDay': '',
         'sessionTime': '',
         'sessionDateTimeUtc': '',
         'durationMinutes': 60,
@@ -13616,9 +13822,23 @@ COMPONENT_SETTINGS_SCHEMA = {
         'liveSessionUrl': '',
         'teamsEventId': '',
         'teamsLiveSessionId': '',
+        # Written when a calendar is created or a plan is stamped, by the
+        # planner above, `applyModuleTeamsSeries` and the schedule editor.
+        'teamsStartDateTimeUtc': '',
+        'teamsMeetingUrl': '',
+        'teamsOnlineMeetingId': '',
+        'teamsCalendarSeries': '',
+        # Empty, not 0, like every other Teams key here: these hold numbers once
+        # a calendar exists, and 0 would read as a real occurrence.
+        'teamsDurationMinutes': '',
+        'teamsSessionNumber': '',
         'teamsMeetingOptionsUrl': '',
         'teamsOrganizerEmail': '',
         'teamsAttendees': [],
+        # Declared here too, or the roles a created calendar writes back land in
+        # `legacySettings` and come home nested inside a JSON blob.
+        'teamsPresenters': [],
+        'teamsCoOrganizers': [],
         'teamsProvider': '',
         'teamsRepeat': 'none',
         'teamsRepeatOccurrences': 1,
@@ -16129,75 +16349,85 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
     otherwise it reads the cohort's selected holidays through the shared
     session planner.
 
-    A week consumes one planned date per DELIVERY DAY, not one per live-session
-    component it happens to hold: a Mon+Fri module spends two of its dates on
-    every week it authors, whether or not both live sessions have been authored
-    yet. Counting components instead walked a ten-week Mon+Fri module through
-    only eleven of its twenty dates, so every week after the first gap was
-    stamped with a date earlier than the one it runs on -- and disagreed with the
-    frontend's `applyModuleWeekSessionPlan`, which already walked it per delivery
-    day.
+    Authored week N is calendar week N. Weeks run Monday to Sunday from the
+    module's own starting week, and a week owns the group's delivery days that
+    fall inside its window -- so a Mon+Fri module gives every full week two
+    dates because the calendar holds two, not because a session count was
+    divided by a week count. That division could only ever give every week the
+    same number, which is wrong the moment a module starts mid-week: such a
+    module's first week owns only the delivery days from its start date on, and
+    the run must not slide by the days it never had.
 
-    A week over-authored with more live sessions than delivery days dates the
-    extras only while the plan has dates to spare -- every week owes its delivery
-    days first. Lengthening the plan to fit the extras instead moved the whole
-    module: a ten-week, ten-session module with one week carrying a second live
-    session ran an eleventh date, so every week below it was stamped a session
-    late and disagreed with the ten rows the sessions drawer shows. Counted
-    sessions are the module's, not the authoring's.
+    A week over-authored with more live sessions than its window has delivery
+    days leaves the extras undated. There is no date to give them -- the group
+    does not deliver again that week -- and no caller may invent one, because an
+    invented date becomes a real calendar entry and a real Teams meeting.
     """
-    per_week = module_week_delivery_days(module, len(weeks))
-    stored_count = module_stored_session_count(module)
-    if module_structure_uses_session_rows(weeks, stored_count, per_week):
-        planned_count = stored_count
-        week_slot_counts = module_structure_live_session_counts(weeks)
-    else:
-        planned_count = module_stored_session_count(module, len(weeks))
-        spare = max(0, planned_count - len(weeks) * per_week)
-        week_slot_counts = []
-        for authored in module_structure_live_session_counts(weeks):
-            extra = min(max(0, authored - per_week), spare)
-            spare -= extra
-            week_slot_counts.append(per_week + extra)
-    session_plan = module_session_plan_for_count(
+    session_plan = module_session_plan_for_weeks(
         module,
-        max(planned_count, sum(week_slot_counts)),
+        len(weeks),
         holidays=holidays,
     ).get('sessions') or []
+    # The plan, split into the Mon-Sun windows it was numbered into. Authored
+    # week N takes window N, so a week with no delivery day in its own window
+    # (a module whose group pauses a week) simply gets nothing rather than
+    # borrowing the next week's date.
+    sessions_by_week_number = defaultdict(list)
+    for planned_session in session_plan:
+        sessions_by_week_number[parse_int(planned_session.get('weekNumber'), 0)].append(planned_session)
     session_start_time, _session_end_time, session_duration = module_session_clock(module, group_row)
-    session_index = 0
     for week_index, week in enumerate(weeks):
         live_components = [component for component in week.get('components') or [] if component.get('type') == 'live-session']
-        slot_count = week_slot_counts[week_index] if week_index < len(week_slot_counts) else 1
-        slots = session_plan[session_index:session_index + slot_count]
-        session_index += slot_count
+        slots = sessions_by_week_number.get(week_index + 1) or []
         first_planned = slots[0] if slots else {}
         if live_components:
             for offset, component in enumerate(live_components):
                 planned = slots[offset] if offset < len(slots) else {}
                 settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
-                tracked_occurrence = (
-                    clean_str(settings.get('sessionDateTimeUtc'))
-                    or (
-                        clean_str(settings.get('teamsLiveSessionId'))
-                        and parse_int(settings.get('teamsSessionNumber'), 0) > 0
-                    )
+                # A live session runs on the day its week runs on. The date on
+                # the component is a copy of the plan's, so it follows the plan
+                # when the plan moves -- a changed start date, a week dragged up
+                # the rail, a week inserted ahead of this one. Keeping the
+                # first-stamped date instead left this week's header and the
+                # session inside it naming different days, and the session's was
+                # the one `authoring_session_links_by_catalogue` handed to the
+                # calendar and to Teams.
+                #
+                # The one date this may not touch is an occurrence Microsoft has
+                # confirmed: that is where a meeting real people were invited to
+                # actually sits, and it moves through the reschedule endpoint,
+                # not silently underneath them. `sessionDateTimeUtc` is
+                # deliberately not part of that test -- it is written below on
+                # every stamp, so counting it froze every date this ever set.
+                #
+                # Mirrors `applyModuleWeekSessionPlan` in
+                # module-builder/moduleAuthoringData.ts. The two walks must agree:
+                # where they have drifted before, the builder spent its first
+                # render silently rewriting what this had just sent.
+                booked_at_microsoft = (
+                    clean_str(settings.get('teamsLiveSessionId'))
+                    and parse_int(settings.get('teamsSessionNumber'), 0) > 0
                 )
-                if clean_str(settings.get('sessionDate')) or tracked_occurrence:
+                if booked_at_microsoft:
                     continue
                 session_date = format_date(planned.get('date'))
                 if not session_date:
                     continue
                 slot_time, _slot_end, slot_duration = module_session_clock(module, group_row, session_date)
+                # Only the day is the plan's to decide. A clock and a length the
+                # author set on this session stay theirs; the module's own slot
+                # fills them in where nothing has yet.
+                authored_time = clean_str(settings.get('sessionTime'))
+                authored_duration = parse_int(settings.get('durationMinutes'), 0)
                 planned_settings = {
                     **settings,
                     'sessionDate': session_date,
                     'sessionDay': clean_str(planned.get('day')),
-                    'sessionTime': slot_time,
-                    'durationMinutes': slot_duration,
-                    'teamsDurationMinutes': slot_duration,
+                    'sessionTime': authored_time or slot_time,
+                    'durationMinutes': authored_duration or slot_duration,
+                    'teamsDurationMinutes': authored_duration or slot_duration,
                 }
-                planned_instant = calendar_clock_to_utc_iso(session_date, slot_time)
+                planned_instant = calendar_clock_to_utc_iso(session_date, authored_time or slot_time)
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
@@ -16563,6 +16793,16 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             for row in authoring_fetch_all(GROUPS_TABLE, f'group_id in ({group_placeholders})', group_ids)
         }
 
+    # Every cohort's ticked holidays in one pair of reads, because the session
+    # plan below runs per module. Left unsupplied, each module would read its own
+    # cohort row and the whole holiday table again -- the per-module cost
+    # cohort_selected_holidays_by_cohort() exists to spare a caller planning a
+    # page of modules, and the last per-module read in this otherwise batched
+    # reader. A 122-module programme paid ~250 round trips for it.
+    holidays_by_cohort = cohort_selected_holidays_by_cohort(
+        [clean_str(row.get('cohort_id')) for row in module_rows]
+    ) if include_extra else {}
+
     week_rows_by_module = defaultdict(list)
     for row in week_rows:
         week_rows_by_module[clean_str(row.get('module_catalogue_id'))].append(row)
@@ -16644,7 +16884,12 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             # component settings, and the lean caller (resolve) asked not to pay
             # for -- or be changed by -- that. The single-module reader always
             # applies it, so parity holds wherever include_extra is on.
-            apply_module_session_plan_to_weeks(module, group_row, weeks)
+            apply_module_session_plan_to_weeks(
+                module,
+                group_row,
+                weeks,
+                holidays=holidays_by_cohort.get(clean_str(module.get('cohort_id'))) or [],
+            )
         payload = {
             'id': f'module-{catalogue_id}',
             'moduleId': catalogue_id,
@@ -20011,25 +20256,33 @@ def curriculum_programme_cohort_collection(request, programme_id):
 def curriculum_modules(request):
     visibility = curriculum_visibility(request)
     bypass_cache = request_bypasses_curriculum_cache(request)
-    if bypass_cache:
-        payload = build_curriculum_payload(visibility, compact=True, force=True)
-        modules = enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all')
-    else:
-        payload = cached_curriculum_value(f'overview:{visibility}:compact', lambda: build_curriculum_payload(visibility, compact=True))
-        modules = cached_curriculum_value(
-            f'modules:{visibility}:enriched',
-            lambda: enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all'),
-        )
+    # One scope around both stages. The enrichment re-reads four of the tables
+    # the payload build has already read, and outside a scope there is no memo
+    # for it to hit, so a cold build scanned each of them twice. Nested inside,
+    # build_curriculum_payload()'s own scope reuses this one.
+    with curriculum_read_scope():
+        if bypass_cache:
+            payload = build_curriculum_payload(visibility, compact=True, force=True)
+            modules = enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all')
+        else:
+            payload = cached_curriculum_value(f'overview:{visibility}:compact', lambda: build_curriculum_payload(visibility, compact=True))
+            modules = cached_curriculum_value(
+                f'modules:{visibility}:enriched',
+                lambda: enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all'),
+            )
     if visibility != 'all':
         modules = [module for module in modules if not programme_deleted_row(module)]
-    # Opt-in slim response: weekStructure is ~94% of this payload, and callers that
-    # only need module identity/metadata (pickers, dropdowns, counts) can skip it.
-    # Absent the flag the response is unchanged, so existing consumers are unaffected.
+    # Opt-in slim response: a whitelist of the fields this endpoint's own callers
+    # were traced to read, never the full row minus a few keys. See
+    # COMPACT_MODULE_LIST_FIELDS for the set and COMPACT_MODULE_LIST_DROPPED for
+    # why each omission is safe. Absent the flag the response is unchanged, so
+    # existing consumers are unaffected.
+    #
+    # Filtering below still works: programmeId, cohortId, groupId and status are
+    # all in the whitelist, so the projection cannot make a filter silently
+    # match nothing.
     if clean_str(request.GET.get('compact')).lower() in {'1', 'true', 'yes'}:
-        modules = [
-            {key: value for key, value in module.items() if key != 'weekStructure'}
-            for module in modules
-        ]
+        modules = compact_module_list_rows(modules)
     filters = {
         'programmeId': clean_str(request.GET.get('programme_id') or request.GET.get('programmeId')),
         'cohortId': clean_str(request.GET.get('cohort_id') or request.GET.get('cohortId')),
@@ -20673,16 +20926,18 @@ def curriculum_module_settings(request, module_catalogue_id):
 def curriculum_module_session_plan(request, module_catalogue_id):
     """The flat session dates for a module week count that is not saved yet.
 
-    Module Builder adds and removes weeks before anything is written, and week N
-    is session N of the module's own dated plan -- so a seventh week added to a
-    six-week module has to be given the seventh planned date: the next delivery
-    day that is not one of the holidays the parent cohort ticked. Asking here is
-    what keeps that date identical to the one the structure payload serves after
-    the save, instead of the browser deriving a schedule of its own that then
-    disagrees with the calendar and the Teams series.
+    Module Builder adds and removes weeks before anything is written, and
+    authored week N is calendar week N of the module's own run -- so a seventh
+    week added to a six-week module has to be given the seventh Monday-to-Sunday
+    window's delivery days. Asking here is what keeps those dates identical to
+    the ones the structure payload serves after the save, instead of the browser
+    deriving a schedule of its own that then disagrees with the calendar and the
+    Teams series.
 
-    ``?weeks=`` is the authored week count; each delivery day contributes one
-    flat session. ``?sessions=`` remains available for callers with a raw count.
+    ``?weeks=`` is the authored week count, and the plan runs to the end of that
+    many Mon-Sun windows -- however many delivery days the group actually has in
+    them, which is not the same number for a module that starts mid-week.
+    ``?sessions=`` remains available for callers with a raw count of dates.
     """
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
@@ -20698,22 +20953,13 @@ def curriculum_module_session_plan(request, module_catalogue_id):
         module_row = module_rows[0]
         requested_sessions = max(0, parse_int(request.GET.get('sessions'), 0))
         requested_weeks = max(0, parse_int(request.GET.get('weeks'), 0))
-        # The plan a caller asks for by WEEKS has to be as long as the weeks
-        # will consume, and the builder consumes one date per delivery day. Read
-        # through the same helper the week walk uses, so a module whose day
-        # column is empty but whose two counts say twice a week still gets a plan
-        # its weeks can be sliced out of rather than one half the length.
-        requested = requested_sessions or (
-            requested_weeks * module_week_delivery_days(module_row, requested_weeks) if requested_weeks else 0
-        )
-        if not requested_sessions and requested_weeks == module_stored_week_count(module_row):
-            structure = get_authoring_structure_payload(catalogue_id) or {}
-            if module_structure_uses_session_rows(structure.get('weekStructure') or [], module_stored_session_count(module_row), delivery_days_per_week(module_row)):
-                requested = module_stored_session_count(module_row)
-        plan = module_session_plan_for_count(
-            module_row,
-            requested or module_stored_session_count(module_row),
-        )
+        if requested_sessions:
+            plan = module_session_plan_for_count(module_row, requested_sessions)
+        else:
+            plan = module_session_plan_for_weeks(
+                module_row,
+                requested_weeks or module_stored_week_count(module_row),
+            )
     except Exception:
         logger.exception('Unable to plan module session dates for %s.', module_catalogue_id)
         return json_error('Unable to plan module session dates.', status=500)

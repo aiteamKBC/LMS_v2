@@ -54,8 +54,7 @@ import { MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceTyp
 import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
-import { loadModuleStructure, saveModuleStructure, utcIsoToCalendarParts } from '@/pages/curriculum/module-builder/moduleAuthoringData';
-import { TeamsMeetingModal, type TeamsMeetingModuleContext } from '@/pages/curriculum/module-builder/TeamsMeetingModal';
+import { loadModuleStructure, saveModuleStructure, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
 import { LiveSessionArtifactsPanel } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
@@ -864,6 +863,16 @@ interface RailNodeProps {
    * resolve -- whether the session runs is the author's call, made on the week.
    */
   holidayDates?: string[];
+  /**
+   * Set only for a live session Microsoft has a confirmed meeting for, on a date
+   * its week no longer runs on.
+   *
+   * Every other live session follows its week automatically -- the planner
+   * re-dates it. This one is held on the booked date because real attendees were
+   * invited to it, so it moves from the Teams Meetings page, which asks
+   * Microsoft. Stated here and nowhere corrected.
+   */
+  dateDrift?: LiveSessionDateDrift;
   onSelect?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
@@ -881,7 +890,7 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, issues, weekSessionDate, holidayDates, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, index, selected, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
@@ -922,6 +931,20 @@ function RailNodeCard({ component, index, selected, issues, weekSessionDate, hol
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
             {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
+            {/* The session and its week disagree about when this runs, and the
+                session's date is the one that wins everywhere downstream. Said
+                on the row that owns the date, with the correction offered --
+                pressing it only edits the module, exactly like typing the date
+                in the session's own settings would. */}
+            {dateDrift && (
+              <span
+                title={`Teams has this meeting on ${formatDateLabel(dateDrift.storedDate)}, but this week now runs on ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. Every other live session follows its week automatically; this one is held here because real attendees were invited to the booked date. Move it from the Teams Meetings page, which asks Microsoft and mails the change.`}
+                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+              >
+                <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
+                Teams holds this date · week runs {formatDateLabel(dateDrift.weekDates[0])}
+              </span>
+            )}
             {/* Says what is missing rather than filling it in: this session is
                 not on the calendar and not in the Teams series until it has a
                 date of its own. The week's date is offered as context, marked
@@ -1099,13 +1122,17 @@ export interface WeekComponentRailProps {
   // caller that has read the module's session plan; see RailNodeProps for what
   // it does (warn) and does not do (anything else).
   holidayDates?: string[];
+  // Live sessions in this week whose own date no longer matches the week's,
+  // keyed by component id. Passed only by a caller holding the module's session
+  // plan -- there is nothing to compare a date against without one.
+  dateDriftByComponentId?: Map<string, LiveSessionDateDrift>;
   // Opens the caller's reuse picker. Optional because the rail is shared: the
   // module builder owns the picker and the copy, and a surface without one (a
   // week template, say) simply does not pass it and shows no Reuse action.
   onReuseComponents?: () => void;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, onReuseComponents }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, components, selectedId, onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const sensors = useSensors(
@@ -1201,6 +1228,7 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
                     issues={validateWeekComponent(component).length}
                     weekSessionDate={weekSessionDate}
                     holidayDates={holidayDates}
+                    dateDrift={dateDriftByComponentId?.get(component.id)}
                   />
                   <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === components.length - 1} />
                 </Fragment>
@@ -1208,7 +1236,7 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
             </div>
           </SortableContext>
           <DragOverlay>
-            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} holidayDates={holidayDates} /> : null}
+            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
           </DragOverlay>
         </DndContext>
       )}
@@ -1455,17 +1483,9 @@ export interface ComponentBodyProps {
   // Injected file uploader so the same bodies work in both the week builder
   // (posts to week-components/) and the module builder (module-scoped upload).
   uploadResource?: WeekComponentUploader;
-  restoreTeamsMeeting?: () => Promise<void>;
-  restoringTeamsMeeting?: boolean;
-  // The module a live-session component belongs to. Only the Module Builder
-  // supplies it; when present, the live-session editor offers a "Create Teams
-  // meeting" button that generates the meeting and fills the join link + dates.
-  // The Week Builder edits reusable templates that have no module, so it omits
-  // this and the button stays hidden.
-  liveSessionModule?: TeamsMeetingModuleContext;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting = false, liveSessionModule }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; restoreTeamsMeeting?: () => Promise<void>; restoringTeamsMeeting?: boolean; liveSessionModule?: TeamsMeetingModuleContext }) {
+export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -1477,7 +1497,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
   const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource };
 
   return (
     <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -1558,9 +1578,8 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
 
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
-  const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
   // An explicit edit always wins; otherwise default to the date/time the week is
   // actually scheduled on (the group-creation clock), so the fields read
   // correctly before anyone types into them rather than sitting blank until
@@ -1586,35 +1605,8 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
             fallbackTime={weekSessionTime}
           />
         ) : (
-          <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="mt-4">
             <Field label="Microsoft Teams link"><input value={s('liveSessionUrl')} onChange={e => setSetting('liveSessionUrl', e.target.value)} placeholder="https://teams.microsoft.com/…" className={inputClass} /></Field>
-            <Field label="Session date"><input type="date" value={sessionDate} onChange={e => setSetting('sessionDate', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
-            <Field label="Start time"><input type="time" value={sessionTime} onChange={e => setSetting('sessionTime', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
-          </div>
-        )}
-        {(liveSessionModule || restoreTeamsMeeting) && (
-          <div className="mt-3 flex flex-wrap justify-end gap-2">
-            {liveSessionModule && !hasMeeting && (
-              <button
-                type="button"
-                onClick={() => setTeamsMeetingOpen(true)}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
-              >
-                <AppIcon className="ri-calendar-event-line"></AppIcon>
-                Create Teams meeting
-              </button>
-            )}
-            {restoreTeamsMeeting && (
-              <button
-                type="button"
-                onClick={() => { void restoreTeamsMeeting(); }}
-                disabled={restoringTeamsMeeting}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-70"
-              >
-                <i className={restoringTeamsMeeting ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></i>
-                {restoringTeamsMeeting ? 'Restoring Teams data...' : 'Restore saved Teams data'}
-              </button>
-            )}
           </div>
         )}
 
@@ -1665,65 +1657,6 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
           <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
-
-      {teamsMeetingOpen && liveSessionModule && (
-        <TeamsMeetingModal
-          component={component}
-          module={liveSessionModule}
-          onClose={() => setTeamsMeetingOpen(false)}
-          onCreated={(result, input) => {
-            const meeting = result.meeting;
-            const componentDate = String(component.settings.sessionDate || '');
-            const scheduled = input.scheduledOccurrences?.find(occurrence => (
-              utcIsoToCalendarParts(occurrence.startDateTimeUtc).date === componentDate
-            ));
-            const scheduledParts = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc) : { date: '', time: '' };
-            const hasExplicitSchedule = Boolean(
-              component.settings.sessionDate
-              || component.settings.sessionDateTimeUtc
-              || (component.settings.teamsLiveSessionId && Number(component.settings.teamsSessionNumber || 0) > 0),
-            );
-            // One merged write so the whole meeting lands atomically (and the
-            // Module Builder's onChange can mirror the join link across the
-            // week's other live sessions). Match this component's own occurrence;
-            // the series start belongs only to session one.
-            onChange({
-              settings: {
-                ...component.settings,
-                liveSessionUrl: meeting.joinUrl || meeting.webLink,
-                teamsMeetingUrl: meeting.joinUrl || meeting.webLink,
-                teamsCalendarSeries: JSON.stringify(meeting.calendarSeries || []),
-                teamsOnlineMeetingId: meeting.onlineMeetingId,
-                teamsEventId: meeting.eventId,
-                teamsLiveSessionId: meeting.liveSessionId,
-                teamsMeetingOptionsUrl: meeting.meetingOptionsUrl,
-                teamsOrganizerEmail: meeting.organizerEmail,
-                teamsAttendees: meeting.attendees,
-                teamsPresenters: meeting.presenters,
-                teamsCoOrganizers: meeting.coOrganizers || [],
-                ...(scheduled ? { teamsSessionNumber: scheduled.sessionNumber } : {}),
-                ...(scheduled && !hasExplicitSchedule ? {
-                  sessionDateTimeUtc: scheduled.startDateTimeUtc,
-                  teamsStartDateTimeUtc: scheduled.startDateTimeUtc,
-                  sessionDate: scheduledParts.date,
-                  sessionTime: scheduledParts.time,
-                } : {}),
-                durationMinutes: meeting.durationMinutes,
-                teamsProvider: meeting.provider,
-                teamsRepeat: meeting.repeat,
-                teamsRepeatOccurrences: meeting.repeatOccurrences,
-                teamsLobbyBypass: input.lobbyBypass,
-                teamsRecording: input.recording,
-                teamsSpokenLanguage: input.spokenLanguage,
-                teamsMeetingType: input.meetingType,
-                teamsRequestResponses: input.requestResponses,
-                teamsAllowTimeProposals: input.allowNewTimeProposals,
-                teamsHideAttendees: input.hideAttendees,
-              },
-            });
-          }}
-        />
-      )}
 
     </>
   );

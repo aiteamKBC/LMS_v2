@@ -16,7 +16,8 @@ import {
   weeksTouchedByHoliday,
   liveSessionNamesByNumber,
   moduleAuthoredLiveSessions,
-  moduleWeekSessionSlots,
+  moduleLiveSessionDateDrift,
+  fetchModuleSessionPlan,
   loadModuleStructure,
   loadTeamsMeetingArtifacts,
   teamsMeetingArtifactPreviewUrl,
@@ -25,6 +26,7 @@ import {
   zonedNaiveToUtcIso,
   type KsbMapping,
   type ModuleCatalogueItem,
+  type ModuleWeekSessionPlan,
   type TeamsAttendanceRecord,
   type TeamsMeetingArtifact,
   type TeamsMeetingArtifactsResult,
@@ -388,6 +390,34 @@ export default function ModuleWorkspacePage() {
     return undefined;
   }, [authoredSessionPlan, tab]);
 
+  /**
+   * The module's own dated plan, read only to check the authored dates against.
+   *
+   * The rows above stay built from the components themselves -- they are the
+   * schedule, and this must not become a second answer that disagrees with them.
+   * This is the other question: whether a session is still on the day its week
+   * runs on. A week's date is recomputed from the plan on every read and a
+   * session's is stamped once, so moving the module's start date or reordering
+   * its weeks leaves sessions behind on dates the calendar and Teams still use.
+   * One module row, not the whole curriculum, and only while this tab is open.
+   */
+  const [weekPlan, setWeekPlan] = useState<ModuleWeekSessionPlan | null>(null);
+  useEffect(() => {
+    if (tab !== 'schedule' || !catalogueId) return undefined;
+    let active = true;
+    fetchModuleSessionPlan(catalogueId, structure?.weekStructure?.length, { timeoutMs: 30000 })
+      // A plan we could not read is not a disagreement: the notice stays away
+      // rather than claiming a drift it has nothing to measure.
+      .then(result => { if (active) setWeekPlan(result); })
+      .catch(() => { if (active) setWeekPlan(null); });
+    return () => { active = false; };
+  }, [catalogueId, structure?.weekStructure?.length, tab]);
+
+  const driftedLiveSessions = useMemo(
+    () => Array.from(moduleLiveSessionDateDrift(structure, weekPlan).values()),
+    [structure, weekPlan],
+  );
+
   // ------------------------------------------------------------- KSBs tab
 
   useEffect(() => {
@@ -574,25 +604,29 @@ export default function ModuleWorkspacePage() {
   const totalOtjh = structure?.totalOtjh ?? 0;
 
   // A week's date is the first date it consumes, and a week can consume more
-  // than one: a group delivering Mon+Thu runs two sessions of the same week, so
-  // week 2 starts on session 3 rather than session 2. Pairing week number with
-  // session number reads a week onto the wrong day the moment a group delivers
-  // more than once a week.
+  // than one: a group delivering Mon+Thu runs two live sessions of the same
+  // week, so week 2 starts on session 3 rather than session 2. Pairing week
+  // number with session number reads a week onto the wrong day the moment a
+  // group delivers more than once a week.
   //
-  // How many dates each week takes is `moduleWeekSessionSlots` -- the delivery
-  // days a week runs on, whether or not a live session has been authored for
-  // each of them. Counting the week's live components instead made a week that
-  // is one live session short consume one date rather than two, and every week
-  // below it slid a day early.
+  // This plan is `authoredSessionPlan` -- built one entry per DATED live-session
+  // component, in course-structure order -- so how many dates a week consumes is
+  // simply how many dated live sessions it holds. A week holding none consumes
+  // none: there is no entry in this list for it, and giving it the delivery-day
+  // count instead swallowed the dates belonging to the weeks below it.
   //
   // The date read here is the day the week is DELIVERED on. A closed delivery
   // slot is not this week: it stays in the curriculum as a reading week of its
-  // own (rendered from `plan.slots` below), and the authored week moves down to
-  // the next open slot with the session it holds. Reading `slotDate` instead
-  // dated the week to a day the module is shut, and disagreed with the Course
-  // structure rail, which has read the delivered date all along.
+  // own (rendered from `plan.slots` below), and the authored week keeps the
+  // session it holds. Reading `slotDate` instead dated the week to a day the
+  // module is shut, and disagreed with the Course structure rail, which has read
+  // the delivered date all along.
   const planSessionDates = (plan?.sessions || []).map(session => session.date);
-  const weekSlotCounts = moduleWeekSessionSlots(structure, planSessionDates.length);
+  const weekSlotCounts = weekStructure.map(week => (
+    (week.components || []).filter(component => (
+      component.type === 'live-session' && cleanText(component.settings?.sessionDate)
+    )).length
+  ));
   // Which authored weeks have a delivery day a ticked holiday falls on. The
   // week keeps its own date and its own live session; this only flags it.
   const weekHolidayNoticesByWeekId = weeksTouchedByHoliday(structure, plan);
@@ -600,7 +634,7 @@ export default function ModuleWorkspacePage() {
   let planDateCursor = 0;
   weekStructure.forEach((week, weekIndex) => {
     weekDateByNumber.set(week.weekNumber, planSessionDates[planDateCursor] || '');
-    planDateCursor += weekSlotCounts[weekIndex] || 1;
+    planDateCursor += weekSlotCounts[weekIndex] || 0;
   });
   const weekMonthGroups: Array<{ key: string; label: string; weeks: typeof weekStructure }> = [];
   weekStructure.forEach(week => {
@@ -860,6 +894,16 @@ export default function ModuleWorkspacePage() {
                   authored={authoredLiveSessions.length}
                   undated={undatedLiveSessions.length}
                   builderUrl={moduleBuilderUrl(catalogueId, context?.programmeId || '', context?.programmeName || '')}
+                />
+              )}
+              {/* Stated, never corrected here. Re-dating these is a Microsoft
+                  operation that mails the attendees, and that lives on the
+                  Teams Meetings page -- so this links out rather than growing a
+                  second door onto the same write. */}
+              {Boolean(driftedLiveSessions.length) && (
+                <ScheduleDriftNotice
+                  drifted={driftedLiveSessions}
+                  teamsUrl={`/curriculum/teams-meetings?module=${encodeURIComponent(catalogueId)}`}
                 />
               )}
               {plan && (
@@ -1217,6 +1261,48 @@ function ScheduleGap({ authored, undated, builderUrl }: {
       >
         <AppIcon className="ri-layout-masonry-line text-sm"></AppIcon>
         {authored ? 'Date them in the Module Builder' : 'Add live sessions in the Module Builder'}
+      </Link>
+    </div>
+  );
+}
+
+/**
+ * Live sessions still sitting on the date they were first stamped with.
+ *
+ * Named one by one rather than counted, because which session moved is the
+ * whole of the question, and the stored date is repeated because that -- not
+ * the week's -- is the date the calendar shows and the Teams push sends.
+ */
+function ScheduleDriftNotice({ drifted, teamsUrl }: {
+  drifted: { componentId: string; storedDate: string; weekDates: string[] }[];
+  teamsUrl: string;
+}) {
+  return (
+    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3.5">
+      <p className="flex items-center gap-2 text-[13px] font-heading font-bold text-amber-900">
+        <AppIcon className="ri-calendar-schedule-line text-base text-amber-600"></AppIcon>
+        {drifted.length === 1
+          ? 'One session is still on the date Teams has it booked for'
+          : `${drifted.length} sessions are still on the dates Teams has them booked for`}
+      </p>
+      <p className="mt-1 text-[12px] leading-relaxed text-amber-900">
+        Live sessions follow their week: change the module’s start date or move a week and the dates move with it.
+        {drifted.length === 1 ? ' This one was' : ' These were'} left where {drifted.length === 1 ? 'it is' : 'they are'},
+        because real attendees were invited to the booked date and only Microsoft can move a meeting.
+      </p>
+      <ul className="mt-2 space-y-0.5 text-[12px] text-amber-900">
+        {drifted.map(session => (
+          <li key={session.componentId} className="tabular-nums">
+            {formatDateLabel(session.storedDate)} — its week now runs {session.weekDates.map(formatDateLabel).join(' and ')}
+          </li>
+        ))}
+      </ul>
+      <Link
+        to={teamsUrl}
+        className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-amber-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-amber-700"
+      >
+        <AppIcon className="ri-team-line text-sm"></AppIcon>
+        Move {drifted.length === 1 ? 'it' : 'them'} on the Teams Meetings page
       </Link>
     </div>
   );

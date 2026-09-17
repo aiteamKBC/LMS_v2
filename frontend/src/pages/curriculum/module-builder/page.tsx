@@ -84,9 +84,16 @@ import {
   moduleWeekSessionDates,
   moduleWeekLiveSessionDates,
   moduleUsesSessionRows,
+  // Every live session the module delivers: one entry per live-session
+  // component, which is what the count in the rail and the Teams series are
+  // both built from.
+  moduleAuthoredLiveSessions,
   // Which authored weeks a ticked holiday falls on. States the fact only --
   // the plan is unchanged, and what the week becomes is the author's call.
   weeksTouchedByHoliday,
+  // Live sessions left behind on an old date when their week was re-planned.
+  // States the fact; the correction is a button the author presses.
+  moduleLiveSessionDateDrift,
   resequenceWeekSessionDates,
   makeAuthoringId,
   recalculateModule,
@@ -108,6 +115,7 @@ import {
   type ModuleComponentType,
   type ModuleWeek,
   type ModuleWeekSessionPlan,
+  type TeamsMeetingInput,
   type TeamsMeetingResult,
 } from './moduleAuthoringData';
 // The shared week-authoring UI arrives through curriculum/shared/components rather
@@ -378,6 +386,9 @@ export default function ModuleBuilder() {
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
+  // The Course structure rail's own Teams create dialog. Module-wide, not tied
+  // to one live-session component, so it carries no component of its own.
+  const [moduleTeamsMeetingOpen, setModuleTeamsMeetingOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
   const [programmeKsbMap, setProgrammeKsbMap] = useState<ProgrammeKsbMapState | null>(null);
@@ -395,7 +406,6 @@ export default function ModuleBuilder() {
   // The state the in-flight save is carrying. Anything the reader types after
   // this is not in that request, which is what the footer has to be able to say.
   const [savingSnapshot, setSavingSnapshot] = useState('');
-  const [restoringTeamsModuleId, setRestoringTeamsModuleId] = useState<string | null>(null);
   const [saveStartedAt, setSaveStartedAt] = useState<number | null>(null);
   const [saveElapsedSeconds, setSaveElapsedSeconds] = useState(0);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -856,78 +866,6 @@ export default function ModuleBuilder() {
     [workingModule?.catalogueId],
   );
 
-  const restoreTeamsMeetingForWorkingModule = useCallback(async () => {
-    const module = workingModule;
-    if (!module?.catalogueId || restoringTeamsModuleId) return;
-    setRestoringTeamsModuleId(module.catalogueId);
-    setActionMessage(null);
-    setNoticeAlert(null);
-    const wasDirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(module) !== savedModuleSnapshotRef.current);
-    try {
-      const result = await restoreModuleTeamsMeeting(module.catalogueId);
-      // Re-attaching rewrites this module's live-session components in storage,
-      // so the version the workspace is holding is now behind. Without adopting
-      // the one the restore answers with, the workspace's own next save reads
-      // as somebody else's write and is refused -- on a module the reader has
-      // just been told was repaired.
-      if (result.module?.structureRevision) serverRevisionRef.current = result.module.structureRevision;
-      const meetingSettings = result.meeting as ModuleComponent['settings'];
-      // The endpoint answers with the module as it now stands, and each week's
-      // live-session component carries that week's own session — so the stored
-      // component is what is merged in, not one set of series settings applied
-      // to every week. Unsaved local edits are kept: only live sessions change.
-      const restoredWeeks = new Map((result.module?.weekStructure || []).map(week => [week.id, week]));
-      let nextSnapshot = '';
-      setWorkingModule(current => {
-        if (!current || current.catalogueId !== module.catalogueId) return current;
-        const next = recalculateModule({
-          ...current,
-          deliveryMetadata: {
-            ...(current.deliveryMetadata || {}),
-            ...meetingSettings,
-          },
-          weekStructure: current.weekStructure.map(week => {
-            const restored = restoredWeeks.get(week.id);
-            const restoredById = new Map((restored?.components || []).map(component => [component.id, component]));
-            const localIds = new Set(week.components.map(component => component.id));
-            return {
-              ...week,
-              sessionDate: restored?.sessionDate ?? week.sessionDate,
-              sessionDay: restored?.sessionDay ?? week.sessionDay,
-              components: [
-                ...week.components.map(component => (
-                  component.type === 'live-session'
-                    ? { ...component, settings: { ...component.settings, ...(restoredById.get(component.id)?.settings || meetingSettings) } }
-                    : component
-                )),
-                // A week that had no live session now has the one the re-attach
-                // created for it; without this the module would only show it
-                // after a reload.
-                ...(restored?.components || []).filter(component => component.type === 'live-session' && !localIds.has(component.id)),
-              ],
-            };
-          }),
-        });
-        nextSnapshot = moduleSnapshot(next);
-        return next;
-      });
-      if (!wasDirty && nextSnapshot) {
-        savedModuleSnapshotRef.current = nextSnapshot;
-      }
-      setStorageVersion(version => version + 1);
-      setNoticeAlert({
-        title: 'Teams data restored',
-        message: result.updatedComponents
-          ? `Restored the saved Teams meeting into ${result.updatedComponents} live session component${result.updatedComponents === 1 ? '' : 's'}.`
-          : 'Loaded the saved Teams meeting for this module.',
-      });
-      reload({ silent: true });
-    } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : 'Unable to restore saved Teams data.');
-    } finally {
-      setRestoringTeamsModuleId(null);
-    }
-  }, [reload, restoringTeamsModuleId, workingModule]);
 
   // Staff and Teams state are additive: the catalogue must still render if either
   // request fails, so neither is allowed to surface as a page-level error.
@@ -2039,6 +1977,37 @@ export default function ModuleBuilder() {
     return () => { active = false; };
   }, [workingModuleCatalogueId, workingModuleWeekCount, workingModuleFlatSessionCount]);
 
+  // How many live sessions each week holds, in week order. Adding one is the
+  // edit that creates a session needing a date, and nothing about the week
+  // count changes when it happens -- so the plan effect above never re-ran and
+  // the new component sat undated until the next save round-trip told the
+  // author it had no date.
+  const workingModuleLiveSessionShape = useMemo(
+    () => (workingModule?.weekStructure || [])
+      .map(week => week.components.filter(component => component.type === 'live-session').length)
+      .join(','),
+    [workingModule],
+  );
+
+  // Date a live session the moment it is added, by the same rule everything
+  // else uses: its week owns the group's delivery days inside its own Monday-to-
+  // Sunday window, and the session takes the next of them. This only ever fills
+  // a component that has no date and no meeting tracked against it, and returns
+  // the module untouched when there is nothing to fill, so re-running it cannot
+  // move an authored date or a booked occurrence.
+  //
+  // A week already carrying a live session for each of its delivery days has no
+  // date left to give, and an extra session there stays undated rather than
+  // being put on a day the group does not deliver.
+  useEffect(() => {
+    if (!workingModuleSessionPlan || !workingModuleCatalogueId) return;
+    setWorkingModule(current => (
+      current && current.catalogueId === workingModuleCatalogueId
+        ? applyModuleWeekSessionPlan(current, workingModuleSessionPlan, { followEndDate: false })
+        : current
+    ));
+  }, [workingModuleLiveSessionShape, workingModuleSessionPlan, workingModuleCatalogueId]);
+
   /**
    * The day each week's live session runs on, keyed by week. This is the same
    * delivered date the week now shows after holiday shifts, so a new live
@@ -2054,6 +2023,66 @@ export default function ModuleBuilder() {
     });
     return byWeekId;
   }, [workingModule, weekSessionPlanState, workingModuleCatalogueId]);
+
+  /**
+   * Put a freshly created module-wide Teams series onto the live sessions it was
+   * created for.
+   *
+   * One create from the Course structure rail covers every live session in the
+   * module, so the join link each one keeps is the link for the day it actually
+   * runs on -- not the first day's link copied down the module. A series with no
+   * entry for a session's day leaves that session alone rather than handing it
+   * somebody else's meeting.
+   *
+   * Only the meeting's own facts are written. Dates, durations and titles stay
+   * as authored: the calendar was built from them, so reading them back would be
+   * a round trip that can only lose.
+   */
+  const applyModuleTeamsSeries = useCallback((result: TeamsMeetingResult, input: TeamsMeetingInput) => {
+    const meeting = result.meeting;
+    const series = meeting.calendarSeries || [];
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => ({
+        ...week,
+        components: week.components.map(component => {
+          if (component.type !== 'live-session') return component;
+          const date = String(component.settings.sessionDate || liveSessionDateByWeekId.get(week.id) || week.sessionDate || '');
+          const day = /^\d{4}-\d{2}-\d{2}$/.test(date)
+            ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`))
+            : '';
+          const daySeries = series.find(item => item.day === day);
+          if (series.length && !daySeries) return component;
+          const joinUrl = daySeries?.joinUrl || meeting.joinUrl || meeting.webLink;
+          if (!joinUrl) return component;
+          return {
+            ...component,
+            settings: {
+              ...component.settings,
+              liveSessionUrl: joinUrl,
+              teamsMeetingUrl: joinUrl,
+              teamsCalendarSeries: JSON.stringify(series),
+              teamsEventId: daySeries?.eventId || meeting.eventId,
+              teamsOnlineMeetingId: daySeries?.onlineMeetingId || meeting.onlineMeetingId || '',
+              teamsLiveSessionId: meeting.liveSessionId,
+              teamsMeetingOptionsUrl: meeting.meetingOptionsUrl,
+              teamsOrganizerEmail: meeting.organizerEmail,
+              teamsAttendees: meeting.attendees,
+              teamsPresenters: meeting.presenters,
+              teamsCoOrganizers: meeting.coOrganizers,
+              teamsProvider: meeting.provider,
+              teamsRepeat: meeting.repeat,
+              teamsRepeatOccurrences: meeting.repeatOccurrences,
+              teamsLobbyBypass: input.lobbyBypass,
+              teamsRecording: input.recording,
+              teamsSpokenLanguage: input.spokenLanguage,
+              teamsMeetingType: input.meetingType,
+            },
+          };
+        }),
+      })),
+    }));
+  }, [liveSessionDateByWeekId, updateWorkingModule]);
 
   // Whichever week is selected (directly, or via one of its components) is
   // always expanded in the Course structure accordion — this is the single
@@ -2159,22 +2188,11 @@ export default function ModuleBuilder() {
               onSelectComponent={(weekId, componentId) => { void requestSelectionChange({ kind: 'component', weekId, componentId }); }}
               onAddWeekFromTemplate={() => setWeekTemplateImportOpen(true)}
               onReuseComponents={weekId => setReusePickerWeekId(weekId)}
+              onCreateTeamsMeeting={() => setModuleTeamsMeetingOpen(true)}
               onAddWeek={() => {
                 const week = createEmptyWeek(workingModule.id, workingModule.weekStructure.length + 1);
                 updateWorkingModule(module => ({ ...module, weekStructure: [...module.weekStructure, week] }));
                 setSelection({ kind: 'week', weekId: week.id });
-              }}
-              onGenerateLiveSessions={() => {
-                const addedCount = countAddedLiveSessions(workingModule);
-                const actualWeekCount = workingModule.weekStructure.length;
-                const requiredCount = countRequiredLiveSessions(workingModule);
-                if (!addedCount) return;
-                updateWorkingModule(generateMissingLiveSessions);
-                void showCurriculumAlert({
-                  title: 'Live sessions added',
-                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added. This module is planned for ${requiredCount} live session${requiredCount === 1 ? '' : 's'} across ${actualWeekCount} week${actualWeekCount === 1 ? '' : 's'}. Use "Create all Teams meetings" once to create the module calendar and link every session.`,
-                  timer: 3200,
-                });
               }}
               onDeleteWeek={weekId => {
                 void confirmDeleteWeek(weekId);
@@ -2251,9 +2269,6 @@ export default function ModuleBuilder() {
                     weekSessionDate={liveSessionDateByWeekId.get(selectedWeek.id) || selectedWeek.sessionDate}
                     weekSessionTime={selectedWeek.sessionStartTime}
                     uploadResource={uploadComponentForModule}
-                    restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
-                    restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
-                    liveSessionModule={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
                   />
                 </ModuleBuilderScrollArea>
               ) : selectedWeek ? (
@@ -2382,6 +2397,18 @@ export default function ModuleBuilder() {
             scope={{ programmeId: workingModule.programmeId, programmeName: workingModule.programmeName }}
             onClose={() => setWeekTemplateImportOpen(false)}
             onImport={importWeekTemplateAsNewWeek}
+          />
+        )}
+        {moduleTeamsMeetingOpen && workingModule && (
+          /* The same create form the Teams Meetings page shows, opened over the
+             builder rather than instead of it. No component: the calendar is
+             the module's, so every live session it holds takes its own day's
+             link back from the series that was just created. */
+          <TeamsMeetingModal
+            module={workingModule}
+            unsavedChanges={hasUnsavedWorkingModuleChanges}
+            onClose={() => setModuleTeamsMeetingOpen(false)}
+            onCreated={applyModuleTeamsSeries}
           />
         )}
         {reusePickerWeekId && (
@@ -2955,7 +2982,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, onCreateTeamsMeeting, pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -2964,11 +2991,17 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onSelectComponent: (weekId: string, componentId: string) => void;
   onAddWeek: () => void;
   onAddWeekFromTemplate: () => void;
-  onGenerateLiveSessions: () => void;
   onDeleteWeek: (weekId: string) => void;
   onDropReorder: (targetWeekId: string) => void;
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
   onReuseComponents: (weekId: string) => void;
+  /**
+   * Opens this module's Teams create dialog here, over the rail that lists the
+   * live sessions it is built from. The Teams Meetings page still owns the
+   * calendar itself -- its detail, its updates, its attendance -- so only the
+   * first create is offered from inside the builder.
+   */
+  onCreateTeamsMeeting: () => void;
   pointsByType: Partial<Record<ModuleComponentType, number>>;
   /**
    * The module's flat dated plan. A week owns one slot per delivery day, so the
@@ -2988,9 +3021,14 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
 }) {
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
   const actualWeekCount = module.weekStructure.length;
-  const missingLiveSessionCount = countAddedLiveSessions(module);
-  const requiredLiveSessionCount = countRequiredLiveSessions(module);
-  const hasLiveSessions = module.weekStructure.some(week => week.components.some(component => component.type === 'live-session'));
+  // How many live sessions this module delivers: the live-session components
+  // authored into it, and nothing else. A module can run fourteen weeks and
+  // deliver no live session at all -- the weeks still hold their reading, their
+  // assignments and the rest -- so there is no number of sessions a week count
+  // implies and none is claimed here. Each one of these is one Teams meeting.
+  const authoredLiveSessions = moduleAuthoredLiveSessions(module);
+  const authoredLiveSessionCount = authoredLiveSessions.length;
+  const datedLiveSessionCount = authoredLiveSessions.filter(session => session.date).length;
 
   // The dates each week delivers on, keyed by week. A ten-week module running
   // Mon+Fri delivers twenty sessions, so every row here owns two dates -- the
@@ -3009,6 +3047,11 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     const week = module.weekStructure[index];
     if (week) liveSessionDatesByWeekId.set(week.id, dates);
   });
+  // The live sessions the planner could not move with their week: the ones
+  // Microsoft already has a confirmed meeting for. Only the plan can tell, so
+  // this is empty until it loads -- nothing to compare against is an unknown,
+  // not a disagreement.
+  const dateDriftByComponentId = moduleLiveSessionDateDrift(module, plannedSessions ? { sessions: plannedSessions } : null);
   // Falls back to the single date the week already carries, so a module whose
   // plan has not loaded yet reads exactly as it did before rather than blank.
   const sessionDatesOf = (week: ModuleWeek): string[] => {
@@ -3149,19 +3192,6 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             <p className="mt-0.5 text-[11px] text-foreground-500">Weeks, in order</p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            {/* Teams lives on its own page, so this only carries the reader over
-                to it with this module already selected. Nothing here writes to
-                Teams. */}
-            {module.catalogueId && (
-              <Link
-                to={`/curriculum/teams-meetings?module=${encodeURIComponent(module.catalogueId)}`}
-                title="Open this module on the Teams Meetings page to see its live sessions"
-                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 text-[11px] font-bold text-violet-700 transition-smooth hover:bg-violet-100"
-              >
-                <AppIcon className="ri-vidicon-line"></AppIcon>
-                View sessions
-              </Link>
-            )}
             {/* The only control on this screen that reads the saved week-template
                 library, which is why it is the only one still called a template. */}
             <button onClick={onAddWeekFromTemplate} title="Add a whole new week, built from a saved week template" className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
@@ -3174,16 +3204,48 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             </button>
           </div>
         </div>
-        {missingLiveSessionCount > 0 && (
-          <button
-            onClick={onGenerateLiveSessions}
-            title="Add a live-session component for every delivery day a week is still missing one for. It won't be created in Teams until you use Create Teams meeting on it."
-            className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 text-[11px] font-bold text-violet-700 transition-smooth hover:bg-violet-100"
-          >
-            <AppIcon className="ri-group-line"></AppIcon>
-            Generate live sessions ({missingLiveSessionCount} missing / {requiredLiveSessionCount} live sessions across {actualWeekCount} week{actualWeekCount === 1 ? '' : 's'})
-          </button>
+        {/* Creating is done here, over the weeks the dates come from: sending a
+            reader to another page to press one button lost them the rail they
+            were reading. Everything after the create -- the calendar's detail,
+            its updates, its attendance -- still lives on the Teams page, which
+            "Restore saved Teams data" carries them to. */}
+        {module.catalogueId && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={onCreateTeamsMeeting}
+              title="Create one Teams meeting on each of this module's live-session dates, without leaving the builder"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600"
+            >
+              <AppIcon className="ri-calendar-event-line"></AppIcon>
+              Create Teams meeting
+            </button>
+            <Link
+              to={`/curriculum/teams-meetings?module=${encodeURIComponent(module.catalogueId)}`}
+              title="Restore this module's saved Teams data on the Teams Meetings page"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100"
+            >
+              <AppIcon className="ri-refresh-line"></AppIcon>
+              Restore saved Teams data
+            </Link>
+          </div>
         )}
+        {/* What this module actually delivers, stated rather than implied: one
+            live-session component is one live session and one Teams meeting, so
+            a module with none delivers none however many weeks it runs. The
+            undated tail is named separately because only a dated session
+            reaches the calendar. */}
+        <p
+          title="Each live-session component in the weeks below is one live session and one Teams meeting. A week count implies nothing — add a live session to a week to deliver one."
+          className="mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 text-[11px] font-bold text-violet-700"
+        >
+          <AppIcon className="ri-group-line"></AppIcon>
+          {authoredLiveSessionCount === 0
+            ? `No live sessions in ${actualWeekCount} week${actualWeekCount === 1 ? '' : 's'}`
+            : `${authoredLiveSessionCount} live session${authoredLiveSessionCount === 1 ? '' : 's'} across ${actualWeekCount} week${actualWeekCount === 1 ? '' : 's'}${
+              datedLiveSessionCount === authoredLiveSessionCount ? '' : ` · ${authoredLiveSessionCount - datedLiveSessionCount} undated`
+            }`}
+        </p>
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <MiniStructureMetric label="Items" value={String(totalComponents)} />
           <MiniStructureMetric label="OTJH" value={module.totalOtjh.toFixed(1)} />
@@ -3311,6 +3373,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     variant="nested"
                     weekSessionDate={week.sessionDate}
                     holidayDates={weekHolidayNotices.map(slot => slot.date)}
+                    dateDriftByComponentId={dateDriftByComponentId}
                     onReuseComponents={() => onReuseComponents(week.id)}
                   />
                 </div>
@@ -8229,54 +8292,10 @@ function moduleDeliveryDaysPerWeek(module: ModuleCatalogueItem) {
   return Math.max(1, Math.round((module.sessionsNumber || weeks) / weeks));
 }
 
-// Weeks that don't yet carry one live-session component per delivery day —
-// the ones "Generate live sessions" tops up. A week keeps whatever live
-// sessions it already has (created, linked to Teams, or not), so this only
-// ever adds the shortfall, never replaces or removes.
-function liveSessionShortfallByWeek(module: ModuleCatalogueItem) {
-  if (moduleUsesSessionRows(module)) return [];
-  const perWeek = moduleDeliveryDaysPerWeek(module);
-  return module.weekStructure
-    .map(week => ({ week, shortfall: perWeek - week.components.filter(component => component.type === 'live-session').length }))
-    .filter(entry => entry.shortfall > 0);
-}
-
-/**
- * Give every week its full set of live-session components — one per delivery
- * day — unattached to any Teams meeting yet. This is the explicit, opt-in
- * counterpart to the Teams tab's "Re-attach to components": that one
- * recreates missing live-session components from a meeting that already
- * exists, this one creates the placeholders before a meeting exists at all.
- * Weeks that already have enough live sessions are left untouched.
- */
-function generateMissingLiveSessions(module: ModuleCatalogueItem): ModuleCatalogueItem {
-  const shortfalls = liveSessionShortfallByWeek(module);
-  if (!shortfalls.length) return module;
-  const shortfallByWeekId = new Map(shortfalls.map(entry => [entry.week.id, entry.shortfall]));
-  return {
-    ...module,
-    weekStructure: module.weekStructure.map(week => {
-      const shortfall = shortfallByWeekId.get(week.id);
-      if (!shortfall) return week;
-      const existingLiveSessions = week.components.filter(component => component.type === 'live-session').length;
-      const additions = Array.from({ length: shortfall }, (_, offset) => {
-        const component = createNamedComponent(week, 'live-session', week.components.length + offset + 1);
-        return { ...component, title: `${component.title} ${existingLiveSessions + offset + 1}` };
-      });
-      return { ...week, components: [...week.components, ...additions] };
-    }),
-  };
-}
-
-function countAddedLiveSessions(module: ModuleCatalogueItem) {
-  return liveSessionShortfallByWeek(module).reduce((total, entry) => total + entry.shortfall, 0);
-}
-
-function countRequiredLiveSessions(module: ModuleCatalogueItem) {
-  if (moduleUsesSessionRows(module)) return module.sessionsNumber || 0;
-  const weekCount = module.weekStructure.length;
-  return weekCount * moduleDeliveryDaysPerWeek(module);
-}
+// A module's live sessions are the live-session components its author put in
+// its weeks, so there is no shortfall to top up and nothing here generates
+// them: a week delivers a live session when somebody adds one to it. The rail
+// states the authored count; "Add component" is how it grows.
 
 function createNamedComponent(week: ModuleWeek, type: ModuleComponentType, index = week.components.length + 1) {
   const component = createEmptyComponent(week.id, type, index);

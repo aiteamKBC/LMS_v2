@@ -3348,6 +3348,49 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
             payload = views.build_curriculum_payload_from_rows(rows, compact=True)
         self.assertEqual(payload['sessions'], [])
 
+    def test_compact_module_list_is_whitelisted_not_subtracted(self):
+        """`/curriculum/modules/?compact=true` returns the whitelist, nothing else.
+
+        A field added to a module row later must not reach compact callers until
+        somebody puts it in COMPACT_MODULE_LIST_FIELDS deliberately -- that is the
+        whole point of projecting onto an allowlist rather than deleting keys.
+        """
+        module = {
+            'id': 'MOD-1', 'name': 'Module', 'programmeId': 'PROG-1', 'programme': 'Programme',
+            'weeks': 4, 'ksbCount': 2, 'notes': 'Notes', 'color': '#6941c6',
+            'weeklySchedule': [{'week': 1}], 'sessionHolidays': [], 'deliveryWeeks': 4,
+            # None of these may survive the projection.
+            'weekStructure': [{'id': 'WEEK-1', 'components': [{'id': 'COMP-1'}]}],
+            'sessionNames': ['Week 1', 'Week 2', 'Week 3'],
+            'deliveryMetadata': {'teamsMeetingUrl': 'https://teams.example.invalid/x'},
+            'author': '', 'assignments': 0, 'qualityScore': 72, 'sourceType': 'authoring',
+            'deliveryRowId': 17, 'legacyModuleId': 'old', 'invalidModuleCatalogueId': 'bad',
+            'somethingAddedNextYear': 'must not leak',
+        }
+
+        compact = views.compact_module_list_rows([module])[0]
+
+        self.assertEqual(
+            set(compact),
+            (set(module) & views.COMPACT_MODULE_LIST_FIELDS) | {'sessionNamesCount'},
+        )
+        # The fields the edit form reopens a module with survive: dropping these
+        # would not just blank a screen, the next save would write the blank back.
+        for field in ('weeklySchedule', 'sessionHolidays', 'deliveryWeeks', 'notes', 'color'):
+            self.assertEqual(compact[field], module[field])
+        # sessionNames goes, but its count stays -- four callers read `.length`.
+        self.assertNotIn('sessionNames', compact)
+        self.assertEqual(compact['sessionNamesCount'], 3)
+        # Teams meeting identity is not in a list response at all.
+        self.assertNotIn('deliveryMetadata', compact)
+        # The source row is untouched: it is shared with the non-compact response.
+        self.assertIn('weekStructure', module)
+
+    def test_compact_module_list_keeps_every_field_its_filters_read(self):
+        """The endpoint filters after projecting, so the filter keys must survive."""
+        for field in ('programmeId', 'cohortId', 'groupId', 'status'):
+            self.assertIn(field, views.COMPACT_MODULE_LIST_FIELDS)
+
     def test_pagination_is_opt_in_and_reports_total_count(self):
         request = RequestFactory().get('/curriculum/modules/', {'page': 2, 'page_size': 2})
         results, metadata = views.paginate_curriculum_results(request, ['a', 'b', 'c', 'd', 'e'])

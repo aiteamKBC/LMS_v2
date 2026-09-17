@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import type { CurriculumSession } from '@/lib/curriculumApi';
 import {
   formatCalendarDateTime,
   getCalendarTimeZone,
@@ -44,8 +43,28 @@ export function minuteKey(value: unknown): string {
   return Number.isNaN(instant.getTime()) ? '' : instant.toISOString().slice(0, 16);
 }
 
+/**
+ * The little a session has to say for a calendar to be built on it.
+ *
+ * `CurriculumSession` satisfies this, so the Teams Meetings page passes its own
+ * rows unchanged. It is stated separately because the Module Builder reads the
+ * same dates off the structure it is already holding -- the backend stamps them
+ * onto each live-session component from the same planner -- rather than reading
+ * the whole curriculum's session collection back to find one module's.
+ */
+export interface TeamsPlannedSession {
+  /** `YYYY-MM-DD` in the business zone. */
+  date: string;
+  startTime: string;
+  endTime: string;
+  /** Dates a ticked cohort holiday lands on, named above the list. */
+  skippedHolidays?: string[];
+  /** The live-session component this date belongs to, when the caller knows it. */
+  componentId?: string;
+}
+
 /** `YYYY-MM-DDTHH:mm` for a stored session — the wall clock the group meets on. */
-export function sessionNaiveLocal(session: CurriculumSession): string {
+export function sessionNaiveLocal(session: TeamsPlannedSession): string {
   // Keep incomplete legacy rows renderable. Creation validates the original
   // values before any request, so this display fallback can never be sent.
   let time = DEFAULT_START_TIME;
@@ -162,7 +181,7 @@ function HolidayWarningNote({ plan }: { plan: HolidayShiftPlan }) {
  */
 export interface TeamsSchedulePreviewRow {
   name: string;
-  sessions: CurriculumSession[];
+  sessions: TeamsPlannedSession[];
   /** The module's own session dates, as the UTC instants Teams would hold. */
   plannedStarts: string[];
   /** What Teams holds today, in order, when it has been asked for. */
@@ -194,7 +213,7 @@ export function ModuleSessionSchedulePreview({
   // A meeting can outlive the module's stored dates. When that happens the
   // calendar entries are still the rows worth showing, so they are listed
   // against the date Teams holds rather than dropped for an empty state.
-  const sessionRows: Array<CurriculumSession | undefined> = row.sessions.length
+  const sessionRows: Array<TeamsPlannedSession | undefined> = row.sessions.length
     ? row.sessions
     : row.teamsStarts.map(() => undefined);
   const occurrences = sessionRows.map((session, index) => {
