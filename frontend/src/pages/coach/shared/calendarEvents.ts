@@ -478,6 +478,18 @@ export function formatTimeLabel(event: CoachCalendarEvent) {
   return event.timeLabel && event.timeLabel !== 'Time TBC' ? event.timeLabel : 'Time TBC';
 }
 
+/** Display a booked session as a start/end range instead of a duration label. */
+export function formatTimeRangeLabel(event: CoachCalendarEvent) {
+  if (!event.scheduledTime) return event.timeLabel && event.timeLabel !== 'Time TBC' ? event.timeLabel : 'Time TBC';
+  const startText = event.scheduledTime.slice(0, 5);
+  const match = /^(\d{1,2}):(\d{2})$/.exec(startText);
+  if (!match) return startText;
+  const start = new Date(2000, 0, 1, Number(match[1]), Number(match[2]));
+  start.setMinutes(start.getMinutes() + (event.durationMinutes || 60));
+  const endText = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+  return `${startText} - ${endText}`;
+}
+
 export function scheduleDefaults(event: CoachCalendarEvent): ScheduleFormState {
   return {
     date: event.scheduledDate || event.targetDate || event.date || '',

@@ -132,9 +132,9 @@ export function CaseloadLoading() {
               <th>Current Module</th>
               <th>Progress</th>
               <th>Last Activity</th>
-              <th>Next Meeting</th>
+              <th>Last PR</th>
+              <th>Last MCM</th>
               <th>Status</th>
-              <th>Coach RAG</th>
               <th className="text-right">Actions</th>
             </tr>
           </thead>

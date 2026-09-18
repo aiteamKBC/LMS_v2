@@ -12,7 +12,7 @@ import {
   eventIdentity,
   fetchCoachCalendarEvents,
   formatDateLabel,
-  formatTimeLabel,
+  formatTimeRangeLabel,
   isCompletedEvent,
   meetingUrl,
   parseLocalDate,
@@ -151,7 +151,7 @@ export default function CoachMeetings() {
 
   const rows = (items: CoachCalendarEvent[], fullActions: boolean) => items.map(event => <tr key={eventIdentity(event)}>
     <td>{formatDateLabel(eventDisplayDate(event))}</td>
-    <td>{formatTimeLabel(event)}</td>
+    <td>{formatTimeRangeLabel(event)}</td>
     <td><strong className={styles.learnerName}>{event.learner || 'Unknown learner'}</strong><small className={styles.cellSub}>{event.programme || event.group || event.cohort || 'Programme not recorded'}</small></td>
     <td>{meetingType(event)}</td>
     <td><span className={styles.status} data-tone={statusTone(event.status)}><AppIcon name={event.status === 'confirmed' ? 'ri-checkbox-circle-fill' : 'ri-calendar-event-line'} />{statusLabel(event.status)}</span></td>

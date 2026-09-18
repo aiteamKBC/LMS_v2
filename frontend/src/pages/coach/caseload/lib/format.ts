@@ -7,8 +7,8 @@
 // so nothing importing from here has to change.
 //
 // What stays local is genuinely caseload-specific: parsing the raw caseload
-// payload, joining it against the attendance payload, and the coach-RAG and
-// programme-status vocabularies that only this page edits or filters by.
+// payload, joining it against the attendance payload, and the programme-status
+// vocabulary that only this page filters by.
 // ============================================================================
 import {
   ATTENDANCE_EXPECTED_RATE,
@@ -56,35 +56,6 @@ export {
   startOfToday,
   daysBetween,
 };
-
-export function formatCoachRagValue(value?: string | null): string {
-  const normalized = (value || '').trim().toLowerCase();
-  if (normalized === 'green') return 'Green';
-  if (normalized === 'amber') return 'Amber';
-  if (normalized === 'red') return 'Red';
-  return EMPTY_VALUE;
-}
-
-export function getCoachRagOptionValue(value?: string | null): string {
-  const normalized = (value || '').trim().toLowerCase();
-  return normalized === 'green' || normalized === 'amber' || normalized === 'red' ? normalized : '';
-}
-
-export function getCoachRagDotClass(value?: string | null): string {
-  const normalized = displayValue(value).toLowerCase();
-  if (normalized === 'green') return 'bg-emerald-500';
-  if (normalized === 'amber') return 'bg-amber-500';
-  if (normalized === 'red') return 'bg-red-500';
-  return 'bg-foreground-300';
-}
-
-export function getCoachRagStyle(value?: string | null) {
-  const normalized = displayValue(value).toLowerCase();
-  if (normalized === 'red') return { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700' };
-  if (normalized === 'amber') return { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700' };
-  if (normalized === 'green') return { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700' };
-  return { bg: 'bg-background-100', border: 'border-foreground-200', text: 'text-foreground-500' };
-}
 
 // --- programme status -------------------------------------------------------
 
@@ -211,7 +182,6 @@ export function normalizeLearner(
     coachName: displayValue(learner.coachName),
     coachEmail: displayValue(learner.coachEmail),
     rawProgramStatus: displayValue(learner.rawProgramStatus),
-    coachRag: formatCoachRagValue(learner.coachRag),
     otjhStatus: displayValue(learner.otjhStatus),
     ksbStatus: displayValue(learner.ksbStatus),
     email: learner.email || undefined,

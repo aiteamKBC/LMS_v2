@@ -20,7 +20,6 @@ export interface CaseloadFilterState {
   search: string;
   cohort: string;
   group: string;
-  coachRag: string;
   programStatus: string;
   employer: string;
 }
@@ -28,7 +27,6 @@ export interface CaseloadFilterState {
 export interface CaseloadFilterOptions {
   cohort: FilterOption[];
   group: FilterOption[];
-  coachRag: FilterOption[];
   programStatus: FilterOption[];
   employer: FilterOption[];
 }
@@ -98,7 +96,6 @@ export const LearnerToolbar = memo(function LearnerToolbar({
   const chips: { key: keyof CaseloadFilterState; label: string; value: string }[] = [];
   if (filters.cohort !== 'all') chips.push({ key: 'cohort', label: 'Cohort', value: optionLabel(options.cohort, filters.cohort) });
   if (filters.group !== 'all') chips.push({ key: 'group', label: 'Group', value: optionLabel(options.group, filters.group) });
-  if (filters.coachRag !== 'all') chips.push({ key: 'coachRag', label: 'Coach RAG', value: filters.coachRag });
   if (filters.programStatus !== 'all') chips.push({ key: 'programStatus', label: 'Enrolment', value: filters.programStatus });
   if (filters.employer !== 'all') chips.push({ key: 'employer', label: 'Employer', value: filters.employer });
   if (filters.search.trim()) chips.push({ key: 'search', label: 'Search', value: filters.search.trim() });
@@ -132,14 +129,6 @@ export const LearnerToolbar = memo(function LearnerToolbar({
           widthClass="w-[140px]"
           tone={filters.group !== 'all' ? 'active' : 'default'}
         />
-        <MenuSelect
-          value={filters.coachRag}
-          onChange={(value) => onFilterChange({ coachRag: value })}
-          options={withAllOption('Any Coach RAG', options.coachRag)}
-          widthClass="w-[145px]"
-          tone={filters.coachRag !== 'all' ? 'active' : 'default'}
-        />
-
         <div ref={moreRef} className="relative">
           <button
             type="button"

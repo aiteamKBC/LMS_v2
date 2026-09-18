@@ -91,14 +91,6 @@ export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { 
           )}
         </section>
 
-        <aside className={styles.coachNotes}>
-          <AppIcon className="ri-file-text-line" />
-          <strong>No notes yet</strong>
-          <p>Add notes to capture observations, next steps or key discussion points about this learner&apos;s learning plan.</p>
-          <button type="button" className={styles.outlineButton} onClick={onOpenNotes}>
-            <AppIcon className="ri-add-line" /> Add note
-          </button>
-        </aside>
       </div>
 
       <section className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden">

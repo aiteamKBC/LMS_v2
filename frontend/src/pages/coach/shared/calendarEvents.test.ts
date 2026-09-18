@@ -51,3 +51,10 @@ describe('Coach calendar booking idempotency', () => {
     expect(second).not.toBe(first);
   });
 });
+
+describe('Coach calendar time labels', () => {
+  it('renders a booked meeting as a start and end time', async () => {
+    const { formatTimeRangeLabel } = await import('./calendarEvents');
+    expect(formatTimeRangeLabel({ scheduledTime: '23:30', durationMinutes: 60 } as never)).toBe('23:30 - 00:30');
+  });
+});

@@ -30,6 +30,7 @@ import {
   eventPeriodLabel,
   formatDateLabel,
   formatTimeLabel,
+  formatTimeRangeLabel,
   isAtRiskEvent,
   currentWeekRange,
   isCompletedEvent,
@@ -861,7 +862,7 @@ function scheduleEventMeta(event: CoachCalendarEvent) {
 
 function scheduleEventTime(event: CoachCalendarEvent) {
   if (event.source === 'live-session') return upcomingLiveSessionTimeLabel(event);
-  if (event.scheduledTime) return event.scheduledTime.slice(0, 5);
+  if (event.scheduledTime) return formatTimeRangeLabel(event);
   if (event.timeLabel && event.timeLabel !== 'Time TBC') return event.timeLabel;
   return 'TBC';
 }

@@ -201,7 +201,7 @@ export function ReviewInstanceModal({
   const content = (
     <>
       {pageMode ? (
-        <header className="rounded-t-2xl border-b border-white/10 bg-gradient-to-r from-[#10021f] via-primary-950 to-[#35105e] px-5 py-6 text-white sm:px-7">
+        <header className="rounded-t-3xl border-b border-white/10 bg-gradient-to-br from-[#10021f] via-primary-950 to-[#35105e] px-5 py-6 text-white sm:px-8 sm:py-7">
           <button
             type="button"
             onClick={onClose}
@@ -210,13 +210,13 @@ export function ReviewInstanceModal({
           >
             <AppIcon className="ri-arrow-left-line"></AppIcon>Back to reviews
           </button>
-          <div className="flex items-start gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-lg text-secondary-200">
+          <div className="flex items-start gap-4">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-lg text-secondary-200 shadow-inner shadow-white/5">
               <AppIcon className="ri-chat-check-line"></AppIcon>
             </span>
             <div className="min-w-0">
               <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-secondary-200">Complete review</p>
-              <h1 className="mt-1 text-xl font-bold text-white sm:text-2xl">
+              <h1 className="mt-1 max-w-4xl text-xl font-bold leading-tight text-white sm:text-2xl lg:text-[28px]">
                 {definition ? `${event.learner || 'Learner'} · ${definition.template.name} #${definition.instance.occurrenceNumber}` : 'Loading review...'}
               </h1>
               <p className="mt-1 text-[13px] text-white/60">Work through each Curriculum-defined step, then save or complete the review.</p>
@@ -244,7 +244,7 @@ export function ReviewInstanceModal({
         />
       )}
 
-      <div className={pageMode ? 'space-y-4 bg-background-100 p-4 sm:p-6' : 'flex-1 space-y-3 overflow-y-auto bg-background-100 p-4 sm:p-6'}>
+      <div className={pageMode ? 'space-y-5 bg-[#f8f7fc] p-4 sm:p-6 lg:p-8' : 'flex-1 space-y-3 overflow-y-auto bg-background-100 p-4 sm:p-6'}>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-foreground-400">
             <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Loading review...
@@ -253,21 +253,21 @@ export function ReviewInstanceModal({
 
         {!loading && definition ? (
           <>
-            <div className="rounded-lg border border-primary-100 bg-primary-50 px-4 py-3 text-[13px] leading-5 text-primary-800">
-              <AppIcon className="ri-information-line mr-2"></AppIcon>
-              These answers are saved to this {definition.template.name} and follow the sections/questions configured in Curriculum.
+            <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/80 px-4 py-3 text-[13px] leading-5 text-primary-800 shadow-sm">
+              <AppIcon className="ri-information-line mt-0.5 shrink-0 text-primary-600"></AppIcon>
+              <span>These answers are saved to this {definition.template.name} and follow the sections/questions configured in Curriculum.</span>
             </div>
 
-            <div className="grid gap-3 rounded-2xl border border-background-200 bg-background-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 rounded-2xl border border-background-200 bg-white p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
               {[
                 ['Learner', event.learner || 'Unknown learner'],
                 ['Programme', event.programme || '--'],
                 ['Review', `${definition.template.name} #${definition.instance.occurrenceNumber}`],
                 ['Target date', formatDateLabel(definition.instance.targetDate)],
               ].map(([label, value]) => (
-                <div key={label} className="rounded-lg bg-background-100 px-3.5 py-3">
-                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
-                  <p className="mt-1 text-[13px] font-bold text-foreground-800">{value}</p>
+                <div key={label} className="rounded-xl bg-[#f7f5fc] px-4 py-3.5 ring-1 ring-inset ring-primary-100/70">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-foreground-400">{label}</p>
+                  <p className="mt-1.5 truncate text-[13px] font-bold text-foreground-900" title={value}>{value}</p>
                 </div>
               ))}
             </div>
@@ -386,7 +386,7 @@ export function ReviewInstanceModal({
         ) : null}
       </div>
 
-      <footer className={pageMode ? 'sticky bottom-0 flex shrink-0 flex-col-reverse gap-2 rounded-b-2xl border-t border-background-200 bg-white/95 px-5 py-4 shadow-[0_-8px_24px_rgba(31,24,51,0.06)] backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-7' : 'flex shrink-0 flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7'}>
+      <footer className={pageMode ? 'sticky bottom-0 z-10 flex shrink-0 flex-col-reverse gap-3 rounded-b-3xl border-t border-background-200 bg-white/95 px-5 py-4 shadow-[0_-8px_24px_rgba(31,24,51,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-8' : 'flex shrink-0 flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7'}>
         <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">{pageMode ? 'Back' : 'Cancel'}</button>
         {!isSignatureStage ? <div className="flex gap-2">
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
@@ -402,7 +402,7 @@ export function ReviewInstanceModal({
   );
 
   if (pageMode) {
-    return <div className="rounded-2xl border border-background-200 bg-white shadow-sm">{content}</div>;
+    return <div className="mx-auto w-full max-w-[1500px] overflow-hidden rounded-3xl border border-background-200 bg-white shadow-[0_18px_50px_rgba(44,24,78,0.08)]">{content}</div>;
   }
 
   return <ModalShell busy={busy} onClose={onClose}>{content}</ModalShell>;

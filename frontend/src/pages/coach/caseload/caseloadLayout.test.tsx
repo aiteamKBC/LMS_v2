@@ -19,7 +19,7 @@ const learner = {
   evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, nextCoaching: '20 Sep 2026', nextReview: '--',
   lastContact: '--', lastAttendanceDate: '--', lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--',
   lastSubmittedEvidence: '--', recentFlag: null, progressVariance: '--', startDate: '--', gatewayReviewDate: '--', plannedEndDate: '--',
-  currentModule: 'Customer Service Excellence', currentWeek: 'Week 4', coachRag: 'Green',
+  currentModule: 'Customer Service Excellence', currentWeek: 'Week 4',
 } satisfies Learner;
 
 const insights: InsightMap = new Map([['42', {
@@ -34,7 +34,7 @@ describe('My Learners table design', () => {
     expect(screen.getByRole('table', { name: 'Learners are loading' })).toBeInTheDocument();
     expect(screen.getAllByRole('row')).toHaveLength(13);
     expect(container.querySelectorAll('[class*="summaryCard"]')).toHaveLength(4);
-    for (const heading of ['Learner', 'Current Module', 'Progress', 'Last Activity', 'Next Meeting', 'Status', 'Coach RAG', 'Actions']) {
+    for (const heading of ['Learner', 'Current Module', 'Progress', 'Last Activity', 'Last PR', 'Last MCM', 'Status', 'Actions']) {
       expect(screen.getByRole('columnheader', { name: heading })).toBeInTheDocument();
     }
   });
@@ -51,15 +51,14 @@ describe('My Learners table design', () => {
     expect(onChange).toHaveBeenCalledWith('at-risk');
   });
 
-  it('shows real learner progress, status, Coach RAG and profile actions in a table', () => {
+  it('shows real learner progress, status and profile actions in a table', () => {
     const onOpenProfile = vi.fn();
-    render(<LearnerTable learners={[learner]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()} savingCoachRagId={null}
-      onToggleSelect={vi.fn()} onQuickView={vi.fn()} onOpenProfile={onOpenProfile} onCoachRagChange={vi.fn()} />);
+    render(<LearnerTable learners={[learner]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+      onToggleSelect={vi.fn()} onQuickView={vi.fn()} onOpenProfile={onOpenProfile} />);
     const row = screen.getByText('Emma Carter').closest('tr')!;
     expect(within(row).getByText('Customer Service Excellence')).toBeInTheDocument();
     for (const metric of ['OTJH', 'KSBs', 'Activities', 'Attendance']) expect(within(row).getByText(metric)).toBeInTheDocument();
     expect(within(row).getByText('On Track')).toBeInTheDocument();
-    expect(within(row).getByRole('button', { name: 'Coach RAG for Emma Carter' })).toHaveTextContent('Green');
     fireEvent.click(within(row).getByRole('button', { name: 'View Profile' }));
     expect(onOpenProfile).toHaveBeenCalledWith(learner);
   });

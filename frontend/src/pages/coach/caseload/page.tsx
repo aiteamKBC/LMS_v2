@@ -9,8 +9,8 @@
 // Data contract, unchanged from before the redesign:
 //   GET   /coach_api/coach/caseload            — the caseload itself
 //   GET   /coach_api/coach/attendance          — live attendance, joined on id/email/name
-//   PATCH /coach_api/coach/caseload/{id}/coach-rag
-// Two requests for the whole page. Nothing is fetched per card, and the quick
+//   GET   /engagement_api/learner-analytics/ â€” Engagement-derived status
+// Three requests for the whole page. Nothing is fetched per card, and the quick
 // view adds no request of its own — both payloads already carry what it shows.
 //
 // This component owns state and wiring only. Anything that renders lives in
@@ -23,9 +23,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { coachFetch } from '@/lib/coachFetch';
+import { fetchCoachCalendarEvents, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 
 import { CaseloadEmpty, CaseloadError, CaseloadLoading, CaseloadNoMatches, CaseloadSummaryLoading } from './components/CaseloadStates';
-import { CaseloadInsights } from './components/CaseloadInsights';
 import { CaseloadSummary } from './components/CaseloadSummary';
 import { LearnerTable } from './components/LearnerTable';
 import { LearnerQuickViewDrawer } from './components/LearnerQuickViewDrawer';
@@ -38,7 +38,6 @@ import {
   EMPTY_VALUE,
   displayValue,
   findAttendanceRecord,
-  formatCoachRagValue,
   getProgramStatusKey,
   normalizeLearner,
   parseDisplayDate,
@@ -61,15 +60,13 @@ const coachNav = roleNavMap.coach;
 
 const CASELOAD_ENDPOINT = '/coach_api/coach/caseload?live=1';
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
-const coachRagEndpoint = (learnerId: string) => `/coach_api/coach/caseload/${learnerId}/coach-rag`;
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 10;
 
 const INITIAL_FILTERS: CaseloadFilterState = {
   search: '',
   cohort: 'all',
   group: 'all',
-  coachRag: 'all',
   programStatus: 'all',
   employer: 'all',
 };
@@ -92,13 +89,42 @@ async function fetchAttendanceLearners(signal: AbortSignal): Promise<AttendanceA
   }
 }
 
+function reviewDate(event: CoachCalendarEvent): string | null {
+  const raw = event.scheduledDate || event.date || event.targetDate;
+  if (!raw) return null;
+  const date = new Date(`${raw.slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? null
+    : new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
+}
+
+async function fetchLastCompletedReviews(signal: AbortSignal): Promise<Map<string, { pr?: string; mcm?: string }>> {
+  try {
+    const response = await fetchCoachCalendarEvents(signal);
+    const latest = new Map<string, { pr?: { time: number; value: string }; mcm?: { time: number; value: string } }>();
+    (response.events || []).forEach((event) => {
+      if (event.status !== 'completed' || !event.learnerId || (event.source !== 'progress-review' && event.source !== 'mcr')) return;
+      const value = reviewDate(event);
+      const time = Date.parse(event.scheduledDate || event.date || event.targetDate || '');
+      if (!value || Number.isNaN(time)) return;
+      const current = latest.get(String(event.learnerId)) || {};
+      const key = event.source === 'progress-review' ? 'pr' : 'mcm';
+      if (!current[key] || time > current[key]!.time) current[key] = { time, value };
+      latest.set(String(event.learnerId), current);
+    });
+    return new Map([...latest].map(([id, value]) => [id, { pr: value.pr?.value, mcm: value.mcm?.value }]));
+  } catch (error) {
+    if (signal.aborted) throw error;
+    console.warn('Unable to load completed PR/MCM sessions for the caseload');
+    return new Map();
+  }
+}
+
 function uniqueOptions(values: string[]): FilterOption[] {
   return [...new Set(values.filter((value) => value && value !== EMPTY_VALUE))]
     .sort((left, right) => left.localeCompare(right))
     .map((value) => ({ value, label: value }));
 }
-
-const COACH_RAG_ORDER: Record<string, number> = { Red: 0, Amber: 1, Green: 2 };
 
 export default function CoachCaseload() {
   const navigate = useNavigate();
@@ -120,12 +146,10 @@ export default function CoachCaseload() {
   const [sortKey, setSortKey] = useState<SortKey>('risk');
   const [sortDir, setSortDir] = useState<SortDirection>('desc');
 
-  const [pageSize, setPageSize] = useState(PAGE_SIZE);
+  const pageSize = PAGE_SIZE;
   const [currentPage, setCurrentPage] = useState(1);
 
   const [quickView, setQuickView] = useState<{ learnerId: string; tab: QuickViewTab } | null>(null);
-  const [savingCoachRagId, setSavingCoachRagId] = useState<string | null>(null);
-  const [coachRagSaveError, setCoachRagSaveError] = useState<string | null>(null);
 
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedLearnerIds, setSelectedLearnerIds] = useState<Set<string>>(() => new Set());
@@ -163,12 +187,30 @@ export default function CoachCaseload() {
         }
 
         const data: CaseloadApiResponse = await caseloadResponse.json();
-        const attendanceLearners = await fetchAttendanceLearners(controller.signal);
-
         setOwnerName(data.owner?.name || authenticatedCoachName);
-        setLearners((data.learners || []).map((learner) => (
-          normalizeLearner(learner, findAttendanceRecord(learner, attendanceLearners))
-        )));
+        const initialLearners = (data.learners || []).map((learner) => normalizeLearner(learner));
+        setLearners(initialLearners);
+        setLoading(false);
+
+        // Sidecar data must not hold the whole page on its skeleton. The
+        // caseload is useful immediately; attendance and completed PR/MCM
+        // dates enrich the rows as their independent requests finish.
+        const [attendanceLearners, completedReviews] = await Promise.all([
+          fetchAttendanceLearners(controller.signal),
+          fetchLastCompletedReviews(controller.signal),
+        ]);
+        if (controller.signal.aborted) return;
+        setLearners((current) => current.map((learner) => {
+          const source = data.learners?.find((item) => item.id === learner.id);
+          if (!source) return learner;
+          const normalized = normalizeLearner(source, findAttendanceRecord(source, attendanceLearners));
+          const reviews = completedReviews.get(learner.id);
+          return {
+            ...normalized,
+            lastProgressReview: reviews?.pr || '--',
+            lastReview: reviews?.mcm || '--',
+          };
+        }));
       } catch (err) {
         if (controller.signal.aborted) return;
         console.error('Unable to load coach caseload', err);
@@ -196,8 +238,6 @@ export default function CoachCaseload() {
       .map(([value, label]) => ({ value, label }))
       .sort((left, right) => left.label.localeCompare(right.label)),
     group: uniqueOptions(learners.map((learner) => displayValue(learner.group))),
-    coachRag: uniqueOptions(learners.map((learner) => displayValue(learner.coachRag)))
-      .sort((left, right) => (COACH_RAG_ORDER[left.value] ?? 99) - (COACH_RAG_ORDER[right.value] ?? 99)),
     programStatus: uniqueOptions(learners.map((learner) => displayValue(learner.rawProgramStatus))),
     employer: uniqueOptions(learners.map((learner) => displayValue(learner.employer))),
   }), [learners]);
@@ -233,7 +273,6 @@ export default function CoachCaseload() {
 
       if (filters.cohort !== 'all' && learner.cohortId !== filters.cohort) return false;
       if (filters.group !== 'all' && displayValue(learner.group) !== filters.group) return false;
-      if (filters.coachRag !== 'all' && displayValue(learner.coachRag) !== filters.coachRag) return false;
       if (filters.programStatus !== 'all' && displayValue(learner.rawProgramStatus) !== filters.programStatus) return false;
       if (filters.employer !== 'all' && displayValue(learner.employer) !== filters.employer) return false;
 
@@ -351,11 +390,6 @@ export default function CoachCaseload() {
     setCurrentPage(1);
   }, []);
 
-  const handlePageSizeChange = useCallback((size: number) => {
-    setPageSize(size);
-    setCurrentPage(1);
-  }, []);
-
   const handleToggleSelect = useCallback((learnerId: string) => {
     setSelectedLearnerIds((current) => {
       const next = new Set(current);
@@ -384,39 +418,6 @@ export default function CoachCaseload() {
   }, [navigate]);
 
   const handleOpenProfile = useCallback((learner: Learner) => openProfile(learner), [openProfile]);
-
-  const handleCoachRagChange = useCallback(async (learnerId: string, nextValue: string) => {
-    const previousValue = learners.find((learner) => learner.id === learnerId)?.coachRag || EMPTY_VALUE;
-    const applyValue = (value: string | null | undefined) => {
-      setLearners((current) => current.map((learner) => (
-        learner.id === learnerId ? { ...learner, coachRag: formatCoachRagValue(value) } : learner
-      )));
-    };
-
-    setCoachRagSaveError(null);
-    setSavingCoachRagId(learnerId);
-    // Optimistic, then reconciled against whatever the server stored.
-    applyValue(nextValue);
-
-    try {
-      const response = await coachFetch(coachRagEndpoint(learnerId), {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ coachRag: nextValue || null }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.detail || `Request failed with status ${response.status}`);
-      }
-      applyValue(payload.coachRag);
-    } catch (err) {
-      console.error('Unable to save coach RAG', err);
-      applyValue(previousValue);
-      setCoachRagSaveError('Unable to save Coach RAG right now.');
-    } finally {
-      setSavingCoachRagId((current) => (current === learnerId ? null : current));
-    }
-  }, [learners]);
 
   const runExport = useCallback((rows: Learner[]) => {
     if (rows.length === 0) return;
@@ -561,19 +562,6 @@ export default function CoachCaseload() {
             </div>
           ) : null}
 
-          {coachRagSaveError ? (
-            <div className="flex items-center justify-between gap-3 border-b border-red-100 bg-red-50 px-3.5 py-2 text-[12px] text-red-700">
-              {coachRagSaveError}
-              <button
-                type="button"
-                onClick={() => setCoachRagSaveError(null)}
-                className="font-semibold underline-offset-2 hover:underline"
-              >
-                Dismiss
-              </button>
-            </div>
-          ) : null}
-
           {loading ? (
             <CaseloadLoading />
           ) : error ? (
@@ -592,11 +580,8 @@ export default function CoachCaseload() {
               insights={insights}
               selectedLearnerIds={selectedLearnerIds}
               selectionMode={selectionMode}
-              savingCoachRagId={savingCoachRagId}
               onToggleSelect={handleToggleSelect}
-              onQuickView={handleQuickView}
               onOpenProfile={handleOpenProfile}
-              onCoachRagChange={handleCoachRagChange}
             />
           )}
 
@@ -607,7 +592,6 @@ export default function CoachCaseload() {
               total={sorted.length}
               pageSize={pageSize}
               onPageChange={setCurrentPage}
-              onPageSizeChange={handlePageSizeChange}
             />
           ) : null}
         </section>
@@ -617,16 +601,13 @@ export default function CoachCaseload() {
             Showing {sorted.length} of {learners.length} learners in your caseload.
           </p>
         ) : null}
-        {!loading && !error && learners.length > 0 ? <CaseloadInsights learners={learners} /> : null}
       </main>
 
       <LearnerQuickViewDrawer
         learner={quickViewLearner}
         insight={quickViewLearner ? insights.get(quickViewLearner.id) ?? null : null}
         initialTab={quickView?.tab ?? 'overview'}
-        savingCoachRag={savingCoachRagId === quickViewLearner?.id}
         onClose={handleCloseQuickView}
-        onCoachRagChange={handleCoachRagChange}
         onOpenProfile={openProfile}
       />
     </WorkspaceShell>

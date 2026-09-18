@@ -30,7 +30,7 @@ import type { Learner } from '../types';
 
 export type ReasonSeverity = 'critical' | 'warning' | 'info';
 
-export type ReasonMetric = 'otjh' | 'attendance' | 'components' | 'ksb' | 'gateway' | 'rag' | 'engagement';
+export type ReasonMetric = 'otjh' | 'attendance' | 'components' | 'ksb' | 'gateway' | 'engagement';
 
 export interface AttentionReason {
   id: string;
@@ -213,29 +213,6 @@ function gatewayReason(learner: Learner, daysAway: number | null): AttentionReas
   return null;
 }
 
-function coachRagReason(learner: Learner): AttentionReason | null {
-  const rag = displayValue(learner.coachRag);
-  if (rag === 'Red') {
-    return {
-      id: 'rag',
-      label: 'Coach RAG set to Red',
-      detail: 'Flagged by a coach, not by the metrics',
-      severity: 'critical',
-      metric: 'rag',
-    };
-  }
-  if (rag === 'Amber') {
-    return {
-      id: 'rag',
-      label: 'Coach RAG set to Amber',
-      detail: 'Flagged by a coach, not by the metrics',
-      severity: 'warning',
-      metric: 'rag',
-    };
-  }
-  return null;
-}
-
 function engagementReason(daysAgo: number | null): AttentionReason | null {
   if (daysAgo === null || daysAgo < STALE_ACTIVITY_DAYS) return null;
   return {
@@ -308,7 +285,6 @@ export function buildLearnerInsight(learner: Learner, today: Date): LearnerInsig
     componentsReason(learner),
     ksbReason(learner),
     gatewayReason(learner, gatewayDaysAway),
-    coachRagReason(learner),
     engagementReason(lastActivityDaysAgo),
   ]
     .filter((reason): reason is AttentionReason => reason !== null)
@@ -388,7 +364,6 @@ export const REASON_ICON: Record<ReasonMetric, string> = {
   components: 'ri-stack-line',
   ksb: 'ri-award-line',
   gateway: 'ri-flag-line',
-  rag: 'ri-flag-2-line',
   engagement: 'ri-pulse-line',
 };
 
@@ -399,6 +374,5 @@ export const REASON_TAB: Record<ReasonMetric, 'overview' | 'attendance' | 'otjh'
   components: 'overview',
   ksb: 'ksbs',
   gateway: 'overview',
-  rag: 'overview',
   engagement: 'attendance',
 };

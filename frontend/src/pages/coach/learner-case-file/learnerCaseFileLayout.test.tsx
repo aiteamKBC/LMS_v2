@@ -111,30 +111,22 @@ describe('Learner Case File design', () => {
     for (const section of ['Profile Snapshot', 'Progress Summary', 'Alerts & Actions', 'Recent Activity', 'Upcoming Sessions & Reviews']) {
       expect(screen.getByRole('heading', { name: section })).toBeInTheDocument();
     }
-    expect(screen.getAllByRole('tab')).toHaveLength(6);
+    expect(screen.getAllByRole('tab')).toHaveLength(4);
+    expect(screen.queryByRole('tab', { name: 'Programme & Employer' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Reviews & Meetings' })).not.toBeInTheDocument();
   });
 
-  it('switches between the redesigned programme, progress, reviews and learning plan views', () => {
+  it('switches between the redesigned progress and learning plan views', () => {
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Programme & Employer' }));
-    expect(screen.getByRole('heading', { name: 'Programme Details' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Employer & Contacts' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Quick Notes' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
     expect(screen.getByRole('heading', { name: 'OTJH Hours' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Progress Snapshot' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'KSB Detailed Breakdown' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Reviews & Meetings' }));
-    expect(screen.getByRole('heading', { name: 'Review Timeline' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Quick Actions' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Session History' })).toBeInTheDocument();
-
     fireEvent.click(screen.getByRole('tab', { name: 'Learning Plan' }));
     expect(screen.getByRole('heading', { name: 'About' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Programme Journey' })).toBeInTheDocument();
-    expect(screen.getByText('No notes yet')).toBeInTheDocument();
+    expect(screen.queryByText('No notes yet')).not.toBeInTheDocument();
   });
 });

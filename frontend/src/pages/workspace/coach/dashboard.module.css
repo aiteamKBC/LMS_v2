@@ -110,6 +110,8 @@ button.metric:hover { border-color: var(--dashboard-accent); }
 .table caption { text-align: left; }
 .learnersTable { min-width: 610px; }
 .meetingsTable { min-width: 1050px; border-collapse: separate; border-spacing: 0 4px; }
+.dashboard .meetingsTable tbody tr { transition: background-color .16s ease, transform .16s ease; }
+.dashboard .meetingsTable tbody tr:hover { transform: translateY(-1px); }
 .identity { display: flex; align-items: center; gap: 11px; min-width: 140px; }
 .identity > :first-child { width: 36px; height: 36px; border-radius: 50%; background: var(--kbc-purple-soft); color: var(--dashboard-accent); box-shadow: none; font-size: 12px; }
 .identityName { display: block; max-width: 210px; font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
@@ -222,6 +224,8 @@ button.metric:hover { border-color: var(--dashboard-accent); }
   :global(.workspace-shell[data-workspace-role="coach"]) :global(.workspace-main) .dashboard .panel { padding: 14px 12px; }
   .dashboard .panel :global(.section-header) { flex-wrap: wrap; }
   .dashboard .panel :global(.section-header) > div:first-child { flex-basis: 100%; }
+  .dashboard .meetingsTable { min-width: 930px; }
+  .dashboard .meetingsTable tbody td { padding-inline: 6px; }
 }
 
 @media (max-width: 380px) {

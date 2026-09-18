@@ -137,7 +137,6 @@ export interface Learner {
   coachName?: string;
   coachEmail?: string;
   rawProgramStatus?: string;
-  coachRag?: string;
   email?: string;
   employerEmail?: string;
   employerPhone?: string;

@@ -32,6 +32,7 @@ import {
   formatFraction,
   formatHours,
   formatPercent,
+  selectCaseFileOtjh,
   toneFromPercent,
   useCoachLearnerCaseFileData,
   type CaseFileActivityItem,
@@ -46,10 +47,8 @@ const EMPTY_REVIEW_SCHEDULE: ScheduleFormState = { date: '', time: '09:00', dura
 
 const CASE_FILE_TABS = [
   { id: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
-  { id: 'programme', label: 'Programme & Employer', icon: 'ri-building-line' },
   { id: 'progress', label: 'OTJH & KSB Progress', icon: 'ri-line-chart-line' },
   { id: 'attendance', label: 'Attendance', icon: 'ri-calendar-check-line' },
-  { id: 'reviews', label: 'Reviews & Meetings', icon: 'ri-calendar-todo-line' },
   { id: 'support', label: 'Learning Plan', icon: 'ri-route-line' },
   { id: 'otjh', label: 'OTJH', icon: 'ri-time-line' },
   { id: 'ksbs', label: 'KSBs', icon: 'ri-award-line' },
@@ -137,6 +136,7 @@ export default function LearnerCaseFile() {
   const pageTitle = data?.displayName || learnerName || 'Learner case file';
   const pageSubtitle = subtitle || 'Live learner view for coaching support';
   const nextLiveSession = data?.upcomingSessions[0] || null;
+  const headerOtjh = data ? selectCaseFileOtjh(data) : null;
 
   const handleOpenTrainingPlan = () => {
     if (!data?.kind || !data.learnerId) {
@@ -178,7 +178,7 @@ export default function LearnerCaseFile() {
       case 'programme':
         return <ReferenceProgrammeContent data={data} />;
       case 'progress':
-        return <ReferenceProgressContent data={data} />;
+        return <ReferenceProgressContent data={data} onViewEvidence={() => setActiveTab('evidence')} />;
       case 'attendance':
         return <ReferenceAttendanceContent data={data} />;
       case 'reviews':
@@ -298,8 +298,8 @@ export default function LearnerCaseFile() {
 
           <div className={styles.metrics}>
               <CaseFileHeroMetric icon="ri-focus-3-line" label="Overall" value={formatPercent(data?.overallProgress ?? null)} />
-              <CaseFileHeroMetric icon="ri-time-line" label="OTJH" value={data ? formatFraction(data.otjhCompleted, data.otjhTarget) : '--'} />
-              <CaseFileHeroMetric icon="ri-stack-line" label="KSB" value={ksbHeadlineValue(data)} />
+              <CaseFileHeroMetric icon="ri-time-line" label="OTJH" value={headerOtjh ? formatFraction(headerOtjh.logged, headerOtjh.target) : '--'} />
+              <CaseFileHeroMetric icon="ri-stack-line" label="KSB" value={formatPercent(data?.ksbProgress ?? null)} />
               <CaseFileHeroMetric icon="ri-group-line" label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} />
               <CaseFileHeroMetric icon="ri-calendar-line" label="Gateway" value={data?.gatewayReviewDate || '--'} />
               <CaseFileHeroMetric icon="ri-calendar-event-line" label="Next session" value={nextLiveSession?.summary || '--'} />
@@ -348,16 +348,13 @@ function ReferenceOverviewContent({
   const risks = buildRiskItems(data).filter((item) => item.tone === 'red' || item.tone === 'amber');
   const activities = data.activityItems.slice(0, 6);
   const upcomingSessions = data.upcomingSessions;
-  const otjhPercent = data.otjhCompleted !== null && data.otjhTarget !== null && data.otjhTarget > 0
-    ? Math.min(100, Math.round((data.otjhCompleted / data.otjhTarget) * 100))
-    : null;
+  const otjh = selectCaseFileOtjh(data);
   const primaryRisk = risks[0];
   return (
     <div className={styles.stack}>
       <div className={styles.overviewGrid}>
-        <ReferencePanel title="Profile Snapshot" subtitle="Key information about this learner" icon="ri-user-line" tone="primary">
+        <ReferencePanel title="Profile Snapshot" subtitle="Current progress and support context" icon="ri-user-line" tone="primary">
           <div className={styles.profileGrid}>
-            <ProfileInfo icon="ri-graduation-cap-line" label="Qualification" value={data.programme} />
             <ProfileInfo icon="ri-calendar-line" label="Planned Gateway" value={data.gatewayReviewDate} />
             <ProfileInfo icon="ri-group-line" label="Cohort" value={data.cohort} />
             <ProfileInfo icon="ri-building-line" label="Employer" value={data.employer} />
@@ -369,7 +366,7 @@ function ReferenceOverviewContent({
         <ReferencePanel title="Progress Summary" subtitle="Current progress against key targets" icon="ri-bar-chart-box-line" tone="emerald">
           <div className={styles.progressStack}>
             <ProfileProgress label="Overall Progress" value={data.overallProgress} tone="primary" />
-            <ProfileProgress label="OTJH Progress" value={otjhPercent} tone="primary" />
+            <ProfileProgress label="OTJH Progress" value={otjh.progressPercent} tone="primary" />
             <ProfileProgress label="KSB Coverage" value={data.ksbProgress} tone="emerald" />
             <ProfileProgress label="Attendance" value={data.attendanceRate} tone="striped" />
           </div>
@@ -469,28 +466,20 @@ function ReferenceProgrammeContent({ data }: { data: CoachLearnerCaseFileData })
         </div>
       </ReferencePanel>
       <ReferencePanel title="Quick Notes" subtitle="Key insights and things to be aware of" icon="ri-file-list-3-line" tone="primary">
-        <div className={styles.notesGrid}>
-          <div className={styles.note} data-tone="positive"><AppIcon className="ri-checkbox-circle-fill" /><div><strong>Learner is {statusLabel(data).toLowerCase()}</strong><p>This learner is currently {statusLabel(data).toLowerCase()} on their programme.</p></div></div>
-          <div className={styles.note}><AppIcon className="ri-calendar-line" /><div><strong>Gateway planned for {data.gatewayReviewDate || '--'}</strong><p>Planned gateway date is {data.gatewayReviewDate || 'not available'}.</p></div></div>
-          <div className={styles.note} data-tone="warning"><AppIcon className="ri-alarm-warning-line" /><div><strong>{data.employerEmail || data.employerPhone ? 'Employer contact available' : 'Employer details incomplete'}</strong><p>{data.employerEmail || data.employerPhone ? 'Employer contact details are available.' : 'Employer email and phone are not provided.'}</p></div></div>
-        </div>
+        {(data.coachNotes || []).length === 0 ? <ProfileEmpty text="No persisted coach notes are available for this learner." /> : <div className={styles.notesGrid}>
+          {(data.coachNotes || []).map((note, index) => <div className={styles.note} key={`${note}-${index}`}><AppIcon className="ri-file-text-line" /><div><strong>Coach note</strong><p>{note}</p></div></div>)}
+        </div>}
       </ReferencePanel>
     </div>
   );
 }
 
-function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) {
+function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearnerCaseFileData; onViewEvidence: () => void }) {
   const [activeKsbCategory, setActiveKsbCategory] = useState('All');
   const [ksbSearch, setKsbSearch] = useState('');
   const [fallbackKsbs, setFallbackKsbs] = useState<Array<{ code: string; description: string; type: string; number: string }>>([]);
   const [fallbackKsbsLoading, setFallbackKsbsLoading] = useState(false);
-  const completed = data.otjhCompleted;
-  const target = data.otjhTarget;
-  const programmeTotal = data.totalExpectedOtjh || null;
-  const remaining = completed !== null && target !== null ? Math.max(0, target - completed) : null;
-  const otjhPercent = completed !== null && target !== null && target > 0
-    ? Math.min(100, Math.round((completed / target) * 100))
-    : null;
+  const otjh = selectCaseFileOtjh(data);
   const primaryKsbs = data.detail?.ksbs || [];
 
   useEffect(() => {
@@ -586,16 +575,16 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
     <div className={styles.stack}>
       <ReferencePanel title="OTJH Hours" subtitle="Track on-the-job learning hours against your programme requirements." icon="ri-time-line" tone="primary">
         <div className={styles.metricGrid}>
-          <BigMetric value={formatHours(data.otjhCompleted)} label="Hours Logged" tone="primary" />
-          <BigMetric value={formatHours(data.otjhTarget)} label="Current Target" tone="muted" />
-          <BigMetric value={formatHours(programmeTotal)} label="Programme Total" tone="amber" />
-          <BigMetric value={formatHours(remaining)} label="Hours Remaining" tone="red" />
+          <BigMetric value={formatHours(otjh.logged)} label="Hours Logged" tone="primary" />
+          <BigMetric value={formatHours(otjh.target)} label="Current Target" tone="muted" />
+          <BigMetric value={formatHours(otjh.programmeTotal)} label="Programme Total" tone="amber" />
+          <BigMetric value={formatHours(otjh.remaining)} label="Hours Remaining" tone="red" />
         </div>
-        <ProfileProgress label="OTJH Progress" value={otjhPercent} color="bg-primary-600" />
+        <ProfileProgress label="OTJH Progress" value={otjh.progressPercent} color="bg-primary-600" />
       </ReferencePanel>
       <ReferencePanel title="Progress Snapshot" subtitle="Your overall progress towards OTJH hours and KSB completion." icon="ri-bar-chart-line" tone="primary">
         <div className={styles.snapshotGrid}>
-          <div className={styles.ringGroup}><ProfileRing label="OTJH" value={otjhPercent} color="#6030d2" /></div>
+          <div className={styles.ringGroup}><ProfileRing label="OTJH" value={otjh.progressPercent} color="#6030d2" /></div>
           <div className={styles.ringGroup}><ProfileRing label="KSB" value={data.ksbProgress} color="#18b978" /></div>
           <div className={styles.hint}><AppIcon className="ri-information-line" /><div><strong>Getting started</strong><p>Log your on-the-job hours and add evidence against KSBs to see progress here.</p></div></div>
         </div>
@@ -655,7 +644,7 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
                     <td><StatusBadge tone={ksbCategoryTone(item.category)} label={item.category} size="sm" dot={false} /></td>
                     <td><StatusBadge tone={item.linked ? 'positive' : 'neutral'} label={item.linked ? 'Evidence linked' : 'Not evidenced'} size="sm" /></td>
                     <td>{item.linked ? 1 : 0}</td>
-                    <td><span className={styles.tableButton}>View</span></td>
+                    <td><button type="button" className={styles.tableButton} onClick={onViewEvidence}>View Evidence</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -955,7 +944,6 @@ function ReferenceReviewsContent({
           <div className={styles.quickActions}>
             <button type="button" className={styles.quickAction} onClick={() => setAddOpen(true)}><AppIcon className="ri-calendar-line" /><span><strong>Schedule Review</strong><span>Add a progress review for this learner</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
             <button type="button" className={styles.quickAction} onClick={onOpenNotes}><AppIcon className="ri-file-list-3-line" /><span><strong>Add Meeting Note</strong><span>Record notes from a coaching meeting</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
-            <button type="button" className={styles.quickAction} onClick={onOpenMonthlyLogs}><AppIcon className="ri-bar-chart-line" /><span><strong>Generate Summary</strong><span>Create a summary of reviews and discussions</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
             <button type="button" className={styles.quickAction} onClick={onOpenMonthlyLogs}><AppIcon className="ri-file-text-line" /><span><strong>View Monthly Logs</strong><span>See all monthly coaching logs</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
           </div>
         </ReferencePanel>
@@ -1331,11 +1319,12 @@ function buildRiskItems(data: CoachLearnerCaseFileData) {
     });
   }
 
-  const otjhTone = toneFromOtjh(data.otjhCompleted, data.otjhTarget);
+  const otjh = selectCaseFileOtjh(data);
+  const otjhTone = toneFromOtjh(otjh.logged, otjh.target);
   items.push({
     label: 'OTJH Hours',
     tone: otjhTone,
-    detail: `${formatHours(data.otjhCompleted)} / ${formatHours(data.otjhTarget)}${data.otjhPlanned ? ` · planned ${formatHours(data.otjhPlanned)}` : ''}`,
+    detail: `${formatHours(otjh.logged)} / ${formatHours(otjh.target)}${otjh.programmeTotal ? ` · planned ${formatHours(otjh.programmeTotal)}` : ''}`,
   });
 
   items.push({
@@ -1420,17 +1409,6 @@ function statusLabel(data: CoachLearnerCaseFileData | null) {
   }
   return data.programStatus || '--';
 }
-
-/** KSB as the learner's own workspace shows it: the number of distinct codes
- *  evidenced in the audit mapping. That mapping spans several apprenticeship
- *  standards and carries no per-learner denominator, so there is no
- *  percentage to quote; learners with no audit record fall back to the
- *  curriculum percentage. */
-function ksbHeadlineValue(data: CoachLearnerCaseFileData | null): string {
-  if (data?.ksbEvidencedCount != null) return `${data.ksbEvidencedCount}`;
-  return formatPercent(data?.ksbProgress ?? null);
-}
-
 
 function toneFromOtjh(current: number | null, target: number | null): 'green' | 'amber' | 'red' | 'neutral' {
   if (current === null || target === null || target <= 0) {
