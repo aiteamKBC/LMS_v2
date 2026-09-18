@@ -69,3 +69,35 @@ class CoachAvailabilityAccessTests(SimpleTestCase):
             response = route.func(RequestFactory().get(path, {'date': '2026-09-22'}), **route.kwargs)
             self.assertEqual(response.status_code, 404)
             slots.assert_not_called()
+
+    def test_a_pre_start_learner_is_not_told_their_coach_is_missing(self):
+        """No active profile and no coach are different problems.
+
+        A learner still in Delivery has no profile here at all, while their
+        coach is recorded on the enrolment row. Reporting that as a missing
+        coach sends them to the programme team over an assignment that already
+        exists, so the two answers stay apart -- as learner_calendar_book's do.
+        """
+        import json
+        from django.test import RequestFactory
+        from django.urls import resolve
+
+        source = Mock()
+        source.all_learners.filter.return_value.first.return_value = SimpleNamespace(id=101)
+        path = '/learner_api/calendar/commercial/101/coach-availability/'
+        route = resolve(path)
+        cases = ((None, 'Only Active learners'), (SimpleNamespace(coach_email=''), 'No coach has been assigned'))
+        for profile, expected in cases:
+            with self.subTest(profile=profile), \
+                 patch('login.permissions._auth_gate_enabled', return_value=True), \
+                 patch('login.permissions.authenticate_request',
+                       return_value=SimpleNamespace(role='learner', subject_id=101)), \
+                 patch('learner_api.learner_detail.SOURCE_MODELS', {'commercial': source}), \
+                 patch('learner_api.identity.learner_profile_for_source', return_value=profile), \
+                 patch('learner_api.coach_availability.free_slots') as slots:
+                response = route.func(
+                    RequestFactory().get(path, {'date': '2026-09-22'}), **route.kwargs
+                )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn(expected, json.loads(response.content)['error'])
+            slots.assert_not_called()
