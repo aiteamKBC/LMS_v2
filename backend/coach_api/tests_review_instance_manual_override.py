@@ -172,7 +172,7 @@ class ManualOverrideTestCase(TestCase):
     def test_awaiting_signature_is_rejected(self):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
-        review_instances.set_review_instance_status(instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='test')
+        review_instances.force_review_instance_status_for_tests(instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='test')
         response = self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self._instance(record)['status'], review_instances.STATUS_AWAITING_SIGNATURE)
@@ -180,7 +180,7 @@ class ManualOverrideTestCase(TestCase):
     def test_completed_is_rejected(self):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
-        review_instances.set_review_instance_status(
+        review_instances.force_review_instance_status_for_tests(
             instance['id'], review_instances.STATUS_COMPLETED, actor='test',
             extra={'completed_at': curriculum_views.datetime.utcnow()},
         )

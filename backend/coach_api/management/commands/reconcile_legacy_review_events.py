@@ -91,6 +91,10 @@ APPROVED_LEGACY_MAPPINGS = {
 #: own review-driven vocabulary; the seven allowlisted rows are all 'mcr'.
 RECONCILABLE_EVENT_TYPES = ("mcr", "progress-review")
 
+# Confirmed Test data is permanently excluded even if somebody later expands
+# the real-row allowlist by mistake.
+CONFIRMED_TEST_EVENT_IDS = frozenset({129, 130, 133, 138})
+
 
 def _blank(value) -> bool:
     """True for None, '', and whitespace-only -- the same "missing" the rest
@@ -217,6 +221,20 @@ class Command(BaseCommand):
                     f"{record.review_template_id!r}, review_instance_id="
                     f"{record.review_instance_id!r}) -- refusing to guess which "
                     "half is correct."
+                ),
+            )
+
+        if record.status in {
+            CoachCalendarEvent.STATUS_IN_PROGRESS,
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+            CoachCalendarEvent.STATUS_COMPLETED,
+        }:
+            return ReconciliationOutcome(
+                record.id,
+                "SKIPPED_ADVANCED_STATUS",
+                message=(
+                    f"Calendar status {record.status!r} is beyond scheduled; "
+                    "refusing to manufacture a new Review Instance lifecycle."
                 ),
             )
 
@@ -361,6 +379,13 @@ class Command(BaseCommand):
         event_ids = options["event_ids"] or []
         apply_changes = options["apply"]
         dry_run = options["dry_run"] or not apply_changes
+
+        confirmed_test = sorted(set(event_ids) & CONFIRMED_TEST_EVENT_IDS)
+        if confirmed_test:
+            raise CommandError(
+                f"ABORT: event id(s) {confirmed_test} are confirmed Test data and "
+                "must be cleaned up, never reconciled."
+            )
 
         unlisted = sorted(set(event_ids) - ALLOWED_EVENT_IDS)
         if unlisted:

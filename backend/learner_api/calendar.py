@@ -911,15 +911,12 @@ def learner_progress_review_sign(request, kind, pk, event_key):
             )
         except ValueError as exc:
             return _error(str(exc), 409)
-        instance_status = _s((definition.get("instance") or {}).get("status"))
-        if instance_status == CoachCalendarEvent.STATUS_COMPLETED:
-            record.status = CoachCalendarEvent.STATUS_COMPLETED
-            if not record.review_completed_at:
-                record.review_completed_at = timezone.now()
-            record.save(update_fields=["status", "review_completed_at", "updated_at"])
-        elif instance_status == CoachCalendarEvent.STATUS_AWAITING_SIGNATURE:
-            record.status = CoachCalendarEvent.STATUS_AWAITING_SIGNATURE
-            record.save(update_fields=["status", "updated_at"])
+        # record_review_instance_signature already projected the instance's new
+        # status onto this Calendar row, transactionally and with link-identity
+        # checks (curriculum_api.review_instances
+        # ._mirror_linked_calendar_after_signature). Writing it again here would
+        # be a second, unguarded lifecycle decision -- re-read instead.
+        record.refresh_from_db()
         return JsonResponse({"event": _serialize_event(record), "review": definition})
     try:
         payload = json.loads(request.body or b"{}")
@@ -1672,7 +1669,11 @@ def learner_calendar_cancel(request, kind, pk):
     The row is kept and marked cancelled rather than deleted, so the booking
     history survives and learner_onboarding_reviews frees the slot for rebooking.
     """
-    from coach_api.views import delete_calendar_event_from_graph
+    from coach_api.views import (
+        cancel_reserved_calendar_event,
+        delete_calendar_event_from_graph,
+        LearnerCalendarConflict,
+    )
 
     if request.method != "POST":
         return _error("Method not allowed.", 405)
@@ -1698,10 +1699,14 @@ def learner_calendar_cancel(request, kind, pk):
         if record.status == CoachCalendarEvent.STATUS_CANCELLED:
             return JsonResponse({"event": _serialize_event(record), "warning": ""})
 
-        if _s(getattr(record, 'review_template_id', '')):
+        is_review_booking = (
+            record.event_type in {'mcr', 'progress-review', 'review'}
+            or _s(getattr(record, 'review_template_id', ''))
+            or _s(getattr(record, 'review_instance_id', ''))
+        )
+        if is_review_booking:
             if record.status in {CoachCalendarEvent.STATUS_COMPLETED, CoachCalendarEvent.STATUS_AWAITING_SIGNATURE}:
                 return _error('A submitted or completed review cannot be cancelled.', 409)
-            from coach_api.views import cancel_reserved_calendar_event
             record, warning = cancel_reserved_calendar_event(record)
             return JsonResponse({'event': _serialize_event(record), 'warning': _friendly_sync_warning(warning)})
 
@@ -1715,6 +1720,8 @@ def learner_calendar_cancel(request, kind, pk):
         record.graph_event_id = ""
         record.last_graph_sync_error = warning
         record.save()
+    except LearnerCalendarConflict as exc:
+        return _error(str(exc), 409)
     except DatabaseError as exc:
         logger.exception("learner_calendar_cancel: cancel failed")
         return _error(f"Database error: {exc}", 502)
