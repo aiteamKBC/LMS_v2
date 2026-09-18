@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssignmentSubmissionWizard } from './AssignmentSubmissionWizard';
 import { checkMonthlyAssignment, emptyMonthlyAssignment } from '@/api/monthlyAssignment';
@@ -33,6 +34,7 @@ afterEach(async () => {
   cleanup();
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function enterTopicTime() {
@@ -46,6 +48,41 @@ async function enterTopicTime() {
 }
 
 describe('monthly assignment drafts', () => {
+  describe.each([
+    ['commercial', false], ['commercial', true],
+    ['apprenticeship', false], ['apprenticeship', true],
+  ] as const)('quality navigation for %s learners (passed: %s)', (kind, passed) => {
+    const destinations = [
+      ['answer', 1, /Your answer/], ['learning', 1, /Your learning statements/],
+      ['evidence', 2, /Evidence & cross-referencing/], ['ksbs', 3, /Your KSB claims/],
+      ['planned', 3, /reviewed the planned hours/], ['declarations', 3, /developed new knowledge/],
+      ['hours', 3, /Your learning time/], ['reflection', 4, /Reflect on your LMS activities/],
+      ['benefit', 5, /employer has benefited/], ['impact', 5, /Impact on your career/],
+      ['action', 6, /Your action plan for next month/], ['meeting', 8, /Coaching & presentation/],
+      ['presentation', 8, /Prepare your presentation/],
+    ] as const;
+    it.each(destinations)('opens %s in step %s and preserves answers', async (key, stepNumber, text) => {
+      // Keep automatic draft generation local while exercising the real step UI.
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+      vi.mocked(checkMonthlyAssignment).mockResolvedValue(destinations.map(([key]) => ({ key, label: `Review ${key}`, passed })));
+      render(<AssignmentSubmissionWizard {...props} kind={kind} />);
+      fireEvent.change(await screen.findByLabelText(/Your answer \(/), { target: { value: 'My unfinished answer stays here.' } });
+      const user = userEvent.setup();
+      fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
+      fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+      const button = await screen.findByRole('button', { name: new RegExp(`Review ${key}.*Go to Step ${stepNumber}`) });
+      expect(button).toHaveClass(passed ? 'bg-emerald-50' : 'bg-amber-50');
+      button.focus();
+      await user.keyboard(key === 'learning' ? ' ' : '{Enter}');
+      expect(screen.getByText(new RegExp(`Step ${stepNumber} of 8`))).toBeInTheDocument();
+      expect(document.activeElement).toHaveTextContent(text);
+      expect(document.activeElement).toHaveAttribute('data-quality-target', key);
+      fireEvent.click(screen.getByRole('button', { name: /Assignment answer/ }));
+      expect(screen.getByLabelText(/Your answer \(/)).toHaveValue('My unfinished answer stays here.');
+      expect(props.onSubmitProgress).not.toHaveBeenCalled();
+    });
+  });
+
   it('seeds a new submission with its Training Plan month', async () => {
     render(<AssignmentSubmissionWizard {...props} initialMonth="2026-03" />);
     await screen.findByText('Step 1 of 8 — Assignment answer');

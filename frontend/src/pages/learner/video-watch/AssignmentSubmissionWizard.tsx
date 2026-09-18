@@ -110,6 +110,17 @@ export function AssignmentSubmissionWizard({
   historicalContent?: HistoricalAssignmentContent;
 }) {
   const [step, setStep] = useState(0);
+  const wizardRef = useRef<HTMLElement>(null);
+  const [qualityTarget, setQualityTarget] = useState<string | null>(null);
+  useEffect(() => {
+    if (!qualityTarget) return;
+    const target = wizardRef.current?.querySelector<HTMLElement>(`[data-quality-target="${qualityTarget}"]`);
+    if (target) {
+      target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      target.focus({ preventScroll: true });
+    }
+    setQualityTarget(null);
+  }, [step, qualityTarget]);
   const [answers, setAnswers] = useState<AssignmentAnswers>(EMPTY_ANSWERS);
   // The Training Plan month seeds a new assignment; a saved draft always wins.
   const [defaultMonth] = useState(() => initialMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(initialMonth) ? initialMonth : londonDate().slice(0, 7));
@@ -431,7 +442,7 @@ export function AssignmentSubmissionWizard({
 
   return (
     <>
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm">
+      <section ref={wizardRef} className="overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm">
         <div className="border-b border-slate-200 bg-sky-50/50 px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -507,7 +518,7 @@ export function AssignmentSubmissionWizard({
                 </div>
               </div>
               {questionFileUrl && <AssignmentAttachment key={questionFileUrl} url={questionFileUrl} fileName={questionFileName} title={title} />}
-              <MonthlyAnswerField title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
+              <MonthlyAnswerField qualityTarget="answer" title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
               <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">Write at least 120 words, then click Generate learning statements to draft the three fields below. Review and edit the generated text before submitting.</p>
               {learningGeneration.status && <div
                 className={`mt-4 flex items-start gap-3 rounded-xl border p-4 sm:p-5 ${learningGeneration.phase === 'error' ? 'border-amber-300 bg-amber-50 text-amber-950' : learningGeneration.phase === 'success' ? 'border-emerald-300 bg-emerald-50 text-emerald-950' : 'border-blue-300 bg-blue-50 text-blue-950'}`}
@@ -529,6 +540,7 @@ export function AssignmentSubmissionWizard({
               evidenceFiles={evidenceFiles} timeControl={timeControl} disabled={readOnly || submittingRef.current} historical={historicalReadOnly}
               evidenceUploader={historicalReadOnly ? <button type="button" className="text-sm font-semibold text-primary-700" onClick={() => setPreviewOpen(true)}>View original files and assessment reports in Preview</button> : <AssignmentEvidence kind={kind} learnerId={learnerId} componentId={componentId} trainingPlanDetails={evidenceDetails} onUploaded={onEvidenceChanged} readOnly={readOnly} />}
               payload={() => payload('draft')} checks={checks} checking={checking} onCheck={runChecks} onSave={saveDraft}
+              onNavigateToCheck={(nextStep, target) => { setQualityTarget(target); setStep(nextStep); }}
             />}
           </div>}
 
