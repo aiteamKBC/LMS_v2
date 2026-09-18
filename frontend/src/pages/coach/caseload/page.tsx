@@ -19,17 +19,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { PageContainer } from '@/components/ui/PageContainer';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { coachFetch } from '@/lib/coachFetch';
 
-import { CaseloadEmpty, CaseloadError, CaseloadLoading, CaseloadNoMatches } from './components/CaseloadStates';
-import { LearnerCardGrid } from './components/LearnerCardGrid';
+import { CaseloadEmpty, CaseloadError, CaseloadLoading, CaseloadNoMatches, CaseloadSummaryLoading } from './components/CaseloadStates';
+import { CaseloadInsights } from './components/CaseloadInsights';
+import { CaseloadSummary } from './components/CaseloadSummary';
+import { LearnerTable } from './components/LearnerTable';
 import { LearnerQuickViewDrawer } from './components/LearnerQuickViewDrawer';
-import { LearnerStatusTabs } from './components/LearnerStatusTabs';
 import { LearnerToolbar, type CaseloadFilterState } from './components/LearnerToolbar';
 import { LearnersHeaderActions } from './components/LearnersHeader';
 import { Pagination } from './components/Pagination';
@@ -56,6 +55,7 @@ import type {
   SortKey,
   StatusFilter,
 } from './types';
+import styles from './caseload.module.css';
 
 const coachNav = roleNavMap.coach;
 
@@ -213,7 +213,7 @@ export default function CoachCaseload() {
           if (insight?.tier !== 'critical') return false;
           break;
         case 'need-attention':
-          if (insight?.tier !== 'attention') return false;
+          if (insight?.tier !== 'attention' && insight?.tier !== 'upcoming') return false;
           break;
         case 'upcoming':
           if (insight?.tier !== 'upcoming') return false;
@@ -486,32 +486,31 @@ export default function CoachCaseload() {
       userName={ownerName}
       userRole="Progress Coach"
     >
-      <PageContainer>
-        <PageHeader
-          icon="ri-group-line"
-          title="My Learners"
-          description="Monitor learner progress, identify risks and take action."
-          actions={(
-            <LearnersHeaderActions
-              selectionMode={selectionMode}
-              selectedCount={selectedLearners.length}
-              isExporting={isExportingPdf}
-              exportDisabled={sorted.length === 0}
-              onExportCurrentView={handleExportCurrentView}
-              onStartSelection={handleStartSelection}
-              onExportSelected={handleExportSelected}
-              onCancelSelection={handleCancelSelection}
-            />
-          )}
-        />
+      <main className={styles.page}>
+        <header className="flex flex-wrap items-center justify-between gap-4">
+          <div className={styles.title}>
+            <h1>My Learners</h1>
+            <p>Monitor learner progress and engagement</p>
+          </div>
+          <LearnersHeaderActions
+            selectionMode={selectionMode}
+            selectedCount={selectedLearners.length}
+            isExporting={isExportingPdf}
+            exportDisabled={sorted.length === 0}
+            onExportCurrentView={handleExportCurrentView}
+            onStartSelection={handleStartSelection}
+            onExportSelected={handleExportSelected}
+            onCancelSelection={handleCancelSelection}
+          />
+        </header>
 
-        {!loading && !error && learners.length > 0 ? (
-          <LearnerStatusTabs value={statusFilter} counts={counts} onChange={handleStatusFilterChange} />
+        {loading ? <CaseloadSummaryLoading /> : !error && learners.length > 0 ? (
+          <CaseloadSummary counts={counts} value={statusFilter} onChange={handleStatusFilterChange} />
         ) : null}
 
-        <section className="overflow-hidden rounded-2xl bg-white shadow-sm">
+        <section className={styles.panel}>
           {!error && learners.length > 0 ? (
-            <div className="border-b border-foreground-100 p-3.5">
+            <div className={styles.toolbar}>
               <LearnerToolbar
                 filters={filters}
                 options={filterOptions}
@@ -527,7 +526,7 @@ export default function CoachCaseload() {
           ) : null}
 
           {selectionMode && !loading && !error && sorted.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-2 border-b border-foreground-100 bg-primary-50/40 px-3.5 py-2.5">
+            <div className={styles.selection}>
               <span className="text-[12px] font-semibold text-primary-800">
                 {selectedLearners.length} selected
               </span>
@@ -588,17 +587,17 @@ export default function CoachCaseload() {
           ) : sorted.length === 0 ? (
             <CaseloadNoMatches onClearFilters={handleClearAll} />
           ) : (
-            <div className="p-3.5">
-              <LearnerCardGrid
-                learners={paginated}
-                insights={insights}
-                selectedLearnerIds={selectedLearnerIds}
-                selectionMode={selectionMode}
-                onToggleSelect={handleToggleSelect}
-                onQuickView={handleQuickView}
-                onOpenProfile={handleOpenProfile}
-              />
-            </div>
+            <LearnerTable
+              learners={paginated}
+              insights={insights}
+              selectedLearnerIds={selectedLearnerIds}
+              selectionMode={selectionMode}
+              savingCoachRagId={savingCoachRagId}
+              onToggleSelect={handleToggleSelect}
+              onQuickView={handleQuickView}
+              onOpenProfile={handleOpenProfile}
+              onCoachRagChange={handleCoachRagChange}
+            />
           )}
 
           {!loading && !error && sorted.length > 0 ? (
@@ -614,11 +613,12 @@ export default function CoachCaseload() {
         </section>
 
         {hasFiltersApplied && !loading && !error && sorted.length > 0 ? (
-          <p className="px-1 text-[12px] text-foreground-400">
+          <p className={styles.footerNote}>
             Showing {sorted.length} of {learners.length} learners in your caseload.
           </p>
         ) : null}
-      </PageContainer>
+        {!loading && !error && learners.length > 0 ? <CaseloadInsights learners={learners} /> : null}
+      </main>
 
       <LearnerQuickViewDrawer
         learner={quickViewLearner}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { CompactMetric, MetricRow } from '@/components/ui/MetricCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import type { JourneyComponent, JourneyModule, JourneyWeek } from '@/utils/learnerJourney';
@@ -16,8 +16,9 @@ import {
   resolveQuizAttemptTitle,
   type CaseFileTabProps,
 } from '../data';
+import styles from '../learnerCaseFile.module.css';
 
-export default function OverviewTab({ data }: CaseFileTabProps) {
+export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { onOpenNotes?: () => void }) {
   const flatComponents = flattenJourney(data);
   const totalWeeks = data.journey.reduce((count, module) => count + module.weeks.length, 0);
   const completedComponentIds = new Set([
@@ -30,22 +31,18 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
 
   return (
     <div className="space-y-5">
-      <MetricRow>
-        <CompactMetric label="Overall Progress" value={formatPercent(data.overallProgress)} tone="brand" />
-        <CompactMetric label="Attendance" value={formatPercent(data.attendanceRate)} tone="caution" />
-        <CompactMetric label="OTJH Logged" value={formatHours(data.otjhCompleted)} tone="info" />
-        <CompactMetric label="Programme Total" value={formatHours(data.totalExpectedOtjh || null)} tone="positive" />
-        <CompactMetric label="Mapped KSBs" value={data.detail?.ksbs.length || 0} tone="upcoming" />
-        <CompactMetric label="Evidence Count" value={data.evidenceCount ?? '--'} tone="brand" />
-      </MetricRow>
+      <div className={styles.learningMetrics}>
+        <LearningMetric label="Overall Progress" value={formatPercent(data.overallProgress)} />
+        <LearningMetric label="Attendance" value={formatPercent(data.attendanceRate)} tone="warning" />
+        <LearningMetric label="OTJH Logged" value={formatHours(data.otjhCompleted)} />
+        <LearningMetric label="Programme Total" value={formatHours(data.totalExpectedOtjh || null)} tone="positive" />
+        <LearningMetric label="Mapped KSBs" value={String(data.detail?.ksbs.length || 0)} />
+        <LearningMetric label="Evidence Count" value={String(data.evidenceCount ?? '--')} />
+      </div>
 
-      <section className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden">
-        <div className="p-5 md:p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <AppIcon className="ri-user-line text-primary-500"></AppIcon> About
-            </h2>
-          </div>
+      <section className={styles.panel}>
+        <div className={styles.panelHeader}><div className={styles.panelHeading}><span className={styles.panelIcon}><AppIcon className="ri-user-line" /></span><div><h2 className={styles.panelTitle}>About</h2></div></div></div>
+        <div className={styles.panelBody}>
           <p className="text-[13px] text-foreground-600 leading-relaxed">
             {data.displayName} is currently tracked under <strong>{data.programme}</strong>
             {data.cohort ? <> in cohort <strong>{data.cohort}</strong></> : null}.
@@ -61,41 +58,48 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-background-200 bg-background-100/45 p-5 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-sm font-heading font-bold text-foreground-950 flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
-                <AppIcon className="ri-route-line text-sm"></AppIcon>
-              </span>
-              Programme Journey
-            </h2>
-            <p className="mt-1 text-[12px] text-foreground-500">
-              Read-only module, week, and component view for coach context.
-            </p>
+      <div className={styles.learningGrid}>
+        <section className={styles.panel}>
+          <div className={styles.panelHeader}>
+            <div className={styles.panelHeading}>
+              <span className={styles.panelIcon}><AppIcon className="ri-book-open-line" /></span>
+              <div>
+                <h2 className={styles.panelTitle}>Programme Journey</h2>
+                <p className={styles.panelSubtitle}>Read-only module, week, and component view for coach context.</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <SummaryPill label="Modules" value={String(data.journey.length)} />
+              <SummaryPill label="Weeks" value={String(totalWeeks)} />
+              <SummaryPill label="Components" value={String(flatComponents.length)} />
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <SummaryPill label="Modules" value={String(data.journey.length)} />
-            <SummaryPill label="Weeks" value={String(totalWeeks)} />
-            <SummaryPill label="Components" value={String(flatComponents.length)} />
-          </div>
-        </div>
 
-        {totalWeeks === 0 ? (
-          <div className="p-6">
-            <EmptyState
-              variant="empty"
-              size="sm"
-              title="No structured plan"
-              description="No structured plan has been saved for this learner yet."
-            />
-          </div>
-        ) : (
-          <div className="max-h-[680px] overflow-y-auto bg-background-100/35 p-4 md:p-5">
-            <CoachPlanView modules={data.journey} completedComponentIds={completedComponentIds} />
-          </div>
-        )}
-      </section>
+          {totalWeeks === 0 ? (
+            <div className={styles.panelBody}>
+              <EmptyState
+                variant="empty"
+                size="sm"
+                title="No structured plan"
+                description="No structured plan has been saved for this learner yet."
+              />
+            </div>
+          ) : (
+            <div className="max-h-[680px] overflow-y-auto bg-background-100/35 p-4 md:p-5">
+              <CoachPlanView modules={data.journey} completedComponentIds={completedComponentIds} />
+            </div>
+          )}
+        </section>
+
+        <aside className={styles.coachNotes}>
+          <AppIcon className="ri-file-text-line" />
+          <strong>No notes yet</strong>
+          <p>Add notes to capture observations, next steps or key discussion points about this learner&apos;s learning plan.</p>
+          <button type="button" className={styles.outlineButton} onClick={onOpenNotes}>
+            <AppIcon className="ri-add-line" /> Add note
+          </button>
+        </aside>
+      </div>
 
       <section className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden">
         <div className="p-5 md:p-6">
@@ -147,6 +151,23 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function LearningMetric({
+  label,
+  value,
+  tone = 'brand',
+}: {
+  label: string;
+  value: string;
+  tone?: 'brand' | 'positive' | 'warning';
+}) {
+  return (
+    <div className={styles.learningMetric} data-tone={tone}>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }

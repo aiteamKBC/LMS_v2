@@ -1,7 +1,8 @@
-import { useState, type CSSProperties, type ReactNode, useEffect } from 'react';
+import { useState, useRef, useCallback, type CSSProperties, type ReactNode, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Sidebar, SidebarIcon, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP, type SidebarNavItem } from './Sidebar';
 import { CoachViewAsBar } from './CoachViewAsBar';
+import { CoachSidebar } from './CoachSidebar';
 import { Header } from './Header';
 import { AppIcon } from './AppIcon';
 import { GlobalSearch } from './GlobalSearch';
@@ -196,6 +197,8 @@ export function WorkspaceShell({
   const [previousRoute, setPreviousRoute] = useState('');
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const closeMobileSidebar = useCallback(() => setMobileSidebarOpen(false), []);
+  const accountButtonRef = useRef<HTMLButtonElement>(null);
   const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
 
   const handlePinChange = (pinned: boolean) => {
@@ -256,9 +259,11 @@ export function WorkspaceShell({
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
-      style={{ '--kbc-sidebar-width': `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
+      style={{ '--kbc-sidebar-width': role === 'coach' ? '200px' : `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
     >
-      <Sidebar
+      {role === 'coach' ? <CoachSidebar navItems={navItems} userName={displayName} userRole={displayRole}
+        mobileOpen={mobileSidebarOpen} onCloseMobile={closeMobileSidebar}
+        onOpenAccount={() => { accountButtonRef.current?.focus(); accountButtonRef.current?.click(); }} /> : <Sidebar
         role={role}
         roleLabel={roleLabel}
         navItems={navItems}
@@ -268,7 +273,7 @@ export function WorkspaceShell({
         onPinChange={handlePinChange}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
-      />
+      />}
       {/* Reserve the shared sidebar width and gutters for every workspace. */}
       <div
         className="workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out motion-reduce:transition-none"
@@ -276,6 +281,7 @@ export function WorkspaceShell({
       >
         {!hidePageChrome && (
           <Header
+            accountButtonRef={accountButtonRef}
             pageTitle={pageTitle}
             pageIcon={headerNavItem ? <SidebarIcon id={headerNavItem.id} label={headerNavItem.label} sourceIcon={headerNavItem.icon} className="h-5 w-5" /> : undefined}
             pageSubtitle={pageSubtitle}

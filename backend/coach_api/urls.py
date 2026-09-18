@@ -3,6 +3,7 @@ from django.urls import path
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
+from .meeting_reminders import coach_meeting_reminder
 from .review_pdf import coach_mcm_pdf
 from .views import (
     coach_attendance,
@@ -57,6 +58,7 @@ urlpatterns = [
     path('coach/timetable/events/book', coach_timetable_book_event, name='coach-timetable-event-book'),
     path('coach/timetable/events/schedule', coach_timetable_schedule_event, name='coach-timetable-event-schedule'),
     path('coach/timetable/events/action', coach_timetable_event_action, name='coach-timetable-event-action'),
+    path('coach/timetable/events/<str:event_key>/reminder', coach_meeting_reminder, name='coach-meeting-reminder'),
     path('coach/timetable/events/<str:event_key>/artifacts', coach_timetable_event_artifacts, name='coach-timetable-event-artifacts'),
     path('coach/timetable/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content', coach_timetable_event_artifact_content, name='coach-timetable-event-artifact-content'),
     path('coach/timetable/events/<str:event_key>/summary', coach_timetable_event_summary, name='coach-timetable-event-summary'),

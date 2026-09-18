@@ -10,17 +10,16 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { CoachDirectoryPicker } from './CoachDirectoryPicker';
 import { AllCoachesCalendar } from './AllCoachesCalendar';
+import { DashboardMeetingActions } from './DashboardMeetingActions';
 import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
-import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE, formatHoursMinutes } from '@/lib/format';
+import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import styles from './dashboard.module.css';
-import { SectionHeader, SectionLabel } from '@/components/ui/SectionHeader';
-import { CompactMetric } from '@/components/ui/MetricCard';
+import { SectionHeader } from '@/components/ui/SectionHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Panel } from '@/components/ui/Panel';
-import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { FilterChip } from '@/components/ui/FilterToolbar';
 import type { ImportedReview } from '@/api/reviewHistory';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
@@ -39,6 +38,7 @@ import {
   parseLocalDate,
   sortEvents,
   startOfDay,
+  statusLabel,
 } from '../../coach/shared/calendarEvents';
 
 const coachNav = roleNavMap.coach;
@@ -157,6 +157,8 @@ interface AttendanceApiLearner {
   email?: string | null;
   attendance: number | null;
   hasAttendance?: boolean;
+  lastSession?: string | null;
+  lastSessionDate?: string | null;
 }
 
 interface AttendanceApiResponse {
@@ -188,20 +190,7 @@ function normalizeIdentity(value?: string | number | null): string {
     .replace(/[^a-z0-9]+/g, '');
 }
 
-function assignmentValuesMatch(left?: string | number | null, right?: string | number | null): boolean {
-  const leftKey = normalizeIdentity(left);
-  const rightKey = normalizeIdentity(right);
-  return Boolean(leftKey && rightKey && leftKey === rightKey);
-}
 
-function learnerBelongsToAssignedGroup(learner: CoachLearner, group: CoachAssignedGroup): boolean {
-  if (!assignmentValuesMatch(learner.group, group.name)) return false;
-  const groupCohort = displayValue(group.cohort);
-  const groupProgramme = displayValue(group.programme);
-  const cohortMatches = groupCohort === EMPTY_VALUE || assignmentValuesMatch(learner.cohortName, group.cohort);
-  const programmeMatches = groupProgramme === EMPTY_VALUE || assignmentValuesMatch(learner.programme, group.programme);
-  return cohortMatches && programmeMatches;
-}
 
 function toNumber(value?: number | string | null): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
@@ -255,6 +244,9 @@ interface EvidenceQueueLearner {
 
 interface MarkingQueueResponse {
   items?: Partial<EvidenceQueueLearner>[];
+  summary?: {
+    pendingItems?: number;
+  };
 }
 
 function isActiveLearner(learner: CoachLearner): boolean {
@@ -372,6 +364,7 @@ function findAttendanceRecord(learner: CoachLearner, attendanceLearners: Attenda
 function mergeAttendanceRates(learners: CoachLearner[], attendanceLearners: AttendanceApiLearner[]): CoachLearner[] {
   return learners.map((learner): CoachLearner => {
     const attendance = findAttendanceRecord(learner, attendanceLearners);
+    const lastSession = displayValue(attendance?.lastSession);
     const hasAttendance = Boolean(
       attendance
       && attendance.attendance !== null
@@ -383,6 +376,12 @@ function mergeAttendanceRates(learners: CoachLearner[], attendanceLearners: Atte
       ...learner,
       attendanceRate: hasAttendance ? clampPercent(attendance?.attendance) : 0,
       attendanceRateAvailable: hasAttendance,
+      // `lastContact` in the caseload payload currently carries the case-owner
+      // name. Attendance owns the latest recorded session date, which is what
+      // this dashboard column is intended to show.
+      lastContact: lastSession !== EMPTY_VALUE
+        ? lastSession
+        : formatDateLabel(attendance?.lastSessionDate),
     };
   });
 }
@@ -673,46 +672,6 @@ function eventTypeLabel(event: CoachCalendarEvent) {
   return displayValue(event.title);
 }
 
-function eventStatusClasses(event: CoachCalendarEvent) {
-  if (isAtRiskEvent(event)) {
-    return {
-      row: 'bg-red-50/80 border border-red-200/50',
-      date: 'text-red-600',
-      badge: 'bg-red-100 text-red-700',
-      icon: 'ri-alert-fill text-red-500',
-    };
-  }
-  if (event.source === 'live-session') {
-    return {
-      row: 'bg-sky-50/70 border border-sky-100 hover:bg-sky-50',
-      date: 'text-sky-600',
-      badge: 'bg-sky-100 text-sky-700',
-      icon: 'ri-live-line text-sky-500',
-    };
-  }
-  if (event.status === 'scheduled' || event.status === 'in-progress') {
-    return {
-      row: 'bg-background-100/50 hover:bg-background-100',
-      date: 'text-foreground-400',
-      badge: 'bg-amber-100 text-amber-700',
-      icon: 'ri-time-line text-amber-500',
-    };
-  }
-  if (isCompletedEvent(event)) {
-    return {
-      row: 'hover:bg-background-50',
-      date: 'text-foreground-400',
-      badge: 'bg-primary-100 text-primary-700',
-      icon: 'ri-check-line text-emerald-500',
-    };
-  }
-  return {
-    row: 'bg-background-100/50 hover:bg-background-100',
-    date: 'text-foreground-400',
-    badge: 'bg-orange-100 text-orange-700',
-    icon: 'ri-calendar-schedule-line text-orange-500',
-  };
-}
 
 /* ═══════════════════════════════════════════════════════════
    Priority model
@@ -734,24 +693,10 @@ const PRIORITY_RANK: Record<PriorityKey, number> = {
   'missing-evidence': 3,
 };
 
-const PRIORITY_META: Record<PriorityKey, { label: string; icon: string }> = {
-  'at-risk': { label: 'At Risk', icon: 'ri-alarm-warning-line' },
-  'overdue-review': { label: 'Overdue Review', icon: 'ri-calendar-close-line' },
-  'poor-attendance': { label: 'Poor Attendance', icon: 'ri-calendar-check-line' },
-  'missing-evidence': { label: 'Missing Evidence', icon: 'ri-file-list-3-line' },
-};
-
 // The priority vocabulary is five ranked reasons; StatusTone carries risk in
 // four bands. `at-risk` and `overdue-review` both read as `critical` — both are
 // "act now" severities, and the label text (not a second red shade) is what
 // tells them apart.
-const PRIORITY_TONE: Record<PriorityKey, StatusTone> = {
-  'at-risk': 'critical',
-  'overdue-review': 'critical',
-  'poor-attendance': 'upcoming',
-  'missing-evidence': 'brand',
-};
-
 interface PriorityReason {
   key: PriorityKey;
   label: string;
@@ -770,10 +715,6 @@ interface OverdueSignal {
   review: boolean;
   coaching: boolean;
   label: string;
-}
-
-function formatHours(value: number) {
-  return formatHoursMinutes(value);
 }
 
 function otjhPercentFor(learner: CoachLearner): number | null {
@@ -927,17 +868,6 @@ function scheduleEventTime(event: CoachCalendarEvent) {
 
 /** Just the start, for the fixed-size "Next" badge -- a live session's
  * "09:00 - 11:00" wraps and overflows a box sized for a single time. */
-function scheduleEventStartTime(event: CoachCalendarEvent) {
-  return scheduleEventTime(event).split(' - ')[0];
-}
-
-/** "12 Sep 2025" -> "12 Sep", so a quick-stat cell stays one line. */
-function shortDateLabel(value?: string | null) {
-  const label = displayValue(value);
-  if (label === EMPTY_VALUE) return EMPTY_VALUE;
-  const parts = label.split(' ');
-  return parts.length >= 2 ? `${parts[0]} ${parts[1]}` : label;
-}
 
 const KPI_FILTER_LABEL: Record<DashboardKpi, string> = {
   caseload: 'Full caseload',
@@ -1028,14 +958,13 @@ export default function CoachDashboard() {
   // same filter to the caseload list when the coach wants to keep working there.
   const [kpiFilter, setKpiFilter] = useState<DashboardKpi | null>(null);
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
-  const [priorityFilter, setPriorityFilter] = useState<PriorityKey | null>(null);
   const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<CoachLearner[]>([]);
-  const [assignedGroups, setAssignedGroups] = useState<CoachAssignedGroup[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
   const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>([]);
   const [liveSessionEvents, setLiveSessionEvents] = useState<CoachCalendarEvent[]>([]);
   const [evidenceQueue, setEvidenceQueue] = useState<EvidenceQueueLearner[]>([]);
+  const [markingThisWeek, setMarkingThisWeek] = useState<number | undefined>();
   const [loading, setLoading] = useState(true);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
   const [calendarLoading, setCalendarLoading] = useState(true);
@@ -1044,7 +973,13 @@ export default function CoachDashboard() {
   const [liveSessionsError, setLiveSessionsError] = useState<string | null>(null);
   const [caseloadExpanded, setCaseloadExpanded] = useState(true);
   const [scheduleExpanded, setScheduleExpanded] = useState(true);
+  const [scheduleNotice, setScheduleNotice] = useState('');
   const [directoryCoaches, setDirectoryCoaches] = useState<DirectoryCoach[]>([]);
+  const updateDashboardMeeting = (updated: CoachCalendarEvent) => {
+    const replace = (events: CoachCalendarEvent[]) => events.map(event => (event.eventKey || event.id) === (updated.eventKey || updated.id) ? updated : event);
+    setCalendarEvents(replace);
+    setCalendarPreviewEvents(events => replace(events).filter(isWithinCalendarPreviewWindow));
+  };
   const handleDirectoryLoaded = useCallback((nextCoaches: DirectoryCoach[]) => {
     setDirectoryCoaches(nextCoaches);
   }, []);
@@ -1082,11 +1017,11 @@ export default function CoachDashboard() {
       if (!authenticatedCoachEmail) {
         setOwnerName(authenticatedCoachName);
         setLearners([]);
-        setAssignedGroups([]);
         setCalendarEvents([]);
         setCalendarPreviewEvents([]);
         setLiveSessionEvents([]);
         setEvidenceQueue([]);
+        setMarkingThisWeek(undefined);
         // An admin has no caseload of their own, so there is nothing missing to
         // report — the picker below is the whole page for them.
         setLoadWarning(coach.canChooseCoach ? null : 'Coach access is required to load this dashboard.');
@@ -1099,10 +1034,16 @@ export default function CoachDashboard() {
       }
 
       try {
-        const dashboard = await fetchSharedJsonGet<CoachDashboardApiResponse>(
-          withCoachViewAs(coachDashboardEndpoint()),
-          { signal: controller.signal, credentials: 'include' },
-        );
+        const [dashboard, markingQueue] = await Promise.all([
+          fetchSharedJsonGet<CoachDashboardApiResponse>(
+            withCoachViewAs(coachDashboardEndpoint()),
+            { signal: controller.signal, credentials: 'include' },
+          ),
+          fetchSharedJsonGet<MarkingQueueResponse>(
+            withCoachViewAs('/coach_api/coach/marking-queue?status=pending&page_size=1'),
+            { signal: controller.signal, credentials: 'include' },
+          ).catch(() => null),
+        ]);
         if (controller.signal.aborted) return;
 
         const queueItems = (dashboard.evidence?.items || []).map(normalizeEvidenceQueueLearner);
@@ -1120,8 +1061,12 @@ export default function CoachDashboard() {
           ),
           queueItems,
         ));
-        setAssignedGroups(dashboard.assignedGroups || []);
         setEvidenceQueue(queueItems);
+        setMarkingThisWeek(
+          markingQueue?.summary?.pendingItems === undefined
+            ? undefined
+            : toNumber(markingQueue.summary.pendingItems),
+        );
         setCalendarEvents(nonLiveEvents);
         setCalendarPreviewEvents(nonLiveEvents.filter(isWithinCalendarPreviewWindow));
         setLiveSessionEvents(events.filter(event => event.source === 'live-session'));
@@ -1133,10 +1078,10 @@ export default function CoachDashboard() {
       } catch (error) {
         if (controller.signal.aborted) return;
         setLearners([]);
-        setAssignedGroups([]);
         setCalendarEvents([]);
         setCalendarPreviewEvents([]);
         setLiveSessionEvents([]);
+        setMarkingThisWeek(undefined);
         setLoadWarning(error instanceof Error ? error.message : 'Unable to load coach dashboard data right now.');
         setCalendarError('Calendar unavailable right now.');
         setLiveSessionsError('Live sessions unavailable right now.');
@@ -1165,9 +1110,6 @@ export default function CoachDashboard() {
 
   const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
   const activeLearners = useMemo(() => enrichedLearners.filter(isActiveLearner), [enrichedLearners]);
-  const onBreakLearners = useMemo(() => enrichedLearners.filter(isOnBreakLearner), [enrichedLearners]);
-  const completedLearners = useMemo(() => enrichedLearners.filter(isCompletedLearner), [enrichedLearners]);
-  const epaLearners = useMemo(() => enrichedLearners.filter(isEpaLearner), [enrichedLearners]);
   const atRiskLearners = useMemo(
     () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk'),
     [activeLearners],
@@ -1189,15 +1131,6 @@ export default function CoachDashboard() {
   const atRiskCount = atRiskLearners.length;
   const onTrackCount = onTrackLearners.length;
   const totalCaseload = enrichedLearners.length;
-  const assignedGroupRows = useMemo(() => assignedGroups.map(group => {
-    const groupLearners = activeLearners.filter(learner => learnerBelongsToAssignedGroup(learner, group));
-    return {
-      ...group,
-      learnerCount: groupLearners.length,
-      atRiskCount: groupLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk').length,
-      needAttentionCount: groupLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'need-attention').length,
-    };
-  }), [activeLearners, assignedGroups]);
   const pendingEvidence = useMemo(
     () => evidenceLearners.reduce((total, learner) => total + learner.pendingEvidence, 0),
     [evidenceLearners],
@@ -1247,20 +1180,15 @@ export default function CoachDashboard() {
   }, [upcomingScheduleEvents]);
 
   /* ── Today / Needs Action ── */
-  const todayEvents = useMemo(() => {
-    const todayIso = toIsoDate(new Date());
-    return upcomingScheduleEvents.filter(event => {
-      const date = parseLocalDate(eventDisplayDate(event));
-      return Boolean(date && toIsoDate(date) === todayIso);
-    });
-  }, [upcomingScheduleEvents]);
-  const nextTodayEvent = todayEvents[0];
-  const remainingTodayEvents = todayEvents.slice(1);
   /* ── This Week ── */
   const weekEvents = useMemo(
-    () => [...activeCalendarEvents, ...liveSessionEvents].filter(event => isEventThisWeek(event)),
+    () => [...activeCalendarEvents, ...liveSessionEvents]
+      .filter(event => event.status !== 'cancelled' && isEventThisWeek(event)),
     [activeCalendarEvents, liveSessionEvents],
   );
+  const progressReviewsThisWeek = weekEvents.filter(event => event.source === 'progress-review').length;
+  const monthlyCoachingThisWeek = weekEvents.filter(event => event.source === 'mcr').length;
+  const catchUpsThisWeek = weekEvents.filter(event => event.source === 'catch-up').length;
 
   /* ── Learners Requiring Attention (Risk Alert + At Risk Learners, merged) ── */
   const overdueMap = useMemo(
@@ -1273,19 +1201,12 @@ export default function CoachDashboard() {
     return map;
   }, [enrichedLearners, overdueMap]);
   const attentionQueue = useMemo(
-    () => activeLearners
+    () => atRiskLearners
       .map(learner => ({ learner, priority: priorityMap.get(learner.id) }))
       .filter((entry): entry is { learner: CoachLearner; priority: LearnerPriority } => Boolean(entry.priority?.reasons.length))
       .sort((left, right) => right.priority.urgency - left.priority.urgency || left.learner.name.localeCompare(right.learner.name)),
-    [activeLearners, priorityMap],
+    [atRiskLearners, priorityMap],
   );
-  const priorityCounts = useMemo(() => {
-    const counts = {} as Record<PriorityKey, number>;
-    PRIORITY_ORDER.forEach(key => { counts[key] = 0; });
-    attentionQueue.forEach(entry => entry.priority.keys.forEach(key => { counts[key] += 1; }));
-    return counts;
-  }, [attentionQueue]);
-
   const kpiFilterPredicate = useMemo((): ((learner: CoachLearner) => boolean) | null => {
     switch (kpiFilter) {
       case 'caseload': return () => true;
@@ -1308,15 +1229,13 @@ export default function CoachDashboard() {
         .map(learner => ({ learner, priority: priorityMap.get(learner.id)! }))
         .sort((left, right) => right.priority.urgency - left.priority.urgency || left.learner.name.localeCompare(right.learner.name));
     }
-    return priorityFilter
-      ? attentionQueue.filter(entry => entry.priority.keys.has(priorityFilter))
-      : attentionQueue;
-  }, [attentionQueue, enrichedLearners, kpiFilterPredicate, priorityFilter, priorityMap]);
+    return attentionQueue;
+  }, [attentionQueue, enrichedLearners, kpiFilterPredicate, priorityMap]);
 
   const attentionPanelTitle = kpiFilter ? KPI_FILTER_LABEL[kpiFilter] : 'Learners at Risk';
   const attentionPanelSubtitle = kpiFilter
     ? 'Filtered from the KPI cards, ordered by priority'
-    : 'Learners who may need additional support.';
+    : 'Learners currently flagged as OTJH at risk.';
   const attentionHasOverflow = attentionRows.length > AT_RISK_SCROLL_THRESHOLD;
 
   const schedulePanelLoading = (calendarLoading || liveSessionsLoading) && !upcomingScheduleEvents.length;
@@ -1330,14 +1249,8 @@ export default function CoachDashboard() {
   const scrollToAttention = () => scrollToSection('learner-caseload');
 
   const openCaseloadFilter = (filter: DashboardKpi) => {
-    setPriorityFilter(null);
     setKpiFilter(filter);
     scrollToAttention();
-  };
-
-  const applyPriorityFilter = (key: PriorityKey) => {
-    setKpiFilter(null);
-    setPriorityFilter(current => (current === key ? null : key));
   };
 
   // An administrator reaches this page with no caseload of their own. Rather
@@ -1374,7 +1287,13 @@ export default function CoachDashboard() {
       userName={ownerName} userRole="Progress Coach"
     >
       <div className={styles.dashboard}>
-        <h1 className="sr-only">Coach Dashboard</h1>
+        <div className={styles.welcome}>
+          <div>
+            <h1>Coach Command Center <span aria-hidden="true">👋</span></h1>
+            <p>Support learners. Track progress. Make a difference.</p>
+          </div>
+
+        </div>
         {(loading || loadWarning) && (
           <div className={styles.notice} role={loadWarning ? 'alert' : 'status'}>
             {loading ? 'Loading live coach dashboard data...' : loadWarning}
@@ -1383,44 +1302,37 @@ export default function CoachDashboard() {
 
         <section className={styles.metrics} aria-label="Coach dashboard metrics">
           <DashboardMetric label="Total learners" value={loading || loadWarning ? undefined : totalCaseload} icon="ri-group-line" onClick={() => setSelectedKpi('caseload')} />
-          <DashboardMetric label="Learners engagement" icon="ri-bar-chart-line" />
           <DashboardMetric label="OTJH at risk" value={loading || loadWarning ? undefined : atRiskCount} note={loading || loadWarning ? undefined : `${needAttentionLearners.length} need attention`} icon="ri-alarm-warning-line" tone="critical" onClick={() => setSelectedKpi('at-risk')} />
-          <DashboardMetric label="PR 12-week" icon="ri-focus-3-line" />
-          <DashboardMetric label="Evidence pending" value={loading || loadWarning ? undefined : pendingEvidence} note="Awaiting review" icon="ri-file-list-3-line" onClick={() => setSelectedKpi('evidence')} />
-          <DashboardMetric label="Referred closure" icon="ri-team-line" />
-          <DashboardMetric label="MCM 4-week" icon="ri-history-line" />
+          <DashboardMetric label="Marking this week" value={loading || loadWarning ? undefined : markingThisWeek} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => navigate('/coach/marking-queue')} />
+          <DashboardMetric label="PR this week" value={loading || loadWarning ? undefined : progressReviewsThisWeek} note="Progress reviews" icon="ri-focus-3-line" tone="caution" onClick={() => navigate('/coach/progress-reviews')} />
+          <DashboardMetric label="MCM this week" value={loading || loadWarning ? undefined : monthlyCoachingThisWeek} note="Monthly coaching" icon="ri-history-line" tone="caution" onClick={() => navigate('/coach/meetings')} />
+          <DashboardMetric label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note="Catch-up sessions" icon="ri-calendar-event-line" tone="caution" onClick={() => navigate('/coach/timetable')} />
         </section>
 
         <div className={styles.riskLayout}>
           <div id="learner-caseload" className="min-w-0 scroll-mt-4">
-            <Panel className={styles.panel}>
+            <Panel className={`${styles.panel} ${styles.learnersPanel}`}>
               <SectionHeader icon="ri-group-line" title={attentionPanelTitle} description={attentionPanelSubtitle}
                 actions={<>
                   <button type="button" className={styles.iconButton} onClick={() => setCaseloadExpanded(current => !current)}
                     aria-expanded={caseloadExpanded} aria-controls="coach-caseload-content" aria-label={`${caseloadExpanded ? 'Collapse' : 'Expand'} caseload panel`}>
                     <AppIcon name={caseloadExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} />
                   </button>
-                  <Link to="/coach/caseload" className={styles.textButton}>View all learners <AppIcon name="ri-arrow-right-s-line" /></Link>
+                  <Link to="/coach/caseload" className={`${styles.textButton} ${styles.sectionLink}`}>View all learners <AppIcon name="ri-arrow-right-line" /></Link>
                 </>} />
               {caseloadExpanded && (
                 <div id="coach-caseload-content">
-                  <div className={styles.filters}>
-                    {kpiFilter ? (
-                      <FilterChip label="Filter" value={KPI_FILTER_LABEL[kpiFilter]} onRemove={() => setKpiFilter(null)} />
-                    ) : (
-                      <PageTabs label="Filter learners by priority" value={priorityFilter ?? 'all'}
-                        onChange={next => next === 'all' ? setPriorityFilter(null) : applyPriorityFilter(next as PriorityKey)}
-                        items={priorityTabItems(attentionQueue.length, priorityCounts)} />
-                    )}
-                  </div>
+                  {kpiFilter && <div className={styles.filters}>
+                    <FilterChip label="Filter" value={KPI_FILTER_LABEL[kpiFilter]} onRemove={() => setKpiFilter(null)} />
+                  </div>}
                   {loading && !attentionRows.length && <AttentionSkeleton />}
                   {!loading && attentionRows.length > 0 && (
-                    <div className={styles.tableScroll} data-overflow={attentionHasOverflow} tabIndex={0} role="region" aria-label="Learners requiring support">
+                    <div className={styles.tableScroll} data-overflow={attentionHasOverflow} tabIndex={0} role="region" aria-label="Learners at OTJH risk">
                       <table className={`${styles.table} ${styles.learnersTable}`}>
-                        <caption className="sr-only">Learners requiring support, ordered by priority</caption>
-                        <thead><tr><th scope="col">Learner name</th><th scope="col">Risk type</th><th scope="col">OTJH status</th><th scope="col">Last contact</th><th scope="col">Action</th></tr></thead>
+                        <caption className="sr-only">Learners at OTJH risk, ordered by priority</caption>
+                        <thead><tr><th scope="col">Learner</th><th scope="col">Group</th><th scope="col">OTJH status</th><th scope="col">Last contact</th><th scope="col">Actions</th></tr></thead>
                         <tbody>{attentionRows.map(entry => (
-                          <AttentionLearnerRow key={entry.learner.id} learner={entry.learner} priority={entry.priority}
+                          <AttentionLearnerRow key={entry.learner.id} learner={entry.learner}
                             onOpen={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(entry.learner.id)}`, {
                               state: {
                                 learnerId: entry.learner.id, learnerName: entry.learner.name,
@@ -1433,10 +1345,10 @@ export default function CoachDashboard() {
                     </div>
                   )}
                   {!loading && !attentionRows.length && (
-                    <EmptyState variant={kpiFilter || priorityFilter ? 'no-matches' : 'empty'}
-                      icon={kpiFilter || priorityFilter ? undefined : 'ri-shield-check-line'}
-                      title={kpiFilter || priorityFilter ? 'No learners match this filter' : 'No learners need attention'}
-                      description={kpiFilter || priorityFilter ? 'Clear the filter to see the full priority queue.' : 'Everyone on your caseload is on track for hours, attendance and reviews.'} />
+                    <EmptyState variant={kpiFilter ? 'no-matches' : 'empty'}
+                      icon={kpiFilter ? undefined : 'ri-shield-check-line'}
+                      title={kpiFilter ? 'No learners match this filter' : 'No learners at risk'}
+                      description={kpiFilter ? 'Clear the filter to see all learners currently at risk.' : 'No active learners are currently flagged as OTJH at risk.'} />
                   )}
                 </div>
               )}
@@ -1444,14 +1356,21 @@ export default function CoachDashboard() {
           </div>
           <aside className={styles.charts} aria-label="Learner risk insights">
             <Panel className={styles.panel}>
-              <SectionHeader title="Risk Distribution" icon="ri-pie-chart-line" actions={<span className={styles.chartPeriod}>By main reason</span>} />
-              <RiskDistribution priorities={attentionQueue.map(entry => entry.priority)} unavailable={loading || Boolean(loadWarning)} />
+              <SectionHeader title="Risk Distribution" icon="ri-bar-chart-line" actions={<span className={styles.chartScope}>By OTJH status</span>} />
+              <OtjhDistribution learners={activeLearners} unavailable={loading || Boolean(loadWarning)} />
             </Panel>
             <Panel className={styles.panel}>
-              <SectionHeader title="Monthly Learners at Risk" icon="ri-calendar-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
-              <div className={styles.unavailableChart}>
-                <AppIcon name="ri-bar-chart-line" aria-hidden="true" />
-                <p>History not available</p><span>Monthly risk data is not available yet.</span>
+              <SectionHeader title="Monthly Learners at Risk" icon="ri-bar-chart-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
+              <div className={styles.monthlyRisk}>
+                <div className={styles.unavailableChart}>
+                  <AppIcon name="ri-line-chart-line" aria-hidden="true" />
+                  <p>History not available</p><span>Monthly risk data is not available yet.</span>
+                </div>
+                <div className={styles.currentRisk}>
+                  <strong>{loading || loadWarning ? EMPTY_VALUE : atRiskCount}</strong>
+                  <span>at risk now</span>
+                  <small>Current OTJH status</small>
+                </div>
               </div>
             </Panel>
           </aside>
@@ -1466,23 +1385,29 @@ export default function CoachDashboard() {
                 <AppIcon name={scheduleExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} />
               </button>
               <Link to="/coach/timetable" className={styles.textButton}>Calendar <AppIcon name="ri-calendar-line" /></Link>
-              <Link to="/coach/meetings" className={styles.textButton}>View all meetings <AppIcon name="ri-arrow-right-s-line" /></Link>
+              <Link to="/coach/meetings" className={`${styles.textButton} ${styles.sectionLink}`}>View all meetings <AppIcon name="ri-arrow-right-line" /></Link>
             </>} />
           {scheduleExpanded && (
             <div id="coach-schedule-content">
+              {scheduleNotice && <p className={styles.notice} role="status">{scheduleNotice}</p>}
               {schedulePanelLoading && <ScheduleSkeleton />}
               {!schedulePanelLoading && upcomingScheduleGroups.length > 0 && (
                 <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Upcoming meetings and live sessions">
                   <table className={`${styles.table} ${styles.meetingsTable}`}>
                     <caption className="sr-only">Meetings and live sessions in the next seven days</caption>
-                    <thead><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Learner / session</th><th scope="col">Meeting type</th><th scope="col">Action</th></tr></thead>
+                    <thead className="sr-only"><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Learner / session</th><th scope="col">Meeting type</th><th scope="col">Status</th><th scope="col">Reschedule</th><th scope="col">Send Reminder</th><th scope="col">Generate Presentation</th><th scope="col">View Form</th></tr></thead>
                     <tbody>{upcomingScheduleGroups.flatMap(group => group.events.map(event => (
                       <tr key={event.eventKey || event.id}>
-                        <td className={styles.dateCell}>{formatCalendarWeekday(group.date)}, {formatDateLabel(group.date)}</td>
-                        <td className={styles.dateCell}>{scheduleEventTime(event)}</td>
-                        <td><span className={styles.identityName}>{scheduleEventTitle(event)}</span></td>
-                        <td>{scheduleEventMeta(event)}</td>
-                        <td><Link to="/coach/timetable" state={buildTimetableFocusState(event)} className={`${styles.textButton} ${styles.primaryButton}`} aria-label={`View ${scheduleEventTitle(event)} in calendar`}><AppIcon name="ri-calendar-line" /> View in calendar</Link></td>
+                        <td className={styles.dateCell}><time className={styles.meetingDate} dateTime={group.date}><span>{formatCalendarWeekday(group.date)}</span><strong>{formatDateLabel(group.date)}</strong></time></td>
+                        <td className={styles.dateCell}><span className={styles.meetingTime}><AppIcon name="ri-time-line" aria-hidden="true" />{scheduleEventTime(event)}</span></td>
+                        <td><div className={styles.identity}>
+                          <LearnerAvatar name={scheduleEventTitle(event)} />
+                          <span><span className={styles.identityName}>{scheduleEventTitle(event)}</span>{optionalDisplayValue(event.group) && <span className={styles.subtle}>{event.group}</span>}</span>
+                        </div></td>
+                        <td><span className={styles.meetingType}><span className={styles.meetingTypeIcon}><AppIcon name="ri-book-open-line" aria-hidden="true" /></span>{scheduleEventMeta(event)}</span></td>
+                        <td><StatusBadge status={event.status} label={statusLabel(event.status)} size="sm" /></td>
+                        {event.source === 'live-session' ? <td colSpan={4}><Link to="/coach/timetable" state={buildTimetableFocusState(event)} className={styles.textButton} aria-label={`View ${scheduleEventTitle(event)} in calendar`}><AppIcon name="ri-calendar-line" /> View in calendar</Link></td>
+                          : <DashboardMeetingActions event={event} onUpdated={updateDashboardMeeting} onScheduleNotice={setScheduleNotice} />}
                       </tr>
                     )))}</tbody>
                   </table>
@@ -1494,153 +1419,7 @@ export default function CoachDashboard() {
             </div>
           )}
         </Panel>
-        <section className={styles.caseloadSummary} aria-label="Caseload health">
-          <h2>Caseload health</h2>
-          {([
-            ['caseload', 'Caseload', totalCaseload], ['active', 'Active', activeLearners.length],
-            ['on-break', 'Paused', onBreakLearners.length], ['completed', 'Completed', completedLearners.length],
-            ['epa', 'EPA', epaLearners.length],
-          ] as const).map(([key, label, count]) => (
-            <button key={key} type="button" onClick={() => setSelectedKpi(key)} aria-label={`Open ${label} details`}>
-              {label} <strong>{loading || loadWarning ? EMPTY_VALUE : count}</strong><AppIcon name="ri-arrow-right-s-line" className="h-3 w-3" />
-            </button>
-          ))}
-        </section>
-        <div className={styles.secondary}>
-          <section id="today-actions" className="scroll-mt-4 border-t border-[var(--kbc-border)] pt-5">
-            <SectionHeader
-              icon="ri-calendar-schedule-line"
-              title="Today's schedule"
-              description="Your next session or review for today"
-              actions={<StatusBadge tone="info" dot={false} label={`${todayEvents.length} today`} />}
-            />
 
-            {loading && !nextTodayEvent && (
-              <LoadingBlock className="mt-4 h-[132px] rounded-2xl" />
-            )}
-
-            {!loading && !nextTodayEvent && (
-              <EmptyState
-                size="sm"
-                icon="ri-check-double-line"
-                title="Nothing scheduled today"
-                description="No live sessions, reviews or coaching sessions are scheduled for today."
-              />
-            )}
-
-            {nextTodayEvent && (
-              <div className="mt-4">
-                <Link
-                  to="/coach/timetable"
-                  state={buildTimetableFocusState(nextTodayEvent)}
-                  className="group flex min-w-0 items-center gap-4 rounded-xl border border-primary-100 bg-primary-50/50 px-4 py-3.5 transition-colors hover:border-primary-200 hover:bg-primary-50"
-                >
-                  <span className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-background-50 text-center shadow-sm ring-1 ring-primary-100">
-                    <span className="text-[10px] font-semibold uppercase text-primary-500">Next</span>
-                    <span className="whitespace-nowrap text-sm font-bold tabular-nums text-primary-800">{scheduleEventStartTime(nextTodayEvent)}</span>
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold text-foreground-950">{scheduleEventTitle(nextTodayEvent)}</span>
-                    <span className="mt-1 block truncate text-[12px] text-foreground-500">{scheduleEventMeta(nextTodayEvent)}</span>
-                  </span>
-                  <span className="hidden items-center gap-1 text-[12px] font-semibold text-primary-700 sm:inline-flex">
-                    Open timetable
-                    <AppIcon className="ri-arrow-right-line text-sm transition-transform group-hover:translate-x-0.5"></AppIcon>
-                  </span>
-                </Link>
-              </div>
-            )}
-
-            {remainingTodayEvents.length > 0 && (
-              <div className="mt-3 border-t border-foreground-100 pt-3">
-                <SectionLabel>Later today</SectionLabel>
-                <div className="mt-2 grid max-h-48 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
-                  {remainingTodayEvents.map(event => {
-                    const classes = eventStatusClasses(event);
-                    return (
-                      <Link
-                        key={`today-${event.eventKey || event.id}`}
-                        to="/coach/timetable"
-                        state={buildTimetableFocusState(event)}
-                        className="group flex min-w-0 items-center gap-2.5 rounded-lg border border-foreground-100 bg-background-50 px-3 py-2 transition-colors hover:border-primary-200 hover:bg-primary-50/50"
-                      >
-                        <span className={cn('shrink-0 rounded-md px-2 py-1 text-center text-[12px] font-bold tabular-nums', classes.badge)}>
-                          {scheduleEventTime(event)}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[12px] font-semibold text-foreground-900">{scheduleEventTitle(event)}</span>
-                          <span className="block truncate text-[11px] text-foreground-400">{scheduleEventMeta(event)}</span>
-                        </span>
-                        <AppIcon className={cn('shrink-0 text-[13px] transition-transform group-hover:translate-x-0.5', classes.icon)}></AppIcon>
-                      </Link>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </section>
-            <section className="border-t border-[var(--kbc-border)] pt-5">
-              <SectionHeader
-                icon="ri-node-tree"
-                title="My Assigned Groups"
-                description="Official curriculum group assignments"
-                actions={<StatusBadge tone="brand" dot={false} label={`${assignedGroupRows.length} groups`} />}
-              />
-              <div className="mt-3.5 space-y-2.5">
-                {loading && assignedGroupRows.length === 0 && (
-                  <>
-                    <LoadingBlock className="h-20 rounded-xl" />
-                    <LoadingBlock className="h-20 rounded-xl" />
-                  </>
-                )}
-                {!loading && assignedGroupRows.length === 0 && (
-                  <EmptyState
-                    size="sm"
-                    icon="ri-user-search-line"
-                    title="No groups assigned"
-                    description="No official curriculum groups are assigned to this coach yet."
-                  />
-                )}
-                {!loading && assignedGroupRows.slice(0, 4).map(group => (
-                  <div key={group.id || `${group.programme}-${group.cohort}-${group.name}`} className="rounded-xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-bold text-foreground-950" title={group.name}>{group.name}</p>
-                        <p className="mt-0.5 truncate text-[12px] text-foreground-500" title={`${group.programme} · ${group.cohort}`}>{group.programme} <span className="text-foreground-300">·</span> {group.cohort}</p>
-                      </div>
-                      <span className="shrink-0 rounded-full bg-primary-50 px-2.5 py-1 text-[11px] font-bold text-primary-700">{group.learnerCount}</span>
-                    </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                      <div className="rounded-lg bg-background-100 px-2 py-1.5">
-                        <p className="text-[10px] font-bold text-foreground-900">{group.learnerCount}</p>
-                        <p className="text-[9px] uppercase text-foreground-400">Active</p>
-                      </div>
-                      <div className="rounded-lg bg-amber-50 px-2 py-1.5">
-                        <p className="text-[10px] font-bold text-amber-700">{group.needAttentionCount}</p>
-                        <p className="text-[9px] uppercase text-amber-600">Attention</p>
-                      </div>
-                      <div className="rounded-lg bg-red-50 px-2 py-1.5">
-                        <p className="text-[10px] font-bold text-red-700">{group.atRiskCount}</p>
-                        <p className="text-[9px] uppercase text-red-600">At risk</p>
-                      </div>
-                    </div>
-                    {displayValue(group.schedule) !== EMPTY_VALUE && (
-                      <p className="mt-2 truncate text-[11px] text-foreground-400" title={group.schedule}>
-                        <AppIcon className="ri-time-line mr-1 text-[12px]"></AppIcon>
-                        {group.schedule}
-                      </p>
-                    )}
-                  </div>
-                ))}
-                {!loading && assignedGroupRows.length > 4 && (
-                  <Link to="/coach/caseload" className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[12px] font-semibold text-primary-700 transition-colors hover:bg-primary-100">
-                    Open My Learners
-                    <AppIcon className="ri-arrow-right-line text-[13px]"></AppIcon>
-                  </Link>
-                )}
-              </div>
-            </section>
-        </div>
       </div>
 
       {selectedKpi && (
@@ -1676,6 +1455,7 @@ function DashboardMetric({ label, value, note, icon, tone, onClick }: {
     <span className={styles.metricLabel}>{label}</span>
     <span className={styles.metricValue}>{unavailable ? EMPTY_VALUE : value}</span>
     <span className={styles.metricNote}>{unavailable ? 'Data not available' : note || 'Your caseload'}</span>
+    {onClick && <span className={styles.metricChevron} aria-hidden="true"><AppIcon name="ri-arrow-right-s-line" /></span>}
   </>;
   return onClick ? (
     <button type="button" className={styles.metric} data-tone={tone} data-unavailable={unavailable} onClick={onClick} aria-label={`Open ${label} details`}>{content}</button>
@@ -1684,31 +1464,36 @@ function DashboardMetric({ label, value, note, icon, tone, onClick }: {
   );
 }
 
-function RiskDistribution({ priorities, unavailable }: { priorities: LearnerPriority[]; unavailable: boolean }) {
-  const colors = ['#6634d5', '#f1b72b', '#9b79e8', '#c4adef'];
-  const total = priorities.length;
+function OtjhDistribution({ learners, unavailable }: { learners: CoachLearner[]; unavailable: boolean }) {
+  const statuses: { key: OtjhStatusKey; label: string; color: string }[] = [
+    { key: 'at-risk', label: 'At Risk', color: '#e51e50' },
+    { key: 'need-attention', label: 'Need Attention', color: '#e4a400' },
+    { key: 'on-track', label: 'On Track', color: '#249b61' },
+    { key: 'unknown', label: 'No OTJH status', color: '#9895ab' },
+  ];
+  const total = learners.length;
   let cursor = 0;
-  const segments = PRIORITY_ORDER.map((key, index) => {
-    const count = priorities.filter(priority => priority.primary?.key === key).length;
+  const segments = statuses.map(status => {
+    const count = learners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === status.key).length;
     const percent = total ? count / total * 100 : 0;
     const start = cursor;
     cursor += percent;
-    return { key, count, percent, color: colors[index], stop: `${colors[index]} ${start}% ${cursor}%` };
+    return { ...status, count, percent, stop: `${status.color} ${start}% ${cursor}%` };
   });
   return <>
     <div className={styles.distribution}>
       <div className={styles.donut} style={{ background: unavailable || !total ? 'var(--kbc-border)' : `conic-gradient(${segments.map(segment => segment.stop).join(', ')})` }} aria-hidden="true">
-        <div className={styles.donutCenter}><strong>{unavailable ? EMPTY_VALUE : total}</strong><span>need support</span></div>
+        <div className={styles.donutCenter}><strong>{unavailable ? EMPTY_VALUE : total}</strong><span>active learners</span></div>
       </div>
-      <ul className={styles.legend} aria-label="Learners by main support reason">
+      <ul className={styles.legend} aria-label="Active learners by OTJH status">
         {segments.map(segment => <li key={segment.key}>
           <span className={styles.legendDot} style={{ background: segment.color }} aria-hidden="true" />
-          <span>{PRIORITY_META[segment.key].label}</span>
+          <span>{segment.label}</span>
           <strong>{unavailable ? EMPTY_VALUE : `${segment.count} (${Math.round(segment.percent)}%)`}</strong>
         </li>)}
       </ul>
     </div>
-    <p className={styles.chartNote}>{unavailable ? 'Risk data is not available.' : `${total} learners requiring support. Each learner is counted once, by their highest-priority reason.`}</p>
+    <p className={styles.chartNote}><AppIcon name="ri-info-i" aria-hidden="true" /><span>{unavailable ? 'OTJH data is not available.' : `${total} active learners grouped by their current OTJH status.`}</span></p>
   </>;
 }
 
@@ -1716,57 +1501,25 @@ function RiskDistribution({ priorities, unavailable }: { priorities: LearnerPrio
    Priority filter tabs — "All" plus the five ranked reasons,
    in priority order, hiding whichever have nothing in them.
    ═══════════════════════════════════════════════════════════ */
-function priorityTabItems(totalCount: number, counts: Record<PriorityKey, number>): PageTabItem[] {
-  return [
-    { value: 'all', label: 'All', count: totalCount },
-    ...PRIORITY_ORDER.map(key => ({
-      value: key,
-      label: PRIORITY_META[key].label,
-      count: counts[key],
-      tone: PRIORITY_TONE[key],
-      hideWhenEmpty: true,
-    })),
-  ];
-}
-
 /* ═══════════════════════════════════════════════════════════
    Compact learner rows retain the support reasons and four
    existing metrics inside keyboard-accessible details.
    ═══════════════════════════════════════════════════════════ */
-function AttentionLearnerRow({ learner, priority, onOpen }: {
+function AttentionLearnerRow({ learner, onOpen }: {
   learner: CoachLearner;
-  priority: LearnerPriority;
   onOpen: () => void;
 }) {
-  const primary = priority.primary;
-  const tone = primary ? PRIORITY_TONE[primary.key] : 'neutral';
   const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
-  const otjhPercent = otjhPercentFor(learner);
-  const review = nextReviewCell(learner);
   return (
     <tr>
       <td><div className={styles.identity}>
-        <LearnerAvatar name={learner.name} initials={learner.initials} tone={tone} />
-        <span><span className={styles.identityName}>{learner.name}</span><span className={styles.subtle}>{learner.group !== EMPTY_VALUE ? learner.group : learner.programme}</span></span>
+        <LearnerAvatar name={learner.name} initials={learner.initials} tone={learnerAvatarTone(learner)} />
+        <span className={styles.identityName}>{learner.name}</span>
       </div></td>
-      <td>
-        <details className={styles.rowDetails}>
-          <summary aria-label={`Show support details for ${learner.name}`}>
-            <StatusBadge tone={tone} label={primary ? PRIORITY_META[primary.key].label : 'On track'} size="sm" />
-          </summary>
-          {priority.reasons.map(reason => <p key={reason.key}>{reason.label}{reason.detail ? ` - ${reason.detail}` : ''}</p>)}
-          {!primary && <p>On track across hours, attendance and reviews</p>}
-          <div className={styles.detailMetrics}>
-            <CompactMetric label="Progress" value={learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE} tone={percentTone(learner.overallProgressAvailable ? learner.overallProgress : null, 40, 75)} />
-            <CompactMetric label="OTJH" value={learner.otjhTarget > 0 ? `${formatHours(learner.otjhCompleted)} / ${formatHours(learner.otjhTarget)}` : EMPTY_VALUE} tone={percentTone(otjhPercent, 45, 75)} />
-            <CompactMetric label="Attendance" value={learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE} tone={percentTone(learner.attendanceRateAvailable ? learner.attendanceRate : null, ATTENDANCE_MINIMUM_RATE, ATTENDANCE_EXPECTED_RATE)} />
-            <CompactMetric label="Next review" value={review.value} tone={review.tone} />
-          </div>
-        </details>
-      </td>
+      <td><span className={styles.groupName}>{learner.group !== EMPTY_VALUE ? learner.group : learner.programme}</span></td>
       <td><StatusBadge tone={status.tone} label={status.label} size="sm" /></td>
-      <td>{displayValue(learner.lastContact)}</td>
-      <td><button type="button" className={styles.textButton} onClick={onOpen} aria-label={`View learner ${learner.name}`}>View Learner</button></td>
+      <td><span className={styles.lastContact}>{displayValue(learner.lastContact)}</span>{displayValue(learner.lastContact) === EMPTY_VALUE && <span className={styles.subtle}>No session recorded</span>}</td>
+      <td><button type="button" className={styles.textButton} onClick={onOpen} aria-label={`View learner ${learner.name}`}><AppIcon name="ri-user-line" aria-hidden="true" />View Profile</button></td>
     </tr>
   );
 }
@@ -1775,13 +1528,6 @@ function AttentionLearnerRow({ learner, priority, onOpen }: {
    Next review cell — an overdue review says so rather than
    showing a date the coach has to compare against today.
    ═══════════════════════════════════════════════════════════ */
-function nextReviewCell(learner: CoachLearner): { value: string; tone: StatusTone } {
-  if (learner.nextReviewStatus === 'overdue') return { value: 'Overdue', tone: 'critical' };
-  if (learner.nextReviewStatus === 'needs-schedule') return { value: shortDateLabel(learner.nextReview), tone: 'caution' };
-  if (learner.nextReviewStatus === 'upcoming') return { value: shortDateLabel(learner.nextReview), tone: 'neutral' };
-  return { value: EMPTY_VALUE, tone: 'neutral' };
-}
-
 /* ═══════════════════════════════════════════════════════════
    KPI drill-down modal
    ═══════════════════════════════════════════════════════════ */

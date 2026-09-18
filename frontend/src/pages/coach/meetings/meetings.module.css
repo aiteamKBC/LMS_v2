@@ -1,119 +1,43 @@
-.meetingGrid {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.75rem;
-}
-
-.meetingCard {
-  container-name: coachingMeetingCard;
-  container-type: inline-size;
-  min-width: 0;
-  height: 100%;
-}
-
-/*
- * A half-width card does not have room for the shared queue row's single-line
- * desktop layout. Base card geometry therefore uses three deliberate bands:
- * identity, facts, then actions. The card's own width, rather than the viewport,
- * decides when all three can safely return to one row.
- */
-.meetingCard :global(.ui-action-row__summary) {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  column-gap: 0.75rem;
-  row-gap: 0.875rem;
-}
-
-.meetingCard :global(.ui-action-row__leading) {
-  grid-column: 1;
-}
-
-.meetingCard :global(.ui-action-row__identity) {
-  grid-column: 2;
-}
-
-.meetingCard :global(.ui-action-row__heading) {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-}
-
-.meetingCard :global(.ui-action-row__title) {
-  width: 100%;
-}
-
-.meetingCard :global(.ui-action-row__meta) {
-  display: grid;
-  grid-column: 1 / -1;
-  width: 100%;
-  min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.5rem 1rem;
-}
-
-.meetingCard :global(.ui-calendar-event-meta) {
-  max-width: 100%;
-}
-
-.meetingCard :global(.ui-action-row__actions) {
-  grid-column: 1 / -1;
-  width: 100%;
-  min-width: 0;
-}
-
-.meetingCard :global(.ui-calendar-event-actions) {
-  width: 100%;
-}
-
-.meetingCard :global(.ui-calendar-event-action-group) {
-  min-width: 0;
-}
-
-@container coachingMeetingCard (max-width: 24rem) {
-  .meetingCard :global(.ui-action-row__meta) {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-/* A genuinely wide card can support the intended left / middle / right row. */
-@container coachingMeetingCard (min-width: 56rem) {
-  .meetingCard :global(.ui-action-row__summary) {
-    grid-template-columns:
-      auto
-      minmax(11rem, 1fr)
-      minmax(14rem, 0.9fr)
-      minmax(20rem, auto);
-    align-items: center;
-  }
-
-  .meetingCard :global(.ui-action-row__leading) {
-    grid-column: 1;
-  }
-
-  .meetingCard :global(.ui-action-row__identity) {
-    grid-column: 2;
-  }
-
-  .meetingCard :global(.ui-action-row__meta) {
-    grid-column: 3;
-  }
-
-  .meetingCard :global(.ui-action-row__actions) {
-    grid-column: 4;
-    width: auto;
-  }
-}
-
-@media (min-width: 1280px) {
-  .meetingGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .meetingGrid > .meetingCard:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
-  }
-}
+.page { display: grid; gap: 15px; padding: 18px 22px 28px; color: #342d51; }
+.title h1 { color: #1c1637; font-size: 26px; font-weight: 760; letter-spacing: -.035em; }
+.title p { margin-top: 2px; color: #746d8c; font-size: 12px; }
+.panel { min-width: 0; overflow: hidden; border: 1px solid #e9e6f1; border-radius: 9px; background: #fff; box-shadow: 0 8px 25px rgb(35 24 79 / 5%); }
+.panelHeader { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px 10px; }
+.panelHeading { display: flex; align-items: center; gap: 12px; }
+.headingIcon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; background: #ede8ff; color: #6740df; font-size: 18px; }
+.panelHeading h2 { color: #2e1d79; font-size: 16px; font-weight: 760; }
+.panelHeading p { margin-top: 1px; color: #7c7590; font-size: 10px; }
+.headerActions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.weekControl { display: flex; align-items: center; height: 34px; overflow: hidden; border: 1px solid #ddd7ef; border-radius: 6px; background: #fff; }
+.weekControl button { display: grid; width: 32px; height: 100%; place-items: center; color: #6040ca; }
+.weekControl button:hover { background: #f1edff; }
+.weekControl span { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-inline: 1px solid #ece8f4; color: #5a38c5; font-size: 10px; font-weight: 700; }
+.outlineButton, .primaryButton { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: 6px; padding: 6px 11px; border-radius: 6px; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.outlineButton { border: 1px solid #d8d0f7; background: #fff; color: #5935ca; }
+.outlineButton:hover { background: #f3efff; }
+.primaryButton { border: 1px solid #6540d8; background: linear-gradient(135deg, #7449e7, #5630c5); color: #fff; box-shadow: 0 4px 10px rgb(94 55 204 / 20%); }
+.primaryButton:hover { filter: brightness(1.05); }
+.searchRow { display: flex; align-items: center; gap: 8px; padding: 0 16px 10px; }
+.searchRow label { display: flex; min-width: 240px; max-width: 420px; flex: 1; align-items: center; gap: 7px; height: 32px; padding: 0 10px; border: 1px solid #e1ddea; border-radius: 6px; color: #7a7390; }
+.searchRow input { width: 100%; min-width: 0; color: #302a47; font-size: 10px; outline: none; }
+.searchRow button { height: 32px; padding: 0 12px; border-radius: 6px; background: #f0ecff; color: #5c37ca; font-size: 9px; font-weight: 700; }
+.tableScroll { overflow-x: auto; }
+.table { width: 100%; min-width: 1080px; border-collapse: collapse; color: #493f69; font-size: 10px; }
+.table th { padding: 8px 12px; background: #f3f1f8; color: #625a7c; font-size: 9px; font-weight: 700; text-align: left; }
+.table td { padding: 8px 12px; border-bottom: 1px solid #eeebf4; vertical-align: middle; white-space: nowrap; }
+.table tbody tr:hover { background: #fcfbff; }
+.table :global(td) > :global(button) { min-height: 29px; }
+.table :global(td) > :global(button[class*="textButton"]) { display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; border: 1px solid #d8d0f7; border-radius: 5px; color: #5935ca; font-size: 9px; font-weight: 700; }
+.table :global(td) > :global(button[class*="primaryButton"]) { border-color: #6540d8; background: #6740d8; color: #fff; }
+.table :global(td) > :global(p) { max-width: 150px; white-space: normal; }
+.learnerName { display: block; color: #302749; font-size: 10px; }
+.cellSub { display: block; max-width: 150px; margin-top: 2px; overflow: hidden; color: #8a829b; font-size: 8px; text-overflow: ellipsis; }
+.status { display: inline-flex; align-items: center; gap: 5px; min-width: 82px; justify-content: center; padding: 5px 8px; border-radius: 5px; font-size: 9px; font-weight: 700; }
+.status[data-tone="positive"] { background: #dcf7e8; color: #15905a; }
+.status[data-tone="brand"] { background: #ece7ff; color: #6140cf; }
+.status[data-tone="warning"] { background: #fff0ce; color: #b87500; }
+.status[data-tone="neutral"] { background: #efedf3; color: #676071; }
+.notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border: 1px solid #ccebdc; border-radius: 7px; background: #eaf9f1; color: #17794f; font-size: 10px; }
+.notice button { display: grid; place-items: center; }
+.state { padding: 12px; }
+@media (max-width: 760px) { .page { padding: 14px 10px 22px; } .title h1 { font-size: 22px; } .headerActions { width: 100%; } .weekControl { width: 100%; justify-content: space-between; } .searchRow { flex-wrap: wrap; } .searchRow label { min-width: 100%; } }

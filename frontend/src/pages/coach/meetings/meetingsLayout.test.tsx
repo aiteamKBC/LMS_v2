@@ -1,29 +1,20 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CoachCalendarEvent } from '../shared/calendarEvents';
-import styles from './meetings.module.css';
 
-const { fetchCoachCalendarEvents } = vi.hoisted(() => ({
-  fetchCoachCalendarEvents: vi.fn(),
-}));
+const { fetchCoachCalendarEvents } = vi.hoisted(() => ({ fetchCoachCalendarEvents: vi.fn() }));
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
-
 vi.mock('@/hooks/useCoachIdentity', () => ({
-  useCoachIdentity: () => ({
-    email: 'coach@example.com',
-    name: 'Coach Example',
-    hasCoachAccess: true,
-    isViewingAsCoach: false,
-    canChooseCoach: false,
-    isInitialized: true,
-  }),
+  useCoachIdentity: () => ({ email: 'coach@example.com', name: 'Coach Example', isViewingAsCoach: false, isInitialized: true }),
 }));
-
+vi.mock('@/pages/workspace/coach/DashboardMeetingActions', () => ({
+  DashboardMeetingActions: () => <><td><button>Reschedule</button></td><td><button>Send Reminder</button></td><td><button>Generate Presentation</button></td><td><button>View Form</button></td></>,
+}));
 vi.mock('../shared/calendarEvents', async importOriginal => ({
   ...(await importOriginal<typeof import('../shared/calendarEvents')>()),
   fetchCoachCalendarEvents,
@@ -31,122 +22,65 @@ vi.mock('../shared/calendarEvents', async importOriginal => ({
 
 function meeting(index: number, overrides: Partial<CoachCalendarEvent> = {}): CoachCalendarEvent {
   return {
-    id: `meeting-${index}`,
-    eventKey: `mcr:${index}`,
-    title: `Monthly coaching meeting ${index}`,
-    type: 'coaching',
-    source: 'mcr',
-    learner: `Learner ${index}`,
-    status: 'not-scheduled',
-    targetDate: `2026-09-${String(20 + index).padStart(2, '0')}`,
-    durationMinutes: 60,
-    platform: 'Microsoft Teams',
-    group: `Group ${index}`,
+    id: `meeting-${index}`, eventKey: `mcr:${index}`, title: `Monthly coaching meeting ${index}`,
+    type: 'coaching', source: 'mcr', learner: `Learner ${index}`, status: 'scheduled',
+    scheduledDate: `2026-09-${String(14 + index).padStart(2, '0')}`, scheduledTime: '10:30', durationMinutes: 60,
     ...overrides,
   };
 }
 
-const layoutMeetings = [
-  meeting(1, {
-    learner: 'A learner with an exceptionally long name that must remain contained inside the card',
-    targetDate: '2026-09-01',
-    group: 'A very long group name that should truncate without widening the meeting card',
-  }),
-  meeting(2, {
-    learner: 'Scheduled Learner',
-    status: 'scheduled',
-    scheduledDate: '2026-09-22',
-    scheduledTime: '10:30',
-    meetingLink: 'https://teams.example/meeting-2',
-  }),
-  meeting(3, {
-    learner: 'In Progress Learner',
-    status: 'in-progress',
-    scheduledDate: '2026-09-23',
-    scheduledTime: '11:00',
-    meetingLink: 'https://teams.example/meeting-3',
-    group: undefined,
-    cohort: 'A very long cohort name that remains available without overflowing the card',
-  }),
-  meeting(4, {
-    learner: 'Not Scheduled Learner',
-    targetDate: '2026-09-30',
-  }),
+const meetings = [
+  meeting(1, { learner: 'Weekly Learner', scheduledDate: '2026-09-15' }),
+  meeting(2, { learner: 'Review Learner', source: 'progress-review', type: 'review', scheduledDate: '2026-09-17' }),
+  meeting(3, { learner: 'Upcoming Learner', scheduledDate: '2026-09-23' }),
+  meeting(4, { learner: 'Live Session Learner', source: 'live-session', scheduledDate: '2026-09-16' }),
 ];
 
-async function renderPage(events: CoachCalendarEvent[]) {
-  fetchCoachCalendarEvents.mockResolvedValueOnce({
-    owner: { name: 'Coach Example', email: 'coach@example.com' },
-    events,
-  });
+function RouteState() {
+  const location = useLocation();
+  return <output data-testid="route">{location.pathname}</output>;
+}
+
+async function renderPage() {
+  fetchCoachCalendarEvents.mockResolvedValueOnce({ owner: { name: 'Coach Example' }, events: meetings });
   const { default: CoachMeetings } = await import('./page');
-  render(
-    <MemoryRouter initialEntries={['/coach/meetings']}>
-      <CoachMeetings />
-    </MemoryRouter>,
-  );
-  await waitFor(() => expect(fetchCoachCalendarEvents).toHaveBeenCalled());
-  return screen.findByTestId('coaching-meeting-grid');
+  render(<MemoryRouter initialEntries={['/coach/meetings']}><CoachMeetings /><RouteState /></MemoryRouter>);
+  await waitFor(() => expect(fetchCoachCalendarEvents).toHaveBeenCalledOnce());
 }
 
-function cardFor(learner: string) {
-  return screen.getByText(learner).closest('.ui-action-row') as HTMLElement;
-}
-
-describe('coach meeting card layout', () => {
+describe('coach meetings schedule layout', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    vi.setSystemTime(new Date('2026-09-14T10:00:00'));
+    vi.setSystemTime(new Date('2026-09-16T10:00:00'));
     fetchCoachCalendarEvents.mockReset();
   });
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
 
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
+  it('splits current-week and later meetings while excluding non-meeting calendar events', async () => {
+    await renderPage();
+    const week = screen.getByRole('region', { name: "This Week's Schedule" });
+    const upcoming = screen.getByRole('region', { name: 'Upcoming Meetings' });
+    expect(within(week).getByText('Weekly Learner')).toBeInTheDocument();
+    expect(within(week).getByText('Review Learner')).toBeInTheDocument();
+    expect(within(week).getByText('Progress Review')).toBeInTheDocument();
+    expect(within(upcoming).getByText('Upcoming Learner')).toBeInTheDocument();
+    expect(screen.queryByText('Live Session Learner')).not.toBeInTheDocument();
   });
 
-  it.each([1, 2, 3, 4])('keeps %i meeting(s) in the responsive card grid', async count => {
-    const grid = await renderPage(layoutMeetings.slice(0, count));
-
-    expect(grid).toHaveClass(styles.meetingGrid);
-    expect(grid.children).toHaveLength(count);
-    for (const card of Array.from(grid.children)) {
-      expect(card).toHaveClass(styles.meetingCard);
-      expect(card.querySelector('.ui-action-row__meta')).toBeInTheDocument();
-      expect(card.querySelector('.ui-action-row__actions')).toBeInTheDocument();
+  it('keeps the extra meeting actions visible in the weekly schedule', async () => {
+    await renderPage();
+    const row = screen.getByText('Weekly Learner').closest('tr')!;
+    for (const action of ['Reschedule', 'Send Reminder', 'Generate Presentation', 'View Form', 'View Learner']) {
+      expect(within(row).getByRole('button', { name: action })).toBeInTheDocument();
     }
   });
 
-  it('preserves status badges and the existing action branches without hiding them at narrow widths', async () => {
-    await renderPage(layoutMeetings);
-
-    const overdue = cardFor(layoutMeetings[0].learner!);
-    expect(within(overdue).getByText('Not Scheduled')).toBeInTheDocument();
-    expect(within(overdue).getByText('Overdue')).toBeInTheDocument();
-    expect(within(overdue).getByRole('button', { name: 'Calendar' })).toBeInTheDocument();
-    expect(within(overdue).getByRole('button', { name: 'Schedule' })).toBeInTheDocument();
-    expect(within(overdue).queryByRole('button', { name: 'Join Meeting' })).not.toBeInTheDocument();
-
-    const scheduled = cardFor('Scheduled Learner');
-    expect(within(scheduled).getByText('Scheduled')).toBeInTheDocument();
-    expect(within(scheduled).getByRole('button', { name: 'Calendar' })).toBeInTheDocument();
-    expect(within(scheduled).getByRole('button', { name: 'Join Meeting' })).toBeInTheDocument();
-    expect(within(scheduled).getByRole('button', { name: 'Manage' })).toBeInTheDocument();
-
-    const inProgress = cardFor('In Progress Learner');
-    expect(within(inProgress).getByText('In Progress')).toBeInTheDocument();
-    expect(within(inProgress).getByRole('button', { name: 'Join Meeting' })).toBeInTheDocument();
-    expect(within(inProgress).getByRole('button', { name: 'Manage' })).toBeInTheDocument();
-
-    const visibleActionGroup = overdue.querySelector('.ui-calendar-event-action-group') as HTMLElement;
-    expect(visibleActionGroup).not.toHaveClass('hidden');
-  });
-
-  it('contains long learner and group/cohort labels with accessible full-text tooltips', async () => {
-    await renderPage(layoutMeetings);
-
-    expect(screen.getByTitle(layoutMeetings[0].learner!)).toHaveClass('truncate');
-    expect(screen.getByTitle(layoutMeetings[0].group!)).toHaveClass('truncate');
-    expect(screen.getByTitle(layoutMeetings[2].cohort!)).toHaveClass('truncate');
+  it('filters both schedule tables and opens the full coach calendar', async () => {
+    await renderPage();
+    fireEvent.change(screen.getByPlaceholderText('Search learners or meeting types...'), { target: { value: 'Upcoming' } });
+    expect(screen.queryByText('Weekly Learner')).not.toBeInTheDocument();
+    expect(screen.getByText('Upcoming Learner')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /View full calendar/i }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/timetable');
   });
 });

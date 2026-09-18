@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { fetchKsbProfile } from '@/api/curriculum';
@@ -8,8 +9,6 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { cn } from '@/lib/cn';
 import { statusTone, toneStyle, type StatusTone } from '@/lib/statusTone';
-import { PageContainer } from '@/components/ui/PageContainer';
-import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import OTJHTab from './components/OTJHTab';
@@ -36,10 +35,10 @@ import {
   toneFromPercent,
   useCoachLearnerCaseFileData,
   type CaseFileActivityItem,
-  type CaseFileReviewGroup,
   type CaseFileReviewMeeting,
   type CoachLearnerCaseFileData,
 } from './data';
+import styles from './learnerCaseFile.module.css';
 
 const coachNav = roleNavMap.coach;
 const ATTENDANCE_DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
@@ -72,9 +71,6 @@ const HIDDEN_CASE_FILE_TAB_IDS = new Set<typeof CASE_FILE_TABS[number]['id']>([
   'documents',
 ]);
 const NAV_TABS = CASE_FILE_TABS.filter(tab => !HIDDEN_CASE_FILE_TAB_IDS.has(tab.id));
-// PageTabs has no per-tab icon slot -- the icons above are still used to
-// validate `?tab=` in the URL, but the rendered strip below is label-only.
-const NAV_TAB_ITEMS: PageTabItem[] = NAV_TABS.map((tab) => ({ value: tab.id, label: tab.label }));
 type LocationState = {
   learnerId?: string;
   learnerName?: string;
@@ -178,7 +174,7 @@ export default function LearnerCaseFile() {
 
     switch (activeTab) {
       case 'overview':
-        return <ReferenceOverviewContent data={data} />;
+        return <ReferenceOverviewContent data={data} onNavigate={setActiveTab} onSchedule={() => navigate('/coach/timetable')} />;
       case 'programme':
         return <ReferenceProgrammeContent data={data} />;
       case 'progress':
@@ -186,11 +182,17 @@ export default function LearnerCaseFile() {
       case 'attendance':
         return <ReferenceAttendanceContent data={data} />;
       case 'reviews':
-        return <ReferenceReviewsContent data={data} onOpen={handleOpenReviewMeeting} onChanged={refresh} />;
+        return <ReferenceReviewsContent
+          data={data}
+          onOpen={handleOpenReviewMeeting}
+          onChanged={refresh}
+          onOpenNotes={() => setActiveTab('coach-notes')}
+          onOpenMonthlyLogs={() => data.detail?.id && navigate(`/coach/monthly-logs/${data.detail.id}`)}
+        />;
       case 'coach-notes':
         return <DocumentsTab data={data} />;
       case 'support':
-        return <LearningPlanTab data={data} />;
+        return <LearningPlanTab data={data} onOpenNotes={() => setActiveTab('coach-notes')} />;
       case 'otjh':
         return <OTJHTab data={data} />;
       case 'ksbs':
@@ -206,7 +208,7 @@ export default function LearnerCaseFile() {
       case 'documents':
         return <DocumentsTab data={data} />;
       default:
-        return <ReferenceOverviewContent data={data} />;
+        return <ReferenceOverviewContent data={data} onNavigate={setActiveTab} onSchedule={() => navigate('/coach/timetable')} />;
     }
   };
 
@@ -221,55 +223,48 @@ export default function LearnerCaseFile() {
       userName={data?.coachName || coach.name}
       userRole="Progress Coach"
     >
-      <PageContainer>
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          className="inline-flex items-center gap-2 text-[12px] font-semibold text-foreground-400 transition hover:text-primary-700"
-        >
-          <AppIcon className="ri-arrow-left-line"></AppIcon>
-          My Learners
-          <span className="text-foreground-300">/</span>
-          <span className="text-foreground-700">{pageTitle}</span>
-        </button>
+      <main className={styles.page}>
+        <nav className={styles.breadcrumb} aria-label="Breadcrumb">
+          <button type="button" aria-label="Coach dashboard" onClick={() => navigate('/workspace/coach')}><AppIcon className="ri-home-4-line" /></button>
+          <AppIcon className="ri-arrow-right-s-line" />
+          <button type="button" onClick={() => navigate('/workspace/coach')}>Coach Workspace</button>
+          <AppIcon className="ri-arrow-right-s-line" />
+          <button type="button" onClick={() => navigate('/coach/caseload')}>Coach</button>
+          <AppIcon className="ri-arrow-right-s-line" />
+          <strong>Learner Case File</strong>
+        </nav>
 
         {error && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">{error}</div>
         )}
 
-        <section
-          className="workspace-page-hero overflow-hidden rounded-2xl shadow-sm"
-          style={{ background: 'var(--kbc-hero-gradient)' }}
-        >
-          <div className="flex flex-col gap-5 px-5 py-5 md:px-7">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div className="flex min-w-0 items-start gap-4">
+        <section className={styles.hero} aria-label="Learner profile summary">
+          <div className={styles.heroTop}>
+              <div className={styles.identity}>
                 <LearnerAvatar
                   name={pageTitle}
                   initials={data?.initials}
                   size="lg"
-                  tone={statusTone(data?.attendance?.risk)}
-                  className="shrink-0 bg-white/90 shadow-sm"
+                  tone={statusTone(data?.programStatus)}
+                  className={styles.avatar}
                 />
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h1 className="min-w-0 truncate font-heading text-xl font-bold tracking-tight text-white md:text-2xl">
-                      {pageTitle}
-                    </h1>
-                    <StatusBadge tone={statusTone(data?.attendance?.risk)} label={statusLabel(data)} size="sm" />
+                <div className={styles.identityCopy}>
+                  <div className={styles.nameRow}>
+                    <h1>{pageTitle}</h1>
+                    <StatusBadge tone={statusTone(data?.programStatus)} label={statusLabel(data)} size="sm" />
                     {data?.snapshot?.coachRag && (
                       <StatusBadge status={data.snapshot.coachRag} label={`RAG: ${data.snapshot.coachRag}`} size="sm" />
                     )}
                   </div>
-                  <p className="mt-1 text-[13px] leading-relaxed text-white/80">{pageSubtitle}</p>
-                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-white/75">
+                  <p className={styles.subtitle}>{pageSubtitle}</p>
+                  <div className={styles.contactLine}>
                     {data?.email && (
-                      <span className="inline-flex items-center gap-1.5">
+                      <span>
                         <AppIcon className="ri-mail-line"></AppIcon>{data.email}
                       </span>
                     )}
                     {data?.detail?.phone && (
-                      <span className="inline-flex items-center gap-1.5">
+                      <span>
                         <AppIcon className="ri-phone-line"></AppIcon>{data.detail.phone}
                       </span>
                     )}
@@ -277,23 +272,23 @@ export default function LearnerCaseFile() {
                 </div>
               </div>
 
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                {data?.detail?.id && <button type="button" onClick={() => navigate(`/coach/monthly-logs/${data.detail!.id}`)}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/30 bg-white/10 px-3 text-[12px] font-semibold text-white transition hover:bg-white/20">
-                  <AppIcon className="ri-file-list-3-line" /> Monthly Logs
-                </button>}
+              <div className={styles.heroActions}>
                 <button
                   type="button"
                   onClick={() => navigate('/coach/timetable')}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white/95 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-white"
+                  className={styles.primaryAction}
                 >
                   <AppIcon className="ri-calendar-line"></AppIcon> Schedule
                 </button>
+                {data?.detail?.id && <button type="button" onClick={() => navigate(`/coach/monthly-logs/${data.detail!.id}`)}
+                  className={styles.secondaryAction}>
+                  <AppIcon className="ri-file-list-3-line" /> Monthly Logs
+                </button>}
                 {data?.kind && (
                   <button
                     type="button"
                     onClick={handleOpenTrainingPlan}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/30 bg-white/10 px-3 text-[12px] font-semibold text-white transition hover:bg-white/20"
+                    className={styles.secondaryAction}
                   >
                     <AppIcon className="ri-route-line"></AppIcon> Training Plan
                   </button>
@@ -301,89 +296,114 @@ export default function LearnerCaseFile() {
               </div>
             </div>
 
-            <div className="grid gap-2 border-t border-white/20 pt-4 sm:grid-cols-2 lg:grid-cols-6">
-              <CaseFileHeroMetric label="Overall" value={formatPercent(data?.overallProgress ?? null)} />
-              <CaseFileHeroMetric label="OTJH" value={data ? formatFraction(data.otjhCompleted, data.otjhTarget) : '--'} />
-              <CaseFileHeroMetric label="KSB" value={ksbHeadlineValue(data)} />
-              <CaseFileHeroMetric label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} />
-              <CaseFileHeroMetric label="Gateway" value={data?.gatewayReviewDate || '--'} />
-              <CaseFileHeroMetric label="Next session" value={nextLiveSession?.summary || '--'} wide />
-            </div>
+          <div className={styles.metrics}>
+              <CaseFileHeroMetric icon="ri-focus-3-line" label="Overall" value={formatPercent(data?.overallProgress ?? null)} />
+              <CaseFileHeroMetric icon="ri-time-line" label="OTJH" value={data ? formatFraction(data.otjhCompleted, data.otjhTarget) : '--'} />
+              <CaseFileHeroMetric icon="ri-stack-line" label="KSB" value={ksbHeadlineValue(data)} />
+              <CaseFileHeroMetric icon="ri-group-line" label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} />
+              <CaseFileHeroMetric icon="ri-calendar-line" label="Gateway" value={data?.gatewayReviewDate || '--'} />
+              <CaseFileHeroMetric icon="ri-calendar-event-line" label="Next session" value={nextLiveSession?.summary || '--'} />
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-          <div className="border-b border-foreground-100 p-3">
-            <PageTabs
-              items={NAV_TAB_ITEMS}
-              value={activeTab}
-              onChange={(next) => setActiveTab(next as TabId)}
-              label="Case file sections"
-            />
-          </div>
-          <div className="p-4 md:p-5">
-            {renderTab()}
-          </div>
+        <nav className={styles.tabs} aria-label="Case file sections" role="tablist">
+          {NAV_TABS.map(tab => {
+            const active = activeTab === tab.id;
+            return <button key={tab.id} type="button" role="tab" aria-selected={active}
+              className={cn(styles.tab, active && styles.tabActive)} onClick={() => setActiveTab(tab.id)}>
+              <AppIcon className={tab.icon} />{tab.label}
+            </button>;
+          })}
+        </nav>
+
+        <section className={styles.content} role="tabpanel">
+          {renderTab()}
         </section>
-      </PageContainer>
+      </main>
     </WorkspaceShell>
   );
 }
 
-function CaseFileHeroMetric({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+function CaseFileHeroMetric({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
-    <div className={cn('rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-white shadow-sm backdrop-blur-sm', wide && 'sm:col-span-2 lg:col-span-1')}>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-white/60">{label}</p>
-      <p className="mt-1 truncate text-[12px] font-semibold text-white" title={value}>{value}</p>
+    <div className={styles.metric}>
+      <span className={styles.metricIcon}><AppIcon className={icon} /></span>
+      <div className="min-w-0">
+        <span className={styles.metricLabel}>{label}</span>
+        <strong className={styles.metricValue} title={value}>{value}</strong>
+      </div>
     </div>
   );
 }
 
-function ReferenceOverviewContent({ data }: { data: CoachLearnerCaseFileData }) {
+function ReferenceOverviewContent({
+  data,
+  onNavigate,
+  onSchedule,
+}: {
+  data: CoachLearnerCaseFileData;
+  onNavigate: (tab: TabId) => void;
+  onSchedule: () => void;
+}) {
   const risks = buildRiskItems(data).filter((item) => item.tone === 'red' || item.tone === 'amber');
   const activities = data.activityItems.slice(0, 6);
   const upcomingSessions = data.upcomingSessions;
+  const otjhPercent = data.otjhCompleted !== null && data.otjhTarget !== null && data.otjhTarget > 0
+    ? Math.min(100, Math.round((data.otjhCompleted / data.otjhTarget) * 100))
+    : null;
+  const primaryRisk = risks[0];
   return (
-    <div className="space-y-5">
-      <div className="grid gap-4 lg:grid-cols-3">
-        <ReferencePanel title="Programme" icon="ri-graduation-cap-line" tone="primary">
-          <ProfileInfo label="Qualification" value={data.programme} />
-          <ProfileInfo label="Cohort" value={data.cohort} />
-          <ProfileInfo label="Group" value={data.group} />
-          <ProfileInfo label="Start Date" value={data.startDate} />
-          <ProfileInfo label="Gateway Date" value={data.gatewayReviewDate} />
-        </ReferencePanel>
-        <ReferencePanel title="Progress Summary" icon="ri-line-chart-line" tone="emerald">
-          <ProfileProgress label="Overall Progress" value={data.overallProgress} color="bg-primary-600" />
-          <ProfileProgress label="KSB Progress" value={data.ksbProgress} color="bg-emerald-500" />
-          <ProfileProgress label="Attendance" value={data.attendanceRate} color="bg-amber-500" />
-          <div className="mt-3 flex items-center justify-between border-t border-foreground-100 pt-3 text-[12px]">
-            <span className="text-foreground-400">Evidence records</span>
-            <strong className="text-foreground-800">{data.evidenceCount ?? '--'}</strong>
+    <div className={styles.stack}>
+      <div className={styles.overviewGrid}>
+        <ReferencePanel title="Profile Snapshot" subtitle="Key information about this learner" icon="ri-user-line" tone="primary">
+          <div className={styles.profileGrid}>
+            <ProfileInfo icon="ri-graduation-cap-line" label="Qualification" value={data.programme} />
+            <ProfileInfo icon="ri-calendar-line" label="Planned Gateway" value={data.gatewayReviewDate} />
+            <ProfileInfo icon="ri-group-line" label="Cohort" value={data.cohort} />
+            <ProfileInfo icon="ri-building-line" label="Employer" value={data.employer} />
+            <ProfileInfo icon="ri-box-3-line" label="Group" value={data.group} />
+            <ProfileInfo icon="ri-user-line" label="Coach" value={data.coachName} />
+            <ProfileInfo icon="ri-calendar-event-line" label="Start Date" value={data.startDate} />
           </div>
         </ReferencePanel>
-        <ReferencePanel title="Alerts & Actions" icon="ri-alarm-warning-line" tone="red">
-          {risks.length === 0 ? (
-            <p className="flex items-center gap-2 text-[12px] font-medium text-emerald-600"><AppIcon className="ri-checkbox-circle-line"></AppIcon>No risk factors identified</p>
-          ) : risks.map((risk) => (
-            <div key={risk.label} className="mb-2 rounded-xl border border-amber-100 bg-amber-50/60 p-3">
-              <p className="text-[12px] font-bold text-amber-800">{risk.label}</p>
-              <p className="mt-0.5 text-[12px] text-amber-700">{risk.detail}</p>
+        <ReferencePanel title="Progress Summary" subtitle="Current progress against key targets" icon="ri-bar-chart-box-line" tone="emerald">
+          <div className={styles.progressStack}>
+            <ProfileProgress label="Overall Progress" value={data.overallProgress} tone="primary" />
+            <ProfileProgress label="OTJH Progress" value={otjhPercent} tone="primary" />
+            <ProfileProgress label="KSB Coverage" value={data.ksbProgress} tone="emerald" />
+            <ProfileProgress label="Attendance" value={data.attendanceRate} tone="striped" />
+          </div>
+        </ReferencePanel>
+        <ReferencePanel title="Alerts & Actions" subtitle="Items that need your attention" icon="ri-alarm-warning-line" tone="red">
+          {primaryRisk ? (
+            <div className={styles.alertBox}>
+              <AppIcon className="ri-alarm-warning-line" />
+              <div>
+                <strong>{primaryRisk.detail}</strong>
+                <p>{primaryRisk.label === 'OTJH Hours'
+                  ? 'This learner needs evidence and activity to meet their OTJH requirement.'
+                  : 'Review this learner record and agree the next support action.'}</p>
+              </div>
             </div>
-          ))}
+          ) : <div className={styles.empty}><span>No alerts require action.</span></div>}
+          <div className={styles.buttonRow}>
+            <button type="button" className={styles.solidButton} onClick={() => onNavigate('progress')}><AppIcon className="ri-add-line" />Log activity</button>
+            <button type="button" className={styles.outlineButton} onClick={() => onNavigate('support')}><AppIcon className="ri-book-open-line" />View journey</button>
+          </div>
         </ReferencePanel>
       </div>
-      <ReferencePanel title="Recent Activity" icon="ri-history-line" tone="muted">
-        {activities.length === 0 ? <ProfileEmpty text="No recent activity is available." /> : activities.map((item) => (
-          <div key={item.id} className="flex gap-3 border-b border-foreground-100 py-2.5 last:border-0">
+      <ReferencePanel title="Recent Activity" subtitle="Latest updates, evidence and interactions" icon="ri-time-line" tone="muted">
+        {activities.length === 0 ? <ProfileEmpty text="No recent activity yet. Activity such as evidence uploads, meeting notes and progress updates will appear here." /> : <div className={styles.activityList}>{activities.map((item) => (
+          <div key={item.id} className={styles.activityRow}>
             <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-full', toneStyle(activityStatusTone(item.tone)).bg, toneStyle(activityStatusTone(item.tone)).text)}><AppIcon className="ri-history-line text-xs"></AppIcon></span>
             <div className="min-w-0 flex-1"><p className="text-[12px] font-bold text-foreground-800">{item.event}</p><p className="truncate text-[12px] text-foreground-400">{item.detail || 'No details available.'}</p></div>
             <span className="text-[12px] text-foreground-300">{item.date}</span>
           </div>
-        ))}
+        ))}</div>}
       </ReferencePanel>
-      <ReferencePanel title="Upcoming Sessions" icon="ri-calendar-event-line" tone="primary">
-        {upcomingSessions.length === 0 ? <ProfileEmpty text="No upcoming live session is scheduled." /> : (
+      <ReferencePanel title="Upcoming Sessions & Reviews" subtitle="Scheduled coaching sessions, reviews and key dates" icon="ri-calendar-event-line" tone="primary"
+        actions={<button type="button" className={styles.solidButton} onClick={onSchedule}><AppIcon className="ri-calendar-event-line" />Schedule session</button>}>
+        {upcomingSessions.length === 0 ? <ProfileEmpty text="No upcoming sessions scheduled. Schedule a coaching session or review to keep this learner on track." /> : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {upcomingSessions.map((session) => (
               <div key={session.id} className="rounded-xl border border-primary-100 bg-primary-50/35 p-3">
@@ -410,37 +430,49 @@ function ReferenceOverviewContent({ data }: { data: CoachLearnerCaseFileData }) 
 function ReferenceProgrammeContent({ data }: { data: CoachLearnerCaseFileData }) {
   const contacts = buildContacts(data);
   return (
-    <div className="space-y-5">
-      <ReferencePanel title="Programme Details" icon="ri-graduation-cap-line" tone="primary">
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          <ProfileInfo label="Programme" value={data.programme} />
-          <ProfileInfo label="Cohort" value={data.cohort} />
-          <ProfileInfo label="Group" value={data.group} />
-          <ProfileInfo label="Employer" value={data.employer} />
-          <ProfileInfo label="Start Date" value={data.startDate} />
-          <ProfileInfo label="Planned Gateway" value={data.gatewayReviewDate} />
-          <ProfileInfo label="Planned End" value={data.plannedEndDate} />
-          <ProfileInfo label="Status" value={data.programStatus} />
+    <div className={styles.stack}>
+      <ReferencePanel title="Programme Details" subtitle="Key programme information for this learner" icon="ri-graduation-cap-line" tone="primary">
+        <div className={styles.programmeGrid}>
+          <div className={styles.programmeCell}><ProfileInfo icon="ri-graduation-cap-line" label="Programme" value={data.programme} /></div>
+          <div className={styles.programmeCell}><ProfileInfo icon="ri-group-line" label="Cohort" value={data.cohort} /></div>
+          <div className={styles.programmeCell}><ProfileInfo icon="ri-group-2-line" label="Group" value={data.group} /></div>
+          <div className={styles.programmeCell}><ProfileInfo icon="ri-building-line" label="Employer" value={data.employer} /></div>
+          <div className={styles.programmeCell}><ProfileInfo icon="ri-pulse-line" label="Status" value={data.programStatus} /></div>
+          <div className={styles.programmeCell}><ProfileInfo icon="ri-calendar-line" label="Start Date" value={data.startDate} /></div>
+          <div className={styles.programmeCell}><ProfileInfo icon="ri-calendar-check-line" label="Planned Gateway" value={data.gatewayReviewDate} /></div>
+          <div className={styles.programmeCell}><ProfileInfo icon="ri-calendar-event-line" label="Planned End" value={data.plannedEndDate} /></div>
+          <div className={styles.programmeCell}><ProfileInfo icon="ri-user-line" label="Coach" value={data.coachName} /></div>
         </div>
       </ReferencePanel>
-      <ReferencePanel title="Employer Information" icon="ri-building-line" tone="primary">
-        <div className="grid gap-5 lg:grid-cols-2">
-          <div className="rounded-xl bg-background-100/70 p-4">
-            <ProfileInfo label="Organisation" value={data.employer} />
-            <div className="mt-4 grid grid-cols-2 gap-4">
-              <ProfileInfo label="Employer Email" value={data.employerEmail} />
-              <ProfileInfo label="Employer Phone" value={data.employerPhone} />
+      <ReferencePanel title="Employer & Contacts" subtitle="Employer information and key contacts for this learner" icon="ri-team-line" tone="primary">
+        <div className={styles.employerGrid}>
+          <div className={styles.subPanel}>
+            <p className={styles.subPanelTitle}><AppIcon className="ri-building-line" />Employer Information</p>
+            <ProfileInfo icon="ri-building-line" label="Organisation" value={data.employer} />
+            <div className="mt-5 grid grid-cols-2 gap-4">
+              <ProfileInfo icon="ri-mail-line" label="Employer Email" value={data.employerEmail} />
+              <ProfileInfo icon="ri-phone-line" label="Employer Phone" value={data.employerPhone} />
             </div>
           </div>
-          <div className="space-y-2">
+          <div className={styles.subPanel}>
+            <p className={styles.subPanelTitle}><AppIcon className="ri-group-line" />Key Contacts</p>
+            <div className={styles.contacts}>
             {contacts.length === 0 ? <ProfileEmpty text="No employer contacts are available." /> : contacts.map((contact) => (
-              <div key={`${contact.role}-${contact.name}`} className="rounded-xl bg-background-100/70 p-4">
-                <p className="text-[12px] font-bold text-foreground-800">{contact.name}</p>
-                <p className="text-[12px] text-foreground-400">{contact.role}</p>
-                {contact.meta && <p className="mt-1 text-[12px] text-primary-600">{contact.meta}</p>}
+              <div key={`${contact.role}-${contact.name}`} className={styles.contactCard}>
+                <span className={styles.contactAvatar}>{contact.initials}</span>
+                <span><strong>{contact.name}</strong><small>{contact.role}{contact.meta ? ` · ${contact.meta}` : ''}</small></span>
+                {contact.meta && <AppIcon className="ri-mail-line text-primary-600" />}
               </div>
             ))}
+            </div>
           </div>
+        </div>
+      </ReferencePanel>
+      <ReferencePanel title="Quick Notes" subtitle="Key insights and things to be aware of" icon="ri-file-list-3-line" tone="primary">
+        <div className={styles.notesGrid}>
+          <div className={styles.note} data-tone="positive"><AppIcon className="ri-checkbox-circle-fill" /><div><strong>Learner is {statusLabel(data).toLowerCase()}</strong><p>This learner is currently {statusLabel(data).toLowerCase()} on their programme.</p></div></div>
+          <div className={styles.note}><AppIcon className="ri-calendar-line" /><div><strong>Gateway planned for {data.gatewayReviewDate || '--'}</strong><p>Planned gateway date is {data.gatewayReviewDate || 'not available'}.</p></div></div>
+          <div className={styles.note} data-tone="warning"><AppIcon className="ri-alarm-warning-line" /><div><strong>{data.employerEmail || data.employerPhone ? 'Employer contact available' : 'Employer details incomplete'}</strong><p>{data.employerEmail || data.employerPhone ? 'Employer contact details are available.' : 'Employer email and phone are not provided.'}</p></div></div>
         </div>
       </ReferencePanel>
     </div>
@@ -452,7 +484,6 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
   const [ksbSearch, setKsbSearch] = useState('');
   const [fallbackKsbs, setFallbackKsbs] = useState<Array<{ code: string; description: string; type: string; number: string }>>([]);
   const [fallbackKsbsLoading, setFallbackKsbsLoading] = useState(false);
-  const [openKsbCategory, setOpenKsbCategory] = useState<string | null>(null);
   const completed = data.otjhCompleted;
   const target = data.otjhTarget;
   const programmeTotal = data.totalExpectedOtjh || null;
@@ -551,19 +582,10 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
       || item.category.toLowerCase().includes(normalizedSearch);
     return matchesCategory && matchesSearch;
   });
-  const visibleCategoryGroups = categoryOptions
-    .map((category) => {
-      const items = filteredKsbs.filter((item) => item.category === category);
-      const linked = items.filter((item) => item.linked).length;
-      return { category, items, total: items.length, linked };
-    })
-    .filter((group) => group.total > 0);
-  const hasActiveFilters = activeKsbCategory !== 'All' || normalizedSearch.length > 0;
-  const hasFocusedCategoryFilter = activeKsbCategory !== 'All' && !normalizedSearch;
   return (
-    <div className="space-y-5">
-      <ReferencePanel title="Off-the-Job Hours (OTJH)" icon="ri-time-line" tone="primary">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className={styles.stack}>
+      <ReferencePanel title="OTJH Hours" subtitle="Track on-the-job learning hours against your programme requirements." icon="ri-time-line" tone="primary">
+        <div className={styles.metricGrid}>
           <BigMetric value={formatHours(data.otjhCompleted)} label="Hours Logged" tone="primary" />
           <BigMetric value={formatHours(data.otjhTarget)} label="Current Target" tone="muted" />
           <BigMetric value={formatHours(programmeTotal)} label="Programme Total" tone="amber" />
@@ -571,252 +593,73 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
         </div>
         <ProfileProgress label="OTJH Progress" value={otjhPercent} color="bg-primary-600" />
       </ReferencePanel>
-      <ReferencePanel title="Progress Snapshot" icon="ri-pie-chart-line" tone="primary">
-        <div className="grid gap-6 sm:grid-cols-2">
-          <ProfileRing label="OTJH" value={otjhPercent} color="#0ea5e9" />
-          <ProfileRing label="KSB" value={data.ksbProgress} color="#18b978" />
+      <ReferencePanel title="Progress Snapshot" subtitle="Your overall progress towards OTJH hours and KSB completion." icon="ri-bar-chart-line" tone="primary">
+        <div className={styles.snapshotGrid}>
+          <div className={styles.ringGroup}><ProfileRing label="OTJH" value={otjhPercent} color="#6030d2" /></div>
+          <div className={styles.ringGroup}><ProfileRing label="KSB" value={data.ksbProgress} color="#18b978" /></div>
+          <div className={styles.hint}><AppIcon className="ri-information-line" /><div><strong>Getting started</strong><p>Log your on-the-job hours and add evidence against KSBs to see progress here.</p></div></div>
         </div>
       </ReferencePanel>
-      <ReferencePanel title="KSB Detailed Breakdown" icon="ri-file-list-3-line" tone="primary">
+      <ReferencePanel title="KSB Detailed Breakdown" subtitle="View your KSB progress by category and track evidence coverage." icon="ri-stack-line" tone="primary">
         {fallbackKsbsLoading && ksbs.length === 0 ? <div className="p-2"><RowsSkeleton rows={4} avatar={false} /></div> : ksbs.length === 0 ? <ProfileEmpty text="No learner KSB snapshot or programme KSB framework is available yet." /> : (
           <div className="space-y-5">
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className={styles.ksbSummary}>
               <KsbOverviewCard icon="ri-stack-line" label="Total KSBs" value={String(ksbs.length)} tone="primary" />
               <KsbOverviewCard icon="ri-links-line" label="Evidence linked" value={String(linkedCount)} tone="emerald" />
               <KsbOverviewCard icon="ri-focus-3-line" label="Not evidenced" value={String(unlinkedCount)} tone="muted" />
             </div>
 
-            <div className="grid gap-4 2xl:grid-cols-[minmax(330px,0.92fr)_minmax(0,1.35fr)]">
-              <div className="rounded-3xl border border-primary-200/70 bg-primary-50/35 p-5">
-                <div className="flex items-start gap-3">
-                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-primary-700 shadow-sm">
-                    <AppIcon className="ri-filter-3-line text-lg"></AppIcon>
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-[13px] font-bold text-foreground-900">Browse all programme KSBs</p>
-                    <p className="mt-1 text-[12px] leading-5 text-foreground-500">
-                      Search by code, category, or description, then review each KSB inside its own category section.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-4 rounded-2xl border border-white/80 bg-white/90 p-3">
-                  <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-foreground-400">Quick filters</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {['All', ...categoryOptions].map((category) => (
-                      <button
-                        key={category}
-                        type="button"
-                        onClick={() => setActiveKsbCategory(category)}
-                        className={`inline-flex items-center rounded-full px-3.5 py-1.5 text-[12px] font-semibold transition ${
-                          activeKsbCategory === category
-                            ? 'bg-primary-700 text-white shadow-sm'
-                            : 'bg-background-50 text-foreground-600 ring-1 ring-foreground-200/70 hover:bg-background-100'
-                        }`}
-                      >
-                        {category}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="relative mt-3">
-                    <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
-                    <input
-                      type="text"
-                      value={ksbSearch}
-                      onChange={(event) => setKsbSearch(event.target.value)}
-                      placeholder="Search code, category, or description..."
-                      className="w-full rounded-2xl border border-primary-200/70 bg-white py-2.5 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-400"
-                    />
-                  </div>
-                </div>
-
-                {hasActiveFilters && (
-                  <div className="mt-4 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveKsbCategory('All');
-                        setKsbSearch('');
-                      }}
-                      className="inline-flex items-center rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-emerald-700 transition hover:bg-emerald-100"
-                    >
-                      Reset filters
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-3xl border border-foreground-200/60 bg-background-100/45 p-5">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <p className="text-[13px] font-bold text-foreground-900">Coverage by category</p>
-                    <p className="mt-1 text-[12px] leading-5 text-foreground-500">
-                      Each section below keeps linked and not-evidenced KSBs separated in a cleaner way for review.
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-foreground-200/70 bg-white px-3 py-2 text-right">
-                    <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-foreground-400">Visible now</p>
-                    <p className="mt-1 text-[12px] font-bold text-foreground-900">{filteredKsbs.length} of {ksbs.length} KSBs</p>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {categorySummary.map((group) => (
-                    <div key={group.category} className="rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-sm">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <span className={cn('inline-flex h-9 w-9 items-center justify-center rounded-xl', toneStyle(ksbCategoryTone(group.category)).bg, toneStyle(ksbCategoryTone(group.category)).text)}>
-                            <AppIcon className={`${ksbCategoryIcon(group.category)} text-sm`}></AppIcon>
-                          </span>
-                          <div>
-                            <StatusBadge tone={ksbCategoryTone(group.category)} label={group.category} size="sm" dot={false} />
-                          </div>
-                        </div>
-                        <span className="text-[12px] font-bold text-foreground-700">{group.linked}/{group.total}</span>
-                      </div>
-                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-background-200">
-                        <div
-                          className={cn('h-full rounded-full', toneStyle(ksbCategoryTone(group.category)).dot)}
-                          style={{ width: `${group.total ? (group.linked / group.total) * 100 : 0}%` }}
-                        ></div>
-                      </div>
-                      <p className="mt-3 text-[12px] text-foreground-600">
-                        {group.linked} linked and {Math.max(0, group.total - group.linked)} still awaiting evidence.
-                      </p>
+            <div>
+              <p className="text-[12px] font-bold text-foreground-900">Coverage by category</p>
+              <p className="mt-1 text-[11px] text-foreground-500">Each section shows how many KSBs are linked to learner evidence.</p>
+              <div className={styles.coverageGrid}>
+                {categorySummary.map((group) => (
+                  <div key={group.category} className={styles.coverageCard}>
+                    <div className={styles.coverageHead}>
+                      <span className="inline-flex items-center gap-2"><AppIcon className={ksbCategoryIcon(group.category)} />{group.category}</span>
+                      <span>{group.linked} / {group.total}</span>
                     </div>
-                  ))}
-                </div>
+                    <ProfileProgress label="" value={group.total ? Math.round((group.linked / group.total) * 100) : 0} tone={group.category === 'Behaviours' ? 'amber' : 'primary'} />
+                  </div>
+                ))}
               </div>
             </div>
+          </div>
+        )}
+      </ReferencePanel>
 
-            {filteredKsbs.length === 0 ? <ProfileEmpty text="No KSBs matched the current filter." /> : (
-              <div className="space-y-4">
-                {visibleCategoryGroups.map((group) => {
-                  const groupToneStyle = toneStyle(ksbCategoryTone(group.category));
-                  const categoryTone = {
-                    shell: groupToneStyle.border,
-                    header: groupToneStyle.bg,
-                    icon: cn(groupToneStyle.bg, groupToneStyle.text),
-                    progress: groupToneStyle.dot,
-                  };
-                  const isOpen = hasActiveFilters || openKsbCategory === group.category;
-                  const sectionScrollClass = hasFocusedCategoryFilter
-                    ? 'mt-4 max-h-[72vh] overflow-y-auto pr-1'
-                    : 'mt-4 max-h-[520px] overflow-y-auto pr-1';
-
-                  return (
-                    <section
-                      key={group.category}
-                      className={`overflow-hidden rounded-2xl border bg-background-50 shadow-sm ${categoryTone.shell}`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (hasActiveFilters) {
-                            return;
-                          }
-                          setOpenKsbCategory(openKsbCategory === group.category ? null : group.category);
-                        }}
-                        className={`w-full border-b px-5 py-4 text-left transition ${categoryTone.header}`}
-                      >
-                        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                          <div className="flex items-start gap-3">
-                            <span className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl ${categoryTone.icon}`}>
-                              <AppIcon className={`${ksbCategoryIcon(group.category)} text-lg`}></AppIcon>
-                            </span>
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <h4 className="text-[14px] font-bold text-foreground-900">{group.category}</h4>
-                                <StatusBadge tone={ksbCategoryTone(group.category)} label={`${group.total} KSBs`} size="sm" dot={false} />
-                              </div>
-                              <p className="mt-1 text-[12px] text-foreground-500">
-                                {group.linked} evidenced and {Math.max(0, group.total - group.linked)} waiting for learner evidence.
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-3 xl:justify-end">
-                            <div className="rounded-2xl border border-white/80 bg-white/90 px-4 py-3">
-                              <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-foreground-400">Evidence linked</p>
-                              <p className="mt-1 text-[18px] font-bold text-foreground-900">{group.linked}</p>
-                            </div>
-                            <div className="rounded-2xl border border-white/80 bg-white/90 px-4 py-3">
-                              <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-foreground-400">Coverage</p>
-                              <p className="mt-1 text-[18px] font-bold text-foreground-900">
-                                {group.total ? Math.round((group.linked / group.total) * 100) : 0}%
-                              </p>
-                            </div>
-                            {!hasActiveFilters && (
-                              <span className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/90 px-3 py-2 text-[12px] font-semibold text-foreground-600">
-                                {isOpen ? 'Collapse' : 'Expand'}
-                                <AppIcon className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></AppIcon>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white/80">
-                          <div
-                            className={`h-full rounded-full ${categoryTone.progress}`}
-                            style={{ width: `${group.total ? (group.linked / group.total) * 100 : 0}%` }}
-                          ></div>
-                        </div>
-                      </button>
-
-                      {isOpen && (
-                        <div className="p-5">
-                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground-200/70 pb-3">
-                            <p className="text-[12px] font-semibold text-foreground-600">
-                              Showing all {group.total} KSBs in this section
-                            </p>
-                            <span className="inline-flex items-center gap-2 rounded-full border border-foreground-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-foreground-500">
-                              Scroll inside section
-                              <AppIcon className="ri-arrow-down-up-line text-sm"></AppIcon>
-                            </span>
-                          </div>
-
-                          <div className={sectionScrollClass}>
-                            <div className="grid gap-4 xl:grid-cols-2">
-                              {group.items.map((item) => (
-                                <article key={item.code} className="flex h-full flex-col rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-                                  <div className="flex items-start gap-3">
-                                    <span className={cn('inline-flex h-11 min-w-11 items-center justify-center rounded-2xl px-2 text-[12px] font-bold', toneStyle(ksbCategoryTone(item.category)).bg, toneStyle(ksbCategoryTone(item.category)).text)}>
-                                      {item.code}
-                                    </span>
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <StatusBadge tone={ksbCategoryTone(item.category)} label={item.category} size="sm" dot={false} />
-                                        <StatusBadge
-                                          tone={item.linked ? 'positive' : 'neutral'}
-                                          label={item.linked ? 'Evidence linked' : 'Not evidenced'}
-                                          size="sm"
-                                          dot={false}
-                                        />
-                                      </div>
-                                      <p className="mt-3 text-[12px] font-semibold leading-5 text-foreground-900">{item.description}</p>
-                                    </div>
-                                  </div>
-
-                                  <div className={`mt-3 flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] leading-5 ${item.linked ? 'border-emerald-100 bg-emerald-50/80 text-emerald-800' : 'border-foreground-200 bg-background-100/70 text-foreground-500'}`}>
-                                    <AppIcon className={`${item.linked ? 'ri-checkbox-circle-line' : 'ri-information-line'} text-sm`}></AppIcon>
-                                    <span>
-                                      {item.linked
-                                        ? 'Already surfaced in the learner evidence snapshot.'
-                                        : 'No learner evidence has surfaced for this KSB yet.'}
-                                    </span>
-                                  </div>
-                                </article>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </section>
-                  );
-                })}
-              </div>
-            )}
+      <ReferencePanel title="KSB Browser" subtitle="Search and filter KSBs to review details and evidence coverage." icon="ri-file-list-3-line" tone="primary">
+        <div className={styles.browserToolbar}>
+          <label className={styles.search}>
+            <span className="sr-only">Search KSBs</span>
+            <AppIcon className="ri-search-line" />
+            <input value={ksbSearch} onChange={(event) => setKsbSearch(event.target.value)} placeholder="Search KSBs by code, title or description..." />
+          </label>
+          <div className={styles.filterPills}>
+            {['All', ...categoryOptions].map((category) => (
+              <button key={category} type="button" className={cn(styles.filterPill, activeKsbCategory === category && styles.filterPillActive)} onClick={() => setActiveKsbCategory(category)}>
+                {category} ({category === 'All' ? ksbs.length : categorySummary.find((group) => group.category === category)?.total || 0})
+              </button>
+            ))}
+          </div>
+        </div>
+        {filteredKsbs.length === 0 ? <ProfileEmpty text="No KSBs matched the current filter." /> : (
+          <div className={styles.tableScroll}>
+            <table className={styles.ksbTable}>
+              <thead><tr><th>KSB Code</th><th>Title</th><th>Category</th><th>Status</th><th>Evidence</th><th>Actions</th></tr></thead>
+              <tbody>
+                {filteredKsbs.map((item) => (
+                  <tr key={item.code}>
+                    <td><strong>{item.code}</strong></td>
+                    <td>{item.description}</td>
+                    <td><StatusBadge tone={ksbCategoryTone(item.category)} label={item.category} size="sm" dot={false} /></td>
+                    <td><StatusBadge tone={item.linked ? 'positive' : 'neutral'} label={item.linked ? 'Evidence linked' : 'Not evidenced'} size="sm" /></td>
+                    <td>{item.linked ? 1 : 0}</td>
+                    <td><span className={styles.tableButton}>View</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </ReferencePanel>
@@ -878,12 +721,9 @@ function KsbOverviewCard({
   } as const;
 
   return (
-    <div className="rounded-2xl border border-foreground-200/60 bg-background-100/45 p-4">
-      <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${toneMap[tone]}`}>
-        <AppIcon className={`${icon} text-base`}></AppIcon>
-      </div>
-      <p className="mt-3 text-2xl font-bold text-foreground-900">{value}</p>
-      <p className="mt-1 text-[12px] font-semibold uppercase tracking-[0.14em] text-foreground-400">{label}</p>
+    <div className={styles.ksbSummaryCard}>
+      <i className={toneMap[tone]}><AppIcon className={icon} /></i>
+      <div><strong>{value}</strong><span>{label}</span></div>
     </div>
   );
 }
@@ -1066,30 +906,30 @@ function ReferenceReviewsContent({
   data,
   onOpen,
   onChanged,
+  onOpenNotes,
+  onOpenMonthlyLogs,
 }: {
   data: CoachLearnerCaseFileData;
   onOpen: (item: CaseFileReviewMeeting) => void;
   onChanged: () => void;
+  onOpenNotes: () => void;
+  onOpenMonthlyLogs: () => void;
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const reviewsLoading = data.reviewsLoading && data.reviewGroups.length === 0;
+  const reviewItems = data.reviewGroups.flatMap(group => group.items);
+  const timeline = [
+    { label: 'Progress Review', description: 'Formal progress review against programme goals and targets.', icon: 'ri-clipboard-line', match: (item: CaseFileReviewMeeting) => item.source === 'progress-review' },
+    { label: 'Monthly Coaching Meeting', description: 'Regular coaching meeting to discuss progress, support needs and next steps.', icon: 'ri-group-line', match: (item: CaseFileReviewMeeting) => item.source === 'mcr' },
+    { label: 'Catch-up', description: 'Additional meeting to address specific topics or concerns.', icon: 'ri-file-list-3-line', match: (item: CaseFileReviewMeeting) => item.source === 'catch-up' },
+  ].map(entry => ({ ...entry, item: reviewItems.find(entry.match) }));
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/60 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-[13px] font-bold text-foreground-900">Reviews & Meetings</p>
-          <p className="mt-1 text-[12px] text-foreground-500">Add a learner-specific review from this case file, then schedule it now or leave it as not scheduled.</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setAddOpen(true)}
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-primary-700"
-        >
-          <AppIcon className="ri-file-add-line"></AppIcon>
-          Add Review
-        </button>
-      </div>
+    <div className={styles.stack}>
+      <ReferencePanel title="Reviews & Meetings" subtitle="Manage learner-specific reviews and coaching meetings from this case file." icon="ri-group-line" tone="primary"
+        actions={<button type="button" onClick={() => setAddOpen(true)} className={styles.solidButton}><AppIcon className="ri-add-line" />Add Review</button>}>
+        <span className="sr-only">Review and meeting controls</span>
+      </ReferencePanel>
       {data.reviewGenerationIssues.map(issue => (
         <div key={issue.code} className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900" role="status">
           <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-[18px]"></AppIcon>
@@ -1099,19 +939,32 @@ function ReferenceReviewsContent({
           </div>
         </div>
       ))}
-      {reviewsLoading ? (
-        <ReferencePanel title="Reviews" icon="ri-file-chart-line" tone="primary">
-          <div className="p-2">
-            <RowsSkeleton rows={3} avatar={false} />
+      <div className={styles.reviewsGrid}>
+        <ReferencePanel title="Review Timeline" subtitle="Key reviews and meetings for this learner" icon="ri-calendar-line" tone="primary">
+          {reviewsLoading ? <RowsSkeleton rows={3} avatar={false} /> : <div className={styles.timeline}>
+            {timeline.map(entry => <div key={entry.label} className={styles.timelineItem}>
+              <span className={styles.timelineIcon}><AppIcon className={entry.icon} /></span>
+              <div><strong>{entry.label}</strong><p>{entry.description}</p></div>
+              <button type="button" disabled={!entry.item} className={styles.timelineStatus} onClick={() => entry.item && onOpen(entry.item)}>
+                {entry.item?.statusLabel || 'Not scheduled'}
+              </button>
+            </div>)}
+          </div>}
+        </ReferencePanel>
+        <ReferencePanel title="Quick Actions" subtitle="Common tasks for reviews and meetings" icon="ri-flashlight-line" tone="primary">
+          <div className={styles.quickActions}>
+            <button type="button" className={styles.quickAction} onClick={() => setAddOpen(true)}><AppIcon className="ri-calendar-line" /><span><strong>Schedule Review</strong><span>Add a progress review for this learner</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
+            <button type="button" className={styles.quickAction} onClick={onOpenNotes}><AppIcon className="ri-file-list-3-line" /><span><strong>Add Meeting Note</strong><span>Record notes from a coaching meeting</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
+            <button type="button" className={styles.quickAction} onClick={onOpenMonthlyLogs}><AppIcon className="ri-bar-chart-line" /><span><strong>Generate Summary</strong><span>Create a summary of reviews and discussions</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
+            <button type="button" className={styles.quickAction} onClick={onOpenMonthlyLogs}><AppIcon className="ri-file-text-line" /><span><strong>View Monthly Logs</strong><span>See all monthly coaching logs</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
           </div>
         </ReferencePanel>
-      ) : data.reviewGroups.length === 0 ? (
-        <ReferencePanel title="Reviews" icon="ri-file-chart-line" tone="primary">
-          <ProfileEmpty text="No review or coaching meeting records are available." />
-        </ReferencePanel>
-      ) : data.reviewGroups.map(group => (
-        <ReviewGroupPanel key={group.key} group={group} onOpen={onOpen} />
-      ))}
+      </div>
+      <ReferencePanel title="Session History" subtitle="All reviews and coaching meetings for this learner" icon="ri-file-list-3-line" tone="primary">
+        {reviewsLoading ? <RowsSkeleton rows={3} avatar={false} /> : reviewItems.length
+          ? <ReviewMeetingList items={reviewItems} itemLabel="review" onOpen={onOpen} />
+          : <div className={styles.empty}><div><AppIcon className="ri-file-list-3-line text-lg" /><p className="mt-2">No review or coaching meeting records are available yet.</p><button type="button" className={cn(styles.solidButton, 'mt-3')} onClick={() => setAddOpen(true)}>Create first review</button></div></div>}
+      </ReferencePanel>
       {addOpen ? (
         <AddLearnerReviewModal
           data={data}
@@ -1121,22 +974,6 @@ function ReferenceReviewsContent({
       ) : null}
     </div>
   );
-}
-
-function ReviewGroupPanel({ group, onOpen }: { group: CaseFileReviewGroup; onOpen: (item: CaseFileReviewMeeting) => void }) {
-  const isMeeting = group.items.some(item => item.source === 'mcr');
-  return (
-    <ReferencePanel title={pluralReviewGroupTitle(group.title)} icon={isMeeting ? 'ri-calendar-todo-line' : 'ri-file-chart-line'} tone="primary">
-      <ReviewMeetingList items={group.items} itemLabel={isMeeting ? 'meeting' : 'review'} onOpen={onOpen} />
-    </ReferencePanel>
-  );
-}
-
-function pluralReviewGroupTitle(title: string) {
-  if (/meetings$/i.test(title) || /reviews$/i.test(title)) return title;
-  if (/meeting$/i.test(title)) return `${title}s`;
-  if (/review$/i.test(title)) return `${title}s`;
-  return title;
 }
 
 function AddLearnerReviewModal({
@@ -1402,22 +1239,39 @@ function ReviewMeetingList({ items, itemLabel, onOpen }: { items: CaseFileReview
   );
 }
 
-function ReferencePanel({ title, icon, tone, children }: { title: string; icon: string; tone: 'primary' | 'emerald' | 'red' | 'muted'; children: React.ReactNode }) {
-  const toneClass = { primary: 'bg-primary-50 text-primary-600', emerald: 'bg-emerald-50 text-emerald-600', red: 'bg-red-50 text-red-600', muted: 'bg-background-100 text-foreground-500' }[tone];
-  return <section className="rounded-2xl border border-foreground-200/60 bg-white p-5"><h3 className="mb-4 flex items-center gap-2 text-[12px] font-bold text-foreground-900"><span className={`flex h-8 w-8 items-center justify-center rounded-lg ${toneClass}`}><AppIcon className={icon}></AppIcon></span>{title}</h3>{children}</section>;
+function ReferencePanel({ title, subtitle, icon, tone, actions, children, className }: {
+  title: string;
+  subtitle?: string;
+  icon: string;
+  tone: 'primary' | 'emerald' | 'red' | 'muted';
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return <section className={cn(styles.panel, className)}>
+    <header className={styles.panelHeader}>
+      <div className={styles.panelHeading}>
+        <span className={styles.panelIcon} data-tone={tone}><AppIcon className={icon} /></span>
+        <div><h3 className={styles.panelTitle}>{title}</h3>{subtitle && <p className={styles.panelSubtitle}>{subtitle}</p>}</div>
+      </div>
+      {actions}
+    </header>
+    <div className={styles.panelBody}>{children}</div>
+  </section>;
 }
 
-function ProfileInfo({ label, value }: { label: string; value?: string | null }) {
-  return <div><p className="text-[12px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-[12px] font-bold text-foreground-800">{value && value !== '--' ? value : '--'}</p></div>;
+function ProfileInfo({ icon = 'ri-information-line', label, value }: { icon?: string; label: string; value?: string | null }) {
+  return <div className={styles.info}><AppIcon className={icon} /><div className="min-w-0"><p className={styles.infoLabel}>{label}</p><p className={styles.infoValue}>{value && value !== '--' ? value : '--'}</p></div></div>;
 }
 
-function ProfileProgress({ label, value, color }: { label: string; value: number | null; color: string }) {
-  return <div className="mb-3 last:mb-0"><div className="mb-1 flex justify-between text-[12px]"><span className="text-foreground-400">{label}</span><strong>{value === null ? '--' : `${Math.round(value)}%`}</strong></div><div className="h-2 overflow-hidden rounded-full bg-background-200"><div className={`h-full rounded-full ${color}`} style={{ width: `${value || 0}%` }}></div></div></div>;
+function ProfileProgress({ label, value, tone, color }: { label: string; value: number | null; tone?: 'primary' | 'emerald' | 'amber' | 'striped'; color?: string }) {
+  const resolvedTone = tone || (color?.includes('emerald') ? 'emerald' : color?.includes('amber') ? 'amber' : 'primary');
+  return <div className={styles.progressRow}><div className={styles.progressMeta}><span>{label}</span><strong>{value === null ? '--' : `${Math.round(value)}%`}</strong></div><div className={cn(styles.track, resolvedTone === 'striped' && styles.striped)}><div className={styles.fill} data-tone={resolvedTone} style={{ width: `${value || 0}%` }} /></div></div>;
 }
 
 function BigMetric({ value, label, tone }: { value: string; label: string; tone: 'primary' | 'emerald' | 'red' | 'amber' | 'muted' }) {
   const color = { primary: 'text-primary-700', emerald: 'text-emerald-600', red: 'text-red-600', amber: 'text-amber-600', muted: 'text-foreground-700' }[tone];
-  return <div className="rounded-2xl border border-foreground-100 bg-background-100/55 p-4 text-center"><p className={`text-2xl font-bold ${color}`}>{value}</p><p className="mt-1 text-[12px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p></div>;
+  return <div className={styles.bigMetric}><p className={cn(styles.bigMetricValue, color)}>{value}</p><p className={styles.bigMetricLabel}>{label}</p></div>;
 }
 
 function reviewStatusPillClass(status: CaseFileReviewMeeting['status']) {
@@ -1445,7 +1299,7 @@ function ProfileRing({ label, value, color }: { label: string; value: number | n
 }
 
 function ProfileEmpty({ text }: { text: string }) {
-  return <div className="rounded-xl border border-dashed border-foreground-200 bg-background-100/45 px-4 py-6 text-center text-[12px] text-foreground-400">{text}</div>;
+  return <div className={styles.empty}><span>{text}</span></div>;
 }
 
 

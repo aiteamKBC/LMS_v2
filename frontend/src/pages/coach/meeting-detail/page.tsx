@@ -20,7 +20,7 @@ import { MonthlyCoachingCompletionModal } from '../meetings/MonthlyCoachingCompl
 import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
-import { ReviewInstanceModal } from '../shared/ReviewInstanceModal';
+import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import {
   type CoachCalendarEvent,
   type ScheduleFormState,
@@ -44,7 +44,7 @@ interface MeetingDetailLocationState {
 }
 
 function safeReturnTo(value?: string) {
-  const allowedPaths = ['/coach/meetings', '/coach/progress-reviews', '/coach/learner-case-file', '/coach/timetable'];
+  const allowedPaths = ['/coach/meetings', '/coach/monthly-coaching', '/coach/progress-reviews', '/coach/learner-case-file', '/coach/timetable'];
   return value && allowedPaths.some(path => value === path || value.startsWith(`${path}/`) || value.startsWith(`${path}?`)) ? value : null;
 }
 
@@ -283,7 +283,9 @@ export default function CoachMeetingDetail() {
   const openReviewWorkflow = async (manualOverride = false) => {
     if (!event) return;
     if (event.reviewInstanceId) {
-      setCompletionEvent(event);
+      navigate(reviewInstancePath(event.reviewInstanceId), {
+        state: reviewInstanceRouteState(event, `${location.pathname}${location.search}`),
+      });
       return;
     }
     if (manualOverride && !event.reviewTemplateId) {
@@ -308,7 +310,9 @@ export default function CoachMeetingDetail() {
       const { instanceId } = await openReviewInstanceForEvent(eventIdentity(event));
       const linkedEvent = { ...event, reviewInstanceId: instanceId };
       updateEvent(linkedEvent);
-      setCompletionEvent(linkedEvent);
+      navigate(reviewInstancePath(instanceId), {
+        state: reviewInstanceRouteState(linkedEvent, `${location.pathname}${location.search}`),
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to open this review.';
       if (manualOverride && message === 'This event is not a Curriculum review.') {
@@ -488,24 +492,6 @@ export default function CoachMeetingDetail() {
                 </div>
               </Panel>
             )}
-
-            {completionEvent && completionEvent.reviewInstanceId ? (
-              <ReviewInstanceModal
-                key={eventIdentity(completionEvent)}
-                event={completionEvent}
-                instanceId={completionEvent.reviewInstanceId}
-                onClose={() => setCompletionEvent(null)}
-                onStatusChanged={(status) => {
-                  const updated = { ...completionEvent, status: status as CoachCalendarEvent['status'] };
-                  updateEvent(updated);
-                  setCompletionEvent(updated);
-                }}
-                onCompleted={(status) => {
-                  updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
-                  setCompletionEvent(null);
-                }}
-              />
-            ) : null}
 
             {completionEvent && !completionEvent.reviewInstanceId ? (
               isProgressReview ? (

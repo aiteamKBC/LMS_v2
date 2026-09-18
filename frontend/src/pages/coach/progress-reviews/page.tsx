@@ -21,7 +21,7 @@ import { CalendarEventMeta, CalendarEventRow } from '../shared/CalendarEventRow'
 import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
 import { InfoTile, ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
-import { ReviewInstanceModal } from '../shared/ReviewInstanceModal';
+import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import {
   type CalendarAction,
   type CoachCalendarEvent,
@@ -1208,7 +1208,13 @@ export default function CoachProgressReviews() {
       setBusyEventId(eventIdentity(event));
       try {
         const instanceId = event.reviewInstanceId || (await openReviewInstanceForEvent(eventIdentity(event))).instanceId;
-        setCompletionEvent({ ...event, reviewInstanceId: instanceId });
+        const query = searchParams.toString();
+        navigate(reviewInstancePath(instanceId), {
+          state: reviewInstanceRouteState(
+            event,
+            `/coach/progress-reviews${query ? `?${query}` : ''}`,
+          ),
+        });
       } catch (err) {
         setActionError(err instanceof Error ? err.message : 'Unable to open this review form.');
       } finally {
@@ -1594,26 +1600,6 @@ export default function CoachProgressReviews() {
             ) : null}
           </div>
         </Panel>
-
-        {completionEvent && completionEvent.reviewInstanceId ? (
-          // A Curriculum-driven Review instance exists for this occurrence --
-          // open the generic dynamic form instead of the legacy hard-coded
-          // Progress Review questions. Existing Create slides / Bulk generate
-          // slides / signature workflow (below) are untouched.
-          <ReviewInstanceModal
-            key={eventIdentity(completionEvent)}
-            event={completionEvent}
-            instanceId={completionEvent.reviewInstanceId}
-            onClose={() => setCompletionEvent(null)}
-            onStatusChanged={(status) => {
-              updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
-            }}
-            onCompleted={(status) => {
-              updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
-              setCompletionEvent(null);
-            }}
-          />
-        ) : null}
 
         {completionEvent && !completionEvent.reviewInstanceId ? (
           // Legacy path for an occurrence scheduled before this migration.
