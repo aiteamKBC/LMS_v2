@@ -409,7 +409,8 @@ class LearnerProfileResolutionTests(SimpleTestCase):
     def setUp(self):
         patcher = patch('learner_api.identity.EnrolmentUser.all_learners.filter')
         self.source_filter = patcher.start()
-        self.source_filter.return_value.exclude.return_value.exists.return_value = False
+        self.twins = self.source_filter.return_value.exclude.return_value.values_list.return_value
+        self.twins.__getitem__.return_value = []
         self.addCleanup(patcher.stop)
 
     @staticmethod
@@ -515,9 +516,27 @@ class LearnerProfileResolutionTests(SimpleTestCase):
     def test_duplicate_source_email_does_not_claim_unlinked_work(self, profile_filter):
         profile = SimpleNamespace(id=2, enrolment_id=None, save=Mock())
         profile_filter.side_effect = self._returns(None, profile)[0]
-        self.source_filter.return_value.exclude.return_value.exists.return_value = True
+        self.twins.__getitem__.return_value = [501]
         self.assertIsNone(learner_profile_for_source(SimpleNamespace(email='shared@example.com'), 500))
         profile.save.assert_not_called()
+
+    @patch('learner_api.identity.LearnerProfile.objects.filter')
+    def test_a_learner_enrolled_twice_is_named_in_the_log_with_both_ids(self, profile_filter):
+        """The refusal above is invisible to callers: they see only a missing
+        profile and report it as a missing coach or an inactive learner. Both
+        ids have to reach the log, or the real fault — one person enrolled
+        twice — has to be found by hand."""
+        profile_filter.side_effect = self._returns(None, SimpleNamespace(id=2, enrolment_id=None, save=Mock()))[0]
+        self.twins.__getitem__.return_value = [501, 502]
+
+        with self.assertLogs('learner_api.identity', level='WARNING') as logged:
+            learner_profile_for_source(SimpleNamespace(email='shared@example.com'), 500)
+
+        message = logged.output[0]
+        self.assertIn('shared@example.com', message)
+        for pk in ('500', '501', '502'):
+            self.assertIn(pk, message)
+        self.assertIn('merge_duplicate_enrolments', message)
 
 
 class AttendanceSummaryTests(SimpleTestCase):

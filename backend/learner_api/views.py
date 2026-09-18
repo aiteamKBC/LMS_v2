@@ -21,6 +21,7 @@ import json
 import logging
 
 from django.db import DatabaseError, transaction
+from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -742,11 +743,9 @@ def enrolment_users(request):
             payload = _parse_body(request)
             fields = write_fields(payload, require_create=True)
             _check_employer_id(fields)
+            row = _create_enrolment_user(request, fields)
         except ValidationError as exc:
             return _error(str(exc), 400)
-
-        try:
-            row = _create_enrolment_user(request, fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(row, status=201)
@@ -761,6 +760,27 @@ def _create_enrolment_user(request, fields, *, require_account=False):
     to abort that transaction rather than leave a partially imported file.
     """
     fields = dict(fields)
+
+    # The login account is pinned to one Created_users primary key. Creating a
+    # second source row for the same email can therefore leave the account on
+    # one row while the permanent LearnerProfile remains linked to the other.
+    # Compare a trimmed, case-insensitive value so legacy spacing/case cannot
+    # bypass the guard. The database's owner-run unique index remains the final
+    # protection against two truly concurrent requests.
+    email = str(fields.get('email') or '').strip()
+    if email:
+        existing = (
+            EnrolmentUser.all_learners
+            .annotate(_normalised_email=Lower(Trim('email')))
+            .filter(_normalised_email=email.casefold())
+            .only('id')
+            .first()
+        )
+        if existing is not None:
+            raise ValidationError(
+                'A learner with this email already exists. Update the existing learner instead.'
+            )
+
     # Stamp who/when enrolled, server-side.
     stamp = timezone.now().strftime("%d/%m/%Y %H:%M:%S")
     fields.setdefault("enrolled_time_and_user", f"{stamp} by Enrolment Officer")
