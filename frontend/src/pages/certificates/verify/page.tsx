@@ -47,7 +47,7 @@ function FieldCard({ label, value }: { label: string; value: string | number }) 
   );
 }
 
-export default function CertificateVerificationPage() {
+export default function CertificateVerificationPage({ personal = false }: { personal?: boolean }) {
   const { token = '' } = useParams();
   const [data, setData] = useState<VerificationResponse | null>(null);
   const [error, setError] = useState('');
@@ -60,7 +60,7 @@ export default function CertificateVerificationPage() {
     let cancelled = false;
     setLoading(true);
     setError('');
-    fetch(`/learner_api/certificates/verify/${encodeURIComponent(token)}/`, { credentials: 'omit' })
+    fetch(`/learner_api/${personal ? 'personal-learning' : 'certificates'}/verify/${encodeURIComponent(token)}/`, { credentials: 'omit' })
       .then(async (response) => {
         const text = await response.text();
         const payload = text ? JSON.parse(text) : null;
@@ -81,7 +81,7 @@ export default function CertificateVerificationPage() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, personal]);
 
   const certificate = data?.certificate;
   const learner = certificate?.snapshot?.learner;
@@ -93,9 +93,9 @@ export default function CertificateVerificationPage() {
   const awardTarget = moduleTitle || programme || 'Programme not recorded';
   const awardTargetLabel = moduleTitle ? 'Module' : 'Programme';
   const verificationUrl = useMemo(() => {
-    if (typeof window === 'undefined') return `/verify-certificate/${token}`;
-    return `${window.location.origin}/verify-certificate/${token}`;
-  }, [token]);
+    const path = `/${personal ? 'verify-personal-certificate' : 'verify-certificate'}/${token}`;
+    return typeof window === 'undefined' ? path : `${window.location.origin}${path}`;
+  }, [token, personal]);
 
   const downloadCertificatePdf = async () => {
     if (!certificate || !pdfSourceRef.current || pdfBusy) return;

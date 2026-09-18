@@ -48,7 +48,7 @@ async function finish() {
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
   fireEvent.click(screen.getByRole('checkbox', { name: /outside UK working hours/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Confirm', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
 }
 
 beforeEach(() => {
@@ -128,7 +128,7 @@ it('retains a successful save when reloading the activity list fails', async () 
   await finish();
   expect(await screen.findByRole('status')).toHaveTextContent('Completed');
   expect(await screen.findByRole('alert')).toHaveTextContent('Your completion was saved');
-  expect(screen.queryByRole('button', { name: 'Confirm', exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
   expect(submitComponentProgress).toHaveBeenCalledTimes(1);
 });
 
@@ -138,6 +138,6 @@ it('keeps a failed save open for retry without marking it complete', async () =>
   await finish();
   expect(await screen.findByText('Could not save progress')).toBeInTheDocument();
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Confirm', exact: true })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled();
   expect(screen.getByTestId('location')).toHaveTextContent('/C1');
 });

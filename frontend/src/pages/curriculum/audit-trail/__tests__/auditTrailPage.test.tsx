@@ -200,12 +200,12 @@ describe('Curriculum audit trail page', () => {
     // A deployed frontend must not break against a backend that has not been
     // updated yet, so every new field is read defensively.
     const legacy = event();
-    delete (legacy as Record<string, unknown>).actorTypeLabel;
-    delete (legacy as Record<string, unknown>).triggeredByName;
-    delete (legacy as Record<string, unknown>).sourceLabel;
-    delete (legacy as Record<string, unknown>).metadata;
+    Reflect.deleteProperty(legacy, 'actorTypeLabel');
+    Reflect.deleteProperty(legacy, 'triggeredByName');
+    Reflect.deleteProperty(legacy, 'sourceLabel');
+    Reflect.deleteProperty(legacy, 'metadata');
     const older = trail({ events: [legacy] });
-    delete (older as Record<string, unknown>).structuredMetadata;
+    Reflect.deleteProperty(older, 'structuredMetadata');
     fetchCurriculumAuditTrail.mockResolvedValue(older);
 
     renderPage();

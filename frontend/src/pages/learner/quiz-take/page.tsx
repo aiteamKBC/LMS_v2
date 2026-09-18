@@ -174,7 +174,7 @@ export default function QuizTakePage() {
     setPhase('intro');
     setAnswers({});
     setResult(null);
-    fetchQuiz(Number(quizId))
+    fetchQuiz(Number(quizId), id)
       .then((data) => { if (!cancelled) setQuiz(data); })
       .catch((e) => { if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Could not load quiz'); })
       .finally(() => { if (!cancelled) setLoading(false); });

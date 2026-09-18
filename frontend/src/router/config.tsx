@@ -189,6 +189,7 @@ const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"))
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
+const PersonalCoursesPage = lazyRoute(() => import("../pages/personal-learning/page"));
 const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/schedule/page"));
 const NotFound = lazyRoute(() => import("../pages/NotFound"));
 const PaymentsPage = lazyRoute(() => import("../pages/finance/payments/page"));
@@ -451,6 +452,10 @@ const routes: RouteObject[] = [
   {
     path: "/learner/week/:weekNumber",
     element: <WeekDetailPage />,
+  },
+  {
+    path: "/my-courses",
+    element: <PersonalCoursesPage />,
   },
   {
     // Canonical URL for the merged Overview/Modules/Quizzes page. The three
@@ -1503,6 +1508,10 @@ const routes: RouteObject[] = [
     element: <CertificateVerificationPage />,
   },
   {
+    path: "/verify-personal-certificate/:token",
+    element: <CertificateVerificationPage personal />,
+  },
+  {
     path: "*",
     element: <NotFound />,
   },
@@ -1537,6 +1546,7 @@ const PUBLIC_PATHS = new Set([
 
 const PUBLIC_PREFIXES = [
   "/verify-certificate/",
+  "/verify-personal-certificate/",
 ];
 
 const isPublic = (route: RouteObject) =>

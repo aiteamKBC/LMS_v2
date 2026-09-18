@@ -775,7 +775,11 @@ class ArchiveWorkerTests(unittest.TestCase):
         node = next(n for n in tree.body if isinstance(n, ast.ClassDef))
         exec(compile(ast.Module(body=[node], type_ignores=[]), 'scheduler', 'exec'), ns)
         command = ns['Command'](); command.stdout = Mock(); command.stderr = Mock()
-        command.handle(lookback_hours=168, limit=1, coach_limit=1, skip_coach_meetings=True, live_session_ids=['S'])
+        archive = types.ModuleType('coach_api.recording_archive')
+        archive.archive_configured = Mock(return_value=False)
+        with patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.recording_archive': archive}):
+            command.handle(lookback_hours=168, limit=1, coach_limit=1, skip_coach_meetings=True, live_session_ids=['S'])
+        archive.archive_configured.assert_called_once_with()
         ns['call_command'].assert_called_once_with('process_session_results', limit=1, scheduled=True,
             live_session_ids=['S'], stdout=command.stdout, stderr=command.stderr)
 

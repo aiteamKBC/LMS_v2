@@ -46,6 +46,21 @@ function access(learnerId?: string | number | null) {
 }
 
 describe('useLearnerWorkspaceAccess', () => {
+  it('permits only the owning administrator in each personal course mode', () => {
+    for (const mode of ['study', 'preview', 'all']) {
+      const id = `pl.1.${mode}.MOD-A`;
+      signedIn(ADMIN);
+      expect(access(id).canProgress).toBe(true);
+      signedIn({ ...ADMIN, id: 3 });
+      expect(access(id).canProgress).toBe(false);
+      signedIn({ ...ADMIN, role: 'staff' });
+      expect(access(id).canProgress).toBe(false);
+      signedIn(LEARNER_56);
+      expect(access(id).canProgress).toBe(false);
+      signedIn(ADMIN, false);
+      expect(access(id).canProgress).toBe(false);
+    }
+  });
   it('lets the learner work through their own plan', () => {
     signedIn(LEARNER_56);
     expect(access('56')).toEqual({ canProgress: true, showReadOnlyNotice: false });
