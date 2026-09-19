@@ -20,6 +20,7 @@ const attendance = (id: string, overrides: Partial<MeetingAttendance> = {}): Mee
   absenceReported: false, absenceSessionId: 'absence:12:1', missed: false, ...overrides,
 });
 const signatureDefinition = (): LearnerReviewDefinition => ({
+  manualOverride: null,
   instance: { id: 'instance-1', reviewTemplateId: 'template-1', learnerId: 12, programmeId: 'programme-1',
     occurrenceNumber: 1, targetDate: '2026-09-01', status: 'awaiting-signature', startedAt: null, completedAt: '2026-09-01' },
   template: { id: 'template-1', name: 'Monthly coaching',
@@ -47,9 +48,26 @@ function mount(overrides: Partial<CoachingHomeProps> = {}, search = '') {
   return props;
 }
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('coaching learner navigation and actions', () => {
+  it.each([
+    { kind: 'apprenticeship', id: '12', now: '2026-09-14T10:00:00Z', month: '2026-09', canAct: true, search: '' },
+    { kind: 'commercial', id: '34', now: '2026-09-30T23:30:00Z', month: '2026-10', canAct: false, search: '&view=all&tab=upcoming' },
+    { kind: 'apprenticeship', id: '56', now: '2026-12-31T23:30:00Z', month: '2026-12', canAct: false, search: '&view=all&tab=past' },
+  ])('opens $kind learner $id logs for the current UK month $month', ({ kind, id, now, month, canAct, search }) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(now));
+    const props = mount({ learner: { kind, id }, canAct, sessions: [session('future', '2027-02-15')] }, search);
+
+    fireEvent.click(screen.getByRole('link', { name: "This month's logs" }));
+
+    expect(screen.getByTestId('location')).toHaveTextContent(`/learner/monthly-logs/${kind}/${id}/${month}`);
+    expect(props.onSchedule).not.toHaveBeenCalled();
+    expect(props.onAttend).not.toHaveBeenCalled();
+    expect(props.onReport).not.toHaveBeenCalled();
+  });
+
   it('shows the current assignment separately from the existing host and keeps an absence-reported meeting link visible', () => {
     const next = session('mcr:211:2:2026-11-30', '2026-09-15', {
       coachName: 'Rewan Yasser', coachEmail: 'rewan@example.com', scheduledTime: '11:00',

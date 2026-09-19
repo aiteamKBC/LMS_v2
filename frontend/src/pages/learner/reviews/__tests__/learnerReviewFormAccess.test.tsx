@@ -79,6 +79,7 @@ function event(overrides: Partial<LearnerCalendarEvent> & Pick<LearnerCalendarEv
 
 function definition(overrides: { name?: string; sections?: ReviewInstanceFormDefinition['sections'] } = {}): ReviewInstanceFormDefinition {
   return {
+    manualOverride: null,
     instance: {
       id: 'REVI-1', reviewTemplateId: 'REV-1', learnerId: 12, programmeId: 'PROG-1',
       occurrenceNumber: 1, targetDate: '2026-09-03', status: 'scheduled',
@@ -185,6 +186,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   clearAllCachedResources();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -200,6 +202,7 @@ const mountMcm = (id: string, suffix = '') => render(
     <Routes>
       <Route path="/learner/monthly-coaching/:sessionId" element={<MonthlyCoachingPage />} />
       <Route path="/learner/monthly-coaching" element={<ReturnedLocation />} />
+      <Route path="/learner/monthly-logs/:kind/:id/:month" element={<ReturnedLocation />} />
     </Routes>
   </MemoryRouter>,
 );
@@ -215,6 +218,19 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
+  it.each([true, false])('opens current month logs from an unfinished MCM with learner actions enabled: %s', async canProgress => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-15T12:00:00Z'));
+    access.canProgress = canProgress;
+    mountMcm(SCHEDULED_MCM);
+    await screen.findByTestId('learner-review-instance-form');
+
+    fireEvent.click(screen.getByRole('link', { name: "This month's logs" }));
+
+    expect(screen.getByTestId('returned-location')).toHaveTextContent('/learner/monthly-logs/apprenticeship/12/2026-11');
+    expect(vi.mocked(fetch).mock.calls.every(call => !call[1]?.method || call[1].method === 'GET')).toBe(true);
+  });
+
   it('shows the saved learner image and points to the pending coach without asking the learner to sign again', () => {
     reviewDefinition.instance!.status = 'awaiting-signature';
     reviewDefinition.signatures.participant = { required: true, signed: true, signedName: 'Aya Khater', signature: 'data:image/png;base64,c2F2ZWQ=', signedAt: '2026-09-14T15:38:56Z' };
@@ -223,7 +239,7 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     expect(screen.getByRole('img', { name: 'Learner signature' })).toHaveAttribute('src', 'data:image/png;base64,c2F2ZWQ=');
     expect(screen.getByText('Your signature is saved')).toBeVisible();
     expect(screen.getByText('The coach still needs to sign this review.')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Sign', exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
     const scroll = vi.fn();
     const step = screen.getByLabelText('Signature step');
     step.scrollIntoView = scroll;
@@ -237,11 +253,11 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     reviewDefinition.instance!.status = 'awaiting-signature';
     const onSign = vi.fn();
     render(<LearnerReviewInstanceForm definition={reviewDefinition} onSign={onSign} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel', exact: true }));
-    expect(screen.queryByRole('button', { name: 'Sign', exact: true })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
     screen.getByLabelText('Signature step').scrollIntoView = vi.fn();
     fireEvent.click(screen.getByRole('button', { name: 'Review & sign' }));
-    expect(screen.getByRole('button', { name: 'Sign', exact: true })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Sign' })).toBeVisible();
     expect(onSign).not.toHaveBeenCalled();
   });
 
@@ -249,7 +265,7 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     render(<LearnerReviewInstanceForm definition={reviewDefinition} onSign={vi.fn()} />);
     expect(screen.getByText('Your coach is preparing this review')).toBeVisible();
     expect(screen.getByText('The coach must complete this review before you can sign it.')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Sign', exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
   });
 
   it('reloads the saved learner signature after signing a monthly coaching review and keeps the coach pending', async () => {
@@ -269,11 +285,11 @@ describe('Learner Review View opens the generic Curriculum form', () => {
       return originalFetch(input, init);
     });
     mountMcm(SCHEDULED_MCM);
-    fireEvent.click(await screen.findByRole('button', { name: 'Sign', exact: true }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign' }));
     expect(await screen.findByRole('img', { name: 'Learner signature' })).toHaveAttribute('src', savedMark);
     expect(screen.getByText('Your signature is saved')).toBeVisible();
     expect(screen.getByText('The coach still needs to sign this review.')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Sign', exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
     expect(signatureWrites).toBe(1);
   });
 
@@ -285,7 +301,7 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     await screen.findByTestId('learner-review-instance-form');
     expect(await screen.findByDisplayValue('Two modules and a reflection.')).toBeVisible();
     expect(screen.getByText('Signatures')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Sign', exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
     expect(screen.queryByText('Your signature is required')).not.toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.every(call => !call[1]?.method || call[1].method === 'GET')).toBe(true);
   });
@@ -302,7 +318,7 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     reviewDefinition.instance!.status = 'awaiting-signature';
     mountMcm(SCHEDULED_MCM);
 
-    expect(await screen.findByRole('button', { name: 'Sign', exact: true })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Sign' })).toBeVisible();
     expect(screen.getByRole('complementary', { name: 'Monthly learning log' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'Open monthly log' })).toHaveAttribute('href', '/learner/monthly-logs/apprenticeship/12/2026-09?workflow=mcm&source=mcm');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -332,7 +348,7 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     const onSign = vi.fn().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectSave = reject; })).mockResolvedValue(undefined);
     render(<LearnerReviewInstanceForm definition={reviewDefinition} onSign={onSign} signatoryName="Aya Khater" />);
 
-    const sign = screen.getByRole('button', { name: 'Sign', exact: true });
+    const sign = screen.getByRole('button', { name: 'Sign' });
     fireEvent.click(sign);
     expect(await screen.findByRole('status')).toHaveTextContent('Saving your signature');
     expect(sign).toBeDisabled();

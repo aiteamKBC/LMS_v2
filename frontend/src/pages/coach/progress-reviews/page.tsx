@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Swal from 'sweetalert2';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { type EvidenceRecord } from '@/api/evidence';
 import { type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
@@ -1197,29 +1198,25 @@ export default function CoachProgressReviews() {
     }
   };
 
-  const handleJoin = async (event: CoachCalendarEvent) => {
+  const handleJoin = (event: CoachCalendarEvent) => {
     const url = meetingUrl(event);
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
-    if (event.status === 'scheduled') {
+  };
+
+  const openCompletionForm = async (event: CoachCalendarEvent) => {
+    setActionError(null);
+    if (event.reviewTemplateId) {
+      setBusyEventId(eventIdentity(event));
       try {
-        setBusyEventId(eventIdentity(event));
-        setActionError(null);
-        setActionNotice(null);
-        const data = await runCoachCalendarAction(event, 'start');
-        updateEvent(data.event);
-        if (data.warning) setActionNotice(data.warning);
+        const instanceId = event.reviewInstanceId || (await openReviewInstanceForEvent(eventIdentity(event))).instanceId;
+        setCompletionEvent({ ...event, reviewInstanceId: instanceId });
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unable to update review.';
-        if (message !== 'Only a scheduled event can be started.') setActionError(message);
+        setActionError(err instanceof Error ? err.message : 'Unable to open this review form.');
       } finally {
         setBusyEventId(null);
       }
       return;
     }
-  };
-
-  const openCompletionForm = (event: CoachCalendarEvent) => {
-    setActionError(null);
     setCompletionEvent(event);
   };
 
@@ -1228,6 +1225,16 @@ export default function CoachProgressReviews() {
       openCompletionForm(event);
       return;
     }
+    const confirmation = await Swal.fire({
+      icon: 'question',
+      title: 'Mark review in progress?',
+      text: 'Use this when the meeting has started but Teams attendance cannot confirm it automatically.',
+      showCancelButton: true,
+      confirmButtonText: 'OK',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#6d28d9',
+    });
+    if (!confirmation.isConfirmed) return;
     try {
       setBusyEventId(eventIdentity(event));
       setActionError(null);
@@ -1457,13 +1464,18 @@ export default function CoachProgressReviews() {
                       {joinAvailable ? (
                         <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={isBusy} onClick={() => { handleJoin(review); }} />
                       ) : null}
+                      {review.status === 'scheduled' && review.reviewTemplateId ? (
+                        <RowAction label="Mark In Progress" icon="ri-play-circle-line" disabled={isBusy} onClick={() => { void markReviewInProgress(review); }} />
+                      ) : null}
                       <RowAction
                         label={hasSlides ? 'View slides' : 'Create slides'}
                         icon={hasSlides ? 'ri-slideshow-2-line' : 'ri-slideshow-line'}
                         disabled={!reviewHasLearnerReference(review)}
                         onClick={() => { handleCreateSlides(review); }}
                       />
-                      {review.status === 'in-progress' ? (
+                      {(review.status === 'scheduled' || review.status === 'in-progress') && review.reviewTemplateId ? (
+                        <RowAction label="Open form" icon="ri-file-edit-line" disabled={isBusy} onClick={() => { void openCompletionForm(review); }} />
+                      ) : review.status === 'in-progress' ? (
                         <RowAction
                           label="Open form"
                           icon="ri-file-edit-line"
@@ -1524,6 +1536,9 @@ export default function CoachProgressReviews() {
                           {joinAvailable ? (
                             <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" onClick={() => { handleJoin(review); }} disabled={isBusy} />
                           ) : null}
+                          {review.status === 'scheduled' && review.reviewTemplateId ? (
+                            <RowAction label="Mark In Progress" icon="ri-play-circle-line" disabled={isBusy} onClick={() => { void markReviewInProgress(review); }} />
+                          ) : null}
                           <RowAction
                             label={hasSlides ? 'View slides' : 'Create slides'}
                             icon={hasSlides ? 'ri-slideshow-2-line' : 'ri-slideshow-line'}
@@ -1537,15 +1552,9 @@ export default function CoachProgressReviews() {
                             disabled={isBusy}
                             onClick={() => { handleSchedule(review); }}
                           />
-                          {review.status === 'scheduled' && review.reviewInstanceId ? (
-                            <RowAction
-                              label="Mark In Progress"
-                              icon="ri-flashlight-line"
-                              disabled={isBusy}
-                              onClick={() => { void markReviewInProgress(review); }}
-                            />
-                          ) : null}
-                          {review.status === 'in-progress' ? (
+                          {(review.status === 'scheduled' || review.status === 'in-progress') && review.reviewTemplateId ? (
+                            <RowAction label="Open form" icon="ri-file-edit-line" disabled={isBusy} onClick={() => { void openCompletionForm(review); }} />
+                          ) : review.status === 'in-progress' ? (
                             <RowAction label="Submit Review" icon="ri-send-plane-line" disabled={isBusy} onClick={() => openCompletionForm(review)} />
                           ) : null}
                         </div>

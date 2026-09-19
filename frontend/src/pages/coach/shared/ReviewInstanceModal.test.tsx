@@ -1,14 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
-import { completeReviewInstance, downloadMcmReviewPdf, fetchReviewInstanceForm, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition } from '@/api/reviewInstances';
+import { calculateReviewInstanceProgress, completeReviewInstance, downloadReviewInstancePdf, fetchReviewInstanceForm, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
 vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/reviewInstances')>(),
   fetchReviewInstanceForm: vi.fn(), saveReviewInstanceAnswers: vi.fn(), completeReviewInstance: vi.fn(), signReviewInstance: vi.fn(),
-  downloadMcmReviewPdf: vi.fn(),
+  downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(),
 }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ signatoryName, onCommit }: { signatoryName: string; onCommit: (signature: string) => void }) => <div>
@@ -200,11 +200,131 @@ describe('Monthly Coaching Meeting signature summary + signed PDF', () => {
     ready.signatures.participant = { required: true, signed: true, signedName: 'Ayman Learner', signedAt: '2026-09-14T09:30:00Z' };
     ready.pdf = { available: true, reason: '' };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(ready);
-    vi.mocked(downloadMcmReviewPdf).mockResolvedValue(undefined);
+    vi.mocked(downloadReviewInstancePdf).mockResolvedValue(undefined);
     mount();
     const download = await screen.findByRole('button', { name: 'Download signed PDF' });
     expect(download).toBeEnabled();
     fireEvent.click(download);
-    await waitFor(() => expect(downloadMcmReviewPdf).toHaveBeenCalledWith('instance-1'));
+    await waitFor(() => expect(downloadReviewInstancePdf).toHaveBeenCalledWith('instance-1'));
+  });
+});
+
+/** Classified as the canonical Progress Review type via the stable
+ *  `reviewTypeCode` -- never by name/title. */
+function progressReviewDefinition(status = 'in-progress', snapshot: ReviewProgressSnapshot | null = null): ReviewInstanceFormDefinition {
+  const base = definition(status);
+  return {
+    ...base,
+    template: { ...base.template, name: 'Progress Review', reviewTypeCode: 'progress_review' },
+    progressSnapshot: snapshot,
+    ragHistory: [],
+  };
+}
+
+function snapshotFixture(overrides: Partial<ReviewProgressSnapshot> = {}): ReviewProgressSnapshot {
+  return {
+    calculationMethod: 'planned_hours',
+    calculatedFrom: '2024-10-18',
+    calculatedAt: '2026-09-16T14:35:00',
+    calculatedBy: 'coach@example.com',
+    weeksElapsed: 100,
+    programmeProgress: { actual: 28, expected: 30, planned: 100, actualPercent: 28, expectedPercent: 30, variancePercent: -2, varianceDirection: 'below' },
+    offTheJobHours: { actual: 64, expected: 52, planned: 100, actualPercent: 64, expectedPercent: 52, variancePercent: 12, varianceDirection: 'above' },
+    ...overrides,
+  };
+}
+
+describe('Progress Review learning progress snapshot', () => {
+  it('offers Calculate only on a Progress Review, and never calculates on its own when the form opens', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(progressReviewDefinition());
+    mount();
+    expect(await screen.findByRole('region', { name: 'Learning progress' })).toBeVisible();
+    expect(screen.getByText('No progress snapshot calculated yet.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Calculate' })).toBeEnabled();
+    // Opening the review must never trigger a calculation by itself.
+    expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
+  });
+
+  it('does not offer the Learning Progress area on another review type', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('in-progress'));
+    mount();
+    await screen.findByDisplayValue('Review the next module');
+    expect(screen.queryByRole('region', { name: 'Learning progress' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Calculate' })).not.toBeInTheDocument();
+  });
+
+  it('renders the saved snapshot returned by the backend and then offers Recalculate', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(progressReviewDefinition());
+    vi.mocked(calculateReviewInstanceProgress).mockResolvedValue(
+      progressReviewDefinition('in-progress', snapshotFixture()),
+    );
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Calculate' }));
+    expect(await screen.findByRole('button', { name: 'Recalculate' })).toBeEnabled();
+    expect(calculateReviewInstanceProgress).toHaveBeenCalledWith('instance-1');
+    // The learner's own start date, and the backend's own calculation time.
+    expect(screen.getByText(/Calculated from 18 Oct 2024/)).toBeVisible();
+    // Month abbreviations vary by ICU version ("Sep" / "Sept"), so match the
+    // parts that carry the meaning: the backend's own calculation date.
+    expect(screen.getByText(/Calculated at 16 Sept? 2026/)).toBeVisible();
+    expect(screen.getByText('64%')).toBeVisible();
+    expect(screen.getByText('12% above expected (52%)')).toBeVisible();
+    expect(screen.getByText('2% below expected (30%)')).toBeVisible();
+  });
+
+  it('disables repeated clicks while a calculation is in flight', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(progressReviewDefinition());
+    let resolveCalculation!: (value: ReviewInstanceFormDefinition) => void;
+    vi.mocked(calculateReviewInstanceProgress).mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCalculation = resolve; }),
+    );
+    mount();
+    const calculate = await screen.findByRole('button', { name: 'Calculate' });
+    fireEvent.click(calculate);
+    const calculating = await screen.findByRole('button', { name: 'Calculating...' });
+    expect(calculating).toBeDisabled();
+    fireEvent.click(calculating);
+    expect(calculateReviewInstanceProgress).toHaveBeenCalledTimes(1);
+    await act(async () => resolveCalculation(progressReviewDefinition('in-progress', snapshotFixture())));
+    expect(await screen.findByRole('button', { name: 'Recalculate' })).toBeEnabled();
+  });
+
+  it('locks the saved snapshot once the review reaches the signature step', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(
+      progressReviewDefinition('awaiting-signature', snapshotFixture()),
+    );
+    mount();
+    expect(await screen.findByRole('region', { name: 'Learning progress' })).toBeVisible();
+    expect(screen.getByText('64%')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Calculate' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Recalculate' })).not.toBeInTheDocument();
+  });
+
+  it('keeps a completed review showing its own saved figures and its own RAG history', async () => {
+    const completed = progressReviewDefinition('completed', snapshotFixture());
+    completed.ragHistory = [
+      { reviewInstanceId: 'instance-1', reviewName: 'Progress Review', occurrenceNumber: 2, targetDate: '2026-01-03', completedAt: '2026-01-14T10:00:00', rag: 'Green' },
+      { reviewInstanceId: 'instance-0', reviewName: 'Progress Review', occurrenceNumber: 1, targetDate: '2025-04-16', completedAt: '2025-04-16T10:00:00', rag: '' },
+    ];
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(completed);
+    mount();
+    expect(await screen.findByText('Review completed')).toBeVisible();
+    expect(screen.getByText('64%')).toBeVisible();
+    expect(screen.getByText('28%')).toBeVisible();
+    expect(screen.getByText('Green')).toBeVisible();
+    // A past review that captured no RAG still appears, as "None".
+    expect(screen.getByText('None')).toBeVisible();
+    expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
+  });
+
+  it('reports a backend refusal instead of showing an invented figure', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(progressReviewDefinition());
+    vi.mocked(calculateReviewInstanceProgress).mockRejectedValue(
+      new Error('This learner has no individual programme start date, so progress cannot be calculated.'),
+    );
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Calculate' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('no individual programme start date');
+    expect(screen.getByText('No progress snapshot calculated yet.')).toBeVisible();
   });
 });

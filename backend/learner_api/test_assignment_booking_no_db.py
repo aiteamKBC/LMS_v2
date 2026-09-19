@@ -67,7 +67,7 @@ class AssignmentBookingTests(unittest.TestCase):
                      'reserve_coach_calendar_booking'):
             setattr(self.coach, name, Mock(side_effect=AssertionError('Unexpected generic booking path')))
         self.coach.find_generated_timetable_event = Mock(side_effect=lambda *_: (self.event, 'Synthetic coach'))
-        self.coach.persist_calendar_sync_reservation = Mock(side_effect=lambda record: record)
+        self.coach.persist_calendar_sync_reservation = Mock(side_effect=self.persist_reservation)
         self.coach.synchronize_reserved_calendar_event = Mock(return_value=(self.record, '', True))
         self.coach.require_review_template_for_first_linkage = Mock()
         self.coach.ensure_review_instance_for_calendar_record = Mock(
@@ -106,6 +106,12 @@ class AssignmentBookingTests(unittest.TestCase):
                     if isinstance(target, ast.Name) and target.id in {'BOOKABLE_TYPES', 'ONBOARDING_REVIEW_TYPES'}:
                         self.ns[target.id] = ast.literal_eval(node.value)
         load_functions(ROOT / 'calendar.py', {'_error', 'learner_calendar_book'}, self.ns)
+
+    def persist_reservation(self, record, *, review_event=None):
+        # First linkage is now part of the reservation's atomic write.
+        if review_event is not None and not record.review_instance_id:
+            self.coach.ensure_review_instance_for_calendar_record(record, review_event)
+        return record
 
     def book(self, *, kind='commercial', **changes):
         payload = dict(sessionType='mcr', bookingContext='monthly-assignment', assignmentMonth='2026-09',
@@ -229,6 +235,23 @@ class AssignmentBookingTests(unittest.TestCase):
         self.assertEqual(response['event'], retried['event'])
         self.assertEqual(self.record.graph_event_id, 'existing-graph-event')
         self.coach.ensure_review_instance_for_calendar_record.assert_called_once()
+
+
+class LearnerReviewCancellationWiringTests(unittest.TestCase):
+    def test_cancel_view_imports_conflict_and_shared_review_cancel_helper(self):
+        tree = ast.parse((ROOT / 'calendar.py').read_text(encoding='utf-8-sig'))
+        cancel_view = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == 'learner_calendar_cancel'
+        )
+        imported = {
+            alias.name
+            for node in ast.walk(cancel_view)
+            if isinstance(node, ast.ImportFrom) and node.module == 'coach_api.views'
+            for alias in node.names
+        }
+        self.assertIn('LearnerCalendarConflict', imported)
+        self.assertIn('cancel_reserved_calendar_event', imported)
 
 
 if __name__ == '__main__':

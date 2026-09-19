@@ -246,6 +246,9 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
             signature='data:image/png;base64,abc', actor=LEARNER_EMAIL,
         )
         self.assertEqual(self._instance(record)['status'], review_instances.STATUS_COMPLETED)
+        record.refresh_from_db()
+        self.assertEqual(record.status, CoachCalendarEvent.STATUS_COMPLETED)
+        self.assertIsNotNone(record.review_completed_at)
 
     # -- 18: participant + employer both required ------------------------------
 
@@ -264,6 +267,9 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
             signature='data:image/png;base64,abc', actor=LEARNER_EMAIL,
         )
         self.assertEqual(self._instance(record)['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        record.refresh_from_db()
+        self.assertEqual(record.status, CoachCalendarEvent.STATUS_AWAITING_SIGNATURE)
+        self.assertIsNone(record.review_completed_at)
 
         instance = self._instance(record)
         review_instances.record_review_instance_signature(
@@ -271,6 +277,11 @@ class ReviewLifecycleStateMachineTestCase(TestCase):
             signature='data:image/png;base64,abc', actor='employer@example.com',
         )
         self.assertEqual(self._instance(record)['status'], review_instances.STATUS_COMPLETED)
+        record.refresh_from_db()
+        instance = self._instance(record)
+        self.assertEqual(record.status, CoachCalendarEvent.STATUS_COMPLETED)
+        self.assertIsNotNone(record.review_completed_at)
+        self.assertIsNotNone(instance['completed_at'])
 
     # -- 10/11: completed is a terminal state -----------------------------------
 

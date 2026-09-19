@@ -147,6 +147,7 @@ export async function signLearnerProgressReview(kind: LearnerKind, learnerId: st
 }
 
 export type BookableSessionType =
+  | 'first-session'
   | 'catch-up'
   | 'student-support'
   // Monthly coaching and progress reviews also come from the programme cycle,

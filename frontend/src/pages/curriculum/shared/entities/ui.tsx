@@ -17,6 +17,7 @@ import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { SelectMenu, type SelectOption } from '@/components/feature/SelectField';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { statusTone } from './model';
+import { recordCurriculumAction, recordCurriculumSearch } from '@/lib/curriculumActivity';
 import { AppIcon } from '@/components/feature/AppIcon';
 
 export interface EntityStat {
@@ -238,7 +239,14 @@ export function EntityFilterBar({
               <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-300"></AppIcon>
               <input
                 value={search}
-                onChange={event => onSearch(event.target.value)}
+                onChange={event => {
+                  onSearch(event.target.value);
+                  // What was searched for, recorded once the typing settles —
+                  // see curriculumActivity. Reported here rather than in each
+                  // page so the Audit Trail sees every entity list the same
+                  // way, and so no page can be left out by being forgotten.
+                  recordCurriculumSearch(event.target.value, placeholder || 'search');
+                }}
                 placeholder={placeholder}
                 disabled={disabled || searchDisabled}
                 className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400"
@@ -253,7 +261,10 @@ export function EntityFilterBar({
               <SelectMenu
                 size="sm"
                 value={select.value}
-                onChange={select.onChange}
+                onChange={value => {
+                  select.onChange(value);
+                  recordCurriculumAction('filter', { filter: select.label, value });
+                }}
                 options={select.options}
                 disabled={disabled || select.disabled}
                 disabledHint={disabled ? 'Filters become available when this list has records.' : select.disabledHint}
@@ -270,7 +281,10 @@ export function EntityFilterBar({
               <SelectMenu
                 size="sm"
                 value={sort.value}
-                onChange={sort.onChange}
+                onChange={value => {
+                  sort.onChange(value);
+                  recordCurriculumAction('sort', { sort: value });
+                }}
                 options={sort.options.map(option => ({ value: option.value, label: option.label }))}
                 disabled={disabled}
                 disabledHint={disabled ? 'Sorting becomes available when this list has records.' : undefined}

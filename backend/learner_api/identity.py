@@ -1,6 +1,10 @@
 """Shared identity resolution for enrolment rows and learner profiles."""
 
+import logging
+
 from .models import EnrolmentUser, LearnerProfile
+
+logger = logging.getLogger(__name__)
 
 
 def learner_profile_for_source(source, source_pk=None, *, active_only=False):
@@ -35,7 +39,23 @@ def learner_profile_for_source(source, source_pk=None, *, active_only=False):
         profile = LearnerProfile.objects.filter(email__iexact=email, enrolment_id__isnull=True, **filters).first()
         if profile is not None:
             # A shared address cannot identify which enrolment owns legacy work.
-            if EnrolmentUser.all_learners.filter(email__iexact=email).exclude(pk=source_pk).exists():
+            twins = list(
+                EnrolmentUser.all_learners.filter(email__iexact=email)
+                .exclude(pk=source_pk)
+                .values_list("pk", flat=True)[:5]
+            )
+            if twins:
+                # Silence here cost a day of diagnosis: the caller sees only a
+                # missing profile, and reports it as a missing coach or an
+                # inactive learner, while the real fault is that this person was
+                # enrolled twice. Say so, with the ids somebody can merge.
+                logger.warning(
+                    "learner_profile_for_source: %s is enrolled more than once "
+                    "(Created_users %s and %s), so no profile can be resolved. "
+                    "Merge them with: manage.py merge_duplicate_enrolments "
+                    "--pairs <keep>:<retire>",
+                    email, source_pk, ", ".join(str(pk) for pk in twins),
+                )
                 return None
             # Self-healing: record the link we just had to infer, so the next
             # lookup takes the fast, correct path. Best-effort — a failure here

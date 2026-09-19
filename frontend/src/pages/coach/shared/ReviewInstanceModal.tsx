@@ -3,9 +3,11 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer, computeMissingRequiredFields, computeVisibleRequiredFields } from '@/components/reviews/ReviewFormRenderer';
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
+import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
 import {
+  calculateReviewInstanceProgress,
   completeReviewInstance,
-  downloadMcmReviewPdf,
+  downloadReviewInstancePdf,
   fetchReviewInstanceForm,
   flattenReviewFields,
   saveReviewInstanceAnswers,
@@ -18,6 +20,10 @@ import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { useAuth } from '@/hooks/useAuth';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
+
+/** Review Types with a signed PDF export, by the Review Type's stable code --
+ *  mirrors curriculum_api.review_pdf.EXPORTABLE_REVIEW_TYPES. */
+const EXPORTABLE_REVIEW_TYPES = ['mcm', 'progress_review'];
 
 /**
  * The generic "open a Curriculum-driven Review" screen -- what a coach sees
@@ -61,6 +67,7 @@ export function ReviewInstanceModal({
   const [error, setError] = useState<string | null>(null);
   const [openSectionId, setOpenSectionId] = useState('');
   const [showErrors, setShowErrors] = useState(false);
+  const [calculating, setCalculating] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -169,7 +176,23 @@ export function ReviewInstanceModal({
     }
   };
 
-  const busy = saving;
+  /** Calculating is an explicit action and never happens on load, reload or
+   *  reopen -- the snapshot below is whatever the backend already stored. */
+  const calculateProgress = async () => {
+    if (!definition || calculating) return;
+    setCalculating(true);
+    setError(null);
+    try {
+      setDefinition(await calculateReviewInstanceProgress(definition.instance.id));
+    } catch (err) {
+      if (isAbortError(err)) return;
+      setError(err instanceof Error ? err.message : 'Progress could not be calculated.');
+    } finally {
+      setCalculating(false);
+    }
+  };
+
+  const busy = saving || calculating;
 
   return (
     <ModalShell busy={busy} onClose={onClose}>
@@ -221,6 +244,21 @@ export function ReviewInstanceModal({
                   </p>
                 </div>
               </div>
+            ) : null}
+
+            {/* The Learning Progress area belongs to the canonical Progress
+                Review type only -- identified by the Review Type's stable
+                code, never by the template's name. Calculating is locked once
+                the review reaches the signature step, so the figures a party
+                signs cannot move afterwards. */}
+            {definition.template.reviewTypeCode === 'progress_review' ? (
+              <ReviewProgressPanel
+                snapshot={definition.progressSnapshot}
+                ragHistory={definition.ragHistory}
+                canCalculate={!isSignatureStage}
+                calculating={calculating}
+                onCalculate={() => { void calculateProgress(); }}
+              />
             ) : null}
 
             <ReviewFormRenderer
@@ -284,18 +322,18 @@ export function ReviewInstanceModal({
               </div>
             ) : null}
             {/* The signed-PDF export and the full signature summary (coach +
-                learner + any other configured party) are specific to the
-                canonical Monthly Coaching Meeting review type -- identified
-                by the Review Type's stable code, never by name/title -- and
-                reuse the exact same components/API the learner side already
-                uses, reading the same signatures/pdf-availability this same
-                fetch already returned. */}
-            {definition.template.reviewTypeCode === 'mcm' && isSignatureStage ? (
+                learner + any other configured party) belong to the Review
+                Types that have a signed export -- identified by the Review
+                Type's stable code, never by name/title -- and reuse the exact
+                same components/API the learner side already uses, reading the
+                same signatures/pdf-availability this same fetch already
+                returned. */}
+            {EXPORTABLE_REVIEW_TYPES.includes(definition.template.reviewTypeCode || '') && isSignatureStage ? (
               <>
                 <ReviewSignatures signatures={definition.signatures} />
                 <ReviewPdfDownload
                   availability={definition.pdf}
-                  onDownload={() => downloadMcmReviewPdf(definition.instance.id)}
+                  onDownload={() => downloadReviewInstancePdf(definition.instance.id)}
                 />
               </>
             ) : null}

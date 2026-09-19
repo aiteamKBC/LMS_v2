@@ -61,11 +61,13 @@ class SignedMcmPdfTests(SimpleTestCase):
                     definition['signatures']['participant'][key] = None
                 self.assertFalse(pdf_availability(definition)['available'])
 
-    def test_mcm_classification_not_display_name_controls_export(self):
+    def test_review_type_classification_not_display_name_controls_export(self):
         definition = sample_definition()
         definition['template']['name'] = 'Monthly learning catch-up'
         self.assertTrue(pdf_availability(definition)['available'])
-        definition['template']['reviewTypeCode'] = 'progress_review'
+        # A Review Type with no signed export still has no PDF at all.
+        # (Progress Review gained one -- see ProgressReviewPdfTests.)
+        definition['template']['reviewTypeCode'] = 'induction'
         self.assertIsNone(pdf_availability(definition))
         self.assertEqual(mcm_pdf_response(definition, {}).status_code, 404)
 
@@ -153,3 +155,137 @@ class SignedMcmPdfTests(SimpleTestCase):
         for status in ('awaiting-signature', 'completed'):
             with self.subTest(status=status), self.assertRaisesMessage(ValueError, 'Submitted review answers cannot be changed'):
                 save_review_instance_answers({'status': status}, {'answer': 'Replacement'})
+
+
+def progress_review_definition(snapshot=None, rag_history=None):
+    """The same signed shape, classified as the canonical Progress Review type
+    and carrying the snapshot a coach froze."""
+    definition = sample_definition()
+    definition['template'] = {'name': 'Progress Review', 'reviewTypeCode': 'progress_review'}
+    definition['progressSnapshot'] = snapshot
+    definition['ragHistory'] = rag_history if rag_history is not None else []
+    return definition
+
+
+def saved_snapshot(**overrides):
+    snapshot = {
+        'calculationMethod': 'planned_hours',
+        'calculatedFrom': '2024-10-18',
+        'calculatedAt': '2026-09-16T14:35:02',
+        'calculatedBy': 'coach@example.test',
+        'weeksElapsed': 100,
+        'programmeProgress': {'actual': 28, 'expected': 56, 'planned': 100, 'actualPercent': 28.0,
+                              'expectedPercent': 56.0, 'variancePercent': -28.0, 'varianceDirection': 'below'},
+        'offTheJobHours': {'actual': 64, 'expected': 41, 'planned': 100, 'actualPercent': 64.0,
+                           'expectedPercent': 41.0, 'variancePercent': 23.0, 'varianceDirection': 'above'},
+    }
+    snapshot.update(overrides)
+    return snapshot
+
+
+#: What the learner's CURRENT figures might be by the time an old review is
+#: reopened -- none of these numbers may ever appear in an export of a review
+#: that was signed against the snapshot above.
+LATER_LIVE_FIGURES = ('90%', '80%', '65%')
+
+PROGRESS_INFORMATION = {
+    **SAMPLE_INFORMATION,
+    # The cohort delivery window the enrolment row carries...
+    'startDate': '2024-10-01', 'endDate': '2027-10-01',
+    # ...and the learner's own dates, which a Progress Review must state.
+    'learnerStartDate': '2024-10-18', 'learnerEndDate': '2027-10-17',
+}
+
+
+class ProgressReviewPdfTests(SimpleTestCase):
+    def pdf_text(self, definition, information=None):
+        pdf = PdfReader(BytesIO(build_mcm_pdf(definition, information or PROGRESS_INFORMATION)))
+        return '\n'.join(page.extract_text() for page in pdf.pages)
+
+    def test_the_progress_review_type_has_a_signed_export(self):
+        definition = progress_review_definition(saved_snapshot())
+        self.assertTrue(pdf_availability(definition)['available'])
+        response = mcm_pdf_response(definition, PROGRESS_INFORMATION)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Progress-Review-REVI-SAMPLE.pdf', response['Content-Disposition'])
+
+    def test_it_renders_the_saved_snapshot_rather_than_recalculating(self):
+        definition = progress_review_definition(saved_snapshot())
+        original = deepcopy(definition)
+        text = self.pdf_text(definition)
+        self.assertIn('Learning Progress', text)
+        self.assertIn('Programme progress', text)
+        self.assertIn('Off-the-job hours progress', text)
+        # Exactly the stored figures, and the stored above/below annotations.
+        self.assertIn('28%', text)
+        self.assertIn('64%', text)
+        self.assertIn('23% above expected (expected 41%)', text)
+        self.assertIn('28% below expected (expected 56%)', text)
+        for later in LATER_LIVE_FIGURES:
+            self.assertNotIn(later, text)
+        # Rendering must not mutate what it was handed.
+        self.assertEqual(definition, original)
+
+    def test_the_window_it_states_is_the_one_the_snapshot_was_calculated_over(self):
+        text = self.pdf_text(progress_review_definition(saved_snapshot()))
+        self.assertIn('18/10/2024', text)
+        self.assertIn('16/09/2026 15:35 (Europe/London)', text)
+        # Never the cohort delivery window the enrolment row also carries.
+        self.assertNotIn('01/10/2024', text)
+
+    def test_the_information_block_states_the_learners_own_programme_dates(self):
+        text = self.pdf_text(progress_review_definition(saved_snapshot()))
+        self.assertIn('Programme Start Date', text)
+        self.assertIn('17/10/2027', text)       # the learner's own planned end
+        self.assertNotIn('01/10/2027', text)    # not the cohort's
+
+    def test_a_review_completed_without_a_calculation_says_so(self):
+        text = self.pdf_text(progress_review_definition(None))
+        self.assertIn('No progress snapshot was calculated for this review.', text)
+
+    def test_rag_history_shows_each_reviews_own_recorded_value(self):
+        text = self.pdf_text(progress_review_definition(saved_snapshot(), [
+            {'reviewInstanceId': 'REVI-2', 'reviewName': 'Progress Review', 'targetDate': '2026-01-03', 'rag': 'Green'},
+            {'reviewInstanceId': 'REVI-1', 'reviewName': 'Progress Review', 'targetDate': '2025-04-16', 'rag': ''},
+        ]))
+        self.assertIn('RAG Status', text)
+        self.assertIn('03/01/2026', text)
+        self.assertIn('Green', text)
+        # A past review that recorded no RAG still appears.
+        self.assertIn('16/04/2025', text)
+        self.assertIn('None', text)
+
+    def test_it_keeps_the_meeting_summary_section_out_of_a_progress_review(self):
+        text = self.pdf_text(progress_review_definition(saved_snapshot()))
+        self.assertNotIn('Meeting Summary', text)
+        self.assertNotIn('No Summary Generated', text)
+
+    def test_saved_answers_and_signatures_render_the_same_way_they_do_for_an_mcm(self):
+        definition = progress_review_definition(saved_snapshot())
+        pdf = PdfReader(BytesIO(build_mcm_pdf(definition, PROGRESS_INFORMATION)))
+        text = '\n'.join(page.extract_text() for page in pdf.pages)
+        self.assertIn('Saved learner answer <not markup>.', text)
+        self.assertNotIn('HIDDEN-OLD-ANSWER', text)
+        self.assertIn('Participant', pdf.pages[-1].extract_text())
+
+    def test_long_answers_still_paginate_around_the_progress_section(self):
+        definition = progress_review_definition(saved_snapshot())
+        definition['sections'][0]['fields'][0]['answer'] = 'A long recorded reflection. ' * 1500 + 'END-OF-ANSWER'
+        pdf = PdfReader(BytesIO(build_mcm_pdf(definition, PROGRESS_INFORMATION)))
+        text = '\n'.join(page.extract_text() for page in pdf.pages)
+        self.assertGreater(len(pdf.pages), 3)
+        self.assertIn('END-OF-ANSWER', text)
+        self.assertIn('Learning Progress', text)
+
+    def test_an_unsigned_progress_review_has_no_export(self):
+        definition = progress_review_definition(saved_snapshot())
+        definition['instance']['status'] = 'awaiting-signature'
+        self.assertFalse(pdf_availability(definition)['available'])
+        self.assertEqual(mcm_pdf_response(definition, PROGRESS_INFORMATION).status_code, 409)
+
+    def test_the_mcm_export_still_reads_the_enrolment_window_it_always_has(self):
+        """The learner-specific dates are carried alongside, not substituted --
+        this export's Information block is unchanged."""
+        text = self.pdf_text(sample_definition(), PROGRESS_INFORMATION)
+        self.assertIn('01/10/2024', text)
+        self.assertNotIn('18/10/2024', text)

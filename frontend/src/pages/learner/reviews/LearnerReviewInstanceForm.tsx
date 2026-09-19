@@ -3,6 +3,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
+import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
 import { fetchLearnerEventReviewInstance, type LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { flattenReviewFields } from '@/api/reviewInstances';
@@ -185,6 +186,19 @@ export function LearnerReviewInstanceForm({ definition, onSign, onDownload, sign
           {canSign ? 'Go to signature' : 'View signatures'}
         </button>
       </div>}
+
+      {/* The same frozen figures the coach calculated and the signed PDF
+          renders. Read-only here: a learner never calculates, and nothing on
+          this page recalculates against their current progress. */}
+      {definition.template.reviewTypeCode === 'progress_review' ? (
+        <ReviewProgressPanel
+          snapshot={definition.progressSnapshot}
+          ragHistory={definition.ragHistory}
+          canCalculate={false}
+          calculating={false}
+          onCalculate={() => undefined}
+        />
+      ) : null}
 
       <ReviewFormRenderer
         sections={definition.sections}

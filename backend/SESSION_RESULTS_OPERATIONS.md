@@ -4,7 +4,7 @@
 
 Implementation is local; it has not been deployed. No database writes or migrations were executed by the agent. The Azure container `session-recordings` **was created and its private access verified**, as explicitly authorized. No real recording, transcript or attendance file was transferred during validation.
 
-Activation requires owner-run SQL and an operating background scheduler. Mocked tests do not verify Microsoft permissions, real SQL execution, Azure upload/playback, or production readiness.
+Activation requires the existing owner-provisioned tables and deployment/restart of the updated application. The web serving process now starts a background scheduler on its first HTTP request. Mocked tests do not verify Microsoft permissions, real SQL execution, Azure upload/playback, or production readiness.
 
 ## What users see
 
@@ -70,15 +70,22 @@ ORDER BY table_schema, table_name, ordinal_position;
 
 ## Background execution
 
-No scheduler/deployment configuration or `.env` file was changed. Use the deployment's existing Python environment from `backend/`.
+The WSGI and ASGI HTTP entrypoints now start one automatic worker thread per serving process on its first HTTP request, after any server preload/fork. It continues without an open browser, checks the durable queue every 60 seconds after each pass, and calls `process_session_results --scheduled --limit 10`. Existing completed-series checks are limited to once per five minutes; Graph may publish attendance and media at different times. No worker is started merely by importing this module or running a management command.
 
-The **existing scheduler command now uses the queue and Azure archiver**, while retaining its coach-meeting synchronization:
+Manual **Sync attendance & files** commits the queue request, then immediately starts a worker scoped to that meeting series. Two manual workers per serving process are allowed; repeated requests are coalesced and overflow stays in the durable queue. Database leases prevent the automatic/manual/external workers from importing the same series concurrently. The HTTP request does not wait for MP4 transfer. Both session views refresh the saved status and display queued, running, failed and complete states. A completed check can have no recording yet; subsequent checks discover delayed files.
+
+Deploy backend and frontend together and restart the web service. The service must remain running and support background threads. No live deployment, `.env` change, job execution, database write or media transfer was performed while implementing this change. No new schema is required. Existing archive/job tables and Graph/private-Azure access remain prerequisites.
+
+For deployments that use only an external scheduler, set `SESSION_RESULTS_AUTOMATIC=false` in the owner-managed runtime environment to disable the in-process periodic loop. Manual dispatch remains available. Otherwise no new environment setting or separate scheduler is required. Do not add a duplicate external schedule just to activate this version.
+
+The optional external scheduler uses the deployment's existing Python environment from `backend/`. The **existing scheduler command uses the same queue and Azure archiver**, while retaining its coach-meeting synchronization:
+
 
 ```text
 python manage.py sync_teams_meeting_artifacts --lookback-hours 168 --limit 10 --coach-limit 100
 ```
 
-Run every five minutes. The seven-day lookback allows delayed Microsoft files to appear. A completed series is not automatically requeued more often than every 30 minutes. Historical completed attendance reports outside the 48-hour settling window reuse saved details when participant counts agree. Manual Sync requests a fresh report read. Saved recordings are not uploaded again.
+Run every five minutes if choosing this external scheduler. The lookback bounds coach discovery; curriculum discovery also retains early runs. A completed curriculum series is not automatically requeued more often than every five minutes. Historical completed attendance reports outside the 48-hour settling window reuse saved details when participant counts agree. Manual Sync requests a fresh report read. Saved recordings are not uploaded again.
 
 Alternatively, a curriculum-only scheduler can use:
 

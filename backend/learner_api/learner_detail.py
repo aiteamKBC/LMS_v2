@@ -1130,6 +1130,32 @@ def persist_live_otjh_snapshot(learner_profile, snapshot):
     return changed_fields
 
 
+def build_otjh_detail(source, learner_profile=None):
+    """One learner's own resolved training plan -- modules/weeks/components with
+    expectedOtjh attached and totalExpectedOtjh summed.
+
+    Extracted from refresh_learner_otjh_snapshot (its only original caller, and
+    still its default path) so a second consumer that needs the same resolved
+    plan -- the Progress Review snapshot, see review_progress_snapshot.py --
+    reads it through one builder instead of repeating this resolution chain.
+    """
+    detail = to_learner_detail(source, learner_profile)
+    detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
+        detail["modules"], detail["week"], detail["components"],
+        assigned_modules=get_training_plan(source),
+    )
+    detail["components"] = _apply_programme_assignment_template(
+        detail["components"], getattr(source, "programme", "")
+    )
+    detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(detail["components"])
+    detail["week"], detail["components"] = _append_week_quizzes(
+        detail["week"],
+        detail["components"],
+        assigned_modules=get_training_plan(source),
+    )
+    return detail
+
+
 def refresh_learner_otjh_snapshot(learner_profile, *, source=None, detail=None):
     if learner_profile is None:
         return {}
@@ -1137,20 +1163,7 @@ def refresh_learner_otjh_snapshot(learner_profile, *, source=None, detail=None):
     resolved_source = source or learner_profile
     resolved_detail = detail
     if resolved_detail is None:
-        resolved_detail = to_learner_detail(resolved_source, learner_profile)
-        resolved_detail["modules"], resolved_detail["week"], resolved_detail["components"] = _resolve_from_master(
-            resolved_detail["modules"], resolved_detail["week"], resolved_detail["components"],
-            assigned_modules=get_training_plan(resolved_source),
-        )
-        resolved_detail["components"] = _apply_programme_assignment_template(
-            resolved_detail["components"], getattr(resolved_source, "programme", "")
-        )
-        resolved_detail["components"], resolved_detail["totalExpectedOtjh"] = _annotate_otjh(resolved_detail["components"])
-        resolved_detail["week"], resolved_detail["components"] = _append_week_quizzes(
-            resolved_detail["week"],
-            resolved_detail["components"],
-            assigned_modules=get_training_plan(resolved_source),
-        )
+        resolved_detail = build_otjh_detail(resolved_source, learner_profile)
 
     snapshot = _live_otjh_snapshot(resolved_detail, learner_profile)
     snapshot["components_planned"] = len(resolved_detail.get("components") or [])

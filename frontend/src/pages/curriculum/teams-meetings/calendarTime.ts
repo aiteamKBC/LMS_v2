@@ -18,8 +18,17 @@ export function clockLabel(value: unknown): string {
   } catch { return 'Check this time'; }
 }
 
-export function calendarInputError(row: { sessions: { startTime: unknown; endTime: unknown }[] }): string {
+/** "2 hours", "90 min" -- the length a reader would say out loud. */
+export function durationLabel(minutes: number): string {
+  if (minutes <= 0) return '';
+  if (minutes % 60) return `${minutes} min`;
+  const hours = minutes / 60;
+  return `${hours} hour${hours === 1 ? '' : 's'}`;
+}
+
+export function calendarInputError(row: { sessions: { startTime: unknown; endTime: unknown; startDateTimeUtc?: string; durationMinutes?: number }[] }): string {
   for (const session of row.sessions) {
+    if (session.startDateTimeUtc && Number.isFinite(Date.parse(session.startDateTimeUtc)) && Number.isFinite(session.durationMinutes) && Number(session.durationMinutes) > 0) continue;
     try {
       const start = normalizedClock(session.startTime);
       const end = normalizedClock(session.endTime);
@@ -30,6 +39,7 @@ export function calendarInputError(row: { sessions: { startTime: unknown; endTim
 }
 
 export function reviewDateLabel(value: string, timeZone: string): string {
+  if (!Number.isFinite(Date.parse(value))) return 'Check this date and time';
   return new Intl.DateTimeFormat('en-GB', {
     timeZone, weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit', hour12: true,

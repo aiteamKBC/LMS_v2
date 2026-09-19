@@ -25,6 +25,7 @@ import { DashboardTrainingPlan } from './DashboardTrainingPlan';
 import { DashboardActivities } from './DashboardActivities';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardPlan } from './useDashboardPlan';
+import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
 
 function formatProgrammeStartDate(value?: string | null): string {
   if (!value) return '';
@@ -70,6 +71,10 @@ export default function LearnerOverview() {
   const skipPreStartData = isRealMode && (!real || isCommercialPreStart);
   const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
   const dashboardPlan = useDashboardPlan(learnerKind, id, isRealMode && !skipPreStartData);
+  // My Learning and Dashboard must quote the same programme snapshot. Keeping
+  // this on the shared metrics resource prevents the weekly overview response
+  // from becoming a second, independently cached source for OTJH totals.
+  const metrics = useLearnerMetrics(learnerKind, id, isRealMode && !skipPreStartData);
   const scheduleRead = dashboardPlan.schedule;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -124,12 +129,6 @@ export default function LearnerOverview() {
   const coachDisplayName = scheduleRead.data?.coach.name || (scheduleRead.data ? 'Not yet assigned' : planPlaceholder);
   const currentModuleLabel = plan.modules.map(module => module.title).join(' · ') || planPlaceholder;
   const continueLearningHref = learnerModuleHref(kind, id, plan.modules[0]?.id, scheduleRead.data?.moduleLinks);
-  const metrics = {
-    data: dashboardPlan.week.data?.metrics ?? null,
-    loading: dashboardPlan.week.loading,
-    error: dashboardPlan.week.error,
-    refresh: dashboardPlan.week.refresh,
-  };
 
   const programme = metrics.data?.programme;
   const programmeProgressPercent = programme?.percent ?? null;

@@ -73,6 +73,7 @@ const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/pa
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
+const CurriculumAuditTrailPersonPage = lazyRoute(() => import("../pages/curriculum/audit-trail/person/page"));
 const CurriculumCohorts = lazyRoute(() => import("../pages/curriculum/cohorts/page"));
 const CurriculumCohortWorkspace = lazyRoute(() => import("../pages/curriculum/cohort-workspace/page"));
 const CurriculumGroups = lazyRoute(() => import("../pages/curriculum/groups/page"));
@@ -189,6 +190,7 @@ const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"))
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
+const PersonalCoursesPage = lazyRoute(() => import("../pages/personal-learning/page"));
 const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/schedule/page"));
 const NotFound = lazyRoute(() => import("../pages/NotFound"));
 const PaymentsPage = lazyRoute(() => import("../pages/finance/payments/page"));
@@ -451,6 +453,10 @@ const routes: RouteObject[] = [
   {
     path: "/learner/week/:weekNumber",
     element: <WeekDetailPage />,
+  },
+  {
+    path: "/my-courses",
+    element: <PersonalCoursesPage />,
   },
   {
     // Canonical URL for the merged Overview/Modules/Quizzes page. The three
@@ -1128,6 +1134,13 @@ const routes: RouteObject[] = [
     element: <CurriculumAuditTrailPage />,
   },
   {
+    // One person's own page rather than a panel over the list: an audit finding
+    // is something people send each other, and a link to it has to survive
+    // being pasted into a message.
+    path: "/curriculum/audit-trail/people/:email",
+    element: <CurriculumAuditTrailPersonPage />,
+  },
+  {
     path: "/curriculum/published",
     element: <CurriculumPublishedPage />,
   },
@@ -1503,6 +1516,10 @@ const routes: RouteObject[] = [
     element: <CertificateVerificationPage />,
   },
   {
+    path: "/verify-personal-certificate/:token",
+    element: <CertificateVerificationPage personal />,
+  },
+  {
     path: "*",
     element: <NotFound />,
   },
@@ -1537,6 +1554,7 @@ const PUBLIC_PATHS = new Set([
 
 const PUBLIC_PREFIXES = [
   "/verify-certificate/",
+  "/verify-personal-certificate/",
 ];
 
 const isPublic = (route: RouteObject) =>

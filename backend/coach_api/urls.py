@@ -2,6 +2,7 @@ from django.urls import path
 
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
+from . import personal_learning
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
 from .review_pdf import coach_mcm_pdf
 from .views import (
@@ -17,6 +18,7 @@ from .views import (
     coach_monthly_activity,
     coach_review_instance_answers,
     coach_review_instance_complete,
+    coach_review_instance_progress,
     coach_review_instance_detail,
     coach_review_instance_for_event,
     coach_review_instance_mark_in_progress_manually,
@@ -34,6 +36,10 @@ from .views import (
 
 
 urlpatterns = [
+    path('coach/personal-marking', personal_learning.marking),
+    path('coach/personal-marking/<uuid:submission_id>', personal_learning.marking),
+    path('coach/personal-marking/<uuid:submission_id>/evidence', personal_learning.evidence),
+    path('coach/personal-marking/<uuid:submission_id>/evidence/<uuid:file_id>', personal_learning.evidence),
     path('csrf', coach_csrf_token, name='coach-csrf'),
     path('coaches', coach_directory, name='coach-directory'),
     path('coach/dashboard', coach_dashboard, name='coach-dashboard'),
@@ -77,6 +83,9 @@ urlpatterns = [
     path('coach/reviews/<str:instance_id>', coach_review_instance_detail, name='coach-review-instance-detail'),
     path('coach/reviews/<str:instance_id>/answers', coach_review_instance_answers, name='coach-review-instance-answers'),
     path('coach/reviews/<str:instance_id>/complete', coach_review_instance_complete, name='coach-review-instance-complete'),
+    # Progress Review only: freeze this instance's learner-progress figures.
+    # An explicit coach action -- no other route ever recalculates them.
+    path('coach/reviews/<str:instance_id>/progress', coach_review_instance_progress, name='coach-review-instance-progress'),
     path(
         'coach/reviews/<str:instance_id>/mark-in-progress',
         coach_review_instance_mark_in_progress_manually,

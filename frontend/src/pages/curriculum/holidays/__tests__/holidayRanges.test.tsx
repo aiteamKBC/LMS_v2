@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CurriculumCohort, CurriculumHoliday } from '@/lib/curriculumApi';
 import { archiveCurriculumHoliday, createCurriculumHoliday } from '@/lib/curriculumApi';
 import type { ReactNode } from 'react';
-import HolidaysPage from '../page';
+import HolidaysPage from '../../england-holidays/page';
 
 /**
  * A holiday is a PERIOD, and the calendar has two sources.

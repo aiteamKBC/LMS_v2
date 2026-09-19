@@ -17,9 +17,23 @@ SIGNATURE_ROLES = ('advisor', 'employer', 'participant', 'referrer')
 ROLE_LABELS = {'advisor': 'Advisor', 'employer': 'Employer', 'participant': 'Participant', 'referrer': 'Referrer'}
 IMAGE_PATTERN = re.compile(r'^data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$', re.I)
 
+REVIEW_TYPE_MCM = 'mcm'
+REVIEW_TYPE_PROGRESS_REVIEW = 'progress_review'
+#: Review Types with a signed export, by the Review Type's stable code -- never
+#: by a template's name. Anything else has no PDF at all (404), exactly as
+#: before this Progress Review entry was added.
+EXPORTABLE_REVIEW_TYPES = {
+    REVIEW_TYPE_MCM: 'Monthly-Coaching-Meeting',
+    REVIEW_TYPE_PROGRESS_REVIEW: 'Progress-Review',
+}
+
+
+def review_type_code(definition):
+    return definition.get('template', {}).get('reviewTypeCode')
+
 
 def pdf_availability(definition):
-    if definition.get('template', {}).get('reviewTypeCode') != 'mcm':
+    if review_type_code(definition) not in EXPORTABLE_REVIEW_TYPES:
         return None
     signatures = definition.get('signatures', {})
     required = {role for role in SIGNATURE_ROLES if signatures.get(role, {}).get('required')}
@@ -43,9 +57,47 @@ def learner_information(source, *, name='', programme=''):
         'programme': getattr(source, 'programme', '') or programme,
         'startDate': getattr(source, 'start_date', None),
         'endDate': getattr(source, 'end_date', None),
+        # The learner's OWN programme dates, as distinct from the two above --
+        # "Created_users"."Start_date"/"End_date" carry the cohort delivery
+        # window (active_users.mirror_learner_placement stamps the profile
+        # mirror with it), which is shared by everyone placed in that cohort.
+        # Carried separately rather than substituted, so the existing MCM
+        # export keeps reading exactly the dates it always has.
+        'learnerStartDate': getattr(source, 'learner_start_date', None),
+        'learnerEndDate': getattr(source, 'learner_end_date', None),
         'employer': getattr(source, 'employer', ''),
         'manager': getattr(source, 'line_manager', ''),
     }
+
+
+def programme_dates(definition, information):
+    """(start, end) for the Information block.
+
+    A Progress Review states the individual learner's own programme start date
+    -- the same date its progress snapshot was calculated from -- so the two
+    can never disagree inside one document. Everything else keeps the enrolment
+    window it already showed.
+    """
+    if review_type_code(definition) != REVIEW_TYPE_PROGRESS_REVIEW:
+        return information.get('startDate'), information.get('endDate')
+    snapshot = definition.get('progressSnapshot') or {}
+    start = snapshot.get('calculatedFrom') or information.get('learnerStartDate') or information.get('startDate')
+    return start, information.get('learnerEndDate') or information.get('endDate')
+
+
+def percent_text(value):
+    return 'Not recorded' if value is None else f'{round(float(value))}%'
+
+
+def variance_text(metric):
+    """"23% above expected (57%)" -- the reference's above/below annotation,
+    read from the stored snapshot rather than recomputed."""
+    variance, direction = metric.get('variancePercent'), metric.get('varianceDirection')
+    if variance is None or not direction:
+        return ''
+    expected = metric.get('expectedPercent')
+    suffix = '' if expected is None else f' (expected {percent_text(expected)})'
+    return f'{abs(round(float(variance)))}% {direction} expected{suffix}'
 
 
 def display_date(value, *, include_time=False):
@@ -114,7 +166,7 @@ def build_mcm_pdf(definition, information):
 
     availability = pdf_availability(definition)
     if not availability or not availability['available']:
-        raise ValueError((availability or {}).get('reason') or 'A signed MCM is required.')
+        raise ValueError((availability or {}).get('reason') or 'A signed review is required.')
     output = BytesIO()
     page_width, page_height = landscape(A4)
     margin = 56
@@ -141,10 +193,11 @@ def build_mcm_pdf(definition, information):
     instance = definition['instance']
     title = definition['template']['name']
     story = [paragraph(title, True), Spacer(1, 12)]
+    start_date, end_date = programme_dates(definition, information)
     info_rows = [
         ('Programme Name', information.get('programme')),
-        ('Programme Start Date', display_date(information.get('startDate'))),
-        ('Planned End Date', display_date(information.get('endDate'))),
+        ('Programme Start Date', display_date(start_date)),
+        ('Planned End Date', display_date(end_date)),
         ('Employer', information.get('employer')), ('Manager', information.get('manager')),
         ('Review Planned Date', display_date(instance.get('targetDate'))),
         ('Review Completed Date', display_date(instance.get('completedAt'))),
@@ -156,6 +209,56 @@ def build_mcm_pdf(definition, information):
                              ('LINEAFTER', (0, 0), (0, -1), .4, navy),
                              ('LEFTPADDING', (1, 0), (1, -1), 10)]))
     story.extend([section('Information', [info]), Spacer(1, 16)])
+
+    def progress_bar(metric):
+        """The reference's track + fill + target marker, drawn from the stored
+        snapshot. Never recalculated here -- this renders numbers, it does not
+        produce them."""
+        from reportlab.graphics.shapes import Drawing, Line, Rect
+
+        bar_width = width - 40
+        drawing = Drawing(bar_width, 16)
+        drawing.add(Rect(0, 3, bar_width, 10, fillColor=colors.HexColor('#d5d9e2'), strokeColor=None))
+        actual = metric.get('actualPercent')
+        if actual is not None:
+            filled = max(0.0, min(float(actual), 100.0)) / 100 * bar_width
+            if filled > 0:
+                drawing.add(Rect(0, 3, filled, 10, fillColor=colors.HexColor('#1f7a8c'), strokeColor=None))
+        expected = metric.get('expectedPercent')
+        if expected is not None:
+            marker = max(0.0, min(float(expected), 100.0)) / 100 * bar_width
+            drawing.add(Line(marker, 0, marker, 16, strokeColor=navy, strokeWidth=1.4))
+        return drawing
+
+    def progress_rows(snapshot):
+        rows = [Paragraph(
+            '<b>Calculated from:</b> {} &nbsp;&nbsp; <b>Calculated at:</b> {}'.format(
+                escape(display_date(snapshot.get('calculatedFrom'))),
+                escape(display_date(snapshot.get('calculatedAt'), include_time=True)),
+            ), body)]
+        for key, label in (('programmeProgress', 'Programme progress'),
+                           ('offTheJobHours', 'Off-the-job hours progress')):
+            metric = snapshot.get(key) or {}
+            caption = variance_text(metric)
+            rows.append([
+                Paragraph(f'<b>{escape(label)}</b> &nbsp; {escape(percent_text(metric.get("actualPercent")))}', body),
+                Spacer(1, 3),
+                progress_bar(metric),
+                Paragraph(escape(caption), body) if caption else Spacer(1, 1),
+            ])
+        return rows
+
+    if review_type_code(definition) == REVIEW_TYPE_PROGRESS_REVIEW:
+        # Exactly what was frozen when the coach pressed Calculate. An
+        # instance that was never calculated says so, rather than this export
+        # quietly reaching for the learner's current figures.
+        snapshot = definition.get('progressSnapshot')
+        story.extend([
+            section('Learning Progress', progress_rows(snapshot) if snapshot
+                    else [paragraph('No progress snapshot was calculated for this review.')]),
+            Spacer(1, 16),
+        ])
+
     for block in sorted(definition.get('sections', []), key=lambda item: item.get('displayOrder', 0)):
         if not block.get('enabled', True):
             continue
@@ -178,14 +281,33 @@ def build_mcm_pdf(definition, information):
         if rows:
             story.extend([section(block.get('title', ''), rows), Spacer(1, 16)])
 
-    # A presentation-only placeholder, matching the legacy reference PDF's
-    # structure -- the Review Instance owns no meeting-summary field today,
-    # so this always shows "No Summary Generated". If one is added later,
-    # this reads it instead, without any dependency on the separate
-    # coach_meeting_summaries/CoachCalendarEvent AI-summary feature.
-    summary = definition.get('meetingSummary')
-    summary_text = summary.strip() if isinstance(summary, str) and summary.strip() else 'No Summary Generated'
-    story.extend([section('Meeting Summary', [paragraph(summary_text)]), Spacer(1, 16)])
+    if review_type_code(definition) == REVIEW_TYPE_PROGRESS_REVIEW:
+        # One row per completed Progress Review this learner has had, each
+        # showing the RAG that review itself recorded -- a review that captured
+        # none reads "None", the way the legacy export shows it. Never the
+        # learner's current coach_rag, which would rewrite signed history.
+        history = definition.get('ragHistory') or []
+        story.extend([
+            section('RAG Status', [
+                Paragraph(
+                    '<b>{}{}</b><br/>{}'.format(
+                        escape(str(entry.get('reviewName') or 'Progress Review')),
+                        f" - {escape(display_date(entry.get('targetDate')))}" if entry.get('targetDate') else '',
+                        escape(str(entry.get('rag') or 'None')),
+                    ), body)
+                for entry in history
+            ] if history else [paragraph('No completed Progress Reviews recorded.')]),
+            Spacer(1, 16),
+        ])
+    else:
+        # A presentation-only placeholder, matching the legacy reference PDF's
+        # structure -- the Review Instance owns no meeting-summary field today,
+        # so this always shows "No Summary Generated". If one is added later,
+        # this reads it instead, without any dependency on the separate
+        # coach_meeting_summaries/CoachCalendarEvent AI-summary feature.
+        summary = definition.get('meetingSummary')
+        summary_text = summary.strip() if isinstance(summary, str) and summary.strip() else 'No Summary Generated'
+        story.extend([section('Meeting Summary', [paragraph(summary_text)]), Spacer(1, 16)])
 
     # A dedicated final page follows the PR reference, using the actual saved
     # mark. Never substitute a typed name or another document's signature.
@@ -222,7 +344,7 @@ def mcm_pdf_response(definition, information):
     from django.http import HttpResponse, JsonResponse
     availability = pdf_availability(definition)
     if availability is None:
-        return JsonResponse({'detail': 'This PDF export is for monthly coaching meetings.'}, status=404)
+        return JsonResponse({'detail': 'This review type has no signed PDF export.'}, status=404)
     if not availability['available']:
         return JsonResponse({'detail': availability['reason']}, status=409)
     try:
@@ -231,6 +353,7 @@ def mcm_pdf_response(definition, information):
         return JsonResponse({'detail': str(exc)}, status=409)
     response = HttpResponse(content, content_type='application/pdf')
     identifier = re.sub(r'[^A-Za-z0-9_-]', '', str(definition['instance']['id']))
-    response['Content-Disposition'] = f'attachment; filename="Monthly-Coaching-Meeting-{identifier}.pdf"'
+    prefix = EXPORTABLE_REVIEW_TYPES[review_type_code(definition)]
+    response['Content-Disposition'] = f'attachment; filename="{prefix}-{identifier}.pdf"'
     response['Cache-Control'] = 'private, no-store'
     return response

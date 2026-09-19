@@ -1,3 +1,4 @@
+import { learningFetch } from '@/lib/personalLearning';
 import { readLearnerJson } from './learnerRead';
 import type { CertificateTemplate } from './platformAdmin';
 
@@ -74,7 +75,7 @@ export async function fetchLearnerCertificateTemplate(kind: string, id: number |
 
 export async function issueLearnerModuleCertificate(kind: string, id: number | string, subjectRef: string, csrfToken: string) {
   if (!csrfToken) throw new Error('Request verification is unavailable. Please reload the page.');
-  const response = await fetch(`/learner_api/certificates/${kind}/${id}/modules/${encodeURIComponent(subjectRef)}/issue/`, {
+  const response = await learningFetch(`/learner_api/certificates/${kind}/${id}/modules/${encodeURIComponent(subjectRef)}/issue/`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' },
