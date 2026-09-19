@@ -291,6 +291,7 @@ export function CompactSchedulePreview({
   occurrences,
   formatLabel = (plannedUtc, date) => formatDateLabel(plannedUtc || date),
   showDuration = true,
+  showSessionNumbers = true,
 }: {
   occurrences: Array<{
     session?: HolidayShiftSessionLike;
@@ -317,6 +318,8 @@ export function CompactSchedulePreview({
    * down twenty rows, "120 min" stops being read as information.
    */
   showDuration?: boolean;
+  /** Keep the number as a fallback when a caller supplies no session title. */
+  showSessionNumbers?: boolean;
 }) {
   // One kind of row. The parked clash rule used to emit two more -- a red
   // `blocked` card on the closed date and a green `replacement` card on the day
@@ -410,7 +413,9 @@ export function CompactSchedulePreview({
                         <span className="text-foreground-400">{weekdayLabel(entry.date)}</span>
                         {/* Numbered so a note talking in session numbers stays
                             actionable: session 8 can be found in the list. */}
-                        <span className="text-[11px] font-bold text-foreground-400">Session {entry.number}</span>
+                        {(showSessionNumbers || !entry.name) && (
+                          <span className="text-[11px] font-bold text-foreground-400">Session {entry.number}</span>
+                        )}
                         {/* What is taught on the date, next to when it runs. */}
                         {entry.name && (
                           <span className="font-semibold text-foreground-700">

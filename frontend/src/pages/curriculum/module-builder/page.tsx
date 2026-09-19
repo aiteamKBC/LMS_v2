@@ -9,15 +9,12 @@ import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { formatHoursMinutes } from '@/lib/format';
 import { curriculumNavItems } from '@/mocks/navigation';
-import {
-  fetchModuleLearners,
-  saveModuleLearners,
-  type ModuleLearnerRow,
-} from '@/api/learningPlan';
+import { fetchLearnerAssignments, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import {
   curriculumErrorMessage,
   fetchCurriculumHolidays,
   fetchCurriculumOverview,
+  fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
@@ -26,6 +23,7 @@ import {
   type CurriculumHoliday,
   type CurriculumKsbSet,
   type CurriculumProgramme,
+  type CurriculumScopeLearnerKsbImpactResponse,
   type LibraryComponent,
   type CurriculumStaffProfile,
   type CurriculumStandard,
@@ -50,6 +48,8 @@ import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
 import { LearnerPreview } from './LearnerPreview';
+import { ModuleLearnerProgressDialog } from './ModuleLearnerProgressDialog';
+import { LearnerAssignmentDrawer } from '../shared/entities/LearnerAssignmentDrawer';
 import { SessionResultsDialog } from '../module-workspace/ModuleSessions';
 import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
 // The holiday notice, shared with the module workspace so a week touched by a
@@ -368,6 +368,7 @@ export default function ModuleBuilder() {
   // catalogue no longer carries a third change-tutor drawer of its own.
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [focusedComponentId, setFocusedComponentId] = useState('');
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
@@ -385,7 +386,7 @@ export default function ModuleBuilder() {
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   // Which list the catalogue is showing. Nothing is read until the archive is
   // opened; see useCurriculumArchive, which Cohorts and Groups share.
-  const [showArchived, setShowArchived] = useState(false);
+  const [showArchived, setShowArchived] = useState(() => searchParams.get('view') === 'archive');
   const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
@@ -401,6 +402,8 @@ export default function ModuleBuilder() {
   const [ksbMapLoadingId, setKsbMapLoadingId] = useState<string | null>(null);
   const [programmeKsbLoading, setProgrammeKsbLoading] = useState(false);
   const [sessionKsbMappingOpen, setSessionKsbMappingOpen] = useState(false);
+  const [learnerAssignmentTarget, setLearnerAssignmentTarget] = useState<LearnerAssignmentTarget | null>(null);
+  const [learnerProgress, setLearnerProgress] = useState<{ target: LearnerAssignmentTarget; impact: CurriculumScopeLearnerKsbImpactResponse } | null>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [quizPackages, setQuizPackages] = useState<QuizPackageSummary[]>([]);
   const [quizzesLoading, setQuizzesLoading] = useState(false);
@@ -421,6 +424,9 @@ export default function ModuleBuilder() {
   // step (a delete, an export) and are better dismissed than re-run blind.
   const [actionMessageRetry, setActionMessageRetry] = useState<(() => void) | null>(null);
   const deepLinkedModuleRef = useRef('');
+  // `setSearchParams` and the editor state are scheduled independently. This
+  // marks the short hand-off while a catalogue click adds its module param.
+  const pendingModuleNavigationRef = useRef('');
   // Until the user drives a filter themselves the URL is read-only: the existing
   // programme deep link resolves an id into a name a beat later, and a sync that
   // deleted params it had not written would erase it before that happens.
@@ -1058,7 +1064,11 @@ export default function ModuleBuilder() {
     await new Promise(resolve => window.setTimeout(resolve, 120));
   }, []);
 
-  const openModule = useCallback(async (module: ModuleCatalogueItem, openSettings = false) => {
+  const openModule = useCallback(async (
+    module: ModuleCatalogueItem,
+    openSettings = false,
+    historyMode: 'replace' | 'push' = 'replace',
+  ) => {
     const structureId = moduleStructureIdentifier(module);
     setOpeningModule({ title: module.title, mode: openSettings ? 'settings' : 'builder' });
     setOpeningModuleComplete(false);
@@ -1135,23 +1145,28 @@ export default function ModuleBuilder() {
       // had been authoring for an hour was shown a module list instead of their
       // module and read that as their work being gone.
       //
-      // `replace`, so opening a module is not a history step of its own: Back
-      // still means "the page I came from", which for most readers is the
-      // programme they clicked through from.
+      // A direct link and a newly created module replace their provisional
+      // address: Back should leave the workspace. A catalogue action is a real
+      // drill-in, though, so it pushes one entry and Back returns to the same
+      // filtered module list instead of skipping to the page before it.
       //
       // The ref is stamped here as well as in the deep-link effect below. It is
       // that effect's "this key is already dealt with" mark, and without it
       // closing the module -- which clears the param -- could be raced by the
       // effect re-reading the param that is still there and re-opening it.
       deepLinkedModuleRef.current = next.catalogueId || '';
+      pendingModuleNavigationRef.current = next.catalogueId || '';
       setSearchParams(previous => {
         const params = new URLSearchParams(previous);
         if (next.catalogueId) params.set('module', next.catalogueId);
         params.delete('moduleTitle');
         return params;
-      }, { replace: true });
+      }, { replace: historyMode === 'replace' });
       setWorkingModule(next);
       setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
+      setFocusedComponentId(deepLinkTarget.selection?.kind === 'component' && new URLSearchParams(window.location.search).get('focus') === 'component'
+        ? deepLinkTarget.selection.componentId
+        : '');
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
@@ -1216,6 +1231,31 @@ export default function ModuleBuilder() {
       setKsbMapLoadingId(null);
     }
   }, [workingModule]);
+
+  const openLearnerAction = useCallback(async (module: ModuleBuilderListItem) => {
+    const identifier = moduleLearnerIdentifier(module);
+    if (!identifier) {
+      setActionMessage(`Unable to open learner assignments for ${module.title}: no module identifier was returned.`);
+      return null;
+    }
+    const target: LearnerAssignmentTarget = { scope: 'module', id: identifier, name: module.title };
+    setActionMessage(null);
+    setActionMessageRetry(null);
+    try {
+      const directory = await fetchLearnerAssignments(target);
+      const assignedCount = Number(directory.totals?.assignedCount || 0);
+      if (assignedCount === 0) {
+        setLearnerAssignmentTarget(target);
+        return 0;
+      }
+      const impact = await fetchCurriculumScopeLearnerKsbImpact('module', identifier, { learnerStatus: 'all' });
+      setLearnerProgress({ target, impact });
+      return assignedCount;
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : `Unable to load learners for ${module.title}.`);
+      return null;
+    }
+  }, []);
 
   const openProgrammeKsbMap = useCallback(async () => {
     if (programmeFilter === 'All' || programmeKsbLoading) return;
@@ -1820,7 +1860,7 @@ export default function ModuleBuilder() {
     });
   };
 
-  const closeWorkingModule = () => {
+  const clearWorkingModule = useCallback(() => {
     savedModuleSnapshotRef.current = '';
     // Everything the save pipeline knows belonged to the module being left.
     // Carrying a revision or an armed auto-save into the next one would have it
@@ -1830,6 +1870,19 @@ export default function ModuleBuilder() {
     autoSaveAttemptRef.current = '';
     setSaveFailure(null);
     setSavingSnapshot('');
+    setWorkingModule(null);
+    setSelection(null);
+    setSettingsOpen(false);
+    setPreviewOpen(false);
+    setLessonPickerWeekId(null);
+    setNoticeAlert(null);
+    setActionMessage(null);
+    // Browser Forward must reload the module from the restored address.
+    deepLinkedModuleRef.current = '';
+  }, []);
+
+  const closeWorkingModule = () => {
+    clearWorkingModule();
     // Back out of the address too, or a reload from the catalogue would re-open
     // the module the reader just left. The week/component deep-link targets go
     // with it: they only mean anything inside the module that owns them.
@@ -1839,14 +1892,22 @@ export default function ModuleBuilder() {
         .forEach(key => params.delete(key));
       return params;
     }, { replace: true });
-    setWorkingModule(null);
-    setSelection(null);
-    setSettingsOpen(false);
-    setPreviewOpen(false);
-    setLessonPickerWeekId(null);
-    setNoticeAlert(null);
-    setActionMessage(null);
   };
+
+  // A catalogue click adds the editor to browser history. This route stays
+  // mounted after browser Back, so clear the editor when its catalogue URL
+  // returns instead of leaving the previous module on screen.
+  useEffect(() => {
+    const moduleTarget = ['module', 'moduleId', 'catalogueId', 'moduleTitle']
+      .map(key => searchParams.get(key) || '')
+      .find(Boolean) || '';
+    if (moduleTarget) {
+      pendingModuleNavigationRef.current = '';
+      return;
+    }
+    if (!workingModule || pendingModuleNavigationRef.current) return;
+    clearWorkingModule();
+  }, [clearWorkingModule, searchParams, workingModule]);
 
   const restoreSavedWorkingModule = useCallback(() => {
     if (!savedModuleSnapshotRef.current) return workingModule;
@@ -1953,8 +2014,15 @@ export default function ModuleBuilder() {
   }, [hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
 
   const requestSelectionChange = useCallback((nextSelection: Selection) => {
+    setFocusedComponentId('');
     applySelectionSafely(nextSelection);
   }, [applySelectionSafely]);
+
+  useEffect(() => {
+    if (!focusedComponentId) return undefined;
+    const timer = window.setTimeout(() => setFocusedComponentId(''), 6000);
+    return () => window.clearTimeout(timer);
+  }, [focusedComponentId]);
 
   // The dates the weeks run on come from the module's own session plan, so
   // adding or removing a week has to re-read it: week N is session N, and the
@@ -2218,6 +2286,7 @@ export default function ModuleBuilder() {
               onAddWeekFromTemplate={() => setWeekTemplateImportOpen(true)}
               onReuseComponents={weekId => setReusePickerWeekId(weekId)}
               onCreateTeamsMeeting={() => setModuleTeamsMeetingOpen(true)}
+              focusedComponentId={focusedComponentId}
               onAddWeek={() => {
                 const week = createEmptyWeek(workingModule.id, workingModule.weekStructure.length + 1);
                 updateWorkingModule(module => ({ ...module, weekStructure: [...module.weekStructure, week] }));
@@ -2252,7 +2321,13 @@ export default function ModuleBuilder() {
 
             <div className="min-w-0">
               {selectedComponent && selectedWeek ? (
-                <ModuleBuilderScrollArea className="h-[calc(100vh-140px)] min-h-[420px]" contentClassName="pr-2.5">
+                <ModuleBuilderScrollArea className={`h-[calc(100vh-140px)] min-h-[420px] ${focusedComponentId === selectedComponent.id ? 'rounded-xl ring-2 ring-primary-400 ring-offset-2 ring-offset-background-100' : ''}`} contentClassName="pr-2.5">
+                  {focusedComponentId === selectedComponent.id && (
+                    <div className="mb-3 flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-semibold text-primary-800" role="status">
+                      <AppIcon className="ri-focus-3-line shrink-0 text-primary-600" />
+                      This is the component you opened from Audit Trail.
+                    </div>
+                  )}
                   <WeekComponentEditor
                     component={selectedComponent}
                     onChange={updates => updateWorkingModule(module => {
@@ -2668,6 +2743,7 @@ export default function ModuleBuilder() {
                     teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
+                    onLearners={() => openLearnerAction(module)}
                     onBuild={() => openModule(module)}
                     onSettings={() => openPlacementForm(module)}
                     onDuplicate={() => duplicateModule(module)}
@@ -2771,6 +2847,25 @@ export default function ModuleBuilder() {
             modules={programmeKsbMap.modules}
             sourceLabels={ksbSourceLabels}
             onClose={() => setProgrammeKsbMap(null)}
+          />
+        )}
+        <LearnerAssignmentDrawer
+          target={learnerAssignmentTarget}
+          onClose={() => setLearnerAssignmentTarget(null)}
+          onAssigned={() => {
+            setLearnerAssignmentTarget(null);
+            void reload({ silent: true });
+          }}
+        />
+        {learnerProgress && (
+          <ModuleLearnerProgressDialog
+            moduleName={learnerProgress.target.name}
+            impact={learnerProgress.impact}
+            onClose={() => setLearnerProgress(null)}
+            onAssignMore={() => {
+              setLearnerProgress(null);
+              setLearnerAssignmentTarget(learnerProgress.target);
+            }}
           />
         )}
         {openingModule && (
@@ -3019,7 +3114,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onReuseComponents, onCreateTeamsMeeting, pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onReuseComponents, onCreateTeamsMeeting, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -3040,6 +3135,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
    * first create is offered from inside the builder.
    */
   onCreateTeamsMeeting: () => void;
+  focusedComponentId?: string;
   pointsByType: Partial<Record<ModuleComponentType, number>>;
   /**
    * The module's flat dated plan. A week owns one slot per delivery day, so the
@@ -3220,6 +3316,17 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
       observer?.disconnect();
     };
   }, [expandedWeekIds.size, module.weekStructure.length, updateStructureScrollbar]);
+
+  useEffect(() => {
+    if (!focusedComponentId) return;
+    const focusedWeek = module.weekStructure.find(week => week.components.some(component => component.id === focusedComponentId));
+    if (!focusedWeek) return;
+    if (!expandedWeekIds.has(focusedWeek.id)) {
+      onExpandedWeekIdsChange(new Set([focusedWeek.id]));
+      return;
+    }
+    document.getElementById(`node-${focusedComponentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [expandedWeekIds, focusedComponentId, module.weekStructure, onExpandedWeekIdsChange]);
 
   return (
     <aside className="flex h-[calc(100vh-140px)] min-h-0 flex-col overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm xl:sticky xl:top-4">
@@ -3427,6 +3534,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     weekId={week.id}
                     components={week.components}
                     selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
+                    focusedId={focusedComponentId}
                     onSelectId={componentId => { if (componentId) onSelectComponent(week.id, componentId); }}
                     onChange={next => onComponentsChange(week.id, next)}
                     pointsByType={pointsByType}
@@ -3983,6 +4091,14 @@ function TypeSpecificFields({
   const [uploadingResource, setUploadingResource] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
+  const [groupProgrammeFilter, setGroupProgrammeFilter] = useState('');
+  const [groupCohortFilter, setGroupCohortFilter] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
+  useEffect(() => {
+    setGroupProgrammeFilter('');
+    setGroupCohortFilter('');
+    setGroupFilter('');
+  }, [component.id, module.catalogueId]);
 
   const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment') => {
     setUploadingResource(true);
@@ -4024,6 +4140,19 @@ function TypeSpecificFields({
     const groupOptions = liveSessionGroupOptions(module);
     const selectedGroupKeys = getStringArray('selectedGroupKeys');
     const selectedGroupSet = new Set(selectedGroupKeys);
+    const programmeOptions = Array.from(new Map(groupOptions.map(option => [option.programmeId || option.programme, option.programme])).entries())
+      .filter(([value, label]) => value && label)
+      .map(([value, label]) => ({ value, label }));
+    const cohortOptions = Array.from(new Map(groupOptions
+      .filter(option => !groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter)
+      .map(option => [option.cohortId || option.cohort, option.cohort])).entries())
+      .filter(([value, label]) => value && label)
+      .map(([value, label]) => ({ value, label }));
+    const filteredGroupOptions = groupOptions.filter(option => (
+      (!groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter)
+      && (!groupCohortFilter || option.cohortId === groupCohortFilter || option.cohort === groupCohortFilter)
+      && (!groupFilter || option.key === groupFilter)
+    ));
     const updateSelectedGroups = (nextKeys: string[]) => {
       const nextSet = new Set(nextKeys);
       onSettingChange('selectedGroupKeys', nextKeys);
@@ -4046,9 +4175,9 @@ function TypeSpecificFields({
               <p className="text-[10px] font-bold uppercase text-foreground-400">Assigned groups</p>
               <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">{selectedGroupKeys.length} of {groupOptions.length} selected</p>
             </div>
-            {!!groupOptions.length && (
+            {!!groupOptions.length && groupProgrammeFilter && groupCohortFilter && (
               <div className="flex items-center gap-1.5">
-                <button type="button" onClick={() => updateSelectedGroups(groupOptions.map(option => option.key))} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
+                <button type="button" onClick={() => updateSelectedGroups(Array.from(new Set([...selectedGroupKeys, ...filteredGroupOptions.map(option => option.key)])))} disabled={!filteredGroupOptions.length} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200 disabled:opacity-40">
                   Select all
                 </button>
                 <button type="button" onClick={() => updateSelectedGroups([])} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
@@ -4058,8 +4187,26 @@ function TypeSpecificFields({
             )}
           </div>
           {groupOptions.length ? (
-            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-              {groupOptions.map(option => (
+            <>
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                <select aria-label="Assigned groups programme" value={groupProgrammeFilter} onChange={event => { setGroupProgrammeFilter(event.target.value); setGroupCohortFilter(''); setGroupFilter(''); }} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300">
+                  <option value="">Select a programme</option>
+                  {programmeOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <select aria-label="Assigned groups cohort" value={groupCohortFilter} onChange={event => { setGroupCohortFilter(event.target.value); setGroupFilter(''); }} disabled={!groupProgrammeFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
+                  <option value="">{groupProgrammeFilter ? 'Select a cohort' : 'Choose programme first'}</option>
+                  {cohortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <select aria-label="Assigned groups group" value={groupFilter} onChange={event => setGroupFilter(event.target.value)} disabled={!groupCohortFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
+                  <option value="">{groupCohortFilter ? 'All groups in cohort' : 'Choose cohort first'}</option>
+                  {groupOptions.filter(option => (!groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter) && (!groupCohortFilter || option.cohortId === groupCohortFilter || option.cohort === groupCohortFilter)).map(option => <option key={option.key} value={option.key}>{option.group}</option>)}
+                </select>
+              </div>
+              {!groupProgrammeFilter || !groupCohortFilter ? (
+                <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">Choose a programme, then a cohort, to view delivery groups.</p>
+              ) : (
+              <div className="mt-3 grid max-h-64 grid-cols-1 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+              {filteredGroupOptions.map(option => (
                 <label key={option.key} className={`flex min-h-10 items-start gap-2 rounded-lg border px-3 py-2 transition-smooth ${selectedGroupSet.has(option.key) ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-100/50 text-foreground-700 hover:border-primary-200'}`}>
                   <input
                     type="checkbox"
@@ -4073,7 +4220,10 @@ function TypeSpecificFields({
                   </span>
                 </label>
               ))}
-            </div>
+              {!filteredGroupOptions.length && <p className="col-span-full rounded-lg border border-dashed border-background-300 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">No groups match these filters.</p>}
+            </div>)
+            }
+            </>
           ) : (
             <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">
               No delivery groups are linked to this module yet.
@@ -6375,7 +6525,7 @@ function ArchivedModulesPanel({ records, loading, error, busyId, onRestore, onDe
   onRestore: (module: CurriculumArchivedModule) => void;
   onDelete: (module: CurriculumArchivedModule) => void;
 }) {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get('archiveModule') || '');
   const [programmeFilter, setProgrammeFilter] = useState('All');
 
   const programmeOptions = useMemo(() => {
@@ -6539,6 +6689,7 @@ function ModuleCatalogueCard({
   teamsSummary,
   onKsbMap,
   ksbMapLoading,
+  onLearners,
   onBuild,
   onSettings,
   onDuplicate,
@@ -6548,6 +6699,7 @@ function ModuleCatalogueCard({
   teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
+  onLearners: () => Promise<number | null>;
   onBuild: () => void;
   onSettings: () => void;
   onDuplicate: () => void;
@@ -6566,6 +6718,8 @@ function ModuleCatalogueCard({
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
   const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
+  const [assignedLearnerCount, setAssignedLearnerCount] = useState<number | null>(null);
+  const [learnersLoading, setLearnersLoading] = useState(false);
   // Legacy fallbacks retained by the merge were:
   // weekCount = module.weekStructure.length || module.weeks || 0
 
@@ -6599,6 +6753,26 @@ function ModuleCatalogueCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+          <button
+            type="button"
+            onClick={async () => {
+              if (learnersLoading) return;
+              setLearnersLoading(true);
+              try {
+                const count = await onLearners();
+                if (count !== null) setAssignedLearnerCount(count);
+              } finally {
+                setLearnersLoading(false);
+              }
+            }}
+            disabled={learnersLoading}
+            aria-busy={learnersLoading}
+            title={assignedLearnerCount === 0 ? 'Assign learners to this module' : assignedLearnerCount === null ? 'Assign learners or view learner progress' : 'View assigned learners and their progress'}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
+          >
+            <AppIcon name={learnersLoading ? 'ri-loader-4-line' : assignedLearnerCount ? 'ri-group-line' : 'ri-user-add-line'} className={learnersLoading ? 'animate-spin' : ''} size={15}></AppIcon>
+            {learnersLoading ? 'Loading learners...' : assignedLearnerCount === 0 ? 'Assign learners' : assignedLearnerCount === null ? 'Learners' : `Learners (${assignedLearnerCount})`}
+          </button>
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}
@@ -7546,13 +7720,15 @@ function liveSessionGroupOptions(module: ModuleCatalogueItem) {
     .map(usage => {
       const group = cleanModuleMeta(usage.group);
       if (!group) return null;
+      const programme = cleanModuleMeta(usage.programme);
+      const programmeId = cleanModuleMeta(usage.programmeId);
       const cohort = cleanModuleMeta(usage.cohort);
       const groupId = cleanModuleMeta(usage.groupId);
       const cohortId = cleanModuleMeta(usage.cohortId);
       const key = groupId || [cohortId || cohort, group].filter(Boolean).join('::') || group;
-      return { key, group, cohort, groupId, cohortId };
+      return { key, group, cohort, groupId, cohortId, programme, programmeId };
     })
-    .filter((option): option is { key: string; group: string; cohort: string; groupId: string; cohortId: string } => Boolean(option?.key && option.group))
+    .filter((option): option is { key: string; group: string; cohort: string; groupId: string; cohortId: string; programme: string; programmeId: string } => Boolean(option?.key && option.group))
     .filter(option => {
       const uniqueKey = normaliseQuizText(option.key);
       if (seen.has(uniqueKey)) return false;
@@ -7799,6 +7975,10 @@ function cleanModuleMeta(value?: string) {
   const text = String(value || '').trim();
   if (!text || ['unassigned cohort', 'default group', 'unassigned'].includes(text.toLowerCase())) return '';
   return text;
+}
+
+function moduleLearnerIdentifier(module: Pick<ModuleCatalogueItem, 'catalogueId' | 'id' | 'sourceModule'>) {
+  return cleanModuleMeta(module.catalogueId || module.sourceModule?.moduleCatalogueId || module.sourceModule?.moduleId || module.id);
 }
 
 function IconButton({ label, icon, onClick, tone = 'default' }: { label: string; icon: string; onClick: () => void; tone?: 'default' | 'danger' }) {

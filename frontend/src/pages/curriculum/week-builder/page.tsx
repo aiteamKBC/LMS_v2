@@ -853,6 +853,7 @@ interface RailNodeProps {
   component: ModuleComponent;
   index: number;
   selected: boolean;
+  focused?: boolean;
   issues: number;
   weekSessionDate?: string;
   /**
@@ -891,7 +892,7 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, index, selected, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
@@ -911,19 +912,19 @@ function RailNodeCard({ component, index, selected, issues, weekSessionDate, hol
     && (holidayDates || []).includes(scheduledDate.slice(0, 10)),
   );
   return (
-    <div id={`node-${component.id}`} className="group/node flex gap-3">
+    <div id={`node-${component.id}`} data-focused={focused || undefined} className="group/node flex gap-3">
       <SpineGutter>
         <span className={`grid place-items-center w-7 h-7 rounded-full text-white text-[11px] font-bold shadow-sm ${tone.marker} ${selected ? 'ring-4 ' + tone.grip : ''}`}>{index + 1}</span>
       </SpineGutter>
       <div
         onClick={onSelect}
-        className={`flex-1 my-1 flex items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
+        className={`min-w-0 flex-1 my-1 flex items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
       >
         <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
         <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
         <span className="flex-1 min-w-0">
-          <span className="flex items-center gap-2">
-            <span onMouseEnter={showFullTextWhenTruncated} className="text-[13px] font-bold text-foreground-900 truncate">{component.title || weekTypeLabel(component.type)}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            <span onMouseEnter={showFullTextWhenTruncated} className="min-w-0 flex-1 text-[13px] font-bold text-foreground-900 truncate">{component.title || weekTypeLabel(component.type)}</span>
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
@@ -972,7 +973,7 @@ function RailNodeCard({ component, index, selected, issues, weekSessionDate, hol
           </span>
         </span>
         {(onDuplicate || onDelete) && (
-          <span className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/node:opacity-100 sm:group-focus-within/node:opacity-100">
+          <span className="flex shrink-0 items-center gap-0.5">
             <button type="button" aria-label={`Duplicate ${component.title || weekTypeLabel(component.type)}`} title="Duplicate component" onClick={e => { e.stopPropagation(); onDuplicate?.(); }} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-primary-600"><AppIcon className="ri-file-copy-line text-[13px]"></AppIcon></button>
             <button type="button" aria-label={`Delete ${component.title || weekTypeLabel(component.type)}`} title="Delete component" onClick={e => { e.stopPropagation(); onDelete?.(); }} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-red-100 hover:text-red-600"><AppIcon className="ri-delete-bin-line text-[13px]"></AppIcon></button>
           </span>
@@ -1107,6 +1108,7 @@ export interface WeekComponentRailProps {
   weekId: string;
   components: ModuleComponent[];
   selectedId: string | null;
+  focusedId?: string;
   onSelectId: (id: string | null) => void;
   onChange: (next: ModuleComponent[]) => void;
   pointsByType: Partial<Record<ModuleComponentType, number>>;
@@ -1133,9 +1135,10 @@ export interface WeekComponentRailProps {
   onReuseComponents?: () => void;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [componentSearch, setComponentSearch] = useState('');
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -1175,6 +1178,11 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
     onChange(reorderComponents(components, String(active.id), String(over.id)));
   };
   const activeComponent = components.find(c => c.id === activeDragId) || null;
+  const searchTerm = componentSearch.trim().toLocaleLowerCase();
+  const visibleComponents = searchTerm
+    ? components.filter(component => [component.title, component.description, component.type, weekTypeLabel(component.type)]
+      .some(value => value.toLocaleLowerCase().includes(searchTerm)))
+    : components;
 
   const nested = variant === 'nested';
 
@@ -1187,15 +1195,29 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
         </div>
       )}
       {components.length > 0 && (
-        <div className={`flex flex-wrap items-center gap-2 ${nested ? 'justify-end' : 'mt-3 justify-between border-y border-background-200 py-2'}`}>
-          {!nested && <p className="text-[10px] font-medium text-foreground-400">Select a component to edit it, or add another.</p>}
-          <div className="flex items-center gap-2">
-            {onReuseComponents && <ReuseComponentsButton onClick={onReuseComponents} />}
-            <button type="button" onClick={() => setPickerIndex(components.length)} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600">
-              <AppIcon className="ri-add-line"></AppIcon>
-              Add component
-            </button>
+        <div className={nested ? 'space-y-2' : 'mt-3 space-y-2 border-y border-background-200 py-2'}>
+          <div className={`flex flex-wrap items-center gap-2 ${nested ? 'justify-end' : 'justify-between'}`}>
+            {!nested && <p className="text-[10px] font-medium text-foreground-400">Select a component to edit it, or add another.</p>}
+            <div className="flex items-center gap-2">
+              {onReuseComponents && <ReuseComponentsButton onClick={onReuseComponents} />}
+              <button type="button" onClick={() => setPickerIndex(components.length)} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600">
+                <AppIcon className="ri-add-line"></AppIcon>
+                Add component
+              </button>
+            </div>
           </div>
+          <label className="relative block">
+            <span className="sr-only">Search components in this week</span>
+            <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
+            <input
+              type="search"
+              value={componentSearch}
+              onChange={event => setComponentSearch(event.target.value)}
+              placeholder="Search this week's components"
+              aria-label="Search components in this week"
+              className="h-8 w-full rounded-lg border border-background-200 bg-background-50 pl-8 pr-3 text-[11px] font-medium text-foreground-800 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+            />
+          </label>
         </div>
       )}
 
@@ -1214,15 +1236,19 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
         </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveDragId(null)} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
-          <SortableContext items={components.map(c => c.id)} strategy={verticalListSortingStrategy}>
+          <SortableContext items={visibleComponents.map(c => c.id)} strategy={verticalListSortingStrategy}>
             <div className="mt-2 max-h-[calc(100vh-15rem)] overflow-y-auto overflow-x-hidden px-1.5 py-1.5">
-              <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first />
-              {components.map((component, index) => (
+              {visibleComponents.length === 0 && searchTerm ? (
+                <p className="rounded-xl border border-dashed border-background-300 px-3 py-6 text-center text-[11px] font-medium text-foreground-500">No components match “{componentSearch.trim()}”.</p>
+              ) : <>
+              {!searchTerm && <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first />}
+              {visibleComponents.map((component, index) => (
                 <Fragment key={component.id}>
                   <SortableRailNode
                     component={component}
                     index={index}
                     selected={component.id === selectedId}
+                    focused={component.id === focusedId}
                     onSelect={() => onSelectId(component.id)}
                     onDuplicate={() => duplicateComponent(component)}
                     onDelete={() => removeComponent(component.id)}
@@ -1231,9 +1257,10 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
                     holidayDates={holidayDates}
                     dateDrift={dateDriftByComponentId?.get(component.id)}
                   />
-                  <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === components.length - 1} />
+                  {!searchTerm && <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === visibleComponents.length - 1} />}
                 </Fragment>
               ))}
+              </>}
             </div>
           </SortableContext>
           <DragOverlay>
@@ -1597,13 +1624,9 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
         <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this session is about…" className={`${inputClass} resize-none`} /></Field>
 
         {hasMeeting ? (
-          // Meeting created: the join link is read-only (copy/open only) and the
-          // date/time move this one session in Teams behind a red warning.
+          // Meeting created: the join link is read-only (copy/open only).
           <LiveSessionScheduleEditor
             component={component}
-            onSettingChange={setSetting}
-            fallbackDate={weekSessionDate}
-            fallbackTime={weekSessionTime}
           />
         ) : (
           <div className="mt-4">
@@ -2845,6 +2868,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
   }, [options]);
   const [programmeFilter, setProgrammeFilter] = useState('');
   const [cohortFilter, setCohortFilter] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
   const cohortChoices = useMemo(() => {
     const scoped = programmeFilter
       ? options.filter(option => (option.programmeId || option.programme) === programmeFilter)
@@ -2856,25 +2880,28 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
     });
     return Array.from(byId, ([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
   }, [options, programmeFilter]);
-  // A programme change can orphan the chosen cohort (it belonged to the old
-  // programme) — drop it rather than leave a cohort filter silently applied
-  // from a different programme.
-  useEffect(() => {
-    if (cohortFilter && !cohortChoices.some(choice => choice.id === cohortFilter)) setCohortFilter('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [programmeFilter]);
+  const groupChoices = useMemo(() => {
+    if (!programmeFilter || !cohortFilter) return [];
+    return options
+      .filter(option => (option.programmeId || option.programme) === programmeFilter && (option.cohortId || option.cohort) === cohortFilter)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [cohortFilter, options, programmeFilter]);
   const filteredOptions = options.filter(option => {
-    if (option.key === lockedKey) return true;
-    if (programmeFilter && (option.programmeId || option.programme) !== programmeFilter) return false;
-    if (cohortFilter && (option.cohortId || option.cohort) !== cohortFilter) return false;
+    if (!programmeFilter || !cohortFilter) return false;
+    if ((option.programmeId || option.programme) !== programmeFilter) return false;
+    if ((option.cohortId || option.cohort) !== cohortFilter) return false;
+    if (groupFilter && option.key !== groupFilter) return false;
     return true;
   });
-  const filtering = Boolean(programmeFilter || cohortFilter);
+  const filtering = Boolean(programmeFilter || cohortFilter || groupFilter);
+  const clearBrowsing = () => {
+    if (browsingKey) onBrowse(browsingKey);
+  };
   return (
     <div className="rounded-xl border border-background-200 bg-background-100/30 p-3">
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] font-semibold text-foreground-500 tabular-nums">{selectedKeys.length} of {options.length} selected</span>
-        {options.length > 0 && (
+        {options.length > 0 && programmeFilter && cohortFilter && (
           <div className="flex items-center gap-1">
             <button onClick={() => onChange(Array.from(new Set([...selectedKeys, ...filteredOptions.map(option => option.key)])))} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-primary-600 hover:bg-primary-50 transition-smooth">
               {filtering ? 'Select shown' : 'Select all'}
@@ -2884,28 +2911,54 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
         )}
       </div>
       {programmeChoices.length > 0 && (
-        <div className="mb-2 grid grid-cols-2 gap-2">
+        <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-3">
           <select
+            aria-label="Assigned groups programme"
             value={programmeFilter}
-            onChange={event => setProgrammeFilter(event.target.value)}
+            onChange={event => {
+              setProgrammeFilter(event.target.value);
+              setCohortFilter('');
+              setGroupFilter('');
+              clearBrowsing();
+            }}
             className="w-full rounded-lg border border-background-200 bg-background-50 px-2 py-1.5 text-[11px] outline-none transition-shadow focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
           >
-            <option value="">All programmes</option>
+            <option value="">Select a programme</option>
             {programmeChoices.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
           </select>
           <select
+            aria-label="Assigned groups cohort"
             value={cohortFilter}
-            onChange={event => setCohortFilter(event.target.value)}
-            disabled={cohortChoices.length === 0}
+            onChange={event => {
+              setCohortFilter(event.target.value);
+              setGroupFilter('');
+              clearBrowsing();
+            }}
+            disabled={!programmeFilter || cohortChoices.length === 0}
             className="w-full rounded-lg border border-background-200 bg-background-50 px-2 py-1.5 text-[11px] outline-none transition-shadow focus:border-primary-300 focus:ring-2 focus:ring-primary-100 disabled:opacity-50"
           >
-            <option value="">All cohorts</option>
+            <option value="">{programmeFilter ? 'Select a cohort' : 'Choose programme first'}</option>
             {cohortChoices.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
+          </select>
+          <select
+            aria-label="Assigned groups group"
+            value={groupFilter}
+            onChange={event => {
+              setGroupFilter(event.target.value);
+              clearBrowsing();
+            }}
+            disabled={!cohortFilter}
+            className="w-full rounded-lg border border-background-200 bg-background-50 px-2 py-1.5 text-[11px] outline-none transition-shadow focus:border-primary-300 focus:ring-2 focus:ring-primary-100 disabled:opacity-50"
+          >
+            <option value="">{cohortFilter ? 'All groups in cohort' : 'Choose cohort first'}</option>
+            {groupChoices.map(option => <option key={option.key} value={option.key}>{option.name}</option>)}
           </select>
         </div>
       )}
       {options.length === 0 ? (
         <p className="text-[11px] text-foreground-400">No delivery groups are linked to this programme yet.</p>
+      ) : !programmeFilter || !cohortFilter ? (
+        <p className="rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">Choose a programme, then a cohort, to view delivery groups.</p>
       ) : filteredOptions.length === 0 ? (
         <p className="text-[11px] text-foreground-400">No groups match this programme/cohort.</p>
       ) : (

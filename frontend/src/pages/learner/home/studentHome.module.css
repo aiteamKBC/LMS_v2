@@ -26,6 +26,10 @@
 .home .headerAction:hover, .home .headerBrand:hover { background: #ffffff12; }
 .home .headerAction[aria-expanded="true"] { color: #D7B454; background: #ffffff12; }
 .home .headerAction:focus-visible, .home .headerBrand:focus-visible { outline: 2px solid #faf7f1; outline-offset: 3px; }
+.home a.headerResource { text-decoration: none; }
+.headerResourceLabel { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.comingSoon { padding: 2px 5px; border: 1px solid #dab86380; border-radius: 4px; color: #dab863; font-size: 9px; line-height: 1; }
+.home .headerAction:disabled { cursor: not-allowed; background: transparent; }
 .notificationBell { position: relative; display: flex; }
 .notificationDot { position: absolute; top: -2px; right: -2px; width: 7px; height: 7px; border-radius: 50%; background: #D7B454; box-shadow: 0 0 0 2px #362044; }
 .headerProfile { position: relative; margin-left: 2px; }
@@ -48,8 +52,9 @@
 .settingLabel { display: grid; gap: 8px; font-weight: 600; }
 .settingLabel select { width: 100%; padding: 10px; border: 1px solid #c8bdd0; border-radius: 8px; background: #fffdfb; color: #362044; font-weight: 400; }
 @media (max-width: 1400px) { .header { gap: 12px; } .headerControlLabel { display: none; } }
-@media (max-width: 1150px) { .headerOrnament { display: none; } }
+@media (max-width: 1700px) { .headerOrnament { display: none; } }
 @media (max-width: 980px) { .headerControlLabel { display: none; } .headerActions { gap: 6px; } }
+@media (max-width: 700px) { .home { --header-height: 112px; } .header { height: auto; min-height: var(--header-height); grid-template-columns: minmax(0, 1fr); gap: 4px; padding-block: 8px; } .headerActions { flex-wrap: wrap; justify-content: space-between; } .headerResource>svg { display: none; } }
 @media (max-width: 600px) { .home .headerBrand { gap: 6px; } .headerLogo { width: 30px; height: 32px; } .headerBrand strong { font-size: 11px; letter-spacing: .03em; } .portalLabel { font-size: 10px; } .headerActions { gap: 2px; } .headerName { max-width: 60px; } .home .headerAction { gap: 5px; padding: 7px; } .headerAction>.headerAvatar { display: none; } }
 @media (max-width: 480px) { .header { gap: 6px; } .brandDivider, .portalLabel { display: none; } }
 .scene { position: relative; isolation: isolate; min-height: 610px; height: calc(100svh - var(--header-height)); background: url('/assets/student-home/canterbury-background.png') center center / cover no-repeat; }

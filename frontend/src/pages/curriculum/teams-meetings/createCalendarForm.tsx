@@ -4,6 +4,7 @@ import {
   formatCalendarDateTime,
   getCalendarTimeZone,
   parseUtcInstant,
+  utcIsoToCalendarParts,
   zonedNaiveToUtcIso,
   type TeamsMeetingInput,
 } from '../module-builder/moduleAuthoringData';
@@ -67,6 +68,8 @@ export interface TeamsPlannedSession {
   skippedHolidays?: string[];
   /** The live-session component this date belongs to, when the caller knows it. */
   componentId?: string;
+  /** Display-only title from the matched live-session component. */
+  componentTitle?: string;
 }
 
 /** `YYYY-MM-DDTHH:mm` for a stored session — the wall clock the group meets on. */
@@ -289,6 +292,7 @@ export function ModuleSessionSchedulePreview({
   renderActions,
   renderFacts,
   overrideDuration = 0,
+  showAlternateTimeZones = true,
 }: {
   row: TeamsSchedulePreviewRow;
   title?: string;
@@ -306,6 +310,7 @@ export function ModuleSessionSchedulePreview({
    * session's stored length while Create sent a different one.
    */
   overrideDuration?: number;
+  showAlternateTimeZones?: boolean;
 }) {
   const plan = buildHolidayShiftPlan(row.sessions, holidayLabelFor);
   const hasCalendar = Boolean(row.summary);
@@ -327,27 +332,38 @@ export function ModuleSessionSchedulePreview({
     const facts = renderFacts?.(index, durationMinutes);
     return {
       session,
+      name: session?.componentTitle,
       plannedUtc: plannedUtc || teamsUtc,
       teamsUtc,
       durationMinutes,
       shift: plan.shifts[index] && { ...plan.shifts[index], sessionNumber: session?.sessionNumber ?? plan.shifts[index].sessionNumber },
       matches: gap.matches,
       actions: renderActions?.(index, durationMinutes),
-      extra: (
+      extra: (showAlternateTimeZones || !session || facts || gap.note) ? (
         <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span>Egypt: {reviewDateLabel(plannedUtc || teamsUtc, 'Africa/Cairo')}</span>
-          <span>England: {reviewDateLabel(plannedUtc || teamsUtc, 'Europe/London')}</span>
+          {showAlternateTimeZones && <>
+            <span>Egypt: {reviewDateLabel(plannedUtc || teamsUtc, 'Africa/Cairo')}</span>
+            <span>England: {reviewDateLabel(plannedUtc || teamsUtc, 'Europe/London')}</span>
+          </>}
           {!session && <span className="font-semibold text-amber-700">Held on Teams, but the module has no session on this date.</span>}
           {facts}
           {gap.note && <span className="font-semibold text-amber-700">{gap.note}</span>}
         </span>
-      ),
+      ) : undefined,
     };
   });
   // Stated once when they all agree, and per row when they do not: a length
   // repeated down twenty rows is read as decoration, not as a fact.
   const durations = Array.from(new Set(occurrences.map(item => item.durationMinutes)));
   const uniformDuration = durations.length === 1 ? durations[0] : 0;
+  // State each distinct clock pair once in the compact modal. Use each real
+  // occurrence so differing schedules and daylight-saving changes stay visible.
+  const countryTimes = showAlternateTimeZones ? [] : Array.from(new Set(occurrences.map(item => {
+    const egypt = utcIsoToCalendarParts(item.plannedUtc, 'Africa/Cairo');
+    const england = utcIsoToCalendarParts(item.plannedUtc, 'Europe/London');
+    if (!egypt.time || !england.time) return '';
+    return `Egypt: ${clockLabel(egypt.time)} · England: ${clockLabel(england.time)}${england.date < egypt.date ? ' (previous day)' : ''}`;
+  }).filter(Boolean)));
 
   return (
     <div className="overflow-hidden rounded-xl border border-background-200 bg-background-50">
@@ -366,6 +382,12 @@ export function ModuleSessionSchedulePreview({
           {Boolean(uniformDuration) && (
             <span className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 text-foreground-600">
               {uniformDuration} min each
+            </span>
+          )}
+          {countryTimes.length > 0 && (
+            <span role="note" aria-label="Session start times in Egypt and England"
+              className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 normal-case text-foreground-600">
+              {countryTimes.map(label => <span key={label} className="block">{label}</span>)}
             </span>
           )}
           {/* Counts the dates a holiday lands on, not dates a holiday moved:
@@ -389,6 +411,7 @@ export function ModuleSessionSchedulePreview({
           <CompactSchedulePreview
             occurrences={occurrences}
             showDuration={!uniformDuration}
+            showSessionNumbers={false}
             formatLabel={(plannedUtc, date) => calendarLabel(plannedUtc || date, row.timeZone)}
           />
           {/* A note about a pending change is only useful next to the thing
@@ -582,6 +605,7 @@ export function TeamsCalendarFormBody({
   onPrefill,
   timeZoneLabel,
   existingCalendar = false,
+  showAlternateTimeZones = true,
 }: {
   row: TeamsCalendarTarget;
   form: TeamsCalendarForm;
@@ -592,6 +616,7 @@ export function TeamsCalendarFormBody({
   onPrefill?: () => void;
   timeZoneLabel?: string;
   existingCalendar?: boolean;
+  showAlternateTimeZones?: boolean;
 }) {
   const previewRow = { ...row, timeZone: form.scheduleTimeZone || row.timeZone,
     plannedStarts: teamsCalendarOccurrences(row, form.scheduleTimeZone).map(item => item.startDateTimeUtc) };
@@ -619,9 +644,12 @@ export function TeamsCalendarFormBody({
             title={existingCalendar ? 'Dates on the existing calendar' : 'Dates the calendar will be created on'}
             holidayLabelFor={holidayLabelFor}
             overrideDuration={override}
+            showAlternateTimeZones={showAlternateTimeZones}
           />
 
-          <FormField label="Schedule time zone" hint="Group/module times are interpreted in this zone. Each date above shows the same meeting in Egypt and England, including daylight-saving changes.">
+          <FormField label="Schedule time zone" hint={showAlternateTimeZones
+            ? 'Group/module times are interpreted in this zone. Each date above shows the same meeting in Egypt and England, including daylight-saving changes.'
+            : 'Dates and times above use this schedule time zone, including daylight-saving changes.'}>
             <SelectControl value={form.scheduleTimeZone || getCalendarTimeZone()}
               disabled={existingCalendar}
               onChange={value => patch({ scheduleTimeZone: value as TeamsCalendarForm['scheduleTimeZone'] })}
