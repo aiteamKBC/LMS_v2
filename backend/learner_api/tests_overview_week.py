@@ -30,6 +30,7 @@ class OverviewWeekTests(SimpleTestCase):
         result = summarise_plan(activities, [], {'current:M1': 2.5})[0]
         self.assertEqual(result['ksbProgress'], {'completed': 2, 'total': 3})
         self.assertEqual(result['ksbCodes'], ['K1', 'S1'])
+        self.assertEqual(result['ksbCodesByMonth'], {'2026-09': ['K1', 'S1']})
         self.assertEqual(result['directHours'], 2.5)
         unavailable = summarise_plan(merged_activities([], [native(ksb_mappings=None)], [], set(), {}), [])[0]
         self.assertIsNone(unavailable['ksbProgress'])
@@ -80,6 +81,22 @@ class OverviewWeekTests(SimpleTestCase):
         self.assertEqual(new_subject['ksbCodes'], ['B1', 'S2'])
         self.assertTrue(new_subject['ksbMappingMissing'])
         self.assertEqual(sum(sum(item['activityCounts'].values()) for item in subjects), 3)
+
+    def test_plan_summary_exposes_compact_dated_assignments_for_the_monthly_card(self):
+        assignments = [
+            native(id='essay', type='assignment', title='Professional Practice Essay', expected_hours=10,
+                   section_title='Assignment 1', ksb_mappings=['K2', 'S4']),
+            native(id='later', type='assignment', title='Case Study Analysis', date='2026-10-02', expected_hours=8),
+        ]
+        progress = [{'componentId': 'essay', 'kind': 'component', 'passed': True}]
+        subject = summarise_plan(merged_activities([], assignments, progress, set(), {}), [])[0]
+        september = subject['monthlyActivities'][0]
+        self.assertEqual(september, {
+            'id': 'native:essay', 'componentId': 'essay', 'title': 'Professional Practice Essay',
+            'type': 'assignment', 'date': '2026-09-09', 'weekTitle': 'Assignment 1',
+            'expectedHours': 10, 'completed': True, 'ksbCodes': ['K2', 'S4'],
+        })
+        self.assertEqual(subject['monthlyActivities'][1]['date'], '2026-10-02')
 
     def test_plan_summary_keeps_all_dates_and_counts_without_activity_content(self):
         historical = [old(), old(activity_id=3, date=None, status='not_started')]

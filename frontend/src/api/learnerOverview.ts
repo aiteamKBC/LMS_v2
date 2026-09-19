@@ -3,12 +3,19 @@ import type { TrainingPlanDashboard } from './trainingPlanDashboard';
 import type { LearnerMetrics } from './learnerMetrics';
 import { peekLearnerJson, readLearnerJson } from './learnerRead';
 
+export type PlanActivitySummary = {
+  id: string; componentId?: string | null; title: string; type: string; date: string;
+  weekTitle?: string | null; expectedHours: number | null; completed: boolean; ksbCodes: string[];
+};
+
 export type PlanSubjectSummary = {
   id: string; title: string; source: 'legacy' | 'current'; completed: number; total: number;
   dates: string[]; moduleIds: string[]; sessionTitles: { date: string; title: string }[];
   activityCounts?: Record<string, number>; ksbCodes?: string[]; ksbMappingMissing?: boolean;
+  ksbCodesByMonth?: Record<string, string[]>;
   ksbProgress?: { completed: number; total: number } | null;
   directHours?: number | null;
+  monthlyActivities?: PlanActivitySummary[];
 };
 
 export type OverviewWeek = {

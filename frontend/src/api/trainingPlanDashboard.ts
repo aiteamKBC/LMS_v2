@@ -23,7 +23,9 @@ export type PlanSlotHoliday = { id?: string; label: string; startDate: string; e
  * unauthored week, or a module that simply does not deliver looks like.
  */
 export type PlanCurriculumSlot = { slotNumber: number; date: string; day: string;
-  type: 'live-session' | 'reading-week'; cause?: string; sessionNumber: number | null; holidays: PlanSlotHoliday[] };
+  type: 'live-session' | 'reading-week'; cause?: string; sessionNumber: number | null; holidays: PlanSlotHoliday[];
+  /** The authored week's own id/title/outcomes (curriculum.weeks), matched by sessionNumber. Absent when no week was authored at that number. */
+  weekId?: string; weekTitle?: string; learningOutcomes?: string[] };
 export type PlanModule = { id: string; title: string; description: string; start_date: string | null; end_date: string | null; tutor_name: string; coach_name: string;
   programme_name?: string; cohort_name?: string; group_name?: string; total_otjh?: number | null;
   weeks_number?: number | null; sessions_number?: number | null;
