@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
@@ -13,9 +13,18 @@ import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
 import { Panel } from '@/components/ui/Panel';
 
 const coachNav = roleNavMap.coach;
-const API_ENDPOINT = '/coach_api/coach/marking-queue';
+
+async function personalEvidence(submissionId: string, fileId?: string) {
+  const response = await coachFetch(`/coach_api/coach/personal-marking/${submissionId}/evidence${fileId ? `/${fileId}` : ''}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || 'Could not load personal coursework evidence.');
+  return data as { results: EvidenceRecord[]; url: string };
+}
 
 interface Submission {
+  version?: number;
+  contentSections?: { label: string; text: string }[];
+  reviewHistory?: { decision: string; feedback: string; reviewedAt: string; reviewedBy: string }[];
   id: string;
   learnerKind: LearnerKind;
   learnerId: string;
@@ -53,7 +62,7 @@ interface Submission {
   submittedDisplay: string;
 }
 
-type ReviewDecision = 'accepted' | 'rejected';
+type ReviewDecision = 'accepted' | 'rejected' | 'referred';
 
 function statusLabel(status: string) {
   if (status === 'accepted') return 'Accepted';
@@ -75,6 +84,11 @@ function fileSize(bytes: number) {
 }
 
 export default function CoachMarkingReviewPage() {
+  const [search] = useSearchParams();
+  const personal = search.get('scope') === 'personal';
+  const apiEndpoint = personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
+  const scopeQuery = personal ? '?scope=personal' : '';
+  const queuePath = `/coach/marking-queue${scopeQuery}`;
   const { submissionId } = useParams<{ submissionId: string }>();
   const navigate = useNavigate();
   const coach = useCoachIdentity();
@@ -98,9 +112,13 @@ export default function CoachMarkingReviewPage() {
   const [promptAvailable, setPromptAvailable] = useState(true);
   const [promptError, setPromptError] = useState('');
 
+  const loadSequence = useRef({ value: 0 });
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current.value;
     if (!coach.isInitialized) return;
     setLoading(true);
+    setItems([]);
+    setEvidence([]);
     setError('');
     if (!coach.email) {
       setItems([]);
@@ -109,20 +127,25 @@ export default function CoachMarkingReviewPage() {
       return;
     }
     try {
-      const response = await coachFetch(`${API_ENDPOINT}/${submissionId}`);
+      const response = await coachFetch(`${apiEndpoint}/${submissionId}`);
       const text = await response.text();
       const data = text ? JSON.parse(text) : {};
+      if (sequence !== loadSequence.current.value) return;
       if (!response.ok) throw new Error(data.detail || 'Unable to load submissions.');
+      setFeedback(data.item?.coachFeedback ?? '');
       setItems(data.item ? [data.item] : []);
     } catch (loadError) {
+      if (sequence !== loadSequence.current.value) return;
       setError(loadError instanceof Error ? loadError.message : 'Unable to load submissions.');
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current.value) setLoading(false);
     }
-  }, [coach.email, coach.isInitialized, submissionId]);
+  }, [coach.email, coach.isInitialized, submissionId, apiEndpoint]);
 
   useEffect(() => {
+    const sequence = loadSequence.current;
     void load();
+    return () => { ++sequence.value; };
   }, [load]);
 
   const selected = useMemo(
@@ -135,12 +158,6 @@ export default function CoachMarkingReviewPage() {
   // fell back to the file.
   const promptEdited = Boolean(prompt.trim()) && prompt.trim() !== defaultPrompt.trim();
   const promptCleared = !prompt.trim() && Boolean(defaultPrompt.trim());
-  useEffect(() => {
-    if (selected) {
-      setFeedback(selected.coachFeedback ?? '');
-    }
-  }, [selected]);
-
   // The documents the learner handed in. Scoped by section_ref to this
   // activity, so it is the submission's own evidence rather than the learner's
   // whole portfolio. Read through the learner endpoints, which already admit
@@ -153,7 +170,8 @@ export default function CoachMarkingReviewPage() {
     // learner's files on screen until the new fetch resolves.
     setEvidence([]);
     setEvidenceError('');
-    fetchEvidence(selected.learnerKind, selected.learnerId, { sectionRef: selected.activityId })
+    (personal ? personalEvidence(selected.id).then(data => data.results)
+      : fetchEvidence(selected.learnerKind, selected.learnerId, { sectionRef: selected.activityId }))
       .then(records => {
         if (!cancelled) setEvidence(records);
       })
@@ -169,16 +187,16 @@ export default function CoachMarkingReviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [selected, personal]);
 
   // The prompt this submission would be marked with. Which of the two applies
   // (assignment or reflection) is decided by the server from the same list the
   // generator uses, so the text shown here is the text that will run.
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || personal) return;
     let cancelled = false;
     setPromptError('');
-    coachFetch(`${API_ENDPOINT}/${selected.id}/ai-prompt`)
+    coachFetch(`${apiEndpoint}/${selected.id}/ai-prompt`)
       .then(async response => {
         const body = await response.text();
         let data: {
@@ -211,7 +229,7 @@ export default function CoachMarkingReviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [selected, personal, apiEndpoint]);
 
   /** Open one uploaded document.
    *
@@ -232,7 +250,8 @@ export default function CoachMarkingReviewPage() {
     setDownloading(record.id);
     setEvidenceError('');
     try {
-      const url = await getEvidenceDownloadUrl(selected.learnerKind, selected.learnerId, record.id);
+      const url = personal ? (await personalEvidence(selected.id, record.id)).url
+        : await getEvidenceDownloadUrl(selected.learnerKind, selected.learnerId, record.id);
       if (tab) tab.location.href = url;
       // A blocked pop-up would otherwise fail silently, leaving the coach
       // clicking a button that appears to do nothing.
@@ -259,7 +278,7 @@ export default function CoachMarkingReviewPage() {
       // The prompt travels only when the coach has actually changed it, so the
       // default path stays byte-identical to what the server would have used on
       // its own and cannot be affected by whitespace drift in the textarea.
-      const response = await coachFetch(`${API_ENDPOINT}/${selected.id}/ai-feedback`, {
+      const response = await coachFetch(`${apiEndpoint}/${selected.id}/ai-feedback`, {
         method: 'POST',
         ...(promptEdited
           ? {
@@ -327,10 +346,10 @@ export default function CoachMarkingReviewPage() {
     setSaving(true);
     setError('');
     try {
-      const response = await coachFetch(`${API_ENDPOINT}/${selected.id}`, {
+      const response = await coachFetch(`${apiEndpoint}/${selected.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name }),
+        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name, ...(personal ? { version: selected.version } : {}) }),
       });
       const text = await response.text();
       // A server error returns HTML, not JSON — parse defensively so the coach
@@ -350,7 +369,7 @@ export default function CoachMarkingReviewPage() {
           .join('; ');
         throw new Error(fieldMessages || data.detail || data.error || 'The review could not be saved.');
       }
-      navigate('/coach/marking-queue');
+      navigate(queuePath);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'The review could not be saved.');
     } finally {
@@ -373,8 +392,8 @@ export default function CoachMarkingReviewPage() {
         <PageHeader
           icon="ri-sparkling-line"
           title="Review, adjust, validate"
-          description="AI-assisted suggestions are clearly labelled. The coach retains final professional judgement on every decision."
-          backTo={{ to: '/coach/marking-queue', label: 'Back to Marking Queue' }}
+          description={personal ? 'Personal learning — review the coursework and record your decision. Results are separate from official learner reports.' : 'AI-assisted suggestions are clearly labelled. The coach retains final professional judgement on every decision.'}
+          backTo={{ to: queuePath, label: 'Back to Marking Queue' }}
         />
 
         {loading ? (
@@ -396,7 +415,7 @@ export default function CoachMarkingReviewPage() {
               <EmptyStateAction
                 label="Back to Marking Queue"
                 icon="ri-arrow-left-line"
-                onClick={() => navigate('/coach/marking-queue')}
+                onClick={() => navigate(queuePath)}
               />
             }
           />
@@ -406,7 +425,7 @@ export default function CoachMarkingReviewPage() {
               {items.map(item => (
                 <button
                   key={item.id}
-                  onClick={() => navigate(`/coach/marking-queue/${item.id}`)}
+                  onClick={() => navigate(`/coach/marking-queue/${item.id}${scopeQuery}`)}
                   className={`w-full rounded-lg border p-4 text-left transition-colors ${
                     item.id === selected.id
                       ? 'border-primary-500 bg-primary-50'
@@ -439,6 +458,9 @@ export default function CoachMarkingReviewPage() {
                   </span>
                 </div>
 
+                {personal && selected.contentSections?.map((section, index) => <section key={index} className="mt-4">
+                  <h4 className="font-semibold">{section.label}</h4><p className="mt-2 whitespace-pre-wrap break-words text-sm">{section.text}</p>
+                </section>)}
                 {selected.learningReflection ? (
                   <p className="mt-4 whitespace-pre-wrap text-base leading-7 text-foreground-800">
                     {selected.learningReflection}
@@ -564,7 +586,7 @@ export default function CoachMarkingReviewPage() {
                   weak prompt. An edit here applies to the next generation on
                   this submission only — the authored .MD file is never written,
                   because that would change marking for every coach. */}
-              <Panel className="order-2" padding="lg">
+              {!personal && <Panel className="order-2" padding="lg">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h3 className="text-lg font-bold text-foreground-950">Marking prompt</h3>
@@ -630,7 +652,7 @@ export default function CoachMarkingReviewPage() {
                 {promptError && (
                   <p className="mt-2 text-xs font-semibold text-red-600">{promptError}</p>
                 )}
-              </Panel>
+              </Panel>}
 
               <Panel className="order-3" padding="lg">
                 <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
@@ -643,7 +665,7 @@ export default function CoachMarkingReviewPage() {
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
+                    {!personal && <button
                       type="button"
                       disabled={generating || saving}
                       onClick={() => void generateAiFeedback()}
@@ -651,7 +673,7 @@ export default function CoachMarkingReviewPage() {
                     >
                       <AppIcon className={`mr-2 ${generating ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-line'}`} />
                       {generating ? 'Generating draft…' : 'Generate AI feedback'}
-                    </button>
+                    </button>}
                     <span className="rounded-full bg-background-100 px-3 py-1.5 text-xs font-semibold text-foreground-700">
                       Marking status: {statusLabel(selected.status)}
                     </span>
@@ -663,6 +685,7 @@ export default function CoachMarkingReviewPage() {
                   </div>
                 </div>
                 <textarea
+                  aria-label="Review feedback"
                   value={feedback}
                   onChange={event => setFeedback(event.target.value)}
                   rows={7}
@@ -680,13 +703,19 @@ export default function CoachMarkingReviewPage() {
                   <button disabled={saving} onClick={() => void saveDecision('accepted')} className="rounded-lg bg-primary-900 px-5 py-3 text-base font-semibold text-white shadow-sm disabled:opacity-50">
                     <AppIcon className="ri-check-line mr-2" />Accept assignment and send feedback
                   </button>
-                  <button disabled={saving} onClick={() => void saveDecision('rejected')} className="rounded-lg border border-red-200 bg-red-50 px-5 py-3 text-base font-semibold text-red-700 shadow-sm disabled:opacity-50">
-                    <AppIcon className="ri-close-line mr-2" />Reject assignment and send feedback
+                  <button disabled={saving} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')} className="rounded-lg border border-red-200 bg-red-50 px-5 py-3 text-base font-semibold text-red-700 shadow-sm disabled:opacity-50">
+                    <AppIcon className="ri-close-line mr-2" />{personal ? 'Return for improvement' : 'Reject assignment and send feedback'}
                   </button>
                 </div>
                 <p className="mt-4 text-xs text-foreground-400">
                   Every decision is audit-trailed with feedback, reviewer and timestamp.
                 </p>
+                {personal && Boolean(selected.reviewHistory?.length) && <details className="mt-4"><summary>Review history</summary>
+                  {selected.reviewHistory?.map((entry, index) => <div key={index} className="mt-3 rounded border p-3 text-sm">
+                    <p>{entry.reviewedBy} · {statusLabel(entry.decision)} · {new Date(entry.reviewedAt).toLocaleString('en-GB')}</p>
+                    <p className="whitespace-pre-wrap">{entry.feedback}</p>
+                  </div>)}
+                </details>}
               </Panel>
             </main>
           </div>

@@ -71,6 +71,9 @@ class CalendarChecksTests(unittest.TestCase):
                  'apply_teams_occurrence_shifts', 'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule',
                  'reschedule_single_live_session_occurrence', 'teams_schedule_settings'}
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'GRAPH_SILENT_INVITE_HEADERS' for target in node.targets):
+                self.v.GRAPH_SILENT_INVITE_HEADERS = ast.literal_eval(node.value)
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         self.assertEqual(len(nodes), len(names))
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(ROOT / 'views.py'), 'exec'), self.v.__dict__)
@@ -135,7 +138,9 @@ class CalendarChecksTests(unittest.TestCase):
             start += timedelta(days=1)
         self.instances_by_master[event['id']] = self.instances
 
-    def graph(self, method, path, payload=None):
+    def graph(self, method, path, payload=None, *, extra_headers=None):
+        if extra_headers is not None:
+            self.assertEqual(extra_headers, {'Prefer': 'outlook.send-invitations="none"'})
         self.calls.append((method, path, copy.deepcopy(payload)))
         if method == 'POST':
             event_id = f'event-{len(self.events) + 1}'
@@ -236,10 +241,10 @@ class CalendarChecksTests(unittest.TestCase):
     def test_rejected_move_does_not_publish_requested_dates(self):
         self.corrupt = 'duration'
         original = self.graph
-        def rejecting(method, path, payload=None):
+        def rejecting(method, path, payload=None, **kwargs):
             if method == 'PATCH' and 'instance-' in path:
                 raise RuntimeError('ErrorOccurrenceCrossingBoundary')
-            return original(method, path, payload)
+            return original(method, path, payload, **kwargs)
         sys.modules['coach_api.views'].microsoft_graph_request = rejecting
         self.assertEqual(self.create().status_code, 502)
         self.assertFalse(self.tracked)
@@ -415,10 +420,10 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(self.create().status_code, 201)
         self.calls.clear()
         original = self.graph
-        def failed_read(method, path, payload=None):
+        def failed_read(method, path, payload=None, **kwargs):
             if method == 'GET' and '/instances?' in path:
                 raise RuntimeError('Synthetic read failure')
-            return original(method, path, payload)
+            return original(method, path, payload, **kwargs)
         sys.modules['coach_api.views'].microsoft_graph_request = failed_read
         result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
         self.assertEqual(result.status_code, 502)

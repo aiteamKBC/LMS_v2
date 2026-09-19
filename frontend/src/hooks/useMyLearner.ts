@@ -1,5 +1,6 @@
 import type { LearnerKind } from '@/api/learnerDetail';
 import { useLocation } from 'react-router-dom';
+import { ownPersonalLearning, parsePersonalLearning, rememberPersonalLearning } from '@/lib/personalLearning';
 
 /**
  * Learner sessions always resolve to the account's enrolment id. Staff review
@@ -35,6 +36,8 @@ function readOverride(): { kind: LearnerKind; id: string } | null {
 
 /** Session identity wins over the staff review selection and demo fallback. */
 export function getRememberedLearner(): { kind: LearnerKind; id: string } | null {
+  const personal = ownPersonalLearning();
+  if (personal) return { kind: 'commercial', id: personal.id };
   return signedInLearner || readOverride() || MY_LEARNER;
 }
 
@@ -59,6 +62,7 @@ export function rememberSignedInLearner(
 
 /** Persist the active learner so paramless /learner/* pages resolve to it. */
 export function rememberLearner(kind: string | undefined, id: string | undefined): void {
+  if (parsePersonalLearning(id)) { rememberPersonalLearning(id!); return; }
   if (!isKind(kind) || !id) return;
   if (signedInLearner) {
     if (signedInLearner.id !== String(id)) return;
@@ -101,6 +105,8 @@ export function useResolvedLearner(
   urlKind: string | undefined,
   urlId: string | undefined,
 ): { kind: LearnerKind | undefined; id: string | undefined } {
+  const personal = ownPersonalLearning();
+  if (personal && (!urlId || urlId === personal.id)) return { kind: 'commercial' as const, id: personal.id };
   if (signedInLearner) return signedInLearner;
   // Persist synchronously while the URL still carries the learner — an effect
   // could fire after the user has already clicked a paramless sidebar link, so

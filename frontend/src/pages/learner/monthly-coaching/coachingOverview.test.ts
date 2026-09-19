@@ -19,6 +19,7 @@ const attendance = (id: string, overrides: Partial<MeetingAttendance> = {}): Mee
 });
 function definition(pending: ReviewParticipantRole[] = ['participant'], status = 'awaiting-signature'): LearnerReviewDefinition {
   return {
+    manualOverride: null,
     instance: { id: 'instance-1', reviewTemplateId: 'template-1', learnerId: 1, programmeId: 'programme-1',
       occurrenceNumber: 1, targetDate: today, status, startedAt: null, completedAt: today },
     template: { id: 'template-1', name: 'Monthly coaching',

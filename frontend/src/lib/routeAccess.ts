@@ -60,6 +60,7 @@ const EMPLOYER_AND_STAFF: readonly Role[] = ['admin', 'staff', 'employer'];
  * fallback below safe to close.
  */
 const RULES: ReadonlyArray<readonly [string, readonly Role[]]> = [
+  ['/my-courses', ADMIN],
   ['/old-otjh/coach', STAFF],
   ['/old-otjh', LEARNER_AND_STAFF],
   // Workspaces, which do not share one audience.

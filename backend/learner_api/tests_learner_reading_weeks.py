@@ -319,3 +319,51 @@ class ModulesThatCannotBePlanned(SimpleTestCase):
     def test_a_module_the_payload_does_not_carry_is_skipped(self):
         with patch.object(views, 'cohort_selected_holidays_by_cohort', return_value={}):
             attach_curriculum_slots([module_row()], {}, {})
+
+
+class WeekContentReachesItsMatchingSlot(SimpleTestCase):
+    """A taught slot carries ITS OWN authored week's content, not the module-wide aggregate.
+
+    Learner Dashboard's weekly view needs a specific week's title and outcomes,
+    not the module's flattened list -- so a live-session slot is matched to
+    ``curriculum.weeks`` by its ``sessionNumber`` (the same content-week count).
+    """
+
+    def weeks_by_number(self, module_id, count=6):
+        return {(module_id, n): {'id': f'W{n}', 'title': f'Authored week {n}', 'learningOutcomes': [f'Outcome {n}']}
+                for n in range(1, count + 1)}
+
+    def test_a_taught_slot_carries_its_own_week_content(self):
+        row = module_row()
+        resolved = {COHORT: holidays(excluded=['england-and-wales:2026-05-04', 'england-and-wales:2026-05-25'])}
+        payload = {row['id']: {'id': row['id']}}
+        with patch.object(views, 'cohort_selected_holidays_by_cohort', return_value=resolved):
+            attach_curriculum_slots([row], payload, {row['id']: row['sessions_number']}, self.weeks_by_number(row['id']))
+
+        slots = {slot['sessionNumber']: slot for slot in payload[row['id']]['curriculumSlots']}
+        self.assertEqual(slots[1]['weekId'], 'W1')
+        self.assertEqual(slots[1]['weekTitle'], 'Authored week 1')
+        self.assertEqual(slots[1]['learningOutcomes'], ['Outcome 1'])
+        self.assertEqual(slots[6]['weekId'], 'W6')
+
+    def test_a_reading_week_slot_is_never_enriched(self):
+        row = module_row()
+        resolved = {COHORT: holidays(excluded=['england-and-wales:2026-05-25'])}
+        payload = {row['id']: {'id': row['id']}}
+        with patch.object(views, 'cohort_selected_holidays_by_cohort', return_value=resolved):
+            attach_curriculum_slots([row], payload, {row['id']: row['sessions_number']}, self.weeks_by_number(row['id']))
+
+        reading = next(slot for slot in payload[row['id']]['curriculumSlots'] if slot['type'] == 'reading-week')
+        self.assertNotIn('weekId', reading)
+        self.assertNotIn('weekTitle', reading)
+        self.assertNotIn('learningOutcomes', reading)
+
+    def test_a_slot_with_no_authored_week_is_left_exactly_as_the_scheduler_made_it(self):
+        excluded = ['england-and-wales:2026-05-04', 'england-and-wales:2026-05-25']
+        row = module_row()
+        resolved = {COHORT: holidays(excluded=excluded)}
+        payload = {row['id']: {'id': row['id']}}
+        with patch.object(views, 'cohort_selected_holidays_by_cohort', return_value=resolved):
+            attach_curriculum_slots([row], payload, {row['id']: row['sessions_number']}, {})
+
+        self.assertEqual(payload[row['id']]['curriculumSlots'], planner(row, excluded=excluded)['slots'])

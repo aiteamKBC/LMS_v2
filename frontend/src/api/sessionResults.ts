@@ -1,3 +1,4 @@
+import { learningFetch, personalLearningUrl } from '@/lib/personalLearning';
 import { coachFetch } from '@/lib/coachFetch';
 import type { LearnerKind } from './learnerDetail';
 
@@ -48,7 +49,7 @@ export const sessionBase = (seriesId: string, learner?: SessionLearner) => learn
   : `${adminBase}/${encodeURIComponent(seriesId)}`;
 
 async function read<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { credentials: 'include', cache: 'no-store', signal });
+  const response = await learningFetch(url, { credentials: 'include', cache: 'no-store', signal });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Saved results could not be loaded.');
   return result as T;
@@ -58,7 +59,7 @@ export const loadModuleSessions = (moduleId: string, signal?: AbortSignal) =>
 export const loadSessionResult = (seriesId: string, number: number, learner?: SessionLearner, signal?: AbortSignal) =>
   read<{ sessions: SessionResult[]; job?: SessionSyncJob | null }>(`${sessionBase(seriesId, learner)}/sessions/${number}/`, signal);
 export const sessionFileUrl = (seriesId: string, file: SessionFile, learner?: SessionLearner, text = false) =>
-  `${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/${text ? '?format=txt' : ''}`;
+  personalLearningUrl(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/${text ? '?format=txt' : ''}`);
 export const loadTranscriptCues = (seriesId: string, artifactId: string, learner?: SessionLearner, signal?: AbortSignal) =>
   read<{ cues: TranscriptCue[] }>(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(artifactId)}/?format=cues`, signal);
 export const sessionAttendanceUrl = (session: SessionResult, format: 'csv' | 'pdf' = 'csv') =>

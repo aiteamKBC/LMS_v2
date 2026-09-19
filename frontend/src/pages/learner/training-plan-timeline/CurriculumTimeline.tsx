@@ -76,11 +76,11 @@ export function CurriculumTimeline({
                 <span className={layout.weekNumber}>Week {row.slotNumber}</span>
                 <span className={layout.rowDate}>{dateLabel(row.date)}</span>
                 <strong>{row.title}</strong>
-              </p>
-              <p className={layout.detail}>
-                {row.start ? `${sessionTime(row.start)} · UK time` : 'Time to be confirmed'}
-                {row.minutes ? ` · ${row.minutes} min` : ''}
-                {row.attended === true ? ' · Attended' : row.attended === false ? ' · Not attended' : ''}
+                <span className={layout.detailInline}>
+                  {row.start ? `${sessionTime(row.start)} · UK time` : 'Time to be confirmed'}
+                  {row.minutes ? ` · ${row.minutes} min` : ''}
+                  {row.attended === true ? ' · Attended' : row.attended === false ? ' · Not attended' : ''}
+                </span>
               </p>
               {/* States the clash and stops there: the session still runs, so
                   this is a heads-up next to it, not a closure notice. */}

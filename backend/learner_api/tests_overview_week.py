@@ -30,6 +30,7 @@ class OverviewWeekTests(SimpleTestCase):
         result = summarise_plan(activities, [], {'current:M1': 2.5})[0]
         self.assertEqual(result['ksbProgress'], {'completed': 2, 'total': 3})
         self.assertEqual(result['ksbCodes'], ['K1', 'S1'])
+        self.assertEqual(result['ksbCodesByMonth'], {'2026-09': ['K1', 'S1']})
         self.assertEqual(result['directHours'], 2.5)
         unavailable = summarise_plan(merged_activities([], [native(ksb_mappings=None)], [], set(), {}), [])[0]
         self.assertIsNone(unavailable['ksbProgress'])
@@ -57,14 +58,49 @@ class OverviewWeekTests(SimpleTestCase):
              'claimedSeconds': 3600, 'timeTrackingSource': 'component:input'},
         ]
         self.assertEqual(monthly_otjh_summary(activities, progress), {
-            '2026-09': {'planned': 4, 'actual': 1.5, 'missingPlannedActivities': 0},
-            '2026-10': {'planned': 3, 'actual': 1, 'missingPlannedActivities': 0},
+            '2026-09': {'planned': 4, 'submitted': 1.5, 'actual': 1.5, 'missingPlannedActivities': 0},
+            '2026-10': {'planned': 3, 'submitted': 1, 'actual': 1, 'missingPlannedActivities': 0},
         })
 
     def test_monthly_planned_hours_stay_unknown_when_an_activity_has_no_hours(self):
         activities = list(merged_activities([], [native(expected_hours=2), native(id='missing')], [], set(), {}))
         self.assertEqual(monthly_otjh_summary(activities, [])['2026-09'], {
-            'planned': None, 'actual': 0, 'missingPlannedActivities': 1,
+            'planned': None, 'submitted': 0, 'actual': 0, 'missingPlannedActivities': 1,
+        })
+
+    def test_monthly_hours_separate_submitted_time_from_achieved_time(self):
+        activities = list(merged_activities([], [native(expected_hours=4)], [], set(), {}))
+        progress = [
+            {'componentId': 'new', 'kind': 'component', 'submittedAt': '2026-09-09T12:00:00Z',
+             'claimedSeconds': 3600, 'timeTrackingSource': 'component:input'},
+            {'quizId': 'failed', 'kind': 'quiz', 'passed': False, 'submittedAt': '2026-09-10T12:00:00Z',
+             'claimedSeconds': 1800, 'timeTrackingSource': 'component:input'},
+        ]
+        self.assertEqual(monthly_otjh_summary(activities, progress)['2026-09'], {
+            'planned': 4, 'submitted': 1.5, 'actual': 1, 'missingPlannedActivities': 0,
+        })
+
+    def test_monthly_hours_apply_pending_marking_only_to_assignments(self):
+        activities = list(merged_activities([], [native(expected_hours=4)], [], set(), {}))
+        progress = [{
+            'componentId': 'assignment', 'componentType': 'assignment', 'kind': 'component',
+            'markingStatus': 'submitted_for_tutor_review',
+            'submittedAt': '2026-09-10T12:00:00Z', 'claimedSeconds': 1800,
+            'timeTrackingSource': 'component:input',
+        }]
+        self.assertEqual(monthly_otjh_summary(activities, progress)['2026-09'], {
+            'planned': 4, 'submitted': 0.5, 'actual': 0, 'missingPlannedActivities': 0,
+        })
+
+    def test_monthly_hours_keep_quiz_submission_semantics_unchanged(self):
+        activities = list(merged_activities([], [native(expected_hours=4)], [], set(), {}))
+        progress = [{
+            'quizId': 'pending', 'kind': 'quiz', 'passed': None,
+            'submittedAt': '2026-09-10T12:00:00Z', 'claimedSeconds': 1800,
+            'timeTrackingSource': 'component:input',
+        }]
+        self.assertEqual(monthly_otjh_summary(activities, progress)['2026-09'], {
+            'planned': 4, 'submitted': 0.5, 'actual': 0, 'missingPlannedActivities': 0,
         })
 
     def test_plan_details_count_merged_activities_and_distinct_ksbs_across_all_dates(self):
@@ -80,6 +116,22 @@ class OverviewWeekTests(SimpleTestCase):
         self.assertEqual(new_subject['ksbCodes'], ['B1', 'S2'])
         self.assertTrue(new_subject['ksbMappingMissing'])
         self.assertEqual(sum(sum(item['activityCounts'].values()) for item in subjects), 3)
+
+    def test_plan_summary_exposes_compact_dated_assignments_for_the_monthly_card(self):
+        assignments = [
+            native(id='essay', type='assignment', title='Professional Practice Essay', expected_hours=10,
+                   section_title='Assignment 1', ksb_mappings=['K2', 'S4']),
+            native(id='later', type='assignment', title='Case Study Analysis', date='2026-10-02', expected_hours=8),
+        ]
+        progress = [{'componentId': 'essay', 'kind': 'component', 'passed': True}]
+        subject = summarise_plan(merged_activities([], assignments, progress, set(), {}), [])[0]
+        september = subject['monthlyActivities'][0]
+        self.assertEqual(september, {
+            'id': 'native:essay', 'componentId': 'essay', 'title': 'Professional Practice Essay',
+            'type': 'assignment', 'date': '2026-09-09', 'weekTitle': 'Assignment 1',
+            'expectedHours': 10, 'completed': True, 'ksbCodes': ['K2', 'S4'],
+        })
+        self.assertEqual(subject['monthlyActivities'][1]['date'], '2026-10-02')
 
     def test_plan_summary_keeps_all_dates_and_counts_without_activity_content(self):
         historical = [old(), old(activity_id=3, date=None, status='not_started')]

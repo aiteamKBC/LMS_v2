@@ -22,6 +22,7 @@ from .training_plan_dashboard import number, rows
 
 log = logging.getLogger(__name__)
 UK = ZoneInfo('Europe/London')
+ASSIGNMENT_PENDING_STATUSES = frozenset({'submitted_for_tutor_review', 'submitted', 'pending_review'})
 
 
 def week_bounds(now=None):
@@ -96,11 +97,12 @@ def direct_hours_by_subject(native, progress, links):
 
 
 def monthly_otjh_summary(activities, progress):
-    """Return real planned and recorded current-platform hours by UK month.
+    """Return planned, submitted and achieved current-platform hours by UK month.
 
     Planned time follows the authored activity delivery date and uses the same
     explicit old/new identity and source-priority rules as the weekly card.
-    Recorded time follows the timestamp of the learner's actual progress entry.
+    Assignment submissions use their coach-marking status. Other activity types,
+    including quizzes, keep the existing progress-row semantics.
     """
     planned, priorities = {}, {}
     for row in activities:
@@ -127,16 +129,29 @@ def monthly_otjh_summary(activities, progress):
     for month in sorted(months):
         values = [value for (key_month, _), value in planned.items() if key_month == month]
         missing = sum(value is None for value in values)
+        submitted_rows = progress_by_month.get(month, [])
+        assignment_rows = [row for row in submitted_rows
+                           if str(row.get('componentType') or '').strip().casefold() == 'assignment']
+        pending_assignments = [row for row in assignment_rows
+                               if str(row.get('markingStatus') or '').strip().casefold() in ASSIGNMENT_PENDING_STATUSES]
+        accepted_assignments = [row for row in assignment_rows
+                                if str(row.get('markingStatus') or '').strip().casefold() in {'accepted', 'partial'}]
+        other_rows = [row for row in submitted_rows if row not in assignment_rows]
+        achieved_rows = [row for row in other_rows + accepted_assignments
+                         if progress_counts_as_achieved(row.get('kind'), row.get('passed'))]
         result[month] = {
             'planned': round(sum(value for value in values if value is not None), 4) if values and not missing else None,
-            'actual': round(_direct_progress_otjh(progress_by_month.get(month, [])), 4),
+            # Only assignments have a separate pending marking state. Quiz and
+            # other activity totals retain their established semantics.
+            'submitted': round(_direct_progress_otjh(pending_assignments + other_rows), 4),
+            'actual': round(_direct_progress_otjh(achieved_rows), 4),
             'missingPlannedActivities': missing,
         }
     return result
 
 
 def summarise_plan(activities, assigned, direct_hours=None):
-    """Plan cards need counts, dates and mapped KSBs, never lesson bodies or attempts."""
+    """Plan cards need counts and compact monthly rows, never lesson bodies or attempts."""
     subjects = {}
     for row in activities:
         subject = subjects.setdefault(row['subject'], {
@@ -145,10 +160,12 @@ def summarise_plan(activities, assigned, direct_hours=None):
             'total': 0, 'completed': 0, 'dates': set(), 'moduleIds': set(), 'sessionTitles': [],
             'activityCounts': {}, 'ksbCodes': set(), 'ksbMappingMissing': False,
             'ksbProgress': {'completed': 0, 'total': 0},
+            'monthlyActivities': [], 'ksbCodesByMonth': {},
         })
         subject['total'] += 1
         subject['completed'] += bool(row['completed'])
         category = clean_text(row.get('type') or row.get('category')) or 'activity'
+        monthly_type = category.strip().casefold().replace('-', '_').replace(' ', '_')
         subject['activityCounts'][category] = subject['activityCounts'].get(category, 0) + 1
         codes = point_codes(row.get('ksb_mappings')) if row.get('ksb_mappings') is not None else None
         subject['ksbCodes'].update(codes or [])
@@ -160,8 +177,24 @@ def summarise_plan(activities, assigned, direct_hours=None):
         day = as_date(row.get('date'))
         if day and not row.get('date_needs_review'):
             subject['dates'].add(day.isoformat())
-            if row.get('type') == 'live_session':
+            month_codes = subject['ksbCodesByMonth'].setdefault(day.strftime('%Y-%m'), set())
+            month_codes.update(codes or [])
+            if monthly_type == 'live_session':
                 subject['sessionTitles'].append({'date': day.isoformat(), 'title': clean_text(row.get('title'))})
+            if monthly_type in ('assignment', 'live_session'):
+                native_ids = row.get('component_ids') or []
+                component_id = (native_ids[0] if native_ids else row.get('id')) if row.get('module_id') else None
+                subject['monthlyActivities'].append({
+                    'id': ':'.join(str(value) for value in row['key']),
+                    'componentId': str(component_id) if component_id else None,
+                    'title': clean_text(row.get('title')) or ('Assignment' if monthly_type == 'assignment' else 'Live session'),
+                    'type': monthly_type,
+                    'date': day.isoformat(),
+                    'weekTitle': clean_text(row.get('section_title')) or None,
+                    'expectedHours': number(row.get('expected_hours')),
+                    'completed': bool(row['completed']),
+                    'ksbCodes': sorted(codes or []),
+                })
     represented = {module_id for subject in subjects.values() for module_id in subject['moduleIds']}
     for module_id, title in assigned:
         if module_id not in represented:
@@ -170,9 +203,11 @@ def summarise_plan(activities, assigned, direct_hours=None):
                 'total': 0, 'completed': 0, 'dates': set(), 'moduleIds': {module_id}, 'sessionTitles': [],
                 'activityCounts': {}, 'ksbCodes': set(), 'ksbMappingMissing': False,
                 'ksbProgress': {'completed': 0, 'total': 0},
+                'monthlyActivities': [], 'ksbCodesByMonth': {},
             }
     return [{**subject, 'dates': sorted(subject['dates']), 'moduleIds': sorted(subject['moduleIds']),
              'ksbCodes': sorted(subject['ksbCodes']),
+             'ksbCodesByMonth': {month: sorted(codes) for month, codes in subject['ksbCodesByMonth'].items()},
              'ksbProgress': None if subject['ksbMappingMissing'] else subject['ksbProgress'],
              'directHours': (direct_hours or {}).get(subject['id'], 0) if direct_hours is not None else None}
             for subject in sorted(subjects.values(), key=lambda item: (item['title'].casefold(), item['id']))]
