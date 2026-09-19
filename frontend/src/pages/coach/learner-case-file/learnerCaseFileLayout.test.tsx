@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CoachLearnerCaseFileData } from './data';
 import LearnerCaseFile from './page';
@@ -93,6 +93,11 @@ const caseFileData = {
   reviewsLoading: false,
 } satisfies CoachLearnerCaseFileData;
 
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location">{location.pathname}</output>;
+}
+
 beforeEach(() => {
   mocks.data = caseFileData;
   mocks.fetchKsbProfile.mockReset().mockResolvedValue({ knowledge: [], skills: [], behaviours: [] });
@@ -105,10 +110,10 @@ describe('Learner Case File design', () => {
 
     expect(screen.getByRole('heading', { name: 'Aya Khater', level: 1 })).toBeInTheDocument();
     const summary = screen.getByRole('region', { name: 'Learner profile summary' });
-    for (const metric of ['Overall', 'OTJH', 'KSB', 'Attendance', 'Gateway', 'Next session']) {
+    for (const metric of ['Overall', 'OTJH (Actual / Target)', 'KSB', 'Attendance', 'Gateway', 'Next session']) {
       expect(within(summary).getByText(metric, { selector: 'span' })).toBeInTheDocument();
     }
-    for (const section of ['Profile Snapshot', 'Progress Summary', 'Alerts & Actions', 'Recent Activity', 'Upcoming Sessions & Reviews']) {
+    for (const section of ['Profile Snapshot', 'Progress Summary', 'Recent Activity', 'Upcoming Sessions & Reviews']) {
       expect(screen.getByRole('heading', { name: section })).toBeInTheDocument();
     }
     expect(screen.getAllByRole('tab')).toHaveLength(4);
@@ -120,13 +125,56 @@ describe('Learner Case File design', () => {
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
 
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
-    expect(screen.getByRole('heading', { name: 'OTJH Hours' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Progress Snapshot' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Off-the-Job Hours (OTJH)' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'KSB Detailed Breakdown' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Learning Plan' }));
     expect(screen.getByRole('heading', { name: 'About' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Programme Journey' })).toBeInTheDocument();
+    expect(screen.getByText('Actual', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText('Planned', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.queryByText('Evidence Count', { selector: 'span' })).not.toBeInTheDocument();
     expect(screen.queryByText('No notes yet')).not.toBeInTheDocument();
+  });
+
+  it('shows the linked learning activity type and full title for a KSB', () => {
+    mocks.data = {
+      ...caseFileData,
+      detail: {
+        ...caseFileData.detail,
+        components: [
+          { module: 'Module 1', week: 'Week 1', component: 'Leadership and responsible decision making quiz', expectedOtjh: null, componentId: 'quiz-1', type: 'quiz', isQuiz: true, ksbMappings: [{ code: 'K1', description: null, classification: 'main', weight: 1 }] },
+        ],
+      },
+      touchedKsbCodes: ['K1'],
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Quiz')).toBeInTheDocument();
+    expect(within(dialog).getByText('Leadership and responsible decision making quiz')).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: 'Understand the organisation' })).toBeInTheDocument();
+    expect(within(dialog).queryByText(/evidence item linked/i)).not.toBeInTheDocument();
+  });
+
+  it('opens an assignment activity from the evidence popup', () => {
+    mocks.data = {
+      ...caseFileData,
+      detail: {
+        ...caseFileData.detail,
+        components: [
+          { module: 'Module 1', week: 'Week 1', component: 'Assignment 2', expectedOtjh: null, componentId: 'assignment-2', type: 'assignment', ksbMappings: [{ code: 'K1', description: null, classification: 'main', weight: 1 }] },
+        ],
+      },
+      touchedKsbCodes: ['K1'],
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LocationProbe /><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    fireEvent.click(screen.getByRole('button', { name: /Assignment Assignment 2/ }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/monthly-submission/apprenticeship/42/assignment-2');
   });
 });

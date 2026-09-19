@@ -66,17 +66,43 @@ def coach_meeting_reminder(request, event_key):
 
     label = {'mcr': 'Monthly Coaching', 'progress-review': 'Progress Review',
              'catch-up': 'Catch-up', 'student-support': 'Student Support'}[record.event_type]
-    lines = [f'Hello {learner.full_name or "Learner"},', '', f'This is a reminder for your {label} meeting.',
+    coach_name = (record.owner_name or 'Your coach').strip()
+    learner_name = learner.full_name or 'Learner'
+    lines = [f'Hello {learner_name},', '', f'This is a reminder for your {label} meeting.',
              f'Date: {starts:%d %B %Y}', f'Time: {starts:%H:%M %Z} ({zone})',
-             f'Duration: {record.duration_minutes} minutes', f'Coach: {record.owner_name or "Your coach"}']
+             f'Duration: {record.duration_minutes} minutes', f'Coach: {coach_name}']
     # The link and recipient come exclusively from authorized server records.
     if record.meeting_link and record.meeting_link.startswith('https://'):
         lines.extend(['', f'Join meeting: {record.meeting_link}'])
     lines.extend(['', 'Please open your learner calendar for the latest meeting details.'])
     body = '\n'.join(lines)
+    meeting_link = record.meeting_link if record.meeting_link and record.meeting_link.startswith('https://') else ''
+    details = ''.join(
+        f'<tr><td style="padding:8px 0;color:#64748b;font-size:13px;width:34%;">{escape(label)}</td>'
+        f'<td style="padding:8px 0;color:#0f172a;font-size:14px;font-weight:600;">{escape(value)}</td></tr>'
+        for label, value in (
+            ('Date', f'{starts:%d %B %Y}'),
+            ('Time', f'{starts:%H:%M %Z} ({zone})'),
+            ('Duration', f'{record.duration_minutes} minutes'),
+            ('Coach', coach_name),
+        )
+    )
+    safe_link = escape(meeting_link, quote=True)
+    html_body = f'''<!doctype html>
+<html><body style="margin:0;padding:24px;background:#f1f5f9;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td align="center">
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:620px;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;">
+<tr><td style="padding:22px 28px;background:#123c69;color:#ffffff;"><div style="font-size:12px;letter-spacing:1.5px;text-transform:uppercase;opacity:.8;">KBC LMS</div><div style="margin-top:6px;font-size:24px;font-weight:700;">{escape(label)} reminder</div></td></tr>
+<tr><td style="padding:30px 28px;"><p style="margin:0 0 20px;font-size:16px;line-height:1.6;">Hello {escape(learner_name)},</p>
+<p style="margin:0 0 22px;font-size:15px;line-height:1.6;color:#334155;">Here are the details for your upcoming {escape(label.lower())} meeting.</p>
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;">{details}</table>
+{f'<p style="margin:26px 0 14px;"><a href="{safe_link}" style="display:inline-block;padding:12px 22px;background:#123c69;color:#ffffff;text-decoration:none;border-radius:7px;font-size:14px;font-weight:700;">Join meeting in Teams</a></p><p style="margin:0 0 22px;font-size:12px;line-height:1.5;color:#64748b;word-break:break-all;">If the button does not work, copy this link:<br>{safe_link}</p>' if meeting_link else ''}
+<p style="margin:22px 0 0;font-size:13px;line-height:1.6;color:#64748b;">Please open your learner calendar for the latest meeting details.</p></td></tr>
+<tr><td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:12px;">Sent by {escape(coach_name)} via KBC LMS.</td></tr>
+</table></td></tr></table></body></html>'''
     try:
         sent, _ = email_azure.send_mail(to=recipient, subject=f'Reminder: {label} meeting',
-                                      html_body='<p>' + escape(body).replace('\n', '<br>') + '</p>', text_body=body)
+                                      html_body=html_body, text_body=body, sender_name=coach_name)
     except Exception:
         sent = False
     if not sent:

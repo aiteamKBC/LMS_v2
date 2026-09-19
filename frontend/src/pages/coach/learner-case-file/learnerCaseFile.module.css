@@ -4,7 +4,8 @@
   --case-muted: #77718d;
   width: 100%;
   min-width: 0;
-  max-width: 1920px;
+  /* The case file is a workspace-level view; use all available content width. */
+  max-width: none;
   margin: 0 auto;
   padding: 14px 20px 28px;
   color: var(--case-ink);
@@ -119,7 +120,7 @@
 
 .content { min-width: 0; }
 .stack { display: grid; gap: 14px; }
-.overviewGrid { display: grid; grid-template-columns: 1.02fr .92fr 1fr; gap: 14px; }
+.overviewGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 
 .panel {
   min-width: 0;
@@ -165,7 +166,7 @@
 .outlineButton { border: 1px solid #8c65e5; background: #fff; color: #5826c6; }
 
 .empty { display: grid; min-height: 62px; place-items: center; padding: 14px; border: 1px dashed #d8d1e7; border-radius: 9px; background: #fdfcff; color: #77718d; text-align: center; font-size: 11px; }
-.activityList { display: grid; gap: 1px; }
+.activityList { display: grid; max-height: 280px; gap: 1px; overflow-y: auto; padding-right: 4px; }
 .activityRow { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #efedf4; }
 .activityRow:last-child { border-bottom: 0; }
 
@@ -195,12 +196,6 @@
 .bigMetric { padding: 11px; border: 1px solid #e3ddef; border-radius: 9px; background: #fdfcff; text-align: center; }
 .bigMetricValue { font-size: 22px; font-weight: 800; }
 .bigMetricLabel { margin-top: 3px; color: #5f5874; font-size: 9px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
-.snapshotGrid { display: grid; grid-template-columns: 1fr 1fr 1.18fr; align-items: center; gap: 20px; }
-.ringGroup { display: flex; align-items: center; justify-content: center; gap: 12px; padding-right: 18px; border-right: 1px solid #e7e2ef; }
-.hint { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 9px; padding: 14px; border-radius: 9px; background: #faf8ff; }
-.hint i { color: #5f2fd2; font-size: 20px; }
-.hint strong { display: block; font-size: 11px; }
-.hint p { margin-top: 4px; color: var(--case-muted); font-size: 10px; line-height: 1.5; }
 .ksbSummary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .ksbSummaryCard { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 10px; padding: 10px 13px; border: 1px solid #e3ddef; border-radius: 8px; background: #fdfcff; }
 .ksbSummaryCard i { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 9px; background: #eee7ff; color: #5d29cf; }
@@ -245,7 +240,7 @@
 .learningMetric strong { display: block; margin-top: 4px; color: #5022bf; font-size: 19px; }
 .learningMetric[data-tone="positive"] strong { color: #0e9b72; }
 .learningMetric[data-tone="warning"] strong { color: #cf760e; }
-.learningGrid { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(280px, .8fr); gap: 14px; }
+.learningGrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .coachNotes { display: flex; min-height: 360px; flex-direction: column; align-items: center; justify-content: center; padding: 25px; border: 1px solid var(--case-border); border-radius: 10px; background: #fff; text-align: center; }
 .coachNotes i { display: grid; width: 54px; height: 54px; place-items: center; border-radius: 50%; background: #f2effa; color: #50446e; font-size: 26px; }
 .coachNotes strong { margin-top: 16px; font-size: 14px; }
@@ -269,8 +264,6 @@
   .heroActions { justify-content: flex-start; }
   .overviewGrid, .employerGrid, .reviewsGrid, .learningGrid { grid-template-columns: 1fr; }
   .overviewGrid > :last-child { grid-column: auto; }
-  .snapshotGrid { grid-template-columns: 1fr; }
-  .ringGroup { border-right: 0; border-bottom: 1px solid #e7e2ef; padding: 0 0 14px; }
   .programmeGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .programmeCell:nth-child(3n + 1) { border-left: 1px solid #e7e2ef; }
   .programmeCell:nth-child(2n + 1) { border-left: 0; }

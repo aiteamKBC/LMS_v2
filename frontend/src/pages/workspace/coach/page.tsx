@@ -885,8 +885,19 @@ const KPI_FILTER_LABEL: Record<DashboardKpi, string> = {
 
 function formatWeekRangeLabel() {
   const { start, end } = currentWeekRange();
+  return formatDateRangeLabel(start, end);
+}
+
+function formatDateRangeLabel(start: Date, end: Date) {
   const format = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' });
-  return `${format.format(start)} - ${format.format(end)}`;
+  return `${format.format(start)} – ${format.format(end)}`;
+}
+
+function formatUpcomingRangeLabel() {
+  const start = startOfDay(new Date());
+  const end = new Date(start);
+  end.setDate(start.getDate() + COACHING_CALENDAR_WINDOW_DAYS - 1);
+  return formatDateRangeLabel(start, end);
 }
 
 function LoadingBlock({ className = '' }: { className?: string }) {
@@ -1304,10 +1315,10 @@ export default function CoachDashboard() {
         <section className={styles.metrics} aria-label="Coach dashboard metrics">
           <DashboardMetric label="Total learners" value={loading || loadWarning ? undefined : totalCaseload} icon="ri-group-line" onClick={() => setSelectedKpi('caseload')} />
           <DashboardMetric label="OTJH at risk" value={loading || loadWarning ? undefined : atRiskCount} note={loading || loadWarning ? undefined : `${needAttentionLearners.length} need attention`} icon="ri-alarm-warning-line" tone="critical" onClick={() => setSelectedKpi('at-risk')} />
-          <DashboardMetric label="Marking this week" value={loading || loadWarning ? undefined : markingThisWeek} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => navigate('/coach/marking-queue')} />
-          <DashboardMetric label="PR this week" value={loading || loadWarning ? undefined : progressReviewsThisWeek} note="Progress reviews" icon="ri-focus-3-line" tone="caution" onClick={() => navigate('/coach/progress-reviews')} />
-          <DashboardMetric label="MCM this week" value={loading || loadWarning ? undefined : monthlyCoachingThisWeek} note="Monthly coaching" icon="ri-history-line" tone="caution" onClick={() => navigate('/coach/meetings')} />
-          <DashboardMetric label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note="Catch-up sessions" icon="ri-calendar-event-line" tone="caution" onClick={() => navigate('/coach/timetable')} />
+          <DashboardMetric label="Pending marking" value={loading || loadWarning ? undefined : markingThisWeek} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => navigate('/coach/marking-queue')} />
+          <DashboardMetric label="PR this week" value={loading || loadWarning ? undefined : progressReviewsThisWeek} note={`Progress reviews · ${formatWeekRangeLabel()}`} icon="ri-focus-3-line" tone="caution" onClick={() => navigate('/coach/progress-reviews')} />
+          <DashboardMetric label="MCM this week" value={loading || loadWarning ? undefined : monthlyCoachingThisWeek} note={`Monthly coaching · ${formatWeekRangeLabel()}`} icon="ri-history-line" tone="caution" onClick={() => navigate('/coach/meetings')} />
+          <DashboardMetric label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note={`Catch-up sessions · ${formatWeekRangeLabel()}`} icon="ri-calendar-event-line" tone="caution" onClick={() => navigate('/coach/timetable')} />
         </section>
 
         <div className={styles.riskLayout}>
@@ -1379,7 +1390,7 @@ export default function CoachDashboard() {
 
         <Panel className={styles.panel}>
           <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
-            description={`Your scheduled meetings and live sessions - next ${COACHING_CALENDAR_WINDOW_DAYS} days`}
+            description={`Your scheduled meetings and live sessions · next ${COACHING_CALENDAR_WINDOW_DAYS} days (${formatUpcomingRangeLabel()})`}
             actions={<>
               <button type="button" className={styles.iconButton} onClick={() => setScheduleExpanded(current => !current)}
                 aria-expanded={scheduleExpanded} aria-controls="coach-schedule-content" aria-label={`${scheduleExpanded ? 'Collapse' : 'Expand'} upcoming schedule`}>

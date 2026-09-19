@@ -1071,7 +1071,9 @@ function buildCaseFileData(args: {
     employerEmail: args.snapshot?.employerEmail || '',
     employerPhone: args.snapshot?.employerPhone || '',
     overallProgress: args.snapshot?.overallProgress ?? null,
-    attendanceRate: args.liveAttendance?.attendanceRate ?? args.attendance?.attendance ?? null,
+    // Keep the case-file header aligned with the attendance tab, which reads
+    // from the same attendance record. The live summary can lag behind it.
+    attendanceRate: args.attendance?.attendance ?? args.liveAttendance?.attendanceRate ?? null,
     otjhCompleted: detailCompletedHours ?? args.snapshot?.otjhCompleted ?? args.attendance?.otjhCompleted ?? null,
     otjhTarget: detailTargetHours ?? args.snapshot?.otjhTarget ?? args.attendance?.otjhTarget ?? null,
     otjhPlanned: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? null,

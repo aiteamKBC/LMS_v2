@@ -111,7 +111,7 @@ it('shows the six requested workload cards using the current week and marking qu
   expect(values).toMatchObject({
     'Total learners': '1',
     'OTJH at risk': '1',
-    'Marking this week': '6',
+    'Pending marking': '6',
     'PR this week': '1',
     'MCM this week': '1',
     'Catch-ups this week': '1',

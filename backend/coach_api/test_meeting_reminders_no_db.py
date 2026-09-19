@@ -121,6 +121,9 @@ class ReminderTests(unittest.TestCase):
         self.assertEqual(sent['to'], self.learner.email)
         self.assertIn('10:30 BST', sent['text_body'])
         self.assertIn('&lt;Learner&gt;', sent['html_body'])
+        self.assertIn('Join meeting in Teams', sent['html_body'])
+        self.assertIn('Sent by Example Coach', sent['html_body'])
+        self.assertEqual(sent['sender_name'], self.record.owner_name)
         self.assertIn(self.record.meeting_link, sent['text_body'])
         self.assertEqual(vars(self.record), before)
 

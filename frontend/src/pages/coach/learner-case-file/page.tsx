@@ -33,7 +33,6 @@ import {
   formatHours,
   formatPercent,
   selectCaseFileOtjh,
-  toneFromPercent,
   useCoachLearnerCaseFileData,
   type CaseFileActivityItem,
   type CaseFileReviewMeeting,
@@ -60,6 +59,10 @@ const CASE_FILE_TABS = [
 ] as const;
 
 type TabId = typeof CASE_FILE_TABS[number]['id'] | 'coach-notes';
+type EvidencePreviewTarget = {
+  title: string;
+  activities: Array<{ title: string; type: string; componentId?: string }>;
+};
 const HIDDEN_CASE_FILE_TAB_IDS = new Set<typeof CASE_FILE_TABS[number]['id']>([
   'otjh',
   'ksbs',
@@ -107,6 +110,7 @@ interface AttendanceDetailsErrorResponse {
 export default function LearnerCaseFile() {
   const coach = useCoachIdentity();
   const [activeTab, setActiveTab] = useState<TabId>('overview');
+  const [evidencePreview, setEvidencePreview] = useState<EvidencePreviewTarget | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -138,13 +142,6 @@ export default function LearnerCaseFile() {
   const nextLiveSession = data?.upcomingSessions[0] || null;
   const headerOtjh = data ? selectCaseFileOtjh(data) : null;
 
-  const handleOpenTrainingPlan = () => {
-    if (!data?.kind || !data.learnerId) {
-      return;
-    }
-    navigate(`/learner/training-plan/${data.kind}/${data.learnerId}`);
-  };
-
   const handleOpenReviewMeeting = (item: CaseFileReviewMeeting) => {
     const returnParams = new URLSearchParams(location.search);
     returnParams.set('id', data?.learnerId || learnerId || '');
@@ -174,11 +171,11 @@ export default function LearnerCaseFile() {
 
     switch (activeTab) {
       case 'overview':
-        return <ReferenceOverviewContent data={data} onNavigate={setActiveTab} onSchedule={() => navigate('/coach/timetable')} />;
+        return <ReferenceOverviewContent data={data} onSchedule={() => navigate('/coach/timetable')} />;
       case 'programme':
         return <ReferenceProgrammeContent data={data} />;
       case 'progress':
-        return <ReferenceProgressContent data={data} onViewEvidence={() => setActiveTab('evidence')} />;
+        return <ReferenceProgressContent data={data} onViewEvidence={setEvidencePreview} />;
       case 'attendance':
         return <ReferenceAttendanceContent data={data} />;
       case 'reviews':
@@ -208,7 +205,7 @@ export default function LearnerCaseFile() {
       case 'documents':
         return <DocumentsTab data={data} />;
       default:
-        return <ReferenceOverviewContent data={data} onNavigate={setActiveTab} onSchedule={() => navigate('/coach/timetable')} />;
+        return <ReferenceOverviewContent data={data} onSchedule={() => navigate('/coach/timetable')} />;
     }
   };
 
@@ -222,6 +219,7 @@ export default function LearnerCaseFile() {
       pageSubtitle="Coaching record, progress and evidence for one learner"
       userName={data?.coachName || coach.name}
       userRole="Progress Coach"
+      hidePageChrome
     >
       <main className={styles.page}>
         <nav className={styles.breadcrumb} aria-label="Breadcrumb">
@@ -272,33 +270,11 @@ export default function LearnerCaseFile() {
                 </div>
               </div>
 
-              <div className={styles.heroActions}>
-                <button
-                  type="button"
-                  onClick={() => navigate('/coach/timetable')}
-                  className={styles.primaryAction}
-                >
-                  <AppIcon className="ri-calendar-line"></AppIcon> Schedule
-                </button>
-                {data?.detail?.id && <button type="button" onClick={() => navigate(`/coach/monthly-logs/${data.detail!.id}`)}
-                  className={styles.secondaryAction}>
-                  <AppIcon className="ri-file-list-3-line" /> Monthly Logs
-                </button>}
-                {data?.kind && (
-                  <button
-                    type="button"
-                    onClick={handleOpenTrainingPlan}
-                    className={styles.secondaryAction}
-                  >
-                    <AppIcon className="ri-route-line"></AppIcon> Training Plan
-                  </button>
-                )}
-              </div>
             </div>
 
           <div className={styles.metrics}>
               <CaseFileHeroMetric icon="ri-focus-3-line" label="Overall" value={formatPercent(data?.overallProgress ?? null)} />
-              <CaseFileHeroMetric icon="ri-time-line" label="OTJH" value={headerOtjh ? formatFraction(headerOtjh.logged, headerOtjh.target) : '--'} />
+              <CaseFileHeroMetric icon="ri-time-line" label="OTJH (Actual / Target)" value={headerOtjh ? formatFraction(headerOtjh.logged, headerOtjh.target) : '--'} />
               <CaseFileHeroMetric icon="ri-stack-line" label="KSB" value={formatPercent(data?.ksbProgress ?? null)} />
               <CaseFileHeroMetric icon="ri-group-line" label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} />
               <CaseFileHeroMetric icon="ri-calendar-line" label="Gateway" value={data?.gatewayReviewDate || '--'} />
@@ -320,6 +296,16 @@ export default function LearnerCaseFile() {
           {renderTab()}
         </section>
       </main>
+      {evidencePreview && (
+        <EvidencePreviewModal
+          evidence={evidencePreview}
+          onClose={() => setEvidencePreview(null)}
+          onOpenAssignment={(componentId) => {
+            if (!data?.kind || !data.learnerId) return;
+            navigate(`/learner/monthly-submission/${data.kind}/${data.learnerId}/${encodeURIComponent(componentId)}`);
+          }}
+        />
+      )}
     </WorkspaceShell>
   );
 }
@@ -338,18 +324,14 @@ function CaseFileHeroMetric({ icon, label, value }: { icon: string; label: strin
 
 function ReferenceOverviewContent({
   data,
-  onNavigate,
   onSchedule,
 }: {
   data: CoachLearnerCaseFileData;
-  onNavigate: (tab: TabId) => void;
   onSchedule: () => void;
 }) {
-  const risks = buildRiskItems(data).filter((item) => item.tone === 'red' || item.tone === 'amber');
   const activities = data.activityItems.slice(0, 6);
   const upcomingSessions = data.upcomingSessions;
   const otjh = selectCaseFileOtjh(data);
-  const primaryRisk = risks[0];
   return (
     <div className={styles.stack}>
       <div className={styles.overviewGrid}>
@@ -361,6 +343,10 @@ function ReferenceOverviewContent({
             <ProfileInfo icon="ri-box-3-line" label="Group" value={data.group} />
             <ProfileInfo icon="ri-user-line" label="Coach" value={data.coachName} />
             <ProfileInfo icon="ri-calendar-event-line" label="Start Date" value={data.startDate} />
+            <ProfileInfo icon="ri-graduation-cap-line" label="Programme" value={data.programme} />
+            <ProfileInfo icon="ri-checkbox-circle-line" label="Status" value={data.programStatus} />
+            <ProfileInfo icon="ri-calendar-check-line" label="Planned End" value={data.plannedEndDate} />
+            <ProfileInfo icon="ri-mail-line" label="Email" value={data.email} />
           </div>
         </ReferencePanel>
         <ReferencePanel title="Progress Summary" subtitle="Current progress against key targets" icon="ri-bar-chart-box-line" tone="emerald">
@@ -371,33 +357,16 @@ function ReferenceOverviewContent({
             <ProfileProgress label="Attendance" value={data.attendanceRate} tone="striped" />
           </div>
         </ReferencePanel>
-        <ReferencePanel title="Alerts & Actions" subtitle="Items that need your attention" icon="ri-alarm-warning-line" tone="red">
-          {primaryRisk ? (
-            <div className={styles.alertBox}>
-              <AppIcon className="ri-alarm-warning-line" />
-              <div>
-                <strong>{primaryRisk.detail}</strong>
-                <p>{primaryRisk.label === 'OTJH Hours'
-                  ? 'This learner needs evidence and activity to meet their OTJH requirement.'
-                  : 'Review this learner record and agree the next support action.'}</p>
-              </div>
+        <ReferencePanel title="Recent Activity" subtitle="Latest updates, evidence and interactions" icon="ri-time-line" tone="muted">
+          {activities.length === 0 ? <ProfileEmpty text="No recent activity yet. Activity such as evidence uploads, meeting notes and progress updates will appear here." /> : <div className={styles.activityList}>{activities.map((item) => (
+            <div key={item.id} className={styles.activityRow}>
+              <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-full', toneStyle(activityStatusTone(item.tone)).bg, toneStyle(activityStatusTone(item.tone)).text)}><AppIcon className="ri-history-line text-xs"></AppIcon></span>
+              <div className="min-w-0 flex-1"><p className="text-[12px] font-bold text-foreground-800">{item.event}</p><p className="truncate text-[12px] text-foreground-400">{item.detail || 'No details available.'}</p></div>
+              <span className="text-[12px] text-foreground-300">{item.date}</span>
             </div>
-          ) : <div className={styles.empty}><span>No alerts require action.</span></div>}
-          <div className={styles.buttonRow}>
-            <button type="button" className={styles.solidButton} onClick={() => onNavigate('progress')}><AppIcon className="ri-add-line" />Log activity</button>
-            <button type="button" className={styles.outlineButton} onClick={() => onNavigate('support')}><AppIcon className="ri-book-open-line" />View journey</button>
-          </div>
+          ))}</div>}
         </ReferencePanel>
       </div>
-      <ReferencePanel title="Recent Activity" subtitle="Latest updates, evidence and interactions" icon="ri-time-line" tone="muted">
-        {activities.length === 0 ? <ProfileEmpty text="No recent activity yet. Activity such as evidence uploads, meeting notes and progress updates will appear here." /> : <div className={styles.activityList}>{activities.map((item) => (
-          <div key={item.id} className={styles.activityRow}>
-            <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-full', toneStyle(activityStatusTone(item.tone)).bg, toneStyle(activityStatusTone(item.tone)).text)}><AppIcon className="ri-history-line text-xs"></AppIcon></span>
-            <div className="min-w-0 flex-1"><p className="text-[12px] font-bold text-foreground-800">{item.event}</p><p className="truncate text-[12px] text-foreground-400">{item.detail || 'No details available.'}</p></div>
-            <span className="text-[12px] text-foreground-300">{item.date}</span>
-          </div>
-        ))}</div>}
-      </ReferencePanel>
       <ReferencePanel title="Upcoming Sessions & Reviews" subtitle="Scheduled coaching sessions, reviews and key dates" icon="ri-calendar-event-line" tone="primary"
         actions={<button type="button" className={styles.solidButton} onClick={onSchedule}><AppIcon className="ri-calendar-event-line" />Schedule session</button>}>
         {upcomingSessions.length === 0 ? <ProfileEmpty text="No upcoming sessions scheduled. Schedule a coaching session or review to keep this learner on track." /> : (
@@ -474,7 +443,7 @@ function ReferenceProgrammeContent({ data }: { data: CoachLearnerCaseFileData })
   );
 }
 
-function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearnerCaseFileData; onViewEvidence: () => void }) {
+function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearnerCaseFileData; onViewEvidence: (evidence: EvidencePreviewTarget) => void }) {
   const [activeKsbCategory, setActiveKsbCategory] = useState('All');
   const [ksbSearch, setKsbSearch] = useState('');
   const [fallbackKsbs, setFallbackKsbs] = useState<Array<{ code: string; description: string; type: string; number: string }>>([]);
@@ -573,21 +542,14 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
   });
   return (
     <div className={styles.stack}>
-      <ReferencePanel title="OTJH Hours" subtitle="Track on-the-job learning hours against your programme requirements." icon="ri-time-line" tone="primary">
+      <ReferencePanel title="Off-the-Job Hours (OTJH)" subtitle="Track on-the-job learning hours against your programme requirements." icon="ri-time-line" tone="primary">
         <div className={styles.metricGrid}>
-          <BigMetric value={formatHours(otjh.logged)} label="Hours Logged" tone="primary" />
-          <BigMetric value={formatHours(otjh.target)} label="Current Target" tone="muted" />
-          <BigMetric value={formatHours(otjh.programmeTotal)} label="Programme Total" tone="amber" />
+          <BigMetric value={formatHours(otjh.logged)} label="Actual" tone="primary" />
+          <BigMetric value={formatHours(otjh.target)} label="Target Hours" tone="muted" />
+          <BigMetric value={formatHours(otjh.programmeTotal)} label="Planned" tone="amber" />
           <BigMetric value={formatHours(otjh.remaining)} label="Hours Remaining" tone="red" />
         </div>
         <ProfileProgress label="OTJH Progress" value={otjh.progressPercent} color="bg-primary-600" />
-      </ReferencePanel>
-      <ReferencePanel title="Progress Snapshot" subtitle="Your overall progress towards OTJH hours and KSB completion." icon="ri-bar-chart-line" tone="primary">
-        <div className={styles.snapshotGrid}>
-          <div className={styles.ringGroup}><ProfileRing label="OTJH" value={otjh.progressPercent} color="#6030d2" /></div>
-          <div className={styles.ringGroup}><ProfileRing label="KSB" value={data.ksbProgress} color="#18b978" /></div>
-          <div className={styles.hint}><AppIcon className="ri-information-line" /><div><strong>Getting started</strong><p>Log your on-the-job hours and add evidence against KSBs to see progress here.</p></div></div>
-        </div>
       </ReferencePanel>
       <ReferencePanel title="KSB Detailed Breakdown" subtitle="View your KSB progress by category and track evidence coverage." icon="ri-stack-line" tone="primary">
         {fallbackKsbsLoading && ksbs.length === 0 ? <div className="p-2"><RowsSkeleton rows={4} avatar={false} /></div> : ksbs.length === 0 ? <ProfileEmpty text="No learner KSB snapshot or programme KSB framework is available yet." /> : (
@@ -644,7 +606,15 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
                     <td><StatusBadge tone={ksbCategoryTone(item.category)} label={item.category} size="sm" dot={false} /></td>
                     <td><StatusBadge tone={item.linked ? 'positive' : 'neutral'} label={item.linked ? 'Evidence linked' : 'Not evidenced'} size="sm" /></td>
                     <td>{item.linked ? 1 : 0}</td>
-                    <td><button type="button" className={styles.tableButton} onClick={onViewEvidence}>View Evidence</button></td>
+                    <td>
+                      <button
+                        type="button"
+                        className={styles.tableButton}
+                        onClick={() => onViewEvidence({ title: item.description, activities: ksbLearningActivities(data, item.code) })}
+                      >
+                        View
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -654,6 +624,88 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
       </ReferencePanel>
     </div>
   );
+}
+
+function EvidencePreviewModal({ evidence, onClose, onOpenAssignment }: { evidence: EvidencePreviewTarget; onClose: () => void; onOpenAssignment: (componentId: string) => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+      role="presentation"
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="evidence-preview-title"
+        className="w-full max-w-sm rounded-xl border border-foreground-200/60 bg-background-50 p-5 shadow-xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="evidence-preview-title" className="mt-1 break-words text-sm font-semibold leading-5 text-foreground-900">{evidence.title}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close evidence" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
+            <AppIcon className="ri-close-line" />
+          </button>
+        </div>
+        <div className="mt-4 space-y-2">
+          {evidence.activities.length ? evidence.activities.map((activity, index) => (
+            <button
+              key={`${activity.title}-${activity.type}-${index}`}
+              type="button"
+              onClick={() => activity.type === 'Assignment' && activity.componentId && onOpenAssignment(activity.componentId)}
+              className={`w-full rounded-lg border border-background-200 bg-background-100/50 p-3 text-left ${activity.type === 'Assignment' && activity.componentId ? 'cursor-pointer hover:border-primary-300 hover:bg-primary-50/40' : 'cursor-default'}`}
+            >
+              <p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">{activity.type}</p>
+              <p className="mt-1 break-words text-[12px] text-foreground-900">{activity.title}</p>
+            </button>
+          )) : <p className="text-[12px] text-foreground-500">No linked learning activity type is available.</p>}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button type="button" onClick={onClose} className="rounded-lg bg-primary-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-primary-700">Close</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): EvidencePreviewTarget['activities'] {
+  const detail = data.detail;
+  if (!detail) return [];
+  const normalizedCode = code.trim().toUpperCase();
+  const activities: EvidencePreviewTarget['activities'] = [];
+  const seen = new Set<string>();
+  const add = (title: string | null | undefined, type: string | null | undefined, key: string, componentId?: string | null) => {
+    if (!title || seen.has(key)) return;
+    seen.add(key);
+    const normalizedType = String(type || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+    activities.push({
+      title,
+      componentId: componentId || undefined,
+      type: normalizedType === 'live session' ? 'Live session'
+        : normalizedType ? normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1)
+          : 'Activity type unavailable',
+    });
+  };
+  for (const component of detail.components) {
+    if (!(component.ksbMappings || []).some((mapping) => mapping.code.trim().toUpperCase() === normalizedCode)) continue;
+    add(component.component, component.isQuiz ? 'quiz' : component.type, component.componentId || `${component.module}:${component.week}:${component.component}`, component.componentId);
+  }
+  for (const attempt of detail.quizAttempts) {
+    if (!(attempt.ksbs || []).some((ksb) => ksb.trim().toUpperCase() === normalizedCode)) continue;
+    const component = detail.components.find((item) => item.componentId === attempt.componentId || item.quizMeta?.quizId === attempt.quizId);
+    add(attempt.componentTitle || component?.component || `Quiz ${attempt.quizId}`, 'quiz', attempt.componentId || component?.componentId || `quiz:${attempt.quizId}`);
+  }
+  for (const progress of detail.videoProgress || []) {
+    if (!(progress.ksbs || []).some((ksb) => ksb.trim().toUpperCase() === normalizedCode)) continue;
+    const component = detail.components.find((item) => item.componentId === progress.componentId);
+    add(component?.component || 'Video', 'video', progress.componentId);
+  }
+  for (const progress of detail.componentProgress || []) {
+    if (!(progress.ksbs || []).some((ksb) => ksb.trim().toUpperCase() === normalizedCode)) continue;
+    const component = detail.components.find((item) => item.componentId === progress.componentId);
+    add(progress.componentTitle || component?.component || progress.componentType, progress.componentType || component?.type, progress.componentId);
+  }
+  return activities;
 }
 
 function buildDisplayKsbs(
@@ -1281,11 +1333,6 @@ function formatSessionTime(start?: string | null, end?: string | null) {
   return endLabel === '--' ? startLabel : `${startLabel} - ${endLabel}`;
 }
 
-function ProfileRing({ label, value, color }: { label: string; value: number | null; color: string }) {
-  const percent = Math.max(0, Math.min(100, value || 0));
-  return <div className="text-center"><div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full" style={{ background: `conic-gradient(${color} ${percent * 3.6}deg, #eceaf2 0deg)` }}><div className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-[16px] font-bold" style={{ color }}>{value === null ? '--' : `${Math.round(value)}%`}</div></div><p className="mt-2 text-[12px] font-semibold text-foreground-700">{label}</p></div>;
-}
-
 function ProfileEmpty({ text }: { text: string }) {
   return <div className={styles.empty}><span>{text}</span></div>;
 }
@@ -1306,50 +1353,6 @@ function parseLearnerKind(value?: string | null) {
     return value;
   }
   return null;
-}
-
-function buildRiskItems(data: CoachLearnerCaseFileData) {
-  const items = [];
-
-  if (data.attendanceRate !== null) {
-    items.push({
-      label: 'Attendance',
-      tone: toneFromPercent(data.attendanceRate),
-      detail: `${formatPercent(data.attendanceRate)}${data.attendance?.sessions ? ` across ${data.attendance.sessions} session(s)` : ''}`,
-    });
-  }
-
-  const otjh = selectCaseFileOtjh(data);
-  const otjhTone = toneFromOtjh(otjh.logged, otjh.target);
-  items.push({
-    label: 'OTJH Hours',
-    tone: otjhTone,
-    detail: `${formatHours(otjh.logged)} / ${formatHours(otjh.target)}${otjh.programmeTotal ? ` · planned ${formatHours(otjh.programmeTotal)}` : ''}`,
-  });
-
-  items.push({
-    label: 'Evidence',
-    tone: data.evidence?.pendingEvidence ? 'amber' : 'green',
-    detail: data.evidence
-      ? `${data.evidence.totalEvidence} total, ${data.evidence.acceptedEvidence} accepted, ${data.evidence.pendingEvidence} pending`
-      : `${data.evidenceCount ?? 0} evidence item(s) in coach snapshot`,
-  });
-
-  if (data.ksbEvidencedCount !== null) {
-    items.push({
-      label: 'KSB Progress',
-      tone: 'green',
-      detail: `${data.ksbEvidencedCount} KSB(s) evidenced in the audit record`,
-    });
-  } else if (data.ksbProgress !== null) {
-    items.push({
-      label: 'KSB Progress',
-      tone: toneFromPercent(data.ksbProgress, 60),
-      detail: `${formatPercent(data.ksbProgress)} with ${data.detail?.ksbs.length || 0} mapped KSB(s)`,
-    });
-  }
-
-  return items;
 }
 
 /**
@@ -1408,14 +1411,6 @@ function statusLabel(data: CoachLearnerCaseFileData | null) {
     return 'Loading';
   }
   return data.programStatus || '--';
-}
-
-function toneFromOtjh(current: number | null, target: number | null): 'green' | 'amber' | 'red' | 'neutral' {
-  if (current === null || target === null || target <= 0) {
-    return 'neutral';
-  }
-  const ratio = (current / target) * 100;
-  return toneFromPercent(Math.round(ratio), 60);
 }
 
 function initialsFromName(value: string) {

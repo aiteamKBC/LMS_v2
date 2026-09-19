@@ -34,10 +34,9 @@ export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { 
       <div className={styles.learningMetrics}>
         <LearningMetric label="Overall Progress" value={formatPercent(data.overallProgress)} />
         <LearningMetric label="Attendance" value={formatPercent(data.attendanceRate)} tone="warning" />
-        <LearningMetric label="OTJH Logged" value={formatHours(data.otjhCompleted)} />
-        <LearningMetric label="Programme Total" value={formatHours(data.totalExpectedOtjh || null)} tone="positive" />
+        <LearningMetric label="Actual" value={formatHours(data.otjhCompleted)} />
+        <LearningMetric label="Planned" value={formatHours(data.totalExpectedOtjh || null)} tone="positive" />
         <LearningMetric label="Mapped KSBs" value={String(data.detail?.ksbs.length || 0)} />
-        <LearningMetric label="Evidence Count" value={String(data.evidenceCount ?? '--')} />
       </div>
 
       <section className={styles.panel}>
