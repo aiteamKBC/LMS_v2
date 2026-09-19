@@ -15,6 +15,7 @@ import { CheckCircle2, Circle, Loader2, Info, AlertCircle } from 'lucide-react';
 import { startLiveDictation } from '@/utils/liveDictation';
 import { Modal } from '@/pages/users/components/Modal';
 import { AssignmentTimeEntries } from './AssignmentTimeEntries';
+import { learningFetch, parsePersonalLearning } from '@/lib/personalLearning';
 
 const inputClass = 'mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
 const buttonClass = 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-blue-50 disabled:opacity-40';
@@ -128,6 +129,8 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   checks: AssignmentQualityCheck[]; checking: boolean; onCheck: () => Promise<boolean>; onSave: () => Promise<boolean>;
   historical?: boolean; question?: string; activityId?: string;
 }) {
+  const personal = parsePersonalLearning(learnerId);
+  const personalStudy = personal?.mode === 'study';
   useEffect(() => {
     if (step !== 7 || disabled || historical) return;
     if (fillEmptyPresentationSlides(data, answers.whatYouLearned, answers.businessImpact) === data) return;
@@ -214,7 +217,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     try {
       const uploaded = await uploadEvidence(kind, learnerId, file, `presentation-reference-${activityId}`);
       if (uploaded.status !== 'approved') throw new Error('This file has not passed the upload checks. Choose another reference.');
-      const response = await fetch(`/learner_api/reflection/assignment/presentation-design/?learnerId=${encodeURIComponent(learnerId)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ learnerKind: kind, evidenceId: uploaded.id }) });
+      const response = await learningFetch(`/learner_api/reflection/assignment/presentation-design/?learnerId=${encodeURIComponent(learnerId)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ learnerKind: kind, evidenceId: uploaded.id }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not read this design reference.');
       if (presentationContextRef.current !== presentationContext) return;
@@ -420,11 +423,13 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
         </div>}
       </section>
       {field('actionPlan', 'Your action plan for next month (at least 20 words)')}{field('epaPreparedness', 'How has this prepared you for EPA? (at least 20 words)')}</>}
-    {step === 6 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">All checks must be green before you can submit your assignment. Complete the coaching meeting booking and presentation in Step 8 (Coaching & presentation), then run the checks again.</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => <div key={c.key} className={`rounded-xl border p-3 text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{c.passed ? <CheckCircle2 aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" /> : <Circle aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" />}{c.label}</div>)}</>}
+    {step === 6 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">{personalStudy ? 'Complete your presentation in Step 8, then run the checks again. All remaining assignment requirements must be met.' : 'All checks must be green before you can submit your assignment. Complete the coaching meeting booking and presentation in Step 8 (Coaching & presentation), then run the checks again.'}</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => <div key={c.key} className={`rounded-xl border p-3 text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{c.passed ? <CheckCircle2 aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" /> : <Circle aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" />}{c.label}</div>)}</>}
     {step === 7 && <>
-      <h3 className="text-lg font-semibold">Coaching & presentation</h3>
-      <p className="text-sm text-slate-600">Book coaching in the submission-month window ({minBooking} to {maxBooking}) or the next-month window shown below. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
-      <AssignmentCoachingBooking kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
+      <h3 className="text-lg font-semibold">{personalStudy ? 'Presentation' : 'Coaching & presentation'}</h3>
+      {!personalStudy && <p className="text-sm text-slate-600">Book coaching in the submission-month window ({minBooking} to {maxBooking}) or the next-month window shown below. You can finish both tasks here and keep the whole submission as a draft until ready.</p>}
+      {personal
+        ? <p className="rounded-xl border bg-blue-50 p-4 text-sm">{personalStudy ? 'Coaching booking is not required for personal learning. Complete your presentation and all other assignment requirements. Tutor review still applies.' : 'Preview does not create coaching bookings or send Teams invitations. No submission is saved.'}</p>
+        : <AssignmentCoachingBooking kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />}
       <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
         <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate slides from your answers, edit and review them, then export your PowerPoint.</p></div></div>
       <section className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
@@ -464,7 +469,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       </div>
       </section>
       <section className="flex flex-col gap-4 rounded-2xl border border-primary-100 bg-primary-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-        <div><h4 className="text-base font-semibold text-slate-900">Ready to submit?</h4><p className="mt-1 text-sm text-slate-600">Recheck after completing your meeting booking and presentation. All 13 checks must be green before you can submit.</p></div>
+        <div><h4 className="text-base font-semibold text-slate-900">Ready to submit?</h4><p className="mt-1 text-sm text-slate-600">{personalStudy ? 'Recheck after completing your presentation. The booking exemption does not change the remaining submission requirements.' : 'Recheck after completing your meeting booking and presentation. All 13 checks must be green before you can submit.'}</p></div>
       <button type="button" className={buttonClass + ' shrink-0'} disabled={checking || disabled} onClick={() => void onCheck()}>Recheck submission requirements</button>
       </section>
     </>}

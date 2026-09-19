@@ -1,3 +1,4 @@
+import { learningFetch } from '@/lib/personalLearning';
 export type TrackingActivityKind = 'quiz' | 'video' | 'component';
 export type TrackingCountingMode = 'active_quiz' | 'active_playback' | 'visible_page';
 
@@ -15,7 +16,7 @@ export async function startTimeTracking(
   learnerId: string,
   countingMode: TrackingCountingMode,
 ): Promise<TimeTrackingSession> {
-  const response = await fetch(
+  const response = await learningFetch(
     `/learner_api/time-tracking/start/?kind=${kind}&learnerId=${encodeURIComponent(learnerId)}`,
     {
       method: 'POST',

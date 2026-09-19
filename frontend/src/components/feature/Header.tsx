@@ -23,6 +23,7 @@ interface HeaderProps {
   mobileSidebarOpen?: boolean;
   role?: string;
   workspaceLabel?: string;
+  personalLearning?: boolean;
 }
 
 /** "Demo Admin" -> "DA". A single word falls back to its first two letters. */
@@ -165,7 +166,7 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role, workspaceLabel }: HeaderProps) {
+export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role, workspaceLabel, personalLearning = false }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
@@ -249,7 +250,7 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
   const email = auth.user?.email || '';
   // Same source the sidebar labels the account with; `account` is the server
   // record, so a real staff Position wins over the coarse RBAC role name.
-  const roleLabel = auth.account?.position || auth.roles[0]?.name || '';
+  const roleLabel = personalLearning ? 'Admin · Learner' : auth.account?.position || auth.roles[0]?.name || '';
   const initials = initialsOf(displayName);
 
   return (
@@ -301,7 +302,7 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
 
       {/* Keep the workspace switcher available in the shared top bar so
           administrators can return to the workspace list from any page. */}
-      <WorkspaceSwitcher />
+      {!personalLearning && <WorkspaceSwitcher />}
 
       {/* Profile and its existing account actions. */}
       <div className="flex shrink-0 items-center gap-0.5 lg:border-l lg:border-white/15 lg:pl-4">

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
@@ -21,12 +21,12 @@ import { LearnerIdentity } from '../shared/LearnerIdentity';
 import { type MarkingKind } from '@/lib/markingKind';
 
 const coachNav = roleNavMap.coach;
-const API_ENDPOINT = '/coach_api/coach/marking-queue';
 
 type QueueFilter = 'all' | 'pending' | 'overdue' | 'accepted' | 'referred';
 type ReviewDecision = 'accepted' | 'referred';
 
 interface MarkingSubmission {
+  version?: number;
   id: string;
   learnerKind: string;
   learnerId: string;
@@ -155,6 +155,10 @@ function DetailPanel({
 }
 
 export default function CoachMarkingQueue() {
+  const [search, setSearch] = useSearchParams();
+  const personal = search.get('scope') === 'personal';
+  const apiEndpoint = personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
+  const scopeQuery = personal ? '?scope=personal' : '';
   const navigate = useNavigate();
   const coach = useCoachIdentity();
   const [items, setItems] = useState<MarkingSubmission[]>([]);
@@ -176,9 +180,14 @@ export default function CoachMarkingQueue() {
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState('');
 
+  const loadSequence = useRef({ value: 0 });
   const loadQueue = useCallback(async () => {
+    const sequence = ++loadSequence.current.value;
     if (!coach.isInitialized) return;
     setLoading(true);
+    setItems([]);
+    setSelected(null);
+    setSummary(EMPTY_SUMMARY);
     setError('');
     if (!coach.email) {
       setItems([]);
@@ -189,22 +198,26 @@ export default function CoachMarkingQueue() {
     }
     try {
       const query = new URLSearchParams({ status: filter, kind, page: String(page), page_size: '25' });
-      const response = await coachFetch(`${API_ENDPOINT}?${query}`);
+      const response = await coachFetch(`${apiEndpoint}?${query}`);
       const text = await response.text();
       const data = text ? JSON.parse(text) : {};
+      if (sequence !== loadSequence.current.value) return;
       if (!response.ok) throw new Error(data.detail || 'Unable to load the marking queue.');
       setItems(data.items || []);
       setSummary(data.summary || EMPTY_SUMMARY);
       setPagination(data.pagination || EMPTY_PAGINATION);
     } catch (loadError) {
+      if (sequence !== loadSequence.current.value) return;
       setError(loadError instanceof Error ? loadError.message : 'Unable to load the marking queue.');
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current.value) setLoading(false);
     }
-  }, [coach.email, coach.isInitialized, filter, kind, page]);
+  }, [coach.email, coach.isInitialized, filter, kind, page, apiEndpoint]);
 
   useEffect(() => {
+    const sequence = loadSequence.current;
     void loadQueue();
+    return () => { ++sequence.value; };
   }, [loadQueue]);
 
   // The server filters by kind, so these rows are already the right ones.
@@ -227,13 +240,14 @@ export default function CoachMarkingQueue() {
     setReviewing(true);
     setError('');
     try {
-      const response = await coachFetch(`${API_ENDPOINT}/${selected.id}`, {
+      const response = await coachFetch(`${apiEndpoint}/${selected.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           decision,
           feedback: feedback.trim(),
           reviewedBy: coach.name,
+          ...(personal ? { version: selected.version } : {}),
         }),
       });
       const text = await response.text();
@@ -333,7 +347,7 @@ export default function CoachMarkingQueue() {
       render: (row) => (
         <button
           type="button"
-          onClick={() => navigate(`/coach/marking-queue/${row.id}`)}
+          onClick={() => navigate(`/coach/marking-queue/${row.id}${scopeQuery}`)}
           className="rounded-lg bg-primary-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-primary-700"
         >
           {row.reviewedBy ? 'Review' : 'View'}
@@ -349,7 +363,7 @@ export default function CoachMarkingQueue() {
       navItems={coachNav.items}
       workspaceLabel={coachNav.workspaceLabel}
       pageTitle="Marking Queue"
-      pageSubtitle="Review learner reflections, evidence and OTJH"
+      pageSubtitle={personal ? 'Review personal coursework for your course groups' : 'Review learner reflections, evidence and OTJH'}
       userName={coach.name}
       userRole="Progress Coach"
     >
@@ -357,8 +371,11 @@ export default function CoachMarkingQueue() {
         <PageHeader
           icon="ri-file-list-3-line"
           title="Marking Queue"
-          description="Review complete learning submissions, validate KSB development and confirm OTJH."
+          description={personal ? 'Review personal coursework for your assigned course groups. Results stay outside official learner reports.' : 'Review complete learning submissions, validate KSB development and confirm OTJH.'}
         />
+        <PageTabs label="Coursework source" value={personal ? 'personal' : 'official'}
+          onChange={value => { setSearch(value === 'personal' ? { scope: 'personal' } : {}); setPage(1); setSelected(null); }}
+          items={[{ value: 'official', label: 'Learner coursework' }, { value: 'personal', label: 'Personal learning' }]} />
 
         {/* The two jobs, separated. Assignments are assessed as work products
             against their KSBs and the EPA plan; everything else is reflection
@@ -377,7 +394,7 @@ export default function CoachMarkingQueue() {
 
         <PageTabsBar actions={<RowAction label="Refresh" icon="ri-refresh-line" onClick={() => void loadQueue()} />}>
           <div className="flex flex-wrap items-center gap-1.5">
-            <Link
+            {personal ? <span className="px-3 text-sm">Personal learners: {summary.activeLearners}</span> : <Link
               to="/coach/caseload"
               className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-600 transition hover:border-foreground-300 hover:text-foreground-900"
             >
@@ -385,7 +402,7 @@ export default function CoachMarkingQueue() {
               <span className="inline-flex min-w-[20px] justify-center rounded bg-background-100 px-1 py-0.5 text-[12px] font-bold tabular-nums text-foreground-500">
                 {summary.activeLearners}
               </span>
-            </Link>
+            </Link>}
             <PageTabs
               label="Filter submissions by status"
               value={filter}
