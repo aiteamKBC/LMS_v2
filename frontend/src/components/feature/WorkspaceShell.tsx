@@ -269,7 +269,7 @@ export function WorkspaceShell({
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
-      style={{ '--kbc-sidebar-width': role === 'coach' ? '200px' : `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
+      style={{ '--kbc-sidebar-width': role === 'coach' ? '240px' : `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
     >
       {role === 'coach' ? <CoachSidebar navItems={navItems} userName={displayName} userRole={displayRole}
         mobileOpen={mobileSidebarOpen} onCloseMobile={closeMobileSidebar}

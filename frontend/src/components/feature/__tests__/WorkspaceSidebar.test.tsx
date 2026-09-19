@@ -159,7 +159,7 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
   it('reserves the chosen navigation width and supports manual collapse', () => {
     const { sidebar, shell, panel } = showWorkspace(role);
     if (role === 'coach') {
-      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('200px');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
       expect(panel).toBeNull();
       const group = roleNavMap.coach.items.find(item => item.children?.length)!;
       const toggle = within(sidebar).getByRole('button', { name: group.label });
@@ -169,7 +169,7 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
       expect(within(sidebar).getByRole('link', { name: group.children![0].label })).toBeVisible();
       fireEvent.click(toggle);
       expect(toggle).toHaveAttribute('aria-expanded', 'false');
-      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('200px');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
       return;
     }
     expect(sidebar.style.width).toBe('88px');
@@ -222,7 +222,7 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
     expect(drawer).not.toHaveAttribute('inert');
     fireEvent.click(within(drawer).getAllByRole('link')[0]);
     expect(drawer).toHaveAttribute('inert');
-    expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe(role === 'coach' ? '200px' : '112px');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe(role === 'coach' ? '240px' : '112px');
   });
 });
 
@@ -257,7 +257,7 @@ it.each([false, true])('navigates directly to a standalone page without opening 
 it('keeps every permitted coach destination in the labelled sidebar for an administrator', () => {
   viewer.isAdmin = true;
   const { sidebar, rail, shell } = showWorkspace('coach', '/workspace/coach');
-  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('200px');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
   for (const item of roleNavMap.coach.items) {
     if (item.children?.length) {
       const toggle = within(rail).getByRole('button', { name: item.label });
@@ -266,7 +266,7 @@ it('keeps every permitted coach destination in the labelled sidebar for an admin
     } else expect(within(rail).getByRole('link', { name: item.label })).toHaveAttribute('href', item.href);
   }
   fireEvent.mouseLeave(sidebar);
-  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('200px');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
   expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
 });
 

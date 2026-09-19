@@ -771,6 +771,12 @@ function otjhPercentFor(learner: CoachLearner): number | null {
   return learner.otjhTarget > 0 ? clampPercent((learner.otjhCompleted / learner.otjhTarget) * 100) : null;
 }
 
+function otjhVarianceLabel(learner: CoachLearner): string {
+  if (learner.otjhTarget <= 0) return EMPTY_VALUE;
+  const variance = Math.round(((learner.otjhCompleted - learner.otjhTarget) / learner.otjhTarget) * 100);
+  return `${variance > 0 ? '+' : ''}${variance}%`;
+}
+
 /** Scheduled but already past, or still needing a date after its target passed. */
 function isOverdueEvent(event: CoachCalendarEvent, referenceDate = new Date()) {
   if (isCompletedEvent(event) || event.status === 'cancelled') return false;
@@ -1395,7 +1401,7 @@ export default function CoachDashboard() {
                     <div className={styles.tableScroll} data-overflow={attentionHasOverflow} tabIndex={0} role="region" aria-label="Learners at OTJH risk">
                       <table className={`${styles.table} ${styles.learnersTable}`}>
                         <caption className="sr-only">Learners at OTJH risk, ordered by priority</caption>
-                        <thead><tr><th scope="col">Learner</th><th scope="col">Group</th><th scope="col">OTJH status</th><th scope="col">Last MCM</th><th scope="col">Last PR</th><th scope="col">Actions</th></tr></thead>
+                        <thead><tr><th scope="col">Learner</th><th scope="col">Group</th><th scope="col">OTJH variance</th><th scope="col">Last MCM</th><th scope="col">Last PR</th><th scope="col">Actions</th></tr></thead>
                         <tbody>{attentionRows.map(entry => (
                           <AttentionLearnerRow key={entry.learner.id} learner={entry.learner}
                             onOpen={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(entry.learner.id)}`, {
@@ -1575,6 +1581,7 @@ function AttentionLearnerRow({ learner, onOpen }: {
   onOpen: () => void;
 }) {
   const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
+  const varianceLabel = otjhVarianceLabel(learner);
   return (
     <tr>
       <td><div className={styles.identity}>
@@ -1582,7 +1589,7 @@ function AttentionLearnerRow({ learner, onOpen }: {
         <span className={styles.identityName}>{learner.name}</span>
       </div></td>
       <td><span className={styles.groupName}>{learner.group !== EMPTY_VALUE ? learner.group : learner.programme}</span></td>
-      <td><StatusBadge tone={status.tone} label={status.label} size="sm" /></td>
+      <td>{varianceLabel === EMPTY_VALUE ? <span className={styles.subtle}>{EMPTY_VALUE}</span> : <StatusBadge tone={status.tone} label={varianceLabel} size="lg" className={styles.varianceBadge} />}</td>
       <td><span className={styles.lastContact}>{displayValue(learner.lastMcm)}</span>{displayValue(learner.lastMcm) === EMPTY_VALUE && <span className={styles.subtle}>No MCM recorded</span>}</td>
       <td><span className={styles.lastContact}>{displayValue(learner.lastPr)}</span>{displayValue(learner.lastPr) === EMPTY_VALUE && <span className={styles.subtle}>No PR recorded</span>}</td>
       <td><button type="button" className={styles.textButton} onClick={onOpen} aria-label={`View learner ${learner.name}`}><AppIcon name="ri-user-line" aria-hidden="true" />View Profile</button></td>

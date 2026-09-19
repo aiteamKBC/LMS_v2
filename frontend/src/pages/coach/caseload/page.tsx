@@ -180,31 +180,22 @@ export default function CoachCaseload() {
       }
 
       try {
-        const caseloadResponse = await coachFetch(CASELOAD_ENDPOINT, { signal: controller.signal });
+        const [caseloadResponse, attendanceLearners, completedReviews] = await Promise.all([
+          coachFetch(CASELOAD_ENDPOINT, { signal: controller.signal }),
+          fetchAttendanceLearners(controller.signal),
+          fetchLastCompletedReviews(controller.signal),
+        ]);
         if (!caseloadResponse.ok) {
           const payload = await caseloadResponse.json().catch(() => ({})) as { detail?: string; message?: string };
           throw new Error(payload.detail || payload.message || `Request failed with status ${caseloadResponse.status}`);
         }
 
         const data: CaseloadApiResponse = await caseloadResponse.json();
-        setOwnerName(data.owner?.name || authenticatedCoachName);
-        const initialLearners = (data.learners || []).map((learner) => normalizeLearner(learner));
-        setLearners(initialLearners);
-        setLoading(false);
-
-        // Sidecar data must not hold the whole page on its skeleton. The
-        // caseload is useful immediately; attendance and completed PR/MCM
-        // dates enrich the rows as their independent requests finish.
-        const [attendanceLearners, completedReviews] = await Promise.all([
-          fetchAttendanceLearners(controller.signal),
-          fetchLastCompletedReviews(controller.signal),
-        ]);
         if (controller.signal.aborted) return;
-        setLearners((current) => current.map((learner) => {
-          const source = data.learners?.find((item) => item.id === learner.id);
-          if (!source) return learner;
+        setOwnerName(data.owner?.name || authenticatedCoachName);
+        setLearners((data.learners || []).map((source) => {
           const normalized = normalizeLearner(source, findAttendanceRecord(source, attendanceLearners));
-          const reviews = completedReviews.get(learner.id);
+          const reviews = completedReviews.get(normalized.id);
           return {
             ...normalized,
             lastProgressReview: reviews?.pr || '--',

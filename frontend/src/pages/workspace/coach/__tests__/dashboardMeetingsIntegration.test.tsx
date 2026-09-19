@@ -28,8 +28,8 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   HTMLDialogElement.prototype.close = function () { this.open = false; };
   mocks.load.mockResolvedValue({ owner: { name: 'Example Coach' }, learners: [{ id: '1', name: 'Example Learner', learnerType: 'commercial',
-    rawProgramStatus: 'active', otjhStatus: 'at-risk' }, { id: '2', name: 'Attention Only Learner', learnerType: 'commercial',
-    rawProgramStatus: 'active', otjhStatus: 'need-attention' }], attendance: { learners: [{ id: '2', learner: 'Attention Only Learner', attendance: 50 }] }, evidence: { items: [] }, timetable: { events: [meeting,
+    rawProgramStatus: 'active', otjhStatus: 'at-risk', otjhCompleted: 20, otjhTarget: 40 }, { id: '2', name: 'Attention Only Learner', learnerType: 'commercial',
+    rawProgramStatus: 'active', otjhStatus: 'need-attention', otjhCompleted: 30, otjhTarget: 40 }], attendance: { learners: [{ id: '2', learner: 'Attention Only Learner', attendance: 50 }] }, evidence: { items: [] }, timetable: { events: [meeting,
       { ...meeting, id: 'live-1', eventKey: 'live-1', source: 'live-session', title: 'Example Lesson' }] } });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -47,6 +47,8 @@ it('keeps the live session calendar link while showing the new actions only on c
   expect(screen.queryByRole('heading', { name: "Today's schedule" })).not.toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Caseload health' })).not.toBeInTheDocument();
   const riskTable = screen.getByRole('region', { name: 'Learners at OTJH risk' });
+  expect(within(riskTable).getByRole('columnheader', { name: 'OTJH variance' })).toBeVisible();
+  expect(within(riskTable).getByText('-50%').closest('.ui-status-badge')).toHaveClass('text-red-700');
   expect(within(riskTable).getByText('Example Learner')).toBeVisible();
   expect(within(riskTable).queryByText('Attention Only Learner')).not.toBeInTheDocument();
   expect(within(riskTable).queryByRole('columnheader', { name: 'Risk type' })).not.toBeInTheDocument();
