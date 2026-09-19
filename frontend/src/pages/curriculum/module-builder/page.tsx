@@ -2442,6 +2442,13 @@ export default function ModuleBuilder() {
           <TeamsMeetingModal
             module={workingModule}
             unsavedChanges={hasUnsavedWorkingModuleChanges}
+            onRestored={restored => {
+              if (restored.catalogueId !== workingModule.catalogueId) return;
+              const next = recalculateModule({ ...workingModule, ...restored, sourceModule: workingModule.sourceModule || restored.sourceModule });
+              savedModuleSnapshotRef.current = moduleSnapshot(next);
+              serverRevisionRef.current = restored.structureRevision || '';
+              setWorkingModule(next);
+            }}
             onClose={() => setModuleTeamsMeetingOpen(false)}
             onCreated={applyModuleTeamsSeries}
           />
@@ -4112,10 +4119,15 @@ function TypeSpecificFields({
           <TeamsMeetingModal
             component={component}
             module={module}
+            onRestored={restored => {
+              const saved = restored.weekStructure.flatMap(item => item.components).find(item => item.id === component.id);
+              if (saved) onChange({ settings: { ...component.settings, ...saved.settings } });
+            }}
             onClose={() => setTeamsMeetingOpen(false)}
             onCreated={(result, input) => {
               const meeting = result.meeting;
               onSettingChange('liveSessionUrl', meeting.joinUrl || meeting.webLink);
+              onSettingChange('teamsMeetingUrl', meeting.joinUrl || meeting.webLink);
               onSettingChange('teamsCalendarSeries', JSON.stringify(meeting.calendarSeries || []));
               onSettingChange('teamsOnlineMeetingId', meeting.onlineMeetingId);
               onSettingChange('teamsEventId', meeting.eventId);

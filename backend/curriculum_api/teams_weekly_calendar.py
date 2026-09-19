@@ -248,6 +248,9 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             'duration_minutes': combined.get('durationMinutes') or 60, 'repeat_pattern': 'weekly',
             'repeat_occurrences': len(requested_numbers), 'module_title': v.teams_calendar_subject(combined, series),
             'attendees': v.json_db_value(attendees), 'presenters': v.json_db_value(presenters), 'co_organizers': v.json_db_value(co_organizers),
+            'recording': combined.get('recording') or 'none',
+            'lobby_bypass': combined.get('lobbyBypass') or 'invited',
+            'spoken_language': combined.get('spokenLanguage') or 'en-GB',
             'warnings': v.json_db_value(warnings), 'updated_at': datetime.utcnow(),
             'hide_attendees': True,
         })

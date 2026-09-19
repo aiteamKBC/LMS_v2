@@ -2,16 +2,31 @@
 // config deliberately does not load that plugin, so a page that relies on it
 // cannot be rendered in a test at all. Every page with tests spells these out.
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { stampLabel } from './activityTime';
 import {
+  fetchCurriculumActivityPeople,
   fetchCurriculumAuditTrail,
+  type CurriculumActivityPeople,
+  type CurriculumActivityPerson,
   type CurriculumAuditEvent,
   type CurriculumAuditTrail,
 } from '@/lib/curriculumApi';
-import { EntityEmptyState, EntityFilterBar, EntityHero, HeroSecondaryButton, InlineError } from '../shared/entities/ui';
+import {
+  EntityEmptyState,
+  EntityFilterBar,
+  EntityHero,
+  EntityTable,
+  HeroSecondaryButton,
+  InlineError,
+  NamedActions,
+  PlainCell,
+  StackedCell,
+  WorkspaceTabs,
+} from '../shared/entities/ui';
 
 /**
  * What changed in the curriculum: who, when, and from what to what.
@@ -30,6 +45,15 @@ import { EntityEmptyState, EntityFilterBar, EntityHero, HeroSecondaryButton, Inl
  * timer tick. And a write with no signed-in account behind it is marked `system`
  * — a scheduled job or a management command — never attributed to a person who
  * happened to be nearby.
+ *
+ * The page opens on People rather than on the change feed, because the question
+ * it is most often asked is "who has been in here?" and the feed cannot answer
+ * it: a save is the only thing it can see, so somebody who read all afternoon
+ * and changed nothing does not appear in it at all. People is built from the
+ * recorded visits instead (`curriculum.activity_events`), with the changes and
+ * the account's sign-ins folded in. Each of those three sources is reported
+ * separately, so a source that is switched off reads as "not recorded" rather
+ * than as nobody having done anything.
  */
 
 const WINDOW_OPTIONS = [
@@ -122,7 +146,10 @@ function displayValue(value: unknown): string {
   return text.trim() ? text : '(empty)';
 }
 
+type AuditTab = 'people' | 'changes';
+
 export default function CurriculumAuditTrail() {
+  const [tab, setTab] = useState<AuditTab>('people');
   const [windowDays, setWindowDays] = useState('30');
   const [entity, setEntity] = useState('');
   const [action, setAction] = useState('');
@@ -136,10 +163,40 @@ export default function CurriculumAuditTrail() {
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
+  const [people, setPeople] = useState<CurriculumActivityPeople | null>(null);
+  const [peopleLoading, setPeopleLoading] = useState(true);
+  const [peopleError, setPeopleError] = useState<string | null>(null);
+  const [peopleSearch, setPeopleSearch] = useState('');
+
+  // Each tab loads only its own data, and only once it is being looked at. The
+  // two reads are unrelated and one of them sweeps a window of visits, so
+  // fetching both on arrival would make the page slower at answering the
+  // question it opened on.
+  useEffect(() => {
+    if (tab !== 'people') return undefined;
+    const controller = new AbortController();
+    setPeopleLoading(true);
+    fetchCurriculumActivityPeople({ days: Number(windowDays), signal: controller.signal })
+      .then(result => {
+        if (controller.signal.aborted) return;
+        setPeople(result);
+        setPeopleError(null);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setPeopleError(err instanceof Error ? err.message : 'Unable to read who used the curriculum');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setPeopleLoading(false);
+      });
+    return () => controller.abort();
+  }, [tab, windowDays, reloadToken]);
+
   // The window and the two selects are answered by the backend, so they refetch.
   // Search is not: it is applied to the events already on screen so typing does
   // not fire a request per keystroke against a query the page can answer itself.
   useEffect(() => {
+    if (tab !== 'changes') return undefined;
     const controller = new AbortController();
     setLoading(true);
     fetchCurriculumAuditTrail({
@@ -165,7 +222,7 @@ export default function CurriculumAuditTrail() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [windowDays, entity, action, actor, source, actorType, reloadToken]);
+  }, [tab, windowDays, entity, action, actor, source, actorType, reloadToken]);
 
   const events = useMemo(() => {
     const rows = trail?.events ?? [];
@@ -193,6 +250,18 @@ export default function CurriculumAuditTrail() {
   const days = useMemo(() => groupByDay(events), [events]);
   const counts = trail?.actionCounts;
 
+  // Filtered here rather than server-side for the same reason the change feed
+  // is: the window is already loaded, and a request per keystroke would answer
+  // a question the page can answer itself.
+  const peopleRows = useMemo(() => {
+    const rows = people?.people ?? [];
+    const query = peopleSearch.trim().toLowerCase();
+    if (!query) return rows;
+    return rows.filter(person => (
+      person.name.toLowerCase().includes(query) || person.email.toLowerCase().includes(query)
+    ));
+  }, [people?.people, peopleSearch]);
+
   return (
     <WorkspaceShell
       role="curriculum"
@@ -207,17 +276,26 @@ export default function CurriculumAuditTrail() {
           eyebrow="Record activity"
           title="Audit Trail"
           description={
-            trail?.source === 'timestamps'
+            tab === 'people'
+              ? people && !people.visitsRecorded
+                ? 'Who used Curriculum Studio. Page opens are not being recorded yet, so this is read from recorded changes and account sign-ins alone — it can say who saved something and when they signed in, never which pages they looked at.'
+                : 'Who used Curriculum Studio: when they were here, which pages they opened, what they did on each, and what they changed. Open a person to see their visits in full.'
+            : trail?.source === 'timestamps'
               ? 'Read from the timestamps on the curriculum records themselves — every create, edit and archive inside the window, newest first. This reading cannot name who made a change.'
               : 'Every recorded change to programmes, cohorts, groups, modules, weeks and components — who made it, when, and exactly which fields moved. Newest first.'
           }
-          stats={[
+          stats={tab === 'people' ? [
+            { icon: 'ri-group-line', label: 'People', value: people?.totals.people ?? 0, detail: 'Used the curriculum in this period' },
+            { icon: 'ri-file-list-3-line', label: 'Pages opened', value: people?.totals.pageViews ?? 0, detail: 'Across everyone' },
+            { icon: 'ri-cursor-line', label: 'Actions', value: (people?.totals.readActions ?? 0) + (people?.totals.changes ?? 0), detail: 'Searches, exports and saves' },
+            { icon: 'ri-time-line', label: 'Window', value: `${people?.windowDays ?? windowDays}d`, detail: 'Period being read' },
+          ] : [
             { icon: 'ri-add-circle-line', label: 'Created', value: counts?.created ?? 0, detail: 'New records' },
             { icon: 'ri-edit-2-line', label: 'Edited', value: counts?.updated ?? 0, detail: 'Saved again after creation' },
             { icon: 'ri-archive-line', label: 'Archived', value: counts?.archived ?? 0, detail: 'Soft-deleted, still restorable' },
             { icon: 'ri-time-line', label: 'Window', value: `${trail?.windowDays ?? windowDays}d`, detail: 'Period being read' },
           ]}
-          loading={loading}
+          loading={tab === 'people' ? peopleLoading : loading}
           secondaryActions={(
             <HeroSecondaryButton
               icon="ri-refresh-line"
@@ -227,6 +305,30 @@ export default function CurriculumAuditTrail() {
           )}
         />
 
+        <WorkspaceTabs
+          tabs={[
+            { key: 'people', label: 'People', icon: 'ri-group-line', count: people?.totals.people },
+            { key: 'changes', label: 'Changes', icon: 'ri-history-line', count: trail?.total },
+          ]}
+          active={tab}
+          onChange={key => setTab(key as AuditTab)}
+        />
+
+        {tab === 'people' && (
+          <PeopleView
+            people={people}
+            rows={peopleRows}
+            loading={peopleLoading}
+            error={peopleError}
+            search={peopleSearch}
+            onSearch={setPeopleSearch}
+            windowDays={windowDays}
+            onWindowDays={setWindowDays}
+            onRetry={() => setReloadToken(token => token + 1)}
+          />
+        )}
+
+        {tab === 'changes' && (<>
         {error && <InlineError message={error} onRetry={() => setReloadToken(token => token + 1)} />}
 
         {trail && !trail.authorRecorded && (
@@ -320,8 +422,152 @@ export default function CurriculumAuditTrail() {
             ))}
           </div>
         )}
+        </>)}
       </div>
     </WorkspaceShell>
+  );
+}
+
+/** Where a person's own activity page lives. */
+function personActivityHref(email: string): string {
+  return `/curriculum/audit-trail/people/${encodeURIComponent(email)}`;
+}
+
+/**
+ * Everyone who used Curriculum Studio in the window.
+ *
+ * The three sources behind a row are counted in separate columns rather than
+ * summed into one "activity" number, because they are not the same claim: a
+ * page open is something the browser reported, a change is something the
+ * backend recorded as it saved, and a sign-in is account-wide and may have
+ * nothing to do with the curriculum at all. A single total would quietly merge
+ * a person who read for an hour with one who signed in and left.
+ *
+ * When a source is not recorded its columns are absent, and the notice above
+ * the table says which one and why — an empty column would otherwise read as a
+ * person who did nothing.
+ */
+function PeopleView({
+  people, rows, loading, error, search, onSearch, windowDays, onWindowDays, onRetry,
+}: {
+  people: CurriculumActivityPeople | null;
+  rows: CurriculumActivityPerson[];
+  loading: boolean;
+  error: string | null;
+  search: string;
+  onSearch: (value: string) => void;
+  windowDays: string;
+  onWindowDays: (value: string) => void;
+  onRetry: () => void;
+}) {
+  const navigate = useNavigate();
+  const visitsRecorded = people?.visitsRecorded ?? true;
+
+  return (
+    <>
+      {error && <InlineError message={error} onRetry={onRetry} />}
+
+      {people && !people.visitsRecorded && (
+        <div className="flex items-start gap-3 rounded-2xl border border-background-200 bg-background-50 px-4 py-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
+            <AppIcon className="ri-eye-off-line text-base"></AppIcon>
+          </span>
+          <p className="min-w-0 text-[11px] leading-5 text-foreground-500">
+            <span className="font-bold text-foreground-700">Page opens are not being recorded yet.</span>{' '}
+            The <span className="font-mono">curriculum.activity_events</span> table has not been created on this
+            database, so nothing knows which pages anybody opened. The people below are the ones who saved something
+            or signed in, which is all the other two histories can say. Recording starts the moment the table exists
+            and is never backdated: today has no page opens in it, and never will.
+          </p>
+        </div>
+      )}
+
+      {people && !people.signInsRecorded && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] font-semibold text-amber-800">
+          The sign-in history could not be read, so the "Signed in" column is empty for everybody rather than zero
+          for anybody.
+        </div>
+      )}
+
+      <EntityFilterBar
+        search={search}
+        onSearch={onSearch}
+        placeholder="Search by name or email..."
+        selects={[{ label: 'Period', value: windowDays, onChange: onWindowDays, options: WINDOW_OPTIONS }]}
+        onReset={() => { onSearch(''); onWindowDays('30'); }}
+        isDirty={Boolean(search) || windowDays !== '30'}
+        summary={
+          loading
+            ? 'Reading who used the curriculum...'
+            : people?.truncated
+              ? `Showing the ${rows.length} most recently active people. Narrow the period to see the rest.`
+              : `${rows.length} ${rows.length === 1 ? 'person' : 'people'} used the curriculum in this period`
+        }
+      />
+
+      <EntityTable
+        columns={[
+          { label: 'Person' },
+          { label: 'Role' },
+          { label: 'Last seen' },
+          { label: 'Visits', align: 'right' },
+          { label: 'Pages opened', align: 'right' },
+          { label: 'Read actions', align: 'right' },
+          { label: 'Changes', align: 'right' },
+          { label: 'Signed in', align: 'right' },
+          { label: '' },
+        ]}
+        gridClass="grid grid-cols-[minmax(200px,2fr)_110px_minmax(150px,1fr)_70px_100px_100px_80px_80px_150px]"
+        rows={rows}
+        rowKey={person => person.email}
+        getRowHref={person => personActivityHref(person.email)}
+        loading={loading}
+        renderRow={person => (
+          <>
+            <StackedCell primary={person.name || person.email} secondary={person.email} />
+            <PlainCell>{person.role || '—'}</PlainCell>
+            <PlainCell>
+              {person.lastSeen ? (
+                <span className="block">
+                  <span className="block text-[12px] text-foreground-700">{stampLabel(person.lastSeen)}</span>
+                  {person.lastPageLabel && (
+                    <span className="block truncate text-[11px] text-foreground-400">on {person.lastPageLabel}</span>
+                  )}
+                </span>
+              ) : '—'}
+            </PlainCell>
+            {/* A dash, not a zero, wherever the source behind the column is not
+                being recorded: zero would be a claim that nothing happened. */}
+            <PlainCell align="right">{visitsRecorded ? person.visits : '—'}</PlainCell>
+            <PlainCell align="right">{visitsRecorded ? person.pageViews : '—'}</PlainCell>
+            <PlainCell align="right">{visitsRecorded ? person.readActions : '—'}</PlainCell>
+            <PlainCell align="right">{people?.changesRecorded ? person.changes : '—'}</PlainCell>
+            <PlainCell align="right">{people?.signInsRecorded ? person.signIns : '—'}</PlainCell>
+            <NamedActions
+              actions={[{
+                icon: 'ri-arrow-right-line',
+                label: 'View activity',
+                title: `Everything ${person.name || person.email} did in this period`,
+                onClick: () => navigate(personActivityHref(person.email)),
+              }]}
+            />
+          </>
+        )}
+        empty={
+          <EntityEmptyState
+            icon="ri-group-line"
+            title={search ? 'Nobody matches that search' : 'Nobody used the curriculum in this window'}
+            message={
+              search
+                ? 'Clear the search, or widen the period above.'
+                : visitsRecorded
+                  ? 'No page was opened, nothing was saved, and nobody signed in over this period.'
+                  : 'Page opens are not being recorded yet, and nobody saved anything or signed in over this period.'
+            }
+          />
+        }
+      />
+    </>
   );
 }
 

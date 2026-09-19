@@ -89,8 +89,15 @@ def coach_available_slots(request, kind, pk):
     learner = model.all_learners.filter(pk=pk).first()
     if learner is None:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
+    # Two different failures, kept apart. A learner who has not been released
+    # into delivery yet has no active profile at all, and telling them their
+    # coach is missing sends them chasing an assignment that is already there:
+    # the coach sits on the enrolment row, which this endpoint never reads.
+    # learner_calendar_book draws the same distinction -- keep the wording.
     profile = learner_profile_for_source(learner, pk, active_only=True)
-    if not profile or not profile.coach_email:
+    if profile is None:
+        return JsonResponse({'error': 'Only Active learners can book coach sessions.'}, status=400)
+    if not profile.coach_email:
         return JsonResponse({'error': 'No coach has been assigned to you yet.'}, status=400)
     try:
         day = date.fromisoformat(request.GET.get('date', ''))

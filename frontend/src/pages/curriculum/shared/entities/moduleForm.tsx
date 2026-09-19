@@ -21,7 +21,7 @@
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { clockLabel } from '../../teams-meetings/calendarTime';
+import { clockLabel, durationLabel, normalizedClock } from '../../teams-meetings/calendarTime';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
@@ -440,8 +440,18 @@ export function ModuleFormDrawer({
       sessionsPerWeek: String(Math.max(1, deliveryDayIndexes(initialDays).length)),
       weekDays: initialDays,
       weeklyTimes: Object.fromEntries((module?.weeklySchedule || storedDelivery?.weeklySchedule || []).map(slot => [slot.day, { startTime: slot.startTime, endTime: slot.endTime }])),
-      groupStartTime: cleanText(module?.startTime || storedDelivery?.startTime || parentGroup?.startTime),
-      groupEndTime: cleanText(module?.endTime || storedDelivery?.endTime || parentGroup?.endTime),
+      // The module's own clock first, then the group's. The group's is taken
+      // through `groupDeliveryPattern` rather than read raw: rows written before
+      // the group schedule was split into columns kept a 12-hour clock, and a
+      // "9:00 AM" reaching the time fields fails their `HH:MM` check, which left
+      // the plan preview refusing to run on a group that had a perfectly good
+      // timetable.
+      groupStartTime: cleanText(module?.startTime || storedDelivery?.startTime)
+        || groupDeliveryPattern(parentGroup)?.startTime
+        || '',
+      groupEndTime: cleanText(module?.endTime || storedDelivery?.endTime)
+        || groupDeliveryPattern(parentGroup)?.endTime
+        || '',
       // A new module inside a cohort starts when the cohort does â€” the same
       // default the backend falls back to when no start date is sent.
       startDate: cleanText(module?.startDate) || cleanText(storedDelivery?.startDate) || (module ? '' : cleanText(parentCohort?.startDate)),
@@ -474,7 +484,6 @@ export function ModuleFormDrawer({
     // has a placement always shows the fields regardless of this flag -- see
     // where it is read below.
     setRevealPlacement(!module);
-    console.log('[TEMP-DEBUG moduleForm] drawer (re)initialised. module prop =', module, 'initial state =', initial);
     setName(initial.name);
     setProgrammeId(initial.programmeId);
     setCohortId(initial.cohortId);
@@ -560,17 +569,71 @@ export function ModuleFormDrawer({
     [holidays, selectedCohort, module?.sessionHolidays],
   );
 
+  // What the group this module is delivered by actually runs to. Read as the
+  // parent's own value and shown as such below, rather than being folded
+  // silently into the fields: a module may differ from its group deliberately,
+  // and the reader has to be able to see that it does.
+  const groupPattern = useMemo(() => groupDeliveryPattern(selectedGroup), [selectedGroup]);
+
   // The end date is the backend's own session-plan calculation, so what the
   // drawer shows cannot drift from what the save stores.
   // Each selected day contributes one session per authored week. The module
   // starts with the group's timetable and can override it for this delivery.
+  //
+  // The group's own window is the fallback ahead of 09:00-10:00. That pair is a
+  // last resort for a group that has no clock stored, not a default worth
+  // applying over one that does -- reaching it for a group meeting 09:00-11:00
+  // silently halved every session the module delivers.
   const weeklySchedule = useMemo<CurriculumWeeklySession[]>(() => canonicalDeliveryDays(weekDays).split(', ').filter(Boolean).map(day => ({
     day,
-    startTime: weeklyTimes[day]?.startTime ?? (groupStartTime || '09:00'),
-    endTime: weeklyTimes[day]?.endTime ?? (groupEndTime || '10:00'),
-  })), [weekDays, weeklyTimes, groupStartTime, groupEndTime]);
+    startTime: weeklyTimes[day]?.startTime ?? (groupStartTime || groupPattern?.startTime || '09:00'),
+    endTime: weeklyTimes[day]?.endTime ?? (groupEndTime || groupPattern?.endTime || '10:00'),
+  })), [weekDays, weeklyTimes, groupStartTime, groupEndTime, groupPattern]);
   const validWeeklyTimes = weeklySchedule.every(slot => /^\d{2}:\d{2}$/.test(slot.startTime) && /^\d{2}:\d{2}$/.test(slot.endTime) && slot.endTime > slot.startTime);
   const deliveryDaysPerWeek = deliveryDayIndexes(weekDays).length;
+  // Whether this module is still running to its group's pattern. Compared slot
+  // by slot rather than on the day list alone: a module can meet on the group's
+  // day and still have been given a different clock for it.
+  const matchesGroupPattern = Boolean(
+    groupPattern?.days
+    && groupPattern.startTime
+    && groupPattern.endTime
+    && canonicalDeliveryDays(weekDays) === groupPattern.days
+    && weeklySchedule.length > 0
+    && weeklySchedule.every(slot => slot.startTime === groupPattern.startTime && slot.endTime === groupPattern.endTime),
+  );
+
+  /** This module's own timetable, said the way the group's is said above. */
+  const modulePatternLabel = weeklySchedule.length
+    ? weeklySchedule
+      .map(slot => `${slot.day} ${clockLabel(slot.startTime)} - ${clockLabel(slot.endTime)}`)
+      .join(' · ')
+    : 'no delivery days yet';
+
+  /**
+   * Take the group's pattern for this module: its delivery day, its start time
+   * and the length that follows from its end time.
+   *
+   * Deliberately an action rather than something the drawer does on open. The
+   * weekday is part of the pattern, so adopting it re-dates every session the
+   * module delivers -- and a stored module must never have its dates moved by
+   * being looked at. Clearing the target end date hands the finish back to the
+   * generated plan, which is what recalculates the dates from the new day and
+   * the cohort's holidays.
+   */
+  const applyGroupPattern = () => {
+    if (!groupPattern?.days || !groupPattern.startTime || !groupPattern.endTime) return;
+    const days = groupPattern.days;
+    setWeekDays(days);
+    setSessionsPerWeek(String(Math.max(1, deliveryDayIndexes(days).length)));
+    setWeeklyTimes(Object.fromEntries(days.split(', ').filter(Boolean).map(day => [
+      day,
+      { startTime: groupPattern.startTime, endTime: groupPattern.endTime },
+    ])));
+    setGroupStartTime(groupPattern.startTime);
+    setGroupEndTime(groupPattern.endTime);
+    setTargetEndDate('');
+  };
   const scheduleComplete = !selectedGroup || deliveryDaysPerWeek === Number(sessionsPerWeek);
   const weeksEntered = Math.max(1, Number(sessionsNumber) || 1);
   const totalSessions = Math.round(weeksEntered * Math.max(1, deliveryDaysPerWeek));
@@ -773,12 +836,14 @@ export function ModuleFormDrawer({
     const group = groups.find(item => sameIdentifier(item.id, nextPrimaryId));
     if (group?.cohortId && !cohortId) setCohortId(group.cohortId);
     if (!sameIdentifier(nextPrimaryId, primaryGroupId)) {
+      const pattern = groupDeliveryPattern(group);
       const nextDays = canonicalDeliveryDays(group?.weekDays || '');
       setWeekDays(nextDays);
       setWeeklyTimes({});
       setSessionsPerWeek(String(Math.max(1, deliveryDayIndexes(nextDays).length)));
-      setGroupStartTime(cleanText(group?.startTime));
-      setGroupEndTime(cleanText(group?.endTime));
+      // Normalised, for the same reason the initial seed above normalises it.
+      setGroupStartTime(pattern?.startTime || '');
+      setGroupEndTime(pattern?.endTime || '');
       setTargetEndDate('');
     }
     // A module saved unassigned carries a planned end date typed by hand -- there
@@ -859,10 +924,7 @@ export function ModuleFormDrawer({
       if (!startDate) { setError('Set the module start date.'); return; }
       if (!endDate) { setError('Set the module end date - or set the start date and weeks so it can be calculated.'); return; }
       if (!tutor) { setError('Choose the tutor who delivers this module.'); return; }
-      if (dateWindowError) {
-        console.log('[TEMP-DEBUG moduleForm] blocked by dateWindowError', dateWindowError, { startDate, endDate, selectedCohort });
-        setError(dateWindowError); return;
-      }
+      if (dateWindowError) { setError(dateWindowError); return; }
       // Pre-empted rather than sent: the save enforces this and would refuse, so
       // firing it only trades an instant answer for a round-trip and the same
       // refusal. The clash itself is spelled out under the Tutor field, so this is
@@ -963,9 +1025,6 @@ export function ModuleFormDrawer({
           startTime: weeklySchedule[0]?.startTime || undefined,
           endTime: weeklySchedule[0]?.endTime || undefined,
         };
-        console.log('[TEMP-DEBUG moduleForm] baseline at open', baseline.current);
-        console.log('[TEMP-DEBUG moduleForm] current form state', { name, programmeId, cohortId, groupIds, sessionsNumber, startDate, targetEndDate, endDate, tutor, status, description, color });
-        console.log('[TEMP-DEBUG moduleForm] PATCH module.id =', module.id, 'payload =', patchPayload);
         // The PATCH merges onto the stored structure, so only what this form
         // owns is sent: the weeks, components and KSB mappings authored in the
         // Module Builder are left exactly as they are.
@@ -974,7 +1033,6 @@ export function ModuleFormDrawer({
         // series was built from. Empty for a module with no calendar, which is
         // most of them.
         const staleTeamsCalendars = patchResult?.teamsCalendarsToUpdate || [];
-        console.log('[TEMP-DEBUG moduleForm] PATCH response =', patchResult);
         // Groups ticked on top of the module's own: each gets a delivery of its
         // own rather than sharing this one, so its dates come from its own
         // delivery days and its tutor booking is checked against its own slot.
@@ -996,7 +1054,6 @@ export function ModuleFormDrawer({
         // is seconds on a slow connection -- where reopening the drawer offered the
         // pre-save weeks and saving again wrote them straight back.
         await onSaved({ catalogueId: module.id, name: trimmed, created: false, ...savedParents() });
-        console.log('[TEMP-DEBUG moduleForm] onSaved() resolved for', module.id);
         // In a chain the wizard owns closing and confirming, so that a run of
         // four steps says what it created once rather than four times.
         if (chained) return;
@@ -1091,7 +1148,6 @@ export function ModuleFormDrawer({
       if (!chained) onClose();
       await onSaved({ catalogueId: created.catalogueId || created.id, name: trimmed, created: true, ...savedParents() });
     } catch (err) {
-      console.log('[TEMP-DEBUG moduleForm] submit() threw', err);
       // A tutor already booked in that slot is reported by the backend as a
       // sentence worth showing verbatim -- and so is every other refusal, such
       // as a module whose programme has been archived. `curriculumErrorMessage`
@@ -1288,6 +1344,48 @@ export function ModuleFormDrawer({
           <FormField label="Delivery days" as="group" required hint={`Choose ${sessionsPerWeek} day${sessionsPerWeek === '1' ? '' : 's'} each week (${deliveryDaysPerWeek} selected).`}>
             <WeekdayControl value={weekDays} maxSelections={Number(sessionsPerWeek)} onChange={value => { setWeekDays(value); setTargetEndDate(''); }} />
           </FormField>
+          {/* The group's own timetable, stated as the group's rather than merged
+              into the fields above. A module inherits it and may then differ, and
+              "this module runs to its own schedule" is a fact the reader has to
+              be able to see before they save dates that follow from it. */}
+          {groupPattern && (
+            <div className="rounded-lg border border-background-200 bg-background-100 p-3">
+              <p className="text-[12px] font-semibold text-foreground-800">
+                {selectedGroup.name} delivers {groupPattern.days || 'on no weekday yet'}
+                {groupPattern.startTime && groupPattern.endTime
+                  ? `, ${clockLabel(groupPattern.startTime)} - ${clockLabel(groupPattern.endTime)}`
+                  : ''}
+                {groupPattern.durationMinutes ? ` (${durationLabel(groupPattern.durationMinutes)} a session)` : ''}
+              </p>
+              {!groupPattern.startTime || !groupPattern.endTime ? (
+                <p className="mt-1 text-[12px] text-amber-700">
+                  This group has no {groupPattern.startTime ? 'end' : groupPattern.endTime ? 'start' : 'start and end'} time
+                  set, so the times below start at 09:00 - 10:00. Set the group&apos;s schedule for this module to follow it.
+                </p>
+              ) : !groupPattern.days ? (
+                <p className="mt-1 text-[12px] text-amber-700">
+                  This group has no delivery day set, so the days above are this module&apos;s own.
+                  Set the group&apos;s schedule for this module to follow it.
+                </p>
+              ) : matchesGroupPattern ? (
+                <p className="mt-1 text-[12px] text-emerald-700">This module follows it.</p>
+              ) : (
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[12px] text-foreground-600">
+                    This module runs to its own schedule: {modulePatternLabel}. Taking the group&apos;s
+                    pattern moves every session onto {groupPattern.days} and re-dates the module.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={applyGroupPattern}
+                    className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-primary-300 bg-white px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-50"
+                  >
+                    Use the group&apos;s pattern
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {weeklySchedule.map(slot => (
             <div key={slot.day} className="rounded-lg border border-background-200 p-3">
               <p className="mb-2 text-[12px] font-semibold">{slot.day}</p>
@@ -1425,6 +1523,43 @@ const WEEKDAY_INDEX: Record<string, number> = {
   saturday: 5, sat: 5,
   sunday: 6, sun: 6,
 };
+
+/** `HH:MM` as minutes past midnight, or -1 when it is not a clock. */
+function clockMinutes(value: string): number {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  return match ? Number(match[1]) * 60 + Number(match[2]) : -1;
+}
+
+/**
+ * The delivery pattern the group runs to: the weekday it meets on, the clock it
+ * occupies, and therefore how long one session is.
+ *
+ * This is the parent value a module inherits. The group stores it as three
+ * loose columns -- `session_week_day`, `session_start_time`, `session_end_time`
+ * -- and rows written before the schedule was split kept a 12-hour clock, so
+ * the times are normalised here rather than trusted. A time that cannot be read
+ * comes back empty and is reported as missing, never as midnight.
+ *
+ * Returns null for a group with no pattern at all, which is the difference
+ * between "the group says nothing" and "the group says Thursday but has no
+ * times" -- the drawer says a different thing for each.
+ */
+function groupDeliveryPattern(group: CurriculumGroup | undefined | null) {
+  if (!group) return null;
+  const readClock = (value: unknown) => {
+    try {
+      return normalizedClock(value);
+    } catch {
+      return '';
+    }
+  };
+  const days = canonicalDeliveryDays(cleanText(group.weekDays));
+  const startTime = readClock(group.startTime);
+  const endTime = readClock(group.endTime);
+  const span = startTime && endTime ? clockMinutes(endTime) - clockMinutes(startTime) : 0;
+  if (!days && !startTime && !endTime) return null;
+  return { days, startTime, endTime, durationMinutes: span > 0 ? span : 0 };
+}
 
 function canonicalDeliveryDays(value: string): string {
   const names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
