@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
@@ -6,14 +6,11 @@ import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachMonthlyCoaching from './page';
 import CoachMeetingDetail from '../meeting-detail/page';
 
-const { fetchEvents, scheduleEvent, savePptx, coach } = vi.hoisted(() => ({
+const { fetchEvents, scheduleEvent, coach } = vi.hoisted(() => ({
   fetchEvents: vi.fn(),
   scheduleEvent: vi.fn(),
-  savePptx: vi.fn(),
   coach: { email: 'coach@example.com', name: 'Coach Example', isInitialized: true, isViewingAsCoach: false },
 }));
-
-vi.mock('@/pages/coach/progress-reviews/lib/progressReviewPptx', () => ({ saveProgressReviewPptx: savePptx }));
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -74,8 +71,6 @@ beforeEach(() => {
   coach.email = 'coach@example.com';
   fetchEvents.mockReset();
   scheduleEvent.mockReset();
-  savePptx.mockReset();
-  savePptx.mockResolvedValue(undefined);
   scheduleEvent.mockResolvedValue({ event: meetings[0] });
   fetchEvents.mockResolvedValue({ owner: { name: 'Coach Example' }, events: meetings });
 });
@@ -173,15 +168,10 @@ describe('restored monthly coaching list', () => {
       'Learner', 'Cohort', 'Date & time', 'Status', 'Schedule', 'Actions',
     ]);
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Form' })).toBeVisible();
-    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Create Slides' })).toBeVisible();
+    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).queryByRole('button', { name: 'Create Slides' })).toBeNull();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Reschedule' })).toBeVisible();
     expect(screen.getByText('Scheduled Learner').closest('tr')).toHaveTextContent('10:30 - 11:30');
-    fireEvent.click(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Create Slides' }));
-    await waitFor(() => expect(savePptx).toHaveBeenCalledWith(
-      expect.objectContaining({ learnerName: 'Scheduled Learner' }),
-      'Monthly Coaching Agenda',
-    ));
   });
 
   it('removes scheduling for completed and awaiting-signature meetings', async () => {
@@ -209,7 +199,7 @@ describe('restored monthly coaching list', () => {
     const row = within(screen.getByText('In Progress Learner').closest('tr')!);
     expect(row.queryByRole('button', { name: /Schedule/ })).toBeNull();
     expect(row.getByRole('button', { name: 'Form' })).toBeVisible();
-    expect(row.getByRole('button', { name: 'Create Slides' })).toBeVisible();
+    expect(row.queryByRole('button', { name: 'Create Slides' })).toBeNull();
   });
 
   it('shows only selected-month status counts and supports awaiting signature', async () => {

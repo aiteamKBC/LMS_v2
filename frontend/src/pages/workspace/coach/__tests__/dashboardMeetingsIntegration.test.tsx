@@ -37,6 +37,7 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 it('keeps the live session calendar link while showing the new actions only on coaching meetings', async () => {
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   expect(await screen.findByRole('button', { name: 'Send Reminder' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Generate Presentation' })).toBeNull();
   const meetings = screen.getByRole('region', { name: 'Upcoming meetings and live sessions' });
   expect(within(meetings).getByRole('columnheader', { name: 'Status' })).toBeInTheDocument();
   expect(within(meetings).getAllByText('Scheduled')).toHaveLength(2);

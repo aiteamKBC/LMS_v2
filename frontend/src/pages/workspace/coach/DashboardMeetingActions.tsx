@@ -7,9 +7,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '@/pages/coach/shared/ScheduleControls';
 import { reviewInstancePath, reviewInstanceRouteState } from '@/pages/coach/shared/reviewInstanceNavigation';
 import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
-import { saveProgressReviewPptx } from '@/pages/coach/progress-reviews/lib/progressReviewPptx';
 import { eventIdentity, scheduleCoachCalendarEvent, scheduleDefaults, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
-import { monthlyCoachingAgenda } from './monthlyCoachingAgenda';
 import styles from './dashboard.module.css';
 
 export function DashboardMeetingActions({ event, onUpdated, onScheduleNotice }: { event: CoachCalendarEvent; onUpdated: (event: CoachCalendarEvent) => void; onScheduleNotice: (message: string) => void }) {
@@ -61,10 +59,8 @@ export function DashboardMeetingActions({ event, onUpdated, onScheduleNotice }: 
         setNotice(`${deliveryDetail} ${sentOnceNote}`);
       })}><AppIcon name="ri-send-plane-line" />{busy === 'reminder' ? 'Sending...' : reminderSent ? 'Reminder sent' : 'Send Reminder'}</button>
       {!scheduleOpen && (notice || error) && <p className={styles.actionMessage} role={error ? 'alert' : 'status'}>{error || notice}</p>}</td>
-    <td>{event.source === 'mcr' || isReview ? <button className={styles.textButton} type="button" disabled={Boolean(busy)}
-      onClick={() => isReview ? setPresentationOpen(true) : void perform('presentation', async () => {
-        await saveProgressReviewPptx(monthlyCoachingAgenda(event), 'Monthly Coaching Agenda'); setNotice('Monthly Coaching agenda downloaded.');
-      })}><AppIcon name="ri-file-ppt-line" />{busy === 'presentation' ? 'Generating...' : 'Generate Presentation'}</button> : <span className={styles.subtle}>Not available for this meeting</span>}</td>
+    <td>{isReview ? <button className={styles.textButton} type="button" disabled={Boolean(busy)}
+      onClick={() => setPresentationOpen(true)}><AppIcon name="ri-file-ppt-line" />Generate Presentation</button> : <span className={styles.subtle}>Not available for this meeting</span>}</td>
     <td>{hasForm ? <button className={styles.textButton} type="button" disabled={Boolean(busy) || (!canWrite && !event.reviewInstanceId)} title={!event.reviewInstanceId ? writeReason : undefined}
       onClick={() => void perform('form', async () => {
         if (event.reviewInstanceId) {
