@@ -903,7 +903,9 @@ function LearnerCalendarBody() {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get('calendar_connected');
     const oauthError = params.get('calendar_error');
-    if (connected) {
+    if (params.get('connect') === 'calendar') {
+      setShowCalendarConnect(true);
+    } else if (connected) {
       setAddToCalendarToast(`${connected === 'google' ? 'Google' : 'Microsoft'} Calendar connected successfully.`);
       setShowCalendarConnect(true);
       window.history.replaceState({}, '', window.location.pathname);

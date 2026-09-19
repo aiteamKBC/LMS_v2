@@ -23,7 +23,9 @@ export type PlanSlotHoliday = { id?: string; label: string; startDate: string; e
  * unauthored week, or a module that simply does not deliver looks like.
  */
 export type PlanCurriculumSlot = { slotNumber: number; date: string; day: string;
-  type: 'live-session' | 'reading-week'; cause?: string; sessionNumber: number | null; holidays: PlanSlotHoliday[] };
+  type: 'live-session' | 'reading-week'; cause?: string; sessionNumber: number | null; holidays: PlanSlotHoliday[];
+  /** The authored week's own id/title/outcomes (curriculum.weeks), matched by sessionNumber. Absent when no week was authored at that number. */
+  weekId?: string; weekTitle?: string; learningOutcomes?: string[] };
 export type PlanModule = { id: string; title: string; description: string; start_date: string | null; end_date: string | null; tutor_name: string; coach_name: string;
   programme_name?: string; cohort_name?: string; group_name?: string; total_otjh?: number | null;
   weeks_number?: number | null; sessions_number?: number | null;
@@ -41,7 +43,10 @@ export type PlanModule = { id: string; title: string; description: string; start
 export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'> & { meetingLink?: string | null };
 export type TrainingPlanDashboard = {
   months: Record<string, PlanMonth>;
-  monthlyOtjh?: Record<string, { planned: number | null; actual: number; missingPlannedActivities: number }>;
+  /** Monthly OTJH; assignment submissions use marking status, other activity types keep their existing semantics. */
+  monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; missingPlannedActivities: number }>;
+  /** Whole-programme OTJH requirement from the shared dashboard metrics. */
+  requiredOtjh?: number | null;
   actual: { month: string; groupId: string | null; hours: number; count: number }[];
   actualAvailable: boolean;
   modules: PlanModule[];

@@ -330,7 +330,7 @@ export default function ComponentViewPage() {
     ? formatRecordedClock(record.timeTaken)
     : component ? completionTimeFor(component, detail) : null;
   const noun = componentNoun(component?.type);
-  const contentOpenable = component ? isOpenableComponent(component) : false;
+  const contentOpenable = component ? isOpenableComponent(component) || (isAssignment && !!component.componentId) : false;
   const savedAssignment = useSavedAssignmentAccess(kind, id, componentId, isAssignment && !contentOpenable && canUseComponent);
   const openable = contentOpenable || savedAssignment.status === 'available';
 

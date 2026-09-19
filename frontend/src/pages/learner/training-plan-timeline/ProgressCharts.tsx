@@ -1,17 +1,126 @@
-import { useId } from 'react';
+import { useId, useState, type CSSProperties } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import type { TimelineModule } from './model';
 import { moduleProgress } from './progress';
 import styles from './ProgressCharts.module.css';
 
-type Props = { modules: TimelineModule[]; selected?: TimelineModule; data: TrainingPlanDashboard; onModuleSelect: (module: TimelineModule) => void };
+type Props = {
+  modules: TimelineModule[];
+  selected?: TimelineModule;
+  data: TrainingPlanDashboard;
+  onModuleSelect: (module: TimelineModule) => void;
+  programmeStartMonth?: string;
+  programmeEndMonth?: string;
+};
 const colors = ['#6c50a5', '#315c85', '#398171', '#a97824', '#9b5981'];
 const percentage = (value: number | null) => value == null ? 'N/A' : `${value}%`;
+const hourNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
 
-export function ProgressCharts({ modules, selected, data, onModuleSelect }: Props) {
+type MonthlyHours = {
+  key: string; label: string; target: number | null; submitted: number | null; completed: number | null;
+};
+
+function monthRange(keys: string[], programmeStartMonth = '', programmeEndMonth = '') {
+  const isMonthKey = (key: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(key);
+  const valid = [...new Set(keys.filter(isMonthKey))].sort();
+  const start = isMonthKey(programmeStartMonth) ? programmeStartMonth : valid[0] || '';
+  const end = isMonthKey(programmeEndMonth) ? programmeEndMonth : valid.at(-1) || '';
+  if (!start || !end || start > end) return [];
+  const result: string[] = [];
+  const cursor = new Date(`${start}-01T12:00:00Z`);
+  while (cursor.toISOString().slice(0, 7) <= end) {
+    result.push(cursor.toISOString().slice(0, 7));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return result;
+}
+
+function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = '', programmeEndMonth = ''): MonthlyHours[] {
+  const keys = monthRange([
+    ...Object.keys(data.months),
+    ...Object.keys(data.monthlyOtjh || {}),
+    ...data.actual.map(row => row.month),
+  ], programmeStartMonth, programmeEndMonth);
+  const recordedAvailable = data.actualAvailable !== false || Object.keys(data.monthlyOtjh || {}).length > 0;
+  return keys.map(key => {
+    const current = data.monthlyOtjh?.[key];
+    const historical = data.actual.filter(row => row.month === key).reduce((sum, row) => sum + row.hours, 0);
+    // Assignment marking is represented in submitted; other activity types
+    // retain their existing submitted semantics. Historical actuals belong
+    // only to completed, so never add them to the light-blue series.
+    const submitted = recordedAvailable ? (current?.submitted ?? 0) : null;
+    const completed = recordedAvailable ? historical + (current?.actual ?? 0) : null;
+    return {
+      key,
+      label: new Date(`${key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
+      target: data.months[key]?.planned ?? current?.planned ?? null,
+      submitted,
+      completed,
+    };
+  });
+}
+
+function ratio(value: number | null, target: number | null) {
+  return value == null || target == null || target <= 0 ? null : Math.round(value / target * 100);
+}
+
+function reportingMonth() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' }).slice(0, 7);
+}
+
+function signed(value: number) {
+  return `${value > 0 ? '+' : ''}${hourNumber.format(value)}`;
+}
+
+function scaleFor(rows: MonthlyHours[]) {
+  const maximum = Math.max(0, ...rows.flatMap(row => [row.target || 0, row.submitted || 0, row.completed || 0]));
+  if (!maximum) return { maximum: 10, step: 2.5 };
+  const rough = maximum / 4;
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const fraction = rough / magnitude;
+  const nice = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+  const step = nice * magnitude;
+  return { maximum: step * 4, step };
+}
+
+function MonthTooltip({ row, id }: { row: MonthlyHours; id: string }) {
+  const targetRatio = row.target == null ? null : 100;
+  const submittedRatio = ratio(row.submitted, row.target);
+  const completedRatio = ratio(row.completed, row.target);
+  const variance = row.target == null || row.completed == null ? null : row.completed - row.target;
+  return <div id={id} role="tooltip" className={styles.monthlyTooltip}>
+    <strong>{row.label}</strong>
+    <dl>
+      <div><dt><i className={styles.targetKey} />Target:</dt><dd>{targetRatio == null ? 'N/A' : `${targetRatio}% (${hourNumber.format(row.target!)} hours)`}</dd></div>
+      <div><dt><i className={styles.submittedKey} />Submitted:</dt><dd>{submittedRatio == null ? 'N/A' : `${submittedRatio}% (${hourNumber.format(row.submitted!)} hours)`}</dd></div>
+      <div><dt><i className={styles.completedKey} />Completed:</dt><dd>{completedRatio == null ? 'N/A' : `${completedRatio}% (${hourNumber.format(row.completed!)} hours)`}</dd></div>
+      <div><dt>Total completed or pending:</dt><dd>{row.submitted == null || row.completed == null ? 'N/A' : `${hourNumber.format(row.submitted + row.completed)} hours`}</dd></div>
+      <div className={styles.variance}><dt>Variance:</dt><dd>{variance == null || completedRatio == null ? 'N/A' : `${completedRatio - 100 > 0 ? '+' : ''}${completedRatio - 100}% (${signed(variance)} hours)`}</dd></div>
+    </dl>
+  </div>;
+}
+
+export function ProgressCharts({ modules, selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth }: Props) {
   const chartId = useId();
+  const tooltipId = `${chartId}-monthly-tooltip`;
+  const [activeMonth, setActiveMonth] = useState('');
   const selectedProgress = selected ? moduleProgress(selected, data) : null;
   const rows = [...modules].sort((a, b) => (a.start || '9999').localeCompare(b.start || '9999') || a.title.localeCompare(b.title));
+  const months = monthlyHours(data, programmeStartMonth, programmeEndMonth);
+  const active = months.find(row => row.key === activeMonth);
+  const activeIndex = Math.max(0, months.findIndex(row => row.key === activeMonth));
+  const scale = scaleFor(months);
+  const ticks = Array.from({ length: 5 }, (_, index) => scale.step * (4 - index));
+  const totalTarget = data.requiredOtjh ?? (months.every(row => row.target != null) ? months.reduce((sum, row) => sum + row.target!, 0) : null);
+  const totalSubmitted = months.every(row => row.submitted != null) ? months.reduce((sum, row) => sum + row.submitted!, 0) : null;
+  const totalCompleted = months.every(row => row.completed != null) ? months.reduce((sum, row) => sum + row.completed!, 0) : null;
+  const targetToDate = months.filter(row => row.key <= reportingMonth());
+  const expectedTarget = targetToDate.length && targetToDate.every(row => row.target != null)
+    ? targetToDate.reduce((sum, row) => sum + row.target!, 0) : null;
+  const overallPercent = ratio(totalCompleted, totalTarget);
+  const expectedPercent = ratio(expectedTarget, totalTarget);
+  const overallVariance = expectedTarget == null || totalCompleted == null ? null : totalCompleted - expectedTarget;
+  const variancePercent = ratio(overallVariance, totalTarget);
   return <div className={styles.charts}>
     <section className={styles.card} aria-label="Module progress">
       <header><div><p className={styles.eyebrow}>Selected module</p><h2>Module progress</h2><p className={styles.subtitle}>{selected?.title || 'Choose a module in the timeline'}</p></div>
@@ -51,6 +160,51 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect }: Prop
         </button>;
       }) : <p className={styles.empty}>Your modules will appear here once assigned.</p>}</div>
       <p className={styles.note}>Attendance, activities, hours, KSBs and reviews carry equal weight. Select a module to explore its details.</p>
+    </section>
+    <section className={`${styles.card} ${styles.monthlyCard}`} aria-label="Off-the-job hours by month">
+      <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Off-The-Job Hours</h2><p className={styles.subtitle}>Target, submitted and completed hours for every month</p></div></header>
+      <div className={styles.monthlyLegend} aria-label="Chart legend">
+        <span><i className={styles.targetKey} />Target</span>
+        <span><i className={styles.submittedKey} />Submitted</span>
+        <span><i className={styles.completedKey} />Completed</span>
+      </div>
+      {active && <div className={styles.tooltipPosition} style={{ '--tooltip-left': `${(activeIndex + .5) / months.length * 100}%` } as CSSProperties}>
+        <MonthTooltip row={active} id={tooltipId} />
+      </div>}
+      {months.length ? <div className={styles.monthlyScroll}>
+        <div className={styles.monthlyPlot} style={{ minWidth: `${Math.max(36, months.length * 4.25)}rem` }}>
+          <div className={styles.yAxis} aria-hidden="true">{ticks.map(value => <span key={value} style={{ bottom: `${value / scale.maximum * 100}%` }}>{hourNumber.format(value)}</span>)}</div>
+          <div className={styles.grid} aria-hidden="true">{ticks.map(value => <i key={value} style={{ bottom: `${value / scale.maximum * 100}%` }} />)}</div>
+          <div className={styles.monthBars} style={{ '--month-count': months.length } as CSSProperties}>{months.map(row => {
+            const targetHeight = row.target == null ? null : row.target / scale.maximum * 100;
+            const submittedHeight = row.submitted == null ? 0 : row.submitted / scale.maximum * 100;
+            const completedHeight = row.completed == null ? 0 : row.completed / scale.maximum * 100;
+            return <button key={row.key} type="button" className={styles.monthColumn}
+              aria-label={`${row.label}: target ${row.target == null ? 'unavailable' : `${hourNumber.format(row.target)} hours`}, submitted ${row.submitted == null ? 'unavailable' : `${hourNumber.format(row.submitted)} hours`}, completed ${row.completed == null ? 'unavailable' : `${hourNumber.format(row.completed)} hours`}`}
+              aria-describedby={activeMonth === row.key ? tooltipId : undefined}
+              onMouseEnter={() => setActiveMonth(row.key)} onMouseLeave={() => setActiveMonth(current => current === row.key ? '' : current)}
+              onFocus={() => setActiveMonth(row.key)} onBlur={() => setActiveMonth(current => current === row.key ? '' : current)}>
+              <span className={styles.barArea}>
+                <i className={styles.submittedBar} style={{ bottom: `${completedHeight}%`, height: `${submittedHeight}%` }} />
+                <i className={styles.completedBar} style={{ height: `${completedHeight}%` }} />
+                {targetHeight != null && <i className={styles.targetLine} style={{ bottom: `${targetHeight}%` }} />}
+              </span>
+              <span className={styles.monthLabel}>{new Date(`${row.key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' })}<small>{row.key.slice(0, 4)}</small></span>
+            </button>;
+          })}</div>
+        </div>
+      </div> : <p className={styles.empty}>Monthly hour targets will appear here once the training plan is available.</p>}
+      {months.length > 0 && <div className={styles.overall}>
+        <div><strong>Overall progress</strong><span>{totalCompleted == null ? 'Recorded hours unavailable' : `${hourNumber.format(totalCompleted)}h completed${totalSubmitted != null && totalSubmitted > 0 ? ` · ${hourNumber.format(totalSubmitted)}h submitted` : ''}`}</span></div>
+        <div className={styles.overallTrack} role="progressbar" aria-label="Overall off-the-job hours progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={overallPercent == null ? undefined : Math.min(100, overallPercent)}>
+          {totalSubmitted != null && totalTarget != null && <i className={styles.submittedOverall} style={{ left: `${Math.min(100, overallPercent || 0)}%`, width: `${Math.min(100, ratio(totalSubmitted, totalTarget) || 0)}%` }} />}
+          <i className={styles.completedOverall} style={{ width: `${Math.min(100, overallPercent || 0)}%` }} />
+          {expectedPercent != null && <b style={{ left: `${Math.min(100, expectedPercent)}%` }} />}
+        </div>
+        <strong className={overallVariance != null && overallVariance < 0 ? styles.behind : styles.ahead}>
+          {variancePercent == null || overallVariance == null ? 'N/A' : `${variancePercent > 0 ? '+' : ''}${variancePercent}% (${signed(overallVariance)}h)`}
+        </strong>
+      </div>}
     </section>
   </div>;
 }

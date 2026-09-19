@@ -95,6 +95,18 @@ describe('building the learner curriculum timeline', () => {
     expect(row.kind === 'session' && row.start).toBeNull();
   });
 
+  it('keeps the authored week identity and outcomes for the weekly learning view', () => {
+    const rows = buildCurriculumTimeline([
+      { ...slot(6, '2026-09-11', 6), weekId: 'W6', weekTitle: 'Campaign planning',
+        learningOutcomes: ['Plan a campaign', 'Measure results'] },
+    ], []);
+    const row = rows[0];
+
+    expect(row.kind === 'session' && row.weekId).toBe('W6');
+    expect(row.kind === 'session' && row.weekTitle).toBe('Campaign planning');
+    expect(row.kind === 'session' && row.learningOutcomes).toEqual(['Plan a campaign', 'Measure results']);
+  });
+
   it('returns nothing for a module with no plannable schedule', () => {
     expect(buildCurriculumTimeline(undefined, [])).toEqual([]);
     expect(buildCurriculumTimeline([], [])).toEqual([]);
