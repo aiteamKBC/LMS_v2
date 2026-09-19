@@ -3475,6 +3475,7 @@ export function fetchCurriculumAuditTrail(
     scopeId?: string;
     signal?: AbortSignal;
     skipCache?: boolean;
+    revalidate?: boolean;
   } = {},
 ): Promise<CurriculumAuditTrail> {
   const query = new URLSearchParams();
@@ -3494,6 +3495,7 @@ export function fetchCurriculumAuditTrail(
   return fetchJson<CurriculumAuditTrail>(`/curriculum/quality/audit-trail/${suffix}`, {
     signal: options.signal,
     skipCache: options.skipCache,
+    revalidate: options.revalidate,
     timeoutMs: 30000,
   });
 }
@@ -3501,11 +3503,12 @@ export function fetchCurriculumAuditTrail(
 /**
  * Everyone who used Curriculum Studio in the window, one row each.
  *
- * Never cached: this is an audit read, and an answer from a minute ago is a
- * different answer. `skipCache` is passed through for the page's own Refresh.
+ * Cached briefly like other read-only curriculum data. The page can request a
+ * network revalidation when the user presses Refresh without discarding the
+ * response for the next visit.
  */
 export function fetchCurriculumActivityPeople(
-  options: { days?: number; search?: string; signal?: AbortSignal; skipCache?: boolean } = {},
+  options: { days?: number; search?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
 ): Promise<CurriculumActivityPeople> {
   const query = new URLSearchParams();
   if (options.days) query.set('days', String(options.days));
@@ -3513,7 +3516,8 @@ export function fetchCurriculumActivityPeople(
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumActivityPeople>(`/curriculum/activity/people/${suffix}`, {
     signal: options.signal,
-    skipCache: true,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
     timeoutMs: 30000,
   });
 }
@@ -3521,14 +3525,19 @@ export function fetchCurriculumActivityPeople(
 /** One person: their visits, the pages in each, and what they did there. */
 export function fetchCurriculumPersonActivity(
   email: string,
-  options: { days?: number; signal?: AbortSignal; skipCache?: boolean } = {},
+  options: { days?: number; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
 ): Promise<CurriculumPersonActivity> {
   const query = new URLSearchParams();
   if (options.days) query.set('days', String(options.days));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumPersonActivity>(
     `/curriculum/activity/people/${encodeURIComponent(email)}/${suffix}`,
-    { signal: options.signal, skipCache: true, timeoutMs: 30000 },
+    {
+      signal: options.signal,
+      skipCache: options.skipCache,
+      revalidate: options.revalidate,
+      timeoutMs: 30000,
+    },
   );
 }
 

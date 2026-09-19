@@ -19,11 +19,13 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
 }));
 
 const fetchCurriculumAuditTrail = vi.fn();
+const fetchCurriculumOverview = vi.fn();
 const fetchCurriculumActivityPeople = vi.fn();
 vi.mock('@/lib/curriculumApi', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('@/lib/curriculumApi');
   return {
     ...actual,
+    fetchCurriculumOverview: (...args: unknown[]) => fetchCurriculumOverview(...args),
     fetchCurriculumAuditTrail: (...args: unknown[]) => fetchCurriculumAuditTrail(...args),
     fetchCurriculumActivityPeople: (...args: unknown[]) => fetchCurriculumActivityPeople(...args),
   };
@@ -143,6 +145,8 @@ describe('Curriculum audit trail page', () => {
   beforeEach(() => {
     fetchCurriculumAuditTrail.mockReset();
     fetchCurriculumAuditTrail.mockResolvedValue(trail());
+    fetchCurriculumOverview.mockReset();
+    fetchCurriculumOverview.mockResolvedValue({ modules: [] });
     fetchCurriculumActivityPeople.mockReset();
     fetchCurriculumActivityPeople.mockResolvedValue(people());
   });
@@ -155,7 +159,25 @@ describe('Curriculum audit trail page', () => {
     // the headline. Scoped to the row, because "Edited" is also a filter option.
     const row = screen.getByRole('listitem');
     expect(within(row).getByText('Edited')).toBeInTheDocument();
-    expect(within(row).getByText('via Auto-save')).toBeInTheDocument();
+    expect(within(row).getByText('Saved automatically')).toBeInTheDocument();
+  });
+
+  it('links a component change to its exact module and week location', async () => {
+    await renderChanges();
+    const link = await screen.findByRole('link', { name: 'Final Knowledge Check' });
+    expect(link).toHaveAttribute(
+      'href',
+      '/curriculum/module-builder?module=MOD-1&component=COMP-1&focus=component&week=WEEK-1',
+    );
+  });
+
+  it('takes archived component changes to the archive instead of a missing builder', async () => {
+    fetchCurriculumAuditTrail.mockResolvedValue(trail({ events: [event({ action: 'archived', actionLabel: 'Archived', contentStatus: 'archived' })] }));
+    await renderChanges();
+    expect(await screen.findByRole('link', { name: 'Final Knowledge Check' })).toHaveAttribute(
+      'href',
+      '/curriculum/module-builder?view=archive&archiveModule=MOD-1',
+    );
   });
 
   it('shows a system action as the system, naming the person who caused it', async () => {
@@ -186,7 +208,7 @@ describe('Curriculum audit trail page', () => {
     // "Ayman edited this module", which he did not.
     expect(screen.getByText(/Triggered by/)).toBeInTheDocument();
     expect(screen.getByText('Ayman Badewi')).toBeInTheDocument();
-    expect(screen.getByText('via Recalculation')).toBeInTheDocument();
+    expect(screen.getByText('Saved via Recalculation')).toBeInTheDocument();
   });
 
   it('does not claim a trigger for a change nobody caused', async () => {
@@ -263,7 +285,7 @@ describe('Curriculum audit trail page', () => {
     expect(await screen.findByText('Final Knowledge Check')).toBeInTheDocument();
     expect(screen.getByText('Ayman Badewi')).toBeInTheDocument();
     // Falls back to the stored value when there is no label for it.
-    expect(screen.getByText('via auto-save')).toBeInTheDocument();
+    expect(screen.getByText('Saved automatically')).toBeInTheDocument();
   });
 
   it('says plainly when no author is recorded rather than showing a blank column', async () => {
@@ -361,5 +383,21 @@ describe('Curriculum audit trail: the People view', () => {
     await userEvent.click(screen.getByRole('button', { name: /Changes/ }));
     expect(await screen.findByText('Final Knowledge Check')).toBeInTheDocument();
     expect(fetchCurriculumAuditTrail).toHaveBeenCalled();
+  });
+
+  it('keeps the current people visible while Refresh revalidates in the background', async () => {
+    renderPeople();
+    expect(await screen.findByText('Ayman Badewi')).toBeInTheDocument();
+
+    let resolveRefresh: (value: CurriculumActivityPeople) => void = () => undefined;
+    fetchCurriculumActivityPeople.mockImplementationOnce(() => new Promise(resolve => {
+      resolveRefresh = resolve;
+    }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(screen.getByText('Ayman Badewi')).toBeInTheDocument();
+    expect(fetchCurriculumActivityPeople).toHaveBeenLastCalledWith(expect.objectContaining({ revalidate: true }));
+
+    resolveRefresh(people());
   });
 });

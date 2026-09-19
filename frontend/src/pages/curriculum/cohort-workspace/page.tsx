@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
-import type { CurriculumCohort, CurriculumGroup } from '@/lib/curriculumApi';
+import type { CurriculumCohort, CurriculumGroup, CurriculumModule } from '@/lib/curriculumApi';
 import {
   cleanText,
   cohortProgramme,
@@ -17,6 +17,8 @@ import {
   upsertById,
 } from '../shared/entities/model';
 import { CohortFormDrawer, GroupFormDrawer } from '../shared/entities/forms';
+import { ModuleFormDrawer, moduleFormTarget, type ModuleFormTarget } from '../shared/entities/moduleForm';
+import { archiveGroupWithConfirm, archiveModuleWithConfirm } from '../shared/entities/archive';
 import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
 import {
   DetailRow,
@@ -25,6 +27,7 @@ import {
   InlineError,
   ParentBadge,
   PlainCell,
+  RowActions,
   StackedCell,
   WorkspaceHeader,
   WorkspacePanel,
@@ -39,13 +42,13 @@ import { AppIcon } from '@/components/feature/AppIcon';
 
 type Tab = 'overview' | 'groups' | 'modules' | 'learners' | 'holidays';
 
-const GROUP_GRID = 'grid grid-cols-[minmax(170px,1.3fr)_minmax(130px,1fr)_minmax(150px,1fr)_80px]';
-const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.4fr)_minmax(140px,1fr)_minmax(130px,1fr)_70px_110px_110px]';
+const GROUP_GRID = 'grid grid-cols-[minmax(170px,1.3fr)_minmax(130px,1fr)_minmax(150px,1fr)_80px_120px]';
+const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.4fr)_minmax(140px,1fr)_minmax(130px,1fr)_70px_110px_110px_120px]';
 
 export default function CohortWorkspacePage() {
   const { id = '' } = useParams();
   const {
-    programmes, cohorts, groups, modules, holidays, coaches,
+    programmes, cohorts, groups, modules, holidays, coaches, tutors,
     loading, loaded, refreshing, error, reload, applyLocal,
   } = useCurriculumEntities({ includeHolidays: true, includeStaff: true });
 
@@ -53,6 +56,9 @@ export default function CohortWorkspacePage() {
   const [cohortDrawerOpen, setCohortDrawerOpen] = useState(false);
   const [groupDrawerOpen, setGroupDrawerOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<CurriculumGroup | null>(null);
+  const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
+  const [editingModule, setEditingModule] = useState<ModuleFormTarget | null>(null);
+  const [moduleSaving, setModuleSaving] = useState(false);
   // The group a save just wrote, marked in the table below until it is seen.
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const highlightTimer = useRef<number | undefined>(undefined);
@@ -91,6 +97,19 @@ export default function CohortWorkspacePage() {
     });
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [coaches, groups]);
+
+  const tutorNames = useMemo(() => {
+    const names = new Set<string>();
+    tutors.forEach(profile => {
+      const name = cleanText(profile.name) || cleanText(profile.email);
+      if (name) names.add(name);
+    });
+    modules.forEach(module => {
+      const name = cleanText(module.tutor);
+      if (name && normaliseKey(name) !== 'unassigned') names.add(name);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [modules, tutors]);
 
   if (!loading && loaded && !cohort) {
     return (
@@ -142,6 +161,28 @@ export default function CohortWorkspacePage() {
     }
     await reload({ silent: true });
     if (saved) highlightTimer.current = window.setTimeout(() => setHighlightId(null), 3000);
+  };
+
+  const archiveGroup = async (group: CurriculumGroup) => {
+    await archiveGroupWithConfirm(group, modules.filter(module => normaliseKey(module.groupId) === normaliseKey(group.id)).length, async () => {
+      applyLocal(previous => ({
+        ...previous,
+        groups: previous.groups.filter(item => normaliseKey(item.id) !== normaliseKey(group.id)),
+      }));
+      await reload({ silent: true });
+    });
+  };
+
+  const archiveModule = async (module: CurriculumModule) => {
+    const moduleId = moduleIdentity(module);
+    const componentCount = module.weekStructure?.reduce((total, week) => total + (week.components?.length || 0), 0) || 0;
+    await archiveModuleWithConfirm({ id: moduleId, name: module.name }, componentCount, async () => {
+      applyLocal(previous => ({
+        ...previous,
+        modules: previous.modules.filter(item => moduleIdentity(item) !== moduleId),
+      }));
+      await reload({ silent: true });
+    });
   };
 
   return (
@@ -257,6 +298,7 @@ export default function CohortWorkspacePage() {
               { label: 'Coach' },
               { label: 'Delivery' },
               { label: 'Modules', align: 'center' },
+              { label: 'Actions', align: 'right' },
             ]}
             gridClass={GROUP_GRID}
             rows={cohortGroups}
@@ -285,6 +327,14 @@ export default function CohortWorkspacePage() {
                 <PlainCell align="center">
                   {modules.filter(module => normaliseKey(module.groupId) === normaliseKey(group.id)).length}
                 </PlainCell>
+                <span className="flex items-center justify-end gap-1.5">
+                  <RowActions
+                    actions={[
+                      { icon: 'ri-edit-line', label: 'Edit group', onClick: () => { setEditingGroup(group); setGroupDrawerOpen(true); } },
+                      { icon: 'ri-archive-line', label: 'Archive group', tone: 'danger', onClick: () => void archiveGroup(group) },
+                    ]}
+                  />
+                </span>
               </>
             )}
           />
@@ -299,6 +349,7 @@ export default function CohortWorkspacePage() {
               { label: 'Sessions', align: 'center' },
               { label: 'Start' },
               { label: 'End' },
+              { label: 'Actions', align: 'right' },
             ]}
             gridClass={MODULE_GRID}
             rows={cohortModules}
@@ -324,6 +375,14 @@ export default function CohortWorkspacePage() {
                 <PlainCell align="center">{module.sessionsNumber || 0}</PlainCell>
                 <PlainCell>{formatDateLabel(module.startDate)}</PlainCell>
                 <PlainCell>{formatDateLabel(module.endDate)}</PlainCell>
+                <span className="flex items-center justify-end gap-1.5">
+                  <RowActions
+                    actions={[
+                      { icon: 'ri-edit-line', label: 'Edit module', disabled: moduleSaving, onClick: () => { setEditingModule(moduleFormTarget(module)); setModuleDrawerOpen(true); } },
+                      { icon: 'ri-archive-line', label: 'Archive module', tone: 'danger', disabled: moduleSaving, onClick: () => void archiveModule(module) },
+                    ]}
+                  />
+                </span>
               </>
             )}
           />
@@ -405,6 +464,23 @@ export default function CohortWorkspacePage() {
         lockCohort
         onClose={() => setGroupDrawerOpen(false)}
         onSaved={saveGroupLocally}
+      />
+      <ModuleFormDrawer
+        open={moduleDrawerOpen}
+        module={editingModule}
+        defaults={{
+          programmeId: programme ? programmeIdentity(programme) : cleanText(cohort?.programmeId),
+          cohortId: cleanText(cohort?.id),
+          groupId: editingModule?.groupId || '',
+        }}
+        programmes={programmes}
+        cohorts={cohorts}
+        groups={groups}
+        holidays={holidays}
+        tutorNames={tutorNames}
+        onSavingChange={setModuleSaving}
+        onClose={() => { setModuleDrawerOpen(false); setEditingModule(null); }}
+        onSaved={async () => { await reload({ silent: true }); }}
       />
     </WorkspaceShell>
   );

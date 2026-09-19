@@ -246,11 +246,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     label: 'Quality',
     icon: 'ri-shield-check-line',
     href: '/curriculum/quality',
-    // Published Content, Reports and the Audit Trail are live; Quality
-    // Assurance and Version Control have no record store yet, and the hub says
-    // which is which. The tag flags that the destination is usable but part
-    // built, where `comingSoon` would wrongly read as "do not bother opening".
-    tag: 'Under review',
     matchPaths: [
       '/curriculum/published',
       '/curriculum/reports',
