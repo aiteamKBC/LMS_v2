@@ -6,10 +6,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { stampLabel } from './activityTime';
+import { auditEventHref, auditFieldValueLabel, auditModuleIds, auditValueLabel, auditValueTitle, stampLabel, timeMetaLabel } from './activityTime';
 import {
   fetchCurriculumActivityPeople,
   fetchCurriculumAuditTrail,
+  fetchCurriculumOverview,
   type CurriculumActivityPeople,
   type CurriculumActivityPerson,
   type CurriculumAuditEvent,
@@ -57,6 +58,7 @@ import {
  */
 
 const WINDOW_OPTIONS = [
+  { value: '1', label: 'Today (last 24 hours)' },
   { value: '7', label: 'Last 7 days' },
   { value: '30', label: 'Last 30 days' },
   { value: '90', label: 'Last 90 days' },
@@ -89,7 +91,7 @@ const ACTION_OPTIONS = [
   { value: 'file_removed', label: 'Removed file' },
   { value: 'recalculated', label: 'Recalculated' },
   { value: 'imported', label: 'Imported' },
-  { value: 'recorded', label: 'First recorded' },
+  { value: 'recorded', label: 'First activity recorded' },
 ];
 
 /**
@@ -124,7 +126,7 @@ const ACTION_STYLE: Record<string, { label: string; icon: string; dot: string; c
   archived: { label: 'Archived', icon: 'ri-archive-line', dot: 'bg-amber-500', chip: 'border-amber-200 bg-amber-50 text-amber-700' },
   restored: { label: 'Restored', icon: 'ri-arrow-go-back-line', dot: 'bg-teal-500', chip: 'border-teal-200 bg-teal-50 text-teal-700' },
   deleted: { label: 'Deleted', icon: 'ri-delete-bin-line', dot: 'bg-rose-500', chip: 'border-rose-200 bg-rose-50 text-rose-700' },
-  recorded: { label: 'First recorded', icon: 'ri-history-line', dot: 'bg-background-400', chip: 'border-background-200 bg-background-100 text-foreground-500' },
+  recorded: { label: 'First activity recorded', icon: 'ri-history-line', dot: 'bg-background-400', chip: 'border-background-200 bg-background-100 text-foreground-500' },
   file_uploaded: { label: 'Uploaded file', icon: 'ri-upload-2-line', dot: 'bg-cyan-500', chip: 'border-cyan-200 bg-cyan-50 text-cyan-700' },
   file_replaced: { label: 'Replaced file', icon: 'ri-file-transfer-line', dot: 'bg-cyan-600', chip: 'border-cyan-200 bg-cyan-50 text-cyan-700' },
   file_removed: { label: 'Removed file', icon: 'ri-delete-bin-6-line', dot: 'bg-orange-500', chip: 'border-orange-200 bg-orange-50 text-orange-700' },
@@ -167,6 +169,7 @@ export default function CurriculumAuditTrail() {
   const [peopleLoading, setPeopleLoading] = useState(true);
   const [peopleError, setPeopleError] = useState<string | null>(null);
   const [peopleSearch, setPeopleSearch] = useState('');
+  const [moduleTitles, setModuleTitles] = useState<ReadonlyMap<string, string>>(new Map());
 
   // Each tab loads only its own data, and only once it is being looked at. The
   // two reads are unrelated and one of them sweeps a window of visits, so
@@ -176,7 +179,11 @@ export default function CurriculumAuditTrail() {
     if (tab !== 'people') return undefined;
     const controller = new AbortController();
     setPeopleLoading(true);
-    fetchCurriculumActivityPeople({ days: Number(windowDays), signal: controller.signal })
+    fetchCurriculumActivityPeople({
+      days: Number(windowDays),
+      signal: controller.signal,
+      revalidate: reloadToken > 0,
+    })
       .then(result => {
         if (controller.signal.aborted) return;
         setPeople(result);
@@ -207,7 +214,7 @@ export default function CurriculumAuditTrail() {
       source: source || undefined,
       actorType: actorType || undefined,
       signal: controller.signal,
-      skipCache: reloadToken > 0,
+      revalidate: reloadToken > 0,
     })
       .then(result => {
         if (controller.signal.aborted) return;
@@ -235,6 +242,32 @@ export default function CurriculumAuditTrail() {
       || event.actorName.toLowerCase().includes(query)
     ));
   }, [trail?.events, search]);
+
+  const moduleIds = useMemo(() => [...new Set((trail?.events || []).flatMap(event => event.changes
+    .filter(change => /module\s+ids?/i.test(change.label))
+    .flatMap(change => [...auditModuleIds(change.before), ...auditModuleIds(change.after)])))], [trail?.events]);
+  const moduleIdKey = moduleIds.join('|');
+
+  useEffect(() => {
+    if (!moduleIdKey) return undefined;
+    const controller = new AbortController();
+    fetchCurriculumOverview(controller.signal, { compact: true })
+      .then(overview => {
+        if (controller.signal.aborted) return;
+        const next = new Map<string, string>();
+        for (const module of overview.modules || []) {
+          const title = String(module.name || '').trim();
+          if (!title) continue;
+          for (const identity of [module.id, module.moduleId, module.moduleCatalogueId, module.catalogueId]) {
+            const key = String(identity || '').trim().toLowerCase();
+            if (key) next.set(key, title);
+          }
+        }
+        setModuleTitles(next);
+      })
+      .catch(() => { /* audit values keep their readable fallback */ });
+    return () => controller.abort();
+  }, [moduleIdKey]);
 
   // Offered only when the trail can actually name people. On the timestamp
   // fallback there is nobody to filter by, and an empty select would imply the
@@ -295,7 +328,7 @@ export default function CurriculumAuditTrail() {
             { icon: 'ri-archive-line', label: 'Archived', value: counts?.archived ?? 0, detail: 'Soft-deleted, still restorable' },
             { icon: 'ri-time-line', label: 'Window', value: `${trail?.windowDays ?? windowDays}d`, detail: 'Period being read' },
           ]}
-          loading={tab === 'people' ? peopleLoading : loading}
+          loading={tab === 'people' ? peopleLoading && !people : loading && !trail}
           secondaryActions={(
             <HeroSecondaryButton
               icon="ri-refresh-line"
@@ -387,7 +420,9 @@ export default function CurriculumAuditTrail() {
           }
         />
 
-        {loading ? (
+        <TimeContextNote />
+
+        {loading && !trail ? (
           <div className="space-y-2 rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
             {Array.from({ length: 8 }).map((_, index) => (
               <div key={index} className="h-12 animate-pulse rounded-xl bg-background-200/70" />
@@ -416,7 +451,7 @@ export default function CurriculumAuditTrail() {
                   </span>
                 </div>
                 <ol>
-                  {day.events.map(event => <AuditRow key={event.id} event={event} />)}
+                  {day.events.map(event => <AuditRow key={event.id} event={event} moduleTitles={moduleTitles} />)}
                 </ol>
               </section>
             ))}
@@ -521,7 +556,7 @@ function PeopleView({
         rows={rows}
         rowKey={person => person.email}
         getRowHref={person => personActivityHref(person.email)}
-        loading={loading}
+        loading={loading && !people}
         renderRow={person => (
           <>
             <StackedCell primary={person.name || person.email} secondary={person.email} />
@@ -571,7 +606,7 @@ function PeopleView({
   );
 }
 
-function AuditRow({ event }: { event: CurriculumAuditEvent }) {
+function AuditRow({ event, moduleTitles }: { event: CurriculumAuditEvent; moduleTitles: ReadonlyMap<string, string> }) {
   const [open, setOpen] = useState(false);
   const style = ACTION_STYLE[event.action] || ACTION_STYLE.updated;
   // A create has no diff (nothing moved, it arrived) and a delete has no after,
@@ -588,7 +623,7 @@ function AuditRow({ event }: { event: CurriculumAuditEvent }) {
     <li className="border-b border-background-200/60 last:border-0">
       <div className="flex items-start gap-3 px-4 py-3 hover:bg-background-100/40">
         <span className="mt-1 flex w-14 shrink-0 justify-end text-[11px] font-semibold tabular-nums text-foreground-400">
-          {timeLabel(event.at)}
+          <span title={timeMetaLabel(event.at)} aria-label={timeMetaLabel(event.at)}>{timeLabel(event.at)}</span>
         </span>
         <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${style.dot}`} aria-hidden="true" />
         <div className="min-w-0 flex-1">
@@ -601,7 +636,7 @@ function AuditRow({ event }: { event: CurriculumAuditEvent }) {
               {event.entityLabel}
             </span>
             <Link
-              to={event.href}
+              to={auditEventHref(event)}
               className="min-w-0 truncate text-[12px] font-bold text-foreground-900 hover:text-primary-700 hover:underline"
             >
               {event.title}
@@ -628,15 +663,13 @@ function AuditRow({ event }: { event: CurriculumAuditEvent }) {
             )}
           </div>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-foreground-400">
-            {event.context && <span className="truncate">{event.context}</span>}
-            {event.context && <span aria-hidden="true">·</span>}
-            <span className="truncate font-mono text-[10px]">{event.entityId}</span>
+            <span className="truncate">{event.context || 'Curriculum record'}</span>
             {/* Auto-save is how the save arrived, not what happened. */}
             {event.source && (
               <>
                 <span aria-hidden="true">·</span>
                 <span className="rounded bg-background-100 px-1.5 py-0.5 text-[10px] font-semibold text-foreground-500">
-                  via {event.sourceLabel || event.source}
+                  {event.source === 'auto-save' ? 'Saved automatically' : `Saved via ${event.sourceLabel || event.source}`}
                 </span>
               </>
             )}
@@ -678,10 +711,10 @@ function AuditRow({ event }: { event: CurriculumAuditEvent }) {
                   </dt>
                   <dd className="mt-1 grid gap-1 sm:grid-cols-2">
                     <span className="min-w-0 break-words rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-800">
-                      <span className="font-bold">Before:</span> {displayValue(change.before)}
+                      <span className="font-bold">Before:</span> <span title={auditValueTitle(change.before)}>{auditFieldValueLabel(change.label, change.before, event.changes, 'before', moduleTitles)}</span>
                     </span>
                     <span className="min-w-0 break-words rounded bg-emerald-50 px-2 py-1 text-[11px] text-emerald-800">
-                      <span className="font-bold">After:</span> {displayValue(change.after)}
+                      <span className="font-bold">After:</span> <span title={auditValueTitle(change.after)}>{auditFieldValueLabel(change.label, change.after, event.changes, 'after', moduleTitles)}</span>
                     </span>
                   </dd>
                   {change.truncated && (
@@ -701,7 +734,7 @@ function AuditRow({ event }: { event: CurriculumAuditEvent }) {
               {snapshotEntries.map(([key, value]) => (
                 <div key={key} className="flex min-w-0 gap-2 rounded bg-background-50 px-2 py-1">
                   <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">{key}</dt>
-                  <dd className="min-w-0 break-words text-[11px] text-foreground-700">{displayValue(value)}</dd>
+                  <dd className="min-w-0 break-words text-[11px] text-foreground-700"><span title={auditValueTitle(value)}>{displayValue(value)}</span></dd>
                 </div>
               ))}
             </dl>
@@ -716,13 +749,13 @@ function AuditRow({ event }: { event: CurriculumAuditEvent }) {
                   <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">
                     {metadataLabel(key)}
                   </dt>
-                  <dd className="min-w-0 break-words text-[11px] text-foreground-700">{displayValue(value)}</dd>
+                  <dd className="min-w-0 break-words text-[11px] text-foreground-700"><span title={auditValueTitle(value)}>{displayValue(value)}</span></dd>
                 </div>
               ))}
             </dl>
           )}
           <p className="mt-2 text-[10px] text-foreground-400">
-            Event <span className="font-mono">{event.action}</span>
+            Event type: <span className="font-mono">{event.action}</span>
             {event.revisionNo > 0 && <> · revision {event.revisionNo}</>}
             {event.actorTypeLabel && <> · {event.actorTypeLabel}</>}
             {event.sourceLabel && <> · via {event.sourceLabel}</>}
@@ -791,5 +824,14 @@ function dayLabel(parsed: Date): string {
 
 function timeLabel(value: string): string {
   const parsed = parseStamp(value);
-  return parsed ? parsed.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
+  return parsed ? parsed.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '';
+}
+
+function TimeContextNote() {
+  return (
+    <p className="flex items-center gap-2 text-[11px] text-foreground-500">
+      <AppIcon className="ri-time-line text-foreground-400" />
+      Times are shown in your local time. Hover a time to see the full date and timezone.
+    </p>
+  );
 }

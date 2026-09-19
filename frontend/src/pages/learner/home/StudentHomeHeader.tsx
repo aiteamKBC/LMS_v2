@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Bell, ChevronDown, CircleHelp, LogOut, Settings, UserRound } from 'lucide-react';
+import { ArrowRight, Bell, ChevronDown, CircleHelp, Compass, LogOut, MessageSquare, Settings, UserRound } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { Modal } from '@/pages/users/components/Modal';
@@ -111,6 +111,12 @@ export function StudentHomeHeader({ name, homeHref, identity, events, loading, e
           aria-haspopup="dialog" aria-expanded={panel === 'notifications'} onClick={event => openPanel('notifications', event.currentTarget)}>
           <span className={styles.notificationBell}><Bell aria-hidden="true"/>{unread > 0 && <span className={styles.notificationDot} aria-hidden="true"/>}</span>
           <span className={styles.headerControlLabel}>Notifications</span>
+        </button>
+        <a className={`${styles.headerAction} ${styles.headerResource}`} href="https://kentbusinesscollege.com/learners/career-planner/">
+          <Compass aria-hidden="true"/><span>Career Planner</span>
+        </a>
+        <button type="button" className={`${styles.headerAction} ${styles.headerResource}`} aria-label="Feedback — coming soon" disabled>
+          <MessageSquare aria-hidden="true"/><span className={styles.headerResourceLabel}>Feedback<span className={styles.comingSoon}>Coming soon</span></span>
         </button>
         <button type="button" className={styles.headerAction} aria-label="Help & Support" aria-haspopup="dialog"
           aria-expanded={panel === 'help'} onClick={event => openPanel('help', event.currentTarget)}>

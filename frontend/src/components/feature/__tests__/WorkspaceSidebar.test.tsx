@@ -230,15 +230,20 @@ it.each([false, true])('navigates directly to a standalone page without opening 
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('112px');
 });
 
-it('keeps long status tags inside the curriculum sidebar', () => {
+it('shows Quality without an availability tag in either sidebar mode', () => {
   const { sidebar, rail, panel } = showWorkspace('curriculum', '/curriculum/quality');
   const qualityLink = within(rail).getByRole('link', { name: 'Quality' });
 
   expect(within(qualityLink).queryByText('Under review')).toBeNull();
-  expect(qualityLink.querySelector('.bg-amber-400')).toBeInTheDocument();
+  expect(within(qualityLink).queryByText(/coming soon/i)).toBeNull();
+  expect(qualityLink.querySelector('.bg-amber-400')).toBeNull();
+  expect(qualityLink).toHaveAttribute('href', '/curriculum/quality');
 
   fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
-  expect(within(panel).getByText('Under review')).toBeVisible();
+  const expandedQualityLink = within(panel).getByRole('link', { name: 'Quality' });
+  expect(expandedQualityLink).toBeVisible();
+  expect(expandedQualityLink).toHaveAttribute('href', '/curriculum/quality');
+  expect(within(expandedQualityLink).queryByText(/under review|coming soon/i)).toBeNull();
 });
 
 it('closes the subsidebar when clicking the standalone page that is already active', () => {
