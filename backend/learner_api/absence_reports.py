@@ -23,6 +23,13 @@ from .evidence_storage import (
 )
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
+from .alternative_recovery import (
+    ALTERNATIVE_METHOD,
+    alternative_event_key,
+    alternative_target_details,
+    eligible_alternative_occurrences,
+    validate_alternative_occurrence,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -80,8 +87,9 @@ def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
         if _can_report_absence(row)
     ]
 
-    return [
-        {
+    result = []
+    for row in rows:
+        item = {
             "id": f"{session_key(row)}-{row['session_date'].isoformat()}",
             "sessionId": session_key(row),
             "reportId": str(report_id(row)),
@@ -94,8 +102,12 @@ def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
             "coach": row.get("coach_name", "") or "",
             "module": row.get("module_title", "") or "",
         }
-        for row in rows
-    ]
+        if row.get("source") == "microsoft-teams":
+            item["alternativeSessions"] = eligible_alternative_occurrences(
+                str(row.get("occurrence_id") or row.get("session_id") or "")
+            )
+        result.append(item)
+    return result
 
 
 def _kbc_attendance_report_id(session_id):
@@ -138,6 +150,10 @@ def _serialize(report):
     evidence_url = ""
     if report.status != CoachAbsenceReport.STATUS_DECLINED:
         evidence_url = resolve_read_url(report.evidence_image_url, allowed_containers)
+    alternative = alternative_target_details(
+        report.catchup_event_key,
+        include_join_url=report.status == CoachAbsenceReport.STATUS_APPROVED,
+    ) if report.recovery_method == ALTERNATIVE_METHOD else None
     return {
         "id": report.id,
         "attendanceId": str(report.attendance_id),
@@ -155,6 +171,7 @@ def _serialize(report):
         "coachNote": report.coach_note,
         "recoveryMethod": report.recovery_method,
         "catchupEventKey": report.catchup_event_key,
+        "alternativeSession": alternative,
         "attendanceRate": report.attendance_rate,
         "previousAbsences": report.previous_absences,
         "createdAt": report.created_at.isoformat(),
@@ -232,6 +249,7 @@ def learner_absence_reports(request, kind, learner_id):
     evidence_text = request.POST.get("explanation", "").strip()
     recovery_method = request.POST.get("recoveryMethod", "").strip()
     catchup_event_key = request.POST.get("catchupEventKey", "").strip()
+    target_occurrence_id = request.POST.get("targetOccurrenceId", "").strip()
     upload = request.FILES.get("evidence")
 
     if not session_title or not session_date_text:
@@ -239,14 +257,18 @@ def learner_absence_reports(request, kind, learner_id):
     if reason_category not in ALLOWED_REASONS:
         return _error("Choose a valid absence reason.")
     meeting_absence = session_id.startswith('meeting:')
-    if meeting_absence and (recovery_method or catchup_event_key):
+    if meeting_absence and (recovery_method or catchup_event_key or target_occurrence_id):
         return _error('Report the meeting absence, then reschedule the meeting with your coach.')
-    if not meeting_absence and recovery_method not in {'recorded', 'catch-up'}:
-        return _error('Choose whether to watch the recording or book a catch-up session.')
+    if not meeting_absence and recovery_method not in {'recorded', 'catch-up', ALTERNATIVE_METHOD}:
+        return _error('Choose another cohort session, a coach catch-up, or the recording.')
     if recovery_method == 'catch-up' and (not catchup_event_key or len(catchup_event_key) > 255):
         return _error('Book or select a catch-up session before submitting your absence report.')
     if recovery_method == 'recorded' and catchup_event_key:
         return _error('A recording recovery plan cannot include a catch-up booking.')
+    if recovery_method == ALTERNATIVE_METHOD and not target_occurrence_id:
+        return _error('Choose an available alternative session.')
+    if recovery_method != ALTERNATIVE_METHOD and target_occurrence_id:
+        return _error('The alternative session does not match the selected recovery plan.')
     if reason_category == "other" and not other_reason:
         return _error("Please specify the other reason.")
     if len(evidence_text) > 600 or len(other_reason) > 120 or len(session_title) > 255:
@@ -296,6 +318,18 @@ def learner_absence_reports(request, kind, learner_id):
         attendance_rate = None
 
     active = learner_profile_for_source(learner, learner_id, active_only=True)
+    original_occurrence_id = session_id[len('teams:'):] if session_id.startswith('teams:') else ''
+    if recovery_method == ALTERNATIVE_METHOD:
+        try:
+            alternative = validate_alternative_occurrence(
+                original_occurrence_id,
+                target_occurrence_id,
+            )
+        except DatabaseError:
+            return _error('Could not verify the alternative session. Please retry.', 502)
+        if alternative is None:
+            return _error('That alternative session is no longer eligible. Choose another option.', 409)
+        catchup_event_key = alternative_event_key(target_occurrence_id)
     if recovery_method == 'catch-up':
         try:
             _catchup_booking(learner, active, catchup_event_key, parsed_date)
@@ -336,6 +370,11 @@ def learner_absence_reports(request, kind, learner_id):
         with transaction.atomic():
             if recovery_method == 'catch-up':
                 _catchup_booking(learner, active, catchup_event_key, parsed_date, lock=True)
+            elif recovery_method == ALTERNATIVE_METHOD:
+                # Recheck eligibility inside the save transaction so an expired
+                # or cancelled target cannot be submitted from a stale dialog.
+                if validate_alternative_occurrence(original_occurrence_id, target_occurrence_id) is None:
+                    raise RecoveryPlanError('That alternative session is no longer eligible. Choose another option.')
             previous_absences = CoachAbsenceReport.objects.filter(learner_id=learner_id).count()
             report = CoachAbsenceReport.objects.create(
                 attendance_id=attendance_id,

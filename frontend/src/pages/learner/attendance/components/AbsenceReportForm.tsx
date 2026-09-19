@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import Swal from 'sweetalert2';
+import 'sweetalert2/dist/sweetalert2.min.css';
 import {
   fetchAbsenceReports,
   submitAbsenceReport,
@@ -84,7 +86,8 @@ export default function AbsenceReportForm({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [didPreselect, setDidPreselect] = useState(false);
-  const [recoveryMethod, setRecoveryMethod] = useState<'' | 'recorded' | 'catch-up'>('');
+  const [recoveryMethod, setRecoveryMethod] = useState<'' | 'recorded' | 'catch-up' | 'alternative'>('');
+  const [targetOccurrenceId, setTargetOccurrenceId] = useState('');
   const [catchupBooking, setCatchupBooking] = useState<{ sessionId: string; event: LearnerCalendarEvent } | null>(null);
   const [bookingBusy, setBookingBusy] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -109,8 +112,42 @@ export default function AbsenceReportForm({
   const hasReason = Boolean(reasonType && (reasonType !== 'other' || otherReason.trim()));
   const canUploadEvidence = Boolean(sessionId && hasReason);
   const canSubmit = Boolean(sessionId && hasReason && confirmed && !bookingBusy
-    && (scope === 'meetings' || recoveryMethod === 'recorded' || (recoveryMethod === 'catch-up' && selectedBooking)));
+    && (scope === 'meetings' || recoveryMethod === 'recorded'
+      || (recoveryMethod === 'catch-up' && selectedBooking)
+      || (recoveryMethod === 'alternative' && targetOccurrenceId)));
   const resolvedCount = reports.filter((report) => report.status !== 'Pending').length;
+
+  const selectAlternativeRecovery = (source: HTMLInputElement) => {
+    if (!selectedSession) return;
+    if ((selectedSession.alternativeSessions?.length ?? 0) === 0) {
+      setTargetOccurrenceId('');
+      setConfirmed(false);
+      void Swal.fire({
+        target: source.closest('dialog') ?? document.body,
+        icon: 'info',
+        title: 'No alternative lecture available',
+        text: 'There is no equivalent future lecture in another group. Please book a catch-up session or watch the recording.',
+        confirmButtonText: 'Choose another option',
+      });
+      return;
+    }
+    setRecoveryMethod('alternative');
+    setTargetOccurrenceId('');
+    setConfirmed(false);
+  };
+
+  const selectRecordedRecovery = (source: HTMLInputElement) => {
+    setRecoveryMethod('recorded');
+    setTargetOccurrenceId('');
+    setConfirmed(false);
+    void Swal.fire({
+      target: source.closest('dialog') ?? document.body,
+      icon: 'warning',
+      title: 'Recording does not recover attendance',
+      text: 'Your attendance will remain absent. After you submit, your coach and any employer linked to your learner record will receive an in-app notification that you will miss this lecture and watch the recording.',
+      confirmButtonText: 'I understand',
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -175,6 +212,7 @@ export default function AbsenceReportForm({
     setSubmittedReport(null);
     setRequestError('');
     setRecoveryMethod('');
+    setTargetOccurrenceId('');
     setCatchupBooking(null);
     setConfirmed(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -195,6 +233,7 @@ export default function AbsenceReportForm({
     payload.append('explanation', explanation.trim());
     payload.append('recoveryMethod', recoveryMethod);
     if (recoveryMethod === 'catch-up' && selectedBooking) payload.append('catchupEventKey', selectedBooking.eventKey);
+    if (recoveryMethod === 'alternative' && targetOccurrenceId) payload.append('targetOccurrenceId', targetOccurrenceId);
     if (file) payload.append('evidence', file);
     try {
       const created = await submitAbsenceReport(myLearner.kind, myLearner.id, payload);
@@ -261,7 +300,7 @@ export default function AbsenceReportForm({
             Your report for <strong className="text-foreground-800">{submittedReport?.sessionTitle}</strong> has been saved for your coach to review.
           </p>
           <div className="mx-auto mb-5 grid max-w-xl gap-3 rounded-xl bg-background-100/70 p-4 text-left sm:grid-cols-2">
-            {submittedReport?.recoveryMethod && <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Catch-up plan</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport.recoveryMethod === 'recorded' ? 'Watch the recording' : 'Catch-up session booked / awaiting approval'}</p></div>}
+            {submittedReport?.recoveryMethod && <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Recovery plan</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport.recoveryMethod === 'recorded' ? 'Watch the recording (attendance stays absent)' : submittedReport.recoveryMethod === 'alternative' ? 'Alternative cohort session / awaiting approval' : 'Coach catch-up booked / awaiting approval'}</p></div>}
             <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Reference</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport?.reference}</p></div>
             <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Current status</p><p className="text-[13px] font-semibold text-amber-600">Pending review</p></div>
             <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Session</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport ? displayDate(submittedReport.sessionDate) : ''}</p></div>
@@ -278,7 +317,7 @@ export default function AbsenceReportForm({
 
             <div>
               <label htmlFor="missed-session" className="mb-2 block text-[13px] font-semibold text-foreground-700">{scope === 'meetings' ? 'Meeting *' : 'Lecture *'}</label>
-              <select id="missed-session" value={sessionId} onChange={(event) => { setSessionId(event.target.value); setRecoveryMethod(''); setCatchupBooking(null); setConfirmed(false); }} required disabled={reportsLoading || availableSessions.length === 0 || bookingBusy || submitting} className="w-full rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-3 text-[13px] text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400">
+              <select id="missed-session" value={sessionId} onChange={(event) => { setSessionId(event.target.value); setRecoveryMethod(''); setTargetOccurrenceId(''); setCatchupBooking(null); setConfirmed(false); }} required disabled={reportsLoading || availableSessions.length === 0 || bookingBusy || submitting} className="w-full rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-3 text-[13px] text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400">
                 <option value="">{scope === 'meetings' ? reportsLoading ? 'Loading meeting...' : availableSessions.length ? 'Choose a meeting' : 'No unreported meetings available' : reportsLoading ? 'Loading lectures...' : availableSessions.length === 0 ? 'No unreported absent or upcoming lectures' : 'Choose an absent or upcoming lecture'}</option>
                 {availableSessions.map((session) => <option key={session.id} value={session.id}>{displayDate(session.dateIso)} - {session.title}{session.status === 'upcoming' ? ' (Upcoming)' : ''}</option>)}
               </select>
@@ -375,11 +414,20 @@ export default function AbsenceReportForm({
             {scope === 'meetings' ? <p className={styles.recoveryHint}>Your coach will review your absence report. Use Reschedule on the meeting page to arrange another time.</p> : <fieldset className={styles.recoveryPlan} disabled={!selectedSession || bookingBusy || submitting}>
               <legend>How will you catch up? *</legend>
               <div className={styles.recoveryOptions}>
-                <label><input type="radio" name="recovery-method" value="recorded" required checked={recoveryMethod === 'recorded'} onChange={() => { setRecoveryMethod('recorded'); setConfirmed(false); }} /><span>Watch the recording</span></label>
-                <label><input type="radio" name="recovery-method" value="catch-up" required checked={recoveryMethod === 'catch-up'} onChange={() => { setRecoveryMethod('catch-up'); setConfirmed(false); }} /><span>Book a Catch-up session</span></label>
+                <label><input type="radio" name="recovery-method" value="alternative" required checked={recoveryMethod === 'alternative'} onChange={event => selectAlternativeRecovery(event.currentTarget)} /><span>Attend another group session</span></label>
+                <label><input type="radio" name="recovery-method" value="catch-up" required checked={recoveryMethod === 'catch-up'} onChange={() => { setRecoveryMethod('catch-up'); setTargetOccurrenceId(''); setConfirmed(false); }} /><span>Book a Catch-up session</span></label>
+                <label><input type="radio" name="recovery-method" value="recorded" required checked={recoveryMethod === 'recorded'} onChange={event => selectRecordedRecovery(event.currentTarget)} /><span>Watch the recording</span></label>
               </div>
             </fieldset>}
-            {recoveryMethod === 'recorded' && <p className={styles.recoveryHint}>Complete the lecture's recorded activities to catch up.{selectedBooking && ' Your existing catch-up booking remains in your calendar.'}</p>}
+            {recoveryMethod === 'alternative' && selectedSession && <div className={styles.recoveryPlan}>
+              <label htmlFor="alternative-session">Available equivalent session *</label>
+              <select id="alternative-session" value={targetOccurrenceId} onChange={event => { setTargetOccurrenceId(event.target.value); setConfirmed(false); }} required>
+                <option value="">Choose a future session</option>
+                {(selectedSession.alternativeSessions || []).map(option => <option key={option.id} value={option.id}>{displayDate(option.dateIso)} · {option.startTime}{option.endTime ? `–${option.endTime}` : ''} · {option.group || option.cohort}</option>)}
+              </select>
+              <p className={styles.recoveryHint}>Your coach must approve this choice. You stay in your current group, and access applies only to this session.</p>
+            </div>}
+            {recoveryMethod === 'recorded' && <p className={styles.recoveryHint}>Watching the recording supports learning but does not recover attendance. Your effective attendance remains absent unless an approved live recovery is completed.</p>}
             {recoveryMethod === 'catch-up' && selectedSession && <CatchupBooking key={selectedSession.id} lecture={selectedSession} selectedKey={selectedBooking?.eventKey || ''} onSelect={selectBooking} onBusyChange={setBookingBusy} disabled={submitting} />}
             <label className={`flex cursor-pointer items-start gap-3 rounded-xl bg-background-100/60 p-3.5 ${compact ? styles.absenceConfirmation : ''}`}>
               <input type="checkbox" required checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={bookingBusy || submitting} className="mt-0.5 h-4 w-4 rounded border-foreground-300 text-primary-500 focus:ring-primary-300" />
@@ -426,6 +474,12 @@ export default function AbsenceReportForm({
             {reports.map((report) => (
               <article key={report.id} className="rounded-xl border border-foreground-200/70 bg-background-50 p-3.5">
                 <div className="mb-2 flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-[13px] font-semibold text-foreground-800">{report.sessionTitle}</p><p className="mt-0.5 text-[10px] text-foreground-400">{displayDate(report.sessionDate)} - {report.reference}</p></div><span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-bold ${statusClass[report.status.trim().toLowerCase()] || statusClass.pending}`}>{report.status}</span></div>
+                {report.recoveryMethod === 'alternative' && report.alternativeSession && <div className="mb-2 rounded-lg border border-primary-100 bg-primary-50/50 p-2.5 text-[11px] text-foreground-600">
+                  <p className="font-semibold text-foreground-800">Alternative: {report.alternativeSession.group || report.alternativeSession.cohort}</p>
+                  <p>{displayDate(report.alternativeSession.dateIso)} · {report.alternativeSession.startTime}{report.alternativeSession.endTime ? `–${report.alternativeSession.endTime}` : ''}</p>
+                  {report.alternativeSession.joinUrl && <a href={report.alternativeSession.joinUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex font-semibold text-primary-600 hover:underline">Join approved session</a>}
+                  {!report.alternativeSession.joinUrl && report.status.trim().toLowerCase() === 'pending' && <p className="mt-1 text-amber-700">Waiting for coach approval</p>}
+                </div>}
                 <div className="flex items-center gap-1.5 border-t border-foreground-100 pt-2 text-[10px] text-foreground-400">
                   <AppIcon className="ri-attachment-2" />
                   {report.evidenceUrl ? (

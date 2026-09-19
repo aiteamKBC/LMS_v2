@@ -38,8 +38,8 @@ def build_attendance_pdf(session):
         story.append(paragraph('Awaiting a completed Teams attendance report; pending participants are not marked absent.', label))
     story.append(Spacer(1, 14))
     labels = {'present': 'Present', 'absent': 'Absent', 'pending': 'Awaiting report', 'review': 'Identity needs review',
-              'excused': 'Excused - catch-up required', 'recovered': 'Present - catch-up completed'}
-    rows = [[paragraph(text, table_heading) for text in ('Participant', 'Joined', 'Left', 'Total duration', 'Attendance status')]]
+              'absent_excused': 'Absent, excused', 'made_up': 'Made up - catch-up completed'}
+    rows = [[paragraph(text, table_heading) for text in ('Participant', 'Joined', 'Left', 'Duration', 'Raw status', 'Effective outcome')]]
     for person in session.get('attendance') or []:
         duration = f"{int(person['seconds']) // 60}m {int(person['seconds']) % 60}s"
         visits = person.get('intervals') or [None]
@@ -48,12 +48,13 @@ def build_attendance_pdf(session):
                          paragraph(report_time(visit['joinedAt']) if visit else 'Not recorded'),
                          paragraph(report_time(visit['leftAt']) if visit else 'Not recorded'),
                          paragraph(duration if index == 0 else 'Included above'),
-                         paragraph(labels.get(person['status'], person['status']))])
+                         paragraph(labels.get(person.get('rawStatus', person['status']), person.get('rawStatus', person['status']))),
+                         paragraph(labels.get(person.get('finalOutcome', person['status']), person.get('finalOutcome', person['status'])))])
     if len(rows) == 1:
         story.append(paragraph('No participants have been saved for this session.'))
     else:
         available = width - 2 * margin
-        table = Table(rows, colWidths=[available * share for share in (.30, .21, .21, .12, .16)], repeatRows=1, splitByRow=1, splitInRow=1)
+        table = Table(rows, colWidths=[available * share for share in (.25, .17, .17, .11, .14, .16)], repeatRows=1, splitByRow=1, splitInRow=1)
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), purple), ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f6f3fb')]),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LINEBELOW', (0, 0), (-1, -1), .35, colors.HexColor('#ded6ee')),

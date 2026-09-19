@@ -10684,6 +10684,10 @@ def serialize_absence_report(
             settings.AZURE_REJECTED_CONTAINER,
         },
     )
+    alternative_session = None
+    if report.recovery_method == 'alternative':
+        from learner_api.alternative_recovery import alternative_target_details
+        alternative_session = alternative_target_details(report.catchup_event_key)
     return {
         "id": str(report.id),
         "learnerId": str(report.learner_id),
@@ -10708,6 +10712,7 @@ def serialize_absence_report(
         "evidenceText": report.evidence_text or None,
         "recoveryMethod": report.recovery_method,
         "catchupEventKey": report.catchup_event_key,
+        "alternativeSession": alternative_session,
         "evidenceImageUrl": evidence_url or None,
         "previousAbsences": previous_absences_override if previous_absences_override is not None else report.previous_absences,
         "attendanceRate": attendance_rate,

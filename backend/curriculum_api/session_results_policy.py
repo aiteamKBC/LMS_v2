@@ -76,8 +76,16 @@ def session_roster(expected, records, *, complete):
         status = 'pending' if not complete else 'present' if seconds > PRESENT_AFTER_SECONDS else 'absent'
         if not person['email'] or (unidentified and not seconds):
             status = 'review'
+        attendance = 1 if status == 'present' else 0 if status == 'absent' else None
         result.append({**person, 'seconds': seconds, 'status': status,
-                       'attendance': 1 if status == 'present' else 0 if status == 'absent' else None,
+                       'attendance': attendance,
+                       # These are the immutable Teams result. Recovery is an
+                       # LMS decision layered on top, never a rewrite of what
+                       # happened in the original meeting.
+                       'rawStatus': status, 'rawAttendance': attendance,
+                       'excuseStatus': 'none', 'recoveryStatus': 'none',
+                       'effectiveStatus': status, 'effectiveAttendance': attendance,
+                       'finalOutcome': status,
                        'excused': False, 'catchupCompleted': False,
                        'intervals': [{'joinedAt': joined.isoformat(), 'leftAt': left.isoformat()} for joined, left in sorted(visits)]})
     return sorted(result, key=lambda person: (not person['expected'], person['name'].casefold()))
@@ -132,12 +140,16 @@ def transcript_text(vtt):
 def attendance_csv(rows):
     output = io.StringIO(newline='')
     writer = csv.writer(output)
-    writer.writerow(['Name', 'Email', 'Attendance', 'Status', 'Seconds', 'Excused', 'Catch-up completed'])
+    writer.writerow(['Name', 'Email', 'Raw attendance', 'Raw status', 'Effective attendance',
+                     'Final outcome', 'Seconds', 'Excused', 'Catch-up completed'])
     def cell(value):
         value = str(value)
         return "'" + value if value.lstrip().startswith(('=', '+', '-', '@')) else value
     for row in rows:
         writer.writerow([cell(row.get('name', '')), cell(row.get('email', '')),
-                         '' if row.get('attendance') is None else row['attendance'], row['status'], row['seconds'],
+                         '' if row.get('rawAttendance', row.get('attendance')) is None else row.get('rawAttendance', row.get('attendance')),
+                         row.get('rawStatus', row.get('status', '')),
+                         '' if row.get('effectiveAttendance', row.get('attendance')) is None else row.get('effectiveAttendance', row.get('attendance')),
+                         row.get('finalOutcome', row.get('status', '')), row['seconds'],
                          'Yes' if row.get('excused') else 'No', 'Yes' if row.get('catchupCompleted') else 'No'])
     return '\ufeff' + output.getvalue()

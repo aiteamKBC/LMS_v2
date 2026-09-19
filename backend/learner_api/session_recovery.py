@@ -24,16 +24,29 @@ def apply_recovery_to_rows(rows):
         for row, person in zip(grouped[session['id']], session['attendance']):
             row['catchup_completed'] = person['catchupCompleted']
             row['excused'] = person['excused']
+            row['raw_attendance_status'] = person['rawStatus']
+            row['effective_attendance_status'] = person['effectiveStatus']
+            row['effective_attendance'] = person['effectiveAttendance']
+            row['final_outcome'] = person['finalOutcome']
+            row['excuse_status'] = person['excuseStatus']
+            row['recovery_status'] = person['recoveryStatus']
             if person['catchupCompleted']:
-                row['attendance_status'] = 'present'
-                row['absence_reason'] = 'Excused absence; completed coach catch-up'
+                row['absence_reason'] = (
+                    'Excused absence; attended approved alternative session'
+                    if person.get('recoveryType') == 'alternative'
+                    else 'Excused absence; completed coach catch-up'
+                )
             elif person['excused']:
-                row['absence_reason'] = 'Excused absence; coach catch-up required'
+                row['absence_reason'] = (
+                    'Excused absence; alternative session scheduled'
+                    if person.get('recoveryType') == 'alternative'
+                    else 'Excused absence; coach catch-up required'
+                )
     return rows
 
 
 def refresh_catchup_attendance(event_key):
-    """Update the existing register after completion, preserving raw Teams evidence."""
+    """Queue refreshed effective results without rewriting raw Teams attendance."""
     from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
     from .absence_reports import _kbc_attendance_report_id
     event = CoachCalendarEvent.objects.filter(event_key=event_key, event_type='catch-up', status='completed').first()
@@ -42,17 +55,18 @@ def refresh_catchup_attendance(event_key):
     reports = list(CoachAbsenceReport.objects.filter(catchup_event_key=event_key, status='approved'))
     with transaction.atomic(), connections['default'].cursor() as cursor:
         for report in reports:
-            cursor.execute('''SELECT d.session_id,d.learner_id FROM "Learner".learner_attendance_details d
+            cursor.execute('''SELECT d.learner_id,d.session_id FROM "Learner".learner_attendance_details d
                 JOIN "Learner".learners l ON l.id=d.learner_id
                 WHERE l.enrolment_id=%s AND lower(btrim(l.email))=%s AND d.source='microsoft_teams' ''',
                 [report.learner_id, str(event.learner_email or '').strip().casefold()])
-            for session_id, profile_id in cursor.fetchall():
+            for attendance_learner_id, session_id in cursor.fetchall():
                 if _kbc_attendance_report_id(f'{report.learner_id}:teams:{session_id}') != report.attendance_id:
                     continue
                 cursor.execute('''UPDATE "Learner".learner_attendance_details
-                    SET attendance_status='present',catchup_completed=true,
+                    SET catchup_completed=true,
                         absence_reason='Excused absence; completed coach catch-up',updated_at=now()
-                    WHERE learner_id=%s AND session_id=%s''', [profile_id, session_id])
+                    WHERE learner_id=%s AND session_id=%s AND source='microsoft_teams' ''',
+                    [attendance_learner_id, session_id])
                 cursor.execute('''INSERT INTO curriculum.session_result_jobs(live_session_id)
                     SELECT live_session_id FROM curriculum.live_session_occurrences WHERE id=%s
                     ON CONFLICT(live_session_id) DO UPDATE

@@ -71,6 +71,7 @@ export const coachNavItems: SidebarNavItem[] = [
     icon: 'ri-group-line',
     href: '/coach/caseload',
   },
+  { id: 'coach-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
   {
     id: 'coach-group-attendance',
     label: 'Attendance',
@@ -200,6 +201,7 @@ export const employerNavItems: SidebarNavItem[] = [
     label: 'Communication',
     icon: 'ri-mail-line',
     children: [
+      { id: 'employer-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
       { id: 'employer-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', statusDot: 'blue' },
       { id: 'employer-support', label: 'Support Requests', icon: 'ri-question-line', href: '/employer/support' },
     ],
