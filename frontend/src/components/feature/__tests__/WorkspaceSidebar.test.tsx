@@ -126,9 +126,10 @@ it('keeps an administrator in the selected coach workspace', () => {
   viewer.isAdmin = true;
   const { sidebar, rail } = showWorkspace('coach', '/workspace/coach');
   expect(sidebar.closest('.workspace-shell')).toHaveAttribute('data-workspace-role', 'coach');
-  expect(within(rail).getAllByRole('link').slice(0, 4).map(link => link.textContent)).toEqual(['Dashboard', 'My Learners', 'Marking', 'Attendance']);
+  expect(within(rail).getAllByRole('link').slice(0, 4).map(link => link.textContent)).toEqual(['Dashboard', 'My Learners', 'Attendance', 'Marking']);
   expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
   expect(within(rail).getByRole('link', { name: 'Marking' })).toHaveAttribute('href', '/coach/marking-queue');
+  expect(within(rail).getByRole('link', { name: 'Marking' }).querySelector('svg')).not.toBeNull();
 });
 
 it.each([
@@ -275,6 +276,7 @@ it.each(['/workspace/coach', '/coach/monthly-coaching'])('opens the restored MCM
   expect(group).toHaveAttribute('aria-expanded', String(initialPath === '/coach/monthly-coaching'));
   if (initialPath !== '/coach/monthly-coaching') fireEvent.click(group);
   const mcm = within(rail).getByRole('link', { name: 'Monthly Coaching Meeting' });
+  expect(mcm.querySelector('svg')).not.toBeNull();
   expect(mcm).toHaveAttribute('href', '/coach/monthly-coaching');
   fireEvent.click(mcm);
   expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');

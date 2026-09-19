@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { BookOpen, ChevronDown, CircleHelp, Settings2, X } from 'lucide-react';
+import { BookOpen, ChevronDown, X } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { SidebarIcon, type SidebarNavItem } from './Sidebar';
 import styles from './CoachSidebar.module.css';
@@ -64,15 +64,15 @@ export function CoachSidebar({ navItems, userName, userRole, mobileOpen, onClose
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span>{item.label}</span><ChevronDown className={styles.chevron} size={14} />
         </button>
         {(openGroups[item.id] ?? item.children.some(active)) && <div className={styles.children} id={`${mobile ? 'mobile-' : ''}${item.id}-links`}>
-          {item.children.map(child => <Link key={child.id} to={child.href} className={styles.row} aria-current={active(child) ? 'page' : undefined} onClick={onCloseMobile}>{child.label}</Link>)}
+          {item.children.map(child => <Link key={child.id} to={child.href} className={styles.row} aria-current={active(child) ? 'page' : undefined} onClick={onCloseMobile}>
+            <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} /><span>{child.label}</span>
+          </Link>)}
         </div>}
       </div> : <Link key={item.id} to={item.href} className={styles.row} aria-current={active(item) ? 'page' : undefined} onClick={onCloseMobile}>
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span>{item.label}</span>
       </Link>)}
     </nav>
     <div className={styles.footer}>
-      <button type="button" className={styles.row} onClick={() => { onCloseMobile(); onOpenAccount(); }}><Settings2 size={18} /><span>Settings</span></button>
-      <Link to="/user-guide" className={styles.row} onClick={onCloseMobile}><CircleHelp size={18} /><span>Help</span></Link>
       <button type="button" className={styles.account} onClick={() => { onCloseMobile(); onOpenAccount(); }} aria-label="Open account settings">
         <span className={styles.avatar}>{initials || 'C'}</span><span className={styles.identity}><strong>{userName}</strong><small>{userRole}</small></span><ChevronDown size={14} />
       </button>

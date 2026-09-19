@@ -148,6 +148,23 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
   });
 
+  it('opens the selected row in the booking modal for Schedule and Reschedule', async () => {
+    mount();
+    await screen.findByText('Scheduled Learner');
+
+    fireEvent.click(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Reschedule' }));
+    let dialog = screen.getByRole('dialog', { name: 'Schedule meeting' });
+    expect(within(dialog).getByRole('combobox', { name: 'Learner' })).toHaveValue('mcr:3');
+    expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-09-22');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(within(screen.getByText('Overdue Learner').closest('tr')!).getByRole('button', { name: 'Schedule' }));
+    dialog = screen.getByRole('dialog', { name: 'Schedule meeting' });
+    expect(within(dialog).getByRole('combobox', { name: 'Learner' })).toHaveValue('mcr:1');
+    expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-09-01');
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
+  });
+
   it('renders the requested table columns and coaching actions', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
@@ -167,11 +184,11 @@ describe('restored monthly coaching list', () => {
     ));
   });
 
-  it('disables scheduling for completed and awaiting-signature meetings', async () => {
+  it('removes scheduling for completed and awaiting-signature meetings', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
-    expect(within(screen.getByText('Completed Learner').closest('tr')!).getByRole('button', { name: 'Scheduling unavailable' })).toBeDisabled();
-    expect(within(screen.getByText('Awaiting Signature Learner').closest('tr')!).getByRole('button', { name: 'Scheduling unavailable' })).toBeDisabled();
+    expect(within(screen.getByText('Completed Learner').closest('tr')!).queryByRole('button', { name: /Schedule/ })).toBeNull();
+    expect(within(screen.getByText('Awaiting Signature Learner').closest('tr')!).queryByRole('button', { name: /Schedule/ })).toBeNull();
   });
 
   it('shows only View for completed and awaiting-signature meetings', async () => {
@@ -190,7 +207,7 @@ describe('restored monthly coaching list', () => {
     mount();
     await screen.findByText('Scheduled Learner');
     const row = within(screen.getByText('In Progress Learner').closest('tr')!);
-    expect(row.getByRole('button', { name: 'Scheduling unavailable' })).toBeDisabled();
+    expect(row.queryByRole('button', { name: /Schedule/ })).toBeNull();
     expect(row.getByRole('button', { name: 'Form' })).toBeVisible();
     expect(row.getByRole('button', { name: 'Create Slides' })).toBeVisible();
   });

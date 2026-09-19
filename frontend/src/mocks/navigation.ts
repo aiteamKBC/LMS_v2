@@ -83,34 +83,24 @@ export const coachNavItems: SidebarNavItem[] = [
     ],
   },
   {
-    id: 'coach-marking-queue',
-    label: 'Marking',
-    icon: 'ri-edit-line',
-    href: '/coach/marking-queue',
-  },
-  {
     id: 'coach-attendance',
     label: 'Attendance',
     icon: 'ri-calendar-check-line',
     href: '/coach/attendance',
   },
   {
+    id: 'coach-marking-queue',
+    label: 'Marking',
+    icon: 'ri-edit-line',
+    href: '/coach/marking-queue',
+  },
+  {
     id: 'coach-group-reports',
-    label: 'Report',
+    label: 'Reports',
     icon: 'ri-file-list-3-line',
     href: '',
     children: [
       { id: 'coach-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/coach/monthly-logs', matchPaths: ['/coach/monthly-cycle'] },
-    ],
-  },
-  {
-    id: 'coach-group-intelligence',
-    label: 'Progress Intelligence',
-    icon: 'ri-bar-chart-2-line',
-    href: '',
-    children: [
-      { id: 'coach-ksb-impact', label: 'KSB Impact', icon: 'ri-bar-chart-2-line', href: '/coach/ksb-impact' },
-      { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
       { id: 'coach-monthly-reports', label: 'Monthly Reports', icon: 'ri-file-list-3-line', href: '/coach/monthly-reports' },
     ],
   },

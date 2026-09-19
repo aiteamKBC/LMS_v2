@@ -17,8 +17,11 @@
 .desktop .row[aria-current="page"], .mobile .row[aria-current="page"], .row[data-active="true"] { background: var(--coach-nav-active); color: var(--coach-nav-accent); font-weight: 700; }
 .row .chevron { margin-left: auto; width: 13px; }
 .row[aria-expanded="true"] .chevron { transform: rotate(180deg); }
-.children { padding-left: 30px; margin: 3px 0 7px; }
-.children .row { min-height: 35px; font-size: 11px; padding: 8px 10px; }
+.children { position: relative; margin: 4px 0 9px 20px; padding-left: 10px; border-left: 1px solid rgb(170 145 255 / 24%); }
+.children .row { min-height: 36px; gap: 9px; padding: 8px 10px; border-radius: 6px; color: #c9c3df; font-size: 11px; }
+.children .row > svg { width: 15px; height: 15px; color: #9f8bdc; }
+.children .row[aria-current="page"] { background: rgb(126 91 229 / 24%); color: #fff; }
+.children .row[aria-current="page"] > svg { color: #c2afff; }
 .footer { margin: 0 14px; padding: 12px 0 16px; border-top: 1px solid rgb(255 255 255 / 10%); }
 .account { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 12px; padding: 6px 8px; text-align: left; }
 .avatar { display: grid; place-items: center; width: 37px; height: 37px; flex-shrink: 0; border-radius: 50%; background: #6b35d8; color: white; font-size: 13px; }

@@ -335,20 +335,6 @@ export default function CoachMonthlyCoaching() {
     });
   };
 
-  const openEventInCalendar = (event: CoachCalendarEvent) => {
-    navigate('/coach/timetable', {
-      state: {
-        focusEvent: {
-          eventKey: eventIdentity(event),
-          source: event.source,
-          date: eventDisplayDate(event),
-          title: event.title,
-          scheduledTime: event.scheduledTime,
-        },
-      },
-    });
-  };
-
   const openMeeting = (event: CoachCalendarEvent) => {
     const url = meetingUrl(event);
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
@@ -368,8 +354,8 @@ export default function CoachMonthlyCoaching() {
     }
   };
 
-  const scheduleMeeting = () => {
-    const preferred = schedulableEvents.find(event => needsScheduling(event)) || schedulableEvents[0];
+  const scheduleMeeting = (selectedEvent?: CoachCalendarEvent) => {
+    const preferred = selectedEvent || schedulableEvents.find(event => needsScheduling(event)) || schedulableEvents[0];
     setScheduleEventKey(preferred ? eventIdentity(preferred) : '');
     setScheduleDate(preferred?.scheduledDate || preferred?.targetDate || isoDate(new Date()));
     setScheduleTime(preferred?.scheduledTime?.slice(0, 5) || '09:00');
@@ -416,7 +402,7 @@ export default function CoachMonthlyCoaching() {
               <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
                 <div className="w-full sm:w-56"><SearchInput value={searchTerm} suggestions={learnerSuggestions} onChange={(value) => { setSearchTerm(value); setCurrentPage(1); }} placeholder="Search learner name..." ariaLabel="Search coaching meetings by learner" /></div>
                 <FilterSelect value={groupFilter} onChange={(value) => { setGroupFilter(value); setCurrentPage(1); }} options={groupFilterOptions} label="Group" icon="ri-group-line" widthClass="w-full sm:w-60" tone={groupFilter === ALL_GROUPS_FILTER ? 'default' : 'active'} />
-                <button type="button" onClick={scheduleMeeting} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-primary-800"><AppIcon className="ri-add-line text-lg" />Schedule meeting</button>
+                <button type="button" onClick={() => scheduleMeeting()} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-primary-800"><AppIcon className="ri-add-line text-lg" />Schedule meeting</button>
               </div>
             </div>
             <div className="mt-5 border-t border-foreground-100 pt-4">
@@ -441,7 +427,7 @@ export default function CoachMonthlyCoaching() {
                 <td className="px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-group-line text-primary-500" />{event.cohort || event.group || '--'}</span></td>
                 <td className="whitespace-nowrap px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex min-w-[150px] flex-col gap-1"><span className="flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-calendar-line shrink-0 text-primary-500" />{event.scheduledDate ? formatDateLabel(event.scheduledDate) : formatDateLabel(event.targetDate)}</span><span className="flex items-center gap-1.5 whitespace-nowrap text-foreground-500"><AppIcon className="ri-time-line shrink-0 text-primary-500" />{formatTimeRangeLabel(event)}</span></span></td>
                 <td className="px-4 py-3 text-center align-middle"><div className="flex flex-wrap justify-center gap-1.5"><StatusBadge tone={statusTone(event.status)} label={statusLabel(event.status)} size="sm" />{isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div></td>
-                <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}><button type="button" onClick={() => openEventInCalendar(event)} disabled={!canSchedule} aria-label={canSchedule ? (event.status === 'scheduled' ? 'Reschedule' : 'Schedule') : 'Scheduling unavailable'} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"><AppIcon className="ri-calendar-schedule-line" />{event.status === 'scheduled' ? 'Reschedule' : 'Schedule'}</button></td>
+                <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{canSchedule ? <button type="button" onClick={() => scheduleMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{event.status === 'scheduled' ? 'Reschedule' : 'Schedule'}</button> : null}</td>
                 <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}><div className="flex justify-end gap-1.5">{!viewOnly ? <><button type="button" onClick={() => { void openForm(event); }} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-file-edit-line" />Form</button><button type="button" onClick={() => { void createSlides(event); }} disabled={Boolean(slidesBusyEventKey)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={slidesBusyEventKey === eventIdentity(event) ? 'ri-loader-4-line animate-spin' : 'ri-file-ppt-line'} />{slidesBusyEventKey === eventIdentity(event) ? 'Generating...' : 'Create Slides'}</button></> : null}<button type="button" onClick={() => openDetails(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>{!viewOnly && url && canJoinMeeting(event) ? <button type="button" onClick={() => openMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-video-on-line" />Join</button> : null}</div></td>
               </tr>;
             })}</tbody></table></div> : null}

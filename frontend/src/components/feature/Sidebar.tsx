@@ -147,6 +147,8 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   // 'learner-home ... ri-home-line' would otherwise never be reached.
   if (/\bhome\b/.test(key)) return HomeIcon;
   if (/dashboard|overview/.test(key)) return LayoutDashboard;
+  if (id === 'coach-marking-queue') return ClipboardList;
+  if (id === 'coach-catchup-queue') return RefreshCw;
   // Curriculum workspace groups get distinct icons so the sidebar is scannable.
   if (/programme\s*-?\s*design|programme-design/.test(key)) return Presentation;
   if (/curriculum\s*-?\s*builder|curriculum-builder/.test(key)) return Workflow;
