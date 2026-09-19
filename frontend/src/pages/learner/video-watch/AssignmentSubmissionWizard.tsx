@@ -22,6 +22,7 @@ import { AssignmentAttachment } from '../monthly-submission/AssignmentAttachment
 import { assignmentTimeHours } from './AssignmentTimeEntries';
 import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
+import { parsePersonalLearning } from '@/lib/personalLearning';
 
 export type AssignmentAnswers = {
   assignmentAnswer: string;
@@ -34,8 +35,6 @@ const EMPTY_ANSWERS: AssignmentAnswers = {
   whatYouLearned: '',
   businessImpact: '',
 };
-
-const STEP_META = MONTHLY_STEPS.map(label => ({ label }));
 
 function londonDate(): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -111,6 +110,8 @@ export function AssignmentSubmissionWizard({
   renderEvidencePreview?: (file: EvidenceRecord, url: string) => ReactNode;
   historicalContent?: HistoricalAssignmentContent;
 }) {
+  const personalStudy = parsePersonalLearning(learnerId)?.mode === 'study';
+  const steps = MONTHLY_STEPS.map((label, index) => personalStudy && index === 7 ? 'Presentation' : label);
   // Imported cards retain their original storage order; display them in wizard order.
   const orderedHistoricalContent = historicalContent ? { ...historicalContent, cards: [
     ...historicalContent.cards.slice(0, 6), ...historicalContent.cards.slice(6, 8).reverse(),
@@ -156,6 +157,8 @@ export function AssignmentSubmissionWizard({
   const lockedRef = useRef(false);
   const mountedRef = useRef(true);
   const onRestoreTimeRef = useRef(onRestoreTime);
+  const ksbMappingsRef = useRef(ksbMappings);
+  ksbMappingsRef.current = ksbMappings;
   const recoveryKey = `monthly-assignment-draft:${kind}:${learnerId}:${componentId}`;
 
   useEffect(() => { onRestoreTimeRef.current = onRestoreTime; }, [onRestoreTime]);
@@ -279,7 +282,7 @@ export function AssignmentSubmissionWizard({
         setStatus(submission.status || '');
         setImported(['imported_legacy', 'classified_legacy'].includes(submission.submissionOrigin || ''));
         if (submission.monthlyAssignment) {
-          const restored = { ...emptyMonthlyAssignment(ksbMappings.map(m => m.code), defaultMonth), ...submission.monthlyAssignment, timeEntries: submission.monthlyAssignment.timeEntries };
+          const restored = { ...emptyMonthlyAssignment(ksbMappingsRef.current.map(m => m.code), defaultMonth), ...submission.monthlyAssignment, timeEntries: submission.monthlyAssignment.timeEntries };
           setMonthly(restored);
           setStep(Math.max(0, Math.min(7, Number(restored.step) || 0)));
         } else setMonthly(current => ({ ...current, timeEntries: undefined }));
@@ -302,7 +305,7 @@ export function AssignmentSubmissionWizard({
         }
       });
     return () => { active = false; };
-  }, [kind, learnerId, componentId, defaultMonth]);
+  }, [kind, learnerId, componentId, defaultMonth, recoveryKey]);
 
   const saveDraft = async (_showSaved = true): Promise<boolean> => {
     if (locked || !loadedRef.current || submittingRef.current) return false;
@@ -497,21 +500,21 @@ export function AssignmentSubmissionWizard({
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-700">
             <label>Submission month <input aria-label="Submission month" type="month" value={monthly.month} disabled={readOnly || savingDraft} onChange={e => { if (e.target.value) changeMonthly(m => ({ ...m, month: e.target.value, meetingKey: '', presentationToken: '' })); }} className="ml-2 rounded-lg border border-slate-200 px-2 py-1" /></label>
-            <span>Step {step + 1} of 8 — {MONTHLY_STEPS[step]}</span>
+            <span>Step {step + 1} of 8 — {steps[step]}</span>
             <span>{imported ? 'Historical record — new submission checks do not apply' : checks.length ? `${checks.filter(c => c.passed).length}/13 checks passed at last check` : 'Quality checks not run yet'}</span>
           </div>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-slate-900 transition-all" style={{ width: `${(step + 1) / 8 * 100}%` }} /></div>
           <div className="mt-4 flex flex-wrap gap-2">
-            {STEP_META.map((item, index) => (
+            {steps.map((label, index) => (
               <button
-                key={item.label}
+                key={label}
                 type="button"
                 onClick={() => setStep(index)}
                 className={`rounded-lg border px-3 py-2 text-left text-xs shadow-sm transition-colors ${step === index ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-sky-50'}`}
               >
                 <span className="flex items-center gap-2 text-[11px] font-bold">
                   <span className={`grid h-6 w-6 place-items-center rounded-full ${step === index ? 'bg-white/15 text-white' : 'bg-background-200 text-foreground-500'}`}>{index + 1}</span>
-                  <span>{item.label}</span>
+                  <span>{label}</span>
                 </span>
               </button>
             ))}

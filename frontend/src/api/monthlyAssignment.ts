@@ -1,3 +1,4 @@
+import { learningFetch } from '@/lib/personalLearning';
 /** Versioned assignment data, persisted inside full_submission (not browser-only). */
 export interface MonthlyAssignment {
   version: 2;
@@ -46,7 +47,7 @@ export function emptyMonthlyAssignment(codes: string[], month: string): MonthlyA
 export interface AssignmentQualityCheck { key: string; label: string; passed: boolean }
 
 export async function checkMonthlyAssignment(payload: unknown): Promise<AssignmentQualityCheck[]> {
-  const res = await fetch('/learner_api/reflection/assignment/check/', {
+  const res = await learningFetch('/learner_api/reflection/assignment/check/', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   });
   const data = await res.json();
@@ -55,7 +56,7 @@ export async function checkMonthlyAssignment(payload: unknown): Promise<Assignme
 }
 
 export async function exportMonthlyPresentation(payload: unknown): Promise<{ blob: Blob; token: string }> {
-  const res = await fetch('/learner_api/reflection/assignment/presentation/', {
+  const res = await learningFetch('/learner_api/reflection/assignment/presentation/', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   });
   if (!res.ok) {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssignmentSubmissionWizard } from './AssignmentSubmissionWizard';
 import { checkMonthlyAssignment, emptyMonthlyAssignment } from '@/api/monthlyAssignment';
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission } from '@/api/reflectionSubmission';
+import { fetchLearnerCalendarEvents } from '@/api/learnerCalendar';
 
 vi.mock('./page', () => ({ InlineAttachmentPreview: ({ url }: { url: string }) => <div data-testid="question-preview" data-url={url}>Question preview</div> }));
 
@@ -42,8 +43,8 @@ async function enterTopicTime() {
   fireEvent.change(screen.getByLabelText('Topic 1'), { target: { value: 'Research' } });
   fireEvent.change(screen.getByLabelText('Hours 1'), { target: { value: '3.5' } });
   const month = (screen.getByLabelText('Submission month') as HTMLInputElement).value;
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1', exact: true })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Date 1', exact: true }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Date 1' }));
   fireEvent.click(screen.getByRole('button', { name: `${month}-15` }));
 }
 
@@ -58,6 +59,25 @@ function confirmLearning() {
   for (const name of learningDeclarations) fireEvent.click(screen.getByRole('checkbox', { name }));
 }
 describe('monthly assignment drafts', () => {
+  it('shows the personal booking exemption while keeping presentation and validation', async () => {
+    render(<AssignmentSubmissionWizard {...props} learnerId="pl.7.study.MOD-A" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Presentation/ }));
+    expect(screen.getByText('Step 8 of 8 — Presentation')).toBeVisible();
+    expect(screen.getByText(/Coaching booking is not required for personal learning/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Recheck submission requirements' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Export PowerPoint (.pptx)' })).toBeVisible();
+    expect(fetchLearnerCalendarEvents).not.toHaveBeenCalled();
+  });
+
+  it('keeps the normal coaching step when previewing the learner experience', async () => {
+    render(<AssignmentSubmissionWizard {...props} learnerId="pl.7.preview.MOD-A" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
+    expect(screen.getByText(/Preview does not create coaching bookings/)).toBeVisible();
+    expect(screen.queryByText(/Coaching booking is not required/)).not.toBeInTheDocument();
+    expect(fetchLearnerCalendarEvents).not.toHaveBeenCalled();
+  });
+
   describe.each([
     ['commercial', false], ['commercial', true],
     ['apprenticeship', false], ['apprenticeship', true],

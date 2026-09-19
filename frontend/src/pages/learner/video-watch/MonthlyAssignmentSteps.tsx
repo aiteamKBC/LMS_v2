@@ -139,6 +139,8 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   historical?: boolean; question?: string; activityId?: string;
   onNavigateToCheck?: (step: number, target: string) => void;
 }) {
+  const personal = parsePersonalLearning(learnerId);
+  const personalStudy = personal?.mode === 'study';
   useEffect(() => {
     if (step !== 7 || disabled || historical || data.uploadedPresentation) return;
     if (fillEmptyPresentationSlides(data, answers.whatYouLearned, answers.businessImpact) === data) return;
@@ -225,7 +227,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     try {
       const uploaded = await uploadEvidence(kind, learnerId, file, `presentation-reference-${activityId}`);
       if (uploaded.status !== 'approved') throw new Error('This file has not passed the upload checks. Choose another reference.');
-      const response = await fetch(`/learner_api/reflection/assignment/presentation-design/?learnerId=${encodeURIComponent(learnerId)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ learnerKind: kind, evidenceId: uploaded.id }) });
+      const response = await learningFetch(`/learner_api/reflection/assignment/presentation-design/?learnerId=${encodeURIComponent(learnerId)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ learnerKind: kind, evidenceId: uploaded.id }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not read this design reference.');
       if (presentationContextRef.current !== presentationContext) return;

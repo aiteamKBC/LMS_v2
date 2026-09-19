@@ -230,7 +230,7 @@ export async function createAssignmentPdf(html: string) {
   cardRow([{ label: 'Reviewed at', value: value('Reviewed at') }]);
   cardRow([{ label: 'Coach feedback', value: value('Coach feedback') }]);
 
-  const imagePage = (image: CanvasImageSource, width: number, height: number) => {
+  const imagePage = (image: globalThis.CanvasImageSource, width: number, height: number) => {
     if (y > 210) flush();
     begin();
     const scale = Math.min(1070 / width, 1390 / height);
@@ -243,7 +243,8 @@ export async function createAssignmentPdf(html: string) {
       if (/\.pdf$/i.test(name) || contentType.includes('application/pdf')) {
         const { getDocument, GlobalWorkerOptions } = await import('pdfjs-dist');
         GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-        const source = await getDocument({ data: new Uint8Array(bytes) }).promise;
+        const task = getDocument({ data: new Uint8Array(bytes) });
+        const source = await task.promise;
         try {
           for (let i = 1; i <= source.numPages; i++) {
             const page = await source.getPage(i);
@@ -254,7 +255,7 @@ export async function createAssignmentPdf(html: string) {
             imagePage(sheet, sheet.width, sheet.height);
             page.cleanup();
           }
-        } finally { await source.destroy(); }
+        } finally { await task.destroy(); }
       } else if (/\.(png|jpe?g|webp)$/i.test(name) || /^image\/(png|jpeg|webp)/.test(contentType)) {
         const url = URL.createObjectURL(new Blob([bytes]));
         try { const image = await loadImage(url); imagePage(image, image.naturalWidth, image.naturalHeight); }

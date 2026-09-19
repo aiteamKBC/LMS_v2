@@ -1,5 +1,6 @@
 from .coach_availability import coach_available_slots
 from . import presentation_design
+from . import personal_learning
 from . import learner_import
 from . import monthly_reflection_ai
 from .assignment_ai_check import assignment_ai_check
@@ -23,6 +24,9 @@ from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path('personal-learning/courses/', personal_learning.courses),
+    path('personal-learning/verify/<uuid:token>/', personal_learning.verify_certificate),
+    path('personal-learning/<str:identity>/request/', personal_learning.learner_request),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/join/', session_results.learner_join),
     path('session-catchup/<str:kind>/<int:learner_id>/', link_catchup),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/', session_results.learner_results),

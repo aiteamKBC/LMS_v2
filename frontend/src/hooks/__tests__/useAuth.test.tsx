@@ -19,6 +19,7 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { createCachedResource, clearAllCachedResources } from '@/api/cachedRequest';
 import { getRememberedLearner, rememberLearner, rememberSignedInLearner } from '../useMyLearner';
+import { rememberPersonalLearning, readPersonalLearning } from '@/lib/personalLearning';
 
 const apiMe = vi.fn();
 const apiLogin = vi.fn();
@@ -82,6 +83,14 @@ afterEach(() => {
 });
 
 describe('learner identity lifecycle', () => {
+  it('keeps personal mode across session restoration and clears it on sign-out', async () => {
+    rememberPersonalLearning('pl.1.study.MOD-A', '/curriculum/module-builder?module=MOD-A');
+    apiMe.mockResolvedValue(ADMIN);
+    const { result } = await renderAuth();
+    expect(readPersonalLearning()?.id).toBe('pl.1.study.MOD-A');
+    act(() => result.current.logout());
+    expect(readPersonalLearning()).toBeNull();
+  });
   const account = { ...LEARNER, subjectType: 'learner' as const, subjectId: 499, learnerType: 'commercial' };
 
   it('pins the restored account despite stale learner selections', async () => {

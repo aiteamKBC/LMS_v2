@@ -485,7 +485,7 @@ function SubjectCardsSkeleton() {
   </div>;
 }
 
-function nativeHref(entry: SubjectEntry, kind?: string, learnerId?: string) {
+export function nativeHref(entry: SubjectEntry, kind?: string, learnerId?: string) {
   const component = entry.native;
   if (!component || !kind || !learnerId || !hasComponentContent(component)) return null;
   const path = component.isQuiz && component.quizMeta ? `quiz/${kind}/${learnerId}/${component.quizMeta.quizId}`

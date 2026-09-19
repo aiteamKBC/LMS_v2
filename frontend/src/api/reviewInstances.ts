@@ -73,6 +73,19 @@ export interface ReviewProgressMetric {
   varianceDirection: 'above' | 'below' | '';
 }
 
+export interface ReviewKsbProgress {
+  available: boolean;
+  title?: string | null;
+  reason?: string | null;
+  actual?: number | null;
+  expected?: number | null;
+  planned?: number | null;
+  actualPercent: number | null;
+  expectedPercent: number | null;
+  variancePercent?: number | null;
+  varianceDirection?: 'above' | 'below' | '';
+}
+
 /**
  * What a coach froze the last time they pressed Calculate on a Progress
  * Review. Rendered exactly as stored -- the frontend never recalculates, and
@@ -84,12 +97,19 @@ export interface ReviewProgressMetric {
  */
 export interface ReviewProgressSnapshot {
   calculationMethod: string;
+  schemaVersion?: number;
+  formulaVersion?: string;
+  /** Source captured for newly calculated snapshots; absent on historical snapshots. */
+  actualHoursSource?: 'learner.completed_hours';
   calculatedFrom: string;
   calculatedAt: string;
   calculatedBy: string;
   weeksElapsed: number | null;
   programmeProgress: ReviewProgressMetric;
   offTheJobHours: ReviewProgressMetric;
+  /** Additive and optional so signed snapshots from before this contract keep
+   * rendering without being reinterpreted. */
+  ksbProgress?: ReviewKsbProgress | null;
 }
 
 /** One past completed Progress Review and the RAG that review itself
