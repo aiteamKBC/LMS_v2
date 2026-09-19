@@ -50,6 +50,7 @@ beforeEach(() => {
     reviewTemplateId: 'template-1', reviewInstanceId: 'instance-1', learnerSigned: false,
   };
   review = {
+    manualOverride: null,
     instance: { id: 'instance-1', reviewTemplateId: 'template-1', learnerId: 12, programmeId: 'programme-1', occurrenceNumber: 1,
       targetDate: '2026-09-14', status: 'awaiting-signature', startedAt: null, completedAt: null },
     template: { id: 'template-1', name: 'Progress review', signatures: { advisor: true, participant: true, employer: false, referrer: false },

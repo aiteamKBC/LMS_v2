@@ -63,7 +63,7 @@ def plan_module(row):
             'learning_outcomes': []}
 
 
-def attach_curriculum_slots(module_rows, by_id, week_counts):
+def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=None):
     """Give every learner module the curriculum slot spine the Builder shows.
 
     This is a READ of the curriculum scheduler, not a second one. The holidays
@@ -71,24 +71,34 @@ def attach_curriculum_slots(module_rows, by_id, week_counts):
     Module Builder, the Teams series and the tutor conflict check use, with the
     cohort's own ``excluded_holiday_ids`` deny-list already applied upstream --
     and the spine comes from ``module_session_plan_for_count``, which is the
-    single door onto ``build_module_session_plan``. Nothing about which slots a
-    holiday touches is decided here, so the learner cannot be shown a timeline
-    the curriculum does not itself hold.
+    single door onto ``build_module_session_plan``. Nothing about holidays or
+    Reading Weeks is decided here, so the learner cannot be shown a timeline the
+    curriculum does not itself hold.
 
-    ``slots`` is what makes a holiday visible to a learner at all: every slot
-    still delivers its session, ticked holiday or not, but a slot a holiday
-    falls on names it -- so a learner reading the timeline sees which week to
-    expect a closure on, rather than an unexplained gap or a silently missed
-    warning.
+    ``slots`` is what makes a holiday visible to a learner at all: a closed
+    delivery slot delivers no session, so a learner reading only session dates
+    sees an unexplained gap. Reading Weeks must come from this spine and never
+    be inferred from gaps between session dates -- a gap is also what a term
+    break, an unauthored week or a module that simply does not deliver that week
+    looks like.
 
     Holidays are resolved once for every cohort on the page rather than per
     module, because every module of a cohort shares that cohort's holidays.
+
+    ``weeks_by_number`` maps ``(module_id, week_number)`` to that authored
+    week's ``id``/``title``/``learningOutcomes`` (see ``curriculum.weeks``).
+    A taught slot's ``sessionNumber`` is the same content-week numbering, so a
+    live-session slot picks up its week's own title and outcomes here rather
+    than the module-wide aggregate. Omitted entirely when the caller has none
+    -- the spine then matches the scheduler's own output exactly, which the
+    Reading Week regression tests rely on.
     """
     from curriculum_api.views import (
         cohort_selected_holidays_by_cohort, module_session_plan_for_count,
         module_stored_session_count,
     )
 
+    weeks_by_number = weeks_by_number or {}
     try:
         holidays = cohort_selected_holidays_by_cohort(
             [row.get('cohort_id') for row in module_rows]
@@ -112,6 +122,14 @@ def attach_curriculum_slots(module_rows, by_id, week_counts):
             log.warning('Could not plan curriculum slots for module %s.', row['id'], exc_info=True)
             plan = {}
         module['curriculumSlots'] = plan.get('slots') or []
+        for slot in module['curriculumSlots']:
+            if slot.get('type') != 'live-session' or not slot.get('sessionNumber'):
+                continue
+            week = weeks_by_number.get((row['id'], slot['sessionNumber']))
+            if week:
+                slot['weekId'] = week['id']
+                slot['weekTitle'] = week['title']
+                slot['learningOutcomes'] = week['learningOutcomes']
         # The effective delivery end is the scheduler's own -- the last
         # DELIVERED session, holiday shifts included. Deliberately separate from
         # the stored `end_date` the module row carries, which a human may have
@@ -217,18 +235,24 @@ def read_dashboard(source, section=None):
             modules = [plan_module(row) for row in module_rows]
             by_id = {module['id']: module for module in modules}
             week_counts = defaultdict(int)
-            cur.execute('''SELECT module_catalogue_id,learning_outcomes FROM curriculum.weeks
+            weeks_by_number = {}
+            cur.execute('''SELECT id,module_catalogue_id,week_number,title,learning_outcomes FROM curriculum.weeks
                 WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')
                 ORDER BY display_order,week_number,id''', [ids])
             for row in rows(cur):
                 week_counts[row['module_catalogue_id']] += 1
+                outcomes = [text for text in (clean_text(o) if isinstance(o, str) else '' for o in as_list(row['learning_outcomes'])) if text]
                 module = by_id.get(row['module_catalogue_id'])
                 if module is not None:
-                    for outcome in as_list(row['learning_outcomes']):
-                        text = clean_text(outcome) if isinstance(outcome, str) else ''
-                        if text and text not in module['learning_outcomes']:
+                    for text in outcomes:
+                        if text not in module['learning_outcomes']:
                             module['learning_outcomes'].append(text)
-            attach_curriculum_slots(module_rows, by_id, week_counts)
+                # The first authored week at a given number wins, matching the
+                # display order the module-level aggregate above already reads in.
+                key = (row['module_catalogue_id'], row['week_number'])
+                if key not in weeks_by_number:
+                    weeks_by_number[key] = {'id': row['id'], 'title': clean_text(row['title']), 'learningOutcomes': outcomes}
+            attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number)
             if section != 'learning':
                 cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
                     s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.repeat_pattern,s.status AS series_status,
@@ -286,7 +310,10 @@ def training_plan_dashboard(request, kind, pk):
     try:
         source = model.all_learners.get(pk=pk)
         section = request.GET.get('section')
-        if section not in (None, 'overview', 'contract', 'learning'):
+        # ``learning`` is the detailed weekly dashboard projection.  Keep it
+        # on the same read path as overview so clients can request the weekly
+        # modules/sessions without being rejected by the section guard.
+        if section not in (None, 'overview', 'learning', 'contract'):
             return JsonResponse({'error': 'Invalid training plan section.'}, status=400)
         payload = read_dashboard(source, section=section)
     except model.DoesNotExist:

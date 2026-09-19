@@ -5504,6 +5504,13 @@ body,
   min-height: 100vh;
 }
 
+html:has(.workspace-shell),
+body:has(.workspace-shell),
+#root:has(.workspace-shell) {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   background: var(--kbc-app-bg);
   color: var(--kbc-text);

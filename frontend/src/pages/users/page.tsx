@@ -120,14 +120,15 @@ function combinedType(a: DirectoryRow, b: DirectoryRow): string {
  * access, and a staff row has no programme or learning plan. Each fills the
  * other's gaps. */
 function fillBlanks(over: DirectoryRow, under: DirectoryRow): DirectoryRow {
-  const out: Record<string, unknown> = { ...under };
+  const out: DirectoryRow = { ...under };
   for (const [key, value] of Object.entries(over)) {
     const empty = value === undefined || value === null || value === '';
-    if (!empty || !(key in out) || out[key] === undefined || out[key] === null || out[key] === '') {
-      out[key] = value;
+    const existing = Reflect.get(out, key);
+    if (!empty || !(key in out) || existing === undefined || existing === null || existing === '') {
+      Reflect.set(out, key, value);
     }
   }
-  return out as DirectoryRow;
+  return out;
 }
 
 export function mergeDirectoryRows(rows: DirectoryRow[]): DirectoryRow[] {

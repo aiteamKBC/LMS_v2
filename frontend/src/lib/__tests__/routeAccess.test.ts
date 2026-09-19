@@ -175,12 +175,12 @@ describe('postLoginRouteFor', () => {
   });
 
   it.each([
-    [{ role: 'admin' as const, accessHome: '/workspace/admin' }, '/workspace/admin'],
-    [{ role: 'staff' as const, accessHome: '/workspace/curriculum' }, '/workspace/curriculum'],
-    [{ role: 'staff' as const, accessHome: '/workspace/tutor' }, '/workspace/tutor'],
-    [{ role: 'staff' as const, accessHome: '/access-required' }, '/access-required'],
+    [{ role: 'admin' as const, subjectId: 1, accessHome: '/workspace/admin' }, '/workspace/admin'],
+    [{ role: 'staff' as const, subjectId: 1, accessHome: '/workspace/curriculum' }, '/workspace/curriculum'],
+    [{ role: 'staff' as const, subjectId: 1, accessHome: '/workspace/tutor' }, '/workspace/tutor'],
+    [{ role: 'staff' as const, subjectId: 1, accessHome: '/access-required' }, '/access-required'],
     [{ role: 'employer' as const, subjectId: 42 }, '/employers/42'],
-    [{ role: 'employer' as const }, '/workspace/employer'],
+    [{ role: 'employer' as const, subjectId: null }, '/workspace/employer'],
   ])('always uses the account home %s instead of stale destinations', (account, home) => {
     for (const requested of ['/notifications?unread=1', '/curriculum/programmes', '/employers/99', '//example.test', undefined]) {
       expect(postLoginRouteFor(account, requested)).toBe(home);

@@ -1,3 +1,4 @@
+import { learningFetch } from '@/lib/personalLearning';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { MonthlyAssignment } from './monthlyAssignment';
 
@@ -114,7 +115,7 @@ export async function saveLearningReflectionSubmission(
 ): Promise<{ id: string; status: string }> {
   let response: Response;
   try {
-    response = await fetch('/learner_api/reflection/submissions/', {
+    response = await learningFetch('/learner_api/reflection/submissions/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),

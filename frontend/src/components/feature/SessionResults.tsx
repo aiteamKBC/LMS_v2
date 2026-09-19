@@ -71,7 +71,7 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
       ? 'Saved recordings and transcripts are not ready for playback yet. Please contact your tutor.'
       : 'Recording storage needs setup. Saved attendance is available below; synchronization and playback are unavailable until setup is complete.'}</p>}
     {loading ? <p role="status" className="p-5 text-sm">Loading saved session…</p> : !session ? !error && !saved.error && <p className="p-5 text-sm">This session has not been linked yet.</p> : <>
-      {learner && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
+      {learner && !preview && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
         <strong>Your attendance: {own ? labels[own.status] : session.reportReady ? 'Identity needs review' : 'Awaiting report'}</strong>
         {own && <p className="mt-1 text-foreground-500">{Math.floor(own.seconds / 60)}m {own.seconds % 60}s verified in Teams. Presence requires more than 3 minutes.</p>}
         {own?.attendance === 0 && <Link className="mt-2 inline-block font-semibold text-primary-700 underline" to="/learner/attendance">{own.excused ? 'Book catch-up with your coach' : 'Open attendance and report absence'}</Link>}

@@ -20,6 +20,7 @@ const attendance = (id: string, overrides: Partial<MeetingAttendance> = {}): Mee
   absenceReported: false, absenceSessionId: 'absence:12:1', missed: false, ...overrides,
 });
 const signatureDefinition = (): LearnerReviewDefinition => ({
+  manualOverride: null,
   instance: { id: 'instance-1', reviewTemplateId: 'template-1', learnerId: 12, programmeId: 'programme-1',
     occurrenceNumber: 1, targetDate: today, status: 'awaiting-signature', startedAt: null, completedAt: today },
   template: { id: 'template-1', name: 'Progress Review',

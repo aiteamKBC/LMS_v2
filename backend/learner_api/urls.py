@@ -1,7 +1,9 @@
 from .coach_availability import coach_available_slots
 from . import presentation_design
+from . import personal_learning
 from . import learner_import
 from . import monthly_reflection_ai
+from .assignment_ai_check import assignment_ai_check
 from . import ksb_generation
 from django.urls import path
 from . import monthly_logs
@@ -22,6 +24,9 @@ from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path('personal-learning/courses/', personal_learning.courses),
+    path('personal-learning/verify/<uuid:token>/', personal_learning.verify_certificate),
+    path('personal-learning/<str:identity>/request/', personal_learning.learner_request),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/join/', session_results.learner_join),
     path('session-catchup/<str:kind>/<int:learner_id>/', link_catchup),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/', session_results.learner_results),
@@ -191,6 +196,7 @@ urlpatterns = [
     ),
     path("monthly-reports/<str:kind>/<int:pk>/", monthly_reports.monthly_reports, name="learner-monthly-reports"),
     path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
+    path("reflection/assignment/ai-check/", assignment_ai_check, name="monthly-assignment-ai-check"),
     path("reflection/assignment/legacy-document/<int:evidence_id>/", legacy_assignments.open_legacy_assignment_document, name="legacy-assignment-document"),
     path("reflection/assignment/presentation-design/", presentation_design.upload_design, name="presentation-design"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
