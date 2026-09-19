@@ -10,7 +10,7 @@ from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 from login.permissions import require_role, learner_self_or_staff
 
-from .session_results_policy import session_roster, attendance_csv, instant, session_runs
+from .session_results_policy import session_roster, attendance_csv, instant, session_runs, evidence_seconds
 from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
 from .session_sync_runtime import start_requested_sync
 from .session_transfer_progress import summarize_transfers
@@ -134,8 +134,13 @@ def result_rows(series, *, session_number=None, email=None):
 
 
 def apply_recovery(results):
-    """Use exact learner + occurrence report identity, never names or dates alone."""
+    """Layer recovery over raw Teams evidence using exact learner/occurrence identity.
+
+    ``status`` and ``attendance`` remain the result of the original meeting.
+    Recovery only changes the explicitly named effective fields.
+    """
     from learner_api.absence_reports import _kbc_attendance_report_id
+    from learner_api.alternative_recovery import alternative_occurrence_id
     emails = list({person['email'] for item in results for person in item['attendance'] if person['email']})
     if not emails:
         return
@@ -148,14 +153,39 @@ def apply_recovery(results):
                    for item in results for p in item['attendance'] if len(email_ids[p['email']]) == 1}
     if not report_keys:
         return
-    reports = read('''SELECT r.attendance_id,r.status,r.catchup_event_key,r.learner_id,
+    reports = read('''SELECT r.attendance_id,r.status,r.recovery_method,r.catchup_event_key,r.learner_id,
         e.status AS catchup_status,e.learner_email,e.event_type
         FROM "Coach".coach_absence_report r
         LEFT JOIN "Coach".coach_calendar_event e ON e.event_key=r.catchup_event_key
         WHERE r.attendance_id=ANY(%s) ORDER BY r.updated_at,r.id''', [list(report_keys)])
+    target_ids = sorted({
+        alternative_occurrence_id(report.get('catchup_event_key'))
+        for report in reports
+        if report.get('recovery_method') == 'alternative'
+    } - {''})
+    alternative_evidence = defaultdict(list)
+    target_states = {}
+    if target_ids:
+        for record in read('''SELECT occurrence_id,email,total_attendance_seconds,intervals
+            FROM curriculum.live_session_attendance WHERE occurrence_id=ANY(%s)''', [target_ids]):
+            email = str(record.get('email') or '').strip().casefold()
+            if email:
+                record['intervals'] = json_value(record.get('intervals'), [])
+                alternative_evidence[(record['occurrence_id'], email)].append(record)
+        target_states = {
+            row['id']: row for row in read('''SELECT id,status,actual_end,attendance_report_id,scheduled_end
+                FROM curriculum.live_session_occurrences WHERE id=ANY(%s)''', [target_ids])
+        }
     reports = {str(report['attendance_id']): report for report in reports}
     for item in results:
         for person in item['attendance']:
+            raw_status = person.get('rawStatus', person.get('status'))
+            raw_attendance = person.get('rawAttendance', person.get('attendance'))
+            person.update(rawStatus=raw_status, rawAttendance=raw_attendance,
+                          excuseStatus='none', recoveryStatus='none',
+                          recoveryType='none',
+                          effectiveStatus=raw_status, effectiveAttendance=raw_attendance,
+                          finalOutcome=raw_status)
             ids = email_ids[person['email']]
             if len(ids) != 1:
                 continue
@@ -163,14 +193,43 @@ def apply_recovery(results):
             report = reports.get(str(_kbc_attendance_report_id(f"{learner_id}:teams:{item['id']}")))
             if not report or report['learner_id'] != learner_id:
                 continue
+            person['excuseStatus'] = report['status'] or 'none'
             person['excused'] = report['status'] == 'approved'
-            person['catchupCompleted'] = bool(person['excused'] and report['catchup_status'] == 'completed'
+            recovery_method = report.get('recovery_method') or 'none'
+            person['recoveryType'] = recovery_method
+            coach_completed = bool(person['excused'] and report['catchup_status'] == 'completed'
                 and report['event_type'] == 'catch-up'
                 and str(report['learner_email'] or '').strip().casefold() == person['email'])
-            if person['catchupCompleted']:
-                person.update(status='recovered', attendance=1)
-            elif person['excused'] and person['status'] == 'absent':
-                person['status'] = 'excused'
+            target_id = alternative_occurrence_id(report.get('catchup_event_key'))
+            alternative_seconds = evidence_seconds(alternative_evidence[(target_id, person['email'])]) if target_id else 0
+            alternative_completed = bool(
+                person['excused']
+                and recovery_method == 'alternative'
+                and alternative_seconds > 180
+            )
+            person['catchupCompleted'] = bool(coach_completed or alternative_completed)
+            if person['catchupCompleted'] and raw_status == 'absent':
+                person.update(recoveryStatus='completed', effectiveStatus='made_up',
+                              effectiveAttendance=1, finalOutcome='made_up')
+            elif person['excused'] and raw_status == 'absent':
+                if recovery_method == 'alternative' and target_id:
+                    target = target_states.get(target_id) or {}
+                    target_complete = bool(target.get('actual_end') and target.get('attendance_report_id'))
+                    target_status = str(target.get('status') or '').strip().casefold()
+                    recovery_status = (
+                        'cancelled'
+                        if target_status in {'cancelled', 'canceled', 'deleted', 'failed', 'superseded'}
+                        else 'missed' if target_complete else 'scheduled'
+                    )
+                elif report['event_type'] == 'catch-up':
+                    recovery_status = report['catchup_status']
+                elif recovery_method == 'recorded':
+                    recovery_status = 'recording_only'
+                else:
+                    recovery_status = 'none'
+                person.update(recoveryStatus=recovery_status or 'none',
+                              effectiveStatus='absent_excused', effectiveAttendance=0,
+                              finalOutcome='absent_excused')
 
 
 def unavailable():

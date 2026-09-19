@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import Swal from 'sweetalert2';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { fetchAbsenceReports, submitAbsenceReport, type LearnerAbsenceReport } from '@/api/absenceReports';
@@ -10,6 +11,7 @@ import AbsenceReportForm from './components/AbsenceReportForm';
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '12' }) }));
 vi.mock('@/api/absenceReports', () => ({ fetchAbsenceReports: vi.fn(), submitAbsenceReport: vi.fn() }));
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn(), bookLearnerCalendarSession: vi.fn() }));
+vi.mock('sweetalert2', () => ({ default: { fire: vi.fn() } }));
 
 const futureDate = (days: number) => {
   const date = new Date(); date.setDate(date.getDate() + days); date.setHours(12, 0, 0, 0);
@@ -54,11 +56,55 @@ function fillBooking() {
 }
 
 describe('absence recovery choice', () => {
+  it('keeps the alternative option visible and explains when no equivalent lecture exists', async () => {
+    await openForm();
+    const alternative = screen.getByRole('radio', { name: 'Attend another group session' });
+    expect(alternative).toBeVisible();
+    fireEvent.click(alternative);
+    expect(Swal.fire).toHaveBeenCalledWith(expect.objectContaining({
+      target: document.body,
+      icon: 'info',
+      title: 'No alternative lecture available',
+    }));
+    expect(alternative).not.toBeChecked();
+    expect(submit()).toBeDisabled();
+  });
+
+  it('offers a backend-approved cohort alternative and submits its exact occurrence', async () => {
+    const alternativeDate = futureDate(2);
+    vi.mocked(fetchAbsenceReports).mockResolvedValue({ count: 0, results: [], missedSessions: [{
+      id: 'first', sessionId: 'teams:first', title: 'first lecture', dateIso: lectureDate,
+      sessionType: 'live_session', startTime: '10:00', endTime: '11:00', coach: 'Coach',
+      module: 'Business', status: 'upcoming', alternativeSessions: [{
+        id: 'target-occurrence', sessionId: 'teams:target-occurrence', title: 'Equivalent lecture',
+        dateIso: alternativeDate, startTime: '14:00', endTime: '16:00', groupId: 'G2',
+        group: 'Thursday group', cohortId: 'C1', cohort: 'October cohort', module: 'Business',
+      }],
+    }] });
+    await openForm();
+    fireEvent.click(screen.getByRole('radio', { name: 'Attend another group session' }));
+    fireEvent.change(screen.getByLabelText('Available equivalent session *'), { target: { value: 'target-occurrence' } });
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(submit()).toBeEnabled();
+    fireEvent.click(submit());
+    await waitFor(() => expect(submitAbsenceReport).toHaveBeenCalledOnce());
+    const data = vi.mocked(submitAbsenceReport).mock.calls[0][2];
+    expect(data.get('recoveryMethod')).toBe('alternative');
+    expect(data.get('targetOccurrenceId')).toBe('target-occurrence');
+    expect(data.has('catchupEventKey')).toBe(false);
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
   it('requires an explicit recovery choice and confirmation, and saves the recording choice', async () => {
     await openForm();
     fireEvent.click(screen.getByRole('checkbox'));
     expect(submit()).toBeDisabled();
     fireEvent.click(screen.getByRole('radio', { name: 'Watch the recording' }));
+    expect(Swal.fire).toHaveBeenCalledWith(expect.objectContaining({
+      target: document.body,
+      icon: 'warning',
+      title: 'Recording does not recover attendance',
+    }));
     expect(submit()).toBeDisabled();
     fireEvent.click(screen.getByRole('checkbox'));
     fireEvent.click(submit());

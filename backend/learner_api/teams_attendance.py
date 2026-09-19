@@ -171,6 +171,32 @@ def fetch_verified_teams_attendance_rows(
             continue
         expected_emails_by_session[session.id] = session_emails
         all_expected_emails.update(session_emails)
+
+    # Approved recovery guests extend only the selected occurrence.  They do
+    # not become module/group members and are never added to the recurring
+    # Teams series attendee snapshot.
+    from .alternative_recovery import approved_alternative_guests
+    approved_guests = approved_alternative_guests(database)
+    if approved_guests:
+        occurrence_series = dict(
+            LiveSessionOccurrence.objects.using(database)
+            .filter(
+                pk__in=list(approved_guests),
+                live_session_id__in=[session.id for session in sessions],
+            )
+            .values_list("id", "live_session_id")
+        )
+        for occurrence_id, guest_emails in approved_guests.items():
+            session_id = occurrence_series.get(occurrence_id)
+            if not session_id:
+                continue
+            scoped_guests = set(guest_emails)
+            if identity_learners_by_email is not None:
+                scoped_guests &= identity_learners_by_email.keys()
+            if not scoped_guests:
+                continue
+            expected_emails_by_session.setdefault(session_id, set()).update(scoped_guests)
+            all_expected_emails.update(scoped_guests)
     if not all_expected_emails:
         return []
 
@@ -288,7 +314,11 @@ def fetch_verified_teams_attendance_rows(
         # that can't be found no longer hides an otherwise-valid invite match.
         module = modules_by_id.get(module_ref)
 
-        occurrence_expected = (_session_expected_emails(session) | launched_occurrences[occurrence.id])
+        occurrence_expected = (
+            _session_expected_emails(session)
+            | launched_occurrences[occurrence.id]
+            | approved_guests[occurrence.id]
+        )
         occurrence_emails = occurrence_expected | reported_occurrences[occurrence.id]
         for email in occurrence_emails & expected_emails_by_session.get(session.id, set()):
             learner = learners_by_email.get(email)
@@ -331,7 +361,8 @@ def fetch_verified_teams_attendance_rows(
                     "group_name": str(module.group_name or "").strip() if module else "",
                     "is_expected": email in occurrence_expected,
                     "eligibility_reason": (
-                        "teams_invite_list" if email in _session_expected_emails(session)
+                        "approved_recovery_guest" if email in approved_guests[occurrence.id]
+                        else "teams_invite_list" if email in _session_expected_emails(session)
                         else "assigned_lms_join" if email in launched_occurrences[occurrence.id]
                         else "verified_teams_participant"
                     ),
@@ -554,10 +585,10 @@ def sync_verified_teams_attendance_reporting(
             session_date = EXCLUDED.session_date,
             session_start_time = EXCLUDED.session_start_time,
             session_end_time = EXCLUDED.session_end_time,
-            attendance_status = CASE WHEN learner_attendance_details.catchup_completed THEN 'present' ELSE EXCLUDED.attendance_status END,
+            attendance_status = EXCLUDED.attendance_status,
             minutes_late = EXCLUDED.minutes_late,
-            absence_reason = CASE WHEN coalesce(learner_attendance_details.absence_reason,'')<>'' THEN learner_attendance_details.absence_reason ELSE EXCLUDED.absence_reason END,
-            catchup_completed = learner_attendance_details.catchup_completed OR EXCLUDED.catchup_completed,
+            absence_reason = EXCLUDED.absence_reason,
+            catchup_completed = EXCLUDED.catchup_completed,
             coach_name = EXCLUDED.coach_name,
             module_title = EXCLUDED.module_title,
             attended_seconds = EXCLUDED.attended_seconds,

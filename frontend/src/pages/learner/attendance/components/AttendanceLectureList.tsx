@@ -172,7 +172,7 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
       {row.absenceReport && <StatusBadge tone="neutral" label={`Absence ${row.absenceReport.status}`} />}
     </div>
     <div className={styles.lectureAttendanceAction} data-label="Attendance action">
-      {row.status === 'absent' ? <button type="button" className={styles.catchupButton} onClick={() => onCatchup(row)}><AppIcon className="ri-calendar-event-line" />Book Catchup Session</button>
+      {row.status === 'absent' && row.catchupStatus !== 'completed' ? <button type="button" className={styles.catchupButton} onClick={() => onCatchup(row)}><AppIcon className="ri-calendar-event-line" />Book Catchup Session</button>
         : row.canReportAbsence ? <button type="button" className={styles.reportButton} onClick={() => onReport(row)}><AppIcon className="ri-calendar-close-line" />Report Absence</button>
         : <span className={styles.unmapped}>{row.absenceReport ? 'Absence reported' : '—'}</span>}
     </div>

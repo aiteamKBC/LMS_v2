@@ -40,7 +40,7 @@ from .review_form import (
     sections_for,
 )
 from .views import _error, _parse_body
-from coach_api.models import CoachCalendarEvent
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
 from curriculum_api import review_instances
 
 logger = logging.getLogger(__name__)
@@ -398,6 +398,46 @@ def _learner_cards(employer_id):
             "documentsTotal": len(reviews) + len(documents),
         })
     return cards
+
+
+def _recording_absence_notification(report, employer_id):
+    return {
+        "id": f"recorded-absence:{report.pk}",
+        "text": (
+            f"{report.learner_name} reported they will miss {report.session_title} "
+            "and watch the recording. Attendance will remain absent."
+        ),
+        "createdAt": _iso(report.created_at),
+        "type": "attendance",
+        "category": "Attendance",
+        "link": f"/employers/{employer_id}",
+    }
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_absence_notifications(request, employer_id):
+    """Recording-choice absence alerts for this employer's own learners."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+
+    try:
+        learner_ids = list(
+            SOURCE_MODELS["apprenticeship"].all_learners
+            .filter(employer_id=employer_id)
+            .values_list("id", flat=True)
+        )
+        reports = (
+            CoachAbsenceReport.objects
+            .filter(learner_id__in=learner_ids, recovery_method="recorded")
+            .order_by("-created_at")[:50]
+        )
+        items = [_recording_absence_notification(report, employer_id) for report in reports]
+    except DatabaseError:
+        logger.exception("Could not load absence notifications for employer %s", employer_id)
+        return _error("Could not load absence notifications.", 502)
+
+    return JsonResponse({"items": items})
 
 
 @csrf_exempt

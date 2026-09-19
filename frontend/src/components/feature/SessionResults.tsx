@@ -10,10 +10,21 @@ import {
 } from '@/api/sessionResults';
 import { useSavedSessionData } from '@/hooks/useSavedSessionData';
 
-const labels: Record<SessionPerson['status'], string> = {
+type RawStatus = 'present' | 'absent' | 'pending' | 'review';
+type FinalOutcome = 'present' | 'absent' | 'pending' | 'review' | 'absent_excused' | 'made_up';
+const rawLabels: Record<RawStatus, string> = {
   present: 'Present', absent: 'Absent', pending: 'Awaiting report', review: 'Identity needs review',
-  excused: 'Excused — catch-up required', recovered: 'Present — catch-up completed',
 };
+const outcomeLabels: Record<FinalOutcome, string> = {
+  present: 'Present', absent: 'Absent, unrecovered', pending: 'Awaiting report', review: 'Identity needs review',
+  absent_excused: 'Absent, excused — catch-up required', made_up: 'Made up — catch-up completed',
+};
+const rawStatusOf = (person: SessionPerson): RawStatus => person.rawStatus
+  || (person.status === 'recovered' || person.status === 'excused' ? 'absent' : person.status);
+const rawAttendanceOf = (person: SessionPerson) => person.rawAttendance
+  ?? (person.status === 'recovered' || person.status === 'excused' ? 0 : person.attendance);
+const finalOutcomeOf = (person: SessionPerson): FinalOutcome => person.finalOutcome
+  || (person.status === 'recovered' ? 'made_up' : person.status === 'excused' ? 'absent_excused' : person.status);
 export function SessionResults({ seriesId, sessionNumber, learner, preview = false }: {
   seriesId: string; sessionNumber: number; learner?: SessionLearner; preview?: boolean;
 }) {
@@ -39,6 +50,8 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
   const transcripts = files.filter(file => file.type === 'transcript');
   const people = (session?.attendance || []).filter(person => `${person.name} ${person.email}`.toLowerCase().includes(query.toLowerCase()));
   const own = learner ? session?.attendance?.[0] : undefined;
+  const ownRawStatus = own ? rawStatusOf(own) : undefined;
+  const ownFinalOutcome = own ? finalOutcomeOf(own) : undefined;
   const sync = async () => {
     setSyncing(true); setError(''); setNotice('');
     try { setNotice((await requestSessionSync(seriesId)).message); saved.refresh(); }
@@ -72,9 +85,10 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
       : 'Recording storage needs setup. Saved attendance is available below; synchronization and playback are unavailable until setup is complete.'}</p>}
     {loading ? <p role="status" className="p-5 text-sm">Loading saved session…</p> : !session ? !error && !saved.error && <p className="p-5 text-sm">This session has not been linked yet.</p> : <>
       {learner && !preview && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
-        <strong>Your attendance: {own ? labels[own.status] : session.reportReady ? 'Identity needs review' : 'Awaiting report'}</strong>
+        <strong>Your original attendance: {ownRawStatus ? rawLabels[ownRawStatus] : session.reportReady ? 'Identity needs review' : 'Awaiting report'}</strong>
         {own && <p className="mt-1 text-foreground-500">{Math.floor(own.seconds / 60)}m {own.seconds % 60}s verified in Teams. Presence requires more than 3 minutes.</p>}
-        {own?.attendance === 0 && <Link className="mt-2 inline-block font-semibold text-primary-700 underline" to="/learner/attendance">{own.excused ? 'Book catch-up with your coach' : 'Open attendance and report absence'}</Link>}
+        {ownFinalOutcome && ownRawStatus && ownFinalOutcome !== ownRawStatus && <p className="mt-1 font-semibold text-primary-700">Effective outcome: {outcomeLabels[ownFinalOutcome]}</p>}
+        {own?.attendance === 0 && !own.catchupCompleted && <Link className="mt-2 inline-block font-semibold text-primary-700 underline" to="/learner/attendance">{own.excused ? 'Book catch-up with your coach' : 'Open attendance and report absence'}</Link>}
       </div>}
       <div className="flex gap-2 border-b px-4" role="tablist" aria-label="Session results">
         {(['recordings', 'attendance', 'transcripts'] as const).filter(value => (!learner && !preview) || value !== 'attendance').map(value =>
@@ -98,8 +112,8 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
             <div className="flex flex-wrap gap-2"><a href={sessionAttendanceUrl(session)} className="rounded-lg border px-4 py-2 text-sm font-semibold"><AppIcon className="ri-download-line mr-2" />Export attendance CSV</a>
               <a href={sessionAttendanceUrl(session, 'pdf')} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white"><AppIcon className="ri-download-line mr-2" />Export attendance PDF</a></div></div>
           {!session.reportReady && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm">Awaiting a completed Teams report. Pending learners are not marked absent.</p>}
-          <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-foreground-500"><th className="p-3">Learner / participant</th><th>Duration</th><th>Attendance</th><th>Status</th></tr></thead><tbody>
-            {people.slice(page * 25, page * 25 + 25).map((person, index) => <tr key={person.email || index} className="border-b"><td className="p-3"><p className="font-semibold">{person.name}</p><p className="text-xs text-foreground-500">{person.email || 'Unmatched identity'}</p></td><td>{Math.floor(person.seconds / 60)}m {person.seconds % 60}s</td><td>{person.attendance ?? '—'}</td><td>{labels[person.status]}</td></tr>)}
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-foreground-500"><th className="p-3">Learner / participant</th><th>Duration</th><th>Raw attendance</th><th>Raw status</th><th>Effective outcome</th></tr></thead><tbody>
+            {people.slice(page * 25, page * 25 + 25).map((person, index) => <tr key={person.email || index} className="border-b"><td className="p-3"><p className="font-semibold">{person.name}</p><p className="text-xs text-foreground-500">{person.email || 'Unmatched identity'}</p></td><td>{Math.floor(person.seconds / 60)}m {person.seconds % 60}s</td><td>{rawAttendanceOf(person) ?? '—'}</td><td>{rawLabels[rawStatusOf(person)]}</td><td>{outcomeLabels[finalOutcomeOf(person)]}</td></tr>)}
           </tbody></table></div>
           {people.length > 25 && <div className="flex items-center gap-4 text-sm"><button disabled={!page} onClick={() => setPage(value => value - 1)}>Previous</button><span>Page {page + 1} of {Math.ceil(people.length / 25)}</span><button disabled={(page + 1) * 25 >= people.length} onClick={() => setPage(value => value + 1)}>Next</button></div>}
         </div>}

@@ -378,6 +378,12 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             'creditedMinutes': row.get('credited_minutes'),
             'status': {'present': 'completed', 'late': 'late', 'absent': 'absent',
                        'upcoming': 'upcoming', 'in_progress': 'in_progress'}.get(row['attendance_status'], 'pending'),
+            'rawAttendanceStatus': row['attendance_status'],
+            'effectiveAttendanceStatus': row.get('effective_attendance_status') or row['attendance_status'],
+            'effectiveAttendance': row.get('effective_attendance') if 'effective_attendance' in row else
+                                   (1 if row['attendance_status'] in {'present', 'late'} else
+                                    0 if row['attendance_status'] == 'absent' else None),
+            'finalOutcome': row.get('final_outcome') or row['attendance_status'],
             'excused': bool(row.get('excused')), 'catchupStatus': 'completed' if row.get('catchup_completed') else None, 'updatedAt': row['updated_at'].isoformat() if row.get('updated_at') else None,
         }
         if source == 'kbc-attendance':

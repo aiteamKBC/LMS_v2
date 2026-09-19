@@ -120,6 +120,11 @@ urlpatterns = [
     # the signature route is declared before the learner route for clarity.
     path("employer-portal/<int:employer_id>/", employer_portal.employer_portal, name="employer-portal"),
     path(
+        "employer-portal/<int:employer_id>/absence-notifications/",
+        employer_portal.employer_absence_notifications,
+        name="employer-absence-notifications",
+    ),
+    path(
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/",
         employer_portal.employer_portal_learner,
         name="employer-portal-learner",

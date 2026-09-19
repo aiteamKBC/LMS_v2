@@ -4,8 +4,16 @@ import type { LearnerKind } from './learnerDetail';
 
 export interface SessionPerson {
   email: string; name: string; seconds: number; expected: boolean;
+  /** Result of the original Teams occurrence. Recovery never changes this. */
   status: 'present' | 'absent' | 'pending' | 'review' | 'excused' | 'recovered';
   attendance: 0 | 1 | null; excused: boolean; catchupCompleted: boolean;
+  rawStatus?: 'present' | 'absent' | 'pending' | 'review';
+  rawAttendance?: 0 | 1 | null;
+  excuseStatus?: 'none' | 'pending' | 'approved' | 'declined';
+  recoveryStatus?: string;
+  effectiveStatus?: 'present' | 'absent' | 'pending' | 'review' | 'absent_excused' | 'made_up';
+  effectiveAttendance?: 0 | 1 | null;
+  finalOutcome?: 'present' | 'absent' | 'pending' | 'review' | 'absent_excused' | 'made_up';
   intervals?: { joinedAt: string; leftAt: string }[];
 }
 export interface SessionFile {
