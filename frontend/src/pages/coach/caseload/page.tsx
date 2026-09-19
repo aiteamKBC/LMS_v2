@@ -18,21 +18,18 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
-import { roleNavMap } from '@/mocks/navigation';
 import { coachFetch } from '@/lib/coachFetch';
 import { fetchCoachCalendarEvents, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 
-import { CaseloadEmpty, CaseloadError, CaseloadLoading, CaseloadNoMatches, CaseloadSummaryLoading } from './components/CaseloadStates';
-import { CaseloadSummary } from './components/CaseloadSummary';
+import { CaseloadEmpty, CaseloadError, CaseloadLoading, CaseloadNoMatches } from './components/CaseloadStates';
 import { LearnerTable } from './components/LearnerTable';
 import { LearnerQuickViewDrawer } from './components/LearnerQuickViewDrawer';
 import { LearnerToolbar, type CaseloadFilterState } from './components/LearnerToolbar';
 import { LearnersHeaderActions } from './components/LearnersHeader';
 import { Pagination } from './components/Pagination';
-import { buildInsightMap, countCaseload } from './lib/attention';
+import { buildInsightMap } from './lib/attention';
 import { downloadLearnersPdf } from './lib/exportPdf';
 import {
   EMPTY_VALUE,
@@ -40,7 +37,6 @@ import {
   findAttendanceRecord,
   getProgramStatusKey,
   normalizeLearner,
-  parseDisplayDate,
   startOfToday,
 } from './lib/format';
 import type {
@@ -50,13 +46,9 @@ import type {
   FilterOption,
   Learner,
   QuickViewTab,
-  SortDirection,
-  SortKey,
   StatusFilter,
 } from './types';
 import styles from './caseload.module.css';
-
-const coachNav = roleNavMap.coach;
 
 const CASELOAD_ENDPOINT = '/coach_api/coach/caseload?live=1';
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
@@ -126,7 +118,7 @@ function uniqueOptions(values: string[]): FilterOption[] {
     .map((value) => ({ value, label: value }));
 }
 
-export default function CoachCaseload() {
+export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
   // Whose caseload this is: the signed-in coach, or the coach an administrator
@@ -143,9 +135,6 @@ export default function CoachCaseload() {
 
   const [filters, setFilters] = useState<CaseloadFilterState>(INITIAL_FILTERS);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [sortKey, setSortKey] = useState<SortKey>('risk');
-  const [sortDir, setSortDir] = useState<SortDirection>('desc');
-
   const pageSize = PAGE_SIZE;
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -221,8 +210,6 @@ export default function CoachCaseload() {
   // The one expensive computation on the page, and the only place risk is
   // decided. Keyed on the learner list, so filtering and sorting never redo it.
   const insights = useMemo(() => buildInsightMap(learners, today), [learners, today]);
-  const counts = useMemo(() => countCaseload(learners, insights), [learners, insights]);
-
   const filterOptions = useMemo(() => ({
     cohort: [...new Map(learners.map((learner) => [learner.cohortId, displayValue(learner.cohortName)])).entries()]
       .filter(([, label]) => label !== EMPTY_VALUE)
@@ -286,40 +273,11 @@ export default function CoachCaseload() {
   }, [learners, insights, statusFilter, filters]);
 
   const sorted = useMemo(() => {
-    const direction = sortDir === 'asc' ? 1 : -1;
-    const gatewayTime = (learner: Learner) => {
-      const parsed = parseDisplayDate(learner.gatewayReviewDate);
-      // Undated learners sort last in either direction rather than clumping at
-      // the top as an epoch-zero block.
-      return parsed ? parsed.getTime() : Number.POSITIVE_INFINITY;
-    };
-
-    const value = (learner: Learner): number => {
-      switch (sortKey) {
-        case 'risk': return insights.get(learner.id)?.urgency ?? 0;
-        case 'progress': return learner.overallProgressAvailable ? learner.overallProgress : -1;
-        case 'attendance': return learner.liveAttendanceRateAvailable ? learner.liveAttendanceRate ?? -1 : -1;
-        case 'otjh': return learner.otjhCompleted;
-        // Matches the card's Components display: completed against the whole
-        // programme component total, not the to-date target.
-        case 'components': return learner.componentsPlanned && learner.componentsPlanned > 0
-          ? ((learner.componentsCompleted ?? 0) / learner.componentsPlanned) * 100
-          : -1;
-        case 'ksb': return learner.ksbProgressAvailable ? learner.ksbProgress : -1;
-        case 'gateway': return gatewayTime(learner);
-        default: return 0;
-      }
-    };
-
     return [...matched].sort((left, right) => {
-      if (sortKey === 'name') {
-        return direction * left.name.localeCompare(right.name);
-      }
-      const delta = value(left) - value(right);
-      // Name is the tie-break everywhere, so equal rows keep a stable order.
-      return delta !== 0 ? direction * delta : left.name.localeCompare(right.name);
+      const urgencyDelta = (insights.get(right.id)?.urgency ?? 0) - (insights.get(left.id)?.urgency ?? 0);
+      return urgencyDelta || left.name.localeCompare(right.name);
     });
-  }, [matched, insights, sortKey, sortDir]);
+  }, [matched, insights]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
@@ -366,18 +324,6 @@ export default function CoachCaseload() {
   const handleClearAll = useCallback(() => {
     setFilters(INITIAL_FILTERS);
     setStatusFilter('all');
-    setCurrentPage(1);
-  }, []);
-
-  const handleSortKeyChange = useCallback((next: SortKey) => {
-    setSortKey(next);
-    // Names read A–Z; every other column is interesting at its extreme.
-    setSortDir(next === 'name' ? 'asc' : 'desc');
-    setCurrentPage(1);
-  }, []);
-
-  const handleSortDirToggle = useCallback(() => {
-    setSortDir((current) => (current === 'asc' ? 'desc' : 'asc'));
     setCurrentPage(1);
   }, []);
 
@@ -462,27 +408,18 @@ export default function CoachCaseload() {
   // been selected. Reuse the existing directory picker instead of showing a
   // misleading empty/error state when a deep link lands here first.
   if (isInitialized && coach.canChooseCoach && !coach.isViewingAsCoach) {
-    return <Navigate to="/workspace/coach" replace />;
+    return embedded ? null : <Navigate to="/workspace/coach#learner-caseload" replace />;
   }
 
   const needsLiveSignIn = isInitialized && !auth.account && !authenticatedCoachEmail;
 
   return (
-    <WorkspaceShell
-      role="coach"
-      roleLabel={coachNav.label}
-      navItems={coachNav.items}
-      workspaceLabel={coachNav.workspaceLabel}
-      pageTitle="My Learners"
-      pageSubtitle="Monitor learner progress, identify risks and take action"
-      userName={ownerName}
-      userRole="Progress Coach"
-    >
-      <main className={styles.page}>
+    <>
+      <section className={`${styles.page} ${embedded ? styles.embedded : ''}`} aria-label="Coach learner caseload">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div className={styles.title}>
-            <h1>My Learners</h1>
-            <p>Monitor learner progress and engagement</p>
+            <h1>{embedded ? 'All Learners' : 'My Learners'}</h1>
+            {!embedded ? <p>Monitor learner progress and engagement</p> : null}
           </div>
           <LearnersHeaderActions
             selectionMode={selectionMode}
@@ -496,22 +433,15 @@ export default function CoachCaseload() {
           />
         </header>
 
-        {loading ? <CaseloadSummaryLoading /> : !error && learners.length > 0 ? (
-          <CaseloadSummary counts={counts} value={statusFilter} onChange={handleStatusFilterChange} />
-        ) : null}
-
         <section className={styles.panel}>
           {!error && learners.length > 0 ? (
             <div className={styles.toolbar}>
               <LearnerToolbar
                 filters={filters}
                 options={filterOptions}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                resultCount={sorted.length}
+                statusFilter={statusFilter}
                 onFilterChange={handleFilterChange}
-                onSortKeyChange={handleSortKeyChange}
-                onSortDirToggle={handleSortDirToggle}
+                onStatusFilterChange={handleStatusFilterChange}
                 onClearAll={handleClearAll}
               />
             </div>
@@ -559,7 +489,7 @@ export default function CoachCaseload() {
             <CaseloadError
               message={error}
               onRetry={handleRetry}
-              action={needsLiveSignIn ? { label: 'Sign in', onClick: () => navigate('/login', { state: { from: '/coach/caseload' } }) } : undefined}
+              action={needsLiveSignIn ? { label: 'Sign in', onClick: () => navigate('/login', { state: { from: '/workspace/coach#learner-caseload' } }) } : undefined}
             />
           ) : learners.length === 0 ? (
             <CaseloadEmpty />
@@ -592,7 +522,7 @@ export default function CoachCaseload() {
             Showing {sorted.length} of {learners.length} learners in your caseload.
           </p>
         ) : null}
-      </main>
+      </section>
 
       <LearnerQuickViewDrawer
         learner={quickViewLearner}
@@ -601,6 +531,11 @@ export default function CoachCaseload() {
         onClose={handleCloseQuickView}
         onOpenProfile={openProfile}
       />
-    </WorkspaceShell>
+    </>
   );
+}
+
+/** The former standalone page now has one canonical home on the coach dashboard. */
+export default function CoachCaseload() {
+  return <Navigate to="/workspace/coach#learner-caseload" replace />;
 }

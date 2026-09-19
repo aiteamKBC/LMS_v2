@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -19,6 +20,7 @@ import {
 import styles from '../learnerCaseFile.module.css';
 
 export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { onOpenNotes?: () => void }) {
+  const navigate = useNavigate();
   const flatComponents = flattenJourney(data);
   const totalWeeks = data.journey.reduce((count, module) => count + module.weeks.length, 0);
   const completedComponentIds = new Set([
@@ -112,21 +114,37 @@ export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { 
               {latestAttempts.map((attempt, index) => {
                 const tone: StatusTone = attempt.passed ? 'positive' : 'caution';
                 const style = toneStyle(tone);
+                const attemptTitle = resolveQuizAttemptTitle(data.detail, attempt);
+                const matchingSubmissions = data.markingSubmissions?.filter((submission) => (
+                  submission.activityId === String(attempt.componentId || '')
+                  || submission.activityId === String(attempt.quizId)
+                  || (
+                    !attempt.componentId
+                    && submission.activityTitle.trim().toLowerCase() === attemptTitle.trim().toLowerCase()
+                  )
+                )) || [];
+                const attemptSubmittedAt = Date.parse(attempt.submittedAt);
+                const markingSubmission = matchingSubmissions.find((submission) => (
+                  submission.submittedAt
+                  && Number.isFinite(attemptSubmittedAt)
+                  && Date.parse(submission.submittedAt) === attemptSubmittedAt
+                )) || matchingSubmissions[0];
                 return (
                   <div
                     key={`${attempt.quizId}-${attempt.attempt ?? 0}-${attempt.submittedAt}-${index}`}
-                    className="flex items-center gap-4 p-3 rounded-xl bg-background-100/60 border border-foreground-200/60"
+                    className="flex flex-col gap-4 rounded-xl border border-foreground-200/60 bg-background-100/60 p-3 sm:flex-row sm:items-center"
                   >
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${style.bg} ${style.text}`}>
                       <AppIcon className="ri-questionnaire-line text-base"></AppIcon>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-semibold text-foreground-900">{resolveQuizAttemptTitle(data.detail, attempt)}</p>
+                      <p className="text-[13px] font-semibold text-foreground-900">{attemptTitle}</p>
                       <p className="text-[12px] text-foreground-400">
                         {resolveQuizAttemptModule(data.detail, attempt) || 'Quiz'} - Submitted {formatDisplayDate(attempt.submittedAt)}
                       </p>
                     </div>
-                    <div className="text-right shrink-0">
+                    <div className="flex w-full shrink-0 items-center justify-between gap-3 sm:w-auto sm:justify-start">
+                      <div className="text-right">
                       <StatusBadge tone={tone} label={attempt.passed ? 'Passed' : 'Submitted'} />
                       <p className="text-[12px] font-semibold text-foreground-900 mt-1">
                         {[formatAttemptGrade(attempt), formatQuizAttemptScore(attempt)].filter(Boolean).join(' - ') || '--'}
@@ -134,6 +152,18 @@ export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { 
                       <p className="text-[12px] text-foreground-400">
                         {attempt.ksbs?.length ? `${attempt.ksbs.length} KSB link(s)` : `${quizGradeValue(attempt)}%`}
                       </p>
+                      </div>
+                      {markingSubmission && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/coach/marking-queue/${markingSubmission.id}`)}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[12px] font-semibold text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                          aria-label={`Open marking: ${attemptTitle}`}
+                        >
+                          Open marking
+                          <AppIcon className="ri-arrow-right-line text-sm" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

@@ -6,6 +6,7 @@ import LearnerCaseFile from './page';
 
 const mocks = vi.hoisted(() => ({
   data: null as CoachLearnerCaseFileData | null,
+  coachFetch: vi.fn(),
   fetchKsbProfile: vi.fn(),
   refresh: vi.fn(),
 }));
@@ -22,6 +23,7 @@ vi.mock('@/hooks/useCoachIdentity', () => ({
   }),
 }));
 vi.mock('@/api/curriculum', () => ({ fetchKsbProfile: mocks.fetchKsbProfile }));
+vi.mock('@/lib/coachFetch', () => ({ coachFetch: mocks.coachFetch }));
 vi.mock('./data', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./data')>();
   return {
@@ -73,6 +75,8 @@ const caseFileData = {
   employerPhone: '',
   overallProgress: 25,
   attendanceRate: 88,
+  attendancePresentCount: 7,
+  attendanceSessionCount: 10,
   otjhCompleted: 10,
   otjhTarget: 38.5,
   otjhPlanned: 132,
@@ -91,6 +95,7 @@ const caseFileData = {
   reviewGroups: [],
   reviewGenerationIssues: [],
   reviewsLoading: false,
+  markingSubmissions: [],
 } satisfies CoachLearnerCaseFileData;
 
 function LocationProbe() {
@@ -101,6 +106,7 @@ function LocationProbe() {
 beforeEach(() => {
   mocks.data = caseFileData;
   mocks.fetchKsbProfile.mockReset().mockResolvedValue({ knowledge: [], skills: [], behaviours: [] });
+  mocks.coachFetch.mockReset();
   mocks.refresh.mockReset();
 });
 
@@ -113,6 +119,8 @@ describe('Learner Case File design', () => {
     for (const metric of ['Overall', 'OTJH (Actual / Target)', 'KSB', 'Attendance', 'Gateway', 'Next session']) {
       expect(within(summary).getByText(metric, { selector: 'span' })).toBeInTheDocument();
     }
+    expect(within(summary).getByText('7 / 10', { selector: 'strong' })).toBeInTheDocument();
+    expect(within(summary).queryByText('Absences')).not.toBeInTheDocument();
     for (const section of ['Profile Snapshot', 'Progress Summary', 'Recent Activity', 'Upcoming Sessions & Reviews']) {
       expect(screen.getByRole('heading', { name: section })).toBeInTheDocument();
     }
@@ -159,6 +167,122 @@ describe('Learner Case File design', () => {
     expect(within(dialog).queryByText(/evidence item linked/i)).not.toBeInTheDocument();
   });
 
+  it('shows the same Evidence count as the number of activities in the View popup', () => {
+    mocks.data = {
+      ...caseFileData,
+      detail: {
+        ...caseFileData.detail,
+        components: [
+          { module: 'Module 1', week: 'Week 1', component: 'Assignment 1', expectedOtjh: null, componentId: 'assignment-1', type: 'assignment', ksbMappings: [{ code: 'K1', description: null, classification: 'main', weight: 1 }] },
+          { module: 'Module 1', week: 'Week 2', component: 'Assignment 2', expectedOtjh: null, componentId: 'assignment-2', type: 'assignment', ksbMappings: [{ code: 'K1', description: null, classification: 'main', weight: 1 }] },
+        ],
+      },
+      touchedKsbCodes: [],
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    const ksbRow = screen.getByText('K1', { selector: 'strong' }).closest('tr');
+    expect(ksbRow).not.toBeNull();
+    expect(within(ksbRow!).getByText('2')).toBeInTheDocument();
+
+    fireEvent.click(within(ksbRow!).getByRole('button', { name: 'View' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Assignment 1')).toBeInTheDocument();
+    expect(within(dialog).getByText('Assignment 2')).toBeInTheDocument();
+  });
+
+  it('shows completed KSB evidence sources returned by the caseload API', () => {
+    mocks.data = {
+      ...caseFileData,
+      snapshot: {
+        ...caseFileData.snapshot,
+        ksbCompletedDetails: [{
+          code: 'K1',
+          type: 'Knowledge',
+          description: 'Understand the organisation',
+          sources: [{
+            id: 'component:workplace-evidence-1',
+            title: 'Workplace marketing evidence',
+            typeLabel: 'Assignment',
+            kind: 'assignment',
+          }],
+        }],
+      },
+      detail: { ...caseFileData.detail, components: [] },
+      touchedKsbCodes: ['K1'],
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    const ksbRow = screen.getByText('K1', { selector: 'strong' }).closest('tr');
+    expect(ksbRow).not.toBeNull();
+    expect(within(ksbRow!).getByText('1')).toBeInTheDocument();
+
+    fireEvent.click(within(ksbRow!).getByRole('button', { name: 'View' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Assignment')).toBeInTheDocument();
+    expect(within(dialog).getByText('Workplace marketing evidence')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/No linked learning activity/i)).not.toBeInTheDocument();
+  });
+
+  it('renders upcoming reviews alongside live sessions', () => {
+    mocks.data = {
+      ...caseFileData,
+      upcomingSessions: [{
+        id: 'review-1',
+        kind: 'review',
+        status: 'scheduled',
+        statusLabel: 'Scheduled',
+        day: 'Monday',
+        title: 'Quarterly Progress Review',
+        date: '21 Sep 2026',
+        time: '10:00',
+        summary: 'Mon 21 Sep · 10:00',
+        detail: 'Progress Review',
+      }],
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    expect(screen.getByText('Quarterly Progress Review')).toBeInTheDocument();
+    expect(screen.getByText('Review', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText('Scheduled', { selector: 'span' })).toBeInTheDocument();
+  });
+
+  it('removes completed catch-ups from outstanding absences', async () => {
+    mocks.data = {
+      ...caseFileData,
+      attendance: {
+        id: '42', learner: 'Aya Khater', initials: 'AK', email: 'aya@example.test', programme: 'Final Test',
+        cohort: 'Final Cohort', group: 'Final Group', attendance: 50, sessions: 4, present: 2, absent: 2,
+        late: 0, catchup: 1, trend: 'stable', risk: 'amber', employer: 'Test Employer', overallProgress: 25,
+        otjhCompleted: 10, otjhTarget: 38.5, ksbProgress: 20, lastSession: '--', nextSession: '--',
+        consecutiveMissed: 2, hasAttendance: true,
+      },
+    };
+    mocks.coachFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        sessions: [
+          { learnerId: '42', learnerName: 'Aya Khater', learnerEmail: 'aya@example.test', sessionId: 'session-2', sessionTitle: 'Recovered session', sessionType: 'live_session', sessionDate: '2026-09-14', sessionDateLabel: '14 Sep 2026', startTime: '11:00', endTime: '12:00', status: 'absent', reason: 'Catch-up completed', catchupCompleted: true },
+          { learnerId: '42', learnerName: 'Aya Khater', learnerEmail: 'aya@example.test', sessionId: 'session-1', sessionTitle: 'Still missed', sessionType: 'live_session', sessionDate: '2026-09-07', sessionDateLabel: '07 Sep 2026', startTime: '11:00', endTime: '12:00', status: 'absent', reason: 'No reason recorded', catchupCompleted: false },
+        ],
+      }),
+    });
+
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
+
+    expect(await screen.findByText('1 session(s) missed')).toBeInTheDocument();
+    const missedPanel = screen.getByRole('heading', { name: 'Missed Sessions' }).closest('section');
+    expect(missedPanel).not.toBeNull();
+    expect(within(missedPanel!).getByText('Still missed')).toBeInTheDocument();
+    expect(within(missedPanel!).queryByText('Recovered session')).not.toBeInTheDocument();
+    expect(screen.getByText('Catch-up completed', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText('Outstanding absences').nextElementSibling).toHaveTextContent('1');
+    expect(screen.getByText('Completed catch-ups').nextElementSibling).toHaveTextContent('1');
+  });
+
   it('opens an assignment activity from the evidence popup', () => {
     mocks.data = {
       ...caseFileData,
@@ -176,5 +300,60 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
     fireEvent.click(screen.getByRole('button', { name: /Assignment Assignment 2/ }));
     expect(screen.getByTestId('location')).toHaveTextContent('/learner/monthly-submission/apprenticeship/42/assignment-2');
+  });
+
+  it('opens the matching marking submission for each attempt of the same assessment', () => {
+    mocks.data = {
+      ...caseFileData,
+      markingSubmissions: [
+        {
+          id: 'submission-123',
+          activityId: 'quiz-1',
+          activityTitle: 'Leadership quiz',
+          submittedAt: '2026-09-17T10:00:00Z',
+        },
+        {
+          id: 'submission-456',
+          activityId: 'quiz-1',
+          activityTitle: 'Leadership quiz',
+          submittedAt: '2026-09-18T10:00:00Z',
+        },
+      ],
+      detail: {
+        ...caseFileData.detail,
+        quizAttempts: [
+          {
+            quizId: 7,
+            componentId: 'quiz-1',
+            componentTitle: 'Leadership quiz',
+            attempt: 1,
+            grade: 0.8,
+            passed: true,
+            startedAt: '2026-09-17T09:30:00Z',
+            submittedAt: '2026-09-17T10:00:00Z',
+          },
+          {
+            quizId: 7,
+            componentId: 'quiz-1',
+            componentTitle: 'Leadership quiz',
+            attempt: 2,
+            grade: 0.9,
+            passed: true,
+            startedAt: '2026-09-18T09:30:00Z',
+            submittedAt: '2026-09-18T10:00:00Z',
+          },
+        ],
+      },
+    };
+
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LocationProbe /><LearnerCaseFile /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('tab', { name: 'Learning Plan' }));
+    const markingButtons = screen.getAllByRole('button', { name: 'Open marking: Leadership quiz' });
+
+    fireEvent.click(markingButtons[0]);
+    expect(screen.getByTestId('location')).toHaveTextContent('/coach/marking-queue/submission-456');
+
+    fireEvent.click(markingButtons[1]);
+    expect(screen.getByTestId('location')).toHaveTextContent('/coach/marking-queue/submission-123');
   });
 });

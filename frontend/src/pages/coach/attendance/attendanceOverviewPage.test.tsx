@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { coachFetch } from '@/lib/coachFetch';
@@ -15,44 +15,65 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
-function CurrentPath() {
-  return <div data-testid="current-path">{useLocation().pathname}</div>;
-}
+const attendanceRecords = [
+  {
+    learnerId: '42', learnerName: 'Aya Khater', learnerEmail: 'aya@example.com', sessionId: 'session-1',
+    sessionTitle: 'Data Analysis — Session 1', sessionDate: '2026-09-10', sessionDateLabel: '10 Sep 2026', status: 'present',
+  },
+  {
+    learnerId: '7', learnerName: 'Ayman Learner', learnerEmail: 'ayman@example.com', sessionId: 'session-1',
+    sessionTitle: 'Data Analysis — Session 1', sessionDate: '2026-09-10', sessionDateLabel: '10 Sep 2026', status: 'absent',
+  },
+  {
+    learnerId: '42', learnerName: 'Aya Khater', learnerEmail: 'aya@example.com', sessionId: 'session-2',
+    sessionTitle: 'Data Analysis — Session 2', sessionDate: '2026-09-17', sessionDateLabel: '17 Sep 2026', status: 'absent',
+  },
+  {
+    learnerId: '9', learnerName: 'Mona Test', learnerEmail: 'mona@example.com', sessionId: 'session-3',
+    sessionTitle: 'Safeguarding — Session 1', sessionDate: '2026-09-11', sessionDateLabel: '11 Sep 2026', status: 'present',
+  },
+];
 
-describe('coach attendance overview page', () => {
+describe('coach lecture attendance page', () => {
   beforeEach(() => {
-    vi.mocked(coachFetch).mockImplementation(async (url) => {
-      if (url === '/coach_api/coach/absence-reports') {
-        return new Response(JSON.stringify({
-          items: [{ learnerId: '42', learner: 'Aya Khater', email: 'aya@example.com', sessionDate: '2026-09-10' }],
-        }));
-      }
-      return new Response(JSON.stringify({
-        summary: { totalLearners: 1, onTrack: 0, needsAttention: 1, atRisk: 0 },
-        learners: [{
-          id: '42', learner: 'Aya Khater', initials: 'AK', email: 'aya@example.com', programme: 'Data Analyst',
-          cohort: 'September 2026', group: 'A', employer: 'Acme', attendance: 80, sessions: 5, present: 3,
-          absent: 2, lastSession: '10 Sep 2026', lastSessionDate: '2026-09-10', risk: 'amber', hasAttendance: true,
-        }],
-      }));
-    });
+    vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ attendanceRecords })));
   });
 
-  it('combines live attendance and absence report totals, then opens the learner profile', async () => {
-    render(
-      <MemoryRouter initialEntries={['/coach/attendance']}>
-        <Routes>
-          <Route path="/coach/attendance" element={<><CoachAttendance /><CurrentPath /></>} />
-          <Route path="/coach/attendance/:learnerId" element={<CurrentPath />} />
-        </Routes>
-      </MemoryRouter>,
-    );
+  it('shows only the two dependent filters and the selected lecture register', async () => {
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
 
-    expect(await screen.findByRole('heading', { name: 'My Learners – Attendance Overview' })).toBeInTheDocument();
-    expect(await screen.findByText('1 / 2 submitted')).toBeInTheDocument();
-    expect(screen.getByText('3 / 5')).toBeInTheDocument();
+    const subject = await screen.findByRole('combobox', { name: 'Subject' });
+    const lectureDate = screen.getByRole('combobox', { name: 'Lecture date' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'View' }));
-    await waitFor(() => expect(screen.getByTestId('current-path')).toHaveTextContent('/coach/attendance/42'));
+    expect(screen.getAllByRole('combobox')).toHaveLength(2);
+    expect(lectureDate).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Search by learner/i)).not.toBeInTheDocument();
+
+    fireEvent.change(subject, { target: { value: 'Data Analysis' } });
+    expect(lectureDate).toBeEnabled();
+    expect(within(lectureDate).getByRole('option', { name: '10 Sep 2026' })).toBeInTheDocument();
+    expect(within(lectureDate).getByRole('option', { name: '17 Sep 2026' })).toBeInTheDocument();
+    expect(within(lectureDate).queryByRole('option', { name: '11 Sep 2026' })).not.toBeInTheDocument();
+
+    fireEvent.change(lectureDate, { target: { value: '2026-09-10' } });
+    expect(screen.getByText('Aya Khater')).toBeInTheDocument();
+    expect(screen.getByText('Ayman Learner')).toBeInTheDocument();
+    expect(screen.getByText('Present')).toBeInTheDocument();
+    expect(screen.getByText('Absent')).toBeInTheDocument();
+    expect(screen.queryByText('Mona Test')).not.toBeInTheDocument();
+  });
+
+  it('clears the lecture date when the subject changes', async () => {
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+
+    const subject = await screen.findByRole('combobox', { name: 'Subject' });
+    const lectureDate = screen.getByRole('combobox', { name: 'Lecture date' });
+    fireEvent.change(subject, { target: { value: 'Data Analysis' } });
+    fireEvent.change(lectureDate, { target: { value: '2026-09-10' } });
+    fireEvent.change(subject, { target: { value: 'Safeguarding' } });
+
+    expect(lectureDate).toHaveValue('');
+    expect(screen.getByText('Select a lecture date')).toBeInTheDocument();
   });
 });

@@ -7,7 +7,11 @@
   background: linear-gradient(165deg, #211a3f 0%, #17132f 58%, #25204a 100%);
   color: var(--coach-nav-text);
 }
-.desktop { position: fixed; inset: 0 auto 0 0; z-index: 40; width: 240px; border-right: 1px solid #29234d; box-shadow: 8px 0 26px rgb(20 14 50 / 12%); }
+.desktop { position: fixed; inset: 0 auto 0 0; z-index: 40; width: 240px; border-right: 1px solid #29234d; box-shadow: 8px 0 26px rgb(20 14 50 / 12%); transition: width .2s ease; }
+.desktop[data-collapsed="true"] { width: 76px; }
+.collapseToggle { position: absolute; top: 28px; right: -13px; z-index: 2; display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid #d8cdfd; border-radius: 50%; background: #fff; color: #5e36d2; box-shadow: 0 3px 10px rgb(25 17 49 / 24%); }
+.collapseToggle:hover { background: #f2eeff; }
+.collapseToggle svg { width: 16px; height: 16px; }
 .brand { display: flex; align-items: center; gap: 10px; min-height: 80px; padding: 20px 22px; color: #fff; font-size: 22px; font-weight: 750; letter-spacing: -.7px; }
 .brand > svg { width: 27px; height: 27px; color: #9f84ff; }
 .nav { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 14px 20px; }
@@ -32,6 +36,16 @@
 .desktop :is(a, button):focus-visible, .mobile :is(a, button):focus-visible { outline: 2px solid var(--coach-nav-accent); outline-offset: 2px; }
 .mobile { display: none; }
 .close { margin-left: auto; padding: 5px; }
+.desktop[data-collapsed="true"] .brand { justify-content: center; padding-inline: 0; }
+.desktop[data-collapsed="true"] .brand span,
+.desktop[data-collapsed="true"] .row .label,
+.desktop[data-collapsed="true"] .row .chevron,
+.desktop[data-collapsed="true"] .identity,
+.desktop[data-collapsed="true"] .accountChevron { display: none; }
+.desktop[data-collapsed="true"] .nav { padding-inline: 10px; }
+.desktop[data-collapsed="true"] .row { justify-content: center; gap: 0; padding-inline: 0; }
+.desktop[data-collapsed="true"] .footer { margin-inline: 10px; }
+.desktop[data-collapsed="true"] .account { justify-content: center; padding-inline: 0; }
 @media (max-width: 1023px) {
   .desktop { display: none; }
   .mobile { display: flex; position: fixed; inset: 0 auto 0 0; z-index: 60; width: min(320px, 90vw); transform: translateX(-100%); visibility: hidden; transition: transform .2s, visibility .2s; }

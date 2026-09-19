@@ -139,7 +139,7 @@ export default function LearnerCaseFile() {
   const subtitle = buildSubtitle(data);
   const pageTitle = data?.displayName || learnerName || 'Learner case file';
   const pageSubtitle = subtitle || 'Live learner view for coaching support';
-  const nextLiveSession = data?.upcomingSessions[0] || null;
+  const nextLiveSession = data?.upcomingSessions.find((session) => session.kind === 'live') || null;
   const headerOtjh = data ? selectCaseFileOtjh(data) : null;
 
   const handleOpenReviewMeeting = (item: CaseFileReviewMeeting) => {
@@ -276,7 +276,7 @@ export default function LearnerCaseFile() {
               <CaseFileHeroMetric icon="ri-focus-3-line" label="Overall" value={formatPercent(data?.overallProgress ?? null)} />
               <CaseFileHeroMetric icon="ri-time-line" label="OTJH (Actual / Target)" value={headerOtjh ? formatFraction(headerOtjh.logged, headerOtjh.target) : '--'} />
               <CaseFileHeroMetric icon="ri-stack-line" label="KSB" value={formatPercent(data?.ksbProgress ?? null)} />
-              <CaseFileHeroMetric icon="ri-group-line" label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} />
+              <CaseFileHeroMetric icon="ri-group-line" label="Attendance" value={formatAttendanceFraction(data?.attendancePresentCount ?? null, data?.attendanceSessionCount ?? null)} />
               <CaseFileHeroMetric icon="ri-calendar-line" label="Gateway" value={data?.gatewayReviewDate || '--'} />
               <CaseFileHeroMetric icon="ri-calendar-event-line" label="Next session" value={nextLiveSession?.summary || '--'} />
           </div>
@@ -354,7 +354,7 @@ function ReferenceOverviewContent({
             <ProfileProgress label="Overall Progress" value={data.overallProgress} tone="primary" />
             <ProfileProgress label="OTJH Progress" value={otjh.progressPercent} tone="primary" />
             <ProfileProgress label="KSB Coverage" value={data.ksbProgress} tone="emerald" />
-            <ProfileProgress label="Attendance" value={data.attendanceRate} tone="striped" />
+            <ProfileValue label="Attendance" value={formatAttendanceFraction(data.attendancePresentCount, data.attendanceSessionCount)} />
           </div>
         </ReferencePanel>
         <ReferencePanel title="Recent Activity" subtitle="Latest updates, evidence and interactions" icon="ri-time-line" tone="muted">
@@ -379,9 +379,14 @@ function ReferenceOverviewContent({
                     <p className="mt-1 text-[12px] text-primary-700">{session.day} · {session.date}</p>
                     <p className="mt-1 text-[12px] font-medium text-foreground-500">{session.time}</p>
                   </div>
-                  <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[12px] font-semibold text-primary-700">
-                    Live
-                  </span>
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[12px] font-semibold text-primary-700">
+                      {session.kind === 'review' ? 'Review' : 'Live'}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 text-[12px] font-semibold ${reviewStatusPillClass(session.status)}`}>
+                      {session.statusLabel}
+                    </span>
+                  </div>
                 </div>
                 <p className="mt-2 text-[12px] text-foreground-500">{session.detail}</p>
               </div>
@@ -508,11 +513,15 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
   const ksbs = sourceKsbs
     .map((item) => {
       const code = String(item.code || '').toUpperCase();
+      const evidenceActivities = ksbLearningActivities(data, code);
+      const linked = touched.has(code);
       return {
         ...item,
         code,
         category: ksbCategoryFromCode(code),
-        linked: touched.has(code),
+        evidenceActivities,
+        evidenceCount: evidenceActivities.length,
+        linked,
       };
     })
     .sort((left, right) => left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' }));
@@ -579,7 +588,7 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
         )}
       </ReferencePanel>
 
-      <ReferencePanel title="KSB Browser" subtitle="Search and filter KSBs to review details and evidence coverage." icon="ri-file-list-3-line" tone="primary">
+      <ReferencePanel title="KSB Browser" subtitle="Search and filter KSBs to review details and evidence coverage." icon="ri-book-open-line" tone="primary" className={styles.browserPanel}>
         <div className={styles.browserToolbar}>
           <label className={styles.search}>
             <span className="sr-only">Search KSBs</span>
@@ -597,22 +606,29 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
         {filteredKsbs.length === 0 ? <ProfileEmpty text="No KSBs matched the current filter." /> : (
           <div className={styles.tableScroll}>
             <table className={styles.ksbTable}>
-              <thead><tr><th>KSB Code</th><th>Title</th><th>Category</th><th>Status</th><th>Evidence</th><th>Actions</th></tr></thead>
+              <thead><tr>
+                <th><span className={styles.columnLabel}>KSB Code <AppIcon className="ri-expand-up-down-line" /></span></th>
+                <th><span className={styles.columnLabel}>Title <AppIcon className="ri-expand-up-down-line" /></span></th>
+                <th><span className={styles.columnLabel}>Category <AppIcon className="ri-expand-up-down-line" /></span></th>
+                <th><span className={styles.columnLabel}>Status <AppIcon className="ri-expand-up-down-line" /></span></th>
+                <th><span className={styles.columnLabel}>Evidence <AppIcon className="ri-expand-up-down-line" /></span></th>
+                <th>Actions</th>
+              </tr></thead>
               <tbody>
                 {filteredKsbs.map((item) => (
-                  <tr key={item.code}>
-                    <td><strong>{item.code}</strong></td>
+                  <tr key={item.code} className={!item.code.includes('.') ? styles.ksbParentRow : undefined}>
+                    <td><strong className={styles.ksbCode}>{item.code}</strong></td>
                     <td>{item.description}</td>
                     <td><StatusBadge tone={ksbCategoryTone(item.category)} label={item.category} size="sm" dot={false} /></td>
                     <td><StatusBadge tone={item.linked ? 'positive' : 'neutral'} label={item.linked ? 'Evidence linked' : 'Not evidenced'} size="sm" /></td>
-                    <td>{item.linked ? 1 : 0}</td>
+                    <td>{item.evidenceCount}</td>
                     <td>
                       <button
                         type="button"
                         className={styles.tableButton}
-                        onClick={() => onViewEvidence({ title: item.description, activities: ksbLearningActivities(data, item.code) })}
+                        onClick={() => onViewEvidence({ title: item.description, activities: item.evidenceActivities })}
                       >
-                        View
+                        View <AppIcon className="ri-arrow-right-s-line" />
                       </button>
                     </td>
                   </tr>
@@ -669,8 +685,6 @@ function EvidencePreviewModal({ evidence, onClose, onOpenAssignment }: { evidenc
 }
 
 function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): EvidencePreviewTarget['activities'] {
-  const detail = data.detail;
-  if (!detail) return [];
   const normalizedCode = code.trim().toUpperCase();
   const activities: EvidencePreviewTarget['activities'] = [];
   const seen = new Set<string>();
@@ -686,6 +700,24 @@ function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): Ev
           : 'Activity type unavailable',
     });
   };
+
+  const completedDetail = data.snapshot?.ksbCompletedDetails?.find(
+    (item) => String(item.code || '').trim().toUpperCase() === normalizedCode,
+  );
+  for (const [index, source] of (completedDetail?.sources || []).entries()) {
+    add(
+      source.title,
+      source.typeLabel || source.kind,
+      source.id || `completed-source:${normalizedCode}:${index}`,
+    );
+  }
+  // Caseload KSB sources are the authoritative completed evidence records. If
+  // an older payload has no source detail, fall back to learner-plan activity
+  // mappings so View remains useful instead of showing an empty modal.
+  if (activities.length > 0) return activities;
+
+  const detail = data.detail;
+  if (!detail) return activities;
   for (const component of detail.components) {
     if (!(component.ksbMappings || []).some((mapping) => mapping.code.trim().toUpperCase() === normalizedCode)) continue;
     add(component.component, component.isQuiz ? 'quiz' : component.type, component.componentId || `${component.module}:${component.week}:${component.component}`, component.componentId);
@@ -773,6 +805,7 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
   const attendance = data.attendance;
   const [attendanceSessions, setAttendanceSessions] = useState<AttendanceDetailSession[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsLoaded, setDetailsLoaded] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -783,10 +816,12 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
         setAttendanceSessions([]);
         setDetailsError(null);
         setDetailsLoading(false);
+        setDetailsLoaded(false);
         return;
       }
 
       setDetailsLoading(true);
+      setDetailsLoaded(false);
       setDetailsError(null);
       try {
         const params = new URLSearchParams({ learner_id: String(attendance.id) });
@@ -811,10 +846,12 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
 
         if (!cancelled) {
           setAttendanceSessions(Array.isArray(parsedPayload?.sessions) ? parsedPayload.sessions : []);
+          setDetailsLoaded(true);
         }
       } catch (loadError) {
         if (!cancelled) {
           setAttendanceSessions([]);
+          setDetailsLoaded(false);
           setDetailsError(loadError instanceof Error ? loadError.message : 'Unable to load learner attendance sessions.');
         }
       } finally {
@@ -831,24 +868,34 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
   }, [attendance?.id, attendance?.email, attendance?.hasAttendance, data.email]);
 
   if (!attendance || !attendance.hasAttendance) return <ReferencePanel title="Attendance" icon="ri-calendar-check-line" tone="primary"><ProfileEmpty text="Live attendance data is not available for this learner." /></ReferencePanel>;
-  const sessions = attendance.sessions || 0;
-  const percentage = (value: number | null) => sessions > 0 && value !== null ? Math.round((value / sessions) * 100) : 0;
-  const missedSessions = attendanceSessions.filter((session) => session.status === 'absent');
+  const missedSessions = attendanceSessions.filter((session) => session.status === 'absent' && !session.catchupCompleted);
+  const completedCatchups = detailsLoaded
+    ? attendanceSessions.filter((session) => session.catchupCompleted).length
+    : attendance.catchup;
+  const outstandingAbsences = detailsLoaded ? missedSessions.length : attendance.absent;
+  const firstResolvedSessionIndex = attendanceSessions.findIndex(
+    (session) => session.status !== 'absent' || session.catchupCompleted,
+  );
+  const displayedConsecutiveMissed = detailsLoaded
+    ? firstResolvedSessionIndex === -1 ? attendanceSessions.length : firstResolvedSessionIndex
+    : attendance.consecutiveMissed;
   const recentSessions = attendanceSessions.slice(0, 8);
 
   return (
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <BigMetric value={formatPercent(attendance.attendance)} label="Attendance Rate" tone="primary" />
+        <BigMetric value={formatAttendanceFraction(attendance.present, attendance.sessions)} label="Attendance" tone="primary" />
         <BigMetric value={String(attendance.sessions ?? '--')} label="Total Sessions" tone="muted" />
         <BigMetric value={String(attendance.present ?? '--')} label="Attended" tone="emerald" />
-        <BigMetric value={String(attendance.absent ?? '--')} label="Absent" tone="red" />
+        <BigMetric value={String(outstandingAbsences ?? '--')} label="Absent" tone="red" />
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ReferencePanel title="Attendance Breakdown" icon="ri-bar-chart-line" tone="primary">
-          <ProfileProgress label={`Attended (${attendance.present ?? 0})`} value={percentage(attendance.present)} color="bg-emerald-500" />
-          <ProfileProgress label={`Absent (${attendance.absent ?? 0})`} value={percentage(attendance.absent)} color="bg-red-500" />
-          <ProfileProgress label={`Catch-up (${attendance.catchup ?? 0})`} value={percentage(attendance.catchup)} color="bg-foreground-300" />
+      <div className={styles.attendanceDetailGrid}>
+        <ReferencePanel title="Attendance Breakdown" icon="ri-bar-chart-line" tone="primary" className={styles.attendanceBreakdownPanel}>
+          <div className={styles.attendanceBreakdownGrid}>
+            <AttendanceBreakdownMetric icon="ri-check-line" label="Attended" value={formatCount(attendance.present)} tone="emerald" />
+            <AttendanceBreakdownMetric icon="ri-close-line" label="Outstanding absences" value={formatCount(outstandingAbsences)} tone="red" />
+            <AttendanceBreakdownMetric icon="ri-refresh-line" label="Completed catch-ups" value={formatCount(completedCatchups)} tone="primary" />
+          </div>
         </ReferencePanel>
         <ReferencePanel title="Missed Sessions" icon="ri-close-circle-line" tone="red">
           {detailsLoading ? (
@@ -863,9 +910,9 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
                     <p className="text-[12px] font-bold text-red-700">{missedSessions.length} session(s) missed</p>
                     <p className="mt-1 text-[12px] text-red-500">Latest absence reasons and catch-up status are shown below.</p>
                   </div>
-                  {(attendance.consecutiveMissed || 0) > 0 && (
+                  {(displayedConsecutiveMissed || 0) > 0 && (
                     <span className="rounded-full border border-red-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-red-600">
-                      {attendance.consecutiveMissed} consecutive
+                      {displayedConsecutiveMissed} consecutive
                     </span>
                   )}
                 </div>
@@ -884,7 +931,7 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
                           Reason: {displayInline(session.reason, 'No reason recorded')}
                         </p>
                         <p className="mt-1 text-[12px] text-foreground-400">
-                          {session.catchupCompleted ? 'Catch-up completed' : 'Catch-up not recorded'}
+                          Catch-up not completed
                         </p>
                       </div>
                       <div className="shrink-0 rounded-xl bg-background-50 px-3 py-2 text-left sm:text-right">
@@ -916,8 +963,8 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full border px-2 py-0.5 text-[12px] font-semibold ${session.status === 'present' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : session.status === 'absent' ? 'border-red-200 bg-red-50 text-red-700' : 'border-foreground-200 bg-background-50 text-foreground-600'}`}>
-                        {displayInline(session.status)}
+                      <span className={`rounded-full border px-2 py-0.5 text-[12px] font-semibold ${session.catchupCompleted || session.status === 'present' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : session.status === 'absent' ? 'border-red-200 bg-red-50 text-red-700' : 'border-foreground-200 bg-background-50 text-foreground-600'}`}>
+                        {session.catchupCompleted ? 'Catch-up completed' : displayInline(session.status)}
                       </span>
                       <span className="text-[12px] text-foreground-400">{displayInline(session.sessionType)}</span>
                     </div>
@@ -1309,6 +1356,23 @@ function ProfileProgress({ label, value, tone, color }: { label: string; value: 
   return <div className={styles.progressRow}><div className={styles.progressMeta}><span>{label}</span><strong>{value === null ? '--' : `${Math.round(value)}%`}</strong></div><div className={cn(styles.track, resolvedTone === 'striped' && styles.striped)}><div className={styles.fill} data-tone={resolvedTone} style={{ width: `${value || 0}%` }} /></div></div>;
 }
 
+function ProfileValue({ label, value }: { label: string; value: string }) {
+  return <div className={styles.progressRow}><div className={styles.progressMeta}><span>{label}</span><strong>{value}</strong></div></div>;
+}
+
+function AttendanceBreakdownMetric({ icon, label, value, tone }: {
+  icon: string;
+  label: string;
+  value: string;
+  tone: 'primary' | 'emerald' | 'red';
+}) {
+  return <div className={styles.attendanceBreakdownMetric} data-tone={tone}>
+    <span className={styles.attendanceBreakdownIcon}><AppIcon className={icon} /></span>
+    <span className={styles.attendanceBreakdownLabel}>{label}</span>
+    <strong className={styles.attendanceBreakdownValue}>{value}</strong>
+  </div>;
+}
+
 function BigMetric({ value, label, tone }: { value: string; label: string; tone: 'primary' | 'emerald' | 'red' | 'amber' | 'muted' }) {
   const color = { primary: 'text-primary-700', emerald: 'text-emerald-600', red: 'text-red-600', amber: 'text-amber-600', muted: 'text-foreground-700' }[tone];
   return <div className={styles.bigMetric}><p className={cn(styles.bigMetricValue, color)}>{value}</p><p className={styles.bigMetricLabel}>{label}</p></div>;
@@ -1325,6 +1389,15 @@ function reviewStatusPillClass(status: CaseFileReviewMeeting['status']) {
 function displayInline(value?: string | null, fallback = '--') {
   const text = String(value || '').trim();
   return text && text !== '--' ? text : fallback;
+}
+
+function formatCount(value: number | null) {
+  return value === null ? '--' : String(Math.max(0, Math.round(value)));
+}
+
+function formatAttendanceFraction(present: number | null, sessions: number | null) {
+  if (present === null || sessions === null) return '--';
+  return `${formatCount(present)} / ${formatCount(sessions)}`;
 }
 
 function formatSessionTime(start?: string | null, end?: string | null) {

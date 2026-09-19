@@ -42,6 +42,27 @@
   background-image: none !important;
 }
 
+/* A 1920px display at 150% browser zoom exposes about 1280 CSS pixels. Keep
+   every coach route inside that effective viewport and let wide data tables
+   own their horizontal scrolling instead of widening the whole workspace. */
+@media (max-width: 1280px) {
+  :global(.dashboard-theme[data-workspace-role="coach"]).shell :global(.workspace-main) {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  :global(.dashboard-theme[data-workspace-role="coach"]).shell :global(.workspace-main) > * {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  :global(.dashboard-theme[data-workspace-role="coach"]).shell :global(.workspace-main) :is(:global(.page-container), main, section) {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
 :global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :global(.page-container) {
   max-width: none;
 }

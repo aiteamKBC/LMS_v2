@@ -37,16 +37,10 @@ export function CaseloadSummaryLoading() {
 
 function ProgressSkeleton() {
   return (
-    <div className={styles.progressGrid}>
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div key={index} className={styles.miniProgress}>
-          <div className="flex items-center justify-between gap-2">
-            <SkeletonBlock className="h-2 w-10" />
-            <SkeletonBlock className="h-2 w-6" />
-          </div>
-          <SkeletonBlock className="mt-1 h-1 w-full rounded-full" />
-        </div>
-      ))}
+    <div className={styles.miniProgress}>
+      <SkeletonBlock className="h-2.5 w-7" />
+      <SkeletonBlock className="mt-1 h-[7px] w-full rounded-full" />
+      <SkeletonBlock className="mt-1 h-2 w-14" />
     </div>
   );
 }
@@ -56,22 +50,13 @@ function LearnerRowSkeleton() {
     <tr>
       <td>
         <div className={styles.learner}>
-          <SkeletonBlock className="h-[30px] w-[30px] shrink-0 rounded-full" />
           <span className="space-y-2">
             <SkeletonBlock className="h-2.5 w-24" />
             <SkeletonBlock className="h-2 w-32" />
           </span>
         </div>
       </td>
-      <td>
-        <div className="space-y-2">
-          <SkeletonBlock className="h-2.5 w-28" />
-          <SkeletonBlock className="h-2 w-16" />
-        </div>
-      </td>
-      <td className={styles.progressCell}>
-        <ProgressSkeleton />
-      </td>
+      {Array.from({ length: 4 }).map((_, index) => <td key={index} className={styles.progressCell}><ProgressSkeleton /></td>)}
       <td>
         <div className="space-y-2">
           <SkeletonBlock className="h-2.5 w-20" />
@@ -85,10 +70,10 @@ function LearnerRowSkeleton() {
         </div>
       </td>
       <td>
-        <SkeletonBlock className="h-6 w-20 rounded-full" />
-      </td>
-      <td>
-        <SkeletonBlock className="h-8 w-24 rounded-md" />
+        <div className="space-y-2">
+          <SkeletonBlock className="h-2.5 w-20" />
+          <SkeletonBlock className="h-2 w-24" />
+        </div>
       </td>
       <td>
         <div className="flex justify-end gap-2">
@@ -127,16 +112,11 @@ export function CaseloadLoading() {
         <table className={styles.table}>
           <caption className="sr-only">Learners are loading</caption>
           <thead>
-            <tr>
-              <th>Learner</th>
-              <th>Current Module</th>
-              <th>Progress</th>
-              <th>Last Activity</th>
-              <th>Last PR</th>
-              <th>Last MCM</th>
-              <th>Status</th>
-              <th className="text-right">Actions</th>
+            <tr className={styles.primaryHead}>
+              <th rowSpan={2}>Learner</th><th colSpan={4}>Progress</th><th rowSpan={2}>Last Activity</th>
+              <th rowSpan={2}>Last PR</th><th rowSpan={2}>Last MCM</th><th rowSpan={2}>Actions</th>
             </tr>
+            <tr className={styles.progressHead}><th>OTJH</th><th>KSBs</th><th>Activities</th><th>Attendance</th></tr>
           </thead>
           <tbody>
             {Array.from({ length: 12 }).map((_, index) => (

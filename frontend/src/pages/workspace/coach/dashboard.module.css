@@ -86,8 +86,9 @@ button.metric:hover { border-color: var(--dashboard-accent); }
 :global([data-theme="dark"]) .metric[data-tone="caution"] .metricIcon { color: #f3c763; background: #463a26; }
 
 .riskLayout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr); gap: 16px; align-items: stretch; }
+.fullWidthCaseload { width: 100%; min-width: 0; scroll-margin-top: 1rem; }
 .learnersPanel { height: 100%; }
-.charts { display: grid; gap: 14px; min-width: 0; }
+.charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-width: 0; }
 :global(.workspace-shell[data-workspace-role="coach"]) :global(.workspace-main) .dashboard .panel { min-width: 0; padding: 22px; border-radius: 12px !important; }
 .dashboard .panel :global(.section-header) { gap: 10px; }
 .dashboard .panel :global(.section-header) h2 { color: var(--dashboard-heading); font-size: 19px !important; font-weight: 700; letter-spacing: -.3px; }
@@ -140,6 +141,7 @@ button.metric:hover { border-color: var(--dashboard-accent); }
 .iconButton:hover { background: var(--kbc-purple-soft); }
 .iconButton svg { width: 17px; height: 17px; }
 .dateCell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.meetingDateCell { vertical-align: middle; }
 .meetingDate { display: grid; place-items: center; min-width: 108px; gap: 2px; padding: 9px 10px; border-radius: 8px; background: var(--kbc-purple-wash); color: var(--dashboard-heading); font-size: 13px; font-weight: 700; }
 .meetingDate strong { font-size: 14px; }
 .meetingTime { display: inline-flex; align-items: center; gap: 7px; color: var(--kbc-muted); }
@@ -175,6 +177,14 @@ button.metric:hover { border-color: var(--dashboard-accent); }
 .chartPeriod { color: var(--kbc-muted); font-size: 13px; white-space: nowrap; }
 .chartScope { padding: 8px 12px; border: 1px solid var(--kbc-border); border-radius: 6px; color: var(--kbc-muted); font-size: 13px; white-space: nowrap; }
 .monthlyRisk { display: grid; grid-template-columns: minmax(0, 1fr) 116px; gap: 12px; margin-top: 16px; }
+.monthlyRiskChart { min-width: 0; min-height: 138px; padding: 8px 8px 0; border: 1px solid var(--kbc-border); border-radius: 7px; }
+.monthlyBars { display: grid; grid-template-columns: repeat(6, minmax(34px, 1fr)); align-items: end; gap: 8px; height: 100%; min-height: 128px; margin: 0; padding: 0; list-style: none; }
+.monthlyBars li { display: grid; grid-template-rows: 20px minmax(78px, 1fr) 20px; align-items: end; justify-items: center; gap: 3px; height: 100%; min-width: 0; }
+.monthlyBars strong { color: var(--dashboard-heading); font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1; }
+.monthlyBars small { color: var(--kbc-muted); font-size: 11px; font-weight: 650; line-height: 1; }
+.monthlyBarTrack { display: flex; align-items: flex-end; justify-content: center; width: 100%; height: 100%; border-bottom: 1px solid var(--kbc-border); }
+.monthlyBar { width: min(28px, 72%); min-height: 4px; border-radius: 5px 5px 2px 2px; background: linear-gradient(180deg, #f0446f 0%, #d9194c 100%); box-shadow: 0 3px 8px rgb(217 25 76 / 18%); }
+.monthlyBar[data-empty="true"] { background: var(--kbc-border); box-shadow: none; }
 .unavailableChart { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-height: 108px; padding: 8px; border: 1px dashed var(--kbc-border); border-radius: 7px; text-align: center; }
 .unavailableChart svg { width: 22px; height: 22px; color: var(--kbc-muted); }
 .unavailableChart p { font-size: 15px; font-weight: 700; }

@@ -1,9 +1,9 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CaseloadApiLearner } from './types';
-import CoachCaseload from './page';
+import { CoachCaseloadContent } from './page';
 
 const { coachFetch, fetchCoachCalendarEvents, authState, coachIdentity } = vi.hoisted(() => ({
   coachFetch: vi.fn(),
@@ -51,7 +51,7 @@ describe('Coach caseload loading', () => {
       return Promise.resolve(new Response(JSON.stringify({ owner: { name: 'Coach Example' }, learners: [learner] })));
     });
 
-    render(<MemoryRouter><CoachCaseload /></MemoryRouter>);
+    render(<MemoryRouter><CoachCaseloadContent embedded /></MemoryRouter>);
 
     expect(await screen.findByText('Loading learners')).toBeInTheDocument();
     expect(screen.queryByText('Final Learner')).not.toBeInTheDocument();
@@ -64,5 +64,15 @@ describe('Coach caseload loading', () => {
 
     expect(await screen.findByText('Final Learner')).toBeInTheDocument();
     expect(screen.queryByText('Loading learners')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'All Learners' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Status' }));
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
+      'Status', 'On track', 'Need attention', 'At risk',
+    ]);
+    expect(screen.queryByRole('button', { name: 'More filters' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+ shown/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Most urgent first')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Sort direction:/ })).not.toBeInTheDocument();
   });
 });

@@ -449,7 +449,7 @@ export function currentWeekRange(referenceDate = new Date()) {
   start.setDate(today.getDate() + mondayOffset);
 
   const end = new Date(start);
-  end.setDate(start.getDate() + 6);
+  end.setDate(start.getDate() + 4);
   return { start, end };
 }
 

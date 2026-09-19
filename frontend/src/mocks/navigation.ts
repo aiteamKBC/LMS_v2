@@ -65,12 +65,6 @@ export const learnerNavItems: SidebarNavItem[] = [
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
   {
-    id: 'coach-group-learners',
-    label: 'My Learners',
-    icon: 'ri-group-line',
-    href: '/coach/caseload',
-  },
-  {
     id: 'coach-meetings',
     label: 'Meetings',
     icon: 'ri-calendar-event-line',

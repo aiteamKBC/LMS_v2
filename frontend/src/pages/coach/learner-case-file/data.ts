@@ -31,6 +31,12 @@ interface CoachCompletedKsbDetail {
   code: string;
   type?: string;
   description?: string;
+  sources?: Array<{
+    id?: string;
+    title?: string;
+    typeLabel?: string;
+    kind?: string;
+  }>;
 }
 
 export interface CoachCaseloadLearner {
@@ -161,6 +167,16 @@ export interface CoachMarkingQueueItem {
   type: string | null;
   due: string | null;
   words: number | null;
+  activityId?: string | null;
+  activityTitle?: string | null;
+  submittedAt?: string | null;
+}
+
+export interface CaseFileMarkingSubmission {
+  id: string;
+  activityId: string;
+  activityTitle: string;
+  submittedAt: string | null;
 }
 
 interface CoachMarkingQueueResponse {
@@ -177,6 +193,9 @@ export interface CaseFileActivityItem {
 
 export interface CaseFileUpcomingSession {
   id: string;
+  kind: 'live' | 'review';
+  status: CoachCalendarEvent['status'];
+  statusLabel: string;
   day: string;
   title: string;
   date: string;
@@ -231,6 +250,8 @@ export interface CoachLearnerCaseFileData {
   employerPhone: string;
   overallProgress: number | null;
   attendanceRate: number | null;
+  attendancePresentCount: number | null;
+  attendanceSessionCount: number | null;
   otjhCompleted: number | null;
   otjhTarget: number | null;
   otjhPlanned: number | null;
@@ -249,6 +270,7 @@ export interface CoachLearnerCaseFileData {
   reviewGroups: CaseFileReviewGroup[];
   reviewGenerationIssues: CoachReviewGenerationIssue[];
   reviewsLoading: boolean;
+  markingSubmissions?: CaseFileMarkingSubmission[];
   coachNotes?: string[];
 }
 
@@ -323,10 +345,11 @@ export function useCoachLearnerCaseFileData(args: {
       // These are independent requests. Start learner detail immediately when the
       // URL already contains a numeric id instead of waiting for all coach-wide
       // collections first (the old flow added both request times together).
+      const requestedMarkingLearnerId = args.enrolmentId?.trim() || rawLearnerId;
       const coachDataPromise = Promise.allSettled([
         fetchCoachCaseload(),
         fetchCoachAttendance(),
-        fetchCoachMarkingQueue(rawLearnerId, rawLearnerName),
+        fetchCoachMarkingQueue(requestedMarkingLearnerId, rawLearnerName),
         fetchCoachTimetable(),
       ]);
       const directId = numericId(rawLearnerId);
@@ -390,7 +413,7 @@ export function useCoachLearnerCaseFileData(args: {
 
       const caseload = caseloadResult.status === 'fulfilled' ? caseloadResult.value : [];
       const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : [];
-      const marking = markingResult.status === 'fulfilled' ? markingResult.value : [];
+      let marking = markingResult.status === 'fulfilled' ? markingResult.value : [];
       const timetable = timetableResult.status === 'fulfilled'
         ? timetableResult.value
         : { events: [], reviewGenerationIssues: [] };
@@ -409,6 +432,14 @@ export function useCoachLearnerCaseFileData(args: {
         || attendanceLearner?.enrolmentId
         || null;
       const resolvedDetailKind = args.kind ?? snapshot?.learnerType ?? attendanceLearner?.learnerType ?? undefined;
+
+      if (resolvedEnrolmentId && resolvedEnrolmentId !== requestedMarkingLearnerId) {
+        try {
+          marking = await fetchCoachMarkingQueue(resolvedEnrolmentId, rawLearnerName);
+        } catch {
+          // Keep the first safe response; the rest of the case file can still render.
+        }
+      }
 
       // Non-numeric routes need coach data to resolve the id. Numeric routes have
       // already loaded detail above, concurrently with the coach requests.
@@ -441,6 +472,7 @@ export function useCoachLearnerCaseFileData(args: {
         snapshot,
         attendance: attendanceLearner,
         evidence,
+        markingItems: marking,
         detail,
         caseload,
         timetableEvents,
@@ -937,7 +969,7 @@ function reviewGroupRank(title: string) {
   return 10;
 }
 
-function buildUpcomingLiveSessions(
+export function buildUpcomingSchedule(
   learnerIdentityIds: string[],
   timetableEvents: CoachCalendarEvent[],
 ): CaseFileUpcomingSession[] {
@@ -946,12 +978,17 @@ function buildUpcomingLiveSessions(
   }
 
   return sortEvents(
-    timetableEvents.filter((event) =>
-      liveSessionMatchesLearner(event, learnerIdentityIds)
+    timetableEvents.filter((event) => {
+      const matchesLiveSession = liveSessionMatchesLearner(event, learnerIdentityIds);
+      const matchesReview = reviewEventMatchesLearner(event, {
+        learnerId: learnerIdentityIds[0] || '',
+        learnerIdentityIds,
+      });
+      return (matchesLiveSession || matchesReview)
       && isUpcomingCalendarEvent(event)
       && event.status !== 'cancelled'
-      && event.status !== 'completed',
-    ),
+      && event.status !== 'completed';
+    }),
   )
     .slice(0, 3)
     .map((event) => {
@@ -961,17 +998,21 @@ function buildUpcomingLiveSessions(
       const date = formatCalendarDateLabel(displayDate);
       const dateShort = formatUpcomingDateShort(displayDate);
       const time = formatCalendarTimeLabel(event);
+      const review = isReviewCalendarEvent(event);
       return {
         id: event.eventKey || event.id,
+        kind: review ? 'review' : 'live',
+        status: event.status,
+        statusLabel: calendarStatusLabel(event.status),
         day,
-        title: event.title || event.module || 'Live session',
+        title: event.title || (review ? reviewTypeLabel(event) : event.module || 'Live session'),
         date,
         time,
         summary: `${dayShort} ${dateShort} · ${time}`,
         detail: [
-          event.tutor ? `Tutor: ${event.tutor}` : '',
+          review ? reviewTypeLabel(event) : event.tutor ? `Tutor: ${event.tutor}` : '',
           event.group ? `Group: ${event.group}` : '',
-        ].filter(Boolean).join(' - ') || 'Live session from the learner delivery plan.',
+        ].filter(Boolean).join(' - ') || (review ? 'Review from the coach schedule.' : 'Live session from the learner delivery plan.'),
       };
     });
 }
@@ -982,6 +1023,7 @@ function buildCaseFileData(args: {
   snapshot: CoachCaseloadLearner | null;
   attendance: CoachAttendanceLearner | null;
   evidence: CoachMarkingQueueItem | null;
+  markingItems?: CoachMarkingQueueItem[];
   detail: LearnerDetail | null;
   caseload: CoachCaseloadLearner[];
   timetableEvents: CoachCalendarEvent[];
@@ -1025,7 +1067,7 @@ function buildCaseFileData(args: {
     args.evidence?.learnerId,
     args.detail?.id,
   ].map(value => String(value || '').trim()).filter(Boolean)));
-  const upcomingSessions = buildUpcomingLiveSessions(learnerIdentityIds, args.timetableEvents);
+  const upcomingSessions = buildUpcomingSchedule(learnerIdentityIds, args.timetableEvents);
   const reviewEventContext = {
     learnerId: args.learnerId,
     learnerIdentityIds,
@@ -1075,6 +1117,8 @@ function buildCaseFileData(args: {
     // Keep the case-file header aligned with the attendance tab, which reads
     // from the same attendance record. The live summary can lag behind it.
     attendanceRate: args.attendance?.attendance ?? args.liveAttendance?.attendanceRate ?? null,
+    attendancePresentCount: args.attendance?.present ?? args.liveAttendance?.present ?? null,
+    attendanceSessionCount: args.attendance?.sessions ?? args.liveAttendance?.sessions ?? null,
     otjhCompleted: detailCompletedHours ?? args.snapshot?.otjhCompleted ?? args.attendance?.otjhCompleted ?? null,
     otjhTarget: detailTargetHours ?? args.snapshot?.otjhTarget ?? args.attendance?.otjhTarget ?? null,
     otjhPlanned: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? null,
@@ -1096,6 +1140,14 @@ function buildCaseFileData(args: {
     learnerIdentityIds,
     reviewGenerationIssues: args.reviewGenerationIssues.filter(issue => learnerIdentityIds.includes(String(issue.learnerId))),
     reviewsLoading: Boolean(args.reviewsLoading),
+    markingSubmissions: (args.markingItems || [])
+      .filter(item => item.id && item.activityId)
+      .map(item => ({
+        id: String(item.id),
+        activityId: String(item.activityId),
+        activityTitle: String(item.activityTitle || ''),
+        submittedAt: item.submittedAt || null,
+      })),
     coachNotes: allReviewMeetings.map(item => item.notes || '').filter(Boolean).slice(0, 5),
   };
 }

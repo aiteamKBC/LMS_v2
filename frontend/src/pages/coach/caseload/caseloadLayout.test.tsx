@@ -13,10 +13,10 @@ const counts: CaseloadCounts = {
 
 const learner = {
   id: '42', name: 'Emma Carter', initials: 'EC', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', group: 'G1',
-  status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 78, overallProgressAvailable: true,
+  status: 'on-track', enrollmentStatus: 'active', riskFlags: [], otjhStatus: 'on-track', overallProgress: 78, overallProgressAvailable: true,
   attendanceRate: 80, attendanceRateAvailable: true, componentsCompleted: 8, componentsPlanned: 10,
   otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
-  evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, nextCoaching: '20 Sep 2026', nextReview: '--',
+  evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, attendancePresent: 9, attendanceAbsent: 1, nextCoaching: '20 Sep 2026', nextReview: '--',
   lastContact: '--', lastAttendanceDate: '--', lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--',
   lastSubmittedEvidence: '--', recentFlag: null, progressVariance: '--', startDate: '--', gatewayReviewDate: '--', plannedEndDate: '--',
   currentModule: 'Customer Service Excellence', currentWeek: 'Week 4',
@@ -32,11 +32,12 @@ describe('My Learners table design', () => {
     const { container } = render(<><CaseloadSummaryLoading /><CaseloadLoading /></>);
     expect(screen.getByText('Loading learners')).toBeInTheDocument();
     expect(screen.getByRole('table', { name: 'Learners are loading' })).toBeInTheDocument();
-    expect(screen.getAllByRole('row')).toHaveLength(13);
+    expect(screen.getAllByRole('row')).toHaveLength(14);
     expect(container.querySelectorAll('[class*="summaryCard"]')).toHaveLength(4);
-    for (const heading of ['Learner', 'Current Module', 'Progress', 'Last Activity', 'Last PR', 'Last MCM', 'Status', 'Actions']) {
+    for (const heading of ['Learner', 'Progress', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
       expect(screen.getByRole('columnheader', { name: heading })).toBeInTheDocument();
     }
+    expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
   });
 
   it('renders the four requested summary cards and uses them as filters', () => {
@@ -51,15 +52,32 @@ describe('My Learners table design', () => {
     expect(onChange).toHaveBeenCalledWith('at-risk');
   });
 
-  it('shows real learner progress, status and profile actions in a table', () => {
+  it('shows real learner progress and profile actions without a status column', () => {
     const onOpenProfile = vi.fn();
     render(<LearnerTable learners={[learner]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      onToggleSelect={vi.fn()} onQuickView={vi.fn()} onOpenProfile={onOpenProfile} />);
+      onToggleSelect={vi.fn()} onOpenProfile={onOpenProfile} />);
     const row = screen.getByText('Emma Carter').closest('tr')!;
-    expect(within(row).getByText('Customer Service Excellence')).toBeInTheDocument();
-    for (const metric of ['OTJH', 'KSBs', 'Activities', 'Attendance']) expect(within(row).getByText(metric)).toBeInTheDocument();
-    expect(within(row).getByText('On Track')).toBeInTheDocument();
+    expect(within(row).getByText('EC')).toBeInTheDocument();
+    expect(within(row).queryByText('Customer Service Excellence')).not.toBeInTheDocument();
+    for (const metric of ['OTJH: 78%', 'KSBs: 65%', 'Activities: 80%', 'Attendance: 90%']) {
+      expect(within(row).getByLabelText(metric)).toBeInTheDocument();
+    }
+    for (const source of ['70h / 90h', '13 / 20', '8 / 10', '9 / 10']) expect(within(row).getByText(source)).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
+    expect(within(row).queryByText('On Track')).not.toBeInTheDocument();
+    expect(within(row).getByLabelText('OTJH: 78%')).toHaveAttribute('data-tone', 'positive');
+    expect(screen.getByRole('table').querySelector('thead svg')).not.toBeInTheDocument();
     fireEvent.click(within(row).getByRole('button', { name: 'View Profile' }));
     expect(onOpenProfile).toHaveBeenCalledWith(learner);
+  });
+
+  it.each([
+    ['at-risk', 'critical'],
+    ['need-attention', 'warning'],
+    ['on-track', 'positive'],
+  ] as const)('uses the OTJH status to colour OTJH: %s', (otjhStatus, tone) => {
+    render(<LearnerTable learners={[{ ...learner, otjhStatus }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+      onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+    expect(screen.getByLabelText('OTJH: 78%')).toHaveAttribute('data-tone', tone);
   });
 });

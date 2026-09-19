@@ -1,4 +1,5 @@
-import { EMPTY_VALUE, displayValue, formatPercent, hasValue } from '../lib/format';
+import { AppIcon } from '@/components/feature/AppIcon';
+import { EMPTY_VALUE, displayValue, getOtjhStatusKey, hasValue } from '../lib/format';
 import type { InsightMap } from '../lib/attention';
 import type { Learner } from '../types';
 import styles from '../caseload.module.css';
@@ -13,17 +14,47 @@ function componentPercent(learner: Learner) {
   return total > 0 ? percent(((learner.componentsCompleted ?? 0) / total) * 100) : null;
 }
 
-function Progress({ label, value }: { label: string; value: number | null }) {
-  return <div className={styles.miniProgress}>
-    <div className={styles.miniLabel}><span>{label}</span><b>{value === null ? EMPTY_VALUE : `${value}%`}</b></div>
+function compactNumber(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, '');
+}
+
+function ratio(completed: number | null | undefined, total: number | null | undefined, suffix = '') {
+  const completedLabel = compactNumber(completed);
+  const totalLabel = compactNumber(total);
+  return completedLabel !== null && totalLabel !== null && Number(total) > 0
+    ? `${completedLabel}${suffix} / ${totalLabel}${suffix}`
+    : null;
+}
+
+function attendanceRatio(learner: Learner) {
+  const present = learner.attendancePresent;
+  const absent = learner.attendanceAbsent;
+  if (present === null || present === undefined || absent === null || absent === undefined) return null;
+  return ratio(present, present + absent);
+}
+
+function Progress({ label, value, detail, metric, tone }: { label: string; value: number | null; detail?: string | null; metric: string; tone?: string }) {
+  return <div className={styles.miniProgress} data-metric={metric} data-tone={tone} aria-label={`${label}: ${value === null ? 'not available' : `${value}%`}`}>
+    <div className={styles.miniLabel}><b>{value === null ? EMPTY_VALUE : `${value}%`}</b></div>
     <div className={styles.track}><div className={styles.fill} style={{ width: `${value ?? 0}%` }} /></div>
+    <div className={styles.miniRatio} title={label === 'OTJH' ? 'Actual hours / target hours' : undefined}>{detail || EMPTY_VALUE}</div>
   </div>;
 }
 
-function statusTone(tier?: string) {
-  if (tier === 'critical') return 'critical';
-  if (tier === 'attention' || tier === 'upcoming') return 'warning';
-  if (tier === 'on-track') return 'positive';
+function DateMetric({ value, emptyLabel, detail }: { value?: string | null; emptyLabel: string; detail: string }) {
+  const available = hasValue(value);
+  return <div className={styles.date}>
+    <strong>{available ? <><AppIcon name="ri-calendar-line" aria-hidden="true" />{displayValue(value)}</> : EMPTY_VALUE}</strong>
+    <small>{available ? detail : emptyLabel}</small>
+  </div>;
+}
+
+function otjhTone(status?: string | null) {
+  const statusKey = getOtjhStatusKey(displayValue(status).replace(/[-_]+/g, ' '));
+  if (statusKey === 'at-risk') return 'critical';
+  if (statusKey === 'need-attention') return 'warning';
+  if (statusKey === 'on-track') return 'positive';
   return 'neutral';
 }
 
@@ -44,28 +75,33 @@ export function LearnerTable({ learners, insights, selectionMode, selectedLearne
 }) {
   return <div className={styles.tableScroll}>
     <table className={styles.table}>
-      <caption className="sr-only">Learners, progress, activity, risk and actions</caption>
-      <thead><tr>
-        {selectionMode ? <th aria-label="Select learner" /> : null}
-        <th>Learner</th><th>Current Module</th><th>Progress</th><th>Last Activity</th><th>Last PR</th><th>Last MCM</th><th>Status</th><th className="text-right">Actions</th>
-      </tr></thead>
+      <caption className="sr-only">Learners, progress, activity and actions</caption>
+      <thead>
+        <tr className={styles.primaryHead}>
+          {selectionMode ? <th rowSpan={2} aria-label="Select learner" /> : null}
+          <th rowSpan={2}>Learner</th><th colSpan={4}>Progress</th>
+          <th rowSpan={2}>Last Activity</th><th rowSpan={2}>Last PR</th><th rowSpan={2}>Last MCM</th><th rowSpan={2}>Actions</th>
+        </tr>
+        <tr className={styles.progressHead}>
+          <th>OTJH</th>
+          <th>KSBs</th>
+          <th>Activities</th>
+          <th>Attendance</th>
+        </tr>
+      </thead>
       <tbody>{learners.map(learner => {
         const insight = insights.get(learner.id);
-        const module = displayValue(learner.currentModule || learner.programmeName || learner.cohortName);
+        const activity = bestActivity(learner);
         return <tr key={learner.id}>
           {selectionMode ? <td><input type="checkbox" aria-label={`Select ${learner.name}`} checked={selectedLearnerIds.has(learner.id)} onChange={() => onToggleSelect(learner.id)} /></td> : null}
           <td><div className={styles.learner}><span className={styles.avatar}>{learner.initials}</span><span><strong>{learner.name}</strong><small>{displayValue(learner.programmeName || learner.cohortName)}</small></span></div></td>
-          <td><div className={styles.module}><strong title={module}>{module}</strong><small>{displayValue(learner.currentWeek || learner.group)}</small></div></td>
-          <td className={styles.progressCell}><div className={styles.progressGrid}>
-            <Progress label="OTJH" value={percent(learner.overallProgress, learner.overallProgressAvailable)} />
-            <Progress label="KSBs" value={percent(learner.ksbProgress, learner.ksbProgressAvailable)} />
-            <Progress label="Activities" value={componentPercent(learner)} />
-            <Progress label="Attendance" value={percent(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable)} />
-          </div></td>
-          <td><div className={styles.date}><strong>{bestActivity(learner)}</strong>{insight?.lastActivityDaysAgo !== null && insight?.lastActivityDaysAgo !== undefined ? <small>{insight.lastActivityDaysAgo} days ago</small> : null}</div></td>
-          <td><div className={styles.date}><strong>{displayValue(learner.lastProgressReview)}</strong><small>Latest completed PR</small></div></td>
-          <td><div className={styles.date}><strong>{displayValue(learner.lastReview)}</strong><small>Latest completed MCM</small></div></td>
-          <td><span className={styles.status} data-tone={statusTone(insight?.tier)}>{insight?.riskLabel || 'Not assessed'}</span></td>
+          <td className={styles.progressCell}><Progress label="OTJH" metric="otjh" tone={otjhTone(learner.otjhStatus)} value={percent(learner.overallProgress, learner.overallProgressAvailable)} detail={ratio(learner.otjhCompleted, learner.otjhTarget, 'h')} /></td>
+          <td className={styles.progressCell}><Progress label="KSBs" metric="ksbs" value={percent(learner.ksbProgress, learner.ksbProgressAvailable)} detail={ratio(learner.ksbCompleted, learner.ksbTarget)} /></td>
+          <td className={styles.progressCell}><Progress label="Activities" metric="activities" value={componentPercent(learner)} detail={ratio(learner.componentsCompleted, learner.componentsPlanned)} /></td>
+          <td className={styles.progressCell}><Progress label="Attendance" metric="attendance" value={percent(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable)} detail={attendanceRatio(learner)} /></td>
+          <td><DateMetric value={activity} emptyLabel="No activity yet" detail={insight?.lastActivityDaysAgo !== null && insight?.lastActivityDaysAgo !== undefined ? `${insight.lastActivityDaysAgo} days ago` : 'Latest activity'} /></td>
+          <td><DateMetric value={learner.lastProgressReview} emptyLabel="No PR yet" detail="Latest completed" /></td>
+          <td><DateMetric value={learner.lastReview} emptyLabel="No MCM yet" detail="Latest completed" /></td>
           <td><div className={styles.actions}><button type="button" className={styles.profileButton} onClick={() => onOpenProfile(learner)}>View Profile</button></div></td>
         </tr>;
       })}</tbody>

@@ -16,6 +16,7 @@ import { cn } from '@/lib/cn';
 import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import styles from './dashboard.module.css';
+import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -128,6 +129,12 @@ interface CaseloadApiResponse {
   learners?: CaseloadApiLearner[];
 }
 
+interface MonthlyRiskPoint {
+  month: string;
+  label: string;
+  count: number;
+}
+
 interface CoachAssignedGroup {
   id: string;
   name: string;
@@ -143,6 +150,7 @@ interface CoachAssignedGroup {
 }
 
 interface CoachDashboardApiResponse extends CaseloadApiResponse {
+  monthlyRisk?: MonthlyRiskPoint[] | null;
   attendance?: AttendanceApiResponse;
   reviewHistory?: {
     learners?: ReviewHistoryApiLearner[];
@@ -203,6 +211,15 @@ function toNumber(value?: number | string | null): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+function normalizeMonthlyRisk(points?: MonthlyRiskPoint[] | null): MonthlyRiskPoint[] | null {
+  if (!Array.isArray(points)) return null;
+  return points.slice(-6).map(point => ({
+    month: displayValue(point.month),
+    label: displayValue(point.label),
+    count: Math.max(0, Math.round(toNumber(point.count))),
+  }));
 }
 
 function clampPercent(value?: number | string | null): number {
@@ -1027,6 +1044,7 @@ export default function CoachDashboard() {
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
   const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<CoachLearner[]>([]);
+  const [monthlyRisk, setMonthlyRisk] = useState<MonthlyRiskPoint[] | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
   const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>([]);
   const [liveSessionEvents, setLiveSessionEvents] = useState<CoachCalendarEvent[]>([]);
@@ -1084,6 +1102,7 @@ export default function CoachDashboard() {
       if (!authenticatedCoachEmail) {
         setOwnerName(authenticatedCoachName);
         setLearners([]);
+        setMonthlyRisk(null);
         setCalendarEvents([]);
         setCalendarPreviewEvents([]);
         setLiveSessionEvents([]);
@@ -1132,6 +1151,7 @@ export default function CoachDashboard() {
           ),
           queueItems,
         ));
+        setMonthlyRisk(normalizeMonthlyRisk(dashboard.monthlyRisk));
         setEvidenceQueue(queueItems);
         setMarkingThisWeek(
           markingQueue?.summary?.pendingItems === undefined
@@ -1149,6 +1169,7 @@ export default function CoachDashboard() {
       } catch (error) {
         if (controller.signal.aborted) return;
         setLearners([]);
+        setMonthlyRisk(null);
         setCalendarEvents([]);
         setCalendarPreviewEvents([]);
         setLiveSessionEvents([]);
@@ -1358,13 +1379,6 @@ export default function CoachDashboard() {
       userName={ownerName} userRole="Progress Coach"
     >
       <div className={styles.dashboard}>
-        <div className={styles.welcome}>
-          <div>
-            <h1>Coach Command Center <span aria-hidden="true">👋</span></h1>
-            <p>Support learners. Track progress. Make a difference.</p>
-          </div>
-
-        </div>
         {(loading || loadWarning) && (
           <div className={styles.notice} role={loadWarning ? 'alert' : 'status'}>
             {loading ? 'Loading live coach dashboard data...' : loadWarning}
@@ -1380,71 +1394,8 @@ export default function CoachDashboard() {
           <DashboardMetric label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note={`Catch-up sessions · ${formatWeekRangeLabel()}`} icon="ri-calendar-event-line" tone="caution" onClick={() => navigate('/coach/timetable')} />
         </section>
 
-        <div className={styles.riskLayout}>
-          <div id="learner-caseload" className="min-w-0 scroll-mt-4">
-            <Panel className={`${styles.panel} ${styles.learnersPanel}`}>
-              <SectionHeader icon="ri-group-line" title={attentionPanelTitle} description={attentionPanelSubtitle}
-                actions={<>
-                  <button type="button" className={styles.iconButton} onClick={() => setCaseloadExpanded(current => !current)}
-                    aria-expanded={caseloadExpanded} aria-controls="coach-caseload-content" aria-label={`${caseloadExpanded ? 'Collapse' : 'Expand'} caseload panel`}>
-                    <AppIcon name={caseloadExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} />
-                  </button>
-                  <Link to="/coach/caseload" className={`${styles.textButton} ${styles.sectionLink}`}>View all learners <AppIcon name="ri-arrow-right-line" /></Link>
-                </>} />
-              {caseloadExpanded && (
-                <div id="coach-caseload-content">
-                  {kpiFilter && <div className={styles.filters}>
-                    <FilterChip label="Filter" value={KPI_FILTER_LABEL[kpiFilter]} onRemove={() => setKpiFilter(null)} />
-                  </div>}
-                  {loading && !attentionRows.length && <AttentionSkeleton />}
-                  {!loading && attentionRows.length > 0 && (
-                    <div className={styles.tableScroll} data-overflow={attentionHasOverflow} tabIndex={0} role="region" aria-label="Learners at OTJH risk">
-                      <table className={`${styles.table} ${styles.learnersTable}`}>
-                        <caption className="sr-only">Learners at OTJH risk, ordered by priority</caption>
-                        <thead><tr><th scope="col">Learner</th><th scope="col">Group</th><th scope="col">OTJH variance</th><th scope="col">Last MCM</th><th scope="col">Last PR</th><th scope="col">Actions</th></tr></thead>
-                        <tbody>{attentionRows.map(entry => (
-                          <AttentionLearnerRow key={entry.learner.id} learner={entry.learner}
-                            onOpen={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(entry.learner.id)}`, {
-                              state: {
-                                learnerId: entry.learner.id, learnerName: entry.learner.name,
-                                ...(entry.learner.learnerType ? { kind: entry.learner.learnerType } : {}),
-                                ...(entry.learner.enrolmentId ? { enrolmentId: entry.learner.enrolmentId } : {}),
-                              },
-                            })} />
-                        ))}</tbody>
-                      </table>
-                    </div>
-                  )}
-                  {!loading && !attentionRows.length && (
-                    <EmptyState variant={kpiFilter ? 'no-matches' : 'empty'}
-                      icon={kpiFilter ? undefined : 'ri-shield-check-line'}
-                      title={kpiFilter ? 'No learners match this filter' : 'No learners at risk'}
-                      description={kpiFilter ? 'Clear the filter to see all learners currently at risk.' : 'No active learners are currently flagged as OTJH at risk.'} />
-                  )}
-                </div>
-              )}
-            </Panel>
-          </div>
-          <aside className={styles.charts} aria-label="Learner risk insights">
-            <Panel className={styles.panel}>
-              <SectionHeader title="Risk Distribution" icon="ri-bar-chart-line" actions={<span className={styles.chartScope}>By OTJH status</span>} />
-              <OtjhDistribution learners={activeLearners} unavailable={loading || Boolean(loadWarning)} />
-            </Panel>
-            <Panel className={styles.panel}>
-              <SectionHeader title="Monthly Learners at Risk" icon="ri-bar-chart-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
-              <div className={styles.monthlyRisk}>
-                <div className={styles.unavailableChart}>
-                  <AppIcon name="ri-line-chart-line" aria-hidden="true" />
-                  <p>History not available</p><span>Monthly risk data is not available yet.</span>
-                </div>
-                <div className={styles.currentRisk}>
-                  <strong>{loading || loadWarning ? EMPTY_VALUE : atRiskCount}</strong>
-                  <span>at risk now</span>
-                  <small>Current OTJH status</small>
-                </div>
-              </div>
-            </Panel>
-          </aside>
+        <div id="learner-caseload" className={styles.fullWidthCaseload}>
+          <CoachCaseloadContent embedded />
         </div>
 
         <Panel className={styles.panel}>
@@ -1467,9 +1418,9 @@ export default function CoachDashboard() {
                   <table className={`${styles.table} ${styles.meetingsTable}`}>
                     <caption className="sr-only">Meetings and live sessions in the next seven days</caption>
                     <thead className="sr-only"><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Learner / session</th><th scope="col">Meeting type</th><th scope="col">Status</th><th scope="col">Reschedule</th><th scope="col">Send Reminder</th><th scope="col">Generate Presentation</th><th scope="col">View Form</th></tr></thead>
-                    <tbody>{upcomingScheduleGroups.flatMap(group => group.events.map(event => (
+                    <tbody>{upcomingScheduleGroups.flatMap(group => group.events.map((event, eventIndex) => (
                       <tr key={event.eventKey || event.id}>
-                        <td className={styles.dateCell}><time className={styles.meetingDate} dateTime={group.date}><span>{formatCalendarWeekday(group.date)}</span><strong>{formatDateLabel(group.date)}</strong></time></td>
+                        {eventIndex === 0 && <td className={`${styles.dateCell} ${styles.meetingDateCell}`} rowSpan={group.events.length}><time className={styles.meetingDate} dateTime={group.date}><span>{formatCalendarWeekday(group.date)}</span><strong>{formatDateLabel(group.date)}</strong></time></td>}
                         <td className={styles.dateCell}><span className={styles.meetingTime}><AppIcon name="ri-time-line" aria-hidden="true" />{scheduleEventTime(event)}</span></td>
                         <td><div className={styles.identity}>
                           <LearnerAvatar name={scheduleEventTitle(event)} />
@@ -1490,6 +1441,24 @@ export default function CoachDashboard() {
             </div>
           )}
         </Panel>
+
+        <section className={styles.charts} aria-label="Learner risk insights">
+          <Panel className={styles.panel}>
+            <SectionHeader title="Risk Distribution" icon="ri-bar-chart-line" actions={<span className={styles.chartScope}>By OTJH status</span>} />
+            <OtjhDistribution learners={activeLearners} unavailable={loading || Boolean(loadWarning)} />
+          </Panel>
+          <Panel className={styles.panel}>
+            <SectionHeader title="Monthly Learners at Risk" icon="ri-bar-chart-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
+            <div className={styles.monthlyRisk}>
+              <MonthlyRiskChart points={monthlyRisk} unavailable={loading || Boolean(loadWarning)} />
+              <div className={styles.currentRisk}>
+                <strong>{loading || loadWarning ? EMPTY_VALUE : atRiskCount}</strong>
+                <span>at risk now</span>
+                <small>Current OTJH status</small>
+              </div>
+            </div>
+          </Panel>
+        </section>
 
       </div>
 
@@ -1533,6 +1502,34 @@ function DashboardMetric({ label, value, note, icon, tone, onClick }: {
   ) : (
     <div className={styles.metric} data-unavailable={unavailable}>{content}</div>
   );
+}
+
+function MonthlyRiskChart({ points, unavailable }: { points: MonthlyRiskPoint[] | null; unavailable: boolean }) {
+  if (unavailable || !points?.length) {
+    return <div className={styles.unavailableChart}>
+      <AppIcon name="ri-line-chart-line" aria-hidden="true" />
+      <p>History not available</p><span>Monthly risk data is not available yet.</span>
+    </div>;
+  }
+
+  const highestCount = Math.max(...points.map(point => point.count), 1);
+  return <div className={styles.monthlyRiskChart}>
+    <ol className={styles.monthlyBars} aria-label="Learners at risk at each month end">
+      {points.map(point => (
+        <li key={point.month} aria-label={`${point.label}: ${point.count} learners at risk`}>
+          <strong>{point.count}</strong>
+          <span className={styles.monthlyBarTrack} aria-hidden="true">
+            <span
+              className={styles.monthlyBar}
+              data-empty={point.count === 0}
+              style={{ height: `${point.count ? Math.max(12, point.count / highestCount * 100) : 4}%` }}
+            />
+          </span>
+          <small>{point.label}</small>
+        </li>
+      ))}
+    </ol>
+  </div>;
 }
 
 function OtjhDistribution({ learners, unavailable }: { learners: CoachLearner[]; unavailable: boolean }) {

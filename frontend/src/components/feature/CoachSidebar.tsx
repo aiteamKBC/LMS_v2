@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { BookOpen, ChevronDown, X } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { SidebarIcon, type SidebarNavItem } from './Sidebar';
 import styles from './CoachSidebar.module.css';
@@ -12,9 +12,11 @@ interface CoachSidebarProps {
   mobileOpen: boolean;
   onCloseMobile: () => void;
   onOpenAccount: () => void;
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
 }
 
-export function CoachSidebar({ navItems, userName, userRole, mobileOpen, onCloseMobile, onOpenAccount }: CoachSidebarProps) {
+export function CoachSidebar({ navItems, userName, userRole, mobileOpen, onCloseMobile, onOpenAccount, collapsed, onCollapsedChange }: CoachSidebarProps) {
   const { canSeeNavItem } = useAuth();
   const location = useLocation();
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -52,35 +54,50 @@ export function CoachSidebar({ navItems, userName, userRole, mobileOpen, onClose
   }, [mobileOpen, onCloseMobile]);
 
   const initials = userName.trim().split(/\s+/).filter(Boolean).map(word => word[0]).slice(0, 2).join('').toUpperCase();
-  const panel = (mobile: boolean) => <>
+  const panel = (mobile: boolean) => {
+    const compact = !mobile && collapsed;
+    return <>
     <div className={styles.brand}><BookOpen aria-hidden="true" /><span>LearningHub</span>
       {mobile && <button type="button" className={styles.close} aria-label="Close navigation" onClick={onCloseMobile}><X size={18} /></button>}
     </div>
     <nav className={styles.nav} aria-label={`Coach ${mobile ? 'mobile menu' : 'primary navigation'}`}>
       {items.map(item => item.children?.length ? <div key={item.id}>
-        <button type="button" className={styles.row} aria-expanded={openGroups[item.id] ?? item.children.some(active)}
+        <button type="button" className={styles.row} aria-expanded={compact ? false : openGroups[item.id] ?? item.children.some(active)}
           aria-controls={`${mobile ? 'mobile-' : ''}${item.id}-links`} data-active={item.children.some(active)}
-          onClick={() => setOpenGroups(current => ({ ...current, [item.id]: !(current[item.id] ?? item.children.some(active)) }))}>
-          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span>{item.label}</span><ChevronDown className={styles.chevron} size={14} />
+          aria-label={compact ? item.label : undefined}
+          title={compact ? item.label : undefined}
+          onClick={() => {
+            if (compact) onCollapsedChange(false);
+            setOpenGroups(current => ({ ...current, [item.id]: compact || !(current[item.id] ?? item.children.some(active)) }));
+          }}>
+          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span className={styles.label}>{item.label}</span><ChevronDown className={styles.chevron} size={14} />
         </button>
-        {(openGroups[item.id] ?? item.children.some(active)) && <div className={styles.children} id={`${mobile ? 'mobile-' : ''}${item.id}-links`}>
+        {!compact && (openGroups[item.id] ?? item.children.some(active)) && <div className={styles.children} id={`${mobile ? 'mobile-' : ''}${item.id}-links`}>
           {item.children.map(child => <Link key={child.id} to={child.href} className={styles.row} aria-current={active(child) ? 'page' : undefined} onClick={onCloseMobile}>
-            <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} /><span>{child.label}</span>
+            <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} /><span className={styles.label}>{child.label}</span>
           </Link>)}
         </div>}
-      </div> : <Link key={item.id} to={item.href} className={styles.row} aria-current={active(item) ? 'page' : undefined} onClick={onCloseMobile}>
-        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span>{item.label}</span>
+      </div> : <Link key={item.id} to={item.href} className={styles.row} aria-current={active(item) ? 'page' : undefined} onClick={onCloseMobile}
+        aria-label={compact ? item.label : undefined} title={compact ? item.label : undefined}>
+        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span className={styles.label}>{item.label}</span>
       </Link>)}
     </nav>
     <div className={styles.footer}>
       <button type="button" className={styles.account} onClick={() => { onCloseMobile(); onOpenAccount(); }} aria-label="Open account settings">
-        <span className={styles.avatar}>{initials || 'C'}</span><span className={styles.identity}><strong>{userName}</strong><small>{userRole}</small></span><ChevronDown size={14} />
+        <span className={styles.avatar}>{initials || 'C'}</span><span className={styles.identity}><strong>{userName}</strong><small>{userRole}</small></span><ChevronDown className={styles.accountChevron} size={14} />
       </button>
     </div>
   </>;
+  };
 
   return <>
-    <aside className={styles.desktop} aria-label="Coach sidebar" data-workspace-role="coach">{panel(false)}</aside>
+    <aside className={styles.desktop} aria-label="Coach sidebar" data-workspace-role="coach" data-collapsed={collapsed}>
+      <button type="button" className={styles.collapseToggle} aria-label={collapsed ? 'Expand coach sidebar' : 'Collapse coach sidebar'}
+        aria-expanded={!collapsed} onClick={() => onCollapsedChange(!collapsed)}>
+        {collapsed ? <ChevronRight aria-hidden="true" /> : <ChevronLeft aria-hidden="true" />}
+      </button>
+      {panel(false)}
+    </aside>
     {mobileOpen && <div className={styles.backdrop} onClick={onCloseMobile} aria-hidden="true" />}
     <div ref={drawerRef} className={styles.mobile} data-open={mobileOpen} aria-label="Coach mobile navigation"
       role={mobileOpen ? 'dialog' : undefined} aria-modal={mobileOpen ? true : undefined} aria-hidden={!mobileOpen} inert={!mobileOpen}>{panel(true)}</div>

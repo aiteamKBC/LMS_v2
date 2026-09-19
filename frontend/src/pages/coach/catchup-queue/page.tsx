@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
-import { statusTone } from '@/lib/statusTone';
-import { type CatchUpItem } from '@/mocks/catchup-queue';
-import { fetchCoachCalendarEvents } from '@/pages/coach/shared/calendarEvents';
+import { type AbsenceReport } from '@/mocks/absence-reports';
+import { type CoachCalendarEvent, fetchCoachCalendarEvents, formatDateLabel, formatTimeRangeLabel } from '@/pages/coach/shared/calendarEvents';
 import { LearnerIdentity } from '@/pages/coach/shared/LearnerIdentity';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -14,16 +14,23 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { Pagination } from '@/components/ui/Pagination';
 import { Panel } from '@/components/ui/Panel';
-import { calendarEventToCatchUp } from './lib/trend';
-import { priorityTone, titleCase } from './lib/tone';
 
 const coachNav = roleNavMap.coach;
+const ABSENCE_REPORTS_ENDPOINT = '/coach_api/coach/absence-reports';
+
+interface CatchUpRequestRow {
+  id: string;
+  learner: string;
+  lecture: string;
+  booking: CoachCalendarEvent | null;
+  completed: boolean;
+}
 
 export default function CoachCatchupQueue() {
   const coach = useCoachIdentity();
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(12);
-  const [catchupQueue, setCatchupQueue] = useState<CatchUpItem[]>([]);
+  const [catchupQueue, setCatchupQueue] = useState<CatchUpRequestRow[]>([]);
   const [queueLoading, setQueueLoading] = useState(true);
   const [queueError, setQueueError] = useState('');
 
@@ -40,11 +47,32 @@ export default function CoachCatchupQueue() {
     setQueueLoading(true);
     setQueueError('');
 
-    fetchCoachCalendarEvents(controller.signal)
-      .then((data) => {
-        const catchups = (data.events || [])
-          .filter((event) => event.source === 'catch-up')
-          .map(calendarEventToCatchUp);
+    Promise.all([
+      fetchCoachCalendarEvents(controller.signal),
+      coachFetch(ABSENCE_REPORTS_ENDPOINT, { signal: controller.signal }).then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+        return data as { items?: AbsenceReport[] };
+      }),
+    ])
+      .then(([calendarData, absenceData]) => {
+        const eventsByKey = new Map(
+          (calendarData.events || [])
+            .filter(event => event.source === 'catch-up')
+            .map(event => [event.eventKey || event.id, event]),
+        );
+        const catchups = (absenceData.items || [])
+          .filter(report => report.recoveryMethod === 'catch-up')
+          .map((report): CatchUpRequestRow => {
+            const booking = report.catchupEventKey ? eventsByKey.get(report.catchupEventKey) || null : null;
+            return {
+              id: report.id,
+              learner: report.learner,
+              lecture: report.sessionTitle,
+              booking,
+              completed: booking?.status === 'completed',
+            };
+          });
         setCatchupQueue(catchups);
       })
       .catch((requestError: unknown) => {
@@ -62,61 +90,38 @@ export default function CoachCatchupQueue() {
   const totalPages = Math.ceil(catchupQueue.length / itemsPerPage) || 1;
   const paginated = catchupQueue.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  const columns: DataColumn<CatchUpItem>[] = [
+  const columns: DataColumn<CatchUpRequestRow>[] = [
     {
       key: 'learner',
       label: 'Learner',
       widthClass: 'w-[240px] min-w-[220px]',
       render: (item) => (
-        <LearnerIdentity
-          name={item.learner}
-          programme={`${item.cohort} - ${item.programme}`}
-          tone={priorityTone(item.priority)}
-        />
+        <LearnerIdentity name={item.learner} />
       ),
     },
     {
-      key: 'missedSession',
-      label: 'Missed Session',
-      widthClass: 'w-[190px] min-w-[170px]',
-      render: (item) => <span className="block max-w-[190px] truncate text-[13px] text-foreground-700">{item.missedSession}</span>,
+      key: 'lecture',
+      label: 'Missed Lecture',
+      widthClass: 'w-[280px] min-w-[220px]',
+      render: (item) => <span className="block max-w-[280px] truncate text-[13px] font-medium text-foreground-700">{item.lecture}</span>,
     },
     {
-      key: 'missedDate',
-      label: 'Missed Date',
-      widthClass: 'w-[130px]',
-      render: (item) => <span className="whitespace-nowrap text-[13px] text-foreground-500">{item.missedDate}</span>,
+      key: 'booking',
+      label: 'Catch-up Booking',
+      widthClass: 'w-[240px] min-w-[210px]',
+      render: (item) => item.booking?.scheduledDate ? (
+        <span className="inline-flex flex-col whitespace-nowrap text-[13px] text-foreground-700">
+          <span className="font-medium">{formatDateLabel(item.booking.scheduledDate)}</span>
+          <span className="text-[12px] text-foreground-500">{formatTimeRangeLabel(item.booking)}</span>
+        </span>
+      ) : <span className="text-[13px] text-foreground-400">Not scheduled</span>,
     },
     {
-      key: 'catchupDate',
-      label: 'Catch-up Date',
-      widthClass: 'w-[130px]',
-      render: (item) => <span className="whitespace-nowrap text-[13px] text-foreground-500">{item.catchupDate}</span>,
-    },
-    {
-      key: 'status',
-      label: 'Status',
+      key: 'completed',
+      label: 'Completed',
       align: 'center',
-      widthClass: 'w-[130px]',
-      render: (item) => <StatusBadge tone={statusTone(item.status)} label={titleCase(item.status)} size="sm" />,
-    },
-    {
-      key: 'priority',
-      label: 'Priority',
-      align: 'center',
-      widthClass: 'w-[120px]',
-      render: (item) => <StatusBadge tone={priorityTone(item.priority)} label={titleCase(item.priority)} size="sm" />,
-    },
-    {
-      key: 'overdue',
-      label: 'Overdue',
-      align: 'center',
-      widthClass: 'w-[90px]',
-      render: (item) => (
-        item.status === 'overdue'
-          ? <span className="text-[13px] font-semibold text-red-600">{item.daysOverdue}d</span>
-          : <span className="text-[13px] text-foreground-300">-</span>
-      ),
+      widthClass: 'w-[140px]',
+      render: (item) => <StatusBadge tone={item.completed ? 'positive' : 'neutral'} label={item.completed ? 'Yes' : 'No'} size="sm" />,
     },
   ];
 
@@ -139,13 +144,13 @@ export default function CoachCatchupQueue() {
             columns={columns}
             rows={paginated}
             rowKey={(row) => row.id}
-            minWidthClass="min-w-[980px]"
+            minWidthClass="min-w-[760px]"
             loading={queueLoading ? <RowsSkeleton rows={6} className="p-4" /> : undefined}
             empty={
               queueError ? (
                 <EmptyState variant="error" title="Could not load catch-up sessions" description={queueError} />
               ) : (
-                <EmptyState variant="empty" title="No catch-up sessions yet" description="Catch-up sessions will appear here once a missed session is scheduled for a learner." />
+                <EmptyState variant="empty" title="No catch-up requests yet" description="Catch-up requests will appear here when a learner links a booking to a missed lecture." />
               )
             }
             className="rounded-none border-0 shadow-none"

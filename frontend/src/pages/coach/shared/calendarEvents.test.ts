@@ -59,6 +59,17 @@ describe('Coach calendar time labels', () => {
   });
 });
 
+describe('Coach working week', () => {
+  it('runs from Monday through Friday, including when opened on a weekend', async () => {
+    const { currentWeekRange } = await import('./calendarEvents');
+    const { start, end } = currentWeekRange(new Date('2026-09-20T12:00:00'));
+    expect(start.getDay()).toBe(1);
+    expect(end.getDay()).toBe(5);
+    expect(start.getDate()).toBe(14);
+    expect(end.getDate()).toBe(18);
+  });
+});
+
 describe('Coach calendar status and month boundaries', () => {
   it('treats only completed as completed while retaining legacy confirmed as a distinct status', async () => {
     const { isCompletedEvent } = await import('./calendarEvents');

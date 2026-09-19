@@ -13,6 +13,7 @@ from coach_api.views import (
     build_generated_calendar_event,
     build_graph_event_payload,
     build_ksb_completed_details,
+    build_monthly_risk_history,
     build_otjh_completed_entries,
     build_monthly_activity_learner,
     coach_caseload,
@@ -543,8 +544,10 @@ class CoachDashboardViewTests(SimpleTestCase):
     @patch("coach_api.views.collect_generated_timetable")
     @patch("coach_api.views.serialize_caseload_dashboard_learner")
     @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    @patch("coach_api.views.dashboard_monthly_risk_history")
     def test_dashboard_aggregates_workspace_data_with_one_timetable_collection(
         self,
+        monthly_risk_history,
         fetch_rows,
         serialize_learner,
         collect_timetable,
@@ -554,6 +557,9 @@ class CoachDashboardViewTests(SimpleTestCase):
         row = SimpleNamespace(id=2)
         fetch_rows.return_value = [row]
         serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
+        monthly_risk_history.return_value = [
+            {"month": "2026-08", "label": "Aug", "count": 1}
+        ]
         collect_timetable.return_value = {
             "owner_name": "Med Maher",
             "summary": {"total": 1},
@@ -569,6 +575,7 @@ class CoachDashboardViewTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["learners"], [{"id": "2", "coachName": "Med Maher"}])
+        self.assertEqual(payload["monthlyRisk"], [{"month": "2026-08", "label": "Aug", "count": 1}])
         self.assertEqual(payload["attendance"]["learners"], [])
         self.assertEqual([item["id"] for item in payload["timetable"]["events"]], ["event-1", "live-1"])
         self.assertEqual(payload["evidence"]["items"], [])
@@ -584,6 +591,63 @@ class CoachDashboardViewTests(SimpleTestCase):
             "Med Maher",
             start_date=date.today(),
             end_date=date.today() + timedelta(days=90),
+        )
+
+
+class MonthlyRiskHistoryTests(SimpleTestCase):
+    def test_counts_month_end_otjh_status_and_uses_current_snapshot_for_open_month(self):
+        training_plan = [{
+            "moduleTitle": "Module 1",
+            "weeks": [
+                {
+                    "weekTitle": f"Week {index}",
+                    "components": [{"componentId": f"component-{index}"}],
+                }
+                for index in range(1, 7)
+            ],
+        }]
+        learner = SimpleNamespace(
+            id=7,
+            status="active",
+            programme_status="active",
+            start_date=date(2026, 4, 1),
+            otjh_status="At risk",
+            training_plan=training_plan,
+        )
+        progress = {
+            7: [
+                {
+                    "kind": "component",
+                    "componentId": "component-1",
+                    "reportedTime": "10 hours",
+                    "submittedAt": "2026-04-15T10:00:00Z",
+                },
+                {
+                    "kind": "component",
+                    "componentId": "component-2",
+                    "reportedTime": "45 hours",
+                    "submittedAt": "2026-07-10T10:00:00Z",
+                },
+            ],
+        }
+
+        history = build_monthly_risk_history(
+            [learner],
+            progress,
+            {f"component-{index}": 10 for index in range(1, 7)},
+            today=date(2026, 9, 18),
+        )
+
+        self.assertEqual(
+            [(point["month"], point["count"]) for point in history],
+            [
+                ("2026-04", 1),
+                ("2026-05", 1),
+                ("2026-06", 1),
+                ("2026-07", 0),
+                ("2026-08", 0),
+                ("2026-09", 1),
+            ],
         )
 
 

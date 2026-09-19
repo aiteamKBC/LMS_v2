@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
 from time import perf_counter, sleep as _sleep
+from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -58,13 +59,14 @@ from learner_api.models import (
     Employer,
     EnrolmentUser,
     LearnerAbsence,
+    LearnerProgressEntry,
     LearnerProfile,
     StaffUser,
     learner_activity_events_relation_exists,
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
-from learner_api.active_users import components_target_to_date, current_curriculum_ksb_items_for_learner, current_week_label, dedupe_otjh_progress_records, hydrate_training_plan, refresh_learner_ksb_snapshot
+from learner_api.active_users import components_target_to_date, completed_hours_value_from_progress, current_curriculum_ksb_items_for_learner, current_week_label, dedupe_otjh_progress_records, hydrate_training_plan, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
@@ -96,6 +98,7 @@ from curriculum_api.views import (
     delivery_days_per_week,
     get_program_config_rows,
     get_training_rows,
+    england_non_delivery_reason,
     group_authoring_detail_rows,
     is_operational_training_row,
     LIVE_SESSION_OCCURRENCES_TABLE,
@@ -2841,6 +2844,169 @@ def monthly_target_start_date(row: LearnerProfile | SimpleNamespace) -> date | N
     if isinstance(start_date, datetime):
         return start_date.date()
     return start_date
+
+
+def recent_month_end_dates(today: date, count: int = 6) -> list[date]:
+    """Month-end cut-offs ending with ``today`` for the open month."""
+    first_of_this_month = today.replace(day=1)
+    cutoffs: list[date] = []
+    for months_back in range(count - 1, -1, -1):
+        absolute_month = first_of_this_month.year * 12 + first_of_this_month.month - 1 - months_back
+        year, zero_based_month = divmod(absolute_month, 12)
+        month = zero_based_month + 1
+        cutoffs.append(
+            today
+            if months_back == 0
+            else date(year, month, monthrange(year, month)[1])
+        )
+    return cutoffs
+
+
+def progress_entry_history_record(entry: LearnerProgressEntry) -> dict:
+    submitted_at = (
+        timezone.localtime(entry.submitted_at)
+        if entry.submitted_at and timezone.is_aware(entry.submitted_at)
+        else entry.submitted_at
+    )
+    started_at = (
+        timezone.localtime(entry.started_at)
+        if entry.started_at and timezone.is_aware(entry.started_at)
+        else entry.started_at
+    )
+    return {
+        "kind": entry.kind,
+        "componentId": entry.component_ref,
+        "quizId": entry.quiz_ref,
+        "attempt": entry.attempt,
+        "moduleTitle": entry.module_title,
+        "weekTitle": entry.week_title,
+        "componentTitle": entry.component_title,
+        "expectedOtjh": entry.expected_otjh,
+        "reportedTime": entry.reported_time,
+        "submittedAt": submitted_at.isoformat() if submitted_at else "",
+        "startedAt": started_at.isoformat() if started_at else "",
+        "claimedSeconds": entry.claimed_seconds,
+        "verifiedSeconds": entry.verified_seconds,
+        "timeTrackingSource": entry.time_tracking_source,
+    }
+
+
+def historical_progress_date(record: dict) -> date | None:
+    value = record.get("submittedAt") or record.get("startedAt")
+    parsed = parse_date_value(value)
+    return parsed.date() if isinstance(parsed, datetime) else parsed
+
+
+def build_monthly_risk_history(
+    rows: list[LearnerProfile | SimpleNamespace],
+    progress_by_learner: dict[int, list[dict]],
+    expected_by_id: dict[str, float],
+    *,
+    today: date,
+) -> list[dict]:
+    """Count active caseload learners whose OTJH variance was at risk.
+
+    Closed months are reconstructed from timestamped OTJH activity and the
+    cumulative target in the learner's current training plan. The open month
+    deliberately uses the persisted current status, so its bar always agrees
+    with the dashboard's current OTJH counter.
+    """
+    active_rows = [
+        row for row in rows
+        if normalize_program_status(get_lms_row_program_status(row)) == "active"
+    ]
+    learner_context = {
+        int(row.id): (monthly_target_start_date(row), monthly_target_training_plan(row))
+        for row in active_rows
+    }
+    points = []
+    cutoffs = recent_month_end_dates(today)
+    for cutoff in cutoffs:
+        is_current_month = cutoff.year == today.year and cutoff.month == today.month
+        at_risk = 0
+        for row in active_rows:
+            if is_current_month:
+                normalized_status = re.sub(
+                    r"[\s_-]+", "", clean_text(getattr(row, "otjh_status", None)).casefold()
+                )
+                at_risk += normalized_status == "atrisk"
+                continue
+
+            learner_start, training_plan = learner_context[int(row.id)]
+            if learner_start is None or learner_start > cutoff:
+                continue
+            target_hours = curriculum_monthly_target_hours(
+                training_plan,
+                learner_start,
+                learner_start,
+                cutoff,
+                expected_by_id,
+            )
+            if target_hours <= 0:
+                continue
+            historical_progress = [
+                record
+                for record in progress_by_learner.get(int(row.id), [])
+                if (historical_progress_date(record) or date.max) <= cutoff
+            ]
+            completed_hours = completed_hours_value_from_progress(historical_progress)
+            variance = (completed_hours - target_hours) / target_hours
+            if variance <= -0.15:
+                at_risk += 1
+
+        points.append({
+            "month": cutoff.strftime("%Y-%m"),
+            "label": cutoff.strftime("%b"),
+            "count": at_risk,
+        })
+    return points
+
+
+def dashboard_monthly_risk_history(
+    rows: list[LearnerProfile | SimpleNamespace],
+    *,
+    today: date,
+) -> list[dict] | None:
+    """Load the inputs for the six-month chart without writing snapshots."""
+    active_rows = [
+        row for row in rows
+        if normalize_program_status(get_lms_row_program_status(row)) == "active"
+    ]
+    if not active_rows:
+        return build_monthly_risk_history([], {}, {}, today=today)
+
+    try:
+        plans = [monthly_target_training_plan(row) for row in active_rows]
+        component_ids = [
+            component_id
+            for plan in plans
+            for week in curriculum_monthly_target_hours_weeks(plan)
+            for component_id in week
+        ]
+        expected_by_id = curriculum_expected_otjh_by_component_id(component_ids)
+        progress_by_learner: dict[int, list[dict]] = defaultdict(list)
+        progress_entries = (
+            LearnerProgressEntry.objects
+            .filter(learner_id__in=[int(row.id) for row in active_rows])
+            .only(
+                "learner_id", "kind", "component_ref", "quiz_ref", "attempt",
+                "module_title", "week_title", "component_title", "expected_otjh",
+                "reported_time", "submitted_at", "started_at", "claimed_seconds",
+                "verified_seconds", "time_tracking_source",
+            )
+            .order_by("learner_id", "entry_order", "id")
+        )
+        for entry in progress_entries:
+            progress_by_learner[int(entry.learner_id)].append(progress_entry_history_record(entry))
+        return build_monthly_risk_history(
+            active_rows,
+            progress_by_learner,
+            expected_by_id,
+            today=today,
+        )
+    except DatabaseError:
+        logger.exception("coach_dashboard_monthly_risk_history_failed")
+        return None
 
 
 def training_plan_component_lookup(training_plan) -> dict[str, dict[str, str]]:
@@ -8516,6 +8682,9 @@ def reserve_coach_calendar_booking(
 
     owner_email = normalize_email(owner_email)
     session_type = clean_text(session_type).lower()
+    non_delivery_reason = england_non_delivery_reason(scheduled_date)
+    if non_delivery_reason:
+        raise LearnerCalendarConflict(non_delivery_reason)
     if initial_status not in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_NOT_SCHEDULED}:
         raise ValueError("Unsupported initial booking status.")
 
@@ -8710,6 +8879,10 @@ def persist_calendar_sync_reservation(
         "review_template_id",
         "occurrence_number",
     )
+    if candidate.scheduled_date:
+        non_delivery_reason = england_non_delivery_reason(candidate.scheduled_date)
+        if non_delivery_reason:
+            raise LearnerCalendarConflict(non_delivery_reason, candidate)
     with transaction.atomic():
         lock_learner_calendar(candidate.learner_id)
         record = CoachCalendarEvent.objects.select_for_update().get(pk=candidate.pk)
@@ -9812,6 +9985,19 @@ def normalize_attendance_detail_status(value) -> str:
     return text or "--"
 
 
+def serialize_attendance_register_row(row: dict) -> dict:
+    return {
+        "learnerId": clean_text(row.get("learner_id")),
+        "learnerName": clean_text(row.get("learner_name")) or "Learner",
+        "learnerEmail": clean_text(row.get("learner_email")),
+        "sessionId": clean_text(row.get("session_id")) or "--",
+        "sessionTitle": clean_text(row.get("session_title")) or "Live session",
+        "sessionDate": format_iso_date_value(row.get("session_date")),
+        "sessionDateLabel": format_date_value(row.get("session_date")),
+        "status": normalize_attendance_detail_status(row.get("attendance_status")),
+    }
+
+
 def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
     rows = fetch_verified_teams_attendance_rows(
         [to_int(learner.get("id"))],
@@ -10066,10 +10252,11 @@ def coach_dashboard(request):
             for row, learner in zip(rows, learners):
                 apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
                 apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
+            monthly_risk = dashboard_monthly_risk_history(rows, today=timezone.localdate())
             # The profile rows carry the `_caseload_source` bridge to Aptem,
             # which the attendance lookup below needs and the serialized
             # payload does not expose.
-            return rows, learners
+            return rows, learners, monthly_risk
         finally:
             close_old_connections()
 
@@ -10116,7 +10303,7 @@ def coach_dashboard(request):
             learners_future = executor.submit(load_dashboard_learners)
             timetable_future = executor.submit(load_dashboard_timetable)
             groups_future = executor.submit(load_assigned_groups)
-            dashboard_rows, learners = learners_future.result()
+            dashboard_rows, learners, monthly_risk = learners_future.result()
             timetable_payload = timetable_future.result()
             assigned_groups = groups_future.result()
         # Depends on the learner list, so it follows the pool rather than
@@ -10155,6 +10342,7 @@ def coach_dashboard(request):
                 "email": owner_email,
             },
             "learners": learners,
+            "monthlyRisk": monthly_risk,
             "assignedGroups": assigned_groups,
             # Attendance is one batched query and the caseload modal on this
             # page renders it, so it ships here. Evidence stays empty: its
@@ -10414,6 +10602,10 @@ def coach_attendance(request):
         attendance_data = fetch_attendance_detail_summary_data(
             learner_ids, email_keys, include_reported_participants=True,
         )
+        attendance_records = [
+            serialize_attendance_register_row(row)
+            for row in attendance_data["rows"]
+        ]
         active_attendance_data = filter_attendance_detail_summary_data(
             attendance_data,
             active_learner_ids,
@@ -10440,6 +10632,8 @@ def coach_attendance(request):
         )
         catchups_by_learner_id: dict[int, int] = {}
         for record in catchup_records:
+            if record.status != CoachCalendarEvent.STATUS_COMPLETED:
+                continue
             catchups_by_learner_id[record.learner_id] = catchups_by_learner_id.get(record.learner_id, 0) + 1
 
         attendance_learners = [
@@ -10526,6 +10720,7 @@ def coach_attendance(request):
             "owner": {"name": owner_name, "email": owner_email},
             "summary": summary,
             "learners": attendance_learners,
+            "attendanceRecords": attendance_records,
             "trends": active_trends,
         }
     )

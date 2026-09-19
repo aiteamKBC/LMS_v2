@@ -386,10 +386,10 @@ export const USER_GUIDES: GuideSection[] = [
     title: 'Learner Caseload',
     description: 'View, search, and manage all your assigned learners.',
     icon: 'ri-group-line',
-    pagePath: '/coach/caseload',
+    pagePath: '/workspace/coach#learner-caseload',
     role: 'coach',
     steps: [
-      { step: 1, title: 'View Your Learner List', description: 'The caseload page shows all your learners in a table or card view. Each learner shows their name, programme, cohort, start date, and overall status.', icon: 'ri-list-check' },
+      { step: 1, title: 'View Your Learner List', description: 'The Learners at Risk section on the dashboard contains the full learner table. Each learner shows their name, programme, cohort, start date, and overall status.', icon: 'ri-list-check' },
       { step: 2, title: 'Search and Filter', description: 'Use the search bar to find learners by name, or use the filters (Programme, Cohort, Status, At-Risk) to narrow the list. The filter panel is at the top of the table.', icon: 'ri-search-line', action: 'Type in search bar or use filter dropdowns' },
       { step: 3, title: 'View Learner Quick Stats', description: 'Each learner row shows quick stats: KSB %, OTJH hours, attendance rate, and next review date. Click any stat to view the detailed report.', icon: 'ri-bar-chart-line' },
       { step: 4, title: 'Open a Learner Case File', description: 'Click the learner\'s name or the "View Case File" button to open their full case file. This shows their complete learning journey, evidence, attendance, and communication history.', icon: 'ri-folder-user-line', action: 'Click learner name or View Case File' },

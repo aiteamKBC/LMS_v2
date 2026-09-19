@@ -305,7 +305,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, on
           administrators can return to the workspace list from any page. */}
       {!personalLearning && <WorkspaceSwitcher />}
 
-      {role === 'coach' && <Link to="/coach/caseload" className="coach-header-search" aria-label="Search learners">
+      {role === 'coach' && <Link to="/workspace/coach#learner-caseload" className="coach-header-search" aria-label="Search learners">
         <AppIcon name="ri-search-line" /><span>Search learners...</span>
       </Link>}
 

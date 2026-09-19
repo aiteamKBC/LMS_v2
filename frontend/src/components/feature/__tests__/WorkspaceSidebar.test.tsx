@@ -126,7 +126,7 @@ it('keeps an administrator in the selected coach workspace', () => {
   viewer.isAdmin = true;
   const { sidebar, rail } = showWorkspace('coach', '/workspace/coach');
   expect(sidebar.closest('.workspace-shell')).toHaveAttribute('data-workspace-role', 'coach');
-  expect(within(rail).getAllByRole('link').slice(0, 4).map(link => link.textContent)).toEqual(['Dashboard', 'My Learners', 'Attendance', 'Marking']);
+  expect(within(rail).getAllByRole('link').slice(0, 3).map(link => link.textContent)).toEqual(['Dashboard', 'Attendance', 'Marking']);
   expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
   expect(within(rail).getByRole('link', { name: 'Marking' })).toHaveAttribute('href', '/coach/marking-queue');
   expect(within(rail).getByRole('link', { name: 'Marking' }).querySelector('svg')).not.toBeNull();
@@ -161,10 +161,17 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
     if (role === 'coach') {
       expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
       expect(panel).toBeNull();
+      expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+      fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse coach sidebar' }));
+      expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('76px');
+      expect(localStorage.getItem('kbc_coach_sidebar_collapsed')).toBe('true');
       const group = roleNavMap.coach.items.find(item => item.children?.length)!;
       const toggle = within(sidebar).getByRole('button', { name: group.label });
       expect(toggle).toHaveAttribute('aria-expanded', 'false');
       fireEvent.click(toggle);
+      expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
       expect(toggle).toHaveAttribute('aria-expanded', 'true');
       expect(within(sidebar).getByRole('link', { name: group.children![0].label })).toBeVisible();
       fireEvent.click(toggle);

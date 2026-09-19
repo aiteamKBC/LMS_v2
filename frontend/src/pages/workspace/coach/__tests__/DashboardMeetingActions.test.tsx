@@ -4,12 +4,13 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DashboardMeetingActions } from '../DashboardMeetingActions';
 import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 
-const mocks = vi.hoisted(() => ({ fetch: vi.fn(), schedule: vi.fn(), openForm: vi.fn(), viewingAs: false }));
+const mocks = vi.hoisted(() => ({ fetch: vi.fn(), schedule: vi.fn(), openForm: vi.fn(), savePptx: vi.fn(), viewingAs: false }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: mocks.fetch }));
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ isViewingAsCoach: mocks.viewingAs }) }));
 vi.mock('@/pages/coach/shared/calendarEvents', async original => ({ ...await original<typeof import('@/pages/coach/shared/calendarEvents')>(), scheduleCoachCalendarEvent: mocks.schedule }));
 vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: mocks.openForm }));
 vi.mock('@/pages/coach/progress-reviews/components/ProgressReviewPptxModal', () => ({ default: () => <div>Progress review presentation</div> }));
+vi.mock('@/pages/coach/progress-reviews/lib/progressReviewPptx', () => ({ saveProgressReviewPptx: mocks.savePptx }));
 
 const event: CoachCalendarEvent = { id: 'meeting', eventKey: 'mcr:42:1', learnerId: '42', learner: 'Example Learner',
   source: 'mcr', title: 'Monthly Coaching', type: 'coaching', status: 'scheduled', scheduledDate: '2026-09-21', scheduledTime: '10:30',
@@ -94,9 +95,13 @@ it('uses the curriculum instance endpoint when the scheduled meeting has a templ
   expect(mocks.openForm).toHaveBeenCalledExactlyOnceWith('mcr:42:1');
 });
 
-it('hides presentation generation for MCM and retains the existing PR presentation workflow', () => {
+it('generates the MCM agenda presentation and retains the existing PR presentation workflow', async () => {
   const result = mount();
-  expect(screen.queryByRole('button', { name: 'Generate Presentation' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Generate Presentation' }));
+  await waitFor(() => expect(mocks.savePptx).toHaveBeenCalledWith(expect.objectContaining({
+    learnerName: 'Example Learner', reviewLabel: 'Monthly Coaching Agenda', slides: expect.any(Array),
+  }), 'Monthly Coaching Agenda'));
+  expect(screen.getByRole('status')).toHaveTextContent('Monthly Coaching agenda downloaded.');
   result.unmount(); mount({ source: 'progress-review', type: 'review' });
   fireEvent.click(screen.getByRole('button', { name: 'Generate Presentation' }));
   expect(screen.getByText('Progress review presentation')).toBeVisible();
