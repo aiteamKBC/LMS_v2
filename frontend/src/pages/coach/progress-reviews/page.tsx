@@ -1432,7 +1432,7 @@ export default function CoachProgressReviews() {
             <PageTabs items={tabItems} value={tab} onChange={(next) => changeTab(next as ReviewTab)} label="Filter progress reviews by status" />
           </div>
 
-          <div className="grid gap-3 bg-background-100/55 p-3 sm:p-5 xl:grid-cols-2">
+          <div className="space-y-2 bg-background-100/55 p-3 sm:p-5">
             {loading && Array.from({ length: 4 }).map((_, index) => <CardSkeleton key={index} />)}
             {!loading && !error && data.length === 0 ? (
               <div className="xl:col-span-2">
@@ -1464,7 +1464,7 @@ export default function CoachProgressReviews() {
                     </>
                   )}
                   actions={(
-                    <div className="hidden shrink-0 items-center gap-2 md:flex">
+                    <div className="flex flex-wrap items-center gap-2">
                       <RowAction label="Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(review)} />
                       {joinAvailable ? (
                         <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={isBusy} onClick={() => { handleJoin(review); }} />

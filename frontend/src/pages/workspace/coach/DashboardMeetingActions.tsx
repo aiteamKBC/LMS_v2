@@ -53,7 +53,12 @@ export function DashboardMeetingActions({ event, onUpdated, onScheduleNotice }: 
         const response = await coachFetch(`/coach_api/coach/timetable/events/${encodeURIComponent(identity)}/reminder`, { method: 'POST' });
         const result = await response.json();
         if (!response.ok || result.sent !== true) throw new Error(result.detail || result.error || 'Reminder delivery could not be confirmed.');
-        setReminderSent(true); setNotice(result.detail || 'Reminder email accepted for delivery.');
+        setReminderSent(true);
+        const deliveryDetail = result.detail || 'Reminder email accepted for delivery.';
+        const sentOnceNote = result.alreadySent
+          ? 'Reminder was already sent once for this meeting.'
+          : 'Reminder sent once for this meeting.';
+        setNotice(`${deliveryDetail} ${sentOnceNote}`);
       })}><AppIcon name="ri-send-plane-line" />{busy === 'reminder' ? 'Sending...' : reminderSent ? 'Reminder sent' : 'Send Reminder'}</button>
       {!scheduleOpen && (notice || error) && <p className={styles.actionMessage} role={error ? 'alert' : 'status'}>{error || notice}</p>}</td>
     <td>{event.source === 'mcr' || isReview ? <button className={styles.textButton} type="button" disabled={Boolean(busy)}

@@ -126,8 +126,8 @@ it('keeps an administrator in the selected coach workspace', () => {
   viewer.isAdmin = true;
   const { sidebar, rail } = showWorkspace('coach', '/workspace/coach');
   expect(sidebar.closest('.workspace-shell')).toHaveAttribute('data-workspace-role', 'coach');
-  expect(within(rail).getAllByRole('link').slice(0, 4).map(link => link.textContent)).toEqual(['Dashboard', 'My Learners', 'Meetings', 'Marking']);
-  expect(within(rail).getByRole('link', { name: 'Meetings' })).toHaveAttribute('href', '/coach/meetings');
+  expect(within(rail).getAllByRole('link').slice(0, 4).map(link => link.textContent)).toEqual(['Dashboard', 'My Learners', 'Marking', 'Attendance']);
+  expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
   expect(within(rail).getByRole('link', { name: 'Marking' })).toHaveAttribute('href', '/coach/marking-queue');
 });
 
@@ -271,8 +271,7 @@ it('keeps every permitted coach destination in the labelled sidebar for an admin
 
 it.each(['/workspace/coach', '/coach/monthly-coaching'])('opens the restored MCM list while retaining Meetings from %s', initialPath => {
   const { rail } = showWorkspace('coach', initialPath);
-  expect(within(rail).getByRole('link', { name: 'Meetings' })).toHaveAttribute('href', '/coach/meetings');
-  const group = within(rail).getByRole('button', { name: 'Coaching & Reviews' });
+  const group = within(rail).getByRole('button', { name: 'Meetings' });
   expect(group).toHaveAttribute('aria-expanded', String(initialPath === '/coach/monthly-coaching'));
   if (initialPath !== '/coach/monthly-coaching') fireEvent.click(group);
   const mcm = within(rail).getByRole('link', { name: 'Monthly Coaching Meeting' });
@@ -280,15 +279,15 @@ it.each(['/workspace/coach', '/coach/monthly-coaching'])('opens the restored MCM
   fireEvent.click(mcm);
   expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
   expect(mcm).toHaveAttribute('aria-current', 'page');
-  expect(within(rail).getByRole('link', { name: 'Meetings' })).not.toHaveAttribute('aria-current');
+  expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
 });
 
 it('honours the MCM navigation restriction without hiding Meetings', () => {
   denied.add('coach-monthly-coaching');
   const { rail } = showWorkspace('coach', '/coach/monthly-coaching');
-  fireEvent.click(within(rail).getByRole('button', { name: 'Coaching & Reviews' }));
+  fireEvent.click(within(rail).getByRole('button', { name: 'Meetings' }));
   expect(within(rail).queryByRole('link', { name: 'Monthly Coaching Meeting' })).toBeNull();
-  expect(within(rail).getByRole('link', { name: 'Meetings' })).toBeVisible();
+  expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
 });
 
 it('keeps long status tags inside the curriculum sidebar', () => {

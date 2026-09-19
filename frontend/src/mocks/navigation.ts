@@ -75,6 +75,12 @@ export const coachNavItems: SidebarNavItem[] = [
     label: 'Meetings',
     icon: 'ri-calendar-event-line',
     href: '/coach/meetings',
+    children: [
+      { id: 'coach-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/monthly-coaching' },
+      { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
+      { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-refresh-line', href: '/coach/catchup-queue' },
+      { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
+    ],
   },
   {
     id: 'coach-marking-queue',
@@ -89,14 +95,11 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/attendance',
   },
   {
-    id: 'coach-group-coaching',
-    label: 'Coaching & Reviews',
-    icon: 'ri-calendar-schedule-line',
+    id: 'coach-group-reports',
+    label: 'Report',
+    icon: 'ri-file-list-3-line',
     href: '',
     children: [
-      { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
-      { id: 'coach-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/monthly-coaching' },
-      { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
       { id: 'coach-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/coach/monthly-logs', matchPaths: ['/coach/monthly-cycle'] },
     ],
   },

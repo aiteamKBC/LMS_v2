@@ -40,6 +40,7 @@ it('sends one explicit reminder and blocks double clicks without passing a recip
   expect(mocks.fetch).toHaveBeenCalledExactlyOnceWith('/coach_api/coach/timetable/events/mcr%3A42%3A1/reminder', { method: 'POST' });
   finish(new Response(JSON.stringify({ sent: true, detail: 'Accepted for delivery.' })));
   expect(await screen.findByRole('status')).toHaveTextContent('Accepted for delivery.');
+  expect(screen.getByRole('status')).toHaveTextContent('Reminder sent once for this meeting.');
   expect(screen.getByRole('button', { name: 'Reminder sent' })).toBeDisabled();
 });
 
