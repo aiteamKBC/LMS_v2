@@ -25,6 +25,7 @@ import type { ImportedReview } from '@/api/reviewHistory';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import {
   type CoachCalendarEvent,
+  fetchCoachCalendarEvents,
   eventDisplayDate,
   eventTargetDate,
   eventPeriodLabel,
@@ -106,6 +107,8 @@ interface CoachLearner {
   nextReview: string;
   nextReviewStatus?: ScheduleStatus;
   lastContact: string;
+  lastMcm?: string;
+  lastPr?: string;
   recentFlag: string | null;
   email?: string | null;
   rawProgramStatus?: string | null;
@@ -362,10 +365,56 @@ function findAttendanceRecord(learner: CoachLearner, attendanceLearners: Attenda
   });
 }
 
-function mergeAttendanceRates(learners: CoachLearner[], attendanceLearners: AttendanceApiLearner[]): CoachLearner[] {
+function eventBelongsToLearner(event: CoachCalendarEvent, learner: CoachLearner) {
+  const learnerId = normalizeIdentity(learner.id);
+  const learnerEmail = normalizeIdentity(learner.email);
+  const learnerName = normalizeIdentity(learner.name);
+  return Boolean(
+    (learnerId && normalizeIdentity(event.learnerId) === learnerId)
+    || (learnerEmail && normalizeIdentity(event.email) === learnerEmail)
+    || (learnerName && normalizeIdentity(event.learner) === learnerName),
+  );
+}
+
+function latestCompletedSessionDate(
+  learner: CoachLearner,
+  events: CoachCalendarEvent[],
+  matchesType: (event: CoachCalendarEvent) => boolean = () => true,
+) {
+  const latest = events
+    .filter(event => isCompletedEvent(event) && matchesType(event) && eventBelongsToLearner(event, learner))
+    .map(event => eventDisplayDate(event))
+    .map(value => ({ value, date: parseLocalDate(value) }))
+    .filter((entry): entry is { value: string; date: Date } => Boolean(entry.date))
+    .sort((a, b) => b.date.getTime() - a.date.getTime())[0];
+  return latest?.value;
+}
+
+function formatCompletedSessionDate(value?: string) {
+  const date = parseLocalDate(value);
+  return date
+    ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date)
+    : EMPTY_VALUE;
+}
+
+function mergeAttendanceRates(
+  learners: CoachLearner[],
+  attendanceLearners: AttendanceApiLearner[],
+  events: CoachCalendarEvent[],
+): CoachLearner[] {
   return learners.map((learner): CoachLearner => {
     const attendance = findAttendanceRecord(learner, attendanceLearners);
-    const lastSession = displayValue(attendance?.lastSession);
+    const attendanceDate = parseLocalDate(attendance?.lastSessionDate);
+    const completedEventDate = latestCompletedSessionDate(learner, events);
+    const lastMcmDate = latestCompletedSessionDate(learner, events, event => event.source === 'mcr');
+    const lastPrDate = latestCompletedSessionDate(learner, events, event => event.source === 'progress-review');
+    const parsedCompletedEventDate = parseLocalDate(completedEventDate);
+    const lastSession = parsedCompletedEventDate
+      && (!attendanceDate || parsedCompletedEventDate.getTime() > attendanceDate.getTime())
+      ? formatDateLabel(completedEventDate)
+      : displayValue(attendance?.lastSession) !== EMPTY_VALUE
+        ? displayValue(attendance?.lastSession)
+        : formatDateLabel(attendance?.lastSessionDate);
     const hasAttendance = Boolean(
       attendance
       && attendance.attendance !== null
@@ -377,12 +426,12 @@ function mergeAttendanceRates(learners: CoachLearner[], attendanceLearners: Atte
       ...learner,
       attendanceRate: hasAttendance ? clampPercent(attendance?.attendance) : 0,
       attendanceRateAvailable: hasAttendance,
-      // `lastContact` in the caseload payload currently carries the case-owner
-      // name. Attendance owns the latest recorded session date, which is what
-      // this dashboard column is intended to show.
-      lastContact: lastSession !== EMPTY_VALUE
-        ? lastSession
-        : formatDateLabel(attendance?.lastSessionDate),
+      // Use the latest completed occurrence across coaching, progress reviews
+      // and live sessions. Future, in-progress and cancelled events are not
+      // contacts, and the caseload payload's owner name is intentionally ignored.
+      lastContact: lastSession,
+      lastMcm: formatCompletedSessionDate(lastMcmDate),
+      lastPr: formatCompletedSessionDate(lastPrDate),
     };
   });
 }
@@ -1046,7 +1095,7 @@ export default function CoachDashboard() {
       }
 
       try {
-        const [dashboard, markingQueue] = await Promise.all([
+        const [dashboard, markingQueue, completedSessionHistory] = await Promise.all([
           fetchSharedJsonGet<CoachDashboardApiResponse>(
             withCoachViewAs(coachDashboardEndpoint()),
             { signal: controller.signal, credentials: 'include' },
@@ -1055,6 +1104,9 @@ export default function CoachDashboard() {
             withCoachViewAs('/coach_api/coach/marking-queue?status=pending&page_size=1'),
             { signal: controller.signal, credentials: 'include' },
           ).catch(() => null),
+          // Use the same full calendar history as My Learners. The dashboard
+          // payload is intentionally limited to today + 90 days for previews.
+          fetchCoachCalendarEvents(controller.signal).catch(() => ({ events: [] })),
         ]);
         if (controller.signal.aborted) return;
 
@@ -1063,12 +1115,13 @@ export default function CoachDashboard() {
         const attendanceLearners = dashboard.attendance?.learners || [];
         const reviewHistoryLearners = dashboard.reviewHistory?.learners || [];
         const events = sortEvents(dashboard.timetable?.events || []);
+        const completedHistoryEvents = completedSessionHistory.events || [];
         const nonLiveEvents = events.filter(event => event.source !== 'live-session');
 
         setOwnerName(displayValue(dashboard.owner?.name) === EMPTY_VALUE ? authenticatedCoachName : String(dashboard.owner?.name));
         setLearners(mergeEvidenceQueueIntoLearners(
           mergeReviewHistory(
-            mergeAttendanceRates(normalizedLearners, attendanceLearners),
+            mergeAttendanceRates(normalizedLearners, attendanceLearners, completedHistoryEvents),
             reviewHistoryLearners,
           ),
           queueItems,
@@ -1342,7 +1395,7 @@ export default function CoachDashboard() {
                     <div className={styles.tableScroll} data-overflow={attentionHasOverflow} tabIndex={0} role="region" aria-label="Learners at OTJH risk">
                       <table className={`${styles.table} ${styles.learnersTable}`}>
                         <caption className="sr-only">Learners at OTJH risk, ordered by priority</caption>
-                        <thead><tr><th scope="col">Learner</th><th scope="col">Group</th><th scope="col">OTJH status</th><th scope="col">Last contact</th><th scope="col">Actions</th></tr></thead>
+                        <thead><tr><th scope="col">Learner</th><th scope="col">Group</th><th scope="col">OTJH status</th><th scope="col">Last MCM</th><th scope="col">Last PR</th><th scope="col">Actions</th></tr></thead>
                         <tbody>{attentionRows.map(entry => (
                           <AttentionLearnerRow key={entry.learner.id} learner={entry.learner}
                             onOpen={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(entry.learner.id)}`, {
@@ -1530,7 +1583,8 @@ function AttentionLearnerRow({ learner, onOpen }: {
       </div></td>
       <td><span className={styles.groupName}>{learner.group !== EMPTY_VALUE ? learner.group : learner.programme}</span></td>
       <td><StatusBadge tone={status.tone} label={status.label} size="sm" /></td>
-      <td><span className={styles.lastContact}>{displayValue(learner.lastContact)}</span>{displayValue(learner.lastContact) === EMPTY_VALUE && <span className={styles.subtle}>No session recorded</span>}</td>
+      <td><span className={styles.lastContact}>{displayValue(learner.lastMcm)}</span>{displayValue(learner.lastMcm) === EMPTY_VALUE && <span className={styles.subtle}>No MCM recorded</span>}</td>
+      <td><span className={styles.lastContact}>{displayValue(learner.lastPr)}</span>{displayValue(learner.lastPr) === EMPTY_VALUE && <span className={styles.subtle}>No PR recorded</span>}</td>
       <td><button type="button" className={styles.textButton} onClick={onOpen} aria-label={`View learner ${learner.name}`}><AppIcon name="ri-user-line" aria-hidden="true" />View Profile</button></td>
     </tr>
   );

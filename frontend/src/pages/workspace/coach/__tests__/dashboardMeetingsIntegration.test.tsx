@@ -5,12 +5,16 @@ import type { ReactNode } from 'react';
 import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 import CoachDashboard from '../page';
 
-const mocks = vi.hoisted(() => ({ load: vi.fn(), schedule: vi.fn() }));
+const mocks = vi.hoisted(() => ({ load: vi.fn(), schedule: vi.fn(), calendar: vi.fn() }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ isInitialized: true, auth: { account: { email: 'coach@example.invalid' } } }) }));
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ email: 'coach@example.invalid', name: 'Example Coach', isInitialized: true, isViewingAsCoach: false }) }));
 vi.mock('@/lib/sharedGetJson', () => ({ fetchSharedJsonGet: mocks.load }));
-vi.mock('@/pages/coach/shared/calendarEvents', async original => ({ ...await original<typeof import('@/pages/coach/shared/calendarEvents')>(), scheduleCoachCalendarEvent: mocks.schedule }));
+vi.mock('@/pages/coach/shared/calendarEvents', async original => ({
+  ...await original<typeof import('@/pages/coach/shared/calendarEvents')>(),
+  scheduleCoachCalendarEvent: mocks.schedule,
+  fetchCoachCalendarEvents: mocks.calendar,
+}));
 vi.mock('@/pages/coach/progress-reviews/components/ProgressReviewPptxModal', () => ({ default: () => null }));
 vi.mock('../CoachDirectoryPicker', () => ({ CoachDirectoryPicker: () => null }));
 vi.mock('../AllCoachesCalendar', () => ({ AllCoachesCalendar: () => null }));
@@ -19,6 +23,7 @@ const meeting: CoachCalendarEvent = { id: 'meeting-1', eventKey: 'mcr:1:1', titl
   learnerId: '1', learner: 'Example Learner', status: 'scheduled', scheduledDate: '2026-09-21', scheduledTime: '10:30', durationMinutes: 60 };
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.calendar.mockResolvedValue({ events: [] });
   vi.useFakeTimers({ shouldAdvanceTime: true }); vi.setSystemTime(new Date('2026-09-18T10:00:00Z'));
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   HTMLDialogElement.prototype.close = function () { this.open = false; };
@@ -55,7 +60,7 @@ it('keeps the live session calendar link while showing the new actions only on c
   expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard', expect.objectContaining({ credentials: 'include' }));
 });
 
-it('shows the learner last session as Last contact instead of the caseload owner name', async () => {
+it('does not show the caseload owner name as learner session activity', async () => {
   mocks.load.mockImplementation((url: string) => Promise.resolve(
     url.includes('/marking-queue')
       ? { summary: { pendingItems: 0 } }
@@ -76,8 +81,38 @@ it('shows the learner last session as Last contact instead of the caseload owner
 
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   const riskTable = await screen.findByRole('region', { name: 'Learners at OTJH risk' });
-  expect(within(riskTable).getByText('12 Sep 2026')).toBeVisible();
+  expect(within(riskTable).queryByRole('columnheader', { name: 'Last contact' })).not.toBeInTheDocument();
   expect(within(riskTable).queryByText('Incorrect Coach Name')).not.toBeInTheDocument();
+});
+
+it('shows the latest completed MCM and PR and ignores future or cancelled sessions', async () => {
+  mocks.calendar.mockResolvedValue({ events: [
+    { ...meeting, id: 'completed-coaching', status: 'completed', scheduledDate: '2026-09-12' },
+    { ...meeting, id: 'completed-review', source: 'progress-review', type: 'review', status: 'completed', scheduledDate: '2026-09-15' },
+    { ...meeting, id: 'completed-live', source: 'live-session', status: 'completed', scheduledDate: '2026-09-16' },
+    { ...meeting, id: 'future-live', source: 'live-session', status: 'scheduled', scheduledDate: '2026-09-21' },
+    { ...meeting, id: 'cancelled-live', source: 'live-session', status: 'cancelled', scheduledDate: '2026-09-17' },
+  ] });
+  mocks.load.mockImplementation((url: string) => Promise.resolve(
+    url.includes('/marking-queue')
+      ? { summary: { pendingItems: 0 } }
+      : {
+          owner: { name: 'Example Coach' },
+          learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'at-risk' }],
+          attendance: { learners: [{ id: '1', learner: 'Example Learner', attendance: 90, lastSession: '10 Sep 2026', lastSessionDate: '2026-09-10' }] },
+          evidence: { items: [] },
+          timetable: { events: [] },
+        },
+  ));
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const riskTable = await screen.findByRole('region', { name: 'Learners at OTJH risk' });
+  const row = within(riskTable).getByText('Example Learner').closest('tr');
+  expect(row).not.toBeNull();
+  expect(within(row!).getByRole('cell', { name: '12 Sept 2026' })).toBeVisible();
+  expect(within(row!).getByRole('cell', { name: '15 Sept 2026' })).toBeVisible();
+  expect(within(riskTable).queryByText('21 Sept 2026')).not.toBeInTheDocument();
+  expect(within(riskTable).queryByText('17 Sept 2026')).not.toBeInTheDocument();
 });
 
 it('keeps a Teams warning visible when a rescheduled meeting moves out of the seven-day preview', async () => {
