@@ -1450,6 +1450,7 @@ export default function CoachProgressReviews() {
               const isBusy = busyEventId === eventIdentity(review);
               const hasSlides = generatedReviewKeys.has(eventIdentity(review));
               const joinAvailable = canJoinMeeting(review);
+              const viewOnly = review.status === 'completed' || review.status === 'awaiting-signature';
               return (
                 <CalendarEventRow
                   key={eventIdentity(review)}
@@ -1465,34 +1466,30 @@ export default function CoachProgressReviews() {
                   )}
                   actions={(
                     <div className="flex flex-wrap items-center gap-2">
-                      <RowAction label="Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(review)} />
-                      {joinAvailable ? (
-                        <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={isBusy} onClick={() => { handleJoin(review); }} />
-                      ) : null}
-                      {review.status === 'scheduled' && review.reviewTemplateId ? (
-                        <RowAction label="Mark In Progress" icon="ri-play-circle-line" disabled={isBusy} onClick={() => { void markReviewInProgress(review); }} />
-                      ) : null}
-                      <RowAction
-                        label={hasSlides ? 'View slides' : 'Create slides'}
-                        icon={hasSlides ? 'ri-slideshow-2-line' : 'ri-slideshow-line'}
-                        disabled={!reviewHasLearnerReference(review)}
-                        onClick={() => { handleCreateSlides(review); }}
-                      />
-                      {(review.status === 'scheduled' || review.status === 'in-progress') && review.reviewTemplateId ? (
-                        <RowAction label="Open form" icon="ri-file-edit-line" disabled={isBusy} onClick={() => { void openCompletionForm(review); }} />
-                      ) : review.status === 'in-progress' ? (
+                      {!viewOnly ? (
                         <RowAction
-                          label="Open form"
-                          icon="ri-file-edit-line"
-                          disabled={isBusy}
-                          onClick={() => { openCompletionForm(review); }}
+                          label={review.status === 'scheduled' ? 'Reschedule' : 'Schedule'}
+                          icon="ri-calendar-schedule-line"
+                          emphasis="calendar"
+                          disabled={isBusy || review.status === 'in-progress'}
+                          onClick={() => openEventInCalendar(review)}
                         />
                       ) : null}
-                      <RowAction
-                        label={needsScheduling(review) ? 'Schedule' : 'Manage'}
-                        emphasis="primary"
-                        onClick={() => toggleExpanded(review)}
-                      />
+                      {!viewOnly && (review.status === 'scheduled' || review.status === 'in-progress') ? (
+                        <RowAction label="Form" icon="ri-file-edit-line" disabled={isBusy} onClick={() => { void openCompletionForm(review); }} />
+                      ) : null}
+                      {!viewOnly ? (
+                        <RowAction
+                          label={hasSlides ? 'View Slides' : 'Create Slides'}
+                          icon={hasSlides ? 'ri-slideshow-2-line' : 'ri-file-ppt-line'}
+                          disabled={!reviewHasLearnerReference(review)}
+                          onClick={() => { handleCreateSlides(review); }}
+                        />
+                      ) : null}
+                      <RowAction label="View" icon="ri-eye-line" onClick={() => toggleExpanded(review)} />
+                      {!viewOnly && joinAvailable ? (
+                        <RowAction label="Join" icon="ri-video-on-line" emphasis="meeting" disabled={isBusy} onClick={() => { handleJoin(review); }} />
+                      ) : null}
                     </div>
                   )}
                 >

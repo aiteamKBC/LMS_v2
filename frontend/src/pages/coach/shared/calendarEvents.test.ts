@@ -58,3 +58,37 @@ describe('Coach calendar time labels', () => {
     expect(formatTimeRangeLabel({ scheduledTime: '23:30', durationMinutes: 60 } as never)).toBe('23:30 - 00:30');
   });
 });
+
+describe('Coach calendar status and month boundaries', () => {
+  it('treats only completed as completed while retaining legacy confirmed as a distinct status', async () => {
+    const { isCompletedEvent } = await import('./calendarEvents');
+    expect(isCompletedEvent({ status: 'completed' } as never)).toBe(true);
+    expect(isCompletedEvent({ status: 'confirmed' } as never)).toBe(false);
+  });
+
+  it.each([
+    ['start of month', '2026-09-01', true],
+    ['end of month', '2026-09-30', true],
+    ['start of next month', '2026-10-01', false],
+  ])('handles %s without crossing the selected month', async (_label, date, expected) => {
+    const { isEventInMonth } = await import('./calendarEvents');
+    expect(isEventInMonth({ date } as never, new Date('2026-09-15T12:00:00'))).toBe(expected);
+  });
+
+  it('keeps due and overdue boundaries on the calendar date', async () => {
+    const { isAtRiskEvent, isDueSoonEvent } = await import('./calendarEvents');
+    const dueToday = { status: 'not-scheduled', targetDate: '2026-09-14' } as never;
+    expect(isAtRiskEvent(dueToday, new Date('2026-09-14T23:59:59'))).toBe(false);
+    expect(isAtRiskEvent(dueToday, new Date('2026-09-15T00:00:00'))).toBe(true);
+    expect(isDueSoonEvent({ status: 'not-scheduled', targetDate: '2026-09-28' } as never, new Date('2026-09-14T00:00:00'))).toBe(true);
+    expect(isDueSoonEvent({ status: 'not-scheduled', targetDate: '2026-09-29' } as never, new Date('2026-09-14T00:00:00'))).toBe(false);
+  });
+
+  it('allows Join only for a link-backed meeting on or before today', async () => {
+    const { canJoinMeeting } = await import('./calendarEvents');
+    const now = new Date('2026-09-14T10:00:00');
+    expect(canJoinMeeting({ status: 'scheduled', scheduledDate: '2026-09-20', meetingLink: 'https://teams.test/future' } as never, now)).toBe(false);
+    expect(canJoinMeeting({ status: 'scheduled', scheduledDate: '2026-09-14', meetingLink: 'https://teams.test/today' } as never, now)).toBe(true);
+    expect(canJoinMeeting({ status: 'completed', scheduledDate: '2026-09-14', meetingLink: 'https://teams.test/completed' } as never, now)).toBe(false);
+  });
+});

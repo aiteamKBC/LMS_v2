@@ -56,7 +56,6 @@ const CoachEvidenceValidation = lazyRoute(() => import("../pages/coach/evidence-
 const CoachKsbImpact = lazyRoute(() => import("../pages/coach/ksb-impact/page"));
 const CoachMarkingQueue = lazyRoute(() => import("../pages/coach/marking-queue/page"));
 const CoachMarkingReviewPage = lazyRoute(() => import("../pages/coach/marking-review/page"));
-const CoachMeetings = lazyRoute(() => import("../pages/coach/meetings/page"));
 const CoachMonthlyCoaching = lazyRoute(() => import("../pages/coach/monthly-coaching/page"));
 const CoachMeetingDetail = lazyRoute(() => import("../pages/coach/meeting-detail/page"));
 const CoachReviewInstancePage = lazyRoute(() => import("../pages/coach/review-instance/page"));
@@ -769,10 +768,6 @@ const routes: RouteObject[] = [
   {
     path: "/coach/ai-marking",
     element: <CoachAiMarking />,
-  },
-  {
-    path: "/coach/meetings",
-    element: <CoachMeetings />,
   },
   {
     path: "/coach/monthly-coaching",

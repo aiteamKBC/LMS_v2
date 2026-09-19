@@ -586,7 +586,7 @@ export function isUrgentEvent(event: CoachCalendarEvent) {
 }
 
 export function isCompletedEvent(event: CoachCalendarEvent) {
-  return event.status === 'completed' || event.status === 'confirmed';
+  return event.status === 'completed';
 }
 
 export function canJoinMeeting(event: CoachCalendarEvent, referenceDate = new Date()) {
@@ -597,7 +597,17 @@ export function canJoinMeeting(event: CoachCalendarEvent, referenceDate = new Da
 }
 
 export function isUpcomingEvent(event: CoachCalendarEvent) {
-  return !['completed', 'confirmed', 'cancelled'].includes(event.status);
+  return !['completed', 'cancelled'].includes(event.status);
+}
+
+export function isEventInMonth(event: CoachCalendarEvent, referenceDate = new Date()) {
+  const displayDate = parseLocalDate(eventDisplayDate(event));
+  if (!displayDate) return false;
+
+  return (
+    displayDate.getFullYear() === referenceDate.getFullYear()
+    && displayDate.getMonth() === referenceDate.getMonth()
+  );
 }
 
 export function isAtRiskEvent(event: CoachCalendarEvent, referenceDate = new Date()) {
@@ -630,13 +640,7 @@ export function isEventThisWeek(event: CoachCalendarEvent, referenceDate = new D
 }
 
 export function isEventThisMonth(event: CoachCalendarEvent, referenceDate = new Date()) {
-  const displayDate = parseLocalDate(eventDisplayDate(event));
-  if (!displayDate || isCompletedEvent(event)) return false;
-
-  return (
-    displayDate.getFullYear() === referenceDate.getFullYear()
-    && displayDate.getMonth() === referenceDate.getMonth()
-  );
+  return !isCompletedEvent(event) && isEventInMonth(event, referenceDate);
 }
 
 export function isAtRiskProgressReview(event: CoachCalendarEvent, referenceDate = new Date()) {

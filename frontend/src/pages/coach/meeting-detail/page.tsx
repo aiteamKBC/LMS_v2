@@ -157,7 +157,7 @@ export default function CoachMeetingDetail() {
   const { eventKey = '' } = useParams();
   const isProgressReview = location.pathname.startsWith('/coach/progress-reviews/')
     || location.pathname.startsWith('/coach/reviews/');
-  const listPath = isProgressReview ? '/coach/progress-reviews' : '/coach/meetings';
+  const listPath = isProgressReview ? '/coach/progress-reviews' : '/coach/monthly-coaching';
   const returnTo = safeReturnTo((location.state as MeetingDetailLocationState | null)?.returnTo) || listPath;
   const backLabel = returnTo.startsWith('/coach/learner-case-file')
     ? 'Back to Learner Reviews'

@@ -25,6 +25,12 @@ const isAbortError = (err: unknown): boolean => err instanceof DOMException && e
  *  mirrors curriculum_api.review_pdf.EXPORTABLE_REVIEW_TYPES. */
 const EXPORTABLE_REVIEW_TYPES = ['mcm', 'progress_review'];
 
+function reviewTypeLabel(definition: ReviewInstanceFormDefinition) {
+  if (definition.template.reviewTypeCode === 'mcm') return 'Monthly Coaching Meeting';
+  if (definition.template.reviewTypeCode === 'progress_review') return 'Progress Review';
+  return definition.template.name;
+}
+
 /**
  * The generic "open a Curriculum-driven Review" screen -- what a coach sees
  * when they open ANY Review instance (Monthly Coaching Meeting, Progress
@@ -197,6 +203,7 @@ export function ReviewInstanceModal({
 
   const busy = saving || calculating;
   const pageMode = presentation === 'page';
+  const headingLabel = definition ? reviewTypeLabel(definition) : '';
 
   const content = (
     <>
@@ -217,7 +224,7 @@ export function ReviewInstanceModal({
             <div className="min-w-0">
               <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-secondary-200">Complete review</p>
               <h1 className="mt-1 max-w-4xl text-xl font-bold leading-tight text-white sm:text-2xl lg:text-[28px]">
-                {definition ? `${event.learner || 'Learner'} · ${definition.template.name} #${definition.instance.occurrenceNumber}` : 'Loading review...'}
+                {definition ? `${headingLabel} #${definition.instance.occurrenceNumber}` : 'Loading review...'}
               </h1>
               <p className="mt-1 text-[13px] text-white/60">Work through each Curriculum-defined step, then save or complete the review.</p>
             </div>

@@ -74,7 +74,7 @@ export const coachNavItems: SidebarNavItem[] = [
     id: 'coach-meetings',
     label: 'Meetings',
     icon: 'ri-calendar-event-line',
-    href: '/coach/meetings',
+    href: '/coach/monthly-coaching',
     children: [
       { id: 'coach-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/monthly-coaching' },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },

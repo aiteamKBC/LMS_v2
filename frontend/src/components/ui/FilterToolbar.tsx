@@ -14,7 +14,7 @@
 // more than it sounds: the commonest "the page is broken" report on screens like
 // these is a filter someone forgot was on.
 // ============================================================================
-import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
 
@@ -73,14 +73,17 @@ export const SearchInput = memo(function SearchInput({
   onChange,
   placeholder = 'Search',
   ariaLabel,
+  suggestions,
   className,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   ariaLabel?: string;
+  suggestions?: string[];
   className?: string;
 }) {
+  const suggestionListId = useId();
   return (
     <div className={cn('relative', className)}>
       <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[14px] text-foreground-400"></AppIcon>
@@ -88,6 +91,7 @@ export const SearchInput = memo(function SearchInput({
         type="search"
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        list={suggestions?.length ? suggestionListId : undefined}
         placeholder={placeholder}
         aria-label={ariaLabel || placeholder}
         className="ui-search-input h-9 w-full rounded-lg border border-foreground-200 bg-background-50 pl-9 pr-8 text-[13px] text-foreground-900 placeholder:text-foreground-400 transition hover:border-foreground-300 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200/50"
@@ -101,6 +105,11 @@ export const SearchInput = memo(function SearchInput({
         >
           <AppIcon className="ri-close-line text-[13px]"></AppIcon>
         </button>
+      ) : null}
+      {suggestions?.length ? (
+        <datalist id={suggestionListId}>
+          {suggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
+        </datalist>
       ) : null}
     </div>
   );

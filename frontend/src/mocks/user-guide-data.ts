@@ -419,7 +419,7 @@ export const USER_GUIDES: GuideSection[] = [
     title: 'Coaching Meetings',
     description: 'Schedule, manage, and record coaching sessions and progress reviews.',
     icon: 'ri-calendar-check-line',
-    pagePath: '/coach/meetings',
+    pagePath: '/coach/monthly-coaching',
     role: 'coach',
     steps: [
       { step: 1, title: 'View Your Meeting Calendar', description: 'The meetings page shows a calendar view of all your coaching sessions, progress reviews, and employer meetings. Click any day to see scheduled meetings.', icon: 'ri-calendar-line' },

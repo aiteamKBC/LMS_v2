@@ -10,7 +10,6 @@ const coachNav = roleNavMap.coach;
 const DEFAULT_RETURN_TO = '/coach/timetable';
 const ALLOWED_RETURN_PATHS = [
   '/workspace/coach',
-  '/coach/meetings',
   '/coach/monthly-coaching',
   '/coach/progress-reviews',
   '/coach/reviews',

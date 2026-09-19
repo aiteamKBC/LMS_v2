@@ -26,7 +26,7 @@ export const roleNotifications: Record<string, RoleNotification[]> = {
     { id: 1, text: 'Sophie Williams submitted 3 new evidence items for review', time: '30 minutes ago', unread: true, type: 'evidence', category: 'Evidence', link: '/coach/evidence-validation' },
     { id: 2, text: 'Tom Richards missed the Teams session — absence logged', time: '2 hours ago', unread: true, type: 'attendance', category: 'Attendance', link: '/coach/absence-reports' },
     { id: 3, text: 'OTJH alert: Finn Murphy is 2 months behind target', time: '3 hours ago', unread: true, type: 'otjh', category: 'OTJH', link: '/coach/otjh-reports' },
-    { id: 4, text: 'Coaching session confirmed with Sophie Williams on 19 June', time: 'Yesterday', unread: false, type: 'meeting', category: 'Meeting', link: '/coach/meetings' },
+    { id: 4, text: 'Coaching session confirmed with Sophie Williams on 19 June', time: 'Yesterday', unread: false, type: 'meeting', category: 'Meeting', link: '/coach/monthly-coaching' },
     { id: 5, text: 'AI marking completed for 8 Module 7 assignments', time: 'Yesterday', unread: false, type: 'marking', category: 'Marking', link: '/coach/ai-marking' },
     { id: 6, text: 'QA finding raised: Evidence pack EV-2024-442 rejected', time: '2 days ago', unread: true, type: 'qa', category: 'QA', link: '/coach/evidence-validation' },
     { id: 8, text: 'Monthly cycle checklist: 6 tasks still pending', time: '3 days ago', unread: false, type: 'cycle', category: 'Monthly Cycle', link: '/coach/monthly-cycle' },

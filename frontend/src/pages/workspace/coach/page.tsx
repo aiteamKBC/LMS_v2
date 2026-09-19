@@ -1317,7 +1317,7 @@ export default function CoachDashboard() {
           <DashboardMetric label="OTJH at risk" value={loading || loadWarning ? undefined : atRiskCount} note={loading || loadWarning ? undefined : `${needAttentionLearners.length} need attention`} icon="ri-alarm-warning-line" tone="critical" onClick={() => setSelectedKpi('at-risk')} />
           <DashboardMetric label="Pending marking" value={loading || loadWarning ? undefined : markingThisWeek} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => navigate('/coach/marking-queue')} />
           <DashboardMetric label="PR this week" value={loading || loadWarning ? undefined : progressReviewsThisWeek} note={`Progress reviews · ${formatWeekRangeLabel()}`} icon="ri-focus-3-line" tone="caution" onClick={() => navigate('/coach/progress-reviews')} />
-          <DashboardMetric label="MCM this week" value={loading || loadWarning ? undefined : monthlyCoachingThisWeek} note={`Monthly coaching · ${formatWeekRangeLabel()}`} icon="ri-history-line" tone="caution" onClick={() => navigate('/coach/meetings')} />
+          <DashboardMetric label="MCM this week" value={loading || loadWarning ? undefined : monthlyCoachingThisWeek} note={`Monthly coaching · ${formatWeekRangeLabel()}`} icon="ri-history-line" tone="caution" onClick={() => navigate('/coach/monthly-coaching')} />
           <DashboardMetric label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note={`Catch-up sessions · ${formatWeekRangeLabel()}`} icon="ri-calendar-event-line" tone="caution" onClick={() => navigate('/coach/timetable')} />
         </section>
 
@@ -1397,7 +1397,7 @@ export default function CoachDashboard() {
                 <AppIcon name={scheduleExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} />
               </button>
               <Link to="/coach/timetable" className={styles.textButton}>Calendar <AppIcon name="ri-calendar-line" /></Link>
-              <Link to="/coach/meetings" className={`${styles.textButton} ${styles.sectionLink}`}>View all meetings <AppIcon name="ri-arrow-right-line" /></Link>
+              <Link to="/coach/timetable" className={`${styles.textButton} ${styles.sectionLink}`}>View all meetings <AppIcon name="ri-arrow-right-line" /></Link>
             </>} />
           {scheduleExpanded && (
             <div id="coach-schedule-content">
