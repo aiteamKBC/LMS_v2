@@ -209,6 +209,29 @@ class ProgressReviewPdfTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('Progress-Review-REVI-SAMPLE.pdf', response['Content-Disposition'])
 
+    def test_reference_progress_values_and_over_100_labels_render_without_recalculation(self):
+        snapshot = saved_snapshot(
+            ksbProgress={
+                'available': True,
+                'title': 'Project controls professional Apprenticeship Standard (v1.0) (Level 6)',
+                'actualPercent': 73,
+                'expectedPercent': 100,
+                'variancePercent': -27,
+                'varianceDirection': 'below',
+            },
+            offTheJobHours={
+                'actual': 120, 'expected': 41, 'planned': 100,
+                'actualPercent': 120.0, 'expectedPercent': 41.0,
+                'variancePercent': 79.0, 'varianceDirection': 'above',
+            },
+        )
+        text = self.pdf_text(progress_review_definition(snapshot))
+        self.assertIn('Project controls professional Apprenticeship Standard', text)
+        self.assertIn('73%', text)
+        self.assertIn('27% Below', text)
+        self.assertIn('120%', text)
+        self.assertIn('79% Above', text)
+
     def test_it_renders_the_saved_snapshot_rather_than_recalculating(self):
         definition = progress_review_definition(saved_snapshot())
         original = deepcopy(definition)
@@ -219,8 +242,11 @@ class ProgressReviewPdfTests(SimpleTestCase):
         # Exactly the stored figures, and the stored above/below annotations.
         self.assertIn('28%', text)
         self.assertIn('64%', text)
-        self.assertIn('23% above expected (expected 41%)', text)
-        self.assertIn('28% below expected (expected 56%)', text)
+        self.assertIn('23% Above', text)
+        self.assertIn('28% Below', text)
+        self.assertIn('Learning Plan Progress', text)
+        self.assertIn('Apprenticeship Standard progress', text)
+        self.assertIn('KSB progress was not available in this snapshot.', text)
         for later in LATER_LIVE_FIGURES:
             self.assertNotIn(later, text)
         # Rendering must not mutate what it was handed.

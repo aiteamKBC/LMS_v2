@@ -1,5 +1,6 @@
 import { Loader2, RefreshCw } from 'lucide-react';
-import type { ReviewProgressMetric, ReviewProgressSnapshot, ReviewRagHistoryEntry } from '@/api/reviewInstances';
+import type { CSSProperties } from 'react';
+import type { ReviewKsbProgress, ReviewProgressMetric, ReviewProgressSnapshot, ReviewRagHistoryEntry } from '@/api/reviewInstances';
 
 /**
  * A Progress Review's Learning Progress area.
@@ -9,11 +10,6 @@ import type { ReviewProgressMetric, ReviewProgressSnapshot, ReviewRagHistoryEntr
  * figures. A review with no snapshot says so, which is the honest state for
  * one that was completed without ever being calculated.
  */
-
-const METRICS: { key: keyof Pick<ReviewProgressSnapshot, 'programmeProgress' | 'offTheJobHours'>; label: string }[] = [
-  { key: 'programmeProgress', label: 'Programme progress' },
-  { key: 'offTheJobHours', label: 'Off-the-job hours progress' },
-];
 
 function percentLabel(value: number | null): string {
   return value === null || value === undefined ? 'Not recorded' : `${Math.round(value)}%`;
@@ -38,32 +34,94 @@ function clamp(value: number | null): number | null {
   return value === null || value === undefined ? null : Math.max(0, Math.min(value, 100));
 }
 
-function MetricBar({ label, metric }: { label: string; metric: ReviewProgressMetric }) {
+function varianceLabel(metric: Pick<ReviewProgressMetric, 'variancePercent' | 'varianceDirection'>): string {
+  const variance = metric.variancePercent;
+  if (variance === null || variance === undefined || !Number.isFinite(variance)) return 'Target unavailable';
+  if (Math.round(Math.abs(variance)) === 0) return 'On target';
+  return `${Math.abs(Math.round(variance))}% ${metric.varianceDirection === 'below' ? 'Below' : 'Above'}`;
+}
+
+function markerStyle(percent: number): CSSProperties {
+  if (percent <= 0) return { left: 0 };
+  if (percent >= 100) return { right: 0 };
+  return { left: `${percent}%`, transform: 'translateX(-50%)' };
+}
+
+function labelStyle(percent: number): CSSProperties {
+  if (percent <= 5) return { left: 0 };
+  if (percent >= 95) return { right: 0 };
+  return { left: `${percent}%`, transform: 'translateX(-50%)' };
+}
+
+function MetricBar({ label, metric, tone = 'teal' }: {
+  label: string;
+  metric: ReviewProgressMetric;
+  tone?: 'teal' | 'blue';
+}) {
   const actual = clamp(metric?.actualPercent ?? null);
   const expected = clamp(metric?.expectedPercent ?? null);
-  const variance = metric?.variancePercent;
-  const direction = metric?.varianceDirection;
   return (
-    <div className="min-w-0">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-[13px] font-bold text-foreground-800">{label}</p>
-        <p className="text-[13px] font-bold text-foreground-900">{percentLabel(metric?.actualPercent ?? null)}</p>
-      </div>
+    <div className="min-w-0" data-testid={`progress-metric-${label.toLowerCase().replace(/[^a-z]+/g, '-')}`}>
+      <p className="text-[14px] font-semibold leading-snug text-[#123f5a]">{label}</p>
       <div
-        className="relative mt-2 h-2.5 w-full overflow-hidden rounded-full bg-background-200"
+        className="relative mt-3 h-[18px] w-full border border-[#9ca3a8] bg-[#d7d7d7]"
         role="img"
         aria-label={`${label}: ${percentLabel(metric?.actualPercent ?? null)} against an expected ${percentLabel(metric?.expectedPercent ?? null)}`}
       >
-        <div className="h-full rounded-full bg-primary-600" style={{ width: `${actual ?? 0}%` }} />
+        <div
+          className={`h-full ${tone === 'blue' ? 'bg-[#174ed4]' : 'bg-[#17a89f]'}`}
+          style={{ width: `${actual ?? 0}%` }}
+        />
         {expected === null ? null : (
-          <span aria-hidden className="absolute inset-y-0 w-0.5 bg-foreground-700" style={{ left: `${expected}%` }} />
+          <span
+            aria-hidden
+            data-testid="target-marker"
+            className="absolute -top-3 -bottom-3 z-10 w-[3px] bg-black"
+            style={markerStyle(expected)}
+          />
         )}
       </div>
-      <p className="mt-1.5 text-[12px] text-foreground-500">
-        {variance === null || variance === undefined || !direction
-          ? `Expected ${percentLabel(metric?.expectedPercent ?? null)}`
-          : `${Math.abs(Math.round(variance))}% ${direction} expected (${percentLabel(metric?.expectedPercent ?? null)})`}
-      </p>
+      <div className="relative mt-2 h-5 text-[12px] font-medium text-[#30383d]">
+        <span>0%</span>
+        {actual === null ? null : (
+          <span className="absolute top-0 whitespace-nowrap" style={labelStyle(actual)}>{percentLabel(metric.actualPercent)}</span>
+        )}
+      </div>
+      <p className="mt-0.5 text-center text-[13px] font-medium text-[#30383d]">{varianceLabel(metric)}</p>
+    </div>
+  );
+}
+
+function KsbBar({ metric }: { metric: ReviewKsbProgress | null | undefined }) {
+  const label = metric?.title || 'Apprenticeship Standard progress';
+  if (!metric?.available || metric.actualPercent === null || metric.expectedPercent === null) {
+    return (
+      <div className="min-w-0" data-testid="ksb-progress-unavailable">
+        <p className="text-[14px] font-semibold leading-snug text-[#123f5a]">{label}</p>
+        <div className="mt-3 h-[18px] border border-[#b8bdc1] bg-[#e1e3e5]" aria-hidden />
+        <p className="mt-2 text-center text-[12px] text-foreground-500">
+          {metric?.reason || 'KSB progress was not available in this snapshot.'}
+        </p>
+      </div>
+    );
+  }
+  return <MetricBar label={label} metric={{ actual: null, expected: null, planned: null, ...metric, variancePercent: metric.variancePercent ?? metric.actualPercent - metric.expectedPercent, varianceDirection: metric.varianceDirection ?? (metric.actualPercent >= metric.expectedPercent ? 'above' : 'below') }} tone="blue" />;
+}
+
+function LearningPlanDonut({ percent }: { percent: number | null }) {
+  const visible = clamp(percent);
+  const radius = 66;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <div className="flex flex-col items-center">
+      <p className="mb-5 text-center text-[18px] font-medium text-[#174c67]">Learning Plan Progress</p>
+      <svg width="176" height="176" viewBox="0 0 176 176" role="img" aria-label={`Learning Plan Progress: ${percentLabel(percent)}`} className="shrink-0">
+        <circle cx="88" cy="88" r={radius} fill="none" stroke="#dce4ec" strokeWidth="22" />
+        {visible === null ? null : (
+          <circle cx="88" cy="88" r={radius} fill="none" stroke="#174ed4" strokeWidth="22" strokeDasharray={`${circumference * visible / 100} ${circumference}`} transform="rotate(-90 88 88)" />
+        )}
+        <text x="88" y="96" textAnchor="middle" className="fill-[#111827] text-[29px] font-medium">{percentLabel(percent)}</text>
+      </svg>
     </div>
   );
 }
@@ -132,8 +190,17 @@ export function ReviewProgressPanel({
       </div>
 
       {snapshot ? (
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          {METRICS.map(({ key, label }) => <MetricBar key={key} label={label} metric={snapshot[key]} />)}
+        <div className="mt-5 overflow-hidden border border-[#ccd5df] bg-white">
+          <div className="grid md:grid-cols-[34%_66%]">
+            <div className="flex min-h-[350px] items-center justify-center px-5 py-8 md:border-r md:border-[#ccd5df]">
+              <LearningPlanDonut percent={snapshot.programmeProgress?.actualPercent ?? null} />
+            </div>
+            <div className="grid gap-7 border-t border-[#ccd5df] px-5 py-7 md:border-t-0 md:px-7">
+              <KsbBar metric={snapshot.ksbProgress} />
+              <MetricBar label="Off-the-job hours progress" metric={snapshot.offTheJobHours} />
+              <MetricBar label="Programme progress" metric={snapshot.programmeProgress} />
+            </div>
+          </div>
         </div>
       ) : !canCalculate ? (
         <p className="mt-3 text-[13px] text-foreground-500">No progress was calculated for this review.</p>
