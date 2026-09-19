@@ -1495,6 +1495,8 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
 #: SET at creation time and is written exactly once, this one is written when
 #: a coach presses Calculate and may be replaced until signing begins.
 PROGRESS_SNAPSHOT_COLUMN = 'progress_snapshot'
+LEGACY_PROGRESS_SNAPSHOT_SCHEMA_VERSION = 1
+LEGACY_PROGRESS_SNAPSHOT_FORMULA_VERSION = 'legacy_unversioned'
 
 #: How a Curriculum-authored question declares itself to BE the RAG question,
 #: so the RAG value is found by the template's own stable marker rather than
@@ -1511,7 +1513,17 @@ def review_instance_progress_snapshot(instance_row):
     the caller can say "not calculated yet", rather than quietly substituting
     the learner's current figures into a historical review.
     """
-    return curriculum_views.as_json_value(instance_row.get(PROGRESS_SNAPSHOT_COLUMN), None)
+    snapshot = curriculum_views.as_json_value(instance_row.get(PROGRESS_SNAPSHOT_COLUMN), None)
+    if not isinstance(snapshot, dict):
+        return snapshot
+    # Interpret old stored JSON explicitly without rewriting it or pretending it
+    # used the current formula. Existing UI/PDF readers ignore these additive
+    # fields and continue to render the frozen values unchanged.
+    return {
+        **snapshot,
+        'schemaVersion': snapshot.get('schemaVersion', LEGACY_PROGRESS_SNAPSHOT_SCHEMA_VERSION),
+        'formulaVersion': snapshot.get('formulaVersion', LEGACY_PROGRESS_SNAPSHOT_FORMULA_VERSION),
+    }
 
 
 def save_review_instance_progress_snapshot(instance_row, snapshot, *, actor='system'):
