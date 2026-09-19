@@ -8,7 +8,7 @@ import {
 
 function session(slotNumber: number, date: string, extra: Partial<Extract<CurriculumRow, { kind: 'session' }>> = {}): CurriculumRow {
   return { kind: 'session', slotNumber, date, sessionNumber: slotNumber, title: `Session ${slotNumber}`,
-    start: null, minutes: null, attended: null, joinUrl: null, ...extra };
+    start: null, minutes: null, attended: null, joinUrl: null, holidays: [], ...extra };
 }
 function readingWeek(slotNumber: number, date: string): CurriculumRow {
   return { kind: 'reading-week', slotNumber, date, holidays: [] };

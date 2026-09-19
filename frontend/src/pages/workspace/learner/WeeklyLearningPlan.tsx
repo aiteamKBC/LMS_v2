@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, CalendarDays, CalendarOff, Clock3, ExternalLink, Target, Users, Video } from 'lucide-react';
+import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Target, Users, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
@@ -30,7 +30,7 @@ const STATUS_TONE: Record<ActivityStatus, 'positive' | 'info' | 'neutral'> = {
 const STATUS_LABEL: Record<ActivityStatus, string> = {
   completed: 'Completed', 'in-progress': 'In progress', 'not-started': 'Not started',
 };
-const WEEK_PAGE_SIZE = 8;
+const WEEK_PAGE_SIZE = 12;
 const ACTIVITY_PAGE_SIZE = 8;
 
 export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading, scheduleError }: {
@@ -66,7 +66,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
 
   const completedIds = useMemo(() => completedComponentIds(real), [real]);
   const isTeachingWeek = selectedWeek?.kind === 'session';
-  const components = isTeachingWeek ? weekComponents(real, resolvedModuleId || undefined, (selectedWeek as SessionRow).weekId) : [];
+  const components = isTeachingWeek ? weekComponents(real, resolvedModuleId || undefined, (selectedWeek as SessionRow).weekId, selectedWeek?.slotNumber) : [];
   const progress = weekProgress(components, completedIds);
 
   // A schedule failure with nothing cached is already surfaced by the
@@ -76,22 +76,22 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
   // to fall back to the way the old, decoupled "This week" card could.
   if (!schedule && !scheduleLoading && scheduleError) return null;
 
-  return <section aria-label="Weekly learning plan" className="grid grid-cols-1 gap-3 lg:items-start lg:grid-cols-[260px_minmax(0,1fr)]">
+  return <section aria-label="Weekly learning plan" className="grid grid-cols-1 gap-3 lg:items-start lg:grid-cols-[240px_minmax(0,1fr)]">
     {!schedule ? <WeeklyLearningPlanSkeleton /> : !candidateModules.length ? <Panel className="lg:col-span-2">
       <EmptyState title="Your weekly plan will appear here" description="Once a module is assigned, its weeks and activities will show up in this space." />
     </Panel> : <>
-    <aside className="rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-bold text-foreground-900">Weeks</h2>
+    <aside className="rounded-2xl border border-foreground-100 bg-background-50 p-3 shadow-sm">
+      <div className="flex items-center justify-between gap-2 border-l-4 border-primary-600 pl-2">
+        <h2 className="text-base font-extrabold text-foreground-950">Weeks</h2>
       </div>
-      {candidateModules.length > 1 && <label className="mt-3 block text-xs font-medium text-foreground-500">Module
+      {candidateModules.length > 1 && <label className="mt-2.5 block text-xs font-medium text-foreground-500">Module
         <select aria-label="Module" value={resolvedModuleId || ''} onChange={event => { setSelectedModuleId(event.target.value); setSelection(null); }}
-          className="mt-1 w-full rounded-lg border border-foreground-200 bg-background-50 px-2.5 py-2 text-sm font-semibold text-foreground-900">
+          className="mt-1 w-full rounded-lg border border-foreground-200 bg-background-50 px-2.5 py-1.5 text-xs font-semibold text-foreground-900">
           {candidateModules.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
         </select>
       </label>}
       {weeks.length ? <>
-      <ol className="mt-3 space-y-1">
+      <ol className="mt-2.5 space-y-1">
         {visibleWeeks.map((week, index) => {
           const absoluteIndex = visibleWeekOffset + index;
           const active = selectedWeek ? weekKey(week) === weekKey(selectedWeek) : false;
@@ -100,41 +100,48 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
           const isReadingWeek = week.kind === 'reading-week';
           const isCompleted = state === 'past';
           const isCurrent = state === 'current';
-          const label = week.kind === 'reading-week' ? 'Reading week' : `Week ${week.sessionNumber}`;
-          const subLabel = week.kind === 'reading-week' ? 'Independent study' : week.weekTitle || 'Learning activities';
+          const weekActivityProgress = week.kind === 'session'
+            ? weekProgress(weekComponents(real, resolvedModuleId || undefined, week.weekId, week.slotNumber), completedIds)
+            : null;
+          const label = week.kind === 'reading-week' ? 'Reading week' : week.weekTitle || `Week ${week.sessionNumber}`;
+          const subLabel = week.kind === 'reading-week' ? 'Independent study' : '';
           const range = `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`;
           const stateLabel = state === 'past' ? 'Completed' : state === 'current' ? 'Current week' : 'Upcoming';
-          return <li key={weekKey(week)} className="relative pl-8">
-            {index < visibleWeeks.length - 1 && <span aria-hidden="true" className="absolute left-[9px] top-7 bottom-[-0.75rem] w-px bg-foreground-200" />}
-            <span aria-hidden="true" className={cn(
-              'absolute left-0 top-4 z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 bg-background-50',
-              isCompleted ? 'border-emerald-500 bg-emerald-500 text-white'
-                : isCurrent ? 'border-foreground-950 bg-foreground-950 text-white'
-                  : isReadingWeek ? 'border-amber-300 bg-amber-50 text-amber-700'
-                    : active ? 'border-primary-600 bg-primary-600 text-white'
-                      : 'border-foreground-300 text-transparent',
-            )}>
-              {isCompleted || isCurrent || active ? <span className="h-1.5 w-1.5 rounded-full bg-white" />
-                : isReadingWeek ? <BookOpen size={13} aria-hidden="true" /> : null}
-            </span>
+          return <li key={weekKey(week)} className="relative pl-9">
+            {index < visibleWeeks.length - 1 && <span aria-hidden="true" className="absolute left-[13px] top-9 bottom-[-0.25rem] w-px bg-foreground-200" />}
+            {weekActivityProgress?.total ? <span role="progressbar" aria-label={`${label} activity progress`}
+              aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekActivityProgress.percent}
+              aria-valuetext={`${weekActivityProgress.completed} of ${weekActivityProgress.total} activities complete`}
+              title={`${weekActivityProgress.completed} of ${weekActivityProgress.total} activities complete`}
+              className={cn('absolute left-0 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-background-50',
+                weekActivityProgress.percent === 100 ? 'text-emerald-600' : 'text-primary-600')}>
+              <svg viewBox="0 0 28 28" className="h-7 w-7 -rotate-90" aria-hidden="true">
+                <circle cx="14" cy="14" r="11" fill="none" stroke="currentColor" strokeOpacity="0.18" strokeWidth="3" />
+                <circle cx="14" cy="14" r="11" fill="none" stroke="currentColor" strokeWidth="3"
+                  strokeDasharray={`${weekActivityProgress.percent} 100`} pathLength="100" strokeLinecap="round" />
+              </svg>
+            </span> : <span aria-hidden="true" className={cn('absolute left-0 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 bg-background-50',
+              isReadingWeek ? 'border-amber-300 text-amber-700' : 'border-foreground-300')}>
+              {isReadingWeek && <BookOpen size={13} />}
+            </span>}
             <button type="button" aria-current={active ? 'true' : undefined}
               onClick={() => resolvedModuleId && setSelection({ moduleId: resolvedModuleId, key: weekKey(week) })}
-              className={cn('block w-full rounded-lg px-3 py-3 text-left transition',
+              className={cn('block w-full rounded-lg px-2.5 py-2 text-left transition',
                 isCompleted ? 'bg-emerald-50/70 text-emerald-950 hover:bg-emerald-50'
                   : isCurrent ? 'bg-slate-100 text-foreground-950 shadow-sm'
                     : active ? 'bg-primary-50 text-primary-950 shadow-sm'
                       : isReadingWeek ? 'bg-amber-50/75 hover:bg-amber-50'
                         : 'hover:bg-background-100')}>
               <span className="min-w-0 text-left">
-                <span className={cn('block text-sm font-bold',
+                <span className={cn('block truncate text-[13px] font-bold leading-5',
                   isCompleted ? 'text-emerald-700'
                     : isCurrent ? 'text-foreground-950'
                       : active ? 'text-primary-700'
                         : isReadingWeek ? 'text-amber-800'
                           : 'text-foreground-900',
                 )}>{label}</span>
-                <span className="mt-0.5 block text-xs leading-5 text-foreground-500">{range}</span>
-                <span className="block truncate text-xs leading-5 text-foreground-600">{subLabel}</span>
+                <span className="block text-[11px] leading-4 text-foreground-500">{range}</span>
+                {subLabel && <span className="block truncate text-[11px] leading-4 text-foreground-600">{subLabel}</span>}
                 <span className="sr-only">{stateLabel}{active ? ', selected' : ''}</span>
               </span>
             </button>
@@ -149,11 +156,11 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
       {!selectedWeek ? <Panel><EmptyState title="No weeks scheduled yet" description="This module's weekly schedule isn't available yet." /></Panel> : <>
         <div className="overflow-hidden">
           <div className="flex flex-col gap-4 border-b border-foreground-100 pb-4 md:flex-row md:items-start md:justify-between">
-            <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-[0.14em] text-primary-600">
+            <div className="min-w-0 border-l-4 border-primary-600 pl-3">
+          <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-primary-700">
             {selectedWeek.kind === 'reading-week' ? 'Reading week' : `Week ${selectedWeek.sessionNumber}`}
           </p>
-          <h2 className="mt-1 text-2xl font-bold leading-tight text-foreground-950">
+          <h2 className="mt-1 text-2xl font-extrabold leading-tight text-foreground-950">
             {selectedWeek.kind === 'reading-week' ? 'Reading week' : selectedWeek.weekTitle || 'This week'}
           </h2>
           {selectedIndex >= 0 ? <p className="mt-1 text-sm font-medium text-foreground-500">
@@ -214,23 +221,27 @@ function PaginationControls({ page, pageCount, onPageChange, label, className }:
   page: number; pageCount: number; onPageChange: (page: number) => void; label: string; className?: string;
 }) {
   if (pageCount <= 1) return null;
-  return <nav aria-label={`${label} pagination`} className={cn('flex items-center justify-between gap-3 text-xs font-semibold text-foreground-500', className)}>
+  return <nav aria-label={`${label} pagination`} className={cn('flex items-center justify-between gap-2 text-[10px] font-semibold text-foreground-500', className)}>
     <button
       type="button"
       onClick={() => onPageChange(Math.max(0, page - 1))}
       disabled={page <= 0}
-      className="inline-flex min-h-8 items-center justify-center rounded-lg border border-foreground-200 bg-background-50 px-3 text-foreground-700 disabled:cursor-not-allowed disabled:opacity-45"
+      aria-label={`Previous ${label} page`}
+      title={`Previous ${label} page`}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-foreground-200 bg-background-50 text-foreground-700 disabled:cursor-not-allowed disabled:opacity-45"
     >
-      Previous
+      <ChevronLeft size={15} aria-hidden="true" />
     </button>
     <span className="whitespace-nowrap">Page {page + 1} of {pageCount}</span>
     <button
       type="button"
       onClick={() => onPageChange(Math.min(pageCount - 1, page + 1))}
       disabled={page >= pageCount - 1}
-      className="inline-flex min-h-8 items-center justify-center rounded-lg border border-foreground-200 bg-background-50 px-3 text-foreground-700 disabled:cursor-not-allowed disabled:opacity-45"
+      aria-label={`Next ${label} page`}
+      title={`Next ${label} page`}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-foreground-200 bg-background-50 text-foreground-700 disabled:cursor-not-allowed disabled:opacity-45"
     >
-      Next
+      <ChevronRight size={15} aria-hidden="true" />
     </button>
   </nav>;
 }
@@ -327,12 +338,12 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
 
   return <div className="overflow-hidden rounded-xl border border-foreground-100 bg-background-50 shadow-sm">
     <div className="max-w-full" style={{ overflowX: 'auto' }}>
-      <table className="w-full min-w-[720px] text-left text-[12px]">
+      <table className="w-full min-w-[680px] text-left text-[11px]">
         <caption className="sr-only">This week's learning activities</caption>
         <thead className="bg-background-100/90">
           <tr>
             {['Type', 'Title', 'Expected time', 'KSB mapping', 'Status', 'Action'].map(label => (
-              <th key={label} scope="col" className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.06em] text-foreground-500">
+              <th key={label} scope="col" className="px-2 py-2 text-[9px] font-bold uppercase tracking-[0.06em] text-foreground-500">
                 {label}
               </th>
             ))}
@@ -345,24 +356,24 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
             const typeLabel = activityTypeLabel(component);
             const meta = resourceTypeMeta(component.type || typeLabel);
             return <tr key={component.componentId || component.title} className="border-t border-foreground-100">
-              <td className="w-16 px-3 py-2.5 align-middle">
-                <span className={cn('inline-flex h-8 w-8 items-center justify-center rounded-lg', meta.bg, meta.color)}>
-                  <AppIcon className={meta.icon} size={16} aria-label={typeLabel} />
+              <td className="w-14 px-2 py-2 align-middle">
+                <span className={cn('inline-flex h-7 w-7 items-center justify-center rounded-lg', meta.bg, meta.color)}>
+                  <AppIcon className={meta.icon} size={14} aria-label={typeLabel} />
                 </span>
               </td>
-              <td className="max-w-[260px] px-3 py-2.5 align-middle">
-                <p className="text-[13px] font-semibold leading-4 text-foreground-900">{component.title}</p>
+              <td className="max-w-[240px] px-2 py-2 align-middle">
+                <p className="text-xs font-semibold leading-4 text-foreground-900">{component.title}</p>
               </td>
-              <td className="w-28 px-3 py-2.5 align-middle text-xs font-semibold tabular-nums text-foreground-700">
-                <span className="inline-flex items-center gap-1.5"><Clock3 size={13} className="text-foreground-400" aria-hidden="true" />{activityExpectedTimeLabel(component)}</span>
+              <td className="w-24 px-2 py-2 align-middle text-[11px] font-semibold tabular-nums text-foreground-700">
+                <span className="inline-flex items-center gap-1"><Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{activityExpectedTimeLabel(component)}</span>
               </td>
-              <td className="w-28 px-3 py-2.5 align-middle"><KsbChips codes={activityKsbCodes(component)} /></td>
-              <td className="w-28 px-3 py-2.5 align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="text-[11px]" /></td>
-              <td className="w-28 px-3 py-2.5 text-right align-middle">
+              <td className="w-24 px-2 py-2 align-middle"><KsbChips codes={activityKsbCodes(component)} /></td>
+              <td className="w-24 px-2 py-2 align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="text-[10px]" /></td>
+              <td className="w-24 px-2 py-2 text-right align-middle">
                 {href ? <Link to={href} className={cn(
-                  'inline-flex min-h-8 min-w-[86px] items-center justify-center whitespace-nowrap rounded-lg px-2.5 text-[11px] font-bold leading-none transition',
+                  'inline-flex min-h-7 min-w-[72px] items-center justify-center whitespace-nowrap rounded-lg px-2 text-[10px] font-bold leading-none transition',
                   status === 'in-progress' ? 'bg-primary-600 text-white shadow-sm hover:bg-primary-700' : 'border border-primary-200 bg-background-50 text-primary-700 hover:border-primary-300 hover:bg-primary-50',
-                )}>{activityActionLabel(status)}</Link> : <span className="text-xs text-foreground-400">Not available</span>}
+                )}>{activityActionLabel(status)}</Link> : <span className="text-[11px] text-foreground-400">Not available</span>}
               </td>
             </tr>;
           })}

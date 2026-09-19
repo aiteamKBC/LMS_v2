@@ -400,7 +400,9 @@ export default function LearnerOverview() {
 
         {real && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
         <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} plan={dashboardPlan} canOpenActivities
-          programmeStartDate={real?.learningAccess?.startDate ?? real?.programmeStartDate} canOpenRewards={!reviewingLearner} />
+          programmeStartDate={real?.learningAccess?.startDate ?? real?.programmeStartDate}
+          programmeEndDate={real?.programmeEndDate}
+          canOpenRewards={!reviewingLearner} />
       </PageContainer>
     </WorkspaceShell>
   );

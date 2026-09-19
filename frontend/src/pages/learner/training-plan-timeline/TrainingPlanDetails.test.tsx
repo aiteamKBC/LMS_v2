@@ -39,6 +39,7 @@ const review = (id: string, date: string, status = 'not-scheduled', source = 'pr
 });
 
 const fixture = (): TrainingPlanDashboard => ({
+  requiredOtjh: 40,
   months: {
     '2026-09': { label: '', topics: ['Brand strategy'], planned: 18, source: 'contract' },
     '2026-10': { label: '', topics: ['Research'], planned: 20, source: 'contract' },
@@ -65,10 +66,10 @@ function Destination() {
   return <output data-testid="destination">{route.pathname}{route.search}{route.hash}</output>;
 }
 
-function renderBoard(data = fixture(), planSubjects: (Subject | PlanSubjectSummary)[] = subjects, onRefresh = vi.fn()) {
+function renderBoard(data = fixture(), planSubjects: (Subject | PlanSubjectSummary)[] = subjects, onRefresh = vi.fn(), programmeStartDate?: string, programmeEndDate?: string) {
   return render(<MemoryRouter initialEntries={['/plan']}><Routes>
     <Route path="/plan" element={<TrainingPlanDetails data={data} subjects={planSubjects} kind="commercial" learnerId="125"
-      onRefresh={onRefresh} onRetryContract={onRefresh} />} />
+      onRefresh={onRefresh} onRetryContract={onRefresh} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} />} />
     <Route path="*" element={<Destination />} />
   </Routes></MemoryRouter>);
 }
@@ -153,11 +154,32 @@ describe('Dashboard training plan controls', () => {
     expect(within(lecture).getByText('S4')).toBeVisible();
   });
 
+  it('uses the lecture activity title instead of a generic calendar session title', () => {
+    const data = fixture();
+    data.sessions[0] = { ...data.sessions[0], title: 'Live Teams Session 1' };
+    renderBoard(data, summarySubjects);
+    const panel = within(screen.getByRole('region', { name: 'Lectures this month' }));
+    const lecture = within(panel.getAllByRole('article')[0]);
+    expect(lecture.getByText('Attended session')).toBeVisible();
+    expect(lecture.queryByText('Live Teams Session 1')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the module title when no lecture title is available', () => {
+    const data = fixture();
+    data.sessions[0] = { ...data.sessions[0], title: 'Marketing' };
+    const subjectsWithoutLectureTitle = summarySubjects.map(subject => subject.id === 'legacy:10'
+      ? { ...subject, monthlyActivities: subject.monthlyActivities?.map(activity => activity.type === 'live_session' ? { ...activity, title: 'Marketing' } : activity) }
+      : subject);
+    renderBoard(data, subjectsWithoutLectureTitle);
+    const panel = within(screen.getByRole('region', { name: 'Lectures this month' }));
+    expect(within(panel.getAllByRole('article')[0]).getByText('Marketing')).toBeVisible();
+  });
+
   it('keeps month selection while selecting modules from the timeline', () => {
     renderBoard();
-    fireEvent.change(screen.getByLabelText('Focus month'), { target: { value: '2026-12' } });
+    fireEvent.change(screen.getByLabelText('Focus month'), { target: { value: '2026-10' } });
     fireEvent.click(screen.getByRole('button', { name: 'Show Marketing overview' }));
-    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-12');
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-10');
     expect(screen.getByRole('combobox', { name: 'Focus module' })).toHaveValue('legacy:10');
     fireEvent.click(screen.getByRole('button', { name: 'New module' }));
     expect(within(screen.getByRole('region', { name: 'Module overview' })).getByRole('heading', { name: 'New module' })).toBeVisible();
@@ -199,12 +221,25 @@ describe('Dashboard training plan controls', () => {
     expect(screen.queryByRole('link', { name: 'Start' })).not.toBeInTheDocument();
   });
 
-  it('supports month navigation across year boundaries', () => {
+  it('does not navigate beyond the programme end month', () => {
     renderBoard();
     fireEvent.change(screen.getByLabelText('Focus month'), { target: { value: '2026-12' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
-    expect(within(screen.getByRole('region', { name: 'Monthly study plan' })).getByRole('heading', { name: 'January 2027' })).toBeVisible();
-    expect(screen.getByLabelText('Focus month')).toHaveValue('2027-01');
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-10');
+    expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled();
+  });
+
+  it('bounds the month input and offers Attend for a live upcoming lecture', () => {
+    renderBoard();
+    const month = screen.getByLabelText('Focus month');
+    expect(month).toHaveAttribute('min', '2026-09');
+    expect(month).toHaveAttribute('max', '2026-10');
+    fireEvent.change(month, { target: { value: '2026-08' } });
+    expect(month).toHaveValue('2026-09');
+    expect(screen.getByRole('button', { name: 'Previous month' })).toBeDisabled();
+
+    const lecture = within(screen.getByRole('region', { name: 'Lectures this month' })).getAllByRole('article')[2];
+    expect(within(lecture).getByText('Assigned tutor')).toBeVisible();
+    expect(within(lecture).getByRole('link', { name: 'Attend' })).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/verified');
   });
 
   it('opens the selected module and monthly footer for the displayed learner', () => {
@@ -223,5 +258,62 @@ describe('Dashboard training plan controls', () => {
     renderBoard(fixture(), subjects, refresh);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh monthly learning' }));
     expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it('shows the whole-programme OTJH chart and month hover details', () => {
+    const data = fixture();
+    data.monthlyOtjh = {
+      '2026-09': { planned: 18, submitted: 14, actual: 11.5, missingPlannedActivities: 0 },
+      '2026-10': { planned: 20, submitted: 8, actual: 6, missingPlannedActivities: 0 },
+    };
+    data.actual = [];
+    renderBoard(data, summarySubjects);
+    const chart = screen.getByRole('region', { name: 'Off-the-job hours by month' });
+    expect(within(chart).getByText('Target')).toBeVisible();
+    expect(within(chart).getByText('Submitted')).toBeVisible();
+    expect(within(chart).getByText('Completed')).toBeVisible();
+    const september = within(chart).getByRole('button', { name: /September 2026: target 18 hours/ });
+    fireEvent.mouseEnter(september);
+    expect(within(chart).getByRole('tooltip')).toHaveTextContent('September 2026');
+    expect(within(chart).getByRole('tooltip')).toHaveTextContent('78% (14 hours)');
+    expect(within(chart).getByRole('tooltip')).toHaveTextContent('64% (11.5 hours)');
+    fireEvent.mouseLeave(september);
+    expect(within(chart).queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+
+  it('keeps pending hours separate from completed hours and uses the programme total for overall progress', () => {
+    const data = fixture();
+    data.monthlyOtjh = {
+      '2026-09': { planned: 18, submitted: 2, actual: 11.5, missingPlannedActivities: 0 },
+      '2026-10': { planned: 20, submitted: 0, actual: 0, missingPlannedActivities: 0 },
+    };
+    data.actual = [];
+    renderBoard(data, summarySubjects);
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    const september = chart.getByRole('button', { name: /September 2026: target 18 hours/ });
+    fireEvent.mouseEnter(september);
+    expect(chart.getByRole('tooltip')).toHaveTextContent('Submitted:11% (2 hours)');
+    expect(chart.getByRole('tooltip')).toHaveTextContent('Completed:64% (11.5 hours)');
+    const bars = september.querySelectorAll('i');
+    expect(bars[0].style.bottom).toBe(bars[1].style.height);
+    expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '29');
+    expect(chart.getByText('11.5h completed · 2h submitted')).toBeInTheDocument();
+    expect(chart.queryByText('N/A')).not.toBeInTheDocument();
+  });
+
+  it('includes every month through the programme end date', () => {
+    const data = fixture();
+    data.monthlyOtjh = {
+      '2026-09': { planned: 18, submitted: 14, actual: 11.5, missingPlannedActivities: 0 },
+      '2026-10': { planned: 20, submitted: 8, actual: 6, missingPlannedActivities: 0 },
+    };
+    data.actual = [];
+    renderBoard(data, summarySubjects, vi.fn(), '2026-08-01', '2027-04-30');
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    const months = chart.getAllByRole('button');
+    expect(months).toHaveLength(9);
+    expect(months[0]).toHaveAccessibleName(/August 2026:/);
+    expect(months[4]).toHaveAccessibleName(/December 2026:/);
+    expect(months[8]).toHaveAccessibleName(/April 2027:/);
   });
 });

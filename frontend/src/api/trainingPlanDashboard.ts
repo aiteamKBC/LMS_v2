@@ -43,7 +43,10 @@ export type PlanModule = { id: string; title: string; description: string; start
 export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'> & { meetingLink?: string | null };
 export type TrainingPlanDashboard = {
   months: Record<string, PlanMonth>;
-  monthlyOtjh?: Record<string, { planned: number | null; actual: number; missingPlannedActivities: number }>;
+  /** Monthly OTJH; assignment submissions use marking status, other activity types keep their existing semantics. */
+  monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; missingPlannedActivities: number }>;
+  /** Whole-programme OTJH requirement from the shared dashboard metrics. */
+  requiredOtjh?: number | null;
   actual: { month: string; groupId: string | null; hours: number; count: number }[];
   actualAvailable: boolean;
   modules: PlanModule[];

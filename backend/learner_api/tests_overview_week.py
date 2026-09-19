@@ -58,14 +58,49 @@ class OverviewWeekTests(SimpleTestCase):
              'claimedSeconds': 3600, 'timeTrackingSource': 'component:input'},
         ]
         self.assertEqual(monthly_otjh_summary(activities, progress), {
-            '2026-09': {'planned': 4, 'actual': 1.5, 'missingPlannedActivities': 0},
-            '2026-10': {'planned': 3, 'actual': 1, 'missingPlannedActivities': 0},
+            '2026-09': {'planned': 4, 'submitted': 1.5, 'actual': 1.5, 'missingPlannedActivities': 0},
+            '2026-10': {'planned': 3, 'submitted': 1, 'actual': 1, 'missingPlannedActivities': 0},
         })
 
     def test_monthly_planned_hours_stay_unknown_when_an_activity_has_no_hours(self):
         activities = list(merged_activities([], [native(expected_hours=2), native(id='missing')], [], set(), {}))
         self.assertEqual(monthly_otjh_summary(activities, [])['2026-09'], {
-            'planned': None, 'actual': 0, 'missingPlannedActivities': 1,
+            'planned': None, 'submitted': 0, 'actual': 0, 'missingPlannedActivities': 1,
+        })
+
+    def test_monthly_hours_separate_submitted_time_from_achieved_time(self):
+        activities = list(merged_activities([], [native(expected_hours=4)], [], set(), {}))
+        progress = [
+            {'componentId': 'new', 'kind': 'component', 'submittedAt': '2026-09-09T12:00:00Z',
+             'claimedSeconds': 3600, 'timeTrackingSource': 'component:input'},
+            {'quizId': 'failed', 'kind': 'quiz', 'passed': False, 'submittedAt': '2026-09-10T12:00:00Z',
+             'claimedSeconds': 1800, 'timeTrackingSource': 'component:input'},
+        ]
+        self.assertEqual(monthly_otjh_summary(activities, progress)['2026-09'], {
+            'planned': 4, 'submitted': 1.5, 'actual': 1, 'missingPlannedActivities': 0,
+        })
+
+    def test_monthly_hours_apply_pending_marking_only_to_assignments(self):
+        activities = list(merged_activities([], [native(expected_hours=4)], [], set(), {}))
+        progress = [{
+            'componentId': 'assignment', 'componentType': 'assignment', 'kind': 'component',
+            'markingStatus': 'submitted_for_tutor_review',
+            'submittedAt': '2026-09-10T12:00:00Z', 'claimedSeconds': 1800,
+            'timeTrackingSource': 'component:input',
+        }]
+        self.assertEqual(monthly_otjh_summary(activities, progress)['2026-09'], {
+            'planned': 4, 'submitted': 0.5, 'actual': 0, 'missingPlannedActivities': 0,
+        })
+
+    def test_monthly_hours_keep_quiz_submission_semantics_unchanged(self):
+        activities = list(merged_activities([], [native(expected_hours=4)], [], set(), {}))
+        progress = [{
+            'quizId': 'pending', 'kind': 'quiz', 'passed': None,
+            'submittedAt': '2026-09-10T12:00:00Z', 'claimedSeconds': 1800,
+            'timeTrackingSource': 'component:input',
+        }]
+        self.assertEqual(monthly_otjh_summary(activities, progress)['2026-09'], {
+            'planned': 4, 'submitted': 0.5, 'actual': 0, 'missingPlannedActivities': 0,
         })
 
     def test_plan_details_count_merged_activities_and_distinct_ksbs_across_all_dates(self):

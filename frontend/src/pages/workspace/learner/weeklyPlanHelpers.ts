@@ -29,10 +29,12 @@ export function weekKey(week: Pick<CurriculumRow, 'slotNumber'>): string {
 }
 
 /** This week's activities, from the components a native curriculum week actually authored. */
-export function weekComponents(real: LearnerDetail | null, moduleId: string | undefined, weekId: string | undefined): JourneyComponent[] {
-  if (!real || !moduleId || !weekId) return [];
+export function weekComponents(real: LearnerDetail | null, moduleId: string | undefined, weekId: string | undefined, weekNumber?: number): JourneyComponent[] {
+  if (!real || !moduleId || (!weekId && weekNumber == null)) return [];
   return real.components
-    .filter(component => component.moduleId === moduleId && component.weekId === weekId)
+    .filter(component => String(component.moduleId) === String(moduleId)
+      && (String(component.weekId) === String(weekId)
+        || (component.weekId == null && weekNumber != null && Number(component.week) === Number(weekNumber))))
     .map(component => ({
       ...component,
       title: component.component,

@@ -31,8 +31,9 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
   }, [active, kind, id, identity, attempt]);
   const refresh = () => { week.refresh(); schedule.refresh(); retryContract(); };
   const contractData = contract?.identity === identity ? contract.data : { months: {}, contractStatus: 'loading' };
+  const requiredOtjh = week.data?.metrics?.otjh.planned ?? null;
   return {
-    data: schedule.data ? { ...schedule.data, ...contractData, monthlyOtjh: week.data?.monthlyOtjh } : null,
+    data: schedule.data ? { ...schedule.data, ...contractData, monthlyOtjh: week.data?.monthlyOtjh, requiredOtjh } : null,
     subjects: week.data?.planSubjects,
     loading: week.loading || schedule.loading,
     error: week.error || schedule.error || (week.data && !week.data.planSubjects ? 'Module summaries could not be loaded.' : ''),

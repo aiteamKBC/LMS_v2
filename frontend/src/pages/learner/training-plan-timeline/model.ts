@@ -111,7 +111,7 @@ export function moduleVisualEnd(module: { end: string; detail?: { effectiveEndDa
 export type CurriculumRow =
   | { kind: 'session'; slotNumber: number; date: string; sessionNumber: number;
       title: string; start: string | null; minutes: number | null; attended: boolean | null; joinUrl: string | null;
-      holidays: PlanSlotHoliday[] }
+      holidays: PlanSlotHoliday[]; weekId?: string; weekTitle?: string; learningOutcomes?: string[] }
   /** Kept for a payload from an older, genuinely closing scheduler; today's spine never emits one. */
   | { kind: 'reading-week'; slotNumber: number; date: string; holidays: PlanSlotHoliday[] };
 
@@ -157,6 +157,9 @@ export function buildCurriculumTimeline(
       attended: session?.attended ?? null,
       joinUrl: session?.joinUrl || null,
       holidays: slot.holidays || [],
+      weekId: slot.weekId,
+      weekTitle: slot.weekTitle,
+      learningOutcomes: slot.learningOutcomes || [],
     };
   });
 }

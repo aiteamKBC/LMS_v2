@@ -22,6 +22,7 @@ from .training_plan_dashboard import number, rows
 
 log = logging.getLogger(__name__)
 UK = ZoneInfo('Europe/London')
+ASSIGNMENT_PENDING_STATUSES = frozenset({'submitted_for_tutor_review', 'submitted', 'pending_review'})
 
 
 def week_bounds(now=None):
@@ -96,11 +97,12 @@ def direct_hours_by_subject(native, progress, links):
 
 
 def monthly_otjh_summary(activities, progress):
-    """Return real planned and recorded current-platform hours by UK month.
+    """Return planned, submitted and achieved current-platform hours by UK month.
 
     Planned time follows the authored activity delivery date and uses the same
     explicit old/new identity and source-priority rules as the weekly card.
-    Recorded time follows the timestamp of the learner's actual progress entry.
+    Assignment submissions use their coach-marking status. Other activity types,
+    including quizzes, keep the existing progress-row semantics.
     """
     planned, priorities = {}, {}
     for row in activities:
@@ -127,9 +129,22 @@ def monthly_otjh_summary(activities, progress):
     for month in sorted(months):
         values = [value for (key_month, _), value in planned.items() if key_month == month]
         missing = sum(value is None for value in values)
+        submitted_rows = progress_by_month.get(month, [])
+        assignment_rows = [row for row in submitted_rows
+                           if str(row.get('componentType') or '').strip().casefold() == 'assignment']
+        pending_assignments = [row for row in assignment_rows
+                               if str(row.get('markingStatus') or '').strip().casefold() in ASSIGNMENT_PENDING_STATUSES]
+        accepted_assignments = [row for row in assignment_rows
+                                if str(row.get('markingStatus') or '').strip().casefold() in {'accepted', 'partial'}]
+        other_rows = [row for row in submitted_rows if row not in assignment_rows]
+        achieved_rows = [row for row in other_rows + accepted_assignments
+                         if progress_counts_as_achieved(row.get('kind'), row.get('passed'))]
         result[month] = {
             'planned': round(sum(value for value in values if value is not None), 4) if values and not missing else None,
-            'actual': round(_direct_progress_otjh(progress_by_month.get(month, [])), 4),
+            # Only assignments have a separate pending marking state. Quiz and
+            # other activity totals retain their established semantics.
+            'submitted': round(_direct_progress_otjh(pending_assignments + other_rows), 4),
+            'actual': round(_direct_progress_otjh(achieved_rows), 4),
             'missingPlannedActivities': missing,
         }
     return result

@@ -6,16 +6,20 @@
 .heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; font-size:13px; font-weight:750; color:var(--kbc-text); margin:0 0 10px; }
 .heading span { font-size:11px; font-weight:600; color:var(--kbc-muted); }
 .month + .month { margin-top:14px; }
-.monthLabel { font-size:10px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; color:var(--kbc-muted); margin:0 0 7px; }
-.rows { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px; }
+/* The navy bar marks the month name only, so it is drawn on the label itself
+   with a tight line-height rather than on the whole month section. */
+.monthLabel { font-size:10px; font-weight:700; letter-spacing:1.2px; line-height:1.2; text-transform:uppercase; color:var(--learner-navy); margin:0 0 7px;
+  border-left:2px solid var(--learner-navy); padding-left:12px; }
+.rows { list-style:none; margin:0; padding:0 0 0 14px; display:flex; flex-direction:column; gap:7px; }
 .rows > li { display:grid; grid-template-columns:18px minmax(0,1fr); gap:10px; align-items:start;
-  border:1px solid var(--kbc-border); border-radius:11px; padding:9px 11px; background:var(--kbc-surface); }
+  border-bottom:1px solid var(--kbc-border); padding:9px 0; background:transparent; }
+.rows > li:last-child { border-bottom:0; }
 .rows > li > svg { margin-top:2px; color:var(--learner-purple); }
-.rowTitle { display:flex; flex-wrap:wrap; align-items:baseline; gap:7px; font-size:12px; color:var(--kbc-text); }
+.rowTitle { display:grid; grid-template-columns:auto auto minmax(0,1fr) auto; align-items:baseline; gap:7px; font-size:12px; color:var(--kbc-text); }
 .rowTitle strong { font-weight:700; overflow-wrap:anywhere; }
 .weekNumber { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--kbc-muted); }
 .rowDate { font-size:11px; font-weight:700; color:var(--kbc-text); }
-.detail { font-size:11px; color:var(--kbc-muted); margin-top:3px !important; line-height:1.5; }
+.detailInline { min-width:0; justify-self:end; color:var(--kbc-muted); font-size:11px; line-height:1.5; text-align:right; overflow-wrap:anywhere; }
 
 /* A closed slot is marked, not shouted: the warning tone says the college is
    shut, while the card keeps the same shape as a taught week so the timeline
@@ -32,4 +36,6 @@
 @media (max-width:560px) {
   .rows > li { grid-template-columns:minmax(0,1fr); }
   .rows > li > svg { display:none; }
+  .rowTitle { grid-template-columns:1fr; gap:3px; }
+  .detailInline { justify-self:start; text-align:left; }
 }

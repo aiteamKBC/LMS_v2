@@ -21,7 +21,8 @@ export type PlanSubjectSummary = {
 export type OverviewWeek = {
   metrics?: LearnerMetrics;
   planSubjects?: PlanSubjectSummary[];
-  monthlyOtjh?: Record<string, { planned: number | null; actual: number; missingPlannedActivities: number }>;
+  /** Monthly OTJH; assignment submissions use marking status, other activity types keep their existing semantics. */
+  monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; missingPlannedActivities: number }>;
   weekStart: string; weekEnd: string; timezone: string;
   modules: { id: string; title: string; weekLabels: string[]; moduleIds?: string[]; completed: number; total: number;
     percent: number | null; ksbCodes: string[]; ksbMappingMissing: boolean }[];
