@@ -17,9 +17,16 @@ export function dashboardPlanSubjects(subjects: PlanSubjectSummary[], data: Trai
       dates: [...new Set([...(previous?.dates || []), ...subject.dates])].sort(),
       moduleIds: [...new Set([...(previous?.moduleIds || []), ...subject.moduleIds])],
       sessionTitles: [...(previous?.sessionTitles || []), ...subject.sessionTitles],
+      monthlyActivities: [...new Map([...(previous?.monthlyActivities || []), ...(subject.monthlyActivities || [])]
+        .map(activity => [activity.id, activity])).values()],
       activityCounts: previous ? Object.fromEntries([...new Set([...Object.keys(previous.activityCounts || {}), ...Object.keys(subject.activityCounts || {})])]
         .map(key => [key, (previous.activityCounts?.[key] || 0) + (subject.activityCounts?.[key] || 0)])) : subject.activityCounts,
       ksbCodes: [...new Set([...(previous?.ksbCodes || []), ...(subject.ksbCodes || [])])].sort(),
+      ksbCodesByMonth: Object.fromEntries([...new Set([
+        ...Object.keys(previous?.ksbCodesByMonth || {}), ...Object.keys(subject.ksbCodesByMonth || {}),
+      ])].map(month => [month, [...new Set([
+        ...(previous?.ksbCodesByMonth?.[month] || []), ...(subject.ksbCodesByMonth?.[month] || []),
+      ])].sort()])),
       ksbMappingMissing: !!previous?.ksbMappingMissing || !!subject.ksbMappingMissing,
       ksbProgress: !previous ? subject.ksbProgress : previous.ksbProgress && subject.ksbProgress
         ? { completed: previous.ksbProgress.completed + subject.ksbProgress.completed, total: previous.ksbProgress.total + subject.ksbProgress.total } : null,

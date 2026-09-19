@@ -97,6 +97,7 @@ interface CoachCaseloadResponse {
 }
 
 export interface CoachAttendanceLearner {
+  sessionHistory?: import('@/api/learnerAttendance').AttendanceSessionRow[];
   id: string;
   learner: string;
   initials: string;

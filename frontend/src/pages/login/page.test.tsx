@@ -132,11 +132,11 @@ it.each([
 });
 
 const homeAccounts = [
-  { role: 'admin' as const, accessHome: '/workspace/admin' },
-  { role: 'staff' as const, accessHome: '/workspace/coach' },
-  { role: 'staff' as const, accessHome: '/workspace/tutor' },
-  { role: 'staff' as const, accessHome: '/workspace/curriculum' },
-  { role: 'staff' as const, accessHome: '/access-required' },
+  { role: 'admin' as const, subjectId: 1, accessHome: '/workspace/admin' },
+  { role: 'staff' as const, subjectId: 1, accessHome: '/workspace/coach' },
+  { role: 'staff' as const, subjectId: 1, accessHome: '/workspace/tutor' },
+  { role: 'staff' as const, subjectId: 1, accessHome: '/workspace/curriculum' },
+  { role: 'staff' as const, subjectId: 1, accessHome: '/access-required' },
   { role: 'employer' as const, subjectId: 42, accessHome: '/employers/42' },
 ];
 it.each(homeAccounts.flatMap(account => [false, true].map(existingSession => ({ account, existingSession }))))(

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -9,9 +9,17 @@ import { roleNavMap } from '@/mocks/navigation';
 import styles from './markingReview.module.css';
 
 const coachNav = roleNavMap.coach;
-const API_ENDPOINT = '/coach_api/coach/marking-queue';
+async function personalEvidence(submissionId: string, fileId?: string) {
+  const response = await coachFetch(`/coach_api/coach/personal-marking/${submissionId}/evidence${fileId ? `/${fileId}` : ''}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || 'Could not load personal coursework evidence.');
+  return data as { results: EvidenceRecord[]; url: string };
+}
 
 interface Submission {
+  version?: number;
+  contentSections?: { label: string; text: string }[];
+  reviewHistory?: { decision: string; feedback: string; reviewedAt: string; reviewedBy: string }[];
   id: string;
   learnerKind: LearnerKind;
   learnerId: string;
@@ -56,7 +64,7 @@ interface QueueSummary {
   referredItems: number;
 }
 
-type ReviewDecision = 'accepted' | 'rejected';
+type ReviewDecision = 'accepted' | 'rejected' | 'referred';
 type WorkspaceTab = 'submission' | 'evidence' | 'history';
 type QueueKind = 'all' | 'assignment' | 'reflection';
 
@@ -87,6 +95,11 @@ function isAssignment(item: Submission) {
 }
 
 export default function CoachMarkingReviewPage() {
+  const [searchParams] = useSearchParams();
+  const personal = searchParams.get('scope') === 'personal';
+  const apiEndpoint = personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
+  const scopeQuery = personal ? '?scope=personal' : '';
+  const queuePath = `/coach/marking-queue${scopeQuery}`;
   const { submissionId } = useParams<{ submissionId: string }>();
   const navigate = useNavigate();
   const coach = useCoachIdentity();
@@ -112,7 +125,9 @@ export default function CoachMarkingReviewPage() {
   const [queueKind, setQueueKind] = useState<QueueKind>('all');
   const [tab, setTab] = useState<WorkspaceTab>('submission');
 
+  const loadSequence = useRef(0);
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     if (!coach.isInitialized) return;
     setLoading(true);
     setError('');
@@ -124,14 +139,15 @@ export default function CoachMarkingReviewPage() {
     }
 
     try {
-      const detailResponse = await coachFetch(`${API_ENDPOINT}/${submissionId}`);
+      const detailResponse = await coachFetch(`${apiEndpoint}/${submissionId}`);
       const detailText = await detailResponse.text();
       const detailData = detailText ? JSON.parse(detailText) : {};
+      if (sequence !== loadSequence.current) return;
       if (!detailResponse.ok) throw new Error(detailData.detail || 'Unable to load this submission.');
       setSelected(detailData.item || null);
 
       try {
-        const queueResponse = await coachFetch(`${API_ENDPOINT}?status=all&page=1&page_size=25`);
+        const queueResponse = await coachFetch(`${apiEndpoint}?status=all&page=1&page_size=25`);
         const queueText = await queueResponse.text();
         const queueData = queueText ? JSON.parse(queueText) : {};
         if (queueResponse.ok) {
@@ -142,15 +158,17 @@ export default function CoachMarkingReviewPage() {
         setQueueItems([]);
       }
     } catch (loadError) {
+      if (sequence !== loadSequence.current) return;
       setSelected(null);
       setError(loadError instanceof Error ? loadError.message : 'Unable to load this submission.');
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [coach.email, coach.isInitialized, submissionId]);
+  }, [apiEndpoint, coach.email, coach.isInitialized, submissionId]);
 
   useEffect(() => {
     void load();
+    return () => { ++loadSequence.current; };
   }, [load]);
 
   useEffect(() => {
@@ -162,19 +180,19 @@ export default function CoachMarkingReviewPage() {
     let cancelled = false;
     setEvidence([]);
     setEvidenceError('');
-    fetchEvidence(selected.learnerKind, selected.learnerId, { sectionRef: selected.activityId })
+    (personal ? personalEvidence(selected.id).then(data => data.results) : fetchEvidence(selected.learnerKind, selected.learnerId, { sectionRef: selected.activityId }))
       .then(records => { if (!cancelled) setEvidence(records); })
       .catch(loadError => {
         if (!cancelled) setEvidenceError(loadError instanceof Error ? loadError.message : 'The uploaded files could not be listed.');
       });
     return () => { cancelled = true; };
-  }, [selected]);
+  }, [personal, selected]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || personal) return;
     let cancelled = false;
     setPromptError('');
-    coachFetch(`${API_ENDPOINT}/${selected.id}/ai-prompt`)
+    coachFetch(`${apiEndpoint}/${selected.id}/ai-prompt`)
       .then(async response => {
         const body = await response.text();
         let data: { prompt?: string; file?: string; kind?: string; available?: boolean; detail?: string; error?: string } = {};
@@ -191,7 +209,7 @@ export default function CoachMarkingReviewPage() {
         if (!cancelled) setPromptError(loadError instanceof Error ? loadError.message : 'The marking prompt could not be loaded.');
       });
     return () => { cancelled = true; };
-  }, [selected]);
+  }, [apiEndpoint, personal, selected]);
 
   const promptEdited = Boolean(prompt.trim()) && prompt.trim() !== defaultPrompt.trim();
   const promptCleared = !prompt.trim() && Boolean(defaultPrompt.trim());
@@ -222,7 +240,7 @@ export default function CoachMarkingReviewPage() {
     setDownloading(record.id);
     setEvidenceError('');
     try {
-      const url = await getEvidenceDownloadUrl(selected.learnerKind, selected.learnerId, record.id);
+      const url = personal ? (await personalEvidence(selected.id, record.id)).url : await getEvidenceDownloadUrl(selected.learnerKind, selected.learnerId, record.id);
       if (tabWindow) tabWindow.location.href = url;
       else setEvidenceError('Allow pop-ups for this site to open the document.');
     } catch (downloadError) {
@@ -239,7 +257,7 @@ export default function CoachMarkingReviewPage() {
     setError('');
     setAiNotice('');
     try {
-      const response = await coachFetch(`${API_ENDPOINT}/${selected.id}/ai-feedback`, {
+      const response = await coachFetch(`${apiEndpoint}/${selected.id}/ai-feedback`, {
         method: 'POST',
         ...(promptEdited ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: prompt.trim() }) } : {}),
       });
@@ -267,10 +285,10 @@ export default function CoachMarkingReviewPage() {
     setSaving(true);
     setError('');
     try {
-      const response = await coachFetch(`${API_ENDPOINT}/${selected.id}`, {
+      const response = await coachFetch(`${apiEndpoint}/${selected.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name }),
+        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name, ...(personal ? { version: selected.version } : {}) }),
       });
       const text = await response.text();
       let data: { detail?: string; error?: string; fields?: Record<string, string[] | string> } = {};
@@ -279,7 +297,7 @@ export default function CoachMarkingReviewPage() {
         const fieldMessages = Object.entries(data.fields ?? {}).map(([field, message]) => `${field}: ${Array.isArray(message) ? message.join(' ') : message}`).join('; ');
         throw new Error(fieldMessages || data.detail || data.error || 'The review could not be saved.');
       }
-      navigate('/coach/marking-queue');
+      navigate(queuePath);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'The review could not be saved.');
     } finally {
@@ -291,7 +309,7 @@ export default function CoachMarkingReviewPage() {
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Marking workspace" pageSubtitle="Review evidence and record your professional judgement" userName={coach.name} userRole="Progress Coach">
       <div className={styles.page}>
         <header className={styles.hero}>
-          <button type="button" className={styles.back} onClick={() => navigate('/coach/marking-queue')}>
+          <button type="button" className={styles.back} onClick={() => navigate(queuePath)}>
             <i className="ri-arrow-left-line" aria-hidden="true" /> Marking queue
           </button>
           <p className={styles.eyebrow}>AI-assisted marking</p>
@@ -371,6 +389,11 @@ export default function CoachMarkingReviewPage() {
 
               {tab === 'submission' && (
                 <section className={styles.tabPanel} role="tabpanel">
+                  {personal && selected.contentSections?.map((section, index) => (
+                    <div className={styles.responseBlock} key={`${section.label}-${index}`}>
+                      <strong>{section.label}</strong><p>{section.text}</p>
+                    </div>
+                  ))}
                   <div className={styles.questionBlock}>
                     <span>Learner submission</span>
                     <p>{[selected.module, selected.week].filter(Boolean).join(' · ') || selected.activityTitle}</p>
@@ -431,22 +454,28 @@ export default function CoachMarkingReviewPage() {
                     <div><h4>{selected.reviewedAt ? statusLabel(selected.status) : 'Awaiting coach review'}</h4><p>{selected.reviewedAt ? `${formatDate(selected.reviewedAt)} · ${selected.reviewedBy || 'Coach'}` : `Submitted ${selected.submittedDisplay}`}</p></div>
                   </div>
                   {selected.coachFeedback && <div className={styles.previousFeedback}><strong>Recorded coach feedback</strong><p>{selected.coachFeedback}</p></div>}
+                  {personal && selected.reviewHistory?.map((entry, index) => (
+                    <div className={styles.previousFeedback} key={`${entry.reviewedAt}-${index}`}>
+                      <strong>{statusLabel(entry.decision)} · {entry.reviewedBy}</strong>
+                      <p>{formatDate(entry.reviewedAt)} · {entry.feedback}</p>
+                    </div>
+                  ))}
                 </section>
               )}
 
               <section className={styles.feedbackPanel}>
                 <div className={styles.feedbackHeading}>
                   <div><p>Coach feedback</p><h4>Review the AI draft and make the final decision</h4></div>
-                  <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
+                  {!personal && <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
                     <i className={generating ? 'ri-loader-4-line' : 'ri-sparkling-line'} aria-hidden="true" />
                     {generating ? 'Generating…' : 'Generate AI draft'}
-                  </button>
+                  </button>}
                 </div>
-                <textarea value={feedback} onChange={event => setFeedback(event.target.value)} rows={7} placeholder="Write clear, actionable feedback for the learner…" />
+                <textarea aria-label="Review feedback" value={feedback} onChange={event => setFeedback(event.target.value)} rows={7} placeholder="Write clear, actionable feedback for the learner…" />
                 {aiNotice && <p className={styles.aiNotice}><i className="ri-sparkling-line" aria-hidden="true" /> {aiNotice}</p>}
                 {error && <p className={styles.inlineError}>{error}</p>}
 
-                <details className={styles.promptEditor}>
+                {!personal && <details className={styles.promptEditor}>
                   <summary>AI marking instructions {promptEdited ? <span>Edited</span> : null}</summary>
                   <p>{promptAvailable ? `These ${promptKind === 'assignment' ? 'assignment marking' : 'reflection validation'} instructions apply to the next draft only.` : 'No saved prompt is available. You can supply instructions for this draft.'}</p>
                   <textarea value={prompt} onChange={event => setPrompt(event.target.value)} rows={8} spellCheck={false} placeholder="Write the instructions the AI should mark against…" />
@@ -456,11 +485,11 @@ export default function CoachMarkingReviewPage() {
                   </div>
                   {promptCleared && <p>The saved prompt will be used because this field is empty.</p>}
                   {promptError && <p className={styles.inlineError}>{promptError}</p>}
-                </details>
+                </details>}
 
                 <div className={styles.decisionRow}>
-                  <button type="button" className={styles.reject} disabled={saving} onClick={() => void saveDecision('rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> Refer back with feedback</button>
-                  <button type="button" className={styles.accept} disabled={saving} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> Accept and send feedback</button>
+                  <button type="button" className={styles.reject} disabled={saving} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>
+                  <button type="button" className={styles.accept} disabled={saving} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> Accept assignment and send feedback</button>
                 </div>
               </section>
             </main>

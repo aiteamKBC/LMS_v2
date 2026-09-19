@@ -1,4 +1,5 @@
 import { SessionResults } from '@/components/feature/SessionResults';
+import { parsePersonalLearning } from '@/lib/personalLearning';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -329,7 +330,7 @@ export default function ComponentViewPage() {
     ? formatRecordedClock(record.timeTaken)
     : component ? completionTimeFor(component, detail) : null;
   const noun = componentNoun(component?.type);
-  const contentOpenable = component ? isOpenableComponent(component) : false;
+  const contentOpenable = component ? isOpenableComponent(component) || (isAssignment && !!component.componentId) : false;
   const savedAssignment = useSavedAssignmentAccess(kind, id, componentId, isAssignment && !contentOpenable && canUseComponent);
   const openable = contentOpenable || savedAssignment.status === 'available';
 
@@ -728,7 +729,7 @@ export default function ComponentViewPage() {
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
               {!isAssignment && (
-                <ComponentContent component={{ ...component, liveSessionUrl: component.teamsLiveSessionId && component.teamsSessionNumber
+                <ComponentContent component={{ ...component, liveSessionUrl: parsePersonalLearning(id) ? null : component.teamsLiveSessionId && component.teamsSessionNumber
                     ? `/learner_api/session-results/${kind}/${id}/${encodeURIComponent(component.teamsLiveSessionId)}/sessions/${component.teamsSessionNumber}/join/`
                     : component.liveSessionUrl }} contentKind={contentKind} parsed={parsed} title={pageTitle}
                   onDuration={(d) => setRealDuration((prev) => prev ?? d)}
@@ -743,6 +744,7 @@ export default function ComponentViewPage() {
                   seriesId={component.teamsLiveSessionId}
                   sessionNumber={component.teamsSessionNumber}
                   learner={{ kind: kind as LearnerKind, id: id || '' }}
+                  preview={Boolean(parsePersonalLearning(id))}
                 /> : <p className="mt-4 rounded-xl border bg-amber-50 p-4 text-sm">This live session needs its saved session number before results can be shown. Please contact your tutor.</p>
               )}
 

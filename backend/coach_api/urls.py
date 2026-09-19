@@ -2,6 +2,7 @@ from django.urls import path
 
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
+from . import personal_learning
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
 from .meeting_reminders import coach_meeting_reminder
 from .review_pdf import coach_mcm_pdf
@@ -36,6 +37,10 @@ from .views import (
 
 
 urlpatterns = [
+    path('coach/personal-marking', personal_learning.marking),
+    path('coach/personal-marking/<uuid:submission_id>', personal_learning.marking),
+    path('coach/personal-marking/<uuid:submission_id>/evidence', personal_learning.evidence),
+    path('coach/personal-marking/<uuid:submission_id>/evidence/<uuid:file_id>', personal_learning.evidence),
     path('csrf', coach_csrf_token, name='coach-csrf'),
     path('coaches', coach_directory, name='coach-directory'),
     path('coach/dashboard', coach_dashboard, name='coach-dashboard'),

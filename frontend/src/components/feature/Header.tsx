@@ -24,6 +24,7 @@ interface HeaderProps {
   mobileSidebarOpen?: boolean;
   role?: string;
   workspaceLabel?: string;
+  personalLearning?: boolean;
 }
 
 /** "Demo Admin" -> "DA". A single word falls back to its first two letters. */
@@ -166,7 +167,7 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role, workspaceLabel }: HeaderProps) {
+export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role, workspaceLabel, personalLearning = false }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
@@ -302,7 +303,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, on
 
       {/* Keep the workspace switcher available in the shared top bar so
           administrators can return to the workspace list from any page. */}
-      <WorkspaceSwitcher />
+      {!personalLearning && <WorkspaceSwitcher />}
 
       {role === 'coach' && <Link to="/coach/caseload" className="coach-header-search" aria-label="Search learners">
         <AppIcon name="ri-search-line" /><span>Search learners...</span>

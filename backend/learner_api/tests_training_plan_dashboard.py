@@ -111,8 +111,10 @@ class TrainingPlanDashboardTests(SimpleTestCase):
              patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {'current:M1': {'id': 'M1'}})), \
              patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], [
-                 {'module_catalogue_id': 'M1', 'learning_outcomes': '["<b>Plan a campaign</b>", ""]'},
-                 {'module_catalogue_id': 'M1', 'learning_outcomes': ['Plan a campaign', 'Measure results', None]},
+                 {'id': 'W1', 'module_catalogue_id': 'M1', 'week_number': 1, 'title': 'Week 1',
+                  'learning_outcomes': '["<b>Plan a campaign</b>", ""]'},
+                 {'id': 'W2', 'module_catalogue_id': 'M1', 'week_number': 2, 'title': 'Week 2',
+                  'learning_outcomes': ['Plan a campaign', 'Measure results', None]},
              ], []]), \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=[]):
             profiles.objects.filter.return_value.first.return_value = None

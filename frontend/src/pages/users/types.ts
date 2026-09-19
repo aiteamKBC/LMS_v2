@@ -27,7 +27,8 @@ export interface UserListRow {
    *  before the uuid backfill. */
   uuid: string | null;
   name: string;
-  type: UserType;
+  /** Display labels include staff positions and combined roles in the directory. */
+  type: string;
   email: string;
   group: string;
   subscriptionStatus: string; // "FullUser"

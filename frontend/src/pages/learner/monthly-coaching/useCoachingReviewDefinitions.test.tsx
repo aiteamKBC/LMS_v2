@@ -13,6 +13,7 @@ const session = (id: string, overrides: Partial<LearnerCalendarEvent> = {}): Lea
   reviewTemplateId: 'template-1', ...overrides,
 });
 const definition = (id: string): LearnerReviewDefinition => ({
+  manualOverride: null,
   instance: { id, reviewTemplateId: 'template-1', learnerId: 12, programmeId: 'programme-1',
     occurrenceNumber: 1, targetDate: '2026-09-01', status: 'awaiting-signature', startedAt: null, completedAt: '2026-09-01' },
   template: { id: 'template-1', name: 'Monthly coaching',

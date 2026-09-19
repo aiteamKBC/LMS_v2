@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
@@ -9,11 +9,10 @@ import type { MarkingKind } from '@/lib/markingKind';
 import styles from './markingQueue.module.css';
 
 const coachNav = roleNavMap.coach;
-const API_ENDPOINT = '/coach_api/coach/marking-queue';
-
 type QueueFilter = 'all' | 'pending' | 'overdue' | 'accepted' | 'referred';
 
 interface MarkingSubmission {
+  version?: number;
   id: string;
   learner: string;
   programme: string;
@@ -104,6 +103,10 @@ function activityLabel(item: MarkingSubmission, kind: MarkingKind) {
 }
 
 export default function CoachMarkingQueue() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const personal = searchParams.get('scope') === 'personal';
+  const apiEndpoint = personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
+  const scopeQuery = personal ? '?scope=personal' : '';
   const navigate = useNavigate();
   const coach = useCoachIdentity();
   const [items, setItems] = useState<MarkingSubmission[]>([]);
@@ -115,7 +118,9 @@ export default function CoachMarkingQueue() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const loadSequence = useRef(0);
   const loadQueue = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     if (!coach.isInitialized) return;
     setLoading(true);
     setError('');
@@ -129,23 +134,26 @@ export default function CoachMarkingQueue() {
 
     try {
       const query = new URLSearchParams({ status: filter, kind, page: String(page), page_size: '25' });
-      const response = await coachFetch(`${API_ENDPOINT}?${query}`);
+      const response = await coachFetch(`${apiEndpoint}?${query}`);
       const text = await response.text();
       const data = text ? JSON.parse(text) : {};
+      if (sequence !== loadSequence.current) return;
       if (!response.ok) throw new Error(data.detail || 'Unable to load the marking queue.');
       setItems(data.items || []);
       setSummary(data.summary || EMPTY_SUMMARY);
       setPagination(data.pagination || EMPTY_PAGINATION);
     } catch (loadError) {
+      if (sequence !== loadSequence.current) return;
       setItems([]);
       setError(loadError instanceof Error ? loadError.message : 'Unable to load the marking queue.');
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [coach.email, coach.isInitialized, filter, kind, page]);
+  }, [apiEndpoint, coach.email, coach.isInitialized, filter, kind, page]);
 
   useEffect(() => {
     void loadQueue();
+    return () => { ++loadSequence.current; };
   }, [loadQueue]);
 
   const filterCounts: Record<QueueFilter, number> = {
@@ -181,6 +189,17 @@ export default function CoachMarkingQueue() {
             </div>
           </div>
         </header>
+
+        <section className={styles.controls} aria-label="Coursework source">
+          <div className={styles.kindTabs} role="group" aria-label="Coursework source">
+            <button type="button" aria-pressed={!personal} onClick={() => { setSearchParams({}); setPage(1); }}>
+              Learner coursework
+            </button>
+            <button type="button" aria-pressed={personal} onClick={() => { setSearchParams({ scope: 'personal' }); setPage(1); }}>
+              Personal learning
+            </button>
+          </div>
+        </section>
 
         <section className={styles.controls} aria-label="Marking queue filters">
           <div className={styles.kindTabs} role="group" aria-label="Submission type">
@@ -235,15 +254,15 @@ export default function CoachMarkingQueue() {
                     </div>
                     <h2>{item.activityTitle || item.activityType}</h2>
                     <p className={styles.meta}>
-                      {item.learner}{item.programme ? ` · ${item.programme}` : ''}{` · Submitted ${item.submittedDisplay}`}
+                      <span>{item.learner}</span>{item.programme ? ` · ${item.programme}` : ''}{` · Submitted ${item.submittedDisplay}`}
                     </p>
                   </div>
                   <div className={styles.cardActions}>
                     <span className={styles.quality} title="Learner submission quality score">
                       <i className="ri-sparkling-line" aria-hidden="true" /> Quality {item.qualityScore}%
                     </span>
-                    <button type="button" onClick={() => navigate(`/coach/marking-queue/${item.id}`)}>
-                      {item.reviewedBy ? 'View review' : 'Review'}
+                    <button type="button" onClick={() => navigate(`/coach/marking-queue/${item.id}${scopeQuery}`)}>
+                      {item.reviewedBy ? 'Review' : 'View'}
                       <i className="ri-arrow-right-line" aria-hidden="true" />
                     </button>
                   </div>

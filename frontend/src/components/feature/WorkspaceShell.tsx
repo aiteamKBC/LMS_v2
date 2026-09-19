@@ -12,6 +12,8 @@ import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
 import { getRememberedLearner } from '@/hooks/useMyLearner';
 import { ArrowLeft } from 'lucide-react';
 import design from './WorkspaceDesign.module.css';
+import { activePersonalLearning } from '@/lib/personalLearning';
+import { PersonalLearningBanner } from './PersonalLearningBanner';
 
 interface WorkspaceShellProps {
   children: ReactNode;
@@ -175,6 +177,8 @@ export function WorkspaceShell({
   // every page, while learner-type and navigation permissions still apply.
   const { auth, isAdmin } = useAuth();
   const location = useLocation();
+  const personalContext = activePersonalLearning(location.pathname);
+  const personal = auth.account?.role === 'admin' && personalContext?.accountId === auth.account.id ? personalContext : null;
   // Keep the approved admin page styling in the shared directory, but let the
   // selected workspace supply its own menu, labels and breadcrumbs.
   const isAdminDirectory = isAdmin && /^\/(?:users|employers)(?:\/|$)/.test(location.pathname);
@@ -191,7 +195,13 @@ export function WorkspaceShell({
   const currentLearner = role === 'learner' ? getRememberedLearner() : null;
   const reviewingLearner = isStaffOrAdmin
     && !isOwnLearnerRecord(auth.account, currentLearner?.kind, currentLearner?.id);
-  const navItems = useLearnerNavGate(filterLearnerNavigation ? role : '', navItemsProp, reviewingLearner);
+  const gatedNavItems = useLearnerNavGate(filterLearnerNavigation && !personal ? role : '', navItemsProp, reviewingLearner);
+  const navItems = personal
+    ? gatedNavItems.filter(item => ['learner-my-learning', 'learner-map'].includes(item.id))
+    : gatedNavItems;
+  const workspaceNavItems = auth.account?.role === 'admin' && !navItems.some(item => item.id === 'personal-courses')
+    ? [...navItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
+    : navItems;
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');
@@ -209,7 +219,7 @@ export function WorkspaceShell({
   };
 
   const displayName = (isAdminDirectory ? auth.account?.displayName || auth.user?.fullName : userName) || auth.user?.fullName || 'User';
-  const displayRole = userRole || auth.roles[0]?.name || roleLabel;
+  const displayRole = personal ? 'Admin · Learner' : userRole || auth.roles[0]?.name || roleLabel;
   const defaultWorkspaceLabel = workspaceLabel || roleLabel + ' Workspace';
 
   // Close mobile sidebar on route change
@@ -266,7 +276,7 @@ export function WorkspaceShell({
         onOpenAccount={() => { accountButtonRef.current?.focus(); accountButtonRef.current?.click(); }} /> : <Sidebar
         role={role}
         roleLabel={roleLabel}
-        navItems={navItems}
+        navItems={workspaceNavItems}
         userName={displayName}
         userRole={displayRole}
         pinned={sidebarPinned}
@@ -279,6 +289,7 @@ export function WorkspaceShell({
         className="workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out motion-reduce:transition-none"
         style={{ marginLeft: 'var(--kbc-sidebar-offset, 0px)' }}
       >
+        {personal && <PersonalLearningBanner context={personal} />}
         {!hidePageChrome && (
           <Header
             accountButtonRef={accountButtonRef}
@@ -290,7 +301,8 @@ export function WorkspaceShell({
             onToggleMobileSidebar={handleToggleMobileSidebar}
             mobileSidebarOpen={mobileSidebarOpen}
             role={chromeRole}
-            workspaceLabel={roleLabel}
+            workspaceLabel={personal ? 'Learner' : roleLabel}
+            personalLearning={Boolean(personal)}
           />
         )}
 
