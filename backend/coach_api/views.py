@@ -287,6 +287,9 @@ MONTHLY_COACHING_AGREEMENT_RESPONSE_IDS = {
 }
 DEFAULT_ATTENDANCE_DATABASE = "AiTeamKBC"
 DEFAULT_MARKING_OWNER_ID = 6452
+# Delivery learners have completed the delivery step and are waiting for the
+# invitation that moves them to the stored Active status. Coach-facing pages
+# should keep them in the same working caseload while that hand-off is pending.
 ATTENDANCE_INCLUDED_STATUSES = {"active", "break"}
 MARKING_OVERDUE_DAYS = 7
 
@@ -974,7 +977,10 @@ def normalize_program_status(raw_status: str | None) -> str:
         return "break"
     if normalized == "readytoenrol":
         return "ready-to-enrol"
-    if normalized == "active":
+    # Treat the pre-invitation Delivery state as active for coach-facing
+    # summaries and attendance metrics. The raw programme status is still
+    # serialized separately, so the UI can show that the invitation is pending.
+    if normalized in {"active", "delivery"}:
         return "active"
     return "unknown"
 
@@ -1020,8 +1026,6 @@ def determine_performance_status(row: dict, hours_progress: int, ksb_progress: i
     if row["coach_rag"] in {"Red", "Amber"}:
         return "at-risk"
     if row["otjh_status"] == "Need Attention" and (hours_progress < 45 or ksb_progress < 35):
-        return "at-risk"
-    if parse_variance(row["progress_variance"]) <= -10:
         return "at-risk"
     if hours_progress >= 80 and ksb_progress >= 75 and component_progress >= 20:
         return "high"
@@ -1511,8 +1515,6 @@ def determine_active_user_status(
         or (ksb_available and ksb_progress < 35)
         or (component_available and component_progress < 35)
     ):
-        return "at-risk"
-    if progress_variance and parse_variance(progress_variance) <= -10:
         return "at-risk"
     if (
         hours_available
@@ -2305,6 +2307,44 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
         return {profile_id: summary for profile_id, summary in results if summary is not None}
 
 
+def caseload_kbc_attendance_rates(rows) -> tuple[dict[int, int], dict[int, dict]]:
+    """Return KBC attendance metrics keyed by LearnerProfile id.
+
+    The coach caseload table must use the KBC register for learners that have
+    an Aptem identity. Keep the profile-to-Aptem mapping alongside the metrics
+    so a learner with no KBC rows is not silently filled from Teams data.
+    """
+    aptem_by_profile = caseload_aptem_ids(rows)
+    if not aptem_by_profile:
+        return {}, {}
+    try:
+        rates = fetch_kbc_attendance_rates(aptem_by_profile.values())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read KBC attendance rates for coach caseload: %s", exc)
+        rates = {}
+
+    # Some KBC register imports carry a valid email but an empty or legacy ID.
+    # Use the same KBC table's email index as a fallback, never the Teams
+    # attendance projection.
+    email_metrics: dict[str, dict] = {}
+    email_keys = [normalize_email(getattr(row, "email", None)) for row in rows or []]
+    email_keys = [email for email in email_keys if email]
+    if email_keys:
+        try:
+            email_metrics = fetch_attendance_data(email_keys).get("metrics", {})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read KBC attendance rates by email: %s", exc)
+
+    rows_by_profile = {int(row.id): row for row in rows or []}
+    return aptem_by_profile, {
+        profile_id: rates.get(str(aptem_id))
+        or email_metrics.get(normalize_email(getattr(rows_by_profile[profile_id], "email", None)))
+        for profile_id, aptem_id in aptem_by_profile.items()
+        if rates.get(str(aptem_id))
+        or email_metrics.get(normalize_email(getattr(rows_by_profile[profile_id], "email", None)))
+    }
+
+
 def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict:
     """Overlay live learner-dashboard facts while preserving coach OTJH pacing."""
     if not metrics:
@@ -2330,11 +2370,16 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     payload["programmeProgressAvailable"] = programme.get("status") == "ready"
     payload["componentsCompleted"] = programme.get("completed")
     payload["componentsPlanned"] = programme.get("total")
-    payload["ksbCompleted"] = ksb.get("completed")
-    payload["ksbTarget"] = ksb.get("total")
-    payload["ksbProgress"] = ksb.get("percent") or 0
-    payload["ksbProgressAvailable"] = ksb.get("status") == "ready"
-    payload["ksbStatus"] = derive_ksb_status(ksb.get("completed"), ksb.get("total"))
+    # The canonical metrics reader can report ``unavailable`` when one of the
+    # activity KSB mappings is incomplete. Keep the caseload snapshot in that
+    # case instead of replacing known values with ``None`` and rendering ``--``
+    # for every learner.
+    if ksb.get("status") == "ready":
+        payload["ksbCompleted"] = ksb.get("completed")
+        payload["ksbTarget"] = ksb.get("total")
+        payload["ksbProgress"] = ksb.get("percent") or 0
+        payload["ksbProgressAvailable"] = True
+        payload["ksbStatus"] = derive_ksb_status(ksb.get("completed"), ksb.get("total"))
 
     target = to_number(payload.get("otjhTarget"))
     actual = to_number(payload.get("otjhCompleted"))
@@ -2343,8 +2388,9 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     payload["overallProgress"] = hours_progress
     payload["overallProgressAvailable"] = hours_available
     progress_variance = clean_text(payload.get("progressVariance"))
-    if progress_variance and progress_variance != "--":
-        payload["otjhStatus"] = otjh_status_from_variance(to_decimal(progress_variance))
+    payload["otjhStatus"] = otjh_status_from_variance(
+        actual - target if target > 0 else None
+    )
     component_available = programme.get("status") == "ready"
     component_progress = int(round(to_number(programme.get("percent")))) if component_available else 0
     ksb_available = payload["ksbProgressAvailable"]
@@ -3169,8 +3215,8 @@ def build_monthly_risk_history(
                 if (historical_progress_date(record) or date.max) <= cutoff
             ]
             completed_hours = completed_hours_value_from_progress(historical_progress)
-            variance = (completed_hours - target_hours) / target_hours
-            if variance <= -0.15:
+            shortfall = target_hours - completed_hours
+            if shortfall >= 40:
                 at_risk += 1
 
         points.append({
@@ -10959,7 +11005,9 @@ def coach_attendance(request):
         ]
         fallback_attendance_data = fetch_learner_absence_data(missing_fallback_emails)
         fallback_metrics_by_email = fallback_attendance_data["metrics"]
-        canonical_attendance_by_profile = caseload_canonical_attendance(caseload_rows)
+        aptem_by_profile, kbc_attendance_by_profile = caseload_kbc_attendance_rates(caseload_rows)
+        non_aptem_rows = [row for row in caseload_rows if int(row.id) not in aptem_by_profile]
+        canonical_attendance_by_profile = caseload_canonical_attendance(non_aptem_rows)
         catchup_records = list(
             CoachCalendarEvent.objects.filter(
                 owner_email__iexact=owner_email,
@@ -10972,17 +11020,28 @@ def coach_attendance(request):
                 continue
             catchups_by_learner_id[record.learner_id] = catchups_by_learner_id.get(record.learner_id, 0) + 1
 
-        attendance_learners = [
-            serialize_attendance_learner(
-                learner,
-                canonical_attendance_by_profile.get(int(learner["id"]))
-                or metrics_by_id.get(int(learner["id"]))
-                or metrics_by_email.get(normalize_email(learner.get("email")))
-                or fallback_metrics_by_email.get(normalize_email(learner.get("email"))),
-                catchups_by_learner_id.get(int(learner["id"]), 0),
+        attendance_learners = []
+        for learner in caseload_learners:
+            profile_id = int(learner["id"])
+            if profile_id in aptem_by_profile:
+                # Aptem-linked coach rows are sourced exclusively from the
+                # KBC register. A missing KBC row stays unavailable instead of
+                # being replaced by a Teams or legacy attendance record.
+                metrics = kbc_attendance_by_profile.get(profile_id)
+            else:
+                metrics = (
+                    canonical_attendance_by_profile.get(profile_id)
+                    or metrics_by_id.get(profile_id)
+                    or metrics_by_email.get(normalize_email(learner.get("email")))
+                    or fallback_metrics_by_email.get(normalize_email(learner.get("email")))
+                )
+            attendance_learners.append(
+                serialize_attendance_learner(
+                    learner,
+                    metrics,
+                    catchups_by_learner_id.get(profile_id, 0),
+                )
             )
-            for learner in caseload_learners
-        ]
     except Exception:
         logger.exception("coach_attendance_load_failed coach_account_id=%s", owner_email)
         return coach_error(

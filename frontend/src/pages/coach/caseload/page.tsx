@@ -121,6 +121,14 @@ function uniqueOptions(values: string[]): FilterOption[] {
     .map((value) => ({ value, label: value }));
 }
 
+function normalizedPerformanceStatus(value?: string | null): string {
+  return displayValue(value).toLowerCase().replace(/[\s_]+/g, '-');
+}
+
+function hasAuthoritativePerformanceStatus(value?: string | null): boolean {
+  return ['at-risk', 'on-track', 'high', 'new-starter'].includes(normalizedPerformanceStatus(value));
+}
+
 export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
@@ -230,10 +238,12 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean 
 
     return learners.filter((learner) => {
       const insight = insights.get(learner.id);
+      const performanceStatus = normalizedPerformanceStatus(learner.status);
+      const useApiStatus = hasAuthoritativePerformanceStatus(learner.status);
 
       switch (statusFilter) {
         case 'at-risk':
-          if (insight?.tier !== 'critical') return false;
+          if (useApiStatus ? performanceStatus !== 'at-risk' : insight?.tier !== 'critical') return false;
           break;
         case 'need-attention':
           if (insight?.tier !== 'attention' && insight?.tier !== 'upcoming') return false;
@@ -242,7 +252,9 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean 
           if (insight?.tier !== 'upcoming') return false;
           break;
         case 'on-track':
-          if (insight?.tier !== 'on-track') return false;
+          if (useApiStatus
+            ? performanceStatus !== 'on-track' && performanceStatus !== 'high'
+            : insight?.tier !== 'on-track') return false;
           break;
         case 'needs-action':
           if (insight?.tier !== 'critical' && insight?.tier !== 'attention' && insight?.tier !== 'upcoming') return false;

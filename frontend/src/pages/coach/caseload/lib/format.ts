@@ -63,7 +63,7 @@ export type ProgramStatusKey = 'active' | 'withdrawn' | 'break' | 'ready-to-enro
 
 export function getProgramStatusKey(value?: string | null): ProgramStatusKey {
   const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
-  if (normalized === 'active') return 'active';
+  if (normalized === 'active' || normalized === 'delivery') return 'active';
   if (normalized === 'withdrawn') return 'withdrawn';
   if (normalized === 'break' || normalized === 'onbreak' || normalized === 'onabreak') return 'break';
   if (normalized === 'readytoenrol') return 'ready-to-enrol';

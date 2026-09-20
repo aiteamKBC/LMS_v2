@@ -275,7 +275,8 @@ interface MarkingQueueResponse {
 }
 
 function isActiveLearner(learner: CoachLearner): boolean {
-  return displayValue(learner.rawProgramStatus).toLowerCase().replace(/\s+/g, '') === 'active';
+  const status = normalizedProgramStatus(learner);
+  return status === 'active' || status === 'delivery';
 }
 
 function normalizedProgramStatus(learner: CoachLearner): string {

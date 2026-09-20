@@ -39,6 +39,7 @@ from coach_api.views import (
     caseload_audit_hour_totals,
     caseload_aptem_ids,
     caseload_evidenced_ksb_counts,
+    caseload_kbc_attendance_rates,
     canonical_attendance_detail_rows,
     dashboard_attendance_rows,
     dashboard_review_history,
@@ -52,8 +53,15 @@ from coach_api.views import (
     reported_minutes,
     route_absence_report_evidence,
     serialize_caseload_learner,
+    normalize_program_status,
 )
 from learner_api.learner_detail import otjh_status_from_variance
+
+
+class CoachProgrammeStatusTests(SimpleTestCase):
+    def test_delivery_is_counted_as_active_for_coach_views(self):
+        self.assertEqual(normalize_program_status("Delivery"), "active")
+        self.assertEqual(normalize_program_status("Active"), "active")
 
 
 def call_coach_view(view, request):
@@ -194,6 +202,23 @@ class DashboardAttendanceTests(SimpleTestCase):
         with patch("coach_api.views.caseload_canonical_attendance") as summaries:
             self.assertEqual(dashboard_attendance_rows([], []), [])
         summaries.assert_not_called()
+
+    @patch("coach_api.views.fetch_kbc_attendance_rates")
+    @patch("coach_api.views.caseload_aptem_ids", return_value={7: 4321, 8: 9876})
+    def test_coach_caseload_attendance_is_keyed_to_kbc_rates(self, aptem_ids, kbc_rates):
+        kbc_rates.return_value = {
+            "4321": {"sessions": 10, "present": 8, "absent": 2, "rate": 80},
+        }
+
+        profile_ids, metrics = caseload_kbc_attendance_rates([
+            SimpleNamespace(id=7),
+            SimpleNamespace(id=8),
+        ])
+
+        self.assertEqual(profile_ids, {7: 4321, 8: 9876})
+        self.assertEqual(metrics, {7: {"sessions": 10, "present": 8, "absent": 2, "rate": 80}})
+        kbc_rates.assert_called_once()
+        self.assertEqual(list(kbc_rates.call_args.args[0]), [4321, 9876])
 
 
 class AttendanceDetailRowsTests(SimpleTestCase):
@@ -380,11 +405,11 @@ class AuditHourOverlayTests(SimpleTestCase):
 
 class CanonicalCoachMetricsTests(SimpleTestCase):
     def test_otjh_status_uses_agreed_variance_boundaries(self):
-        self.assertEqual(otjh_status_from_variance(Decimal("-0.04")), "On track")
-        self.assertEqual(otjh_status_from_variance(Decimal("-0.05")), "On track")
-        self.assertEqual(otjh_status_from_variance(Decimal("-0.051")), "Need attention")
-        self.assertEqual(otjh_status_from_variance(Decimal("-0.15")), "Need attention")
-        self.assertEqual(otjh_status_from_variance(Decimal("-0.151")), "At risk")
+        self.assertEqual(otjh_status_from_variance(Decimal("-19.99")), "On track")
+        self.assertEqual(otjh_status_from_variance(Decimal("-20")), "Need attention")
+        self.assertEqual(otjh_status_from_variance(Decimal("-39.99")), "Need attention")
+        self.assertEqual(otjh_status_from_variance(Decimal("-40")), "At risk")
+        self.assertEqual(otjh_status_from_variance(Decimal("5")), "On track")
 
     def test_live_metrics_match_learner_facts_but_keep_coach_target_pacing(self):
         payload = {
@@ -405,7 +430,7 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         self.assertEqual(result["otjhCompleted"], 74.71)
         self.assertEqual(result["otjhTarget"], 120.57)
         self.assertEqual(result["overallProgress"], 62)
-        self.assertEqual(result["otjhStatus"], "On track")
+        self.assertEqual(result["otjhStatus"], "At risk")
         self.assertEqual(result["programmeProgress"], 8.97)
         self.assertEqual((result["componentsCompleted"], result["componentsPlanned"]), (34, 379))
         self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (14, 20, 70))
@@ -414,6 +439,28 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
     def test_unavailable_metrics_leave_the_existing_snapshot_untouched(self):
         payload = {"otjhCompleted": 4, "otjhTarget": 5}
         self.assertIs(apply_canonical_learner_metrics(payload, None), payload)
+
+    def test_unavailable_canonical_ksb_metrics_keep_the_caseload_snapshot(self):
+        payload = {
+            "ksbCompleted": 4,
+            "ksbTarget": 20,
+            "ksbProgress": 20,
+            "ksbProgressAvailable": True,
+            "ksbStatus": "Started",
+        }
+        metrics = {
+            "programme": {"completed": 1, "total": 2, "percent": 50, "status": "ready"},
+            "otjh": {},
+            "ksb": {"completed": None, "total": None, "percent": None, "status": "unavailable"},
+        }
+
+        result = apply_canonical_learner_metrics(payload, metrics)
+
+        self.assertEqual(
+            (result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"], result["ksbProgressAvailable"]),
+            (4, 20, 20, True),
+        )
+        self.assertEqual(result["ksbStatus"], "Started")
 
 
 class SourceProfileIdentityTests(SimpleTestCase):

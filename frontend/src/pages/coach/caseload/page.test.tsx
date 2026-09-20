@@ -77,4 +77,22 @@ describe('Coach caseload loading', () => {
     expect(screen.queryByText('Most urgent first')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Sort direction:/ })).not.toBeInTheDocument();
   });
+
+  it('uses the API performance status when filtering the caseload', async () => {
+    const atRiskLearner = { ...learner, id: '43', name: 'At Risk Learner', initials: 'AR', status: 'at-risk' } satisfies CaseloadApiLearner;
+    coachFetch.mockImplementation((url: string) => (
+      url.includes('/attendance')
+        ? Promise.resolve(new Response(JSON.stringify({ learners: [] })))
+        : Promise.resolve(new Response(JSON.stringify({ owner: { name: 'Coach Example' }, learners: [learner, atRiskLearner] })))
+    ));
+
+    render(<MemoryRouter><CoachCaseloadContent embedded /></MemoryRouter>);
+
+    expect(await screen.findByText('At Risk Learner')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Status' }));
+    fireEvent.click(screen.getByRole('option', { name: 'At risk' }));
+
+    expect(screen.getByText('At Risk Learner')).toBeInTheDocument();
+    expect(screen.queryByText('Final Learner')).not.toBeInTheDocument();
+  });
 });

@@ -179,6 +179,27 @@ it('shows the six requested workload cards using the current week and marking qu
   expect(within(metrics).queryByText('MCM 4-week')).not.toBeInTheDocument();
 });
 
+it('counts delivery learners with active learners on the coach dashboard', async () => {
+  mocks.load.mockImplementation((url: string) => Promise.resolve(
+    url.includes('/marking-queue')
+      ? { summary: { pendingItems: 0 } }
+      : {
+          owner: { name: 'Example Coach' },
+          learners: [
+            { id: '1', name: 'Active Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' },
+            { id: '2', name: 'Delivery Learner', rawProgramStatus: 'delivery', otjhStatus: 'on-track' },
+          ],
+          timetable: { events: [] },
+        },
+  ));
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  const totalLearners = within(metrics).getByRole('button', { name: 'Open Total learners details' });
+  expect(totalLearners.querySelector('[class*="metricValue"]')).toHaveTextContent('2');
+  expect(screen.getByText('2 active learners grouped by their current OTJH status.')).toBeVisible();
+});
+
 it('opens a detail popup and full-page link from every workload card', async () => {
   const dashboardEvents: CoachCalendarEvent[] = [
     { ...meeting, id: 'mcm-week', eventKey: 'mcm-week', scheduledDate: '2026-09-18' },
