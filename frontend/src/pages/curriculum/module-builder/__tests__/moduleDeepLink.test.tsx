@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
@@ -136,11 +136,20 @@ async function renderAt(search: string) {
 
 /** Reports the router's own query string, which is what a reload would replay. */
 function AddressProbe() {
-  return <output data-testid="address">{useLocation().search}</output>;
+  const location = useLocation();
+  const navigate = useNavigate();
+  return <>
+    <output data-testid="address" data-history-key={location.key}>{location.search}</output>
+    <button type="button" onClick={() => navigate(-1)}>Test browser Back</button>
+  </>;
 }
 
 function address() {
   return new URLSearchParams(screen.getByTestId('address').textContent || '');
+}
+
+function historyKey() {
+  return screen.getByTestId('address').dataset.historyKey || '';
 }
 
 describe('Module Builder deep links', { timeout: 15000 }, () => {
@@ -176,7 +185,7 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     expect(createNewModule).not.toHaveBeenCalled();
   });
 
-  it('puts the module it opens in the address, so a reload comes back to it', async () => {
+  it('puts the module it opens in the address and adds one Back step to the filtered catalogue', async () => {
     // The workspace used to live in component state alone. Reload, Back, or a
     // restored tab all landed on the catalogue, and someone who had been
     // authoring for an hour was shown a module list instead of their module.
@@ -187,10 +196,17 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     // not decided by how the catalogue happens to sort two of them.
     await renderAt('?programme=Marketing+Manager');
     expect(address().get('module')).toBeNull();
+    const catalogueHistoryKey = historyKey();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Edit components' }));
 
     await waitFor(() => expect(address().get('module')).toBe('MOD-202608229DBEB6F2ACA5'));
+    expect(historyKey()).not.toBe(catalogueHistoryKey);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Test browser Back' }));
+    await waitFor(() => expect(address().get('module')).toBeNull());
+    await waitFor(() => expect(screen.getByText('Module catalogue')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Back to modules' })).not.toBeInTheDocument();
   });
 
   it('takes the module back out of the address when the reader leaves it', async () => {

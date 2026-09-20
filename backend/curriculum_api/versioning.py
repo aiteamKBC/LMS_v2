@@ -25,13 +25,14 @@ can still name who saved.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
 from datetime import date, datetime
 from decimal import Decimal
 
-from django.db import DatabaseError, connection, transaction
+from django.db import DEFAULT_DB_ALIAS, DatabaseError, connection, transaction
 
 from . import schema_gate
 
@@ -651,16 +652,45 @@ def strip_credentials(value):
     return value
 
 
+#: Columns whose value must never reach history, per entity type, registered by
+#: ``system_audit.writes``. Curriculum's own tables register none: no authoring
+#: table holds a personal detail, and the ``SNAPSHOT_COLUMNS`` allowlist above
+#: already keeps out anything not named.
+#:
+#: A redacted column is not simply dropped. Dropping it would make an edit to it
+#: invisible, and "this field changed, by this person, at this time" is exactly
+#: what an audit of a sensitive field is for. So the value is replaced by a
+#: digest of itself: the same value digests the same way and records no change,
+#: a different one records a change, and neither digest can be read back into
+#: the value it stands for.
+REDACTED_COLUMNS = {}
+
+REDACTED_PREFIX = 'redacted:'
+
+
+def redacted(value):
+    """A stand-in that changes when the value changes and reveals nothing."""
+    if value is None or value == '':
+        return None
+    text = value if isinstance(value, str) else json.dumps(jsonable(value), sort_keys=True, ensure_ascii=False)
+    return REDACTED_PREFIX + hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
+
+
 def build_snapshot(entity_type, row):
     """The saved record as history will hold it, in a shape both write paths share.
 
     Always carries exactly the columns ``SNAPSHOT_COLUMNS`` declares for the
     entity — see the note there for why the source's own key set is not used.
+    Columns named in ``REDACTED_COLUMNS`` carry a digest instead of the value.
     """
     row = row or {}
+    hidden = REDACTED_COLUMNS.get(entity_type) or frozenset()
     snapshot = {}
     for column in SNAPSHOT_COLUMNS.get(entity_type, ()):
         value = row.get(column)
+        if column in hidden:
+            snapshot[column] = redacted(value)
+            continue
         if column in JSON_SNAPSHOT_COLUMNS:
             parsed = parse_json_column(value)
             snapshot[column] = strip_credentials(jsonable(parsed)) if parsed is not None else None
@@ -1011,7 +1041,7 @@ def latest_revisions(entity_type, entity_ids):
     return result
 
 
-def record_rows(table, rows, *, reason='', deleted=False):
+def record_rows(table, rows, *, reason='', deleted=False, using=None):
     """Note what a write left behind, to be recorded when it commits. Never raises.
 
     Callers pass the rows their write returned, so this costs no extra read of
@@ -1040,7 +1070,8 @@ def record_rows(table, rows, *, reason='', deleted=False):
     try:
         entity_type = config['entity_type']
         key_column = config['key']
-        buffer = pending_buffer()
+        alias = using or config.get('using') or DEFAULT_DB_ALIAS
+        buffer = pending_buffer(alias)
         # Taken here, not at flush time. The flush can run after the request has
         # finished -- it waits for the commit -- and by then the thread-locals
         # have been cleared for the next request. Reading them late would credit
@@ -1077,33 +1108,54 @@ def record_rows(table, rows, *, reason='', deleted=False):
                 'metadata': metadata,
                 'action_override': action_override,
             }
-        arm_flush()
+        arm_flush(alias)
     except Exception:
         # Deliberately broad: history is worth less than the content it records.
         logger.warning('Could not buffer curriculum revisions for %s.', table, exc_info=True)
 
 
-def record_deleted_rows(table, rows, *, reason=''):
+def record_deleted_rows(table, rows, *, reason='', using=None):
     """Record rows a hard delete destroyed, from the rows the delete returned."""
-    record_rows(table, rows, reason=reason or 'hard-delete', deleted=True)
+    record_rows(table, rows, reason=reason or 'hard-delete', deleted=True, using=using)
 
 
 # ------------------------------------------------------- the pending buffer
 
-def pending_buffer():
-    buffer = getattr(_local, 'pending', None)
-    if buffer is None:
-        buffer = {}
-        _local.pending = buffer
-    return buffer
+def pending_buffers():
+    """Every connection's buffer, keyed by database alias."""
+    buffers = getattr(_local, 'pending', None)
+    if buffers is None:
+        buffers = {}
+        _local.pending = buffers
+    return buffers
 
 
-def discard_pending():
-    """Throw the buffer away. What a rolled-back transaction wrote never happened."""
-    _local.pending = {}
+def pending_buffer(alias=DEFAULT_DB_ALIAS):
+    """The buffer for one connection.
+
+    Kept per alias, not per thread. One request can write through more than one
+    connection -- curriculum's tables on `default`, a learner's on `enrolment`
+    -- and each becomes durable at its own commit. A single shared buffer would
+    let whichever transaction committed first carry the other's rows out with
+    it, so a revision could be recorded for a write that then rolled back. That
+    is precisely the claim an audit log must never make.
+    """
+    return pending_buffers().setdefault(alias, {})
 
 
-def arm_flush():
+def discard_pending(alias=None):
+    """Throw the buffer away. What a rolled-back transaction wrote never happened.
+
+    With no alias, every connection's buffer goes -- which is what a test
+    tearing down wants. With one, only that connection's.
+    """
+    if alias is None:
+        _local.pending = {}
+    else:
+        pending_buffers().pop(alias, None)
+
+
+def arm_flush(alias=DEFAULT_DB_ALIAS):
     """Arrange for the buffer to be recorded when the write becomes durable.
 
     Inside a transaction that is ``on_commit``: a rollback drops the callback and
@@ -1117,20 +1169,28 @@ def arm_flush():
     leave the flag set and silently drop every later save's history on that
     thread. ``flush_pending`` empties the buffer as it runs, so the extra
     callbacks cost one dictionary lookup each and do nothing.
+
+    Registered against the connection the write actually went through. It used
+    to ask `connection` -- always `default` -- whether a transaction was open,
+    which is the right answer only while every audited write uses that one
+    connection. A write on another alias inside its own `atomic()` block would
+    have been reported as having no transaction at all, so its revision would
+    have been written immediately and kept even if that transaction then rolled
+    back.
     """
+    alias = alias or DEFAULT_DB_ALIAS
     try:
-        if connection.in_atomic_block:
-            transaction.on_commit(flush_pending)
+        if transaction.get_connection(alias).in_atomic_block:
+            transaction.on_commit(lambda: flush_pending(alias), using=alias)
             return
     except Exception:
         pass
-    flush_pending()
+    flush_pending(alias)
 
 
-def flush_pending():
+def flush_pending(alias=DEFAULT_DB_ALIAS):
     """Write one revision per entity the transaction actually changed. Never raises."""
-    buffer = getattr(_local, 'pending', None)
-    _local.pending = {}
+    buffer = pending_buffers().pop(alias, None)
     if not buffer:
         return
     try:

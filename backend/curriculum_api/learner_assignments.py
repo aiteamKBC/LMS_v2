@@ -1,4 +1,4 @@
-"""Additive cohort and module assignment using the existing learner plan."""
+"""Cohort and module learner assignment using the existing learner plan."""
 import json
 import logging
 
@@ -128,8 +128,26 @@ def _assign(learner, target, catalogue, cache):
     return True
 
 
+def _unassign(learner, target, cache):
+    if not _assigned(learner, target, cache):
+        return False
+    saved = stored_training_plan(learner)
+    existing = list(saved if saved is not None else get_training_plan(learner) or [])
+    remove_ids = set(target['moduleIds'])
+    remaining = [entry for entry in existing if plans._s(entry.get('moduleId')) not in remove_ids]
+    # Freeze what is left as explicit, the same as an assignment does, so a later
+    # plan read does not put the removed module straight back from a group/cohort
+    # preset the learner still inherits from.
+    remaining = [dict(entry, assignmentMode='explicit') for entry in remaining]
+    field = training_plan_field(learner)
+    setattr(learner, field, remaining)
+    learner.save(update_fields=[field])
+    plans.sync_learning_plan_mirror(learner, strict=True)
+    return True
+
+
 def _handle(request, scope, identifier):
-    if request.method not in ('GET', 'POST'):
+    if request.method not in ('GET', 'POST', 'DELETE'):
         return JsonResponse({'error': 'Method not allowed.'}, status=405)
     try:
         target = _target(scope, identifier)
@@ -163,8 +181,9 @@ def _handle(request, scope, identifier):
             if len(learners) != len(ids):
                 return JsonResponse({'error': 'One or more selected learners no longer exist.'}, status=400)
             cache = {}
+            action = _unassign if request.method == 'DELETE' else _assign
             for learner in learners:
-                changed += int(_assign(learner, target, catalogue, cache))
+                changed += int(action(learner, target, catalogue, cache))
         from .views import invalidate_curriculum_cache
         invalidate_curriculum_cache()
         return JsonResponse({'assignedCount': len(ids), 'changedCount': changed, 'moduleCount': len(target['moduleIds'])})
@@ -226,3 +245,27 @@ def module_assignment_roster(module_id, placement_learners, lifecycle_status='')
             'progressVariance': profile.progress_variance, 'otjhStatus': profile.otjh_status or '',
         }
     return sorted(result.values(), key=lambda row: (row.get('name', '').casefold(), str(row['id'])))
+
+
+def bulk_assigned_learner_counts(module_ids):
+    """Assigned-learner counts for many modules in one pass over all learners.
+
+    The module list shows a "Learners (N)" figure on every card, and computing
+    it the way `_assigned()` does -- one query and one effective-plan
+    computation per module -- would mean one query per card. This runs that
+    same computation (saved plan, or the learner's group preset when nothing is
+    saved) once per learner instead, with the group-preset lookup cached and
+    shared across learners exactly as `_payload` already shares it across a
+    single module's request.
+    """
+    wanted = {plans._s(module_id) for module_id in module_ids if plans._s(module_id)}
+    if not wanted:
+        return {}
+    counts = {module_id: 0 for module_id in wanted}
+    cache = {}
+    learners = EnrolmentUser.all_learners.only('id', 'programme', 'group', 'learning_plan', 'training_plan')
+    for learner in learners:
+        for module_id in set(plans._effective_plan_ids(learner, cache)):
+            if module_id in wanted:
+                counts[module_id] += 1
+    return counts

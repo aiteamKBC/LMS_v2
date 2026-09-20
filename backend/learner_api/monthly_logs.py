@@ -23,6 +23,7 @@ from login.permissions import audit_admin_learner_action, login_required
 from old_otjh import repository as old_repo, service as old, storage
 from old_otjh.views import public_detail, public_state
 from . import monthly_log_sources as sources
+from . import monthly_log_history as history
 from .subject_content import ContentUnavailable
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,8 @@ def require_closed_month(month):
 def legacy_summary(learner):
     if not learner.get('aptem_id'):
         return {'months': []}
+    if history.enabled(learner):
+        return public_state(history.summary(learner))
     # Include every retained month, without starting/finalizing a transition on GET.
     result = public_state(old.summary({**learner, '_read_only': True}))
     targets = signed_training_plan_targets(learner)
@@ -221,8 +224,15 @@ def current_months(learner, signs=(), *, include_open=False):
         if learner.get('aptem_id') and month <= old_repo.CUTOFF:
             continue
         grouped[month].append(row)
+    if history.enabled(learner):
+        for month, audit_rows in history.later_rows(learner, open_month).items():
+            if month == open_month and not include_open:
+                continue
+            # Resolve the existing owner-scoped document URLs before merging.
+            public_detail(learner, {'rows': audit_rows})
+            grouped[month] = history.merge_rows(grouped.get(month, []), audit_rows)
     for rows in grouped.values():
-        rows.sort(key=lambda row: (row['activity_date'], row['source_ref']))
+        rows.sort(key=lambda row: (str(row['activity_date'] or ''), row['source_ref'] or ''))
     return grouped
 
 
@@ -245,7 +255,10 @@ def summary_data(learner, *, include_open=False):
 def detail_data(learner, month, *, include_open=False):
     valid_month(month)
     if learner.get('aptem_id') and month <= old_repo.CUTOFF:
-        detail = public_detail(learner, old.month_detail({**learner, '_read_only': True}, month))
+        if history.enabled(learner):
+            detail = public_detail(learner, history.detail(learner, month))
+        else:
+            detail = public_detail(learner, old.month_detail({**learner, '_read_only': True}, month))
         targets = signed_training_plan_targets(learner)
         if month in targets:
             detail['training_plan_target'] = targets[month]
@@ -288,6 +301,11 @@ def content(request, learner_id, month, row_id):
     row = next((r for r in report['rows'] if r['id'] == row_id), None)
     if row is None:
         raise old.ServiceError('Activity not found.', 'not_found', 404)
+    if row.get('_audit_row_id'):
+        original = old_repo.activity_row(learner, month, row['_audit_row_id'])
+        if original is None:
+            raise old.ServiceError('Activity not found.', 'not_found', 404)
+        return JsonResponse({'id': row_id, 'parts': old_repo.activity_parts(learner, original)})
     return JsonResponse(sources.activity_content(learner, row))
 
 

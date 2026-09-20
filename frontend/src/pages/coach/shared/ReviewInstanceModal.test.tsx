@@ -228,6 +228,7 @@ function snapshotFixture(overrides: Partial<ReviewProgressSnapshot> = {}): Revie
     calculatedAt: '2026-09-16T14:35:00',
     calculatedBy: 'coach@example.com',
     weeksElapsed: 100,
+    ksbProgress: { available: true, title: 'Project controls professional Apprenticeship Standard (v1.0) (Level 6)', actualPercent: 73, expectedPercent: 100, variancePercent: -27, varianceDirection: 'below' },
     programmeProgress: { actual: 28, expected: 30, planned: 100, actualPercent: 28, expectedPercent: 30, variancePercent: -2, varianceDirection: 'below' },
     offTheJobHours: { actual: 64, expected: 52, planned: 100, actualPercent: 64, expectedPercent: 52, variancePercent: 12, varianceDirection: 'above' },
     ...overrides,
@@ -268,8 +269,10 @@ describe('Progress Review learning progress snapshot', () => {
     // parts that carry the meaning: the backend's own calculation date.
     expect(screen.getByText(/Calculated at 16 Sept? 2026/)).toBeVisible();
     expect(screen.getByText('64%')).toBeVisible();
-    expect(screen.getByText('12% above expected (52%)')).toBeVisible();
-    expect(screen.getByText('2% below expected (30%)')).toBeVisible();
+    expect(screen.getByText('12% Above')).toBeVisible();
+    expect(screen.getByText('2% Below')).toBeVisible();
+    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 28%' })).toBeVisible();
+    expect(screen.getByText('27% Below')).toBeVisible();
   });
 
   it('disables repeated clicks while a calculation is in flight', async () => {
@@ -310,7 +313,7 @@ describe('Progress Review learning progress snapshot', () => {
     mount();
     expect(await screen.findByText('Review completed')).toBeVisible();
     expect(screen.getByText('64%')).toBeVisible();
-    expect(screen.getByText('28%')).toBeVisible();
+    expect(screen.getAllByText('28%')).toHaveLength(2);
     expect(screen.getByText('Green')).toBeVisible();
     // A past review that captured no RAG still appears, as "None".
     expect(screen.getByText('None')).toBeVisible();

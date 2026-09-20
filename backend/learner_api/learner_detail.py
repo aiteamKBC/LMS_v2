@@ -1140,9 +1140,10 @@ def build_otjh_detail(source, learner_profile=None):
     reads it through one builder instead of repeating this resolution chain.
     """
     detail = to_learner_detail(source, learner_profile)
+    resolved_plan = effective_training_plan(source)
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
         detail["modules"], detail["week"], detail["components"],
-        assigned_modules=get_training_plan(source),
+        assigned_modules=resolved_plan,
     )
     detail["components"] = _apply_programme_assignment_template(
         detail["components"], getattr(source, "programme", "")
@@ -1151,7 +1152,7 @@ def build_otjh_detail(source, learner_profile=None):
     detail["week"], detail["components"] = _append_week_quizzes(
         detail["week"],
         detail["components"],
-        assigned_modules=get_training_plan(source),
+        assigned_modules=resolved_plan,
     )
     return detail
 

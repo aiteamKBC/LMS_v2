@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
-import { type CurriculumGroup } from '@/lib/curriculumApi';
+import { type CurriculumGroup, type CurriculumModule } from '@/lib/curriculumApi';
 import {
   cleanText,
   findGroup,
@@ -17,7 +17,8 @@ import {
   upsertById,
 } from '../shared/entities/model';
 import { GroupFormDrawer } from '../shared/entities/forms';
-import { ModuleFormDrawer } from '../shared/entities/moduleForm';
+import { ModuleFormDrawer, moduleFormTarget, type ModuleFormTarget } from '../shared/entities/moduleForm';
+import { archiveModuleWithConfirm } from '../shared/entities/archive';
 import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
 import {
   DetailRow,
@@ -26,6 +27,7 @@ import {
   InlineError,
   ParentBadge,
   PlainCell,
+  RowActions,
   StackedCell,
   WorkspaceHeader,
   WorkspacePanel,
@@ -33,13 +35,12 @@ import {
 } from '../shared/entities/ui';
 import { AppIcon } from '@/components/feature/AppIcon';
 
-// One Group: what it delivers, to whom, and when. Modules are listed rather than
-// edited here — each one opens its own workspace, which is where the operational
-// controls (schedule, Teams, components) live.
+// One Group: what it delivers, to whom, and when. Module rows reuse the shared
+// edit and archive controls; each module's workspace holds its operational tools.
 
 type Tab = 'overview' | 'modules' | 'learners';
 
-const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(130px,1fr)_70px_110px_110px]';
+const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(130px,1fr)_70px_110px_110px_76px]';
 
 export default function GroupWorkspacePage() {
   const { id = '' } = useParams();
@@ -52,7 +53,20 @@ export default function GroupWorkspacePage() {
   const [tab, setTab] = useState<Tab>('overview');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
-  const [moduleCreating, setModuleCreating] = useState(false);
+  const [editingModule, setEditingModule] = useState<ModuleFormTarget | null>(null);
+  const [moduleSaving, setModuleSaving] = useState(false);
+
+  const archiveModule = async (module: CurriculumModule) => {
+    const moduleId = moduleIdentity(module);
+    const componentCount = module.weekStructure?.reduce((total, week) => total + (week.components?.length || 0), 0) || 0;
+    await archiveModuleWithConfirm({ id: moduleId, name: module.name }, componentCount, async () => {
+      applyLocal(previous => ({
+        ...previous,
+        modules: previous.modules.filter(item => moduleIdentity(item) !== moduleId),
+      }));
+      await reload({ silent: true });
+    });
+  };
 
   // This page is about one group, so a save shows on it immediately rather than
   // when the background refresh gets back. See the Cohorts list for the pattern.
@@ -237,13 +251,14 @@ export default function GroupWorkspacePage() {
                 type="button"
                 onClick={() => {
                   setTab('modules');
+                  setEditingModule(null);
                   setModuleDrawerOpen(true);
                 }}
-                disabled={!group || moduleCreating}
+                disabled={!group || moduleSaving}
                 className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-50"
               >
-                <AppIcon className={`${moduleCreating ? 'ri-loader-4-line animate-spin' : 'ri-add-line'} text-sm`}></AppIcon>
-                {moduleCreating ? 'Creating module...' : 'Add module'}
+                <AppIcon className={`${moduleSaving && !editingModule ? 'ri-loader-4-line animate-spin' : 'ri-add-line'} text-sm`}></AppIcon>
+                {moduleSaving && !editingModule ? 'Creating module...' : 'Add module'}
               </button>
             </>
           )}
@@ -291,13 +306,14 @@ export default function GroupWorkspacePage() {
               { label: 'Sessions', align: 'center' },
               { label: 'Start' },
               { label: 'End' },
+              { label: 'Actions', align: 'right' },
             ]}
             gridClass={MODULE_GRID}
             rows={groupModules}
             rowKey={module => moduleIdentity(module) || module.id}
             getRowHref={module => namedCurriculumWorkspacePath('modules', moduleIdentity(module), module.name)}
             loading={loading && !loaded}
-            refreshing={refreshing || moduleCreating}
+            refreshing={refreshing || moduleSaving}
             empty={(
               <EntityEmptyState
                 icon="ri-stack-line"
@@ -316,6 +332,22 @@ export default function GroupWorkspacePage() {
                 <PlainCell align="center">{module.sessionsNumber || 0}</PlainCell>
                 <PlainCell>{formatDateLabel(module.startDate)}</PlainCell>
                 <PlainCell>{formatDateLabel(module.endDate)}</PlainCell>
+                {/* Keep keyboard activation of an action out of the row's navigation handler. */}
+                <span className="self-center" onKeyDown={event => event.stopPropagation()}>
+                  <RowActions actions={[
+                    {
+                      icon: 'ri-edit-line', label: 'Edit module', disabled: moduleSaving,
+                      onClick: () => {
+                        setEditingModule(moduleFormTarget(module));
+                        setModuleDrawerOpen(true);
+                      },
+                    },
+                    {
+                      icon: 'ri-archive-line', label: 'Archive module', tone: 'danger', disabled: moduleSaving,
+                      onClick: () => void archiveModule(module),
+                    },
+                  ]} />
+                </span>
               </>
             )}
           />
@@ -350,6 +382,7 @@ export default function GroupWorkspacePage() {
           Authoring weeks and components stays behind the explicit Edit components action. */}
       <ModuleFormDrawer
         open={moduleDrawerOpen}
+        module={editingModule}
         defaults={{
           programmeId: context?.programme ? programmeIdentity(context.programme) : cleanText(group?.programmeId),
           cohortId: cleanText(group?.cohortId),
@@ -361,8 +394,8 @@ export default function GroupWorkspacePage() {
         holidays={holidays}
         tutorNames={tutorNames}
         lockGroup
-        onSavingChange={setModuleCreating}
-        onClose={() => setModuleDrawerOpen(false)}
+        onSavingChange={setModuleSaving}
+        onClose={() => { setModuleDrawerOpen(false); setEditingModule(null); }}
         onSaved={async () => {
           await reload({ silent: true });
         }}
