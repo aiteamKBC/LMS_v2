@@ -948,6 +948,10 @@ export default function ModuleBuilder() {
    * cohorts and no modules report "no cohorts".
    */
   const cohortFilterOptions = useMemo(() => {
+    // The catalogue filter follows the delivery hierarchy. Showing every
+    // cohort before its programme is chosen makes it possible to assemble an
+    // impossible Programme / Cohort / Group combination.
+    if (programmeFilter === 'All') return [];
     const options = new Map<string, string>();
     scopeCohorts
       .filter(cohort => recordMatchesProgrammeFilter(cohort.programme, cohort.programmeId, programmeFilter, curriculumProgrammes))
@@ -966,6 +970,9 @@ export default function ModuleBuilder() {
 
   /** The groups of the programme and cohort in the filter, on the same terms. */
   const groupFilterOptions = useMemo(() => {
+    // A group is always owned by one cohort, so it is not a meaningful filter
+    // until both of its parents have been selected.
+    if (programmeFilter === 'All' || !cohortFilter) return [];
     const options = new Map<string, string>();
     scopeGroups
       .filter(group => (
@@ -2751,22 +2758,24 @@ export default function ModuleBuilder() {
                 aria-label="Cohort"
                 value={cohortFilter}
                 onChange={event => changeFilter(() => { setCohortFilter(event.target.value); setGroupFilter(''); })}
+                disabled={programmeFilter === 'All'}
                 className={FILTER_SELECT_CLASS}
               >
                 <option value="">{cohortFilterOptions.length
                   ? 'All cohorts'
-                  : programmeFilter === 'All' ? 'No cohorts' : 'No cohorts in this programme'}</option>
+                  : programmeFilter === 'All' ? 'Choose programme first' : 'No cohorts in this programme'}</option>
                 {cohortFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
               <select
                 aria-label="Group"
                 value={groupFilter}
                 onChange={event => changeFilter(() => setGroupFilter(event.target.value))}
+                disabled={programmeFilter === 'All' || !cohortFilter}
                 className={FILTER_SELECT_CLASS}
               >
                 <option value="">{groupFilterOptions.length
                   ? 'All groups'
-                  : cohortFilter ? 'No groups in this cohort' : 'No groups'}</option>
+                  : !cohortFilter ? 'Choose cohort first' : 'No groups in this cohort'}</option>
                 {groupFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
               <select
