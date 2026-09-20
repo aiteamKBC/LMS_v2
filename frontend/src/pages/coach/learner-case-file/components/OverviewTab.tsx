@@ -118,10 +118,7 @@ export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { 
                 const matchingSubmissions = data.markingSubmissions?.filter((submission) => (
                   submission.activityId === String(attempt.componentId || '')
                   || submission.activityId === String(attempt.quizId)
-                  || (
-                    !attempt.componentId
-                    && submission.activityTitle.trim().toLowerCase() === attemptTitle.trim().toLowerCase()
-                  )
+                  || submission.activityTitle.trim().toLowerCase() === attemptTitle.trim().toLowerCase()
                 )) || [];
                 const attemptSubmittedAt = Date.parse(attempt.submittedAt);
                 const markingSubmission = matchingSubmissions.find((submission) => (

@@ -356,4 +356,39 @@ describe('Learner Case File design', () => {
     fireEvent.click(markingButtons[1]);
     expect(screen.getByTestId('location')).toHaveTextContent('/coach/marking-queue/submission-123');
   });
+
+  it('shows the marking button when the queue and quiz use different activity ids for the same assessment', () => {
+    mocks.data = {
+      ...caseFileData,
+      markingSubmissions: [
+        {
+          id: 'submission-by-title',
+          activityId: 'assignment-record-9',
+          activityTitle: 'Leadership quiz',
+          submittedAt: '2026-09-17T10:00:00Z',
+        },
+      ],
+      detail: {
+        ...caseFileData.detail,
+        quizAttempts: [
+          {
+            quizId: 7,
+            componentId: 'curriculum-component-4',
+            componentTitle: 'Leadership quiz',
+            attempt: 1,
+            grade: 0.8,
+            passed: true,
+            startedAt: '2026-09-17T09:30:00Z',
+            submittedAt: '2026-09-17T10:00:00Z',
+          },
+        ],
+      },
+    };
+
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LocationProbe /><LearnerCaseFile /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('tab', { name: 'Learning Plan' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open marking: Leadership quiz' }));
+
+    expect(screen.getByTestId('location')).toHaveTextContent('/coach/marking-queue/submission-by-title');
+  });
 });
