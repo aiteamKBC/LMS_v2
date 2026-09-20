@@ -11317,11 +11317,12 @@ MARKING_QUEUE_COLUMNS = """
     benefit_explanation, actual_time_hours,
     completed_during_paid_hours, date_completed, otjh_confirmed,
     signed_declaration, quality_score, coach_feedback, reviewed_by,
-    reviewed_at, submitted_at
+    reviewed_at, submitted_at, full_submission
 """
 
 
 def serialize_marking_submission(row, *, now=None):
+    from learner_api.assignment_attempts import submission_attempts
     now = now or timezone.now()
     submitted_at = row["submitted_at"]
     elapsed_days = max((now - submitted_at).days, 0) if submitted_at else 0
@@ -11367,6 +11368,7 @@ def serialize_marking_submission(row, *, now=None):
         "submittedDisplay": submitted_at.strftime("%d/%m/%Y %H:%M") if submitted_at else "--",
         "elapsedDays": elapsed_days,
         "isOverdue": status == "pending" and elapsed_days >= MARKING_OVERDUE_DAYS,
+        "submissionAttempts": submission_attempts(row.get("full_submission"), row["status"], submitted_at, row["coach_feedback"], row["reviewed_by"], row["reviewed_at"]) if row["activity_type"] == "assignment" else [],
     }
 
 

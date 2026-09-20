@@ -8054,6 +8054,22 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
     return modules
 
 
+def attach_module_assignment_counts(modules):
+    """Set each module row's real `assignments` count, in one bulk pass.
+
+    Every card shows this eagerly, so it has to be cheap for a whole list, not
+    one query per module -- see `learner_assignments.bulk_assigned_learner_counts`.
+    """
+    from .learner_assignments import bulk_assigned_learner_counts
+
+    def key_for(module):
+        return clean_str(module.get('moduleCatalogueId')) or clean_str(module.get('catalogueId')) or clean_str(module.get('id'))
+
+    counts = bulk_assigned_learner_counts({key_for(module) for module in modules})
+    for module in modules:
+        module['assignments'] = counts.get(key_for(module), 0)
+
+
 def _programme_ksb_stats(source_id, required_ksb_codes, only_stats_for_ids):
     """The two per-programme reads build_programmes() would otherwise run for
     every programme in the system just to keep the one the caller wants.
@@ -10374,6 +10390,7 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         ]
     if not compact:
         modules = enrich_modules_with_authoring(modules, include_programme_deleted=visibility == 'all')
+    attach_module_assignment_counts(modules)
     cohorts, groups = build_cohorts_and_groups(
         training_rows,
         rows['program_configs'],
@@ -11732,7 +11749,7 @@ COMPACT_MODULE_LIST_FIELDS = frozenset({
     'isProgrammeDeleted',
     # Counts the catalogue card and the OTJH input render.
     'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes',
-    'totalOtjh', 'declaredTotalOtjh',
+    'totalOtjh', 'declaredTotalOtjh', 'assignments',
     # Status badges and the delivery label.
     'status', 'authoringStatus', 'deliveryStatus',
     # Read into the module edit form and saved back out of it. Not display-only.
@@ -11757,7 +11774,6 @@ COMPACT_MODULE_LIST_DROPPED = {
     'deliveryMetadata': 'Not on the CurriculumModule TypeScript type at all, so nothing can read it off a response row. Every `deliveryMetadata` read in the frontend is of the object curriculumModuleToCatalogue() builds locally. Carries the Teams join URL, organiser and the attendee/presenter/co-organiser lists, so dropping it takes real attendee addresses out of a list response as well.',
     'qualityScore': 'Not on the CurriculumModule type; the catalogue item hardcodes 0.',
     'author': "Always '' out of build_modules() and authoring_summary_catalogue_item(). No reader.",
-    'assignments': 'Always 0. No reader on a module row.',
     'legacyModuleId': 'No reference anywhere in the frontend.',
     'invalidModuleCatalogueId': 'No reference anywhere in the frontend. Read server-side by enrich_modules_with_authoring(), which runs before this projection.',
     'deliveryRowId': 'No reference on a module row (the one `deliveryRowId` read in the frontend is on a session).',

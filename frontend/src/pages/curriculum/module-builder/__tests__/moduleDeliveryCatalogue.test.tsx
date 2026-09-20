@@ -34,6 +34,10 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ auth: null }),
+}));
+
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumAlert: vi.fn(async () => undefined),
   showCurriculumConfirm: vi.fn(async () => undefined),
@@ -397,11 +401,22 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(card.queryByText(/Scoped module - used in/)).not.toBeInTheDocument();
   });
 
-  it('narrows the catalogue to one group through the delivery filters', async () => {
+  it('requires programme then cohort before a group can narrow the catalogue', async () => {
     const user = userEvent.setup();
     await renderCatalogue();
     expect(screen.getByText('Network Basics')).toBeInTheDocument();
 
+    expect(screen.getByLabelText('Cohort')).toBeDisabled();
+    expect(screen.getByLabelText('Group')).toBeDisabled();
+    expect(within(screen.getByLabelText('Cohort')).getByRole('option')).toHaveTextContent('Choose programme first');
+    expect(within(screen.getByLabelText('Group')).getByRole('option')).toHaveTextContent('Choose cohort first');
+
+    await user.selectOptions(screen.getByLabelText('Programme'), 'Data Analyst');
+    expect(screen.getByLabelText('Cohort')).toBeEnabled();
+    expect(screen.getByLabelText('Group')).toBeDisabled();
+
+    await user.selectOptions(screen.getByLabelText('Cohort'), 'COHORT-1');
+    expect(screen.getByLabelText('Group')).toBeEnabled();
     await user.selectOptions(screen.getByLabelText('Group'), 'GROUP-1');
 
     expect(screen.getByText('Data Foundations')).toBeInTheDocument();
@@ -413,6 +428,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await renderCatalogue();
 
     await user.selectOptions(screen.getByLabelText('Programme'), 'Data Analyst');
+    await user.selectOptions(screen.getByLabelText('Cohort'), 'COHORT-1');
 
     const groupOptions = within(screen.getByLabelText('Group')).getAllByRole('option');
     expect(groupOptions.map(option => option.textContent)).toEqual(['All groups', 'Group A']);

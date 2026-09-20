@@ -7,11 +7,11 @@ from .content import obj, values, http_url
 
 
 def read(learner, ids):
-    from .repository import query
+    from .repository import source_query
     if not ids:
         return {}
     params = [learner['aptem_id'], learner['aptem_id'], list(map(str, sorted(ids)))]
-    rows = query('''WITH learner_source AS (
+    rows = source_query('''WITH learner_source AS (
         SELECT programme_structure::jsonb AS structure FROM "Audit".learner_match WHERE aptem_id=%s
         UNION ALL
         SELECT programme_structure::jsonb FROM "Audit".learner_match_market_research_l4 WHERE aptem_id=%s
@@ -27,7 +27,7 @@ def read(learner, ids):
         item->>'iframe_url' AS iframe_url, item->>'preview_url' AS preview_url,
         item->>'text_body' AS text_body
       FROM components WHERE item->>'component_id'=ANY(%s)''', params)
-    attempts = query('''SELECT q.key AS component_id, q.value AS attempt
+    attempts = source_query('''SELECT q.key AS component_id, q.value AS attempt
         FROM "Audit".learner_match lm CROSS JOIN LATERAL jsonb_each(lm.quiz_attempts) q
         WHERE lm.aptem_id=%s AND q.key=ANY(%s)''', [learner['aptem_id'], params[-1]])
     result = {}

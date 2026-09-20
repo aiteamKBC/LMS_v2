@@ -924,6 +924,8 @@ export interface ModuleCatalogueItem {
   lessonCount: number;
   quizCount: number;
   qualityScore: number;
+  /** Learners currently assigned this module, from the bulk overview count. */
+  assignedLearnerCount?: number;
   moduleKsbMappings: KsbMapping[];
   completionCriteria: CompletionCriteria;
   advancedDetails: AdvancedModuleDetails;
@@ -1215,6 +1217,45 @@ export async function duplicateModuleStructure(
     title: renameCopy ? `${source.title} copy` : source.title,
     status: 'draft',
     sourceModule: undefined,
+    // The copy is an authored module in its own right, never a second claim on
+    // whatever the original was made from. `source_id` is how a training-plan
+    // row finds its module (`matching_authoring_module_for_training_row`), so a
+    // copy carrying the original's made two modules answer to one row and which
+    // one answered was whichever the candidate scan reached first. `sourceId` is
+    // re-pointed at the copy's OWN catalogue id below, once the row exists --
+    // which is how an authored module names itself.
+    sourceType: 'module_authoring',
+    // The fingerprint of the STORED structure this object was read from -- the
+    // original's. The copy has not been stored yet, and carrying a revision that
+    // belongs to another module's row is only ever wrong.
+    structureRevision: undefined,
+    // Read back off the original's own weeks by the structure endpoint, so it
+    // arrives holding the original's `teamsLiveSessionId` even though every
+    // component here is about to be stripped of it. The backend does not treat
+    // this as description: `link_live_session_series_to_module` takes every
+    // live-session id the payload mentions -- components AND this object -- and
+    // points those `curriculum.live_sessions` rows at the module being saved. So
+    // saving the copy MOVED the original's real meeting onto the copy: the
+    // original kept the ids in its components but no longer owned the row, and
+    // everything that reads the table by module (the Teams Meetings page,
+    // attendance, recordings, the sync) followed the meeting to the copy.
+    // Stripped the same way the components are, and for the same reason.
+    deliveryMetadata: source.deliveryMetadata
+      ? independentCopySettings(structuredClone(source.deliveryMetadata), { keepDates })
+      : source.deliveryMetadata,
+    // The run the source is on is the source's, not the copy's. `createNewModule`
+    // below already withholds these, but the structure save right after it sends
+    // the whole module -- so leaving them here put the original's start date back
+    // on the copy's row, and every date the copy has is generated from that row:
+    // `module_session_plan_for_count` walks forward from `start_date`, so the
+    // copy's weeks and live sessions were re-dated onto the original's days the
+    // moment they were planned. Assigning the copy to another group did not save
+    // it either -- that group supplies its own delivery days, not a start date,
+    // so the sessions simply landed on the old run's dates spelled in new days.
+    // Undated is the honest state: the module drawer asks for a start date before
+    // it will save, and the plan fills the weeks from the answer.
+    startDate: keepDates ? source.startDate : '',
+    endDate: keepDates ? source.endDate : '',
     cohortId: options.cohortId ?? source.cohortId,
     cohort: options.cohortName ?? source.cohort,
     groupId: options.groupId ?? source.groupId,
@@ -1244,7 +1285,13 @@ export async function duplicateModuleStructure(
           id: makeId(`component-copy-${weekIndex + 1}-${componentIndex + 1}`),
           weekId,
           ksbMappings: cloneMappings(component.ksbMappings, `component-${weekIndex + 1}-${componentIndex + 1}`),
-          settings: independentCopySettings(component.settings || {}, { keepDates }),
+          // Cloned before it is stripped, like `duplicateWeekInModule` does:
+          // `independentCopySettings` spreads one level, so the copy would go on
+          // sharing the source's ARRAYS -- its attendees, presenters and KSB
+          // lists. The source here is the object `loadModuleStructure` cached,
+          // so an edit through the copy would reach both the original on screen
+          // and everything else reading that cache entry.
+          settings: independentCopySettings(structuredClone(component.settings || {}), { keepDates }),
         })),
       };
     }),
@@ -1264,7 +1311,15 @@ export async function duplicateModuleStructure(
       startDate: keepDates ? duplicate.startDate : undefined,
       endDate: keepDates ? duplicate.endDate : undefined,
     });
-    const payload = recalculateModule({ ...duplicate, catalogueId: created.catalogueId, id: created.id || duplicate.id });
+    const payload = recalculateModule({
+      ...duplicate,
+      catalogueId: created.catalogueId,
+      id: created.id || duplicate.id,
+      // An authored module's `source_id` is its own catalogue id -- that is what
+      // the estate holds for the modules the builder made. The copy names
+      // itself here rather than the module it was copied from.
+      sourceId: created.catalogueId,
+    });
     const saved = await saveModuleStructure(payload.catalogueId, payload);
     return saved;
   } catch (err) {
@@ -1317,6 +1372,11 @@ const SESSION_DATE_SETTING_KEYS = [
   'sessionDate',
   'sessionDay',
   'sessionDateTimeUtc',
+  // The instant Microsoft holds the booked occurrence at. It is the same date
+  // said a second way, and the week builder falls back to it when reading a
+  // session's calendar instant, so a copy that kept it still pointed at the
+  // original's day after `sessionDate` had been cleared.
+  'teamsStartDateTimeUtc',
 ] as const;
 
 const TEAMS_MEETING_SETTING_KEYS = [
@@ -1329,6 +1389,17 @@ const TEAMS_MEETING_SETTING_KEYS = [
   'teamsMeetingUrl',
   'liveSessionUrl',
   'teamsProvider',
+  // The rest of what the Teams attachment path stamps per occurrence
+  // (`LIVE_SESSION_TRACKING_SETTING_KEYS` in componentAuthoringModel.ts). Every
+  // one of them names the ORIGINAL's meeting: `teamsOccurrenceId` is its Graph
+  // instance, `teamsWebLink` opens its calendar entry, `teamsDurationMinutes`
+  // is the length Microsoft booked it for, and `sessionRescheduled` records
+  // that its occurrence was moved. `durationMinutes` -- what the author chose
+  // -- is a different key and survives the copy.
+  'teamsOccurrenceId',
+  'teamsWebLink',
+  'teamsDurationMinutes',
+  'sessionRescheduled',
 ] as const;
 
 /**
@@ -1850,6 +1921,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     lessonCount: module.lessons || sessionNameCount(module) || 0,
     quizCount: module.quizzes || 0,
     qualityScore: 0,
+    assignedLearnerCount: module.assignments ?? 0,
     moduleKsbMappings: (module.ksbCodes || []).map((code, index) => ({
       id: makeAuthoringId('KSBMAP'),
       ksbId: code,

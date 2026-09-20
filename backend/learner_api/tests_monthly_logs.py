@@ -79,11 +79,42 @@ class MonthlyLogsTests(SimpleTestCase):
     def test_old_report_is_returned_with_existing_signatures_and_iframe_rows(self):
         historical = {'month': '2026-08', 'rows': [], 'student_signature': {'file_id': 'saved',
                        'signed_at': '2026-09-01', 'signer_name': 'Learner'}, 'coach_signature': None}
-        with patch.object(logs.old, 'month_detail', return_value=historical), patch.object(logs.old, 'start') as start:
+        with patch.object(logs.old, 'month_detail', return_value=historical), \
+             patch.object(logs, 'signed_training_plan_targets', return_value={'2026-08': 20}), \
+             patch.object(logs.old, 'start') as start:
             detail = logs.detail_data(self.learner, '2026-08')
         self.assertEqual(detail['student_signature']['url'], '/audit_api/old-otjh/signatures/saved/')
         self.assertEqual(detail['source'], 'legacy')
+        self.assertEqual(detail['training_plan_target'], 20)
+        self.assertEqual(detail['training_plan_target_source'], 'signed_training_plan')
         start.assert_not_called()
+
+    def test_historical_summary_uses_signed_training_plan_targets(self):
+        historical = {'months': [
+            {'month': '2026-01', 'training_plan_target': 1},
+            {'month': '2026-02', 'training_plan_target': 30},
+        ]}
+        with patch.object(logs.old, 'summary', return_value=historical), \
+             patch.object(logs, 'signed_training_plan_targets', return_value={'2026-01': 3}):
+            summary = logs.legacy_summary(self.learner)
+
+        self.assertEqual(summary['months'][0]['training_plan_target'], 3)
+        self.assertEqual(summary['months'][0]['training_plan_target_source'], 'signed_training_plan')
+        self.assertEqual(summary['months'][1]['training_plan_target'], 30)
+
+    def test_month_after_august_keeps_using_the_lms_source(self):
+        with patch.object(logs.old, 'month_detail') as audit_detail, \
+             patch.object(logs, 'signed_training_plan_targets') as contract_targets, \
+             patch.object(logs, 'signatures', return_value=[]), \
+             patch.object(sources, 'activity_rows', return_value=[self.row]), \
+             patch.object(logs, 'lock_state', return_value={'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}), \
+             patch.object(logs.old_repo, 'report_profile', return_value={}):
+            detail = logs.detail_data(self.learner, '2026-09')
+
+        self.assertEqual(detail['source'], 'lms')
+        self.assertEqual(detail['rows'], [self.row])
+        audit_detail.assert_not_called()
+        contract_targets.assert_not_called()
 
     def test_summary_includes_retained_and_current_months(self):
         retained = {'month': '2026-08', 'status': 'complete', 'student_signature': {'url': 'saved'}}

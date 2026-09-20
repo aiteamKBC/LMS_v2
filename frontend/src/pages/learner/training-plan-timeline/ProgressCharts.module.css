@@ -40,7 +40,12 @@
 .targetKey { width: 1rem; height: 1px; background: var(--learner-navy); }
 .submittedKey { width: .65rem; height: .65rem; border-radius: 50%; background: var(--otjh-navy-light); }
 .completedKey { width: .65rem; height: .65rem; border-radius: 50%; background: var(--otjh-navy); }
-.monthlyScroll { margin-top: 1.25rem; overflow-x: auto; padding: .25rem 0 .35rem; scrollbar-gutter: stable; }
+.monthlyScroll { width: 100%; min-width: 0; max-width: 100%; margin-top: 1.25rem; overflow-x: auto; overflow-y: hidden; padding: .25rem 0 .5rem; scrollbar-color: var(--otjh-navy-light) var(--learner-soft); scrollbar-gutter: stable; scrollbar-width: thin; overscroll-behavior-inline: contain; }
+.monthlyScroll:focus-visible { border-radius: .5rem; outline: 2px solid var(--otjh-navy); outline-offset: 2px; }
+.monthlyScroll::-webkit-scrollbar { height: .55rem; }
+.monthlyScroll::-webkit-scrollbar-track { border-radius: 999px; background: var(--learner-soft); }
+.monthlyScroll::-webkit-scrollbar-thumb { border: 2px solid var(--learner-soft); border-radius: 999px; background: var(--otjh-navy-light); }
+.monthlyScroll::-webkit-scrollbar-thumb:hover { background: var(--otjh-navy); }
 .monthlyPlot { position: relative; height: 16.5rem; padding: 0 .75rem 0 2.75rem; }
 .yAxis { position: absolute; inset: 0 auto 2.4rem 0; width: 2.2rem; color: var(--kbc-muted); font-size: .625rem; }
 .yAxis span { position: absolute; right: 0; transform: translateY(50%); }

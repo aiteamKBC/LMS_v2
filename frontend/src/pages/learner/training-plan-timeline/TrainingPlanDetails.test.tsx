@@ -262,6 +262,11 @@ describe('Dashboard training plan controls', () => {
       coach_name: 'Module coach', learning_outcomes: ['Plan a campaign', 'Measure campaign results'] };
     renderBoard(data, summarySubjects);
     const panel = within(screen.getByRole('region', { name: 'Module overview' }));
+    expect(panel.getByRole('heading', { name: 'Staff' })).toBeVisible();
+    expect(panel.queryByRole('heading', { name: 'People' })).not.toBeInTheDocument();
+    expect(panel.getByRole('progressbar', { name: 'Study hours progress' })).toHaveAttribute('aria-valuenow', '5');
+    expect(panel.queryByText('Module training plan')).not.toBeInTheDocument();
+    expect(panel.queryByText('Accepted study hours')).not.toBeInTheDocument();
     for (const value of ['140 hours', 'Cohort: October 2026', 'Group: G1', 'Marketing Level 4', 'Module coach', 'Assigned tutor']) {
       expect(panel.getByText(value)).toBeVisible();
     }
@@ -380,6 +385,55 @@ describe('Dashboard training plan controls', () => {
       .getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '50');
   });
 
+  it('uses Audit OTJH through August 2026 and LMS calculations from September', () => {
+    const data = fixture();
+    data.months = {
+      '2026-07': { label: '', topics: [], planned: 70, source: 'contract' },
+      '2026-08': { label: '', topics: [], planned: 80, source: 'contract' },
+      '2026-09': { label: '', topics: [], planned: 18, source: 'contract' },
+    };
+    data.auditOtjhCutoffMonth = '2026-08';
+    data.monthlyLogOtjh = {
+      '2026-07': { target: 10, submitted: 1, completed: 8 },
+      '2026-08': { target: 44, submitted: 2, completed: 15 },
+      '2026-09': { target: 18, submitted: 4, completed: 12 },
+    };
+    data.monthlyOtjh = {
+      '2026-08': { planned: 80, submitted: 30, actual: 40, missingPlannedActivities: 0 },
+      '2026-09': { planned: 18, submitted: 3, actual: 7, missingPlannedActivities: 0 },
+    };
+    data.actual = [
+      { month: '2026-08', groupId: null, hours: 99, count: 1 },
+      { month: '2026-09', groupId: null, hours: 4, count: 1 },
+    ];
+    renderBoard(data, summarySubjects, vi.fn(), '2026-07-01', '2026-09-30');
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.getByRole('button', { name: 'July 2026: target 10 hours, submitted 1 hours, completed 8 hours' })).toBeVisible();
+    expect(chart.getByRole('button', { name: 'August 2026: target 44 hours, submitted 2 hours, completed 15 hours' })).toBeVisible();
+    expect(chart.getByRole('button', { name: 'September 2026: target 18 hours, submitted 4 hours, completed 12 hours' })).toBeVisible();
+    expect(chart.getByText(/35h completed.*7h submitted/)).toBeVisible();
+  });
+
+  it('starts at the programme start month and excludes earlier monthly logs', () => {
+    const data = fixture();
+    data.months = {
+      '2026-02': { label: '', topics: [], planned: 20, source: 'contract' },
+      '2026-03': { label: '', topics: [], planned: 20, source: 'contract' },
+    };
+    data.auditOtjhCutoffMonth = '2026-08';
+    data.monthlyLogOtjh = {
+      '2026-01': { target: 12, submitted: 1, completed: 9 },
+    };
+    data.monthlyOtjh = {};
+    data.actual = [];
+    renderBoard(data, summarySubjects, vi.fn(), '2026-02-01', '2026-03-31');
+
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.queryByRole('button', { name: /January 2026:/ })).not.toBeInTheDocument();
+    expect(chart.getByRole('button', { name: /February 2026:/ })).toBeVisible();
+    expect(chart.getByRole('button', { name: /March 2026:/ })).toBeVisible();
+  });
+
   it('includes every month through the programme end date', () => {
     const data = fixture();
     data.monthlyOtjh = {
@@ -389,6 +443,9 @@ describe('Dashboard training plan controls', () => {
     data.actual = [];
     renderBoard(data, summarySubjects, vi.fn(), '2026-08-01', '2027-04-30');
     const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    const horizontalScroll = chart.getByRole('region', { name: /scroll horizontally to view more months/i });
+    expect(horizontalScroll).toHaveAttribute('tabindex', '0');
+    expect(horizontalScroll.firstElementChild).toHaveStyle({ minWidth: '38.25rem' });
     const months = chart.getAllByRole('button');
     expect(months).toHaveLength(9);
     expect(months[0]).toHaveAccessibleName(/August 2026:/);

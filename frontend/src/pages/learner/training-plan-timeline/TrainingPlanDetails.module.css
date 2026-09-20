@@ -59,7 +59,10 @@
 .topRow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; align-items: stretch; margin-bottom: 1.5rem; }
 .activityOverviewTopRow { grid-template-columns: minmax(0, 1fr); align-items: start; }
 .activityOverviewMain { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.weeklyPlan { min-width: 0; }
 .engagement { container: monthlyFocus / inline-size; min-width: 0; --learner-purple: var(--learner-navy); --learner-accent-soft: #eaf2f8; --learner-soft: #f4f7fa; padding: clamp(1.125rem, 1.65cqi, 1.75rem); border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(24 45 72 / .04); }
+.focusHeading { padding-left: .75rem; border-left: 4px solid var(--learner-purple, #7350a8); }
+.focusHeading > p { color: var(--learner-navy, #182d48); }
 .tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .25rem; padding: .25rem; margin-bottom: 1.25rem; border: 1px solid var(--kbc-border); border-radius: .75rem; background: var(--learner-soft); }
 .tabs button { min-height: 2.5rem; padding: .5rem .75rem; border-radius: .5rem; font-size: .8125rem; font-weight: 600; color: var(--kbc-muted); }
 .tabs button[aria-selected='true'] { background: var(--learner-accent-soft); color: var(--learner-purple); box-shadow: 0 1px 3px rgb(24 45 72 / .08); }
@@ -80,7 +83,7 @@
 .activityOverviewCards { grid-template-columns: minmax(0, 1fr) !important; }
 .learningVisuals > section { margin-top: 0; flex-shrink: 0; }
 .root .cards > section { display: flex; flex-direction: column; grid-column: auto; min-width: 0; margin-top: 0; padding: clamp(1.125rem, 1.65cqi, 1.75rem); border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(24 45 72 / .04); }
-.root .cards > section.overview { grid-column: auto; --learner-purple: var(--learner-navy); --learner-accent-soft: #eaf2f8; --learner-soft: #f4f7fa; --purple: var(--learner-navy); }
+.root .cards > section.overview { container: moduleOverview / inline-size; grid-column: auto; --learner-purple: var(--learner-navy); --learner-accent-soft: #eaf2f8; --learner-soft: #f4f7fa; --purple: var(--learner-navy); }
 .cards h2 { font-size: .9375rem; line-height: 1.4; }
 .cards h3 { overflow-wrap: anywhere; }
 .root .sessions { min-height: 6rem; max-height: 16rem; scrollbar-gutter: stable; }
@@ -146,11 +149,15 @@
 .overviewGroup { padding: .875rem; background: var(--learner-soft); border: 1px solid var(--kbc-border); border-radius: .75rem; }
 .root .overviewGroup h3 { margin: 0 0 .75rem; font-size: .75rem; font-weight: 650; color: var(--learner-navy); }
 .factGrid { display: grid; gap: .875rem .75rem; margin: 0; }
+.root .overview .scheduleFacts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .factGrid > div { display: grid; grid-template-columns: 1rem minmax(0, 1fr); gap: .25rem .5rem; align-content: start; }
 .factGrid svg { grid-row: 1 / 3; color: var(--learner-purple); margin-top: .1rem; }
 .factGrid dt { color: var(--kbc-muted); font-size: .625rem; line-height: 1.5; }
 .factGrid dd { color: var(--kbc-text); font-size: .75rem; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 .factGrid small { display: block; color: var(--kbc-muted); font-size: .625rem; font-weight: 400; margin-top: .2rem; }
+.studyHoursProgress { display: flex; align-items: center; gap: .625rem; margin-top: .75rem; }
+.studyHoursProgress > div { flex: 1; }
+.studyHoursProgress > span { min-width: 2.75rem; color: var(--learner-navy); font-size: .6875rem; font-weight: 700; text-align: right; }
 .moduleDescription { margin-top: .75rem !important; font-size: .75rem; color: var(--kbc-muted); line-height: 1.65; overflow-wrap: anywhere; }
 .root .moduleStats { margin: 1.25rem 0; }
 .moduleSection { border-top: 1px solid var(--kbc-border); padding-top: 1rem; margin-top: 1rem; }
@@ -175,9 +182,23 @@
 .loading span:last-child { height: 9rem; }
 .error { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: 1rem; margin-bottom: 1rem; border-radius: .75rem; background: var(--learner-warning-soft); color: var(--learner-warning); font-size: .8125rem; }
 .error button { text-decoration: underline; font-weight: 600; }
+@container moduleOverview (min-width: 28rem) {
+  .root .overview .scheduleFacts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container moduleOverview (min-width: 34rem) {
+  .overviewGroups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scheduleGroup { grid-column: 1 / -1; }
+}
+@container moduleOverview (min-width: 40rem) {
+  .root .overview .scheduleFacts { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
 @container trainingDetails (min-width: 64rem) {
   .withWeeklyFocus, .root .cards { grid-template-columns: minmax(0, 1.8fr) minmax(20rem, 1fr); }
   .activityOverviewTopRow { grid-template-columns: minmax(0, 4fr) minmax(18rem, 1fr) !important; }
+  .weeklyPlan { min-height: 0; align-items: stretch; }
+  .weekRail { contain: size; display: flex; min-height: 0; flex-direction: column; overflow: hidden; }
+  .weekList { min-height: 0; flex: 1; overflow-y: auto; padding-right: .25rem; scrollbar-gutter: stable; }
+  .weekDetail { min-height: 0; }
 }
 @container trainingDetails (max-width: 39.99rem) {
   .filters { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 2.5rem; }

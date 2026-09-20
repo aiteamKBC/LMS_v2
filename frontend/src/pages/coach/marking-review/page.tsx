@@ -8,6 +8,9 @@ import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import styles from './markingReview.module.css';
 
+import { AssignmentAttemptHistory } from '@/components/feature/AssignmentAttemptHistory';
+import type { SubmissionAttempt } from '@/api/assignmentAttempts';
+
 const coachNav = roleNavMap.coach;
 async function personalEvidence(submissionId: string, fileId?: string) {
   const response = await coachFetch(`/coach_api/coach/personal-marking/${submissionId}/evidence${fileId ? `/${fileId}` : ''}`);
@@ -17,6 +20,7 @@ async function personalEvidence(submissionId: string, fileId?: string) {
 }
 
 interface Submission {
+  submissionAttempts?: SubmissionAttempt[];
   version?: number;
   contentSections?: { label: string; text: string }[];
   reviewHistory?: { decision: string; feedback: string; reviewedAt: string; reviewedBy: string }[];
@@ -376,6 +380,8 @@ export default function CoachMarkingReviewPage() {
                   <div><dt>Claimed KSBs</dt><dd>{selected.ksbCodes.join(', ') || 'None claimed'}</dd></div>
                 </dl>
               </section>
+
+              <AssignmentAttemptHistory attempts={selected.submissionAttempts || []} />
 
               <div className={styles.tabs} role="tablist" aria-label="Submission detail">
                 {([

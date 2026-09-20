@@ -7,7 +7,7 @@ import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
 from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
-from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach
+from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan
 
 
 def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, split_header=False, split_total=False):
@@ -227,10 +227,31 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
              patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
              patch('learner_api.calendar.coaching_events_for_learner') as reviews:
-            self.assertEqual(read_dashboard(source, section='contract'), {'months': {}, 'contractStatus': 'not-available'})
+            self.assertEqual(read_dashboard(source, section='contract'), {
+                'months': {}, 'contractStatus': 'not-available',
+                'programmeStartDate': None, 'programmeEndDate': None,
+            })
         profiles.objects.filter.assert_not_called()
         connection.cursor.return_value.__enter__.return_value.execute.assert_not_called()
         reviews.assert_not_called()
+
+    def test_contract_section_returns_programme_dates_from_selected_training_plan(self):
+        contract = {
+            'azure_path': 'az://contracts/training-plan.pdf',
+            'training_plan_planned_hours': 30,
+            'fetched_at': datetime(2026, 1, 20, tzinfo=timezone.utc),
+            'extraction_metadata': None,
+            'program_start_date': date(2026, 1, 19),
+            'planned_end_date': date(2027, 1, 31),
+        }
+        with patch('learner_api.training_plan_dashboard.read_contract', return_value={
+            '2026-01': {'planned': 3, 'topics': [], 'activities': []},
+        }):
+            result = contract_plan(SimpleNamespace(pk=125), contract)
+
+        self.assertEqual(result['programmeStartDate'], '2026-01-19')
+        self.assertEqual(result['programmeEndDate'], '2027-01-31')
+        self.assertEqual(result['contractStatus'], 'ready')
 
     def test_contract_download_uses_one_size_check_and_reuses_versioned_extract(self):
         read_contract.cache_clear()
