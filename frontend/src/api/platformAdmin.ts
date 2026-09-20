@@ -13,7 +13,7 @@
 
 const BASE = '/login_api/admin';
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
@@ -323,7 +323,7 @@ export function accountAction(
  */
 export function addLearnerRecord(
   id: number,
-  details: { programme?: string; cohort?: string; learnerType?: string } = {},
+  details: { programme?: string; cohort?: string; group?: string; learnerType?: string } = {},
 ): Promise<{ account: PlatformAccount; learnerRecordId: number }> {
   return request<{ account: PlatformAccount; learnerRecordId: number }>(
     `${BASE}/accounts/${id}/`,

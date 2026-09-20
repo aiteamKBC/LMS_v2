@@ -1,3 +1,4 @@
+import { learningFetch } from '@/lib/personalLearning';
 import { createCachedResource } from './cachedRequest';
 
 export const LEARNER_READ_TIMEOUT_MS = 45_000;
@@ -73,7 +74,7 @@ async function fetchJson(key: string): Promise<unknown> {
   const loadOnce = async () => {
     let response: Response;
     try {
-      response = await fetch(url, { headers: Object.fromEntries(headers), credentials, cache, signal: controller.signal });
+      response = await learningFetch(url, { headers: Object.fromEntries(headers), credentials, cache, signal: controller.signal });
     } catch {
       throw new LearnerReadError('Could not reach the server. Please check your connection and try again.', 0, 'network');
     }

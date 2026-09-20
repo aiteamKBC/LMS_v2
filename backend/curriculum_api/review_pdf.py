@@ -210,43 +210,127 @@ def build_mcm_pdf(definition, information):
                              ('LEFTPADDING', (1, 0), (1, -1), 10)]))
     story.extend([section('Information', [info]), Spacer(1, 16)])
 
-    def progress_bar(metric):
-        """The reference's track + fill + target marker, drawn from the stored
-        snapshot. Never recalculated here -- this renders numbers, it does not
-        produce them."""
-        from reportlab.graphics.shapes import Drawing, Line, Rect
+    def progress_bar(metric, *, bar_width, fill='#17a89f'):
+        """Reference-style fill and independent black target marker."""
+        from reportlab.graphics.shapes import Drawing, Line, Rect, String
 
-        bar_width = width - 40
-        drawing = Drawing(bar_width, 16)
-        drawing.add(Rect(0, 3, bar_width, 10, fillColor=colors.HexColor('#d5d9e2'), strokeColor=None))
+        drawing = Drawing(bar_width, 45)
+        drawing.add(Rect(0, 24, bar_width, 13, fillColor=colors.HexColor('#d7d7d7'),
+                         strokeColor=colors.HexColor('#9ca3a8'), strokeWidth=.6))
         actual = metric.get('actualPercent')
         if actual is not None:
             filled = max(0.0, min(float(actual), 100.0)) / 100 * bar_width
             if filled > 0:
-                drawing.add(Rect(0, 3, filled, 10, fillColor=colors.HexColor('#1f7a8c'), strokeColor=None))
+                drawing.add(Rect(0, 24, filled, 13, fillColor=colors.HexColor(fill), strokeColor=None))
+            label_x = max(0, min(filled, bar_width))
+            anchor = 'start' if label_x < 18 else 'end' if label_x > bar_width - 18 else 'middle'
+            drawing.add(String(label_x, 9, percent_text(actual), fontName='Helvetica', fontSize=8,
+                               textAnchor=anchor, fillColor=colors.HexColor('#30383d')))
+        drawing.add(String(0, 9, '0%', fontName='Helvetica', fontSize=8,
+                           fillColor=colors.HexColor('#30383d')))
         expected = metric.get('expectedPercent')
         if expected is not None:
             marker = max(0.0, min(float(expected), 100.0)) / 100 * bar_width
-            drawing.add(Line(marker, 0, marker, 16, strokeColor=navy, strokeWidth=1.4))
+            drawing.add(Line(marker, 19, marker, 43, strokeColor=colors.black, strokeWidth=1.8))
         return drawing
 
-    def progress_rows(snapshot):
-        rows = [Paragraph(
+    def report_variance(metric):
+        value = metric.get('variancePercent')
+        if value is None:
+            return 'Target unavailable'
+        rounded = round(abs(float(value)))
+        if rounded == 0:
+            return 'On target'
+        return f'{rounded}% {"Below" if metric.get("varianceDirection") == "below" else "Above"}'
+
+    def progress_metric(label, metric, *, bar_width, fill='#17a89f'):
+        caption = Paragraph(escape(report_variance(metric)), ParagraphStyle(
+            'ProgressVariance', parent=body, alignment=1, fontSize=8.5, leading=10,
+            textColor=colors.HexColor('#30383d'),
+        ))
+        table = Table([
+            [Paragraph(f'<b>{escape(label)}</b>', body)],
+            [progress_bar(metric, bar_width=bar_width, fill=fill)],
+            [caption],
+        ], colWidths=[bar_width], rowHeights=[None, 45, 12])
+        table.setStyle(TableStyle([
+            ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        return table
+
+    def progress_donut(metric):
+        from reportlab.graphics.shapes import Circle, Drawing, String, Wedge
+
+        drawing = Drawing(190, 205)
+        drawing.add(String(95, 187, 'Learning Plan Progress', fontName='Helvetica', fontSize=12,
+                           textAnchor='middle', fillColor=colors.HexColor('#174c67')))
+        drawing.add(Circle(95, 91, 66, fillColor=colors.HexColor('#dce4ec'), strokeColor=None))
+        actual = metric.get('actualPercent')
+        if actual is not None and float(actual) > 0:
+            extent = 360 * max(0.0, min(float(actual), 100.0)) / 100
+            drawing.add(Wedge(95, 91, 66, 90 - extent, 90,
+                              fillColor=colors.HexColor('#174ed4'), strokeColor=None))
+        drawing.add(Circle(95, 91, 45, fillColor=colors.white, strokeColor=None))
+        drawing.add(String(95, 85, percent_text(actual), fontName='Helvetica', fontSize=19,
+                           textAnchor='middle', fillColor=colors.HexColor('#111827')))
+        return drawing
+
+    def progress_panel(snapshot):
+        left_width = width * .33
+        right_width = width - left_width
+        bar_width = right_width - 32
+        ksb = snapshot.get('ksbProgress') or {}
+        ksb_title = ksb.get('title') or 'Apprenticeship Standard progress'
+        if ksb.get('available') and ksb.get('actualPercent') is not None and ksb.get('expectedPercent') is not None:
+            ksb_variance = ksb.get('variancePercent')
+            ksb_metric = {
+                **ksb,
+                'variancePercent': (
+                    ksb_variance if ksb_variance is not None
+                    else float(ksb['actualPercent']) - float(ksb['expectedPercent'])
+                ),
+                'varianceDirection': ksb.get('varianceDirection') or (
+                    'above' if float(ksb['actualPercent']) >= float(ksb['expectedPercent']) else 'below'
+                ),
+            }
+            ksb_block = progress_metric(ksb_title, ksb_metric, bar_width=bar_width, fill='#174ed4')
+        else:
+            unavailable = escape(str(ksb.get('reason') or 'KSB progress was not available in this snapshot.'))
+            ksb_block = Table([
+                [Paragraph(f'<b>{escape(ksb_title)}</b>', body)],
+                [Table([['']], colWidths=[bar_width], rowHeights=[13], style=TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#e1e3e5')),
+                    ('BOX', (0, 0), (-1, -1), .6, colors.HexColor('#b8bdc1')),
+                ]))],
+                [Paragraph(unavailable, ParagraphStyle('Unavailable', parent=body, alignment=1, fontSize=8))],
+            ], colWidths=[bar_width], style=TableStyle([
+                ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ]))
+        right = Table([
+            [ksb_block],
+            [progress_metric('Off-the-job hours progress', snapshot.get('offTheJobHours') or {}, bar_width=bar_width)],
+            [progress_metric('Programme progress', snapshot.get('programmeProgress') or {}, bar_width=bar_width)],
+        ], colWidths=[right_width], style=TableStyle([
+            ('LEFTPADDING', (0, 0), (-1, -1), 16), ('RIGHTPADDING', (0, 0), (-1, -1), 16),
+            ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ]))
+        panel_table = Table([[progress_donut(snapshot.get('programmeProgress') or {}), right]],
+                            colWidths=[left_width, right_width], rowHeights=[245])
+        panel_table.setStyle(TableStyle([
+            ('BOX', (0, 0), (-1, -1), .55, colors.HexColor('#ccd5df')),
+            ('LINEAFTER', (0, 0), (0, 0), .55, colors.HexColor('#ccd5df')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        return [Paragraph(
             '<b>Calculated from:</b> {} &nbsp;&nbsp; <b>Calculated at:</b> {}'.format(
                 escape(display_date(snapshot.get('calculatedFrom'))),
                 escape(display_date(snapshot.get('calculatedAt'), include_time=True)),
-            ), body)]
-        for key, label in (('programmeProgress', 'Programme progress'),
-                           ('offTheJobHours', 'Off-the-job hours progress')):
-            metric = snapshot.get(key) or {}
-            caption = variance_text(metric)
-            rows.append([
-                Paragraph(f'<b>{escape(label)}</b> &nbsp; {escape(percent_text(metric.get("actualPercent")))}', body),
-                Spacer(1, 3),
-                progress_bar(metric),
-                Paragraph(escape(caption), body) if caption else Spacer(1, 1),
-            ])
-        return rows
+            ), body), Spacer(1, 6), panel_table]
 
     if review_type_code(definition) == REVIEW_TYPE_PROGRESS_REVIEW:
         # Exactly what was frozen when the coach pressed Calculate. An
@@ -254,7 +338,7 @@ def build_mcm_pdf(definition, information):
         # quietly reaching for the learner's current figures.
         snapshot = definition.get('progressSnapshot')
         story.extend([
-            section('Learning Progress', progress_rows(snapshot) if snapshot
+            section('Learning Progress', progress_panel(snapshot) if snapshot
                     else [paragraph('No progress snapshot was calculated for this review.')]),
             Spacer(1, 16),
         ])

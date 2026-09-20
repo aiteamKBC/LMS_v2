@@ -50,6 +50,8 @@ import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 import { LearnerPreview } from './LearnerPreview';
 import { ModuleLearnerProgressDialog } from './ModuleLearnerProgressDialog';
 import { LearnerAssignmentDrawer } from '../shared/entities/LearnerAssignmentDrawer';
+import { PersonalLearningEntry } from '@/components/feature/PersonalLearningEntry';
+import { useAuth } from '@/hooks/useAuth';
 import { SessionResultsDialog } from '../module-workspace/ModuleSessions';
 import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
 // The holiday notice, shared with the module workspace so a week touched by a
@@ -345,6 +347,7 @@ async function showBuilderDeleteSwal({
 }
 
 export default function ModuleBuilder() {
+  const { auth } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCreateScopeRef = useRef({
     programmeId: (searchParams.get('programme') || searchParams.get('programmeId') || '').trim(),
@@ -2471,7 +2474,9 @@ export default function ModuleBuilder() {
             await reload({ silent: true });
           }}
         />
-        {previewOpen && <LearnerPreview module={workingModule} initialComponentId={selectedComponent?.id} onClose={() => setPreviewOpen(false)} />}
+        {previewOpen && (auth.account?.role === 'admin'
+          ? <PersonalLearningEntry moduleId={workingModule.catalogueId} title={workingModule.title} unsaved={hasUnsavedWorkingModuleChanges} onClose={() => setPreviewOpen(false)} />
+          : <LearnerPreview module={workingModule} initialComponentId={selectedComponent?.id} onClose={() => setPreviewOpen(false)} />)}
         {sessionKsbMappingOpen && (
           <SessionKsbMappingModal
             module={workingModule}

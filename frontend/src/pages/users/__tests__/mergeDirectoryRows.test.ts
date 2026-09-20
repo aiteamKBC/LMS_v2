@@ -88,7 +88,7 @@ describe('mergeDirectoryRows', () => {
   it('keeps the staff position where the learner record has none', () => {
     // Nothing is lost by merging: the staff row fills in underneath.
     const [merged] = mergeDirectoryRows([
-      staff, row({ ...learner, type: '' } as Partial<UserListRow>),
+      staff, row({ ...learner, type: '' }),
     ]);
 
     expect(merged.type).toBe('Admin');

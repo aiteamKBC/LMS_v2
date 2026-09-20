@@ -73,7 +73,7 @@ def _direct_progress_records(enrolment_id):
             'submitted_at', 'passed',
         )
     )
-    return [{
+    records = [{
         'kind': row['kind'],
         'componentId': row['component_ref'],
         'quizId': row['quiz_ref'],
@@ -89,6 +89,29 @@ def _direct_progress_records(enrolment_id):
         'submittedAt': row['submitted_at'].isoformat() if row['submitted_at'] else '',
         'passed': row['passed'],
     } for row in entries]
+    component_ids = sorted({str(row['componentId']) for row in records if row.get('componentId')})
+    if not component_ids:
+        return records
+
+    # Assignment marking is stored separately from the progress row. Keep the
+    # coach decision beside the record so OTJH reporting can distinguish a
+    # hand-in from an accepted assignment without changing quiz semantics.
+    candidates = {str(enrolment_id), str(profile.id), str(profile.enrolment_id)}
+    try:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute('''SELECT DISTINCT ON (activity_id) activity_id,status
+                FROM "Learner"."learning_reflection_submissions"
+                WHERE learner_id::text=ANY(%s) AND activity_id=ANY(%s)
+                ORDER BY activity_id,submitted_at DESC NULLS LAST''', [sorted(candidates), component_ids])
+            statuses = {str(activity_id): str(status or '') for activity_id, status in cursor.fetchall()}
+    except DatabaseError:
+        # Older installations may not have the marking table yet. Preserve the
+        # existing progress response rather than making the overview unavailable.
+        statuses = {}
+    for record in records:
+        if record.get('componentId') in statuses:
+            record['markingStatus'] = statuses[record['componentId']]
+    return records
 
 
 def _direct_progress_otjh(progress):

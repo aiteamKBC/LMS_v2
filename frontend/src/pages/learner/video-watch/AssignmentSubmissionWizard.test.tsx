@@ -1,8 +1,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssignmentSubmissionWizard } from './AssignmentSubmissionWizard';
 import { checkMonthlyAssignment, emptyMonthlyAssignment } from '@/api/monthlyAssignment';
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission } from '@/api/reflectionSubmission';
+import { fetchLearnerCalendarEvents } from '@/api/learnerCalendar';
 
 vi.mock('./page', () => ({ InlineAttachmentPreview: ({ url }: { url: string }) => <div data-testid="question-preview" data-url={url}>Question preview</div> }));
 
@@ -27,12 +29,13 @@ beforeEach(() => {
   sessionStorage.clear();
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
   vi.mocked(saveLearningReflectionSubmission).mockResolvedValue({ id: 'submission-1', status: 'draft' });
-  vi.mocked(checkMonthlyAssignment).mockResolvedValue(Array.from({ length: 13 }, (_, i) => ({ key: String(i), label: `Check ${i}`, passed: true })));
+  vi.mocked(checkMonthlyAssignment).mockResolvedValue(['answer', 'learning', 'evidence', 'ksbs', 'planned', 'declarations', 'hours', 'reflection', 'benefit', 'impact', 'action', 'meeting', 'presentation'].map(key => ({ key, label: `Check ${key}`, passed: true })));
 });
 afterEach(async () => {
   cleanup();
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function enterTopicTime() {
@@ -40,12 +43,76 @@ async function enterTopicTime() {
   fireEvent.change(screen.getByLabelText('Topic 1'), { target: { value: 'Research' } });
   fireEvent.change(screen.getByLabelText('Hours 1'), { target: { value: '3.5' } });
   const month = (screen.getByLabelText('Submission month') as HTMLInputElement).value;
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1', exact: true })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Date 1', exact: true }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Date 1' }));
   fireEvent.click(screen.getByRole('button', { name: `${month}-15` }));
 }
 
+const learningDeclarations = [
+  /I have reviewed the planned hours/,
+  /This activity developed new knowledge/,
+  /This activity developed new skills or behaviours/,
+  /If I include evidence, my employer accepts sharing/,
+];
+
+function confirmLearning() {
+  for (const name of learningDeclarations) fireEvent.click(screen.getByRole('checkbox', { name }));
+}
 describe('monthly assignment drafts', () => {
+  it('shows the personal booking exemption while keeping presentation and validation', async () => {
+    render(<AssignmentSubmissionWizard {...props} learnerId="pl.7.study.MOD-A" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Presentation/ }));
+    expect(screen.getByText('Step 8 of 8 — Presentation')).toBeVisible();
+    expect(screen.getByText(/Coaching booking is not required for personal learning/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Recheck submission requirements' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Export PowerPoint (.pptx)' })).toBeVisible();
+    expect(fetchLearnerCalendarEvents).not.toHaveBeenCalled();
+  });
+
+  it('keeps the normal coaching step when previewing the learner experience', async () => {
+    render(<AssignmentSubmissionWizard {...props} learnerId="pl.7.preview.MOD-A" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
+    expect(screen.getByText(/Preview does not create coaching bookings/)).toBeVisible();
+    expect(screen.queryByText(/Coaching booking is not required/)).not.toBeInTheDocument();
+    expect(fetchLearnerCalendarEvents).not.toHaveBeenCalled();
+  });
+
+  describe.each([
+    ['commercial', false], ['commercial', true],
+    ['apprenticeship', false], ['apprenticeship', true],
+  ] as const)('quality navigation for %s learners (passed: %s)', (kind, passed) => {
+    const destinations = [
+      ['answer', 1, /Your answer/], ['learning', 1, /Your learning statements/],
+      ['evidence', 2, /Evidence & cross-referencing/], ['ksbs', 3, /Your KSB claims/],
+      ['planned', 3, /reviewed the planned hours/], ['declarations', 3, /developed new knowledge/],
+      ['hours', 3, /Your learning time/], ['reflection', 4, /Reflect on your LMS activities/],
+      ['benefit', 5, /employer has benefited/], ['impact', 5, /Impact on your career/],
+      ['action', 6, /Your action plan for next month/], ['meeting', 7, /Coaching & presentation/],
+      ['presentation', 7, /Prepare your presentation/],
+    ] as const;
+    it.each(destinations)('opens %s in step %s and preserves answers', async (key, stepNumber, text) => {
+      // Keep automatic draft generation local while exercising the real step UI.
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+      vi.mocked(checkMonthlyAssignment).mockResolvedValue(destinations.map(([key]) => ({ key, label: `Review ${key}`, passed })));
+      render(<AssignmentSubmissionWizard {...props} kind={kind} />);
+      fireEvent.change(await screen.findByLabelText(/Your answer \(/), { target: { value: 'My unfinished answer stays here.' } });
+      const user = userEvent.setup();
+      fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
+      fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+      const button = await screen.findByRole('button', { name: new RegExp(`Review ${key}.*Go to Step ${stepNumber}`) });
+      expect(button).toHaveClass(passed ? 'bg-emerald-50' : 'bg-amber-50');
+      button.focus();
+      await user.keyboard(key === 'learning' ? ' ' : '{Enter}');
+      expect(screen.getByText(new RegExp(`Step ${stepNumber} of 8`))).toBeInTheDocument();
+      expect(document.activeElement).toHaveTextContent(text);
+      expect(document.activeElement).toHaveAttribute('data-quality-target', key);
+      fireEvent.click(screen.getByRole('button', { name: /Assignment answer/ }));
+      expect(screen.getByLabelText(/Your answer \(/)).toHaveValue('My unfinished answer stays here.');
+      expect(props.onSubmitProgress).not.toHaveBeenCalled();
+    });
+  });
+
   it('seeds a new submission with its Training Plan month', async () => {
     render(<AssignmentSubmissionWizard {...props} initialMonth="2026-03" />);
     await screen.findByText('Step 1 of 8 — Assignment answer');
@@ -100,12 +167,17 @@ describe('monthly assignment drafts', () => {
     cleanup();
     expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
   });
-  it('renders eight steps and lets an incomplete answer move forward as a draft', async () => {
+  it('blocks Next for an incomplete answer while allowing draft saving', async () => {
+    vi.mocked(checkMonthlyAssignment).mockResolvedValue([{ key: 'answer', label: 'Assignment answer: at least 120 words', passed: false }, { key: 'learning', label: 'Learning statements: 20 words each', passed: false }]);
     render(<AssignmentSubmissionWizard {...props} />);
     await screen.findByText('Step 1 of 8 — Assignment answer');
     expect(screen.queryByRole('button', { name: 'Preview' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^Next/ }));
-    await screen.findByText('Step 2 of 8 — Evidence & cross-referencing');
+    await screen.findByText('Complete the following before selecting Next:');
+    expect(screen.getByRole('button', { name: /^Next/ })).toBeDisabled();
+    expect(screen.getByText('Step 1 of 8 — Assignment answer')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenCalled());
     const saved = vi.mocked(saveLearningReflectionSubmission).mock.calls[0][0];
     expect(saved.submissionMode).toBe('draft');
     expect(saved.monthlyAssignment?.version).toBe(2);
@@ -175,9 +247,10 @@ describe('monthly assignment drafts', () => {
   it('keeps submit locked until checking, then uses the atomic completion endpoint only', async () => {
     render(<AssignmentSubmissionWizard {...props} />);
     await enterTopicTime();
-    fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
+    confirmLearning();
+    fireEvent.click(await screen.findByRole('button', { name: /Quality checks/ }));
     expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
     await screen.findByText('Submission preview');
@@ -191,8 +264,9 @@ describe('monthly assignment drafts', () => {
   it('does not submit when the final validation returns an incomplete check set', async () => {
     render(<AssignmentSubmissionWizard {...props} />);
     await enterTopicTime();
-    fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    confirmLearning();
+    fireEvent.click(await screen.findByRole('button', { name: /Quality checks/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
     vi.mocked(checkMonthlyAssignment).mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
@@ -204,14 +278,15 @@ describe('monthly assignment drafts', () => {
   it('discards previously passed checks when revalidation fails, and can retry', async () => {
     render(<AssignmentSubmissionWizard {...props} />);
     await enterTopicTime();
-    fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    confirmLearning();
+    fireEvent.click(await screen.findByRole('button', { name: /Quality checks/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
     vi.mocked(checkMonthlyAssignment).mockRejectedValueOnce(new Error('Validation service unavailable'));
-    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
     await screen.findByText('Validation service unavailable');
     expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
   });
 });
@@ -223,4 +298,61 @@ it('previews a question attachment inside the answer step without downloading it
   fireEvent.click(screen.getByRole('button', { name: 'View file' }));
   expect(await screen.findByTestId('question-preview')).toHaveAttribute('data-url', '/curriculum_api/curriculum/uploads/brief.pdf');
   expect(screen.getByRole('button', { name: 'Hide preview' })).toHaveAttribute('aria-expanded', 'true');
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('requires every learning declaration for %s submission even when server checks pass', async kind => {
+  render(<AssignmentSubmissionWizard {...props} kind={kind} initialMonth="2026-09" />);
+  await enterTopicTime();
+  confirmLearning();
+  fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeEnabled());
+
+  for (const name of learningDeclarations) {
+    fireEvent.click(screen.getByRole('button', { name: /KSBs & hours claimed/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+    await screen.findByText('13/13 checks passed at last check');
+    const submit = screen.getByRole('button', { name: 'Submit assignment' });
+    expect(submit).toBeDisabled();
+    expect(submit).toHaveAccessibleDescription('Confirm all four learning declarations in Step 3 before submitting your assignment.');
+    fireEvent.click(submit);
+    expect(props.onSubmitProgress).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /KSBs & hours claimed/ }));
+    expect(screen.getByRole('checkbox', { name })).not.toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name }));
+    fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeEnabled());
+  }
+});
+it.each(['commercial', 'apprenticeship'] as const)('places coaching before final quality checks for %s learners', async kind => {
+  render(<AssignmentSubmissionWizard {...props} kind={kind} initialMonth="2026-09" />);
+  fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
+  expect(screen.getByText('Step 7 of 8 — Coaching & presentation')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Submit assignment' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('button', { name: /^Next/ })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: /^Next/ }));
+  expect(await screen.findByText('Step 8 of 8 — Quality checks')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Run quality checks' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+  expect(screen.getByText('Step 7 of 8 — Coaching & presentation')).toBeVisible();
+  expect(props.onSubmitProgress).not.toHaveBeenCalled();
+});
+
+it('restores and saves an uploaded presentation without requiring generated slides', async () => {
+  const monthly = { ...emptyMonthlyAssignment([], '2026-09'), step: 6, uploadedPresentation: { id: 'file-mcm', name: 'My MCM.pptx' } };
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ monthlyAssignment: monthly, status: 'draft' } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+  render(<AssignmentSubmissionWizard {...props} initialMonth="2026-09" />);
+  expect(await screen.findByText('My MCM.pptx')).toBeVisible();
+  fireEvent.click(screen.getByRole('checkbox', { name: 'I have reviewed the slides and they accurately represent my own work.' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+  await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({
+    evidenceFiles: ['My MCM.pptx'],
+    monthlyAssignment: expect.objectContaining({ uploadedPresentation: monthly.uploadedPresentation, presentationReviewed: true, slides: [] }),
+  })));
 });

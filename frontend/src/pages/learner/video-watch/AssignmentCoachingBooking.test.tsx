@@ -5,7 +5,7 @@ import { AssignmentCoachingBooking } from './AssignmentCoachingBooking';
 import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 vi.mock('@/api/learnerCalendar', () => ({ bookLearnerCalendarSession: vi.fn(), fetchLearnerCalendarEvents: vi.fn(), fetchLearnerMeetingArtifacts: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn() }));
 function chooseDate(value: string) {
-  fireEvent.click(screen.getByRole('button', { name: 'Date', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Date' }));
   let month = screen.getByRole('group', { name: 'Booking calendar' }).getAttribute('data-month')!;
   while (month !== value.slice(0, 7)) {
     const next = screen.getByRole('button', { name: month < value.slice(0, 7) ? 'Next month' : 'Previous month' });
@@ -13,7 +13,7 @@ function chooseDate(value: string) {
     fireEvent.click(next);
     month = screen.getByRole('group', { name: 'Booking calendar' }).getAttribute('data-month')!;
   }
-  const day = screen.queryByRole('button', { name: value, exact: true });
+  const day = screen.queryByRole('button', { name: value });
   if (!day || day.hasAttribute('disabled')) {
     if (day) expect(day).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Clear date' }));
