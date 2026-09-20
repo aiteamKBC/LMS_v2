@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyModuleWeekSessionPlan,
+  copyWeekToModule,
   createEmptyComponent,
   createLocalModuleDraft,
   duplicateWeekInModule,
@@ -126,6 +127,24 @@ function fridayPlan(): ModuleWeekSessionPlan {
 }
 
 describe('duplicating a week', () => {
+  it('copies a whole week into another module without carrying its Teams booking', () => {
+    const source = authoredModule();
+    const sourceWeek = source.weekStructure[0];
+    const copy = copyWeekToModule(sourceWeek, 'MOD-TARGET', 4);
+
+    expect(copy.id).not.toBe(sourceWeek.id);
+    expect(copy.moduleId).toBe('MOD-TARGET');
+    expect(copy.weekNumber).toBe(4);
+    expect(copy.title).toBe('Project risk foundations');
+    expect(copy.summary).toBe(sourceWeek.summary);
+    expect(copy.learningOutcomes).toEqual(sourceWeek.learningOutcomes);
+    expect(copy.components.map(component => component.type)).toEqual(['reading', 'quiz', 'live-session']);
+    expect(copy.components.every(component => component.moduleId === 'MOD-TARGET' && component.weekId === copy.id)).toBe(true);
+    expect(copy.components.filter(isUnbookedCopiedLiveSession)).toHaveLength(1);
+    expect(String(copy.components[2].settings.teamsLiveSessionId || '')).toBe('');
+    expect(String(sourceWeek.components[2].settings.teamsLiveSessionId || '')).toBe('LIVE-SOURCE-1');
+  });
+
   it('copies every component in full, live session included', () => {
     const source = authoredModule();
     const next = duplicateWeekInModule(source, source.weekStructure[0].id);

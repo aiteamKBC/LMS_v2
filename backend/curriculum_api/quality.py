@@ -427,10 +427,22 @@ def revision_trail(request):
     search = curriculum_views.clean_str(request.GET.get('search')).lower()
     scope = curriculum_views.clean_str(request.GET.get('scope')).lower()
     scope_id = curriculum_views.clean_str(request.GET.get('scopeId'))
+    workspace = curriculum_views.clean_str(request.GET.get('workspace')).lower()
 
     since = datetime.utcnow() - timedelta(days=days)
     where = ['created_at >= %s']
     params = [since]
+    # One revision log for the whole LMS, read through a workspace's door. The
+    # scoped door at /curriculum/audit-trail must keep showing curriculum and
+    # nothing else now that learner, staff and coaching saves land in the same
+    # table -- so the workspace narrows the record types rather than the page
+    # filtering afterwards and reporting a total that counts what it hid.
+    from system_audit import writes as system_writes
+    if workspace:
+        owned = system_writes.entity_types_for_workspace(workspace)
+        if owned:
+            where.append('entity_type in (' + ','.join(['%s'] * len(owned)) + ')')
+            params.extend(owned)
     if entity_filter and entity_filter != 'all' and entity_filter in versioning.ENTITY_TYPES:
         where.append('entity_type = %s')
         params.append(entity_filter)
@@ -567,7 +579,13 @@ def revision_actors(since):
 def revision_event(row):
     """One revision as the trail's event shape."""
     entity_type = curriculum_views.clean_str(row.get('entity_type'))
-    label, href = ENTITY_LABELS.get(entity_type, (entity_type.replace('_', ' ').title() or 'Record', '/curriculum'))
+    # Curriculum's own types first, then whatever `system_audit` registered for
+    # the rest of the LMS. The last fallback keeps `/curriculum` only for a type
+    # nothing claims, which by then is a bug rather than a record to link to.
+    from system_audit import writes as system_writes
+    label, href = ENTITY_LABELS.get(entity_type) or system_writes.ENTITY_LABELS.get(entity_type) or (
+        entity_type.replace('_', ' ').title() or 'Record', '/curriculum',
+    )
     action = curriculum_views.clean_str(row.get('action')) or 'updated'
     entity_id = curriculum_views.clean_str(row.get('entity_id'))
     snapshot = versioning.as_dict(row.get('snapshot'))

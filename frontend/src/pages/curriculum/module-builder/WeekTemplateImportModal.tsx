@@ -12,6 +12,7 @@ export function WeekTemplateImportModal({ scope, onClose, onImport }: {
   const [error, setError] = useState('');
   const [importingId, setImportingId] = useState<string | null>(null);
   const [weekCount, setWeekCount] = useState('1');
+  const [search, setSearch] = useState('');
   const importing = useRef(false);
   const active = useRef(true);
   const count = Number(weekCount);
@@ -27,6 +28,13 @@ export function WeekTemplateImportModal({ scope, onClose, onImport }: {
   }, []);
 
   const list = filterWeekTemplatesForScope(templates, scope);
+  const searchTerm = search.trim().toLocaleLowerCase();
+  const filteredTemplates = searchTerm
+    ? list.filter(template => [
+      template.title,
+      template.componentCount || template.components.length,
+    ].some(value => String(value || '').toLocaleLowerCase().includes(searchTerm)))
+    : list;
   const pick = async (template: WeekTemplate) => {
     if (importing.current || !validCount) return;
     importing.current = true;
@@ -67,9 +75,24 @@ export function WeekTemplateImportModal({ scope, onClose, onImport }: {
             {validCount ? `${count} new week${count === 1 ? '' : 's'} will be added with the selected template's components.` : 'Enter a whole number of weeks, starting from 1.'}
           </p>
         </div>
+        <div className="border-b border-background-200 px-5 py-3">
+          <label htmlFor="week-template-search" className="sr-only">Search week templates</label>
+          <div className="relative">
+            <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"/>
+            <input
+              id="week-template-search"
+              type="search"
+              value={search}
+              onChange={event => setSearch(event.target.value)}
+              disabled={loading || Boolean(importingId)}
+              placeholder="Search by week number, title or components..."
+              className="h-9 w-full rounded-lg border border-background-300 bg-background-50 py-2 pl-9 pr-3 text-[12px] text-foreground-900 placeholder:text-foreground-400 focus:border-primary-400 focus:outline-none disabled:opacity-60"
+            />
+          </div>
+        </div>
         <div className="max-h-[50vh] overflow-y-auto p-4">
           {loading ? <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-foreground-500"><span className="h-4 w-4 animate-spin rounded-full border-2 border-background-300 border-t-primary-500"/>Loading templates...</div>
-            : list.length ? <div className="space-y-2">{list.map(template => (
+            : filteredTemplates.length ? <div className="space-y-2">{filteredTemplates.map(template => (
               <button key={template.id} type="button" disabled={Boolean(importingId) || !validCount} onClick={() => void pick(template)} className="flex w-full items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-300 hover:bg-primary-50 disabled:opacity-60">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-500 text-white"><AppIcon className="ri-calendar-todo-line"/></span>
                 <span className="min-w-0 flex-1">
@@ -78,7 +101,7 @@ export function WeekTemplateImportModal({ scope, onClose, onImport }: {
                 </span>
                 {importingId === template.id ? <AppIcon className="ri-loader-4-line animate-spin text-foreground-400"/> : <span className="text-[12px] font-bold text-primary-600">+{validCount ? count : ''}</span>}
               </button>
-            ))}</div> : <p className="py-10 text-center text-[12px] text-foreground-400">No week templates found. Create one in the Week Builder first.</p>}
+            ))}</div> : <p className="py-10 text-center text-[12px] text-foreground-400">{searchTerm ? 'No week templates match that search.' : 'No week templates found. Create one in the Week Builder first.'}</p>}
           {error && <p role="alert" className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
         </div>
       </div>

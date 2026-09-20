@@ -14,6 +14,8 @@ import { studentWorkspaceRoutes } from "./studentWorkspaceRoutes";
 // already-open tab no longer exist, and the first navigation would otherwise
 // fail with "Failed to fetch dynamically imported module". See ./lazyRoute.
 const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/page"));
+const SystemAuditTrailPage = lazyRoute(() => import("../pages/admin/audit-trail/page"));
+const SystemAuditTrailPersonPage = lazyRoute(() => import("../pages/admin/audit-trail/person/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
 const AdminCertificatesPage = lazyRoute(() => import("../pages/admin/certificates/page"));
 const AdminDocumentsPage = lazyRoute(() => import("../pages/admin/documents/page"));
@@ -821,6 +823,20 @@ const routes: RouteObject[] = [
   {
     path: "/admin/access-logs",
     element: <AdminAccessLogsPage />,
+  },
+  {
+    // The system-wide Audit Trail: every workspace, not just Curriculum.
+    // Curriculum keeps its own scoped door at /curriculum/audit-trail; both
+    // render the same component from features/audit-trail.
+    path: "/admin/audit-trail",
+    element: <SystemAuditTrailPage />,
+  },
+  {
+    // One person's own page rather than a panel over the list: an audit finding
+    // is something people send each other, and a link to it has to survive
+    // being pasted into a message.
+    path: "/admin/audit-trail/people/:email",
+    element: <SystemAuditTrailPersonPage />,
   },
   {
     path: "/admin/system",
