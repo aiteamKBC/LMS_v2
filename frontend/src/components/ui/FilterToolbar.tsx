@@ -17,6 +17,7 @@
 import { memo, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
+import { recordAction, recordSearch } from '@/lib/activityTrail';
 
 export interface FilterOption {
   value: string;
@@ -84,14 +85,22 @@ export const SearchInput = memo(function SearchInput({
   className?: string;
 }) {
   const suggestionListId = useId();
+  // Reported here, by name, rather than left to the LMS-wide capture listener:
+  // this component knows what the box is for, and the listener would only be
+  // able to guess it from the placeholder. `data-audit="manual"` keeps the two
+  // from both recording the same keystrokes.
+  const label = ariaLabel || placeholder;
   return (
-    <div className={cn('relative', className)}>
+    <div data-audit="manual" className={cn('relative', className)}>
       <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[14px] text-foreground-400"></AppIcon>
       <input
         type="search"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
         list={suggestions?.length ? suggestionListId : undefined}
+        onChange={(event) => {
+          recordSearch(event.target.value, label);
+          onChange(event.target.value);
+        }}
         placeholder={placeholder}
         aria-label={ariaLabel || placeholder}
         className="ui-search-input h-9 w-full rounded-lg border border-foreground-200 bg-background-50 pl-9 pr-8 text-[13px] text-foreground-900 placeholder:text-foreground-400 transition hover:border-foreground-300 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200/50"
@@ -169,8 +178,12 @@ export function FilterSelect({
 
   const isActive = tone === 'active';
 
+  // A sort is chosen the same way a filter is, so it is the same control --
+  // but they are different things in the audit trail, and the label is what
+  // says which.
+  const kind = label && /sort/i.test(label) ? 'sort' : 'filter';
   return (
-    <div ref={rootRef} className={cn('relative', widthClass)}>
+    <div ref={rootRef} data-audit="manual" className={cn('relative', widthClass)}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
@@ -213,6 +226,9 @@ export function FilterSelect({
                 role="option"
                 aria-selected={active}
                 onClick={() => {
+                  recordAction(kind, kind === 'sort'
+                    ? { sort: option.label }
+                    : { filter: label || 'Filter', value: option.label });
                   onChange(option.value);
                   setOpen(false);
                 }}

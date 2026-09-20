@@ -65,4 +65,32 @@ describe('ModuleLearnerProgressDialog', () => {
     screen.getByRole('button', { name: 'Assign more learners' }).click();
     expect(assignMore).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps every learner from the assignment directory visible when impact omits one', () => {
+    render(
+      <ModuleLearnerProgressDialog
+        moduleName="Definition of Project Management"
+        impact={impact}
+        assignedLearners={[
+          ...impact.assignedLearners,
+          {
+            id: 'learner-2',
+            name: 'Recently assigned learner',
+            email: 'new@example.com',
+            programme: 'Programme',
+            programmeStatus: 'active',
+            cohort: 'October 2026',
+            group: 'Group A',
+            lifecycleStatus: 'active',
+          },
+        ]}
+        onClose={vi.fn()}
+        onAssignMore={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('2 learners assigned to this module')).toBeInTheDocument();
+    expect(screen.getByText('Recently assigned learner')).toBeInTheDocument();
+    expect(screen.getByText('0h / 0h')).toBeInTheDocument();
+  });
 });

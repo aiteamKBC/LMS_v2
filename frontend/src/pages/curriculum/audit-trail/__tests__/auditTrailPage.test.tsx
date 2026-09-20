@@ -20,14 +20,14 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
 
 const fetchCurriculumAuditTrail = vi.fn();
 const fetchCurriculumOverview = vi.fn();
-const fetchCurriculumActivityPeople = vi.fn();
+const fetchActivityPeople = vi.fn();
 vi.mock('@/lib/curriculumApi', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('@/lib/curriculumApi');
   return {
     ...actual,
     fetchCurriculumOverview: (...args: unknown[]) => fetchCurriculumOverview(...args),
     fetchCurriculumAuditTrail: (...args: unknown[]) => fetchCurriculumAuditTrail(...args),
-    fetchCurriculumActivityPeople: (...args: unknown[]) => fetchCurriculumActivityPeople(...args),
+    fetchActivityPeople: (...args: unknown[]) => fetchActivityPeople(...args),
   };
 });
 
@@ -147,8 +147,8 @@ describe('Curriculum audit trail page', () => {
     fetchCurriculumAuditTrail.mockResolvedValue(trail());
     fetchCurriculumOverview.mockReset();
     fetchCurriculumOverview.mockResolvedValue({ modules: [] });
-    fetchCurriculumActivityPeople.mockReset();
-    fetchCurriculumActivityPeople.mockResolvedValue(people());
+    fetchActivityPeople.mockReset();
+    fetchActivityPeople.mockResolvedValue(people());
   });
 
   it('shows a person as the person, and the save source as a source', async () => {
@@ -310,8 +310,8 @@ describe('Curriculum audit trail: the People view', () => {
   beforeEach(() => {
     fetchCurriculumAuditTrail.mockReset();
     fetchCurriculumAuditTrail.mockResolvedValue(trail());
-    fetchCurriculumActivityPeople.mockReset();
-    fetchCurriculumActivityPeople.mockResolvedValue(people());
+    fetchActivityPeople.mockReset();
+    fetchActivityPeople.mockResolvedValue(people());
   });
 
   it('opens on the people who used the curriculum, not on the change feed', async () => {
@@ -321,7 +321,7 @@ describe('Curriculum audit trail: the People view', () => {
     // in it.
     expect(await screen.findByText('Ayman Badewi')).toBeInTheDocument();
     expect(screen.getByText('ayman@kentbusinesscollege.com')).toBeInTheDocument();
-    expect(fetchCurriculumActivityPeople).toHaveBeenCalled();
+    expect(fetchActivityPeople).toHaveBeenCalled();
     expect(fetchCurriculumAuditTrail).not.toHaveBeenCalled();
   });
 
@@ -348,7 +348,7 @@ describe('Curriculum audit trail: the People view', () => {
   it('says page opens are not recorded, and shows a dash rather than a zero', async () => {
     // A zero would be a claim that nobody opened anything. The truth is that
     // nothing was looking.
-    fetchCurriculumActivityPeople.mockResolvedValue(people({
+    fetchActivityPeople.mockResolvedValue(people({
       visitsRecorded: false,
       people: [{
         email: 'ayman@kentbusinesscollege.com',
@@ -364,6 +364,8 @@ describe('Curriculum audit trail: the People view', () => {
         signIns: 2,
         lastPageKey: '',
         lastPageLabel: '',
+        lastWorkspace: '',
+        workspaces: [],
       }],
     }));
     renderPeople();
@@ -390,13 +392,13 @@ describe('Curriculum audit trail: the People view', () => {
     expect(await screen.findByText('Ayman Badewi')).toBeInTheDocument();
 
     let resolveRefresh: (value: CurriculumActivityPeople) => void = () => undefined;
-    fetchCurriculumActivityPeople.mockImplementationOnce(() => new Promise(resolve => {
+    fetchActivityPeople.mockImplementationOnce(() => new Promise(resolve => {
       resolveRefresh = resolve;
     }));
 
     await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(screen.getByText('Ayman Badewi')).toBeInTheDocument();
-    expect(fetchCurriculumActivityPeople).toHaveBeenLastCalledWith(expect.objectContaining({ revalidate: true }));
+    expect(fetchActivityPeople).toHaveBeenLastCalledWith(expect.objectContaining({ revalidate: true }));
 
     resolveRefresh(people());
   });
