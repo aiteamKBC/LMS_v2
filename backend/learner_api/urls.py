@@ -3,6 +3,7 @@ from . import presentation_design
 from . import personal_learning
 from . import learner_import
 from . import monthly_reflection_ai
+from .assignment_ai_check import assignment_ai_check
 from . import ksb_generation
 from django.urls import path
 from . import monthly_logs
@@ -200,6 +201,7 @@ urlpatterns = [
     ),
     path("monthly-reports/<str:kind>/<int:pk>/", monthly_reports.monthly_reports, name="learner-monthly-reports"),
     path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
+    path("reflection/assignment/ai-check/", assignment_ai_check, name="monthly-assignment-ai-check"),
     path("reflection/assignment/legacy-document/<int:evidence_id>/", legacy_assignments.open_legacy_assignment_document, name="legacy-assignment-document"),
     path("reflection/assignment/presentation-design/", presentation_design.upload_design, name="presentation-design"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),

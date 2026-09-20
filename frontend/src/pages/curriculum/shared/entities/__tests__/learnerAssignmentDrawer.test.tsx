@@ -27,6 +27,17 @@ beforeEach(() => {
 });
 
 describe('learner assignment', () => {
+  it('bubbles already assigned learners to the top of the filtered list', async () => {
+    render(<LearnerAssignmentDrawer target={target} onClose={vi.fn()} onAssigned={vi.fn()} />);
+    await screen.findByText('Ahmed Ali');
+
+    const assignedRow = screen.getByText('Already Enrolled').closest('label');
+    const availableRow = screen.getByText('Ahmed Ali').closest('label');
+    expect(assignedRow).not.toBeNull();
+    expect(availableRow).not.toBeNull();
+    expect(Boolean(assignedRow!.compareDocumentPosition(availableRow!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
+
   it('filters the real directory and selects all matching unassigned learners only', async () => {
     const user = userEvent.setup();
     const onAssigned = vi.fn();

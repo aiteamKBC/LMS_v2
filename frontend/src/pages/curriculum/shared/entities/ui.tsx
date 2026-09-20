@@ -775,6 +775,8 @@ export function MultiSelectControl({
   options,
   emptyMessage = 'Nothing to choose from.',
   selectAllLabel,
+  searchable = false,
+  searchPlaceholder = 'Search options...',
 }: {
   value: string[];
   onChange: (value: string[]) => void;
@@ -783,10 +785,19 @@ export function MultiSelectControl({
   emptyMessage?: string;
   /** Adds a select-all / clear toggle above the list, named by this. */
   selectAllLabel?: string;
+  /** Adds an inline filter for long option lists without changing the selection. */
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }) {
+  const [search, setSearch] = useState('');
   const selected = new Set(value.map(String));
   const togglable = options.filter(option => !option.locked);
   const allSelected = togglable.length > 0 && togglable.every(option => selected.has(option.value));
+  const query = search.trim().toLocaleLowerCase();
+  const visibleOptions = query
+    ? options.filter(option => [option.label, option.description, option.badge].filter(Boolean)
+      .some(text => String(text).toLocaleLowerCase().includes(query)))
+    : options;
 
   const toggle = (option: MultiSelectOption) => {
     if (option.locked) return;
@@ -824,8 +835,22 @@ export function MultiSelectControl({
           </button>
         </div>
       )}
-      <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-2">
-        {options.map(option => {
+      {searchable && (
+        <label className="relative block">
+          <span className="sr-only">Search options</span>
+          <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
+          <input
+            type="search"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            placeholder={searchPlaceholder}
+            aria-label="Search options"
+            className="h-9 w-full rounded-lg border border-background-200 bg-background-50 pl-8 pr-3 text-[12px] text-foreground-800 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+          />
+        </label>
+      )}
+      <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-2">
+        {visibleOptions.length ? visibleOptions.map(option => {
           const active = selected.has(option.value);
           return (
             <button
@@ -859,7 +884,9 @@ export function MultiSelectControl({
               </span>
             </button>
           );
-        })}
+        }) : (
+          <p className="px-2 py-5 text-center text-[11px] text-foreground-500">No options match “{search.trim()}”.</p>
+        )}
       </div>
     </div>
   );

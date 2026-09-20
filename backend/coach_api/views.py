@@ -69,6 +69,7 @@ from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
 from learner_api.learner_detail import refresh_learner_otjh_snapshot
+from learner_api.ksb_codes import extract_ksb_codes, normalize_ksb_parent_code
 from learner_api.progress_rules import progress_record_counts_as_achieved
 from audit_api.last_audit_ledger_views import _connection as audit_connection
 from learner_api.student_activity_access import student_activity_available
@@ -114,7 +115,10 @@ from curriculum_api.views import (
 from curriculum_api import review_instances as curriculum_review_instances
 from curriculum_api import review_types as curriculum_review_types
 from curriculum_api import reviews as curriculum_reviews
-from learner_api.review_progress_snapshot import build_progress_snapshot
+from learner_api.review_progress_snapshot import (
+    UnresolvedTrainingPlanTarget,
+    build_progress_snapshot,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1294,35 +1298,6 @@ def activity_completion_key(item: dict, index: int) -> str:
     ]
     compact = "|".join(part for part in parts if part)
     return compact or f"item:{index}"
-
-
-KSB_PARENT_CODE_RE = re.compile(r"^([KSB])(\d+)(?:\.\d+)?$")
-
-
-def normalize_ksb_parent_code(value: str) -> str:
-    code = clean_text(value).upper()
-    if not code:
-        return ""
-    match = KSB_PARENT_CODE_RE.match(code)
-    if match:
-        return f"{match.group(1)}{match.group(2)}"
-    return code
-
-
-def extract_ksb_codes(values) -> set[str]:
-    codes: set[str] = set()
-    for value in list_or_empty(values):
-        if isinstance(value, str):
-            code = normalize_ksb_parent_code(value)
-        elif isinstance(value, dict):
-            code = normalize_ksb_parent_code(
-                value.get("code") or value.get("Code") or value.get("id")
-            )
-        else:
-            code = ""
-        if code:
-            codes.add(code)
-    return codes
 
 
 def summarize_ksb_breakdown(target_codes: set[str], completed_codes: set[str]) -> dict[str, dict[str, int | None]]:
@@ -11619,11 +11594,10 @@ def coach_review_instance_progress(request, instance_id):
     PDF download -- a stored snapshot is returned as it was stored, and only
     this endpoint ever replaces it.
 
-    The calculation window is the individual learner's own programme start
-    date (resolve_review_anchor_date -- enrolment."Created_users".
-    "Learner_start_date", never Start_date, never the cohort-stamped profile
-    mirror, never a group/cohort/programme/module date) up to this server's own
-    clock right now. A timestamp sent by the browser is ignored.
+    The target cutoff is this server's one timezone-aware clock reading now.
+    The learner start remains snapshot metadata; target inclusion itself comes
+    from the resolved plan's authoritative curriculum week dates. A timestamp,
+    target date, or scheduled date sent by the browser is never used.
 
     Authorization is the same gate every other review-instance endpoint uses:
     the assigned coach only, via _authorized_review_instance.
@@ -11663,12 +11637,17 @@ def coach_review_instance_progress(request, instance_id):
             source or learner_profile, learner_profile,
             learner_start_date=learner_start_date,
             # The authoritative calculated_at: this server's clock, taken here.
-            calculated_at=datetime.utcnow(),
+            calculated_at=timezone.now(),
             calculated_by=owner_email,
         )
         curriculum_review_instances.save_review_instance_progress_snapshot(
             instance_row, snapshot, actor=owner_email,
         )
+    except UnresolvedTrainingPlanTarget as exc:
+        return JsonResponse({
+            "detail": str(exc),
+            "errors": {"targetSchedule": exc.calculation.get("unresolvedReasons") or []},
+        }, status=409)
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=409)
     except DatabaseError:

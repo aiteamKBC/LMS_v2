@@ -61,7 +61,7 @@ function AssignmentForm({ target, onClose, onAssigned }: {
       && (!company || learner.company === company)
       && (!status || learner.programmeStatus === status)
       && (!assignment || learner.assigned === (assignment === 'assigned'));
-  }), [data, query, programme, company, status, assignment]);
+  }).sort((left, right) => Number(right.assigned) - Number(left.assigned)), [data, query, programme, company, status, assignment]);
   const selectable = visible.filter(learner => !learner.assigned);
   const allSelected = selectable.length > 0 && selectable.every(learner => selected.has(learner.id));
   const visibleSelected = visible.filter(learner => selected.has(learner.id)).length;

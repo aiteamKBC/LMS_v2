@@ -314,5 +314,6 @@ $RECYCLE.BIN/
 !/.gitignore
 !/AGENTS.md
 !/README.md
+!/AI_marking_prompt.MD
 !/backend/
 !/frontend/

@@ -228,6 +228,29 @@ describe('ModuleFormDrawer', () => {
     }));
   });
 
+  it('filters a long group list without changing the selected groups', async () => {
+    const manyGroups = [
+      ...groups,
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: `GROUP-${index + 2}`,
+        name: `Other delivery group ${index + 2}`,
+        cohortId: 'COHORT-1',
+        programmeId: 'PROG-DATA',
+        weekDays: 'Wednesday',
+        startTime: '10:00',
+        endTime: '12:00',
+      })),
+    ] as unknown as CurriculumGroup[];
+    renderDrawer({ groups: manyGroups, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1' } });
+
+    const search = screen.getByRole('searchbox', { name: 'Search options' });
+    await userEvent.type(search, 'Other delivery group 4');
+
+    expect(screen.getByRole('button', { name: /Other delivery group 4/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Other delivery group 2/ })).not.toBeInTheDocument();
+    expect(screen.getByText('0 of 9 selected')).toBeInTheDocument();
+  });
+
   it('creates a module in a locked group through the group endpoint', async () => {
     const { onSaved } = renderDrawer({
       lockGroup: true,

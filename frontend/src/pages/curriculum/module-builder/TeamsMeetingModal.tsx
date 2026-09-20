@@ -274,11 +274,24 @@ export function TeamsMeetingModal({
     return cleanText(match?.label);
   }, [holidays]);
 
+  const liveComponents = (openedWith.current.weekStructure || []).flatMap(week => week.components || [])
+    .filter(item => item.type === 'live-session');
+  const componentTitles = new Map(liveComponents.map(item => [item.id, item.title]));
+  const savedLiveComponents = (existingCalendar?.module.weekStructure || []).flatMap(week => week.components || [])
+    .filter(item => item.type === 'live-session');
   const displayedSessions = existingCalendar ? existingCalendar.calendar.occurrences.map(occurrence => {
     const start = utcIsoToCalendarParts(occurrence.startDateTimeUtc, form.scheduleTimeZone);
     const end = utcIsoToCalendarParts(new Date(Date.parse(occurrence.startDateTimeUtc) + occurrence.durationMinutes * 60000).toISOString(), form.scheduleTimeZone);
-    return { ...occurrence, date: start.date, startTime: start.time, endTime: end.time, timeZone: form.scheduleTimeZone };
-  }) : sessions;
+    // Cancelled occurrences leave gaps in numbering. Match the saved identity,
+    // never the row index, then use the title currently shown in the builder.
+    const matchesOccurrence = (item: ModuleComponent) => (
+      item.settings?.teamsLiveSessionId === existingCalendar.meeting.teamsLiveSessionId
+      && Number(item.settings?.teamsSessionNumber) === occurrence.sessionNumber
+    );
+    const linked = liveComponents.find(matchesOccurrence) || savedLiveComponents.find(matchesOccurrence);
+    const componentTitle = linked ? componentTitles.get(linked.id) ?? linked.title : undefined;
+    return { ...occurrence, componentTitle, date: start.date, startTime: start.time, endTime: end.time, timeZone: form.scheduleTimeZone };
+  }) : sessions.map(session => ({ ...session, componentTitle: componentTitles.get(session.componentId) }));
   const row: TeamsCalendarTarget = {
     catalogueId: cleanText(module.catalogueId),
     name: cleanText(component?.title) || cleanText(module.title) || 'Live session',
@@ -521,6 +534,7 @@ export function TeamsMeetingModal({
           onPrefill={() => void prefillInvitees()}
           timeZoneLabel={graphTimeZone}
           existingCalendar={Boolean(existingCalendar)}
+          showAlternateTimeZones={false}
         />
       )}
       {error && <div className="mt-4"><InlineError message={error} /></div>}
