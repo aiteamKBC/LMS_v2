@@ -17,6 +17,7 @@ import { Modal } from '@/pages/users/components/Modal';
 import { AssignmentTimeEntries } from './AssignmentTimeEntries';
 import { LocalAiTextCheck, LocalAiWritingHint } from './LocalAiTextCheck';
 import { McmPresentationUpload } from './McmPresentationUpload';
+import { learningFetch, parsePersonalLearning } from '@/lib/personalLearning';
 
 // Keys are supplied by the monthly assignment quality-check endpoint.
 const QUALITY_CHECK_STEPS: Record<string, number> = {

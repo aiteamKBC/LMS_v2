@@ -12,6 +12,9 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
 import { Panel } from '@/components/ui/Panel';
 
+import { AssignmentAttemptHistory } from '@/components/feature/AssignmentAttemptHistory';
+import type { SubmissionAttempt } from '@/api/assignmentAttempts';
+
 const coachNav = roleNavMap.coach;
 
 async function personalEvidence(submissionId: string, fileId?: string) {
@@ -22,6 +25,7 @@ async function personalEvidence(submissionId: string, fileId?: string) {
 }
 
 interface Submission {
+  submissionAttempts?: SubmissionAttempt[];
   version?: number;
   contentSections?: { label: string; text: string }[];
   reviewHistory?: { decision: string; feedback: string; reviewedAt: string; reviewedBy: string }[];
@@ -442,6 +446,7 @@ export default function CoachMarkingReviewPage() {
             </aside>
 
             <main className="flex min-w-0 flex-col gap-6">
+              <AssignmentAttemptHistory attempts={selected.submissionAttempts || []} />
               {/* What the learner actually wrote, above the decision. A coach
                   validating a reflection had no way to read it on this page —
                   only an empty feedback box — so the judgement they were being

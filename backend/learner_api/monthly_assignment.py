@@ -277,11 +277,12 @@ def complete_saved_assignment(kind, learner_id, component_id, record, save_progr
     The row lock also prevents a delayed autosave from overwriting submission.
     """
     from .reflection_submissions import _reflection_lineage
+    from .assignment_attempts import preserve_attempts
     from django.utils import timezone
     with transaction.atomic(using="enrolment"):
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                'SELECT id, status, full_submission FROM "Learner"."learning_reflection_submissions" '
+                'SELECT id, status, full_submission, coach_feedback, reviewed_by, reviewed_at, submitted_at FROM "Learner"."learning_reflection_submissions" '
                 "WHERE learner_kind = %s AND learner_id = %s AND activity_type = 'assignment' AND activity_id = %s FOR UPDATE",
                 [kind, str(learner_id), component_id],
             )
@@ -291,6 +292,8 @@ def complete_saved_assignment(kind, learner_id, component_id, record, save_progr
             payload = mapping(json.loads(row[2]) if isinstance(row[2], str) else row[2])
             if payload.get("submissionOrigin") == "imported_legacy":
                 raise ValueError("Historical imported assignments cannot be completed again.")
+            if row[1] != "draft":
+                preserve_attempts(payload, payload, status=row[1], feedback=row[3], reviewer=row[4], reviewed_at=row[5], submitted_at=row[6])
             payload.update(learnerKind=kind, learnerId=str(learner_id), activityId=component_id)
             checks = assignment_checks(payload)
             if not all(c["passed"] for c in checks):
@@ -307,7 +310,7 @@ def complete_saved_assignment(kind, learner_id, component_id, record, save_progr
             cur.execute(
                 'UPDATE "Learner"."learning_reflection_submissions" '
                 "SET status = 'submitted_for_tutor_review', full_submission = %s::jsonb, quality_score = 100, "
-                "submitted_at = now(), date_completed = %s, otjh_confirmed = true, signed_declaration = true, "
+                "submitted_at = now(), coach_feedback = NULL, reviewed_by = NULL, reviewed_at = NULL, date_completed = %s, otjh_confirmed = true, signed_declaration = true, "
                 "progress_entry_id = %s WHERE id = %s",
                 [json.dumps(payload), payload["dateCompleted"], lineage["progress_entry_id"], row[0]],
             )
