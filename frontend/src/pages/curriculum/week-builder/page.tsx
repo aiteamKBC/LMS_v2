@@ -68,7 +68,7 @@ const QuizEditorPanel = lazy(() => import('@/pages/curriculum/quiz-xml/edit/Quiz
 const GuidedQuizUpload = lazy(() => import('./GuidedQuizUpload').then(m => ({ default: m.GuidedQuizUpload })));
 
 export type { WeekScope };
-export interface GroupOption { key: string; name: string; cohort?: string; cohortId?: string; programmeId?: string; programme?: string }
+export interface GroupOption { key: string; name: string; cohort?: string; cohortId?: string; programmeId?: string; programme?: string; moduleCount?: number }
 export type WeekComponentUploader = (componentId: string, file: File, componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment') => Promise<WeekComponentUploadResult>;
 
 const curriculumNav = roleNavMap.curriculum;
@@ -518,7 +518,7 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
         const resolveProgrammeName = (group: typeof groups[number]) => (
           group.programme || programmeNameByKey.get(norm(group.programmeId)) || group.programmeId || ''
         );
-        setGroupOptions(ordered.map(group => ({ key: group.id, name: group.name, cohort: group.cohort, cohortId: group.cohortId, programmeId: group.programmeId, programme: resolveProgrammeName(group) })));
+        setGroupOptions(ordered.map(group => ({ key: group.id, name: group.name, cohort: group.cohort, cohortId: group.cohortId, programmeId: group.programmeId, programme: resolveProgrammeName(group), moduleCount: Array.isArray(group.modules) ? group.modules.length : 0 })));
       })
       .catch(() => { /* picker stays empty */ })
       .finally(() => { if (active) setScopeReady(true); });
@@ -2990,7 +2990,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
                 tabIndex={0}
                 onClick={() => (on ? onToggle(option.key) : onBrowse(option.key))}
                 onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); on ? onToggle(option.key) : onBrowse(option.key); } }}
-                title={on ? 'Click to unassign' : "Not yet assigned — click to place this part in this group's week"}
+                title={on ? 'Click to unassign' : `${option.moduleCount ? 'Contains modules' : 'No modules'} — click to place this part in this group's week`}
                 className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${browsing ? 'border-primary-400 bg-primary-50 ring-2 ring-primary-200' : on ? 'border-primary-300 bg-primary-50' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
               >
                 <input
@@ -3007,7 +3007,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
                       {[option.cohort, option.programme].filter(Boolean).join(' · ')}
                     </span>
                   )}
-                  {!on && <span className="mt-0.5 block truncate text-[10px] font-semibold text-primary-500">{browsing ? 'Browsing…' : "Not assigned — click to place a copy here"}</span>}
+                  {!on && <span className="mt-0.5 block truncate text-[10px] font-semibold text-primary-500">{browsing ? 'Browsing…' : `${option.moduleCount ? 'Contains modules' : 'No modules'} — click to place a copy here`}</span>}
                 </span>
               </div>
             );
