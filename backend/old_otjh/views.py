@@ -300,12 +300,25 @@ def content_review(request):
     return JsonResponse(service.content_review(learner, request.GET.get('month')))
 
 
+def require_document_month(learner, month):
+    """Later Audit evidence is readable; transition signing stays capped."""
+    from django.utils import timezone
+    import re
+    if (isinstance(month, str) and re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month)
+            and repo.CUTOFF < month <= timezone.localdate().strftime('%Y-%m')):
+        found = repo.query(f'SELECT id FROM {repo.ROWS} WHERE aptem_id=%s AND month=%s '
+                           'AND deleted_at IS NULL LIMIT 1', [learner['aptem_id'], month])
+        if found:
+            return
+    service.require_month(service.readable_transition(learner), month)
+
+
 @endpoint('GET')
 def material_document(request, row_id, material_id):
     from .content import source_ids, catalogue, backup_document
     learner, _ = scope(request)
     month = request.GET.get('month')
-    service.require_month(service.readable_transition(learner), month)
+    require_document_month(learner, month)
     row = repo.activity_row(learner, month, row_id)
     if not row or material_id not in source_ids(row)[1]:
         raise service.ServiceError('Document not found.', 'not_found', 404)
@@ -335,7 +348,7 @@ def source_document(request, row_id, evidence_id, kind):
                 if d['source_evidence_id'] == evidence_id and d['source_kind'] == kind), None)
     if not doc:
         raise service.ServiceError('Document not found.', 'not_found', 404)
-    service.require_month(service.readable_transition(learner), doc['month'])
+    require_document_month(learner, doc['month'])
     if request.GET.get('preview') == 'office' and kind != 'note':
         return office_preview(doc)
     if kind == 'note':
@@ -359,7 +372,7 @@ def document(request, doc_id):
     doc = repo.document(learner, doc_id)
     if not doc:
         raise service.ServiceError('Document not found.', 'not_found', 404)
-    service.require_month(service.readable_transition(learner), doc['month'])
+    require_document_month(learner, doc['month'])
     if request.GET.get('preview') == 'office':
         return office_preview(doc)
     try:
