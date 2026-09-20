@@ -4,7 +4,7 @@
 .toolbar { padding: 15px 18px; border: 1px solid var(--line); border-radius: 12px; background: white; }
 .toolbarRow { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 .search { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 180px; padding: 0 11px; height: 39px; border: 1px solid var(--line); border-radius: 8px; color: #8b99ae; }
-.toolbar .search input { width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; outline: none; box-shadow: none; font-size: 12px; color: var(--ink); }
+.toolbar .search input { width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; outline: none; box-shadow: none !important; font-size: 12px; color: var(--ink); }
 .toolbar .search input::placeholder { color: #8b99ae; }
 .search:focus-within { border-color: #9c7ec4; box-shadow: 0 0 0 2px #eee7f7; }
 .search > svg { flex-shrink: 0; }

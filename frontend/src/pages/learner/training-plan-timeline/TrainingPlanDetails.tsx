@@ -103,7 +103,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
     <div className={`${layout.topRow} ${weeklyFocus ? layout.withWeeklyFocus : ''}`}>
       {weeklyFocus}
       <section className={layout.engagement} aria-label="Monthly study plan">
-        <div className={styles.panelHeading}><div><p className={styles.eyebrow}>Monthly focus</p><h2>{monthLabel(selectedMonth)}</h2></div><div className={styles.controls}><button className={styles.iconButton} onClick={() => shiftMonth(-1)} disabled={!canGoPrevious} aria-label="Previous month"><ChevronLeft size={16} /></button><button className={styles.iconButton} onClick={() => shiftMonth(1)} disabled={!canGoNext} aria-label="Next month"><ChevronRight size={16} /></button></div></div>
+        <div className={styles.panelHeading}><div className={layout.focusHeading}><p className={styles.eyebrow}>Monthly focus</p><h2>{monthLabel(selectedMonth)}</h2></div><div className={styles.controls}><button className={styles.iconButton} onClick={() => shiftMonth(-1)} disabled={!canGoPrevious} aria-label="Previous month"><ChevronLeft size={16} /></button><button className={styles.iconButton} onClick={() => shiftMonth(1)} disabled={!canGoNext} aria-label="Next month"><ChevronRight size={16} /></button></div></div>
         {!!month?.topics.length && <p className={styles.focusTitle}>{month.topics.join(' · ')}</p>}
         {data.contractStatus === 'loading' && <p role="status" className={styles.hint}>Loading study hour targets…</p>}
         {data.contractStatus === 'unavailable' && <p role="status" className={styles.hint}>Study hour targets could not be loaded. <button className={styles.secondary} onClick={onRetryContract}>Retry study hours</button></p>}

@@ -9,6 +9,7 @@ import logging
 import re
 from collections import defaultdict
 from functools import wraps
+from types import SimpleNamespace
 
 from django.db import DatabaseError, transaction
 from django.conf import settings
@@ -102,7 +103,33 @@ def legacy_summary(learner):
     if history.enabled(learner):
         return public_state(history.summary(learner))
     # Include every retained month, without starting/finalizing a transition on GET.
-    return public_state(old.summary({**learner, '_read_only': True}))
+    result = public_state(old.summary({**learner, '_read_only': True}))
+    targets = signed_training_plan_targets(learner)
+    for month in result['months']:
+        if month['month'] in targets:
+            month['training_plan_target'] = targets[month['month']]
+            month['training_plan_target_source'] = 'signed_training_plan'
+    return result
+
+
+def signed_training_plan_targets(learner):
+    """Monthly targets from the same signed Aptem contract shown by Audit."""
+    if not learner.get('aptem_id'):
+        return {}
+    from .training_plan_dashboard import contract_plan, find_contract
+
+    with old_repo.source_connection().cursor() as cursor:
+        contract = find_contract(cursor, learner['aptem_id'])
+    plan = contract_plan(SimpleNamespace(pk=learner['id']), contract)
+    if plan.get('contractStatus') != 'ready':
+        return {}
+    targets = {}
+    for month, value in (plan.get('months') or {}).items():
+        raw_target = value.get('planned') if isinstance(value, dict) else None
+        target = sources.number(raw_target) if raw_target is not None else None
+        if month <= old_repo.CUTOFF and target is not None:
+            targets[month] = target
+    return targets
 
 
 def signatures(learner):
@@ -229,8 +256,14 @@ def detail_data(learner, month, *, include_open=False):
     valid_month(month)
     if learner.get('aptem_id') and month <= old_repo.CUTOFF:
         if history.enabled(learner):
-            return {**public_detail(learner, history.detail(learner, month)), 'source': 'legacy'}
-        return {**public_detail(learner, old.month_detail({**learner, '_read_only': True}, month)), 'source': 'legacy'}
+            detail = public_detail(learner, history.detail(learner, month))
+        else:
+            detail = public_detail(learner, old.month_detail({**learner, '_read_only': True}, month))
+        targets = signed_training_plan_targets(learner)
+        if month in targets:
+            detail['training_plan_target'] = targets[month]
+            detail['training_plan_target_source'] = 'signed_training_plan'
+        return {**detail, 'source': 'legacy'}
     if not include_open:
         require_closed_month(month)
     signs = signatures(learner)

@@ -74,10 +74,9 @@ export function CurriculumTimeline({
             <div>
               <p className={layout.rowTitle}>
                 <span className={layout.weekNumber}>Week {row.slotNumber}</span>
-                <span className={layout.rowDate}>{dateLabel(row.date)}</span>
-                <strong>{row.title}</strong>
+                <strong>{row.weekTitle || 'Week title to be confirmed'}</strong>
                 <span className={layout.detailInline}>
-                  {row.start ? `${sessionTime(row.start)} · UK time` : 'Time to be confirmed'}
+                  {row.start ? sessionTime(row.start) : `${dateLabel(row.date)} · Time to be confirmed`}
                   {row.minutes ? ` · ${row.minutes} min` : ''}
                   {row.attended === true ? ' · Attended' : row.attended === false ? ' · Not attended' : ''}
                 </span>
