@@ -293,8 +293,10 @@ export interface CurriculumModule {
   lessons: number;
   quizzes: number;
   /**
-   * Always 0 out of every module builder -- nothing counts assignments on a
-   * module row yet. Omitted from a `?compact=true` list for that reason.
+   * Learners currently assigned this module -- computed in bulk once per
+   * overview build (see `attach_module_assignment_counts` server-side), not
+   * per row, so listing many modules costs one pass over learners, not one
+   * query per module.
    */
   assignments?: number;
   status: 'published' | 'draft' | 'review' | string;
