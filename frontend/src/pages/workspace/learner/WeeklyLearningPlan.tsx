@@ -20,6 +20,7 @@ import {
   activityActionLabel, activityExpectedTimeLabel, activityHref, activityKsbCodes, activityStatus,
   resolveInitialWeek, weekComponents, weekKey, weekProgress, weekWindow, type ActivityStatus,
 } from './weeklyPlanHelpers';
+import planLayout from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
 type SessionRow = Extract<CurriculumRow, { kind: 'session' }>;
 type ReadingWeekRow = Extract<CurriculumRow, { kind: 'reading-week' }>;
@@ -30,7 +31,6 @@ const STATUS_TONE: Record<ActivityStatus, 'positive' | 'info' | 'neutral'> = {
 const STATUS_LABEL: Record<ActivityStatus, string> = {
   completed: 'Completed', 'in-progress': 'In progress', 'not-started': 'Not started',
 };
-const WEEK_PAGE_SIZE = 12;
 const ACTIVITY_PAGE_SIZE = 8;
 
 export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading, scheduleError }: {
@@ -52,13 +52,6 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
     const sessions = (schedule?.sessions || []).filter(session => session.moduleId === resolvedModuleId);
     return buildCurriculumTimeline(module?.curriculumSlots, sessions);
   }, [module, schedule?.sessions, resolvedModuleId]);
-  const [weekPage, setWeekPage] = useState(0);
-  const weekPageCount = Math.max(1, Math.ceil(weeks.length / WEEK_PAGE_SIZE));
-  const visibleWeekOffset = Math.min(weekPage, weekPageCount - 1) * WEEK_PAGE_SIZE;
-  const visibleWeeks = weeks.slice(visibleWeekOffset, visibleWeekOffset + WEEK_PAGE_SIZE);
-  useEffect(() => { setWeekPage(0); }, [resolvedModuleId]);
-  useEffect(() => { if (weekPage >= weekPageCount) setWeekPage(Math.max(0, weekPageCount - 1)); }, [weekPage, weekPageCount]);
-
   const [selection, setSelection] = useState<{ moduleId: string; key: string } | null>(null);
   const initialWeek = resolveInitialWeek(weeks, today);
   const selectedWeek = (selection?.moduleId === resolvedModuleId && weeks.find(week => weekKey(week) === selection.key)) || initialWeek;
@@ -76,11 +69,11 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
   // to fall back to the way the old, decoupled "This week" card could.
   if (!schedule && !scheduleLoading && scheduleError) return null;
 
-  return <section aria-label="Weekly learning plan" className="grid grid-cols-1 gap-3 lg:items-start lg:grid-cols-[240px_minmax(0,1fr)]">
+  return <section aria-label="Weekly learning plan" className={cn(planLayout.weeklyPlan, 'grid grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)]')}>
     {!schedule ? <WeeklyLearningPlanSkeleton /> : !candidateModules.length ? <Panel className="lg:col-span-2">
       <EmptyState title="Your weekly plan will appear here" description="Once a module is assigned, its weeks and activities will show up in this space." />
     </Panel> : <>
-    <aside className="rounded-2xl border border-foreground-100 bg-background-50 p-3 shadow-sm">
+    <aside className={cn(planLayout.weekRail, 'rounded-2xl border border-foreground-100 bg-background-50 p-3 shadow-sm')}>
       <div className="flex items-center justify-between gap-2 border-l-4 border-primary-600 pl-2">
         <h2 className="text-base font-extrabold text-foreground-950">Weeks</h2>
       </div>
@@ -91,11 +84,10 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
         </select>
       </label>}
       {weeks.length ? <>
-      <ol className="mt-2.5 space-y-1">
-        {visibleWeeks.map((week, index) => {
-          const absoluteIndex = visibleWeekOffset + index;
+      <ol className={cn(planLayout.weekList, 'mt-2.5 space-y-1')}>
+        {weeks.map((week, index) => {
           const active = selectedWeek ? weekKey(week) === weekKey(selectedWeek) : false;
-          const { start, end } = weekWindow(weeks, absoluteIndex);
+          const { start, end } = weekWindow(weeks, index);
           const state: 'past' | 'current' | 'upcoming' = start > today ? 'upcoming' : end !== null && end < today ? 'past' : 'current';
           const isReadingWeek = week.kind === 'reading-week';
           const isCompleted = state === 'past';
@@ -108,7 +100,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
           const range = `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`;
           const stateLabel = state === 'past' ? 'Completed' : state === 'current' ? 'Current week' : 'Upcoming';
           return <li key={weekKey(week)} className="relative pl-9">
-            {index < visibleWeeks.length - 1 && <span aria-hidden="true" className="absolute left-[13px] top-9 bottom-[-0.25rem] w-px bg-foreground-200" />}
+            {index < weeks.length - 1 && <span aria-hidden="true" className="absolute left-[13px] top-9 bottom-[-0.25rem] w-px bg-foreground-200" />}
             {weekActivityProgress?.total ? <span role="progressbar" aria-label={`${label} activity progress`}
               aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekActivityProgress.percent}
               aria-valuetext={`${weekActivityProgress.completed} of ${weekActivityProgress.total} activities complete`}
@@ -148,11 +140,10 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
           </li>;
         })}
       </ol>
-      <PaginationControls page={weekPage} pageCount={weekPageCount} onPageChange={setWeekPage} label="weeks" className="mt-3" />
       </> : <EmptyState size="sm" title="No weeks scheduled yet" description="This module's weekly schedule isn't available yet." className="mt-3" />}
     </aside>
 
-    <div className="min-w-0 rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm">
+    <div className={cn(planLayout.weekDetail, 'min-w-0 rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm')}>
       {!selectedWeek ? <Panel><EmptyState title="No weeks scheduled yet" description="This module's weekly schedule isn't available yet." /></Panel> : <>
         <div className="overflow-hidden">
           <div className="flex flex-col gap-4 border-b border-foreground-100 pb-4 md:flex-row md:items-start md:justify-between">

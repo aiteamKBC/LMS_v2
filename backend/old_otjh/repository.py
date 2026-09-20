@@ -4,10 +4,14 @@ import json
 import re
 from datetime import date
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 from django.db import connections, transaction
 
+from audit_api.db_source import resolve
+
 DB = 'enrolment'
+SOURCE_DB = 'audit'
 VERSION = 'old-otjh-transition-v1'
 CUTOFF = '2026-08'
 TRANSITIONS = '"Audit".learner_transitions'
@@ -17,9 +21,11 @@ FINALIZATIONS = 'structured_manual_activities.manual_month_finalization_events'
 ROWS = 'structured_manual_activities.manual_learner_activities'
 DOCS = 'structured_manual_activities.manual_activity_documents'
 
+_query_alias = ContextVar('old_otjh_query_alias', default=None)
+
 
 def query(sql, params=()):
-    with connections[DB].cursor() as cursor:
+    with connections[_query_alias.get() or DB].cursor() as cursor:
         cursor.execute(sql, params)
         if cursor.description is None:
             return []
@@ -31,6 +37,24 @@ def query(sql, params=()):
                 if isinstance(row.get(key), str):
                     row[key] = json.loads(row[key])
         return result
+
+
+def source_query(sql, params=()):
+    """Read the retained journal from the same database as Audit.
+
+    Authentication, transitions and signatures remain on ``enrolment``.  The
+    Last_audit/manual-ledger projection deliberately follows the ``audit``
+    alias so Learner Monthly Logs cannot silently read a different snapshot.
+    """
+    token = _query_alias.set(resolve(SOURCE_DB))
+    try:
+        return query(sql, params)
+    finally:
+        _query_alias.reset(token)
+
+
+def source_connection():
+    return connections[resolve(SOURCE_DB)]
 
 
 def student(learner_id):
@@ -46,7 +70,7 @@ def linked_learners(aptem_id):
 
 
 def historical_learner(aptem_id):
-    return query('SELECT aptem_id, learner_id, learner_name, learner_email, '
+    return source_query('SELECT aptem_id, learner_id, learner_name, learner_email, '
                  'programme_name, programme_status, coach_email, coach_name, planned_hours_monthly '
                  'FROM "Last_audit".learners WHERE aptem_id=%s LIMIT 2', [aptem_id])
 
@@ -102,7 +126,7 @@ def coach_learners(email, is_admin, page, page_size=25, search=''):
 
 
 def source_months(aptem_id):
-    return query(f'''SELECT month, count(*) AS row_count,
+    return source_query(f'''SELECT month, count(*) AS row_count,
         coalesce(sum(planned_hours),0) AS planned_hours,
         coalesce(sum(actual_hours) FILTER (WHERE accepted),0) AS actual_hours,
         coalesce(sum(actual_hours) FILTER (WHERE NOT accepted),0) AS not_accepted_hours
@@ -160,7 +184,7 @@ def pending_revisions(aptem_id):
 def month_rows(learner, month):
     import mimetypes
     from audit_api.last_audit_ledger_views import _duration_min_sql
-    rows = query(f'''SELECT r.id, r.month, r.category, r.source_ref, r.group_id, r.activity_id, r.title,
+    rows = source_query(f'''SELECT r.id, r.month, r.category, r.source_ref, r.group_id, r.activity_id, r.title,
         r.activity_date, r.activity_time, r.planned_hours, r.actual_hours, r.timestamp_label,
         r.completion_note, r.accepted, r.updated_at, g.group_name,
         {_duration_min_sql('a')} AS duration_minutes,
@@ -177,7 +201,7 @@ def month_rows(learner, month):
         LEFT JOIN structured_manual_activities.activity_ksbs mk ON mk.activity_id=r.activity_id
         WHERE r.aptem_id=%s AND r.month=%s AND r.deleted_at IS NULL
         ORDER BY r.activity_date NULLS LAST, r.id''', [learner['aptem_id'], month])
-    docs = query(f'''SELECT d.id, d.manual_activity_id, d.display_name,
+    docs = source_query(f'''SELECT d.id, d.manual_activity_id, d.display_name,
         d.content_type, d.size_bytes, d.uploaded_at, d.blob_name FROM {DOCS} d JOIN {ROWS} r
         ON r.id=d.manual_activity_id AND r.aptem_id=d.aptem_id
         WHERE d.aptem_id=%s AND r.month=%s AND d.deleted_at IS NULL
@@ -187,7 +211,7 @@ def month_rows(learner, month):
         if not doc.get('content_type') or doc['content_type'] == 'application/octet-stream':
             doc['content_type'] = mimetypes.guess_type(blob_name)[0] or mimetypes.guess_type(doc['display_name'])[0]
     activity_ids = list({r['activity_id'] for r in rows if r['activity_id'] is not None})
-    results = query('''SELECT activity_id, group_id, status, video_started,
+    results = source_query('''SELECT activity_id, group_id, status, video_started,
         video_completed, reading_viewed, quiz_attempted, quiz_passed, quiz_score,
         quiz_maximum_score, quiz_attempt_number, mapped_hours, updated_at
         FROM "Last_audit".activity_results
@@ -195,7 +219,7 @@ def month_rows(learner, month):
         [learner.get('lms_id'), activity_ids]) if activity_ids and learner.get('lms_id') else []
     evidence_ids = [int(r['source_ref'][3:]) for r in rows
                     if re.fullmatch(r'ev:[0-9]+', r.get('source_ref') or '')]
-    evidence = query('''SELECT evidence_id, component_name, ksb_codes
+    evidence = source_query('''SELECT evidence_id, component_name, ksb_codes
         FROM fetching_evidence.evidence_items
         WHERE learner_id=%s AND evidence_id=ANY(%s)''',
         [learner['aptem_id'], evidence_ids]) if evidence_ids else []
@@ -233,7 +257,7 @@ def source_documents(learner, row_ids):
     import mimetypes
     if not row_ids:
         return []
-    evidence = query(f'''SELECT r.id AS row_id, r.month, e.evidence_id, e.evidence_name,
+    evidence = source_query(f'''SELECT r.id AS row_id, r.month, e.evidence_id, e.evidence_name,
         e.file_blob, e.report_blob, e.note_content, e.updated_at AS source_updated_at FROM {ROWS} r
         JOIN fetching_evidence.evidence_items e ON e.learner_id=r.aptem_id AND (
           r.source_ref='ev:' || e.evidence_id::text OR
@@ -245,7 +269,7 @@ def source_documents(learner, row_ids):
           AND (o.deleted_at IS NOT NULL OR o.archived_at IS NOT NULL))
         ORDER BY r.id,e.evidence_id''', [learner['aptem_id'], row_ids])
     # Respect deliberate document deletion from the other system.
-    deleted = query(f'''SELECT manual_activity_id, blob_name FROM {DOCS}
+    deleted = source_query(f'''SELECT manual_activity_id, blob_name FROM {DOCS}
         WHERE aptem_id=%s AND manual_activity_id=ANY(%s) AND deleted_at IS NOT NULL''',
         [learner['aptem_id'], row_ids])
     tombstones = {(d['manual_activity_id'], d['blob_name']) for d in deleted}
@@ -293,7 +317,7 @@ def ksb_codes(value):
 
 
 def activity_row(learner, month, row_id):
-    rows = query(f'''SELECT id, month, title, category, source_ref, group_id, activity_id
+    rows = source_query(f'''SELECT id, month, title, category, source_ref, group_id, activity_id
         FROM {ROWS} WHERE id=%s AND aptem_id=%s AND month=%s
         AND deleted_at IS NULL''', [row_id, learner['aptem_id'], month])
     return rows[0] if rows else None
@@ -309,22 +333,26 @@ def content_review(learner, rows):
     return review(learner, rows)
 
 
-def report_profile(learner):
+def programme_dates(learner):
     # Only the authenticated Aptem identity and an exact programme match; no
     # name-based cross-person matching and no arbitrary choice between dates.
-    contracts = query('''SELECT DISTINCT program_start_date AS start_date, planned_end_date
+    contracts = source_query('''SELECT DISTINCT program_start_date AS start_date, planned_end_date
         FROM fetching_evidence.aptem_cv_contracts_probe WHERE learner_id=%s
         AND (lower(btrim(current_programme))=lower(btrim(%s))
              OR lower(btrim(program_name))=lower(btrim(%s)))
         AND program_start_date IS NOT NULL LIMIT 2''',
         [learner['aptem_id'], learner['programme'], learner['programme']])
-    profile = dict(contracts[0]) if len(contracts) == 1 else {'start_date': None, 'planned_end_date': None}
+    return dict(contracts[0]) if len(contracts) == 1 else {'start_date': None, 'planned_end_date': None}
+
+
+def report_profile(learner):
+    profile = programme_dates(learner)
     profile['first_evidence_date'] = None
     if not profile['start_date']:
         return profile
     # Same first-evidence definition as the audit report: after programme start,
     # excluding welcome material, deleted/archived records, including overrides.
-    candidates = query('''SELECT coalesce(o.evidence_date::text, item->>'created_date') AS evidence_date
+    candidates = source_query('''SELECT coalesce(o.evidence_date::text, item->>'created_date') AS evidence_date
         FROM fetching_evidence.learner_evidence e
         CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(e.evidence)='array'
             THEN e.evidence ELSE '[]'::jsonb END) item
@@ -352,7 +380,7 @@ def report_profile(learner):
 
 
 def document(learner, doc_id):
-    result = query(f'''SELECT d.id, d.container, d.blob_name, d.display_name,
+    result = source_query(f'''SELECT d.id, d.container, d.blob_name, d.display_name,
         d.content_type, r.month FROM {DOCS} d JOIN {ROWS} r
         ON r.id=d.manual_activity_id AND r.aptem_id=d.aptem_id
         WHERE d.id=%s AND d.aptem_id=%s AND d.deleted_at IS NULL

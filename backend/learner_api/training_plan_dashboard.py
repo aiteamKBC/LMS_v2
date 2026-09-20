@@ -43,6 +43,11 @@ def instant(value):
     return value.isoformat()
 
 
+def date_only(value):
+    """Serialize contract programme dates without applying a machine timezone."""
+    return str(value)[:10] if value else None
+
+
 def plan_session(row):
     start = row['scheduled_start'] or row['start_datetime']
     end = row['scheduled_end']
@@ -153,7 +158,8 @@ def find_contract(cursor, aptem_id):
     cursor.execute('''SELECT c.id,c.azure_path,c.training_plan_planned_hours,
         c.document_name AS original_name,
         coalesce(nullif(a.display_name,''),c.document_name) AS document_name,
-        c.date,c.fetched_at,c.fully_signed_date,c.raw AS extraction_metadata
+        c.date,c.fetched_at,c.fully_signed_date,c.raw AS extraction_metadata,
+        c.program_start_date,c.planned_end_date
         FROM fetching_evidence.aptem_cv_contracts_probe c
         LEFT JOIN "Audit".contract_document_archive a ON a.contract_id=c.id
         WHERE c.learner_id=%s
@@ -178,7 +184,9 @@ def contract_plan(source, contract):
         except Exception:
             log.warning('Training-plan contract could not be read for enrolment %s', source.pk)
             status = 'unavailable'
-    return {'months': months, 'contractStatus': status}
+    return {'months': months, 'contractStatus': status,
+            'programmeStartDate': date_only(contract.get('program_start_date')) if contract else None,
+            'programmeEndDate': date_only(contract.get('planned_end_date')) if contract else None}
 
 
 def read_dashboard(source, section=None):
@@ -280,7 +288,8 @@ def read_dashboard(source, section=None):
         }
     # The overview must never wait for an Azure PDF download. Older clients
     # still receive the complete response when no section was requested.
-    contract_data = ({'months': {}, 'contractStatus': 'loading'} if section == 'overview'
+    contract_data = ({'months': {}, 'contractStatus': 'loading',
+                      'programmeStartDate': None, 'programmeEndDate': None} if section == 'overview'
                      else contract_plan(source, contract))
     contact = current_coach(source, profile, historical)
     coach_name, coach_email = contact['coach_name'], contact['coach_email']

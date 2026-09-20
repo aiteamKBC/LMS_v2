@@ -43,8 +43,15 @@ export type PlanModule = { id: string; title: string; description: string; start
 export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'> & { meetingLink?: string | null };
 export type TrainingPlanDashboard = {
   months: Record<string, PlanMonth>;
+  /** Programme dates recorded on the selected Aptem Training Plan contract. */
+  programmeStartDate?: string | null;
+  programmeEndDate?: string | null;
   /** Monthly OTJH; assignment submissions use marking status, other activity types keep their existing semantics. */
   monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; missingPlannedActivities: number }>;
+  /** Authoritative Monthly Logs totals: retained Audit history, then LMS months. */
+  monthlyLogOtjh?: Record<string, { target: number | null; submitted: number; completed: number }>;
+  /** Last YYYY-MM month whose OTJH figures must come from Audit rather than live LMS calculations. */
+  auditOtjhCutoffMonth?: string;
   /** Whole-programme OTJH requirement from the shared dashboard metrics. */
   requiredOtjh?: number | null;
   actual: { month: string; groupId: string | null; hours: number; count: number }[];
@@ -63,7 +70,8 @@ export function fetchTrainingPlanDashboard(kind: LearnerKind, id: string, signal
   return readLearnerJson<TrainingPlanDashboard>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=overview`, { signal, ttlMs: 30_000, revalidate: true });
 }
 
-export type TrainingPlanContract = Pick<TrainingPlanDashboard, 'months' | 'contractStatus'>;
+export type TrainingPlanContract = Pick<TrainingPlanDashboard,
+  'months' | 'contractStatus' | 'programmeStartDate' | 'programmeEndDate'>;
 export function fetchTrainingPlanContract(kind: LearnerKind, id: string, signal?: AbortSignal) {
   return subjectRequest<TrainingPlanContract>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=contract`, { signal });
 }
