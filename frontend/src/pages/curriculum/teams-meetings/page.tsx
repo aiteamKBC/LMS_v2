@@ -27,10 +27,12 @@ import {
 import {
   createTeamsMeeting,
   fetchModuleMeetingInvitees,
+  fetchModuleSessionPlan,
   formatCalendarDateTime,
   getCalendarTimeZone,
   loadTeamsMeetingArtifacts,
   loadTeamsMeetingConfiguration,
+  loadModuleStructure,
   parseUtcInstant,
   probeModuleTeamsAttachment,
   restoreModuleTeamsMeeting,
@@ -44,6 +46,8 @@ import {
   type TeamsMeetingArtifactsResult,
   type TeamsMeetingInput,
   type TeamsRecordingEventInput,
+  type ModuleWeekSessionPlan,
+  type ModuleCatalogueItem,
 } from '../module-builder/moduleAuthoringData';
 import { emailList } from '../module-builder/EmailChipsInput';
 import {
@@ -226,6 +230,50 @@ function groupDeliveryPattern(group: CurriculumGroup | undefined, name: string):
     endTime,
     durationMinutes: Math.max(0, minutesBetween(startTime, endTime)),
   };
+}
+
+/**
+ * A booked occurrence keeps its historical date in `curriculum.sessions`.
+ * The detail modal must still show the current plan that will be sent when a
+ * group day/time changes, so overlay the fresh planner result without mutating
+ * historical session rows or their Teams identity.
+ */
+function liveSessionPlan(module: ModuleCatalogueItem | null, plan: ModuleWeekSessionPlan): ModuleWeekSessionPlan['sessions'] {
+  if (!module?.weekStructure?.length) return plan.sessions || [];
+  const selected: ModuleWeekSessionPlan['sessions'] = [];
+  let fallbackIndex = 0;
+  module.weekStructure.forEach(week => {
+    const liveCount = (week.components || []).filter(component => component.type === 'live-session').length;
+    if (!liveCount) return;
+    const byWeek = (plan.sessions || []).filter(session => Number(session.weekNumber) === Number(week.weekNumber));
+    const candidates = byWeek.length
+      ? byWeek.slice(0, liveCount)
+      : (plan.sessions || []).slice(fallbackIndex, fallbackIndex + liveCount);
+    selected.push(...candidates);
+    fallbackIndex += candidates.length;
+  });
+  return selected;
+}
+
+function sessionRowsFromPlan(row: MeetingRow, plan: ModuleWeekSessionPlan, module?: ModuleCatalogueItem | null): CurriculumSession[] {
+  return liveSessionPlan(module || null, plan).map((planned, index) => {
+    const previous = row.sessions[index] || row.sessions[row.sessions.length - 1];
+    return {
+      ...(previous || {}),
+      id: previous?.id || `${row.catalogueId}-${planned.sessionNumber || index + 1}`,
+      moduleCatalogueId: row.catalogueId,
+      moduleId: row.catalogueId,
+      title: previous?.title || row.name,
+      type: previous?.type || 'live-session',
+      date: planned.date,
+      day: planned.day || previous?.day || '',
+      startTime: planned.startTime || previous?.startTime || '',
+      endTime: planned.endTime || previous?.endTime || '',
+      skippedHolidays: planned.skippedHolidays || [],
+      status: previous?.status || 'scheduled',
+      ksbCodes: previous?.ksbCodes || [],
+    } as CurriculumSession;
+  });
 }
 
 /**
@@ -598,6 +646,7 @@ export default function CurriculumTeamsMeetingsPage() {
   // reader has open.
   const [notice, setNotice] = useState<{ tone: 'info' | 'warning' | 'error'; text: string; moduleId?: string } | null>(null);
   const [detail, setDetail] = useState<TeamsMeetingArtifactsResult | null>(null);
+  const [plannedSessions, setPlannedSessions] = useState<Record<string, CurriculumSession[]>>({});
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [artifactSyncing, setArtifactSyncing] = useState<Set<string>>(() => new Set());
@@ -884,6 +933,13 @@ export default function CurriculumTeamsMeetingsPage() {
     () => rows.find(row => normaliseKey(row.catalogueId) === normaliseKey(selectedId)) || null,
     [rows, selectedId],
   );
+  const selectedForDisplay = useMemo(() => {
+    if (!selected) return null;
+    const sessionsForPlan = plannedSessions[normaliseKey(selected.catalogueId)];
+    if (!sessionsForPlan) return selected;
+    const plannedStarts = sessionsForPlan.map(session => zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || selected.summary?.timeZone));
+    return { ...selected, sessions: sessionsForPlan, plannedStarts };
+  }, [plannedSessions, selected]);
   const selectedLiveId = useRef('');
   selectedLiveId.current = selected?.summary?.liveSessionId || '';
 
@@ -957,6 +1013,24 @@ export default function CurriculumTeamsMeetingsPage() {
     if (!liveSessionId) { setDetail(null); setDetailError(null); return; }
     void loadDetail(liveSessionId);
   }, [loadDetail, selected?.summary?.liveSessionId]);
+
+  // A booked session row intentionally keeps the historical Teams date. The
+  // modal must nevertheless preview the current group plan, because that is
+  // what the send action will use after a day/time edit.
+  useEffect(() => {
+    if (!selected?.summary || selected.state !== 'out-of-sync') return undefined;
+    let cancelled = false;
+    void Promise.all([fetchModuleSessionPlan(selected.catalogueId), loadModuleStructure(selected.catalogueId)])
+      .then(([plan, module]) => {
+        if (cancelled || !plan?.sessions?.length) return;
+        setPlannedSessions(previous => ({
+          ...previous,
+          [normaliseKey(selected.catalogueId)]: sessionRowsFromPlan(selected, plan, module),
+        }));
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [selected]);
 
   const runArtifactSync = useCallback(async (
     liveSessionId: string,
@@ -1105,17 +1179,31 @@ export default function CurriculumTeamsMeetingsPage() {
   const pushDates = async (row: MeetingRow) => {
     const summary = row.summary;
     if (!summary || !row.sessions.length) return;
-    const invalid = calendarInputError(row);
-    if (invalid) { setNotice({ tone: 'error', text: invalid }); return; }
-    const occurrences = scheduledOccurrences(row);
     setBusy(`${row.catalogueId}:dates`);
     setNotice(null);
     try {
+      // Do not send `row.sessions` here: booked rows intentionally retain the
+      // old Teams occurrence dates. The server-side planner is authoritative
+      // after a group day/time edit and is fetched again immediately before the
+      // write, so the modal cannot send stale dates from a cached row.
+      const [plan, module] = await Promise.all([
+        fetchModuleSessionPlan(row.catalogueId),
+        loadModuleStructure(row.catalogueId),
+      ]);
+      const planned = liveSessionPlan(module, plan).filter(session => String(session.date || '').trim());
+      if (!planned.length) throw new Error('This module has no planned session dates to send.');
+      const firstStart = planned[0].startTime || row.groupPattern?.startTime || '09:00';
+      const fallbackDuration = Math.max(15, row.groupPattern?.durationMinutes || summary.durationMinutes || DEFAULT_DURATION_MINUTES);
+      const occurrences = planned.map((session, index) => ({
+        sessionNumber: session.sessionNumber || index + 1,
+        startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || firstStart}`, summary.timeZone),
+        durationMinutes: session.durationMinutes || Math.max(15, minutesBetween(session.startTime || firstStart, session.endTime || '') || fallbackDuration),
+      }));
       const result = await updateTeamsMeetingSchedule(summary.liveSessionId, {
         title: row.name,
         organizerEmail: summary.organizerEmail,
         eventId: summary.eventId,
-        localStartDateTime: sessionNaiveLocal(row.sessions[0]),
+        localStartDateTime: `${planned[0].date}T${planned[0].startTime || firstStart}`,
         startDateTimeUtc: occurrences[0].startDateTimeUtc,
         durationMinutes: occurrences[0].durationMinutes,
         repeat: occurrences.length > 1 ? 'weekly' : 'none',
@@ -1131,17 +1219,17 @@ export default function CurriculumTeamsMeetingsPage() {
       // it is taken again. This one IS awaited: the drawer is open in front of
       // the reader, and showing it the dates it just replaced would be wrong.
       if (summary.liveSessionId) await loadDetail(summary.liveSessionId);
-      const warnings = result.warnings || [];
-      if (warnings.length) {
+      const warning = result.warnings?.[0]?.message || '';
+      if (warning) {
         setNotice({
           tone: 'warning',
-          text: `${row.name}: the session dates are saved here, but Microsoft Teams did not accept every shifted meeting. ${warnings[0].message}`,
+          text: `${row.name}: the session dates are saved here, but Microsoft Teams did not accept every shifted meeting. ${warning}`,
         });
       }
       await showCurriculumAlert({
-        title: warnings.length ? 'Sent with warnings' : 'Teams calendar updated',
+        title: warning ? 'Sent with warnings' : 'Teams calendar updated',
         text: `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to the Teams calendar for ${row.name}.`,
-        timer: warnings.length ? undefined : 2000,
+        timer: warning ? undefined : 2000,
       });
     } catch (err) {
       if (isTeamsReviewCancelled(err)) return;
@@ -1712,8 +1800,8 @@ export default function CurriculumTeamsMeetingsPage() {
                     )}
                     <button
                       type="button"
-                      onClick={() => void pushDates(selected)}
-                      disabled={!selected.sessions.length || Boolean(busy) || !graphConfigured}
+                      onClick={() => void pushDates(selectedForDisplay || selected)}
+                      disabled={!(selectedForDisplay || selected).sessions.length || Boolean(busy) || !graphConfigured}
                       title="Move the Teams calendar onto this module's stored session dates, holiday shifts included."
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -1728,7 +1816,7 @@ export default function CurriculumTeamsMeetingsPage() {
                   <button
                     type="button"
                     onClick={() => void createCalendar(selected)}
-                    disabled={!selected.sessions.length || createDrawer.saving || Boolean(busy) || !graphConfigured}
+                    disabled={!(selectedForDisplay || selected).sessions.length || createDrawer.saving || Boolean(busy) || !graphConfigured}
                     title="Create one Teams meeting on each of this module's stored session dates."
                     className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -1745,7 +1833,7 @@ export default function CurriculumTeamsMeetingsPage() {
                 {STATE_LABELS[selected.state]}
               </span>
               <span className="inline-flex items-center rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-foreground-600">
-                {selected.sessions.length} module session{selected.sessions.length === 1 ? '' : 's'}
+                {(selectedForDisplay || selected).sessions.length} module session{(selectedForDisplay || selected).sessions.length === 1 ? '' : 's'}
               </span>
               {selected.differingSessions > 0 && (
                 <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800">
@@ -1867,7 +1955,7 @@ export default function CurriculumTeamsMeetingsPage() {
                     in, who attended, what it left behind -- are facts about the
                     same sessions, so they hang off the same rows. */}
                 <ModuleSessionSchedulePreview
-                  row={selected}
+                  row={selectedForDisplay || selected}
                   title="Module dates sent to Teams"
                   holidayLabelFor={holidayLabelFor}
                   renderActions={(index, durationMinutes) => {

@@ -25,6 +25,8 @@ import {
   permanentlyDeleteCohortWithConfirm,
   restoreCohortWithConfirm,
 } from '../shared/entities/archive';
+import { duplicateCohortWithGroups } from '../shared/entities/cloneStructure';
+import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
@@ -43,7 +45,7 @@ import {
 // of the structure wizard. The parent Programme is chosen in the form; nothing
 // forces the user on into Group or Module creation afterwards.
 
-const GRID = 'grid grid-cols-[minmax(180px,1.3fr)_minmax(150px,1fr)_110px_110px_80px_130px_80px_175px]';
+const GRID = 'grid grid-cols-[minmax(180px,1.3fr)_minmax(150px,1fr)_110px_110px_80px_130px_80px_260px]';
 
 const COLUMNS = [
   { label: 'Cohort' },
@@ -187,6 +189,28 @@ export default function CurriculumCohortsPage() {
   const deletePermanently = async (cohort: CurriculumArchivedCohort) => {
     // Nothing to put back into the live list here, so only the archive moves.
     await permanentlyDeleteCohortWithConfirm(cohort, () => archived.reload());
+  };
+
+  const duplicate = async (cohort: CurriculumCohort) => {
+    const groupCount = groupsByCohort.get(normaliseKey(cohort.id)) || 0;
+    await showCurriculumConfirm({
+      title: 'Duplicate cohort?',
+      text: groupCount
+        ? `A new cohort is created on the same dates, with its own copy of all ${groupCount} group${groupCount === 1 ? '' : 's'} and their modules — no Teams meetings and no learners.`
+        : 'A new cohort is created on the same dates. It has no groups yet.',
+      icon: 'question',
+      confirmButtonText: 'Duplicate cohort',
+      onConfirm: async () => {
+        const result = await duplicateCohortWithGroups(cohort, groups);
+        applyLocal(previous => ({ ...previous, cohorts: upsertById(previous.cohorts, result.cohort) }));
+        revealCohort(result.cohort);
+        window.clearTimeout(highlightTimer.current);
+        setHighlightId(result.cohort.id);
+        await reload({ silent: true });
+        highlightTimer.current = window.setTimeout(() => setHighlightId(null), 3000);
+      },
+      successTitle: 'Cohort duplicated',
+    });
   };
 
   const programmeOptions = useMemo(
@@ -435,6 +459,12 @@ export default function CurriculumCohortsPage() {
                       label: 'Edit',
                       title: 'Edit this cohort, its dates, EPA window and holidays',
                       onClick: () => openEdit(cohort),
+                    },
+                    {
+                      icon: 'ri-file-copy-line',
+                      label: 'Duplicate',
+                      title: 'Create a new cohort on the same dates, with its own copy of every group and module — no Teams meetings, no learners',
+                      onClick: () => void duplicate(cohort),
                     },
                     {
                       icon: 'ri-archive-line',

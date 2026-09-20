@@ -54,6 +54,7 @@ import { MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceTyp
 import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
+import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
 import { loadModuleStructure, saveModuleStructure, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
 import { LiveSessionArtifactsPanel } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
@@ -486,9 +487,24 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
         const resolvedModuleName = weekModule?.name || '';
         setModuleName(resolvedModuleName);
 
+        // The "Assigned groups" picker only ever offers live programmes — an
+        // archived programme has nothing left to deliver into, so its cohorts
+        // and groups would just be dead ends in the dropdown.
+        const archivedProgrammeKeys = new Set<string>();
+        programmes.forEach(programme => {
+          if (programme.isArchived || programme.status === 'archived') {
+            [programme.id, programme.sourceId, programme.name].forEach(key => {
+              if (key) archivedProgrammeKeys.add(norm(key));
+            });
+          }
+        });
+        const liveGroups = groups.filter(group => (
+          ![group.programmeId, group.programme].some(key => key && archivedProgrammeKeys.has(norm(key)))
+        ));
+
         let scoped = initial.courseType === 'paid'
-          ? groups.filter(group => group.programmeId === initial.programmeId || group.programme === initial.programmeName)
-          : groups;
+          ? liveGroups.filter(group => group.programmeId === initial.programmeId || group.programme === initial.programmeName)
+          : liveGroups;
         // Narrow to the week's module when we can resolve it — but only if that
         // actually leaves some groups, so a naming mismatch never empties the
         // picker (fall back to the programme-scoped set).
@@ -502,9 +518,9 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
         // the same Teams link across a duplicated module), so the picker
         // must never hide groups outside this week's own programme/module —
         // it only lists the scoped-in ones first, for convenience.
-        const preferred = scoped.length ? scoped : groups;
+        const preferred = scoped.length ? scoped : liveGroups;
         const preferredIds = new Set(preferred.map(group => group.id));
-        const ordered = [...preferred, ...groups.filter(group => !preferredIds.has(group.id))];
+        const ordered = [...preferred, ...liveGroups.filter(group => !preferredIds.has(group.id))];
         // A group's own `programme` name is blank on plenty of records — the
         // raw programmeId is meaningless to a tutor, so resolve the readable
         // name from the programme list instead (matching id/sourceId/name,
@@ -518,7 +534,22 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
         const resolveProgrammeName = (group: typeof groups[number]) => (
           group.programme || programmeNameByKey.get(norm(group.programmeId)) || group.programmeId || ''
         );
-        setGroupOptions(ordered.map(group => ({ key: group.id, name: group.name, cohort: group.cohort, cohortId: group.cohortId, programmeId: group.programmeId, programme: resolveProgrammeName(group), moduleCount: Array.isArray(group.modules) ? group.modules.length : 0 })));
+        // `group.modules` is a compact, occasionally stale name list. Count
+        // the same concrete module rows the placement modal will display so
+        // the group card never says "No modules" when the next click finds some.
+        setGroupOptions(ordered.map(group => ({
+          key: group.id,
+          name: group.name,
+          cohort: group.cohort,
+          cohortId: group.cohortId,
+          programmeId: group.programmeId,
+          programme: resolveProgrammeName(group),
+          moduleCount: moduleCountForGroup(modules, {
+            groupId: group.id,
+            groupName: group.name,
+            programmeId: group.programmeId,
+          }),
+        })));
       })
       .catch(() => { /* picker stays empty */ })
       .finally(() => { if (active) setScopeReady(true); });
@@ -2834,6 +2865,7 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
         <GroupPlacementPanel
           key={browsingOption.key}
           component={component}
+          groupId={browsingOption.key}
           groupName={browsingOption.name}
           programmeId={browsingOption.programmeId || programmeId}
           onClose={() => setBrowsingKey(null)}

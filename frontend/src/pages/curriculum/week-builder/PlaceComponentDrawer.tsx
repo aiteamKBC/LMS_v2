@@ -3,6 +3,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { type CurriculumModule } from '@/lib/curriculumApi';
 import { loadCurriculumScope } from './weekTemplateData';
+import { modulesForGroup } from '../shared/entities/groupModuleMatch';
 import {
   copyComponentToWeek,
   loadModuleStructure,
@@ -14,7 +15,6 @@ import {
 
 type Step = 'module' | 'week';
 
-const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
 const catalogueIdOf = (module: CurriculumModule) => module.moduleCatalogueId || module.catalogueId || module.id;
 const weekLabel = (week: ModuleWeek) => week.title || `Week ${week.weekNumber}`;
 
@@ -38,8 +38,9 @@ export interface PlacementResult {
   componentId: string;
 }
 
-export function GroupPlacementPanel({ component, groupName, programmeId, onClose, onPlaced }: {
+export function GroupPlacementPanel({ component, groupId, groupName, programmeId, onClose, onPlaced }: {
   component: ModuleComponent;
+  groupId?: string;
   groupName: string;
   programmeId: string;
   onClose: () => void;
@@ -71,8 +72,8 @@ export function GroupPlacementPanel({ component, groupName, programmeId, onClose
   }, []);
 
   const groupModules = useMemo(
-    () => modules.filter(module => norm(module.group) === norm(groupName) && (!programmeId || module.programmeId === programmeId)),
-    [modules, groupName, programmeId],
+    () => modulesForGroup(modules, { groupId, groupName, programmeId }),
+    [groupId, modules, groupName, programmeId],
   );
 
   const selectModule = async (module: CurriculumModule) => {

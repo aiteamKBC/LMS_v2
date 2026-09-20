@@ -14,3 +14,10 @@ class LearnerApiConfig(AppConfig):
         # Registers the two-database consistency checks (see checks.py and
         # ENROLMENT_GAP_ANALYSIS.md 7.2). Import for the @register side effect.
         from . import checks  # noqa: F401
+
+        # Records learner, staff, employer and organisation saves in the Audit
+        # Trail. Here rather than in system_audit because the models have to be
+        # loaded before their signals can be connected, and this is the app that
+        # owns them. Never fails a start-up: it logs and moves on.
+        from system_audit.records import register_enrolment_records
+        register_enrolment_records()
