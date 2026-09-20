@@ -10,6 +10,7 @@ import {
   downloadReviewInstancePdf,
   fetchReviewInstanceForm,
   flattenReviewFields,
+  generateReviewMeetingSummary,
   saveReviewInstanceAnswers,
   signReviewInstance,
   type ReviewInstanceFormDefinition,
@@ -68,6 +69,9 @@ export function ReviewInstanceModal({
   const [openSectionId, setOpenSectionId] = useState('');
   const [showErrors, setShowErrors] = useState(false);
   const [calculating, setCalculating] = useState(false);
+  const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [summaryMessage, setSummaryMessage] = useState('');
+  const [pendingSummaryReplacement, setPendingSummaryReplacement] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -80,6 +84,27 @@ export function ReviewInstanceModal({
         for (const field of flattenReviewFields(data.sections)) {
           if (field.answer !== undefined && field.answer !== null) initialAnswers[field.id] = field.answer;
         }
+        const source = data.meetingSummarySource;
+        const hasFormalAnswer = Boolean(
+          source && Object.prototype.hasOwnProperty.call(initialAnswers, source.fieldId),
+        );
+        if (
+          source
+          && ['ready', 'edited'].includes(source.status)
+          && source.summaryText
+          && !['awaiting-signature', 'completed'].includes(data.instance.status)
+          && !hasFormalAnswer
+        ) {
+          // Suggestion only: it enters local editor state but is not a formal
+          // Review answer until the coach deliberately saves/submits it.
+          initialAnswers[source.fieldId] = source.summaryText;
+          setSummaryMessage('The stored AI suggestion has been loaded for review. Save the draft to make it part of this Review.');
+        } else if (source?.message) {
+          setSummaryMessage(source.message);
+        } else {
+          setSummaryMessage('');
+        }
+        setPendingSummaryReplacement('');
         setAnswers(initialAnswers);
         setOpenSectionId(data.sections.find((s) => s.enabled)?.id || '');
       })
@@ -127,6 +152,7 @@ export function ReviewInstanceModal({
   const handleAnswerChange = (fieldId: string, value: unknown) => {
     if (formReadOnly) return;
     setAnswers((current) => ({ ...current, [fieldId]: value }));
+    if (fieldId === definition?.meetingSummarySource?.fieldId) setPendingSummaryReplacement('');
     setShowErrors(false);
   };
 
@@ -164,8 +190,7 @@ export function ReviewInstanceModal({
     setSaving(true);
     setError(null);
     try {
-      await saveReviewInstanceAnswers(definition.instance.id, answers);
-      const completed = await completeReviewInstance(definition.instance.id);
+      const completed = await completeReviewInstance(definition.instance.id, answers);
       setDefinition(completed);
       onStatusChanged?.(completed.instance.status);
     } catch (err) {
@@ -173,6 +198,32 @@ export function ReviewInstanceModal({
       setError(err instanceof Error ? err.message : 'This review cannot be completed yet.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const generateMeetingSummary = async () => {
+    if (!definition || generatingSummary || isSignatureStage) return;
+    setGeneratingSummary(true);
+    setError(null);
+    try {
+      const { meetingSummarySource: source } = await generateReviewMeetingSummary(definition.instance.id);
+      setDefinition(current => current ? { ...current, meetingSummarySource: source } : current);
+      const currentText = typeof answers[source.fieldId] === 'string' ? String(answers[source.fieldId]).trim() : '';
+      if (!source.summaryText) {
+        setSummaryMessage(source.message || 'No generated Meeting Summary is available yet.');
+      } else if (currentText && currentText !== source.summaryText.trim()) {
+        setPendingSummaryReplacement(source.summaryText);
+        setSummaryMessage('A generated summary is available. Confirm before replacing the text currently in the editor.');
+      } else {
+        setAnswers(current => ({ ...current, [source.fieldId]: source.summaryText }));
+        setPendingSummaryReplacement('');
+        setSummaryMessage('The generated summary is ready for review. Save the draft when you are satisfied with it.');
+      }
+    } catch (err) {
+      if (isAbortError(err)) return;
+      setError(err instanceof Error ? err.message : 'The Meeting Summary could not be generated.');
+    } finally {
+      setGeneratingSummary(false);
     }
   };
 
@@ -192,7 +243,7 @@ export function ReviewInstanceModal({
     }
   };
 
-  const busy = saving || calculating;
+  const busy = saving || calculating || generatingSummary;
 
   return (
     <ModalShell busy={busy} onClose={onClose}>
@@ -269,6 +320,55 @@ export function ReviewInstanceModal({
               readOnly={formReadOnly}
               openSectionId={openSectionId}
               onOpenSectionChange={setOpenSectionId}
+              renderFieldAddon={(field) => field.id === definition.meetingSummarySource?.fieldId ? (
+                <div className="mb-3 space-y-2 rounded-xl border border-primary-100 bg-primary-50 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-[12px] font-bold text-primary-900">AI Meeting Summary</p>
+                      <p className="text-[11px] text-primary-700">Optional suggestion from the linked Teams transcript. It is not saved automatically.</p>
+                    </div>
+                    {!formReadOnly ? (
+                      <button
+                        type="button"
+                        onClick={() => { void generateMeetingSummary(); }}
+                        disabled={busy}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60"
+                      >
+                        <AppIcon className={generatingSummary ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-2-line'}></AppIcon>
+                        {generatingSummary ? 'Generating...' : 'Generate from Teams'}
+                      </button>
+                    ) : null}
+                  </div>
+                  {summaryMessage ? (
+                    <p role={definition.meetingSummarySource?.status === 'failed' ? 'alert' : 'status'} className="text-[11px] leading-4 text-primary-800">{summaryMessage}</p>
+                  ) : null}
+                  {pendingSummaryReplacement ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAnswers(current => ({ ...current, [field.id]: pendingSummaryReplacement }));
+                          setPendingSummaryReplacement('');
+                          setSummaryMessage('The generated summary replaced the editor text. Review it before saving.');
+                        }}
+                        className="h-8 rounded-lg bg-amber-600 px-3 text-[11px] font-bold text-white"
+                      >
+                        Replace with generated summary
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPendingSummaryReplacement('');
+                          setSummaryMessage('The current editor text was kept.');
+                        }}
+                        className="h-8 rounded-lg border border-amber-300 bg-white px-3 text-[11px] font-bold text-amber-800"
+                      >
+                        Keep current text
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             />
             {advisorSignaturePending ? (
               <section aria-label="Review signature step" tabIndex={-1} className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
@@ -355,7 +455,7 @@ export function ReviewInstanceModal({
           </button>
           <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
-            {saving ? 'Saving...' : 'Complete review'}
+            {saving ? 'Saving...' : requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
           </button>
         </div> : null}
       </footer>

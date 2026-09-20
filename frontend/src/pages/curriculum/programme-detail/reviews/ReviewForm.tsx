@@ -57,6 +57,7 @@ const RECURRENCE_UNITS: ReviewRecurrenceUnit[] = ['days', 'weeks', 'months'];
  *  Progress Review's RAG question carries so its answer is found by the
  *  template's own configuration, never by matching a question title. */
 const RAG_SEMANTIC_KEY = 'rag_status';
+const MEETING_SUMMARY_SEMANTIC_KEY = 'meeting_summary';
 
 // A "Post code and Address" field always collects this fixed set of lines
 // together, as one answer -- there is nothing to configure, this is shown
@@ -231,7 +232,7 @@ function OptionListEditor({ options, onChange }: { options: string[]; onChange: 
 // ever reaches a save-time error.
 const MAX_FIELD_NESTING_DEPTH = 8;
 
-function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove, onMove }: {
+function FieldRow({ field, path, index, total, depth, errors, allowMeetingSummary, onChange, onRemove, onMove }: {
   field: DraftField;
   /** Dotted/bracketed location matching the backend's error keys, e.g. sections[0].fields[1]. */
   path: string;
@@ -240,6 +241,7 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
   /** 0 for a section's direct fields; +1 for every IF YES/IF NO level in. */
   depth: number;
   errors: Record<string, string>;
+  allowMeetingSummary: boolean;
   onChange: (field: DraftField) => void;
   onRemove: () => void;
   onMove: (direction: -1 | 1) => void;
@@ -253,6 +255,7 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
   const description = (field.configuration as TitleDescriptionConfiguration | undefined)?.description || '';
   const options = (field.configuration as ListItemConfiguration | undefined)?.options || [];
   const isRagQuestion = (field.configuration as ListItemConfiguration | undefined)?.semanticKey === RAG_SEMANTIC_KEY;
+  const isMeetingSummary = (field.configuration as Record<string, unknown> | undefined)?.semanticKey === MEETING_SUMMARY_SEMANTIC_KEY;
   const branchFieldCount = countFields(field.yesFields) + countFields(field.noFields);
 
   const handleTypeChange = (nextType: ReviewFieldType) => {
@@ -393,6 +396,24 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
         </div>
       )}
 
+      {allowMeetingSummary && (field.fieldType === 'text' || field.fieldType === 'text_multiline') && (
+        <label className="mt-3 flex items-center gap-2 text-[12px] font-semibold text-foreground-700">
+          <input
+            type="checkbox"
+            checked={isMeetingSummary}
+            onChange={event => {
+              const { semanticKey: _dropped, ...rest } = (field.configuration as Record<string, unknown> | undefined) || {};
+              onChange({
+                ...field,
+                configuration: event.target.checked ? { ...rest, semanticKey: MEETING_SUMMARY_SEMANTIC_KEY } : rest,
+              });
+            }}
+            className="h-4 w-4 rounded border-background-300 text-primary-600 focus:ring-primary-300"
+          />
+          This is the canonical Meeting Summary
+        </label>
+      )}
+
       {field.fieldType === 'title_description' && (
         <div className="mt-3">
           <FormField label="Description" hint="Shown under the title as instructional text -- this block does not collect an answer.">
@@ -439,6 +460,7 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
             fields={field.yesFields}
             depth={depth + 1}
             errors={errors}
+            allowMeetingSummary={allowMeetingSummary}
             onChange={yesFields => onChange({ ...field, yesFields })}
           />
           <ConditionalBranch
@@ -447,6 +469,7 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
             fields={field.noFields}
             depth={depth + 1}
             errors={errors}
+            allowMeetingSummary={allowMeetingSummary}
             onChange={noFields => onChange({ ...field, noFields })}
           />
         </div>
@@ -478,12 +501,13 @@ const BRANCH_STYLE = {
   },
 } as const;
 
-function ConditionalBranch({ branch, path, fields, depth, errors, onChange }: {
+function ConditionalBranch({ branch, path, fields, depth, errors, allowMeetingSummary, onChange }: {
   branch: 'yes' | 'no';
   path: string;
   fields: DraftField[];
   depth: number;
   errors: Record<string, string>;
+  allowMeetingSummary: boolean;
   onChange: (fields: DraftField[]) => void;
 }) {
   const style = BRANCH_STYLE[branch];
@@ -503,6 +527,7 @@ function ConditionalBranch({ branch, path, fields, depth, errors, onChange }: {
             total={fields.length}
             depth={depth}
             errors={errors}
+            allowMeetingSummary={allowMeetingSummary}
             onChange={updated => onChange(fields.map(f => (f.key === updated.key ? updated : f)))}
             onRemove={() => onChange(fields.filter(f => f.key !== child.key))}
             onMove={direction => {
@@ -533,11 +558,12 @@ function countFields(fields: DraftField[]): number {
   return fields.reduce((total, field) => total + 1 + countFields(field.yesFields) + countFields(field.noFields), 0);
 }
 
-function SectionCard({ section, index, total, errors, onChange, onRemove, onMove }: {
+function SectionCard({ section, index, total, errors, allowMeetingSummary, onChange, onRemove, onMove }: {
   section: DraftSection;
   index: number;
   total: number;
   errors: Record<string, string>;
+  allowMeetingSummary: boolean;
   onChange: (section: DraftSection) => void;
   onRemove: () => void;
   onMove: (direction: -1 | 1) => void;
@@ -613,6 +639,7 @@ function SectionCard({ section, index, total, errors, onChange, onRemove, onMove
                 total={section.fields.length}
                 depth={0}
                 errors={errors}
+                allowMeetingSummary={allowMeetingSummary}
                 onChange={updated => onChange({ ...section, fields: section.fields.map(f => (f.key === updated.key ? updated : f)) })}
                 onRemove={() => onChange({ ...section, fields: section.fields.filter(f => f.key !== field.key) })}
                 onMove={direction => {
@@ -791,6 +818,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     }
     return options;
   }, [reviewTypes, reviewTypeId, review]);
+  const selectedReviewTypeCode = reviewTypeOptions.find(type => type.id === reviewTypeId)?.code || '';
 
   const handleTypeCreated = (created: ReviewType) => {
     setReviewTypes(current => [...current.filter(type => type.id !== created.id), created]);
@@ -863,6 +891,19 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     const expectedOtjhNumber = Number(expectedOtjh);
     if (!Number.isFinite(expectedOtjhNumber) || expectedOtjhNumber < 0) next.expectedOtjh = 'Expected OTJH must be zero or a positive number.';
     Object.assign(next, validateSections(sections));
+    const countMeetingSummaryFields = (fields: DraftField[]): number => fields.reduce(
+      (total, field) => total
+        + ((field.configuration as Record<string, unknown> | undefined)?.semanticKey === MEETING_SUMMARY_SEMANTIC_KEY ? 1 : 0)
+        + countMeetingSummaryFields(field.yesFields)
+        + countMeetingSummaryFields(field.noFields),
+      0,
+    );
+    const meetingSummaryCount = sections.reduce((total, item) => total + countMeetingSummaryFields(item.fields), 0);
+    if (meetingSummaryCount > 0 && selectedReviewTypeCode !== 'mcm') {
+      next.sections = 'Only a Monthly Coaching Meeting may define a Meeting Summary field.';
+    } else if (meetingSummaryCount > 1) {
+      next.sections = 'A Monthly Coaching Meeting can define only one Meeting Summary field.';
+    }
     return next;
   };
 
@@ -1164,6 +1205,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
                     index={index}
                     total={sections.length}
                     errors={errors}
+                    allowMeetingSummary={selectedReviewTypeCode === 'mcm'}
                     onChange={updated => setSections(prev => prev.map(s => (s.key === updated.key ? updated : s)))}
                     onRemove={() => setSections(prev => prev.filter(s => s.key !== sectionDraft.key))}
                     onMove={direction => setSections(prev => {

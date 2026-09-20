@@ -102,6 +102,27 @@ SIGNATURE_ROLES = reviews.PARTICIPANT_ROLES
 _TABLES_READY = False
 
 
+def required_signature_roles(signature_requirements):
+    """Roles required by one Review Instance's frozen signature rules.
+
+    ``definition_snapshot.signatures`` stores booleans, while the serialized
+    form definition exposes the same frozen decision as
+    ``signatures[role].required``. Accepting both shapes keeps lifecycle,
+    signature validation and PDF availability on one resolver without ever
+    consulting the live Curriculum template.
+    """
+    requirements = signature_requirements or {}
+    return tuple(
+        role
+        for role in SIGNATURE_ROLES
+        if bool(
+            requirements.get(role, {}).get('required')
+            if isinstance(requirements.get(role), dict)
+            else requirements.get(role)
+        )
+    )
+
+
 def ensure_review_instance_tables():
     global _TABLES_READY
     if _TABLES_READY:
@@ -1302,6 +1323,34 @@ def _flatten_snapshot_fields(sections):
     return flat
 
 
+def semantic_review_fields(definition, semantic_key):
+    """Fields carrying one stable semantic marker, at any nesting depth.
+
+    ``definition`` may be either a frozen ``definition_snapshot`` or the
+    serialized form definition built from it. Runtime consumers deliberately
+    do not fall back to editable titles such as "Summary".
+    """
+    semantic_key = curriculum_views.clean_str(semantic_key)
+    if not semantic_key:
+        return []
+    return [
+        field
+        for field in _flatten_snapshot_fields((definition or {}).get('sections', []))
+        if curriculum_views.clean_str((field.get('configuration') or {}).get('semanticKey')) == semantic_key
+    ]
+
+
+def meeting_summary_field(definition):
+    """Return the single explicitly mapped formal MCM summary field.
+
+    Multiple markers are ambiguous and therefore behave like no mapping.
+    Template validation prevents new duplicates; this defensive rule keeps
+    existing persisted definitions from being guessed at runtime.
+    """
+    fields = semantic_review_fields(definition, reviews.MEETING_SUMMARY_SEMANTIC_KEY)
+    return fields[0] if len(fields) == 1 else None
+
+
 def review_instance_form_definition(instance_row):
     """The hierarchical {instance, template, sections[].fields[].answer} shape
     a dynamic form renderer consumes. Sections/fields/signature-and-visibility
@@ -1315,6 +1364,7 @@ def review_instance_form_definition(instance_row):
 
     answers_by_field = get_review_instance_answers(instance_row.get('id'))
     signatures_by_role = get_review_instance_signatures(instance_row.get('id'))
+    required_roles = set(required_signature_roles(snapshot.get('signatures', {})))
 
     def _attach_answers(fields):
         decorated = []
@@ -1350,9 +1400,12 @@ def review_instance_form_definition(instance_row):
         'template': {
             'id': instance_row.get('review_template_id'),
             'name': live_name,
-            'reviewTypeId': (live_template or {}).get('review_type_id') or snapshot.get('reviewTypeId'),
-            'reviewTypeCode': (type_row or {}).get('code') or snapshot.get('reviewTypeCode'),
-            'reviewTypeName': (type_row or {}).get('name') or snapshot.get('reviewTypeName'),
+            # Classification is part of the frozen definition. Only legacy
+            # snapshots that predate Review Types fall back to the live row;
+            # the display title above deliberately remains live.
+            'reviewTypeId': snapshot.get('reviewTypeId') or (live_template or {}).get('review_type_id'),
+            'reviewTypeCode': snapshot.get('reviewTypeCode') or (type_row or {}).get('code'),
+            'reviewTypeName': snapshot.get('reviewTypeName') or (type_row or {}).get('name'),
             'signatures': snapshot.get('signatures', {}),
             'visibleTo': snapshot.get('visibleTo', {}),
             'recurrence': snapshot.get('recurrence', {}),
@@ -1362,7 +1415,7 @@ def review_instance_form_definition(instance_row):
         'sections': sections,
         'signatures': {
             role: {
-                'required': bool(snapshot.get('signatures', {}).get(role)),
+                'required': role in required_roles,
                 'signed': bool(signatures_by_role.get(role, {}).get('signed_at')),
                 'signedBy': signatures_by_role.get(role, {}).get('signed_by'),
                 'signedName': signatures_by_role.get(role, {}).get('signed_name'),
@@ -1442,40 +1495,17 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
     because it is not visible right now)."""
     if instance_row.get('status') in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
         raise ValueError('Submitted review answers cannot be changed after the signature step begins.')
-    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
-    valid_field_ids = {
-        field.get('id')
-        for field in _flatten_snapshot_fields(snapshot.get('sections', []))
-    }
 
     with transaction.atomic():
-        for field_id, value in (answers or {}).items():
-            if field_id not in valid_field_ids:
-                continue
-            existing_rows = curriculum_views.fetch_all(
-                f'select * from {curriculum_views.table_name(REVIEW_INSTANCE_ANSWERS_TABLE)} '
-                f'where review_instance_id = %s and field_id = %s',
-                [instance_row.get('id'), field_id],
-            )
-            payload = {
-                'answer': curriculum_views.json_db_value(value),
-                'answered_by': actor,
-                'answered_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow(),
-            }
-            if existing_rows:
-                curriculum_views.update_rows(
-                    REVIEW_INSTANCE_ANSWERS_TABLE, 'id = %s', [existing_rows[0]['id']], payload,
-                    allow_null_columns=['answer'],
-                )
-            else:
-                curriculum_views.insert_row(REVIEW_INSTANCE_ANSWERS_TABLE, {
-                    'id': curriculum_views.unique_prefixed_id('REVIA'),
-                    'review_instance_id': instance_row.get('id'),
-                    'field_id': field_id,
-                    'created_at': datetime.utcnow(),
-                    **payload,
-                })
+        # Answer writers and completion lock this same parent first. A stale
+        # save that started before submission therefore re-reads the terminal
+        # status and is rejected instead of changing signed content.
+        locked = get_review_instance(instance_row.get('id'), for_update=True)
+        if not locked:
+            raise ValueError('Review not found.')
+        if locked.get('status') in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
+            raise ValueError('Submitted review answers cannot be changed after the signature step begins.')
+        _save_review_instance_answers_locked(locked, answers, actor=actor)
 
         # Saving a draft answer is not evidence the meeting started -- it used
         # to flip status to in-progress here, which is exactly the "opened/
@@ -1485,6 +1515,42 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
         # coach_api.views.apply_teams_attendance_status_transition.
 
     return review_instance_form_definition(get_review_instance(instance_row.get('id')))
+
+
+def _save_review_instance_answers_locked(instance_row, answers, *, actor):
+    """Merge answer values while the caller holds the instance row lock."""
+    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+    valid_field_ids = {
+        field.get('id')
+        for field in _flatten_snapshot_fields(snapshot.get('sections', []))
+    }
+    for field_id, value in (answers or {}).items():
+        if field_id not in valid_field_ids:
+            continue
+        existing_rows = curriculum_views.fetch_all(
+            f'select * from {curriculum_views.table_name(REVIEW_INSTANCE_ANSWERS_TABLE)} '
+            f'where review_instance_id = %s and field_id = %s',
+            [instance_row.get('id'), field_id],
+        )
+        payload = {
+            'answer': curriculum_views.json_db_value(value),
+            'answered_by': actor,
+            'answered_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow(),
+        }
+        if existing_rows:
+            curriculum_views.update_rows(
+                REVIEW_INSTANCE_ANSWERS_TABLE, 'id = %s', [existing_rows[0]['id']], payload,
+                allow_null_columns=['answer'],
+            )
+        else:
+            curriculum_views.insert_row(REVIEW_INSTANCE_ANSWERS_TABLE, {
+                'id': curriculum_views.unique_prefixed_id('REVIA'),
+                'review_instance_id': instance_row.get('id'),
+                'field_id': field_id,
+                'created_at': datetime.utcnow(),
+                **payload,
+            })
 
 
 # ------------------------------------------------- progress + RAG snapshots
@@ -1636,7 +1702,7 @@ def progress_review_rag_history(learner_id, *, limit=8):
 
 
 def _all_required_signatures_present(instance_id, snapshot):
-    required_roles = [role for role in SIGNATURE_ROLES if bool(snapshot.get('signatures', {}).get(role))]
+    required_roles = required_signature_roles(snapshot.get('signatures', {}))
     if not required_roles:
         return True
     signatures_by_role = get_review_instance_signatures(instance_id)
@@ -1723,7 +1789,7 @@ def record_review_instance_signature(instance_row, role, *, signed_by, signed_na
     if role not in SIGNATURE_ROLES:
         raise ValueError(f'Unknown signature role "{role}".')
     snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
-    if not bool(snapshot.get('signatures', {}).get(role)):
+    if role not in required_signature_roles(snapshot.get('signatures', {})):
         raise ValueError(f'This review does not require a "{role}" signature.')
     if instance_row.get('status') not in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
         raise ValueError('This review must be finished before it can be signed.')
@@ -1806,7 +1872,7 @@ def _complete_review_instance_status_rejection(current_status):
     return 'This review cannot be completed from its current status.'
 
 
-def complete_review_instance(instance_row, *, actor='system'):
+def complete_review_instance(instance_row, *, actor='system', answers=None):
     """Finishes the form: validates every visible required field is
     answered, then moves the instance to Awaiting Signature (if the
     Curriculum template requires any signature) or straight to Completed (if
@@ -1827,31 +1893,41 @@ def complete_review_instance(instance_row, *, actor='system'):
     if current_status != STATUS_IN_PROGRESS:
         return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
 
-    definition = review_instance_form_definition(instance_row)
-    answers_by_field = get_review_instance_answers(instance_row.get('id'))
-    missing_fields = _visible_required_unanswered_fields(definition['sections'], answers_by_field)
-    if missing_fields:
-        return False, {'fields': missing_fields}
+    with transaction.atomic():
+        # This is the same first lock used by save_review_instance_answers.
+        # Optional browser answers are saved, validated and frozen within this
+        # one critical section, making Send for Signatures an atomic action.
+        locked = get_review_instance(instance_row.get('id'), for_update=True)
+        if not locked:
+            return False, {'status': ['Review not found.']}
+        current_status = locked.get('status')
+        if current_status != STATUS_IN_PROGRESS:
+            return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
+        if answers is not None:
+            _save_review_instance_answers_locked(locked, answers, actor=actor)
 
-    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
-    requires_signature = any(bool(snapshot.get('signatures', {}).get(role)) for role in SIGNATURE_ROLES)
-    if requires_signature:
-        updated = curriculum_views.update_rows(
-            REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
-            [instance_row.get('id'), STATUS_IN_PROGRESS],
-            {'status': STATUS_AWAITING_SIGNATURE, 'updated_by': actor, 'updated_at': datetime.utcnow()},
-        )
-    else:
-        updated = curriculum_views.update_rows(
-            REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
-            [instance_row.get('id'), STATUS_IN_PROGRESS],
-            {
-                'status': STATUS_COMPLETED, 'completed_at': datetime.utcnow(),
-                'updated_by': actor, 'updated_at': datetime.utcnow(),
-            },
-        )
-    if not updated:
-        # Lost a race: something else (another completion attempt) moved this
-        # instance off in-progress between the caller's read and this write.
-        return False, {'status': ['This review is no longer in progress. Reload it and try again.']}
+        snapshot = curriculum_views.as_json_value(locked.get('definition_snapshot'), {})
+        answers_by_field = get_review_instance_answers(locked.get('id'))
+        missing_fields = _visible_required_unanswered_fields(snapshot.get('sections', []), answers_by_field)
+        if missing_fields:
+            return False, {'fields': missing_fields}
+
+        requires_signature = bool(required_signature_roles(snapshot.get('signatures', {})))
+        if requires_signature:
+            updated = curriculum_views.update_rows(
+                REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
+                [locked.get('id'), STATUS_IN_PROGRESS],
+                {'status': STATUS_AWAITING_SIGNATURE, 'updated_by': actor, 'updated_at': datetime.utcnow()},
+            )
+        else:
+            updated = curriculum_views.update_rows(
+                REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
+                [locked.get('id'), STATUS_IN_PROGRESS],
+                {
+                    'status': STATUS_COMPLETED, 'completed_at': datetime.utcnow(),
+                    'updated_by': actor, 'updated_at': datetime.utcnow(),
+                },
+            )
+        if not updated:
+            return False, {'status': ['This review is no longer in progress. Reload it and try again.']}
     return True, None

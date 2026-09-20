@@ -51,8 +51,11 @@ def _statement_field(field_id, title, description):
     return {"id": "", "title": title, "fieldType": "title_description", "required": False, "configuration": {"description": description}}
 
 
-def _text_field(title, *, required=True, placeholder=""):
-    return {"id": "", "title": title, "fieldType": "text_multiline", "required": required, "configuration": {"placeholder": placeholder}}
+def _text_field(title, *, required=True, placeholder="", semantic_key=""):
+    configuration = {"placeholder": placeholder}
+    if semantic_key:
+        configuration["semanticKey"] = semantic_key
+    return {"id": "", "title": title, "fieldType": "text_multiline", "required": required, "configuration": configuration}
 
 
 def _yes_no_field(title, *, required=True):
@@ -187,7 +190,11 @@ MCM_SECTIONS = [
         "title": "Meeting Summary",
         "estimatedMinutes": 0,
         "fields": [
-            _text_field("Summary", placeholder="Summarise progress, key discussion points, risks, support and next steps..."),
+            _text_field(
+                "Summary",
+                placeholder="Summarise progress, key discussion points, risks, support and next steps...",
+                semantic_key=reviews.MEETING_SUMMARY_SEMANTIC_KEY,
+            ),
             _text_field("Meeting notes", placeholder="Add any detailed coaching notes...", required=False),
             _rag_field("Select the overall meeting outcome."),
         ],

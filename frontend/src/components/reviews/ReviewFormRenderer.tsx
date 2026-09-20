@@ -1,6 +1,7 @@
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
 import { flattenReviewFields, type ReviewFieldDefinition, type ReviewSectionDefinition } from '@/api/reviewInstances';
+import type { ReactNode } from 'react';
 
 /**
  * Renders whatever sections/fields a Curriculum Review template defines --
@@ -29,6 +30,7 @@ interface ReviewFormRendererProps {
   readOnly?: boolean;
   openSectionId: string;
   onOpenSectionChange: (sectionId: string) => void;
+  renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
 }
 
 function fieldAnswered(field: ReviewFieldDefinition, answers: Record<string, unknown>) {
@@ -44,7 +46,7 @@ function sectionRequiredFields(section: ReviewSectionDefinition) {
 }
 
 export function ReviewFormRenderer({
-  sections, answers, onAnswerChange, errors, readOnly, openSectionId, onOpenSectionChange,
+  sections, answers, onAnswerChange, errors, readOnly, openSectionId, onOpenSectionChange, renderFieldAddon,
 }: ReviewFormRendererProps) {
   const enabledSections = sections
     .filter((section) => section.enabled)
@@ -89,6 +91,7 @@ export function ReviewFormRenderer({
                       onAnswerChange={onAnswerChange}
                       errors={errors}
                       readOnly={readOnly}
+                      renderFieldAddon={renderFieldAddon}
                     />
                   ))}
               </div>
@@ -101,7 +104,7 @@ export function ReviewFormRenderer({
 }
 
 function ReviewFieldControl({
-  field, index, answers, onAnswerChange, errors, readOnly,
+  field, index, answers, onAnswerChange, errors, readOnly, renderFieldAddon,
 }: {
   field: ReviewFieldDefinition;
   index: number;
@@ -109,6 +112,7 @@ function ReviewFieldControl({
   onAnswerChange: (fieldId: string, value: unknown) => void;
   errors?: ReviewFieldErrorSet;
   readOnly?: boolean;
+  renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
 }) {
   const value = answers[field.id];
   const invalid = errors?.missingFieldIds.has(field.id);
@@ -146,15 +150,16 @@ function ReviewFieldControl({
         {field.required ? <span className="ml-1 text-red-500">*</span> : null}
       </label>
 
+      {renderFieldAddon?.(field)}
       <ReviewFieldInput field={field} value={value} onChange={(next) => onAnswerChange(field.id, next)} readOnly={readOnly} />
 
       {field.fieldType === 'boolean_case_block' ? (
         <div className="mt-3 space-y-3 border-l-2 border-primary-100 pl-4">
           {value === 'yes' ? (field.yesFields || []).map((child, childIndex) => (
-            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} />
+            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} renderFieldAddon={renderFieldAddon} />
           )) : null}
           {value === 'no' ? (field.noFields || []).map((child, childIndex) => (
-            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} />
+            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} renderFieldAddon={renderFieldAddon} />
           )) : null}
         </div>
       ) : null}
@@ -180,7 +185,7 @@ function ReviewFieldInput({
           value={stringValue}
           onChange={(e) => onChange(e.target.value)}
           rows={3}
-          maxLength={4000}
+          maxLength={field.configuration?.semanticKey === 'meeting_summary' ? undefined : 4000}
           disabled={readOnly}
           placeholder={String(field.configuration?.placeholder || '')}
           className="w-full resize-y rounded-lg border border-background-300 bg-white px-3.5 py-3 text-sm text-foreground-800 outline-none transition placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-200 disabled:bg-background-100"

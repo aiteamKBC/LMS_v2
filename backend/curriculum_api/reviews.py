@@ -82,6 +82,10 @@ DISPLAY_ONLY_FIELD_TYPES = ('title_description', 'action_button')
 CONDITIONAL_FIELD_TYPE = 'boolean_case_block'
 CONDITION_VALUES = ('yes', 'no')
 
+# Stable field meaning used by the canonical MCM integration. It lives in the
+# existing JSON field configuration and is frozen into each Review Instance.
+MEETING_SUMMARY_SEMANTIC_KEY = 'meeting_summary'
+
 PARTICIPANT_ROLES = ('advisor', 'employer', 'participant', 'referrer')
 
 # Every Review carries a Review Type -- its classification, chosen in the
@@ -696,7 +700,9 @@ def validate_applicability(value, programme_id, errors):
     return {'scope': scope, 'ids': identifiers}
 
 
-def validate_review_payload(payload, *, partial=False, programme_id=None):
+def validate_review_payload(
+    payload, *, partial=False, programme_id=None, current_review_type_id=None,
+):
     """Returns (cleaned, errors). ``partial`` allows PATCH to omit unset fields."""
     errors = {}
     cleaned = {}
@@ -781,6 +787,30 @@ def validate_review_payload(payload, *, partial=False, programme_id=None):
             errors['sections'] = 'sections must be a list.'
         else:
             cleaned_sections = [validate_section_payload(section, index, errors) for index, section in enumerate(sections_payload)]
+            semantic_fields = []
+
+            def _collect_semantic_fields(fields):
+                for field in fields or []:
+                    if (field.get('configuration') or {}).get('semanticKey') == MEETING_SUMMARY_SEMANTIC_KEY:
+                        semantic_fields.append(field)
+                    _collect_semantic_fields(field.get('yes_fields'))
+                    _collect_semantic_fields(field.get('no_fields'))
+
+            for section in cleaned_sections:
+                _collect_semantic_fields(section.get('fields'))
+            if semantic_fields:
+                review_type_id = (
+                    cleaned.get('review_type_id')
+                    or curriculum_views.clean_str(payload.get('reviewTypeId'))
+                    or curriculum_views.clean_str(current_review_type_id)
+                )
+                type_row = review_types.get_review_type(review_type_id) if review_type_id else None
+                if (type_row or {}).get('code') != review_types.REVIEW_TYPE_CODE_MCM:
+                    errors['sections'] = 'Only a Monthly Coaching Meeting may define a Meeting Summary field.'
+                elif len(semantic_fields) > 1:
+                    errors['sections'] = 'A Monthly Coaching Meeting can define only one Meeting Summary field.'
+                elif semantic_fields[0].get('field_type') not in ('text', 'text_multiline'):
+                    errors['sections'] = 'The Meeting Summary field must be a text field.'
     cleaned['_sections'] = cleaned_sections
 
     return cleaned, errors
@@ -883,7 +913,12 @@ def update_review(review_id, payload, *, actor='system'):
     if not row:
         return None, {'_': 'Review not found.'}
 
-    cleaned, errors = validate_review_payload(payload, partial=True, programme_id=row['programme_id'])
+    cleaned, errors = validate_review_payload(
+        payload,
+        partial=True,
+        programme_id=row['programme_id'],
+        current_review_type_id=row.get('review_type_id'),
+    )
     if errors:
         return None, errors
 

@@ -123,6 +123,16 @@ export interface ReviewRagHistoryEntry {
   rag: string;
 }
 
+export interface ReviewMeetingSummarySource {
+  fieldId: string;
+  status: 'ready' | 'edited' | 'failed' | 'unavailable' | string;
+  summaryText: string;
+  generatedAt?: string | null;
+  editedAt?: string | null;
+  /** Always a safe coach-facing state message, never a raw backend exception. */
+  message?: string;
+}
+
 export interface ReviewInstanceFormDefinition {
   pdf?: { available: boolean; reason: string } | null;
   /** Progress Review only, and null until a coach calculates it. */
@@ -130,6 +140,9 @@ export interface ReviewInstanceFormDefinition {
   /** Progress Review only -- this learner's completed Progress Reviews,
    *  newest first. */
   ragHistory?: ReviewRagHistoryEntry[];
+  /** MCM coach surface only. Omitted for Progress Reviews and unmapped legacy
+   * instances. The formal answer is still attached to the field in sections. */
+  meetingSummarySource?: ReviewMeetingSummarySource;
   instance: {
     id: string;
     reviewTemplateId: string;
@@ -233,13 +246,22 @@ export interface ReviewCompletionError {
   errors?: { status?: string[]; fields?: string[]; signatures?: ReviewParticipantRole[]; reason?: string[]; note?: string[]; startedAt?: string[] };
 }
 
-export async function completeReviewInstance(instanceId: string) {
-  const response = await coachFetch(`${instanceUrl(instanceId)}/complete`, { method: 'POST' });
+export async function completeReviewInstance(instanceId: string, answers?: Record<string, unknown>) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/complete`, {
+    method: 'POST',
+    headers: answers ? { 'Content-Type': 'application/json' } : undefined,
+    body: answers ? JSON.stringify({ answers }) : undefined,
+  });
   if (!response.ok) {
     const data = await response.json().catch(() => ({})) as ReviewCompletionError;
     throw Object.assign(new Error(data.detail || 'This review cannot be completed yet.'), { errors: data.errors });
   }
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function generateReviewMeetingSummary(instanceId: string) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/meeting-summary`, { method: 'POST' });
+  return readJsonResponse<{ meetingSummarySource: ReviewMeetingSummarySource }>(response);
 }
 
 export type ManualInProgressReasonCode =

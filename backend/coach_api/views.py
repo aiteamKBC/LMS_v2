@@ -6492,10 +6492,35 @@ def openai_meeting_summary(record: CoachCalendarEvent, transcript_text: str) -> 
         payload = json.loads(content)
     except json.JSONDecodeError as exc:
         raise RuntimeError("The AI service returned an invalid meeting summary.") from exc
-    return normalize_meeting_summary_payload(payload, source), COACH_MEETING_SUMMARY_MODEL
+    summary = normalize_meeting_summary_payload(payload, record.event_type)
+    if not clean_text(summary.get("overview")):
+        raise RuntimeError("The AI service returned a meeting summary without an overview.")
+    return summary, COACH_MEETING_SUMMARY_MODEL
 
 
-def ensure_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
+def should_reuse_coach_meeting_summary(
+    existing,
+    transcript_hash: str,
+    *,
+    retry_failed: bool = False,
+) -> bool:
+    """Keep valid/edited summaries, but allow an explicit retry of a failed row."""
+    if not existing:
+        return False
+    existing_hash = clean_text(existing[0])
+    existing_status = clean_text(existing[1])
+    if existing_status == "edited":
+        return True
+    if existing_hash != transcript_hash:
+        return False
+    return not (retry_failed and existing_status == "failed")
+
+
+def ensure_coach_meeting_summary(
+    record: CoachCalendarEvent,
+    *,
+    retry_failed: bool = False,
+) -> dict | None:
     if clean_text(record.event_type).lower() not in COACH_MEETING_SUMMARY_TYPES:
         return None
     database = router.db_for_write(CoachCalendarEvent) or "default"
@@ -6523,9 +6548,11 @@ def ensure_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
         logger.exception("Unable to inspect coach meeting summary for event_key=%s", record.event_key)
         return None
 
-    if existing and clean_text(existing[0]) == transcript_hash:
-        return stored_coach_meeting_summary(record)
-    if existing and clean_text(existing[1]) == "edited":
+    if should_reuse_coach_meeting_summary(
+        existing,
+        transcript_hash,
+        retry_failed=retry_failed,
+    ):
         return stored_coach_meeting_summary(record)
 
     now = timezone.now()
@@ -7079,7 +7106,7 @@ def coach_timetable_event_artifacts(request, event_key):
             attendance_reports=snapshot["attendanceReports"],
             attendance_tracker=snapshot["attendanceTracker"],
         )
-        meeting_summary = ensure_coach_meeting_summary(record)
+        meeting_summary = ensure_coach_meeting_summary(record, retry_failed=True)
     else:
         snapshot = stored_coach_meeting_snapshot(record)
         status_code = 200
@@ -11424,6 +11451,68 @@ def _authorized_review_instance(request, instance_id):
     return instance_row, None
 
 
+def _review_instance_calendar_record(instance_row):
+    """The exact calendar event linked in both directions to this instance."""
+    calendar_event_id = instance_row.get("calendar_event_id")
+    if not calendar_event_id:
+        return None
+    return CoachCalendarEvent.objects.filter(
+        pk=calendar_event_id,
+        review_instance_id=instance_row.get("id"),
+        owner_email__iexact=instance_row.get("coach_email") or "",
+    ).first()
+
+
+def _review_instance_meeting_summary_source(instance_row, definition=None):
+    """Stored-only coach suggestion for one explicitly mapped MCM field.
+
+    This helper never contacts Graph or OpenAI. The formal answer remains on
+    the field inside ``definition['sections']`` and always wins in the client.
+    """
+    definition = definition or curriculum_review_instances.review_instance_form_definition(instance_row)
+    if definition.get("template", {}).get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_MCM:
+        return None
+    field = curriculum_review_instances.meeting_summary_field(definition)
+    if not field:
+        return None
+    source = {
+        "fieldId": field.get("id"),
+        "status": "unavailable",
+        "summaryText": "",
+        "generatedAt": None,
+        "editedAt": None,
+        "message": "No stored AI Meeting Summary is available yet.",
+    }
+    record = _review_instance_calendar_record(instance_row)
+    if not record:
+        return source
+    stored = stored_coach_meeting_summary(record)
+    if not stored:
+        return source
+    status = clean_text(stored.get("status")) or "ready"
+    source.update({
+        "status": status,
+        "generatedAt": stored.get("generatedAt"),
+        "editedAt": stored.get("editedAt"),
+        "message": (
+            "Meeting Summary generation failed. The formal Review answer was not changed."
+            if status == "failed"
+            else ""
+        ),
+    })
+    if status in {"ready", "edited"}:
+        source["summaryText"] = meeting_summary_plain_text(stored.get("summary") or {})
+    return source
+
+
+def _coach_review_instance_definition(instance_row):
+    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    source = _review_instance_meeting_summary_source(instance_row, definition)
+    if source is not None:
+        definition["meetingSummarySource"] = source
+    return definition
+
+
 @coach_access_required
 def coach_review_instance_for_event(request):
     """Open the Curriculum Review form for a calendar event.
@@ -11555,7 +11644,7 @@ def coach_review_instance_detail(request, instance_id):
     # to flip status to in-progress here. The real trigger is a confirmed
     # Microsoft Teams attendance signal; see
     # apply_teams_attendance_status_transition.
-    return JsonResponse(curriculum_review_instances.review_instance_form_definition(instance_row))
+    return JsonResponse(_coach_review_instance_definition(instance_row))
 
 
 @coach_access_required
@@ -11574,10 +11663,77 @@ def coach_review_instance_answers(request, instance_id):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
     owner_email = authenticated_coach_email(request)
     try:
-        result = curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
+        curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
     except ValueError as exc:
         return JsonResponse({'detail': str(exc)}, status=409)
-    return JsonResponse(result)
+    return JsonResponse(_coach_review_instance_definition(
+        curriculum_review_instances.get_review_instance(instance_row["id"])
+    ))
+
+
+@coach_access_required
+def coach_review_instance_meeting_summary(request, instance_id):
+    """Explicitly acquire/generate the AI suggestion for one mapped MCM.
+
+    Passive Review reads use ``_review_instance_meeting_summary_source`` and
+    never reach Graph/OpenAI. This POST reuses the same snapshot persistence,
+    transcript extraction and repaired generation pipeline as Check Teams.
+    It never writes the formal Review answer.
+    """
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    if definition.get("template", {}).get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_MCM:
+        return JsonResponse({"detail": "Meeting Summary generation is only available on an MCM Review."}, status=404)
+    if not curriculum_review_instances.meeting_summary_field(definition):
+        return JsonResponse({
+            "detail": "This Review Instance has no explicitly mapped Meeting Summary field. Enter the summary manually.",
+        }, status=409)
+    if instance_row.get("status") in {
+        curriculum_review_instances.STATUS_AWAITING_SIGNATURE,
+        curriculum_review_instances.STATUS_COMPLETED,
+    }:
+        return JsonResponse({"detail": "This Review has already been submitted and its answers are read-only."}, status=409)
+
+    record = _review_instance_calendar_record(instance_row)
+    if not record:
+        return JsonResponse({
+            "detail": "This Review is not linked to a scheduled Teams meeting. Enter the summary manually.",
+        }, status=409)
+
+    # A valid stored artifact is idempotent. In particular, a coach-edited AI
+    # artifact must never be replaced simply because this button was pressed.
+    existing = stored_coach_meeting_summary(record)
+    if existing and clean_text(existing.get("status")) in {"ready", "edited"}:
+        return JsonResponse({"meetingSummarySource": _review_instance_meeting_summary_source(instance_row, definition)})
+
+    snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
+    if error_payload:
+        return JsonResponse(error_payload, status=status_code)
+    persist_coach_meeting_snapshots(
+        record,
+        artifacts=snapshot["artifacts"],
+        attendance_reports=snapshot["attendanceReports"],
+        attendance_tracker=snapshot["attendanceTracker"],
+    )
+    if not stored_coach_meeting_transcript_for_summary(record):
+        return JsonResponse({
+            "detail": "The Teams transcript is not available yet. Your current Review answer has not been changed.",
+        }, status=409)
+
+    generated = ensure_coach_meeting_summary(record, retry_failed=True)
+    if not generated:
+        return JsonResponse({
+            "detail": "The Meeting Summary could not be generated. Your current Review answer has not been changed.",
+        }, status=502)
+    if clean_text(generated.get("status")) == "failed":
+        return JsonResponse({
+            "detail": "Meeting Summary generation failed. Your current Review answer has not been changed.",
+        }, status=502)
+    return JsonResponse({"meetingSummarySource": _review_instance_meeting_summary_source(instance_row, definition)})
 
 
 @coach_access_required
@@ -11650,7 +11806,7 @@ def coach_review_instance_progress(request, instance_id):
         return JsonResponse({"detail": "Progress could not be calculated. Please try again."}, status=503)
 
     return JsonResponse(
-        curriculum_review_instances.review_instance_form_definition(
+        _coach_review_instance_definition(
             curriculum_review_instances.get_review_instance(instance_row["id"]),
         )
     )
@@ -11663,8 +11819,21 @@ def coach_review_instance_complete(request, instance_id):
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
+    payload = {}
+    if request.body:
+        try:
+            payload = parse_json_body(request)
+        except ValidationError as exc:
+            return validation_error_response(exc)
+    if not isinstance(payload, dict):
+        return JsonResponse({"detail": "Request body must be a JSON object."}, status=400)
+    answers = payload.get("answers")
+    if answers is not None and not isinstance(answers, dict):
+        return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
     owner_email = authenticated_coach_email(request)
-    ok, errors = curriculum_review_instances.complete_review_instance(instance_row, actor=owner_email)
+    ok, errors = curriculum_review_instances.complete_review_instance(
+        instance_row, actor=owner_email, answers=answers,
+    )
     if not ok:
         # errors is {'status': [...]} for an invalid lifecycle transition (not
         # yet in-progress, or already submitted/completed) or {'fields': [...]}
@@ -11674,7 +11843,7 @@ def coach_review_instance_complete(request, instance_id):
         return JsonResponse({"detail": detail, "errors": errors}, status=400)
     instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
     _sync_calendar_record_to_review_instance_status(instance_row)
-    return JsonResponse(curriculum_review_instances.review_instance_form_definition(instance_row))
+    return JsonResponse(_coach_review_instance_definition(instance_row))
 
 
 @coach_access_required
@@ -11733,7 +11902,7 @@ def coach_review_instance_mark_in_progress_manually(request, instance_id):
 
     updated_instance = curriculum_review_instances.get_review_instance(instance_row["id"])
     _sync_calendar_record_to_review_instance_status(updated_instance)
-    return JsonResponse(curriculum_review_instances.review_instance_form_definition(updated_instance))
+    return JsonResponse(_coach_review_instance_definition(updated_instance))
 
 
 @coach_access_required
@@ -11762,7 +11931,9 @@ def coach_review_instance_signature(request, instance_id):
     # No mirror call here: record_review_instance_signature owns the calendar
     # projection for every signature, in the same transaction as the status
     # change. One canonical transition, one mirror.
-    return JsonResponse(result)
+    return JsonResponse(_coach_review_instance_definition(
+        curriculum_review_instances.get_review_instance(instance_row["id"])
+    ))
 
 
 def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:

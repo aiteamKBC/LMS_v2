@@ -22,6 +22,7 @@ from .views import (
     coach_review_instance_detail,
     coach_review_instance_for_event,
     coach_review_instance_mark_in_progress_manually,
+    coach_review_instance_meeting_summary,
     coach_review_instance_signature,
     coach_review_learner_addition_templates,
     coach_review_learner_additions_create,
@@ -82,6 +83,7 @@ urlpatterns = [
     path('coach/reviews/learner-additions', coach_review_learner_additions_create, name='coach-review-learner-additions-create'),
     path('coach/reviews/<str:instance_id>', coach_review_instance_detail, name='coach-review-instance-detail'),
     path('coach/reviews/<str:instance_id>/answers', coach_review_instance_answers, name='coach-review-instance-answers'),
+    path('coach/reviews/<str:instance_id>/meeting-summary', coach_review_instance_meeting_summary, name='coach-review-instance-meeting-summary'),
     path('coach/reviews/<str:instance_id>/complete', coach_review_instance_complete, name='coach-review-instance-complete'),
     # Progress Review only: freeze this instance's learner-progress figures.
     # An explicit coach action -- no other route ever recalculates them.

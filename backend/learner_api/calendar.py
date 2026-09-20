@@ -772,7 +772,7 @@ def learner_calendar_event_review(request, kind, pk, event_key):
             definition = review_instances.review_instance_form_definition(instance)
             if not definition['template']['visibleTo'].get('participant', True):
                 return _error('This review is not visible to the learner.', 403)
-            return JsonResponse(definition)
+            return JsonResponse(_learner_visible_review_definition(definition))
         template = reviews.get_review_template_row(template_id, include_deleted=bool(record))
         if template is None:
             return _error('Review template not found.', 404)
@@ -791,7 +791,22 @@ def learner_calendar_event_review(request, kind, pk, event_key):
     definition = review_instances.review_instance_form_definition(instance)
     if not definition['template']['visibleTo'].get('participant', True):
         return _error('This review is not visible to the learner.', 403)
-    return JsonResponse(definition)
+    return JsonResponse(_learner_visible_review_definition(definition))
+
+
+def _learner_visible_review_definition(definition):
+    """Hide the formal MCM summary until the coach submits the Review."""
+    if (
+        (definition.get('template') or {}).get('reviewTypeCode') == 'mcm'
+        and (definition.get('instance') or {}).get('status') not in {'awaiting-signature', 'completed'}
+    ):
+        from curriculum_api.review_instances import meeting_summary_field
+        field = meeting_summary_field(definition)
+        if field:
+            field['answer'] = None
+            field['answeredBy'] = None
+            field['answeredAt'] = None
+    return definition
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -829,7 +844,7 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
     if not record:
         return _error("Calendar event not found for this learner.", 404)
     from coach_api.views import (
-        apply_teams_attendance_status_transition, ensure_coach_meeting_summary,
+        apply_teams_attendance_status_transition,
         fetch_coach_meeting_graph_snapshot, persist_coach_meeting_snapshots,
     )
     snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
@@ -846,19 +861,18 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
         attendance_reports=snapshot["attendanceReports"],
         attendance_tracker=snapshot["attendanceTracker"],
     )
-    meeting_summary = ensure_coach_meeting_summary(record)
     # Learners may watch the formal meeting recording, but transcripts remain
     # staff-only because they can contain sensitive discussion notes.
     learner_artifacts = [
         artifact for artifact in snapshot["artifacts"]
-        if _s(artifact.get("artifact_type")).lower() in (
-            {"recording", "transcript"} if record.event_type == "mcr" else {"recording"}
-        )
+        if _s(artifact.get("artifact_type")).lower() == "recording"
     ]
     return JsonResponse({
         "artifacts": learner_artifacts,
         "attendance": snapshot["attendance"],
-        "meetingSummary": meeting_summary,
+        # Mutable AI drafts never cross the learner boundary. The lifecycle-
+        # gated formal answer is returned by learner_calendar_event_review.
+        "meetingSummary": None,
         "errors": snapshot["errors"],
         "partial": snapshot["partial"],
         "storage": storage,
@@ -872,7 +886,7 @@ def learner_calendar_event_artifact_content(request, kind, pk, event_key, artifa
     record = _learner_calendar_record(kind, pk, event_key)
     if not record:
         return _error("Calendar event not found for this learner.", 404)
-    allowed_types = {"recording", "transcript"} if record.event_type == "mcr" else {"recording"}
+    allowed_types = {"recording"}
     if _s(artifact_type).lower() not in allowed_types:
         return _error("Only meeting recordings are available to learners.", 403)
     from coach_api.views import coach_meeting_artifact_content_response

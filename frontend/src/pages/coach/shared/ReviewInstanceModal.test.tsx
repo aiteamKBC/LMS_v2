@@ -1,14 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
-import { calculateReviewInstanceProgress, completeReviewInstance, downloadReviewInstancePdf, fetchReviewInstanceForm, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
+import { calculateReviewInstanceProgress, completeReviewInstance, downloadReviewInstancePdf, fetchReviewInstanceForm, generateReviewMeetingSummary, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
 vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/reviewInstances')>(),
   fetchReviewInstanceForm: vi.fn(), saveReviewInstanceAnswers: vi.fn(), completeReviewInstance: vi.fn(), signReviewInstance: vi.fn(),
-  downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(),
+  downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(), generateReviewMeetingSummary: vi.fn(),
 }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ signatoryName, onCommit }: { signatoryName: string; onCommit: (signature: string) => void }) => <div>
@@ -33,7 +33,15 @@ function definition(status = 'in-progress'): ReviewInstanceFormDefinition {
  *  review type via the stable `reviewTypeCode` -- never by name/title. */
 function mcmDefinition(status = 'awaiting-signature'): ReviewInstanceFormDefinition {
   const base = definition(status);
-  return { ...base, template: { ...base.template, reviewTypeCode: 'mcm' }, pdf: { available: false, reason: 'The PDF is available after the learner and all required parties have signed.' } };
+  return {
+    ...base,
+    template: { ...base.template, reviewTypeCode: 'mcm' },
+    sections: [...base.sections, { id: 'summary-section', title: 'Meeting Summary', estimatedMinutes: 0, displayOrder: 2, enabled: true,
+      fields: [{ id: 'summary-field', title: 'Summary', fieldType: 'text_multiline', required: true, displayOrder: 1,
+        configuration: { semanticKey: 'meeting_summary' }, answer: null }] }],
+    meetingSummarySource: { fieldId: 'summary-field', status: 'ready', summaryText: 'AI generated coaching summary.' },
+    pdf: { available: false, reason: 'The PDF is available after the learner and all required parties have signed.' },
+  };
 }
 
 function mount() {
@@ -64,12 +72,14 @@ describe('coach review signature workflow', () => {
   it('keeps the submitted review open and focuses the coach signature without requiring a second visit', async () => {
     const { onStatusChange, onClose } = mount();
     await screen.findByDisplayValue('Review the next module');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Complete review' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Complete review' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send for signatures' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Send for signatures' }));
     expect(await screen.findByRole('heading', { name: 'Your coach signature is required' })).toBeVisible();
+    expect(completeReviewInstance).toHaveBeenCalledWith('instance-1', { 'field-1': 'Review the next module' });
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
     expect(onStatusChange).toHaveBeenCalledWith('awaiting-signature');
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send for signatures' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox')).toBeDisabled();
   });
@@ -129,8 +139,8 @@ describe('coach review signature workflow', () => {
     draft.sections[0].fields[0].answer = '';
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(draft);
     mount();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Complete review' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Complete review' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send for signatures' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Send for signatures' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Please complete every required field');
     expect(completeReviewInstance).not.toHaveBeenCalled();
     expect(signReviewInstance).not.toHaveBeenCalled();
@@ -143,7 +153,7 @@ describe('coach review signature workflow', () => {
     mount();
     expect(await screen.findByText('Your part is complete. The review is waiting for the remaining required signatures.')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Confirm coach signature' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send for signatures' })).not.toBeInTheDocument();
   });
 
   it('shows direct completion for templates with no required signatures', async () => {
@@ -163,6 +173,83 @@ describe('coach review signature workflow', () => {
     expect(onStatusChange).toHaveBeenCalledWith('completed');
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Confirm coach signature' })).not.toBeInTheDocument();
+  });
+});
+
+describe('MCM Meeting Summary integration', () => {
+  it('loads a stored AI suggestion into an empty mapped editor without saving it', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('in-progress'));
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    expect(await screen.findByDisplayValue('AI generated coaching summary.')).toBeVisible();
+    expect(screen.getByText(/not saved automatically/i)).toBeVisible();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+    expect(generateReviewMeetingSummary).not.toHaveBeenCalled();
+  });
+
+  it('keeps the existing formal answer authoritative over the AI suggestion', async () => {
+    const existing = mcmDefinition('in-progress');
+    existing.sections[1].fields[0].answer = 'Coach-approved draft wording.';
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    expect(await screen.findByDisplayValue('Coach-approved draft wording.')).toBeVisible();
+    expect(screen.queryByDisplayValue('AI generated coaching summary.')).not.toBeInTheDocument();
+  });
+
+  it('does not replace a deliberately saved blank formal answer on open', async () => {
+    const existing = mcmDefinition('in-progress');
+    existing.sections[1].fields[0].answer = '';
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    await screen.findByText('AI Meeting Summary');
+    expect(screen.getAllByRole('textbox').at(-1)).toHaveValue('');
+    expect(screen.queryByDisplayValue('AI generated coaching summary.')).not.toBeInTheDocument();
+  });
+
+  it('requires confirmation before generated text replaces editor content', async () => {
+    const existing = mcmDefinition('in-progress');
+    existing.sections[1].fields[0].answer = 'Keep this coach wording.';
+    existing.meetingSummarySource = { fieldId: 'summary-field', status: 'unavailable', summaryText: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    vi.mocked(generateReviewMeetingSummary).mockResolvedValue({
+      meetingSummarySource: { fieldId: 'summary-field', status: 'ready', summaryText: 'New generated wording.' },
+    });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Generate from Teams' }));
+    expect(await screen.findByRole('button', { name: 'Replace with generated summary' })).toBeVisible();
+    expect(screen.getByDisplayValue('Keep this coach wording.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace with generated summary' }));
+    expect(screen.getByDisplayValue('New generated wording.')).toBeVisible();
+  });
+
+  it('supports a manually entered summary when no AI artifact is available', async () => {
+    const existing = mcmDefinition('in-progress');
+    existing.meetingSummarySource = { fieldId: 'summary-field', status: 'unavailable', summaryText: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(existing);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    const summaryEditor = screen.getAllByRole('textbox').at(-1)!;
+    fireEvent.change(summaryEditor, { target: { value: 'Coach-written summary without AI.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(
+      'instance-1',
+      expect.objectContaining({ 'summary-field': 'Coach-written summary without AI.' }),
+    ));
+    expect(generateReviewMeetingSummary).not.toHaveBeenCalled();
+  });
+
+  it('keeps the mapped summary editable beyond the unrelated 4,000 character field limit', async () => {
+    const existing = mcmDefinition('in-progress');
+    existing.meetingSummarySource = { fieldId: 'summary-field', status: 'ready', summaryText: 'S'.repeat(4500) };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    const editor = await screen.findByDisplayValue('S'.repeat(4500));
+    expect(editor).not.toHaveAttribute('maxLength');
   });
 });
 
