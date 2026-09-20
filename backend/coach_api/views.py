@@ -2050,6 +2050,77 @@ def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newe
     return [entry for entry in list_or_empty(getattr(row, "activity_feed", [])) if isinstance(entry, dict)]
 
 
+def latest_learning_activity(progress_entries: list[dict], activity_entries: list[dict]) -> dict | None:
+    """Return the newest real learner action across progress and activity feeds."""
+    candidates = []
+    for entry in [*progress_entries, *activity_entries]:
+        if not isinstance(entry, dict):
+            continue
+        occurred_at = next(
+            (
+                parse_date_value(entry.get(field))
+                for field in ("submittedAt", "at", "completedAt", "startedAt", "date", "createdAt")
+                if entry.get(field)
+            ),
+            None,
+        )
+        if not occurred_at:
+            continue
+        if isinstance(occurred_at, date) and not isinstance(occurred_at, datetime):
+            sort_value = datetime.combine(occurred_at, time.min)
+        else:
+            sort_value = occurred_at.replace(tzinfo=None) if occurred_at.tzinfo else occurred_at
+        title = clean_text(
+            entry.get("componentTitle")
+            or entry.get("title")
+            or entry.get("quizTitle")
+            or entry.get("activityTitle")
+        ) or clean_text(entry.get("kind")) or "Learning activity"
+        candidates.append((sort_value, occurred_at, title))
+
+    if not candidates:
+        return None
+    _, occurred_at, title = max(candidates, key=lambda candidate: candidate[0])
+    return {
+        "date": occurred_at.isoformat(),
+        "display": format_date_value(occurred_at),
+        "label": title,
+    }
+
+
+def caseload_latest_learning_activities(rows) -> dict[int, dict]:
+    """Bulk-load latest LMS activity so dashboard rows do not issue N requests."""
+    learner_ids = [int(row.id) for row in rows or [] if getattr(row, "id", None) is not None]
+    if not learner_ids:
+        return {}
+    activities: dict[int, dict] = {}
+    entries = (
+        LearnerProgressEntry.objects
+        .filter(learner_id__in=learner_ids)
+        .only(
+            "learner_id", "kind", "component_title", "module_title", "week_title",
+            "submitted_at", "started_at",
+        )
+        .order_by("learner_id", "-submitted_at", "-started_at", "-id")
+    )
+    for entry in entries:
+        learner_id = int(entry.learner_id)
+        candidate = latest_learning_activity([progress_entry_history_record(entry)], [])
+        current = activities.get(learner_id)
+        if candidate and (not current or candidate["date"] > current["date"]):
+            activities[learner_id] = candidate
+    return activities
+
+
+def apply_latest_learning_activity(payload: dict, activity: dict | None) -> dict:
+    if not activity:
+        return payload
+    payload["lastActivityDate"] = activity["date"]
+    payload["lastActivity"] = activity["display"]
+    payload["lastActivityLabel"] = activity["label"]
+    return payload
+
+
 def fetch_caseload_aptem_ids(learners) -> dict[int, int]:
     """LearnerProfile id -> Aptem id, loading only the columns that needs.
 
@@ -2373,6 +2444,7 @@ def serialize_caseload_learner(
 
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = learner_activity_feed_entries(row)
+    latest_activity = latest_learning_activity(progress_entries, activity_entries)
     otjh_completed_entries = build_otjh_completed_entries(progress_entries, activity_entries, row.training_plan)
     planned_components = int(live_snapshot.get("componentsPlanned") or count_planned_components(row.training_plan))
     completed_components = count_completed_components(progress_entries)
@@ -2453,7 +2525,7 @@ def serialize_caseload_learner(
     current_week = current_week_label(row)
     components_target = components_target_to_date(row)
 
-    return {
+    return apply_latest_learning_activity({
         "id": str(row.id),
         "name": clean_text(row.username) or "Unknown learner",
         "initials": build_initials(row.username),
@@ -2522,7 +2594,7 @@ def serialize_caseload_learner(
         "coachEmail": clean_text(row.coach_email) or None,
         "rawProgramStatus": program_status or "--",
         "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
-    }
+    }, latest_activity)
 
 
 def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) -> dict:
@@ -9947,6 +10019,8 @@ def dashboard_attendance_rows(
             "sessions": metrics["sessions"],
             "present": metrics["present"],
             "absent": metrics["absent"],
+            "lastSession": format_date_value(metrics.get("lastSessionDate")),
+            "lastSessionDate": metrics.get("lastSessionDate"),
         })
     return payload
 
@@ -10133,6 +10207,36 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
     ]
 
 
+def canonical_attendance_detail_rows(source) -> tuple[dict | None, list[dict]]:
+    """Return detail rows from the exact register used by the learner page."""
+    from learner_api.attendance_lectures import lecture_register
+
+    summary = _summarize_attendance(lecture_register(source))
+    if not summary:
+        return None, []
+
+    sessions = [
+        {
+            "learnerId": clean_text(summary.get("learnerId")),
+            "learnerName": clean_text(summary.get("learnerName")) or "Learner",
+            "learnerEmail": clean_text(summary.get("learnerEmail")),
+            "sessionId": clean_text(item.get("id")) or "--",
+            "sessionTitle": clean_text(item.get("title")) or "--",
+            "sessionType": clean_text(item.get("sessionType")) or "--",
+            "sessionDate": clean_text(item.get("date")),
+            "sessionDateLabel": format_date_value(item.get("date")),
+            "startTime": clean_text(item.get("startTime")) or "--",
+            "endTime": clean_text(item.get("endTime")) or "--",
+            "status": "absent" if item.get("status") == "missed" else "present",
+            "reason": "--",
+            "catchupCompleted": False,
+            "attendedSeconds": None,
+        }
+        for item in summary.get("sessionHistory", [])
+    ]
+    return summary, sessions
+
+
 @coach_access_required
 @require_GET
 def coach_attendance_details(request):
@@ -10170,7 +10274,11 @@ def coach_attendance_details(request):
         if not learner:
             return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
 
-        sessions = fetch_attendance_detail_rows(learner)
+        profile_row = next(row for row in caseload_rows if str(row.id) == str(learner["id"]))
+        source = getattr(profile_row, "_caseload_source", None)
+        if source is None:
+            return JsonResponse({"detail": "Learner attendance source is unavailable."}, status=404)
+        summary, sessions = canonical_attendance_detail_rows(source)
     except Exception:
         logger.exception("coach_attendance_details_failed coach_account_id=%s learner_id=%s", owner_email, learner_id)
         return coach_error(
@@ -10180,8 +10288,8 @@ def coach_attendance_details(request):
             status=503,
         )
 
-    present = sum(1 for item in sessions if item["status"] == "present")
-    absent = sum(1 for item in sessions if item["status"] == "absent")
+    present = summary["present"] if summary else 0
+    absent = summary["absent"] if summary else 0
     return JsonResponse(
         {
             "learner": {
@@ -10192,10 +10300,10 @@ def coach_attendance_details(request):
                 "group": learner.get("group"),
             },
             "summary": {
-                "total": len(sessions),
+                "total": summary["sessions"] if summary else 0,
                 "present": present,
                 "absent": absent,
-                "unknown": len(sessions) - present - absent,
+                "unknown": 0,
             },
             "sessions": sessions,
         }
@@ -10358,10 +10466,12 @@ def coach_dashboard(request):
         try:
             rows = fetch_caseload_dashboard_profiles(owner_email)
             learners = [serialize_caseload_dashboard_learner(row) for row in rows]
+            latest_activities = caseload_latest_learning_activities(rows)
             audit_totals = caseload_audit_hour_totals(rows)
             ksb_counts = caseload_evidenced_ksb_counts(rows)
             canonical_metrics = caseload_canonical_metrics(rows)
             for row, learner in zip(rows, learners):
+                apply_latest_learning_activity(learner, latest_activities.get(int(row.id)))
                 apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
                 apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
                 apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))

@@ -217,7 +217,19 @@ export default function LearnerCaseFile() {
       case 'coach-notes':
         return <DocumentsTab data={data} />;
       case 'support':
-        return <LearningPlanTab data={data} onOpenNotes={() => setActiveTab('coach-notes')} />;
+        return <div className="space-y-5">
+          {dashboardKind ? <DashboardTrainingPlan
+            kind={dashboardKind}
+            learnerId={data.enrolmentId || data.learnerId}
+            plan={dashboardPlan}
+            programmeStartDate={data.detail?.programmeStartDate}
+            programmeEndDate={data.detail?.programmeEndDate}
+            canOpenActivities
+            showRewards={false}
+            timelineOnly
+          /> : null}
+          <LearningPlanTab data={data} onOpenNotes={() => setActiveTab('coach-notes')} />
+        </div>;
       case 'otjh':
         return <OTJHTab data={data} />;
       case 'ksbs':
@@ -424,7 +436,10 @@ function ReferenceProgrammeContent({ data }: { data: CoachLearnerCaseFileData })
   );
 }
 
-function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearnerCaseFileData; onViewEvidence: (evidence: EvidencePreviewTarget) => void }) {
+function ReferenceProgressContent({ data, onViewEvidence }: {
+  data: CoachLearnerCaseFileData;
+  onViewEvidence: (evidence: EvidencePreviewTarget) => void;
+}) {
   const [activeKsbCategory, setActiveKsbCategory] = useState('All');
   const [ksbSearch, setKsbSearch] = useState('');
   const [ksbSortKey, setKsbSortKey] = useState<KsbSortKey>('code');
@@ -487,7 +502,9 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
   }, [primaryKsbs.length, data.programme]);
 
   const touched = new Set(data.touchedKsbCodes.map((code) => code.toUpperCase()));
-  const sourceKsbs = buildDisplayKsbs(data, fallbackKsbs);
+  const mappedKsbCodes = new Set(data.mappedKsbCodes.map((code) => code.toUpperCase()));
+  const sourceKsbs = buildDisplayKsbs(data, fallbackKsbs)
+    .filter((item) => mappedKsbCodes.size === 0 || mappedKsbCodes.has(String(item.code || '').toUpperCase()));
   const ksbs = sourceKsbs
     .map((item) => {
       const code = String(item.code || '').toUpperCase();
@@ -504,7 +521,11 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
     })
     .sort((left, right) => left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' }));
   const linkedCount = ksbs.filter((item) => item.linked).length;
-  const unlinkedCount = Math.max(0, ksbs.length - linkedCount);
+  const canonicalKsbTotal = data.ksbTotalCount;
+  const summaryKsbTotal = canonicalKsbTotal != null ? Math.max(0, canonicalKsbTotal) : ksbs.length;
+  const summaryKsbCompleted = Math.min(summaryKsbTotal, Math.max(0, data.ksbEvidencedCount ?? linkedCount));
+  const summaryKsbRemaining = Math.max(0, summaryKsbTotal - summaryKsbCompleted);
+  const progressByCode = new Map(data.ksbCodeProgress.map((item) => [item.code.toUpperCase(), item]));
   const categoryOrder = ['Knowledge', 'Skills', 'Behaviours', 'Other'];
   const categoryOptions = Array.from(new Set(ksbs.map((item) => item.category))).sort((left, right) => {
     const leftIndex = categoryOrder.indexOf(left);
@@ -515,9 +536,18 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
   });
   const categorySummary = categoryOptions.map((category) => {
     const items = ksbs.filter((item) => item.category === category);
-    const linked = items.filter((item) => item.linked).length;
-    return { category, total: items.length, linked };
+    const totals = items.reduce((result, item) => {
+      const progress = progressByCode.get(item.code);
+      result.total += progress?.total ?? 1;
+      result.completed += progress?.completed ?? (item.linked ? 1 : 0);
+      return result;
+    }, { completed: 0, total: 0 });
+    return { category, total: totals.total, linked: totals.completed };
   });
+  const categoryCodeCounts = new Map(categoryOptions.map((category) => [
+    category,
+    ksbs.filter((item) => item.category === category).length,
+  ]));
   const normalizedSearch = ksbSearch.trim().toLowerCase();
   const filteredKsbs = ksbs.filter((item) => {
     const matchesCategory = activeKsbCategory === 'All' || item.category === activeKsbCategory;
@@ -566,18 +596,18 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
         </div>
         <ProfileProgress label="OTJH Progress" value={otjh.progressPercent} color="bg-primary-600" />
       </ReferencePanel>
-      <ReferencePanel title="KSB Detailed Breakdown" subtitle="View your KSB progress by category and track evidence coverage." icon="ri-stack-line" tone="primary">
+      <ReferencePanel title="KSB Detailed Breakdown" subtitle="View your KSB progress and browse evidence coverage by framework code." icon="ri-stack-line" tone="primary">
         {fallbackKsbsLoading && ksbs.length === 0 ? <div className="p-2"><RowsSkeleton rows={4} avatar={false} /></div> : ksbs.length === 0 ? <ProfileEmpty text="No learner KSB snapshot or programme KSB framework is available yet." /> : (
           <div className="space-y-5">
             <div className={styles.ksbSummary}>
-              <KsbOverviewCard icon="ri-stack-line" label="Total KSBs" value={String(ksbs.length)} tone="primary" />
-              <KsbOverviewCard icon="ri-links-line" label="Evidence linked" value={String(linkedCount)} tone="emerald" />
-              <KsbOverviewCard icon="ri-focus-3-line" label="Not evidenced" value={String(unlinkedCount)} tone="muted" />
+              <KsbOverviewCard icon="ri-stack-line" label="Total KSB points" value={String(summaryKsbTotal)} tone="primary" />
+              <KsbOverviewCard icon="ri-links-line" label="Points achieved" value={String(summaryKsbCompleted)} tone="emerald" />
+              <KsbOverviewCard icon="ri-focus-3-line" label="Points remaining" value={String(summaryKsbRemaining)} tone="muted" />
             </div>
 
             <div>
-              <p className="text-[12px] font-bold text-foreground-900">Coverage by category</p>
-              <p className="mt-1 text-[11px] text-foreground-500">Each section shows how many KSBs are linked to learner evidence.</p>
+              <p className="text-[12px] font-bold text-foreground-900">KSB points by category</p>
+              <p className="mt-1 text-[11px] text-foreground-500">Each category shows completed activity points out of the learner's 40 mapped KSB points.</p>
               <div className={styles.coverageGrid}>
                 {categorySummary.map((group) => (
                   <div key={group.category} className={styles.coverageCard}>
@@ -604,7 +634,7 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
           <div className={styles.filterPills}>
             {['All', ...categoryOptions].map((category) => (
               <button key={category} type="button" className={cn(styles.filterPill, activeKsbCategory === category && styles.filterPillActive)} onClick={() => setActiveKsbCategory(category)}>
-                {category} ({category === 'All' ? ksbs.length : categorySummary.find((group) => group.category === category)?.total || 0})
+                {category} ({category === 'All' ? ksbs.length : categoryCodeCounts.get(category) || 0})
               </button>
             ))}
           </div>
@@ -814,7 +844,7 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
   const [attendanceStatus, setAttendanceStatus] = useState('all');
   const [attendanceMonth, setAttendanceMonth] = useState('all');
   const [detailsLoading, setDetailsLoading] = useState(false);
-  const [detailsLoaded, setDetailsLoaded] = useState(false);
+  const [, setDetailsLoaded] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -877,8 +907,10 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
   }, [attendance?.id, attendance?.email, attendance?.hasAttendance, data.email]);
 
   if (!attendance || !attendance.hasAttendance) return <ReferencePanel title="Attendance" icon="ri-calendar-check-line" tone="primary"><ProfileEmpty text="Live attendance data is not available for this learner." /></ReferencePanel>;
-  const missedSessions = attendanceSessions.filter((session) => session.status === 'absent' && !session.catchupCompleted);
-  const outstandingAbsences = detailsLoaded ? missedSessions.length : attendance.absent;
+  const summarySessions = data.attendanceSessionCount ?? attendance.sessions;
+  const summaryPresent = data.attendancePresentCount ?? attendance.present;
+  const summaryAbsent = data.attendanceAbsentCount ?? attendance.absent;
+  const outstandingAbsences = summaryAbsent;
   const monthOptions = Array.from(new Set(attendanceSessions
     .map((session) => session.sessionDate?.slice(0, 7))
     .filter((month): month is string => Boolean(month))))
@@ -896,9 +928,9 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
   return (
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <BigMetric value={formatAttendanceFraction(attendance.present, attendance.sessions)} label="Attendance" tone="primary" />
-        <BigMetric value={String(attendance.sessions ?? '--')} label="Total Sessions" tone="muted" />
-        <BigMetric value={String(attendance.present ?? '--')} label="Attended" tone="emerald" />
+        <BigMetric value={formatAttendanceFraction(summaryPresent, summarySessions)} label="Attendance" tone="primary" />
+        <BigMetric value={String(summarySessions ?? '--')} label="Total Sessions" tone="muted" />
+        <BigMetric value={String(summaryPresent ?? '--')} label="Attended" tone="emerald" />
         <BigMetric value={String(outstandingAbsences ?? '--')} label="Absent" tone="red" />
         <BigMetric value={String(outstandingAbsences ?? '--')} label="Outstanding Absences" tone="red" />
       </div>

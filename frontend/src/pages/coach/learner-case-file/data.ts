@@ -254,11 +254,15 @@ export interface CoachLearnerCaseFileData {
   attendanceRate: number | null;
   attendancePresentCount: number | null;
   attendanceSessionCount: number | null;
+  attendanceAbsentCount: number | null;
   otjhCompleted: number | null;
   otjhTarget: number | null;
   otjhPlanned: number | null;
   ksbProgress: number | null;
   ksbEvidencedCount: number | null;
+  ksbTotalCount: number | null;
+  mappedKsbCodes: string[];
+  ksbCodeProgress: Array<{ code: string; completed: number; total: number }>;
   evidenceCount: number | null;
   startDate: string;
   gatewayReviewDate: string;
@@ -706,6 +710,9 @@ type CaseFileLearnerMetrics = {
   planned: number | null;
   actual: number | null;
   ksbCompleted: number | null;
+  ksbTotal: number | null;
+  ksbCodes: string[];
+  ksbCodeProgress: Array<{ code: string; completed: number; total: number }>;
   ksbProgress: number | null;
 };
 
@@ -722,6 +729,13 @@ async function fetchCaseFileMetrics(kind: LearnerKind | null, enrolmentId: strin
       planned: metrics.otjh.planned,
       actual: metrics.otjh.actual,
       ksbCompleted: metrics.ksb.completed,
+      ksbTotal: metrics.ksb.total,
+      ksbCodes: (metrics.ksb.codes || []).map((item) => item.code),
+      ksbCodeProgress: (metrics.ksb.codes || []).map((item) => ({
+        code: item.code,
+        completed: item.completed,
+        total: item.total,
+      })),
       ksbProgress: metrics.ksb.percent,
     };
   } catch {
@@ -1129,6 +1143,7 @@ function buildCaseFileData(args: {
     attendanceRate: args.liveAttendance?.attendanceRate ?? args.attendance?.attendance ?? null,
     attendancePresentCount: args.liveAttendance?.present ?? args.attendance?.present ?? null,
     attendanceSessionCount: args.liveAttendance?.sessions ?? args.attendance?.sessions ?? null,
+    attendanceAbsentCount: args.liveAttendance?.absent ?? args.attendance?.absent ?? null,
     otjhCompleted: detailCompletedHours ?? args.snapshot?.otjhCompleted ?? args.attendance?.otjhCompleted ?? null,
     otjhTarget: detailTargetHours ?? args.snapshot?.otjhTarget ?? args.attendance?.otjhTarget ?? null,
     otjhPlanned: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? null,
@@ -1136,6 +1151,9 @@ function buildCaseFileData(args: {
     // Counts remain available to the detailed KSB section, while the header
     // consistently uses the canonical percentage in `ksbProgress`.
     ksbEvidencedCount: args.learnerMetrics?.ksbCompleted ?? null,
+    ksbTotalCount: args.learnerMetrics?.ksbTotal ?? null,
+    mappedKsbCodes: args.learnerMetrics?.ksbCodes ?? [],
+    ksbCodeProgress: args.learnerMetrics?.ksbCodeProgress ?? [],
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
     startDate: args.detail?.programmeStartDate || args.snapshot?.startDate || '--',
     gatewayReviewDate: args.snapshot?.gatewayReviewDate || '--',

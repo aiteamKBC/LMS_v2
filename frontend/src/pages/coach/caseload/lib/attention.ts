@@ -252,8 +252,8 @@ function computeUrgency(tier: AttentionTier, reasons: AttentionReason[], otjhDel
 export function buildLearnerInsight(learner: Learner, today: Date): LearnerInsight {
   const gatewayDate = parseDisplayDate(learner.gatewayReviewDate);
   const gatewayDaysAway = gatewayDate ? daysBetween(today, gatewayDate) : null;
-  const lastSession = parseDisplayDate(learner.attendanceLastSessionDate);
-  const lastActivityDaysAgo = lastSession ? Math.max(0, -daysBetween(today, lastSession)) : null;
+  const lastActivity = parseDisplayDate(learner.lastActivityDate || learner.attendanceLastSessionDate);
+  const lastActivityDaysAgo = lastActivity ? Math.max(0, -daysBetween(today, lastActivity)) : null;
 
   // `otjhProgressHours` is Django's own "completed - target" column. When it is
   // blank the same figure comes straight from the two hour totals.

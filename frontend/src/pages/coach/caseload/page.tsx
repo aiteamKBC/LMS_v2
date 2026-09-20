@@ -364,7 +364,7 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean 
         case 'ksb': return numeric(learner.ksbProgress, learner.ksbProgressAvailable);
         case 'components': return learner.componentsPlanned ? numeric(((learner.componentsCompleted ?? 0) / learner.componentsPlanned) * 100) : null;
         case 'attendance': return numeric(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable);
-        case 'activity': return date([learner.attendanceLastSession, learner.lastSubmittedEvidence, learner.lastContact].find(hasValue));
+        case 'activity': return date([learner.lastActivity, learner.attendanceLastSession, learner.lastSubmittedEvidence, learner.lastContact].find(hasValue));
         case 'progress-review': return date(learner.lastProgressReview);
         case 'monthly-coaching': return date(learner.lastReview);
         default: return insights.get(learner.id)?.urgency ?? 0;

@@ -38,6 +38,7 @@ from coach_api.views import (
     caseload_audit_hour_totals,
     caseload_aptem_ids,
     caseload_evidenced_ksb_counts,
+    canonical_attendance_detail_rows,
     dashboard_attendance_rows,
     dashboard_review_history,
     fetch_caseload_learner_profiles,
@@ -45,6 +46,7 @@ from coach_api.views import (
     fetch_source_schedule_rows,
     graph_organizer_mailbox,
     iterate_generated_schedule_dates,
+    latest_learning_activity,
     monthly_event_is_between,
     reported_minutes,
     route_absence_report_evidence,
@@ -125,7 +127,7 @@ class DashboardAttendanceTests(SimpleTestCase):
 
     @patch("coach_api.views.caseload_canonical_attendance")
     def test_rows_carry_the_register_rate(self, summaries):
-        summaries.return_value = {7: {"sessions": 62, "present": 59, "absent": 3, "attendanceRate": 95}}
+        summaries.return_value = {7: {"sessions": 62, "present": 59, "absent": 3, "attendanceRate": 95, "lastSessionDate": "2026-09-18"}}
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
         learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
 
@@ -135,6 +137,7 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.assertEqual(payload[0]["attendance"], 95)
         self.assertTrue(payload[0]["hasAttendance"])
         self.assertEqual(payload[0]["present"], 59)
+        self.assertEqual(payload[0]["lastSessionDate"], "2026-09-18")
 
     @patch("coach_api.views.caseload_canonical_attendance", return_value={})
     def test_learners_with_no_register_are_left_out(self, summaries):
@@ -165,6 +168,44 @@ class DashboardAttendanceTests(SimpleTestCase):
         with patch("coach_api.views.caseload_canonical_attendance") as summaries:
             self.assertEqual(dashboard_attendance_rows([], []), [])
         summaries.assert_not_called()
+
+
+class AttendanceDetailRowsTests(SimpleTestCase):
+    @patch("learner_api.attendance_lectures.lecture_register", return_value=[{"attendance_status": "unused"}])
+    @patch("coach_api.views._summarize_attendance")
+    def test_details_use_the_same_two_of_three_summary_as_connected_pages(self, summarize, register):
+        summarize.return_value = {
+            "learnerId": 7,
+            "learnerName": "A Learner",
+            "learnerEmail": "learner@example.com",
+            "sessions": 3,
+            "present": 2,
+            "absent": 1,
+            "sessionHistory": [
+                {"id": "one", "date": "2026-09-14", "title": "Session 1", "sessionType": "live_session", "status": "attended", "startTime": "09:00", "endTime": "10:00"},
+                {"id": "two", "date": "2026-09-07", "title": "Session 2", "sessionType": "live_session", "status": "missed", "startTime": "09:00", "endTime": "10:00"},
+                {"id": "three", "date": "2026-09-02", "title": "Session 3", "sessionType": "live_session", "status": "late", "startTime": "09:00", "endTime": "10:00"},
+            ],
+        }
+        source = SimpleNamespace(id=7)
+
+        summary, sessions = canonical_attendance_detail_rows(source)
+
+        register.assert_called_once_with(source)
+        self.assertEqual((summary["present"], summary["sessions"]), (2, 3))
+        self.assertEqual([session["status"] for session in sessions], ["present", "absent", "present"])
+
+
+class LatestLearnerActivityTests(SimpleTestCase):
+    def test_newest_action_wins_across_progress_and_activity_feeds(self):
+        latest = latest_learning_activity(
+            [{"kind": "assignment", "componentTitle": "Older assignment", "submittedAt": "2026-09-17T10:00:00Z"}],
+            [{"kind": "quiz", "title": "Latest quiz", "completedAt": "2026-09-19T12:30:00Z"}],
+        )
+
+        self.assertEqual(latest["date"], "2026-09-19T12:30:00+00:00")
+        self.assertEqual(latest["display"], "19 Sep 2026")
+        self.assertEqual(latest["label"], "Latest quiz")
 
 
 class DashboardReviewHistoryTests(SimpleTestCase):

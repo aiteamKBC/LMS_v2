@@ -100,6 +100,27 @@ describe('Dashboard training plan controls', () => {
     expect(screen.getByRole('region', { name: 'Monthly study plan' }).parentElement).toHaveAttribute('data-layout', 'split');
   });
 
+  it('keeps the weekly learning plan visible in activity overview mode', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly
+      weeklyFocus={<section aria-label="Weekly learning plan">Weekly learning plan</section>} /></MemoryRouter>);
+
+    const monthlyPlan = screen.getByRole('region', { name: 'Monthly study plan' });
+    const leftColumn = monthlyPlan.parentElement?.firstElementChild as HTMLElement;
+    expect(within(leftColumn).getByRole('region', { name: 'Weekly learning plan' })).toBeVisible();
+    expect(within(leftColumn).getByRole('region', { name: 'Module progress' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Learner progress charts' })).not.toBeInTheDocument();
+  });
+
+  it('renders only the shared module timeline when embedded in the coach learning plan', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} timelineOnly /></MemoryRouter>);
+
+    expect(screen.getByRole('region', { name: 'Module timeline' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Monthly study plan' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Whole programme progress' })).not.toBeInTheDocument();
+  });
+
   it('combines all learner modules in the coach whole-programme chart', () => {
     render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
       onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly programmeSnapshot={{

@@ -150,6 +150,12 @@ export function normalizeLearner(
     && attendance.hasAttendance !== false,
   );
   const programme = displayValue(attendance?.programme);
+  const learningActivityDate = learner.lastActivityDate || null;
+  const attendanceActivityDate = attendance?.lastSessionDate || null;
+  const attendanceIsLatest = Boolean(
+    attendanceActivityDate
+    && (!learningActivityDate || Date.parse(attendanceActivityDate) > Date.parse(learningActivityDate)),
+  );
 
   return {
     ...learner,
@@ -171,6 +177,11 @@ export function normalizeLearner(
     attendanceConsecutiveMissed: toOptionalNumber(attendance?.consecutiveMissed),
     attendanceLastSession: displayValue(attendance?.lastSession),
     attendanceLastSessionDate: attendance?.lastSessionDate || null,
+    lastActivity: attendanceIsLatest
+      ? displayValue(attendance?.lastSession)
+      : displayValue(learner.lastActivity),
+    lastActivityDate: attendanceIsLatest ? attendanceActivityDate : learningActivityDate,
+    lastActivityLabel: attendanceIsLatest ? 'Attendance' : displayValue(learner.lastActivityLabel),
     lastProgressReview: gatewayReviewDate,
     lastReview: gatewayReviewDate,
     lastCoachingSession: plannedEndDate,

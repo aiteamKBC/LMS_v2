@@ -60,6 +60,7 @@ function otjhTone(status?: string | null) {
 }
 
 function bestActivity(learner: Learner) {
+  if (hasValue(learner.lastActivity)) return learner.lastActivity;
   if (hasValue(learner.attendanceLastSession)) return learner.attendanceLastSession;
   if (hasValue(learner.lastSubmittedEvidence)) return learner.lastSubmittedEvidence;
   if (hasValue(learner.lastContact)) return learner.lastContact;
@@ -114,7 +115,7 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
           <td className={styles.progressCell}><Progress label="KSBs" metric="ksbs" value={percent(learner.ksbProgress, learner.ksbProgressAvailable)} detail={ratio(learner.ksbCompleted, learner.ksbTarget)} /></td>
           <td className={styles.progressCell}><Progress label="Activities" metric="activities" value={componentPercent(learner)} detail={ratio(learner.componentsCompleted, learner.componentsPlanned)} /></td>
           <td className={styles.progressCell}><Progress label="Attendance" metric="attendance" value={percent(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable)} detail={attendanceRatio(learner)} /></td>
-          <td><DateMetric value={activity} emptyLabel="No activity yet" detail={insight?.lastActivityDaysAgo !== null && insight?.lastActivityDaysAgo !== undefined ? `${insight.lastActivityDaysAgo} days ago` : 'Latest activity'} /></td>
+          <td><DateMetric value={activity} emptyLabel="No activity yet" detail={insight?.lastActivityDaysAgo !== null && insight?.lastActivityDaysAgo !== undefined ? `${insight.lastActivityDaysAgo} days ago` : displayValue(learner.lastActivityLabel) !== EMPTY_VALUE ? displayValue(learner.lastActivityLabel) : 'Latest activity'} /></td>
           <td><DateMetric value={learner.lastProgressReview} emptyLabel="No PR yet" detail="Latest completed" /></td>
           <td><DateMetric value={learner.lastReview} emptyLabel="No MCM yet" detail="Latest completed" /></td>
           <td><div className={styles.actions}><button type="button" className={styles.profileButton} onClick={() => onOpenProfile(learner)}>View Profile</button></div></td>

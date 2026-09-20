@@ -46,7 +46,7 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type DashboardKpi = 'caseload' | 'active' | 'on-break' | 'on-track' | 'at-risk' | 'need-attention' | 'completed' | 'epa' | 'evidence' | 'reviews';
+type DashboardKpi = 'caseload' | 'active' | 'on-break' | 'on-track' | 'at-risk' | 'need-attention' | 'completed' | 'epa' | 'evidence' | 'reviews' | 'pending-marking' | 'pr-week' | 'mcm-week' | 'catch-ups-week';
 type OtjhStatusKey = 'at-risk' | 'need-attention' | 'on-track' | 'unknown';
 type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
 type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
@@ -108,6 +108,9 @@ interface CoachLearner {
   nextReview: string;
   nextReviewStatus?: ScheduleStatus;
   lastContact: string;
+  lastActivity?: string;
+  lastActivityDate?: string | null;
+  lastActivityLabel?: string;
   lastMcm?: string;
   lastPr?: string;
   recentFlag: string | null;
@@ -347,6 +350,9 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     nextReview: displayValue(learner.nextReview),
     nextReviewStatus: 'none',
     lastContact: displayValue(learner.lastContact),
+    lastActivity: displayValue(learner.lastActivity),
+    lastActivityDate: learner.lastActivityDate || null,
+    lastActivityLabel: displayValue(learner.lastActivityLabel),
     recentFlag,
     email: learner.email || null,
     rawProgramStatus: learner.rawProgramStatus || null,
@@ -426,6 +432,15 @@ function mergeAttendanceRates(
     const lastMcmDate = latestCompletedSessionDate(learner, events, event => event.source === 'mcr');
     const lastPrDate = latestCompletedSessionDate(learner, events, event => event.source === 'progress-review');
     const parsedCompletedEventDate = parseLocalDate(completedEventDate);
+    const learningActivityDate = parseLocalDate(learner.lastActivityDate);
+    const latestAttendanceDate = parsedCompletedEventDate
+      && (!attendanceDate || parsedCompletedEventDate.getTime() > attendanceDate.getTime())
+      ? parsedCompletedEventDate
+      : attendanceDate;
+    const attendanceIsLatestActivity = Boolean(
+      latestAttendanceDate
+      && (!learningActivityDate || latestAttendanceDate.getTime() > learningActivityDate.getTime()),
+    );
     const lastSession = parsedCompletedEventDate
       && (!attendanceDate || parsedCompletedEventDate.getTime() > attendanceDate.getTime())
       ? formatDateLabel(completedEventDate)
@@ -447,6 +462,11 @@ function mergeAttendanceRates(
       // and live sessions. Future, in-progress and cancelled events are not
       // contacts, and the caseload payload's owner name is intentionally ignored.
       lastContact: lastSession,
+      lastActivity: attendanceIsLatestActivity ? lastSession : learner.lastActivity,
+      lastActivityDate: attendanceIsLatestActivity
+        ? (parsedCompletedEventDate && latestAttendanceDate === parsedCompletedEventDate ? completedEventDate : attendance?.lastSessionDate || null)
+        : learner.lastActivityDate,
+      lastActivityLabel: attendanceIsLatestActivity ? 'Attendance' : learner.lastActivityLabel,
       lastMcm: formatCompletedSessionDate(lastMcmDate),
       lastPr: formatCompletedSessionDate(lastPrDate),
     };
@@ -1388,10 +1408,10 @@ export default function CoachDashboard() {
         <section className={styles.metrics} aria-label="Coach dashboard metrics">
           <DashboardMetric label="Total learners" value={loading || loadWarning ? undefined : totalCaseload} icon="ri-group-line" onClick={() => setSelectedKpi('caseload')} />
           <DashboardMetric label="OTJH at risk" value={loading || loadWarning ? undefined : atRiskCount} note={loading || loadWarning ? undefined : `${needAttentionLearners.length} need attention`} icon="ri-alarm-warning-line" tone="critical" onClick={() => setSelectedKpi('at-risk')} />
-          <DashboardMetric label="Pending marking" value={loading || loadWarning ? undefined : markingThisWeek} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => navigate('/coach/marking-queue')} />
-          <DashboardMetric label="PR this week" value={loading || loadWarning ? undefined : progressReviewsThisWeek} note={`Progress reviews · ${formatWeekRangeLabel()}`} icon="ri-focus-3-line" tone="caution" onClick={() => navigate('/coach/progress-reviews')} />
-          <DashboardMetric label="MCM this week" value={loading || loadWarning ? undefined : monthlyCoachingThisWeek} note={`Monthly coaching · ${formatWeekRangeLabel()}`} icon="ri-history-line" tone="caution" onClick={() => navigate('/coach/monthly-coaching')} />
-          <DashboardMetric label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note={`Catch-up sessions · ${formatWeekRangeLabel()}`} icon="ri-calendar-event-line" tone="caution" onClick={() => navigate('/coach/timetable')} />
+          <DashboardMetric label="Pending marking" value={loading || loadWarning ? undefined : markingThisWeek} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => setSelectedKpi('pending-marking')} />
+          <DashboardMetric label="PR this week" value={loading || loadWarning ? undefined : progressReviewsThisWeek} note={`Progress reviews · ${formatWeekRangeLabel()}`} icon="ri-focus-3-line" tone="caution" onClick={() => setSelectedKpi('pr-week')} />
+          <DashboardMetric label="MCM this week" value={loading || loadWarning ? undefined : monthlyCoachingThisWeek} note={`Monthly coaching · ${formatWeekRangeLabel()}`} icon="ri-history-line" tone="caution" onClick={() => setSelectedKpi('mcm-week')} />
+          <DashboardMetric label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note={`Catch-up sessions · ${formatWeekRangeLabel()}`} icon="ri-calendar-event-line" tone="caution" onClick={() => setSelectedKpi('catch-ups-week')} />
         </section>
 
         <div id="learner-caseload" className={styles.fullWidthCaseload}>
@@ -1467,6 +1487,7 @@ export default function CoachDashboard() {
           type={selectedKpi}
           learners={enrichedLearners}
           calendarEvents={activeCalendarEvents}
+          weekEvents={weekEvents}
           evidenceQueue={evidenceLearners}
           pendingEvidence={pendingEvidence}
           completedEvidence={completedEvidence}
@@ -1601,10 +1622,11 @@ function AttentionLearnerRow({ learner, onOpen }: {
 /* ═══════════════════════════════════════════════════════════
    KPI drill-down modal
    ═══════════════════════════════════════════════════════════ */
-function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pendingEvidence, completedEvidence, onClose, onFilter }: {
+function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQueue, pendingEvidence, completedEvidence, onClose, onFilter }: {
   type: DashboardKpi;
   learners: CoachLearner[];
   calendarEvents: CoachCalendarEvent[];
+  weekEvents: CoachCalendarEvent[];
   evidenceQueue: EvidenceQueueLearner[];
   pendingEvidence: number;
   completedEvidence: number;
@@ -1623,6 +1645,10 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
     epa: { title: 'EPA learners', subtitle: 'Learners currently at the end-point assessment stage', icon: 'ri-award-line', iconStyle: 'bg-secondary-100 text-secondary-700' },
     evidence: { title: 'Evidence awaiting review', subtitle: 'Evidence submissions and review status', icon: 'ri-file-search-line', iconStyle: 'bg-secondary-100 text-secondary-600' },
     reviews: { title: 'Upcoming reviews', subtitle: 'Progress reviews scheduled in the next 14 days', icon: 'ri-file-chart-line', iconStyle: 'bg-primary-100 text-primary-600' },
+    'pending-marking': { title: 'Pending marking', subtitle: 'Submissions currently waiting for your review', icon: 'ri-file-list-3-line', iconStyle: 'bg-secondary-100 text-secondary-600' },
+    'pr-week': { title: 'Progress reviews this week', subtitle: formatWeekRangeLabel(), icon: 'ri-focus-3-line', iconStyle: 'bg-amber-100 text-amber-700' },
+    'mcm-week': { title: 'Monthly coaching this week', subtitle: formatWeekRangeLabel(), icon: 'ri-history-line', iconStyle: 'bg-amber-100 text-amber-700' },
+    'catch-ups-week': { title: 'Catch-ups this week', subtitle: formatWeekRangeLabel(), icon: 'ri-calendar-event-line', iconStyle: 'bg-amber-100 text-amber-700' },
   };
   const current = meta[type];
   const filterForType: Partial<Record<DashboardKpi, DashboardKpi>> = {
@@ -1650,6 +1676,15 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
       : [];
   const reviews = sortEvents(calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)));
   const evidenceLearners = evidenceQueue;
+  const weeklyEventSource = type === 'pr-week' ? 'progress-review' : type === 'mcm-week' ? 'mcr' : type === 'catch-ups-week' ? 'catch-up' : null;
+  const weeklyDetails = weeklyEventSource ? sortEvents(weekEvents.filter(event => event.source === weeklyEventSource)) : [];
+  const detailCount = type === 'evidence' || type === 'pending-marking'
+    ? pendingEvidence
+    : type === 'reviews'
+      ? reviews.length
+      : weeklyEventSource
+        ? weeklyDetails.length
+        : modalLearners.length;
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -1699,7 +1734,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2.5">
                   <h2 id="kpi-modal-title" className="font-heading text-xl font-bold tracking-tight text-foreground-900 sm:text-2xl">{current.title}</h2>
-                  <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-primary-200/80 bg-background-50 px-2.5 text-xs font-bold text-primary-700 shadow-sm">{type === 'evidence' ? pendingEvidence : type === 'reviews' ? reviews.length : modalLearners.length}</span>
+                  <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-primary-200/80 bg-background-50 px-2.5 text-xs font-bold text-primary-700 shadow-sm">{detailCount}</span>
                 </div>
                 <p id="kpi-modal-description" className="mt-1.5 text-xs leading-5 text-foreground-500 sm:text-sm">{current.subtitle}</p>
               </div>
@@ -1755,7 +1790,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
             </div>
           )}
 
-          {type === 'evidence' && (
+          {(type === 'evidence' || type === 'pending-marking') && (
             <div className="space-y-3">
               {evidenceLearners.map(learner => {
                 // The marking queue has no learnerType of its own -- cross-reference the
@@ -1795,6 +1830,30 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
             </div>
           )}
 
+          {weeklyEventSource && (
+            <div className="space-y-2">
+              {weeklyDetails.map(event => {
+                const date = eventDisplayDate(event);
+                return (
+                  <div key={event.eventKey || event.id} className="flex items-center gap-3 rounded-lg border border-foreground-100 bg-background-50 p-3">
+                    <span className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+                      <span className="text-[12px] font-bold uppercase">{formatCalendarMonth(date)}</span>
+                      <span className="text-sm font-bold leading-none">{formatCalendarDayNumber(date)}</span>
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-semibold text-foreground-900">{displayValue(event.learner || event.title)}</p>
+                      <p className="mt-0.5 text-[12px] text-foreground-400">{formatTimeLabel(event)} · {eventTypeLabel(event)}</p>
+                    </div>
+                    <StatusBadge status={event.status} label={statusLabel(event.status)} size="sm" />
+                  </div>
+                );
+              })}
+              {!weeklyDetails.length && (
+                <EmptyState icon={current.icon} title="Nothing scheduled this week" description="There are no matching sessions in the current week." />
+              )}
+            </div>
+          )}
+
           {type === 'reviews' && (
             <div className="space-y-2">
               {reviews.map(event => {
@@ -1823,8 +1882,11 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
         <footer className="flex flex-wrap items-center justify-end gap-2.5 border-t border-foreground-100 bg-background-100/60 px-5 py-4 sm:px-7">
           <button type="button" onClick={onClose} className="rounded-xl border border-foreground-200 bg-background-50 px-4 py-2.5 text-xs font-semibold text-foreground-700 shadow-sm transition-colors hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Close</button>
           {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">View in caseload list</button>}
-          {type === 'evidence' && <Link to="/coach/marking-queue" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
+          {(type === 'evidence' || type === 'pending-marking') && <Link to="/coach/marking-queue" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
           {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open reviews</Link>}
+          {type === 'pr-week' && <Link to="/coach/progress-reviews" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open progress reviews</Link>}
+          {type === 'mcm-week' && <Link to="/coach/monthly-coaching" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open monthly coaching</Link>}
+          {type === 'catch-ups-week' && <Link to="/coach/timetable" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open timetable</Link>}
         </footer>
         </div>
       </div>

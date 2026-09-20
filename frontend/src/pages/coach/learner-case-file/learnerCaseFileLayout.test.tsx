@@ -27,11 +27,12 @@ vi.mock('@/api/curriculum', () => ({ fetchKsbProfile: mocks.fetchKsbProfile }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: mocks.coachFetch }));
 vi.mock('@/pages/workspace/learner/useDashboardPlan', () => ({ useDashboardPlan: mocks.useDashboardPlan }));
 vi.mock('@/pages/workspace/learner/DashboardTrainingPlan', () => ({
-  DashboardTrainingPlan: ({ activityOverviewOnly, showRewards, programmeSnapshot }: { activityOverviewOnly?: boolean; showRewards?: boolean;
+  DashboardTrainingPlan: ({ activityOverviewOnly, timelineOnly, showRewards, programmeSnapshot }: { activityOverviewOnly?: boolean; timelineOnly?: boolean; showRewards?: boolean;
     programmeSnapshot?: { overall: number | null; otjhActual: number | null; otjhTarget: number | null; ksb: number | null;
       attendancePresent: number | null; attendanceTotal: number | null } }) => <div aria-label="Coach learner activity overview">
     <h2>Weekly learning plan</h2><h2>Monthly study plan</h2>
     <h2>Whole programme progress</h2><h2>Programme progress</h2><h2>Off-The-Job Hours</h2>
+    {timelineOnly && <h2>Module timeline</h2>}
     <span>{programmeSnapshot && `${programmeSnapshot.overall}% · ${programmeSnapshot.otjhActual}/${programmeSnapshot.otjhTarget} · ${programmeSnapshot.ksb}% · ${programmeSnapshot.attendancePresent}/${programmeSnapshot.attendanceTotal}`}</span>
     <span>{activityOverviewOnly ? 'Activity overview only' : 'Full plan'}</span>
     <span>{showRewards === false ? 'Rewards hidden' : 'Rewards visible'}</span>
@@ -91,11 +92,15 @@ const caseFileData = {
   attendanceRate: 88,
   attendancePresentCount: 7,
   attendanceSessionCount: 10,
+  attendanceAbsentCount: 3,
   otjhCompleted: 10,
   otjhTarget: 38.5,
   otjhPlanned: 132,
   ksbProgress: 20,
-  ksbEvidencedCount: 0,
+  ksbEvidencedCount: 14,
+  ksbTotalCount: 40,
+  mappedKsbCodes: [],
+  ksbCodeProgress: [],
   evidenceCount: 3,
   startDate: '03 Aug 2026',
   gatewayReviewDate: '04 May 2027',
@@ -161,6 +166,9 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
     expect(screen.getByRole('heading', { name: 'Off-the-Job Hours (OTJH)' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'KSB Detailed Breakdown' })).toBeInTheDocument();
+    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('40');
+    expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('14');
+    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('26');
     for (const label of ['KSB Code', 'Title', 'Category', 'Status', 'Evidence']) {
       expect(screen.getByRole('button', { name: `Sort by ${label}` }).querySelector('svg')).toBeInTheDocument();
     }
@@ -169,12 +177,41 @@ describe('Learner Case File design', () => {
     expect(screen.getByRole('columnheader', { name: 'KSB Code' })).toHaveAttribute('aria-sort', 'descending');
 
     fireEvent.click(screen.getByRole('tab', { name: 'Learning Plan' }));
-    expect(screen.getByRole('heading', { name: 'About' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'About' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Module timeline' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Programme Journey' })).toBeInTheDocument();
     expect(screen.getByText('Actual', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText('Planned', { selector: 'span' })).toBeInTheDocument();
     expect(screen.queryByText('Evidence Count', { selector: 'span' })).not.toBeInTheDocument();
     expect(screen.queryByText('No notes yet')).not.toBeInTheDocument();
+  });
+
+  it('limits the KSB browser to mapped learner codes and counts evidence-linked codes', () => {
+    const ksbs = [
+      ...Array.from({ length: 6 }, (_, index) => ({ code: `K${index + 1}`, type: 'Knowledge', number: String(index + 1), description: `Knowledge ${index + 1}` })),
+      ...Array.from({ length: 4 }, (_, index) => ({ code: `S${index + 1}`, type: 'Skills', number: String(index + 1), description: `Skill ${index + 1}` })),
+      ...Array.from({ length: 4 }, (_, index) => ({ code: `B${index + 1}`, type: 'Behaviours', number: String(index + 1), description: `Behaviour ${index + 1}` })),
+    ];
+    const totals = [4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2];
+    mocks.data = {
+      ...caseFileData,
+      detail: { ...caseFileData.detail, ksbs },
+      mappedKsbCodes: ksbs.map((item) => item.code),
+      touchedKsbCodes: ksbs.slice(0, 10).map((item) => item.code),
+      ksbCodeProgress: ksbs.map((item, index) => ({ code: item.code, completed: 1, total: totals[index] })),
+      ksbTotalCount: 40,
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('40');
+    expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('14');
+    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('26');
+    expect(screen.getAllByText('Knowledge')[0].parentElement).toHaveTextContent('6 / 24');
+    expect(screen.getByRole('button', { name: 'All (14)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Knowledge (6)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Skills (4)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Behaviours (4)' })).toBeInTheDocument();
   });
 
   it('shows completed components out of the weekly total and omits recent assessments', () => {
@@ -208,6 +245,7 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Learning Plan' }));
 
     expect(screen.getByText('1 / 2 completed')).toBeInTheDocument();
+    expect(screen.getByText('Completed', { selector: 'span' }).parentElement).toHaveTextContent('1 / 2');
     expect(screen.queryByRole('heading', { name: 'Recent Assessments' })).not.toBeInTheDocument();
   });
 
@@ -243,7 +281,7 @@ describe('Learner Case File design', () => {
           { module: 'Module 1', week: 'Week 2', component: 'Assignment 2', expectedOtjh: null, componentId: 'assignment-2', type: 'assignment', ksbMappings: [{ code: 'K1', description: null, classification: 'main', weight: 1 }] },
         ],
       },
-      touchedKsbCodes: [],
+      touchedKsbCodes: ['K1'],
     };
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
 
@@ -317,6 +355,9 @@ describe('Learner Case File design', () => {
   it('shows outstanding absences in the summary and filters the session table', async () => {
     mocks.data = {
       ...caseFileData,
+      attendancePresentCount: 1,
+      attendanceSessionCount: 1,
+      attendanceAbsentCount: 0,
       attendance: {
         id: '42', learner: 'Aya Khater', initials: 'AK', email: 'aya@example.test', programme: 'Final Test',
         cohort: 'Final Cohort', group: 'Final Group', attendance: 50, sessions: 4, present: 2, absent: 2,
@@ -341,7 +382,10 @@ describe('Learner Case File design', () => {
     expect(await screen.findByRole('table')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Attendance Breakdown' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Missed Sessions' })).not.toBeInTheDocument();
-    expect(screen.getByText('Outstanding Absences').previousElementSibling).toHaveTextContent('1');
+    expect(screen.getByText('Attendance', { selector: 'p' }).previousElementSibling).toHaveTextContent('1 / 1');
+    expect(screen.getByText('Total Sessions').previousElementSibling).toHaveTextContent('1');
+    expect(screen.getByText('Attended', { selector: 'p' }).previousElementSibling).toHaveTextContent('1');
+    expect(screen.getByText('Outstanding Absences').previousElementSibling).toHaveTextContent('0');
     expect(screen.getByText('2 of 2 sessions')).toBeInTheDocument();
     expect(screen.getByText('Still missed')).toBeInTheDocument();
     expect(screen.getByText('Recovered session')).toBeInTheDocument();
@@ -372,6 +416,26 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
     fireEvent.click(screen.getByRole('button', { name: /Assignment Assignment 2/ }));
     expect(screen.getByTestId('location')).toHaveTextContent('/learner/monthly-submission/apprenticeship/42/assignment-2');
+  });
+
+  it('keeps View available for a KSB without evidence', () => {
+    mocks.data = {
+      ...caseFileData,
+      detail: {
+        ...caseFileData.detail,
+        components: [
+          { module: 'Module 1', week: 'Week 1', component: 'Assignment 2', expectedOtjh: null, componentId: 'assignment-2', type: 'assignment', ksbMappings: [{ code: 'K1', description: null, classification: 'main', weight: 1 }] },
+        ],
+      },
+      mappedKsbCodes: ['K1'],
+      touchedKsbCodes: [],
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LocationProbe /><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add evidence' })).not.toBeInTheDocument();
   });
 
 });

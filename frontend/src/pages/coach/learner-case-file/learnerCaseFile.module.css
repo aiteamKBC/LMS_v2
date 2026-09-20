@@ -287,6 +287,7 @@
 .tableButton svg { font-size: 16px; }
 .tableButton:hover { transform: translateY(-1px); border-color: #7c55df; background: #faf8ff; box-shadow: 0 5px 12px rgb(79 44 166 / 10%); }
 .tableButton:focus-visible { outline: 3px solid rgb(105 54 220 / 18%); outline-offset: 2px; }
+.tableButton:disabled { cursor: not-allowed; transform: none; border-color: #dfe2e8; background: #f5f6f8; color: #9aa2af; box-shadow: none; }
 
 .reviewsGrid { display: grid; grid-template-columns: 1.7fr .83fr; gap: 14px; }
 .timeline { position: relative; display: grid; gap: 12px; padding-left: 25px; }

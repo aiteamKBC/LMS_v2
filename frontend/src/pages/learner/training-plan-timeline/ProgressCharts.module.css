@@ -1,5 +1,5 @@
-.charts { container: progressCharts / inline-size; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 1.25rem; min-width: 0; --programme-navy: var(--learner-navy); --programme-navy-light: #9db4cf; --programme-navy-soft: #e8eef5; }
-.card { display: flex; flex-direction: column; align-self: start; width: 100%; min-width: 0; padding: 1.25rem; border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(24 45 72 / .04); }
+.charts { container: progressCharts / inline-size; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 1.25rem; min-width: 0; --programme-navy: var(--learner-navy); --programme-navy-light: #9db4cf; --programme-navy-soft: #e8eef5; }
+.card { display: flex; flex-direction: column; align-self: stretch; width: 100%; min-width: 0; padding: 1.25rem; border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(24 45 72 / .04); }
 .card header { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
 .card header > div { min-width: 0; }
 :global(.dashboard-theme) .card h2 { margin: .25rem 0 .4rem; color: var(--learner-navy); font-size: .9375rem; line-height: 1.4; }

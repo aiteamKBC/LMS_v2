@@ -18,6 +18,7 @@ const learner = {
   otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
   evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, attendancePresent: 9, attendanceAbsent: 1, nextCoaching: '20 Sep 2026', nextReview: '--',
   lastContact: '--', lastAttendanceDate: '--', lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--',
+  lastActivity: '19 Sep 2026', lastActivityDate: '2026-09-19T12:30:00Z', lastActivityLabel: 'Latest quiz',
   lastSubmittedEvidence: '--', recentFlag: null, progressVariance: '--', startDate: '--', gatewayReviewDate: '--', plannedEndDate: '--',
   currentModule: 'Customer Service Excellence', currentWeek: 'Week 4',
 } satisfies Learner;
@@ -67,6 +68,8 @@ describe('My Learners table design', () => {
     expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
     expect(within(row).queryByText('On Track')).not.toBeInTheDocument();
     expect(within(row).getByLabelText('OTJH: 78%')).toHaveAttribute('data-tone', 'positive');
+    expect(within(row).getByText('19 Sep 2026')).toBeInTheDocument();
+    expect(within(row).getByText('2 days ago')).toBeInTheDocument();
     for (const label of ['Learner', 'OTJH', 'KSBs', 'Activities', 'Attendance', 'Last Activity', 'Last PR', 'Last MCM']) {
       expect(screen.getByRole('button', { name: `Sort by ${label}` })).toBeInTheDocument();
     }

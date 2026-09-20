@@ -58,6 +58,7 @@
 .embeddedLearnerTheme :global([aria-label="Weekly learning plan"]) > * { min-width: 0; }
 .topRow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; align-items: stretch; margin-bottom: 1.5rem; }
 .activityOverviewTopRow { grid-template-columns: minmax(0, 1fr); align-items: start; }
+.activityOverviewMain { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
 .engagement { container: monthlyFocus / inline-size; min-width: 0; --learner-purple: var(--learner-navy); --learner-accent-soft: #eaf2f8; --learner-soft: #f4f7fa; padding: clamp(1.125rem, 1.65cqi, 1.75rem); border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(24 45 72 / .04); }
 .tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .25rem; padding: .25rem; margin-bottom: 1.25rem; border: 1px solid var(--kbc-border); border-radius: .75rem; background: var(--learner-soft); }
 .tabs button { min-height: 2.5rem; padding: .5rem .75rem; border-radius: .5rem; font-size: .8125rem; font-weight: 600; color: var(--kbc-muted); }

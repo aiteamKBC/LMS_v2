@@ -27,24 +27,6 @@ export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { 
         <LearningMetric label="Mapped KSBs" value={String(data.detail?.ksbs.length || 0)} />
       </div>
 
-      <section className={styles.panel}>
-        <div className={styles.panelHeader}><div className={styles.panelHeading}><span className={styles.panelIcon}><AppIcon className="ri-user-line" /></span><div><h2 className={styles.panelTitle}>About</h2></div></div></div>
-        <div className={styles.panelBody}>
-          <p className="text-[13px] text-foreground-600 leading-relaxed">
-            {data.displayName} is currently tracked under <strong>{data.programme}</strong>
-            {data.cohort ? <> in cohort <strong>{data.cohort}</strong></> : null}.
-            {data.group ? <> Group assignment is <strong>{data.group}</strong>.</> : null}
-            {' '}The coach snapshot shows <strong>{formatPercent(data.overallProgress)}</strong> overall progress,
-            {' '}<strong>{formatPercent(data.attendanceRate)}</strong> attendance,
-            {' '}and <strong>{formatHours(data.otjhCompleted)}</strong> logged against a current target of <strong>{formatHours(data.otjhTarget)}</strong>
-            {' '}within an overall OTJH plan of <strong>{formatHours(data.totalExpectedOtjh || null)}</strong>.
-            {' '}This learner currently has <strong>{flatComponents.length}</strong> structured component(s),
-            {' '}<strong>{totalWeeks}</strong> learning week(s),
-            {' '}and <strong>{data.detail?.quizAttempts.length || 0}</strong> recorded quiz attempt(s).
-          </p>
-        </div>
-      </section>
-
       <div className={styles.learningGrid}>
         <section className={styles.panel}>
           <div className={styles.panelHeader}>
@@ -134,7 +116,9 @@ function CoachModuleSection({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const weekCount = module.weeks.length;
-  const componentCount = module.weeks.reduce((count, week) => count + week.components.length, 0);
+  const moduleComponents = module.weeks.flatMap((week) => week.components);
+  const componentCount = moduleComponents.length;
+  const completedCount = moduleComponents.filter((component) => isComponentComplete(component, completedComponentIds)).length;
   const moduleOtjh = module.weeks.reduce((total, week) => total + (week.otjh || 0), 0);
 
   return (
@@ -158,6 +142,7 @@ function CoachModuleSection({
         </span>
         <span className="hidden shrink-0 items-center gap-2 sm:flex">
           {moduleOtjh > 0 && <SummaryPill label="OTJH" value={formatHours(moduleOtjh)} compact />}
+          <SummaryPill label="Completed" value={`${completedCount} / ${componentCount}`} compact />
           <SummaryPill label="Items" value={String(componentCount)} compact />
         </span>
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400">

@@ -121,6 +121,9 @@ export interface Learner {
   attendanceConsecutiveMissed?: number | null;
   attendanceLastSession?: string;
   attendanceLastSessionDate?: string | null;
+  lastActivity?: string;
+  lastActivityDate?: string | null;
+  lastActivityLabel?: string;
 
   nextCoaching: string;
   nextReview: string;

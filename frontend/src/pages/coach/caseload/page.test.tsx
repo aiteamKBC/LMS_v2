@@ -33,6 +33,7 @@ const learner = {
   attendanceRate: 80, attendanceRateAvailable: true, componentsCompleted: 8, componentsPlanned: 10,
   otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
   evidenceCount: 2, nextCoaching: '--', nextReview: '--', lastContact: '--', lastAttendanceDate: '--',
+  lastActivity: '19 Sep 2026', lastActivityDate: '2026-09-19T12:30:00Z', lastActivityLabel: 'Latest quiz',
   lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--', lastSubmittedEvidence: '--', recentFlag: null,
 } satisfies CaseloadApiLearner;
 
@@ -63,6 +64,7 @@ describe('Coach caseload loading', () => {
     });
 
     expect(await screen.findByText('Final Learner')).toBeInTheDocument();
+    expect(screen.getByText('19 Sep 2026')).toBeInTheDocument();
     expect(screen.queryByText('Loading learners')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'All Learners' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();

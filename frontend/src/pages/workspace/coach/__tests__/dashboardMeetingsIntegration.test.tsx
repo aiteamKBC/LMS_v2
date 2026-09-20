@@ -178,3 +178,42 @@ it('shows the six requested workload cards using the current week and marking qu
   expect(within(metrics).queryByText('Referred closure')).not.toBeInTheDocument();
   expect(within(metrics).queryByText('MCM 4-week')).not.toBeInTheDocument();
 });
+
+it('opens a detail popup and full-page link from every workload card', async () => {
+  const dashboardEvents: CoachCalendarEvent[] = [
+    { ...meeting, id: 'mcm-week', eventKey: 'mcm-week', scheduledDate: '2026-09-18' },
+    { ...meeting, id: 'pr-week', eventKey: 'pr-week', source: 'progress-review', title: 'Progress Review', type: 'review', scheduledDate: '2026-09-18' },
+    { ...meeting, id: 'catch-up-week', eventKey: 'catch-up-week', source: 'catch-up', title: 'Catch-up', scheduledDate: '2026-09-18' },
+  ];
+  mocks.load.mockImplementation((url: string) => Promise.resolve(
+    url.includes('/marking-queue')
+      ? { summary: { pendingItems: 2 } }
+      : {
+          owner: { name: 'Example Coach' },
+          learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'at-risk' }],
+          evidence: { items: [{ id: 'evidence-1', learnerId: '1', learner: 'Example Learner', pendingEvidence: 2, totalEvidence: 2 }] },
+          timetable: { events: dashboardEvents },
+        },
+  ));
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  const popupCases = [
+    ['Total learners', 'Learner caseload', 'View in caseload list', null],
+    ['OTJH at risk', 'Learners at risk', 'View in caseload list', null],
+    ['Pending marking', 'Pending marking', 'Open marking queue', '/coach/marking-queue'],
+    ['PR this week', 'Progress reviews this week', 'Open progress reviews', '/coach/progress-reviews'],
+    ['MCM this week', 'Monthly coaching this week', 'Open monthly coaching', '/coach/monthly-coaching'],
+    ['Catch-ups this week', 'Catch-ups this week', 'Open timetable', '/coach/timetable'],
+  ] as const;
+
+  for (const [cardName, heading, actionName, href] of popupCases) {
+    fireEvent.click(within(metrics).getByRole('button', { name: `Open ${cardName} details` }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: heading })).toBeVisible();
+    const action = within(dialog).getByRole(href ? 'link' : 'button', { name: actionName });
+    if (href) expect(action).toHaveAttribute('href', href);
+    fireEvent.click(within(dialog).getByText('Close'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  }
+});
