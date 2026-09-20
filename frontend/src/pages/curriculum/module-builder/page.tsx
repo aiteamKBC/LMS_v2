@@ -6929,8 +6929,13 @@ function ModuleCatalogueCard({
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
   const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
-  const [assignedLearnerCount, setAssignedLearnerCount] = useState<number | null>(null);
+  // Seeded from the bulk overview count so the badge shows without a click;
+  // a click still refreshes it with the freshest number as the dialog opens.
+  const [assignedLearnerCount, setAssignedLearnerCount] = useState<number | null>(module.assignedLearnerCount ?? null);
   const [learnersLoading, setLearnersLoading] = useState(false);
+  // The card instance survives a list reload (same key), so a fresh overview
+  // count has to be pushed in rather than only read once at mount.
+  useEffect(() => { setAssignedLearnerCount(module.assignedLearnerCount ?? null); }, [module.assignedLearnerCount]);
   // Legacy fallbacks retained by the merge were:
   // weekCount = module.weekStructure.length || module.weeks || 0
 
