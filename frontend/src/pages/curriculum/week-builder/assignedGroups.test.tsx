@@ -24,9 +24,9 @@ describe('week component assigned groups', () => {
       settings: {},
     } as ComponentProps<typeof ComponentEditor>['component'];
     const groupOptions = [
-      { key: 'G1', name: 'Group One', programmeId: 'P1', programme: 'Programme One', cohortId: 'C1', cohort: 'Cohort One' },
-      { key: 'G2', name: 'Group Two', programmeId: 'P1', programme: 'Programme One', cohortId: 'C1', cohort: 'Cohort One' },
-      { key: 'G3', name: 'Group Three', programmeId: 'P1', programme: 'Programme One', cohortId: 'C2', cohort: 'Cohort Two' },
+      { key: 'G1', name: 'Group One', programmeId: 'P1', programme: 'Programme One', cohortId: 'C1', cohort: 'Cohort One', moduleCount: 2 },
+      { key: 'G2', name: 'Group Two', programmeId: 'P1', programme: 'Programme One', cohortId: 'C1', cohort: 'Cohort One', moduleCount: 0 },
+      { key: 'G3', name: 'Group Three', programmeId: 'P1', programme: 'Programme One', cohortId: 'C2', cohort: 'Cohort Two', moduleCount: 1 },
     ];
 
     render(
@@ -51,6 +51,8 @@ describe('week component assigned groups', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Assigned groups cohort' }), 'C1');
     expect(screen.getByRole('button', { name: /Group One/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Group Two/ })).toBeInTheDocument();
+    expect(screen.getByText('Contains modules — click to place a copy here')).toBeInTheDocument();
+    expect(screen.getByText('No modules — click to place a copy here')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Group Three/ })).not.toBeInTheDocument();
 
     await user.selectOptions(screen.getByRole('combobox', { name: 'Assigned groups group' }), 'G2');
