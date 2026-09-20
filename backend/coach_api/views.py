@@ -10625,8 +10625,19 @@ def coach_dashboard(request):
                     dashboard_rows,
                     aptem_by_profile=aptem_by_profile,
                 )
-                attendance_rows = attendance_future.result()
-                review_history = review_history_future.result()
+                try:
+                    attendance_rows = attendance_future.result()
+                except Exception:
+                    # Attendance is an optional dashboard enrichment. A
+                    # malformed source row or an unavailable side database
+                    # must not turn an otherwise valid caseload into a 503.
+                    logger.warning("Could not load dashboard attendance", exc_info=True)
+                    attendance_rows = []
+                try:
+                    review_history = review_history_future.result()
+                except Exception:
+                    logger.warning("Could not load dashboard review history", exc_info=True)
+                    review_history = {}
         finally:
             close_old_connections()
         owner_name = coach_staff_display_name(owner_email) or next(
