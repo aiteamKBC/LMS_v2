@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.db import DatabaseError
+from django.db.utils import ConnectionDoesNotExist
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
@@ -102,6 +103,13 @@ class AuditKsbOverlayTests(SimpleTestCase):
         linked = SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))
 
         self.assertEqual(caseload_evidenced_ksb_counts([linked]), {})
+
+    @patch("coach_api.views.audit_connection", side_effect=ConnectionDoesNotExist("audit"))
+    def test_missing_audit_alias_leaves_the_caseload_renderable(self, _connection):
+        linked = SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))
+
+        self.assertEqual(caseload_evidenced_ksb_counts([linked]), {})
+        self.assertEqual(caseload_audit_hour_totals([linked]), {})
 
 
 class CaseloadAptemIdTests(SimpleTestCase):

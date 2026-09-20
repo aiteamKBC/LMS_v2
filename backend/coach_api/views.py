@@ -24,6 +24,7 @@ from psycopg.rows import dict_row
 from django.conf import settings
 from django.core.cache import cache
 from django.db import DatabaseError, IntegrityError, close_old_connections, connections, router, transaction
+from django.db.utils import ConnectionDoesNotExist
 from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
@@ -2202,7 +2203,7 @@ def caseload_evidenced_ksb_counts(rows) -> dict[int, int]:
     try:
         with audit_connection().cursor() as cursor:
             counts = read_evidenced_ksb_counts_bulk(cursor, aptem_by_profile.values())
-    except DatabaseError as exc:
+    except (ConnectionDoesNotExist, DatabaseError) as exc:
         # A display upgrade, not a dependency: the caseload still renders.
         logger.warning("Could not read audit KSB counts for caseload: %s", exc)
         return {}
@@ -2235,7 +2236,7 @@ def caseload_audit_hour_totals(rows) -> dict[int, dict]:
     try:
         with audit_connection().cursor() as cursor:
             totals = read_audit_hour_totals_bulk(cursor, aptem_by_profile.values())
-    except DatabaseError as exc:
+    except (ConnectionDoesNotExist, DatabaseError) as exc:
         # The caseload must still render on its stored figures if the audit
         # mirror is unreachable -- this is a display upgrade, not a dependency.
         logger.warning("Could not read audit OTJ totals for caseload: %s", exc)
