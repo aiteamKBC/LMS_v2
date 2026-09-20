@@ -80,6 +80,7 @@ from learner_api.student_activity_data import read_audit_hour_totals_bulk, read_
 from learner_api.attendance import (
     _summarize_attendance,
     combined_attendance_rows,
+    fetch_kbc_attendance_rates,
 )
 from learner_api.review_history import REVIEW_TYPES, _serialize_review
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
@@ -2361,6 +2362,27 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
         component_progress=component_progress, component_available=component_available,
     )
     payload["metricsSource"] = "learner-dashboard"
+    return payload
+
+
+def apply_aptem_variance_status(payload: dict, aptem_id) -> dict:
+    """Set Aptem OTJH variance and RAG status from actual minus target."""
+    if aptem_id in (None, ""):
+        return payload
+    actual = to_number(payload.get("otjhCompleted"))
+    target = to_number(payload.get("otjhTarget"))
+    if target <= 0:
+        return payload
+
+    variance = round(actual - target, 2)
+    payload["otjhVariance"] = variance
+    shortfall = -variance
+    if shortfall >= 40:
+        payload["otjhStatus"] = "At Risk"
+    elif shortfall >= 20:
+        payload["otjhStatus"] = "Need Attention"
+    else:
+        payload["otjhStatus"] = "On Track"
     return payload
 
 
@@ -9983,26 +10005,23 @@ def dashboard_attendance_rows(
     *,
     aptem_by_profile: dict[int, int] | None = None,
 ) -> list[dict]:
-    """Real attendance rates for the dashboard's caseload modal.
-
-    The dashboard used to send `attendance: {learners: []}` because its compact
-    cards do not show attendance -- but the caseload modal on the same page
-    does, so every learner there read "--".
-
-    This uses the learner workspace's combined KBC + verified Teams register,
-    including the same de-duplication and date cut-off rules.
-
-    The shape is only what `mergeAttendanceRates` on the client reads: the
-    identity to match on plus the rate and whether one was actually recorded.
-    """
+    """Dashboard attendance: KBC by Aptem ID, existing register for other learners."""
     if not learners:
         return []
-    summaries = caseload_canonical_attendance(rows)
+    aptem_by_profile = aptem_by_profile if aptem_by_profile is not None else caseload_aptem_ids(rows)
+    other_rows = [row for row in rows if int(row.id) not in aptem_by_profile]
+    summaries = caseload_canonical_attendance(other_rows)
+    try:
+        kbc_rates = fetch_kbc_attendance_rates(aptem_by_profile.values())
+    except Exception:
+        logger.warning("Could not load KBC attendance for the coach dashboard", exc_info=True)
+        kbc_rates = {}
 
     payload = []
     for learner in learners:
         learner_id = to_int(learner.get("id"))
-        metrics = summaries.get(learner_id) if learner_id else None
+        aptem_id = aptem_by_profile.get(learner_id)
+        metrics = kbc_rates.get(str(aptem_id)) if aptem_id is not None else summaries.get(learner_id)
         # A row with no register behind it carries nothing the client can
         # use -- `mergeAttendanceRates` would read it as "no attendance"
         # either way -- so it is left out rather than padding the payload.
@@ -10010,17 +10029,18 @@ def dashboard_attendance_rows(
             continue
         # .get, not indexing: this enriches whatever the serializer produced,
         # and must never be the reason the whole dashboard 503s.
+        last_session_date = metrics.get("lastSessionDate")
         payload.append({
             "id": learner.get("id"),
             "learner": learner.get("name"),
             "email": learner.get("email"),
-            "attendance": metrics["attendanceRate"],
+            "attendance": metrics.get("rate", metrics.get("attendanceRate")),
             "hasAttendance": True,
             "sessions": metrics["sessions"],
             "present": metrics["present"],
             "absent": metrics["absent"],
-            "lastSession": format_date_value(metrics.get("lastSessionDate")),
-            "lastSessionDate": metrics.get("lastSessionDate"),
+            "lastSession": format_date_value(last_session_date),
+            "lastSessionDate": last_session_date.isoformat() if hasattr(last_session_date, "isoformat") else last_session_date,
         })
     return payload
 
@@ -10517,11 +10537,13 @@ def coach_dashboard(request):
             audit_totals = caseload_audit_hour_totals(rows)
             ksb_counts = caseload_evidenced_ksb_counts(rows)
             canonical_metrics = caseload_canonical_metrics(rows)
+            aptem_by_profile = caseload_aptem_ids(rows)
             for row, learner in zip(rows, learners):
                 apply_latest_learning_activity(learner, latest_activities.get(int(row.id)))
                 apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
                 apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
                 apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
+                apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
             monthly_risk = dashboard_monthly_risk_history(rows, today=timezone.localdate())
             # The profile rows carry the `_caseload_source` bridge to Aptem,
             # which the attendance lookup below needs and the serialized
@@ -10578,18 +10600,33 @@ def coach_dashboard(request):
             assigned_groups = groups_future.result()
         # Depends on the learner list, so it follows the pool rather than
         # joining it. Resolve the Aptem bridge once and share it between the
-        # KBC attendance and imported review-history enrichments.
+        # KBC attendance and imported review-history enrichments. Those two
+        # enrichments are independent read-only queries; run them together so
+        # a slow attendance source does not add its latency to review history.
         try:
             aptem_by_profile = caseload_aptem_ids(dashboard_rows)
-            attendance_rows = dashboard_attendance_rows(
-                dashboard_rows,
-                learners,
-                aptem_by_profile=aptem_by_profile,
-            )
-            review_history = dashboard_review_history(
-                dashboard_rows,
-                aptem_by_profile=aptem_by_profile,
-            )
+            def run_enrichment(fn, *args, **kwargs):
+                try:
+                    return fn(*args, **kwargs)
+                finally:
+                    close_old_connections()
+
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="coach-dashboard-enrichment") as executor:
+                attendance_future = executor.submit(
+                    run_enrichment,
+                    dashboard_attendance_rows,
+                    dashboard_rows,
+                    learners,
+                    aptem_by_profile=aptem_by_profile,
+                )
+                review_history_future = executor.submit(
+                    run_enrichment,
+                    dashboard_review_history,
+                    dashboard_rows,
+                    aptem_by_profile=aptem_by_profile,
+                )
+                attendance_rows = attendance_future.result()
+                review_history = review_history_future.result()
         finally:
             close_old_connections()
         owner_name = coach_staff_display_name(owner_email) or next(
@@ -10768,11 +10805,13 @@ def coach_caseload(request):
         audit_totals = caseload_audit_hour_totals(rows)
         ksb_counts = caseload_evidenced_ksb_counts(rows)
         canonical_metrics = caseload_canonical_metrics(rows)
+        aptem_by_profile = caseload_aptem_ids(rows)
         review_history = dashboard_review_history(rows)
         for row, learner in zip(rows, learners):
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
             apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
+            apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
             imported = review_history.get(int(row.id), {})
             last_mcm = _latest_completed_review_date(imported.get("mcm", []))
             last_pr = _latest_completed_review_date(imported.get("reviews", []))

@@ -295,6 +295,45 @@ class CoachAttendanceContractTests(unittest.TestCase):
         })
 
 
+class DashboardKbcAttendanceTests(unittest.TestCase):
+    def setUp(self):
+        self.kbc = Mock(return_value={
+            "4321": {"sessions": 4, "present": 3, "absent": 1, "rate": 75,
+                     "lastSessionDate": date(2026, 9, 18)},
+        })
+        self.canonical = Mock(return_value={
+            8: {"sessions": 3, "present": 2, "absent": 1, "attendanceRate": 67},
+        })
+        self.namespace = {
+            "to_int": lambda value: int(value or 0),
+            "caseload_aptem_ids": lambda rows: {7: 4321},
+            "caseload_canonical_attendance": self.canonical,
+            "fetch_kbc_attendance_rates": self.kbc,
+            "format_date_value": lambda value: value.strftime("%d %b %Y") if value else "--",
+            "logger": Mock(),
+        }
+        load_functions(BACKEND / "coach_api/views.py", {"dashboard_attendance_rows"}, self.namespace)
+
+    def test_aptem_uses_id_keyed_kbc_and_other_learner_keeps_existing_source(self):
+        rows = [SimpleNamespace(id=7), SimpleNamespace(id=8)]
+        learners = [{"id": "7", "name": "A"}, {"id": "8", "name": "B"}]
+
+        payload = self.namespace["dashboard_attendance_rows"](rows, learners)
+
+        self.assertEqual([(row["id"], row["attendance"]) for row in payload], [("7", 75), ("8", 67)])
+        self.assertEqual(payload[0]["lastSessionDate"], "2026-09-18")
+        self.assertEqual(list(self.kbc.call_args.args[0]), [4321])
+        self.canonical.assert_called_once_with([rows[1]])
+
+    def test_missing_kbc_rows_do_not_use_teams_for_aptem_learner(self):
+        self.kbc.return_value = {}
+        rows = [SimpleNamespace(id=7), SimpleNamespace(id=8)]
+
+        payload = self.namespace["dashboard_attendance_rows"](rows, [{"id": "7"}, {"id": "8"}])
+
+        self.assertEqual([row["id"] for row in payload], ["8"])
+
+
 if __name__ == "__main__":
     with patch("socket.socket", side_effect=AssertionError("Network forbidden")):
         unittest.main()

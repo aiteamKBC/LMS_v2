@@ -93,6 +93,7 @@ interface CoachLearner {
   attendanceRateAvailable?: boolean;
   otjhCompleted: number;
   otjhTarget: number;
+  otjhVariance?: number | null;
   otjhStatus?: string | null;
   ksbProgress: number;
   ksbProgressAvailable?: boolean;
@@ -338,6 +339,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     attendanceRateAvailable: false,
     otjhCompleted: toNumber(learner.otjhCompleted),
     otjhTarget: Math.max(toNumber(learner.otjhTarget), 0),
+    otjhVariance: learner.otjhVariance ?? null,
     otjhStatus: displayValue(learner.otjhStatus),
     ksbProgress: clampPercent(learner.ksbProgress),
     ksbProgressAvailable: learner.ksbProgressAvailable,
@@ -810,6 +812,10 @@ function otjhPercentFor(learner: CoachLearner): number | null {
 
 function otjhVarianceLabel(learner: CoachLearner): string {
   if (learner.otjhTarget <= 0) return EMPTY_VALUE;
+  if (learner.otjhVariance !== undefined && learner.otjhVariance !== null) {
+    const variance = Math.round(learner.otjhVariance * 10) / 10;
+    return `${variance > 0 ? '+' : ''}${variance}h`;
+  }
   const variance = Math.round(((learner.otjhCompleted - learner.otjhTarget) / learner.otjhTarget) * 100);
   return `${variance > 0 ? '+' : ''}${variance}%`;
 }

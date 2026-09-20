@@ -123,11 +123,12 @@ class CaseloadAptemIdTests(SimpleTestCase):
 
 
 class DashboardAttendanceTests(SimpleTestCase):
-    """The dashboard uses the learner's combined attendance summary."""
+    """Aptem-linked dashboard rows use KBC; other rows keep their register."""
 
+    @patch("coach_api.views.fetch_kbc_attendance_rates")
     @patch("coach_api.views.caseload_canonical_attendance")
-    def test_rows_carry_the_register_rate(self, summaries):
-        summaries.return_value = {7: {"sessions": 62, "present": 59, "absent": 3, "attendanceRate": 95, "lastSessionDate": "2026-09-18"}}
+    def test_aptem_rows_carry_the_kbc_rate(self, summaries, kbc_rates):
+        kbc_rates.return_value = {"4321": {"sessions": 62, "present": 59, "absent": 3, "rate": 95, "lastSessionDate": date(2026, 9, 18)}}
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
         learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
 
@@ -138,19 +139,23 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.assertTrue(payload[0]["hasAttendance"])
         self.assertEqual(payload[0]["present"], 59)
         self.assertEqual(payload[0]["lastSessionDate"], "2026-09-18")
+        summaries.assert_called_once_with([])
+        self.assertEqual(list(kbc_rates.call_args.args[0]), [4321])
 
+    @patch("coach_api.views.fetch_kbc_attendance_rates", return_value={})
     @patch("coach_api.views.caseload_canonical_attendance", return_value={})
-    def test_learners_with_no_register_are_left_out(self, summaries):
+    def test_learners_with_no_register_are_left_out(self, summaries, kbc_rates):
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
         learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
 
         self.assertEqual(dashboard_attendance_rows(rows, learners), [])
 
+    @patch("coach_api.views.fetch_kbc_attendance_rates")
     @patch("coach_api.views.caseload_canonical_attendance")
-    def test_a_partial_learner_dict_does_not_break_the_dashboard(self, summaries):
+    def test_a_partial_learner_dict_does_not_break_the_dashboard(self, summaries, kbc_rates):
         """This helper enriches whatever the serializer produced; a missing key
         must never turn the whole dashboard into a 503."""
-        summaries.return_value = {2: {"sessions": 4, "present": 4, "absent": 0, "attendanceRate": 100}}
+        kbc_rates.return_value = {"4321": {"sessions": 4, "present": 4, "absent": 0, "rate": 100}}
         rows = [SimpleNamespace(id=2, _caseload_source=SimpleNamespace(aptem_id="4321"))]
 
         payload = dashboard_attendance_rows(rows, [{"id": "2"}])
@@ -158,11 +163,24 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.assertEqual(payload[0]["learner"], None)
         self.assertEqual(payload[0]["attendance"], 100)
 
+    @patch("coach_api.views.fetch_kbc_attendance_rates", side_effect=RuntimeError("unavailable"))
     @patch("coach_api.views.caseload_canonical_attendance", return_value={})
-    def test_an_unreachable_register_leaves_the_dashboard_renderable(self, summaries):
+    def test_an_unreachable_register_leaves_the_dashboard_renderable(self, summaries, kbc_rates):
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
 
         self.assertEqual(dashboard_attendance_rows(rows, [{"id": "7", "name": "A"}]), [])
+
+    @patch("coach_api.views.fetch_kbc_attendance_rates", return_value={})
+    @patch("coach_api.views.caseload_canonical_attendance")
+    def test_learner_without_aptem_keeps_existing_register(self, summaries, kbc_rates):
+        summaries.return_value = {8: {"sessions": 3, "present": 2, "absent": 1, "attendanceRate": 67}}
+        row = SimpleNamespace(id=8, _caseload_source=SimpleNamespace(aptem_id=""))
+
+        payload = dashboard_attendance_rows([row], [{"id": "8", "name": "B"}])
+
+        self.assertEqual(payload[0]["attendance"], 67)
+        summaries.assert_called_once_with([row])
+        kbc_rates.assert_called_once()
 
     def test_no_query_runs_for_an_empty_caseload(self):
         with patch("coach_api.views.caseload_canonical_attendance") as summaries:
