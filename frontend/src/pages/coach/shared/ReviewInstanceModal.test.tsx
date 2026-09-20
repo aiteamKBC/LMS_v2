@@ -177,6 +177,22 @@ describe('coach review signature workflow', () => {
 });
 
 describe('MCM Meeting Summary integration', () => {
+  it('uses the semantic marker for the report editor while regular text fields keep the compact control', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('in-progress'));
+    mount();
+
+    const regularEditor = await screen.findByDisplayValue('Review the next module');
+    expect(regularEditor).toHaveAttribute('rows', '3');
+    expect(regularEditor.className).not.toContain('h-[360px]');
+
+    fireEvent.click(screen.getByRole('button', { name: /Meeting Summary/ }));
+    const summaryEditor = screen.getByRole('textbox', { name: 'Meeting Summary' });
+    expect(summaryEditor.className).toContain('h-[360px]');
+    expect(summaryEditor).not.toHaveAttribute('rows');
+    expect(screen.getByText('Review and finalise the meeting summary before sending the Review for signatures.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Expand editor' })).toBeVisible();
+  });
+
   it('loads a stored AI suggestion into an empty mapped editor without saving it', async () => {
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('in-progress'));
     mount();
@@ -250,6 +266,85 @@ describe('MCM Meeting Summary integration', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
     const editor = await screen.findByDisplayValue('S'.repeat(4500));
     expect(editor).not.toHaveAttribute('maxLength');
+  });
+
+  it('preserves long multiline text across inline and expanded editing without saving automatically', async () => {
+    const existing = mcmDefinition('in-progress');
+    const longSummary = 'Overview\nLearner is progressing well.\n\nKey discussion points\n• Portfolio evidence\n• Functional skills\n\nNext steps\n1. Upload evidence';
+    existing.sections[1].fields[0].answer = longSummary;
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    mount();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    const inlineEditor = screen.getByRole('textbox', { name: 'Meeting Summary' });
+    expect(inlineEditor).toHaveValue(longSummary);
+    fireEvent.change(inlineEditor, { target: { value: `${longSummary}\n2. Confirm next meeting` } });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand editor' }));
+
+    expect(screen.getByRole('region', { name: 'Edit Meeting Summary' }).className).toContain('h-[90vh]');
+    const expandedEditor = screen.getByRole('textbox', { name: 'Expanded Meeting Summary' });
+    expect(expandedEditor).toHaveFocus();
+    expect(expandedEditor).toHaveValue(`${longSummary}\n2. Confirm next meeting`);
+    fireEvent.change(expandedEditor, { target: { value: `${longSummary}\n2. Confirm next meeting\n3. Share resources` } });
+    fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
+
+    expect(screen.getByRole('textbox', { name: 'Meeting Summary' })).toHaveValue(`${longSummary}\n2. Confirm next meeting\n3. Share resources`);
+    expect(screen.getByRole('button', { name: 'Expand editor' })).toHaveFocus();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+  });
+
+  it('closes expanded editing with Escape, keeps the typed value, and restores focus', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('in-progress'));
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand editor' }));
+    const expandedEditor = screen.getByRole('textbox', { name: 'Expanded Meeting Summary' });
+    const doneEditing = screen.getByRole('button', { name: 'Done editing' });
+    expect(expandedEditor).toHaveFocus();
+    fireEvent.keyDown(expandedEditor, { key: 'Tab' });
+    expect(doneEditing).toHaveFocus();
+    fireEvent.keyDown(doneEditing, { key: 'Tab', shiftKey: true });
+    expect(expandedEditor).toHaveFocus();
+    fireEvent.change(expandedEditor, { target: { value: 'Edited with the expanded surface.' } });
+    fireEvent.keyDown(expandedEditor, { key: 'Escape' });
+
+    expect(screen.queryByRole('heading', { name: 'Edit Meeting Summary' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Meeting Summary' })).toHaveValue('Edited with the expanded surface.');
+    expect(screen.getByRole('button', { name: 'Expand editor' })).toHaveFocus();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+  });
+
+  it('only reports a saved draft after the existing save request succeeds and clears it on a later edit', async () => {
+    const existing = mcmDefinition('in-progress');
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(existing);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    const editor = screen.getByRole('textbox', { name: 'Meeting Summary' });
+    fireEvent.change(editor, { target: { value: 'Coach-approved meeting report.' } });
+    expect(screen.queryByText('Draft saved.')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    expect(await screen.findByText('Draft saved.')).toBeVisible();
+    expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(
+      'instance-1',
+      expect.objectContaining({ 'summary-field': 'Coach-approved meeting report.' }),
+    );
+
+    fireEvent.change(editor, { target: { value: 'Coach-approved meeting report, amended.' } });
+    expect(screen.queryByText('Draft saved.')).not.toBeInTheDocument();
+  });
+
+  it('keeps the semantic editor read-only at the signature stage, including when expanded', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('awaiting-signature'));
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    expect(screen.getByRole('textbox', { name: 'Meeting Summary' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Generate from Teams' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand editor' }));
+    expect(screen.getByRole('textbox', { name: 'Expanded Meeting Summary' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
   });
 });
 

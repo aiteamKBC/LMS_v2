@@ -31,6 +31,15 @@ interface ReviewFormRendererProps {
   openSectionId: string;
   onOpenSectionChange: (sectionId: string) => void;
   renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
+  renderFieldInput?: (
+    field: ReviewFieldDefinition,
+    context: {
+      value: unknown;
+      onChange: (value: unknown) => void;
+      readOnly: boolean;
+      invalid: boolean;
+    },
+  ) => ReactNode | undefined;
 }
 
 function fieldAnswered(field: ReviewFieldDefinition, answers: Record<string, unknown>) {
@@ -46,7 +55,7 @@ function sectionRequiredFields(section: ReviewSectionDefinition) {
 }
 
 export function ReviewFormRenderer({
-  sections, answers, onAnswerChange, errors, readOnly, openSectionId, onOpenSectionChange, renderFieldAddon,
+  sections, answers, onAnswerChange, errors, readOnly, openSectionId, onOpenSectionChange, renderFieldAddon, renderFieldInput,
 }: ReviewFormRendererProps) {
   const enabledSections = sections
     .filter((section) => section.enabled)
@@ -92,6 +101,7 @@ export function ReviewFormRenderer({
                       errors={errors}
                       readOnly={readOnly}
                       renderFieldAddon={renderFieldAddon}
+                      renderFieldInput={renderFieldInput}
                     />
                   ))}
               </div>
@@ -104,7 +114,7 @@ export function ReviewFormRenderer({
 }
 
 function ReviewFieldControl({
-  field, index, answers, onAnswerChange, errors, readOnly, renderFieldAddon,
+  field, index, answers, onAnswerChange, errors, readOnly, renderFieldAddon, renderFieldInput,
 }: {
   field: ReviewFieldDefinition;
   index: number;
@@ -113,9 +123,11 @@ function ReviewFieldControl({
   errors?: ReviewFieldErrorSet;
   readOnly?: boolean;
   renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
+  renderFieldInput?: ReviewFormRendererProps['renderFieldInput'];
 }) {
   const value = answers[field.id];
-  const invalid = errors?.missingFieldIds.has(field.id);
+  const invalid = Boolean(errors?.missingFieldIds.has(field.id));
+  const isMeetingSummary = field.configuration?.semanticKey === 'meeting_summary';
 
   if (field.fieldType === 'title_description') {
     const description = String(field.configuration?.description || '');
@@ -146,20 +158,27 @@ function ReviewFieldControl({
     <div className={cn('rounded-2xl border bg-background-50 p-4 transition focus-within:border-primary-300 focus-within:shadow-sm', invalid ? 'border-red-300' : 'border-background-200')}>
       <label className="mb-2 block text-xs font-bold text-foreground-800">
         <span className="mr-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-100 px-1 text-[12px] text-primary-700">{index + 1}</span>
-        {field.title}
+        {isMeetingSummary ? 'Meeting Summary' : field.title}
         {field.required ? <span className="ml-1 text-red-500">*</span> : null}
       </label>
 
       {renderFieldAddon?.(field)}
-      <ReviewFieldInput field={field} value={value} onChange={(next) => onAnswerChange(field.id, next)} readOnly={readOnly} />
+      {renderFieldInput?.(field, {
+        value,
+        onChange: (next) => onAnswerChange(field.id, next),
+        readOnly: Boolean(readOnly),
+        invalid,
+      }) ?? (
+        <ReviewFieldInput field={field} value={value} onChange={(next) => onAnswerChange(field.id, next)} readOnly={readOnly} />
+      )}
 
       {field.fieldType === 'boolean_case_block' ? (
         <div className="mt-3 space-y-3 border-l-2 border-primary-100 pl-4">
           {value === 'yes' ? (field.yesFields || []).map((child, childIndex) => (
-            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} renderFieldAddon={renderFieldAddon} />
+            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />
           )) : null}
           {value === 'no' ? (field.noFields || []).map((child, childIndex) => (
-            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} renderFieldAddon={renderFieldAddon} />
+            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />
           )) : null}
         </div>
       ) : null}
