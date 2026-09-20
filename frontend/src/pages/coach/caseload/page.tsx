@@ -22,8 +22,6 @@ import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { fetchCoachCalendarEvents, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
-import { fetchLearnerMetrics } from '@/api/learnerMetrics';
-import { fetchLearnerAttendance } from '@/api/learnerAttendance';
 
 import { CaseloadEmpty, CaseloadError, CaseloadLoading, CaseloadNoMatches } from './components/CaseloadStates';
 import { LearnerTable } from './components/LearnerTable';
@@ -59,53 +57,6 @@ const CASELOAD_ENDPOINT = '/coach_api/coach/caseload?live=1';
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
 
 const PAGE_SIZE = 10;
-
-async function fetchCanonicalLearnerFacts(learners: CaseloadApiResponse['learners'], signal: AbortSignal) {
-  const rows = learners || [];
-  const settled = await Promise.allSettled(rows.map(async learner => {
-    const kind = learner.learnerType;
-    const enrolmentId = learner.enrolmentId ? String(learner.enrolmentId) : '';
-    if (!kind || !enrolmentId) return { learner, attendance: null };
-    const [metricsResult, attendanceResult] = await Promise.allSettled([
-      fetchLearnerMetrics(kind, enrolmentId, signal, true),
-      fetchLearnerAttendance(kind, enrolmentId, signal, true),
-    ]);
-    const metrics = metricsResult.status === 'fulfilled' ? metricsResult.value : null;
-    const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : null;
-    if (!metrics) return { learner, attendance };
-
-    const previousPlan = Number(learner.otjhPlanned || 0);
-    const previousTarget = Number(learner.otjhTarget || 0);
-    const canonicalPlan = metrics.otjh.planned;
-    const pacing = previousPlan > 0 ? previousTarget / previousPlan : 0;
-    const target = canonicalPlan != null && previousTarget > 1 && pacing > 0 && pacing <= 1
-      ? Math.max(Math.round(canonicalPlan * pacing * 100) / 100, 1)
-      : previousTarget;
-    const actual = metrics.otjh.actual ?? learner.otjhCompleted;
-    const overall = target > 0 && actual != null ? Math.round((Number(actual) / target) * 100) : learner.overallProgress;
-
-    return {
-      learner: {
-        ...learner,
-        componentsCompleted: metrics.programme.completed ?? undefined,
-        componentsPlanned: metrics.programme.total ?? undefined,
-        otjhCompleted: actual,
-        otjhPlanned: canonicalPlan ?? learner.otjhPlanned,
-        otjhTarget: target,
-        overallProgress: overall,
-        overallProgressAvailable: target > 0,
-        ksbCompleted: metrics.ksb.completed ?? undefined,
-        ksbTarget: metrics.ksb.total ?? undefined,
-        ksbProgress: metrics.ksb.percent ?? 0,
-        ksbProgressAvailable: metrics.ksb.status === 'ready',
-      },
-      attendance,
-    };
-  }));
-  return settled.map((result, index) => result.status === 'fulfilled'
-    ? result.value
-    : { learner: rows[index], attendance: null });
-}
 
 const INITIAL_FILTERS: CaseloadFilterState = {
   search: '',
@@ -235,38 +186,14 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean 
 
         const data: CaseloadApiResponse = await caseloadResponse.json();
         if (controller.signal.aborted) return;
-        const canonicalFacts = await fetchCanonicalLearnerFacts(data.learners, controller.signal);
-        if (controller.signal.aborted) return;
-        const canonicalAttendance: AttendanceApiLearner[] = canonicalFacts
-          .filter(item => item.attendance)
-          .map(item => ({
-            id: String(item.learner.id),
-            learner: item.learner.name,
-            email: item.learner.email,
-            programme: item.learner.programmeName,
-            attendance: item.attendance!.attendanceRate,
-            sessions: item.attendance!.sessions,
-            present: item.attendance!.present,
-            absent: item.attendance!.absent,
-            late: item.attendance!.late,
-            catchup: item.attendance!.catchup,
-            risk: item.attendance!.risk,
-            lastSessionDate: item.attendance!.lastSessionDate,
-            consecutiveMissed: item.attendance!.consecutiveMissed,
-            hasAttendance: true,
-          }));
-        const mergedAttendance = [
-          ...canonicalAttendance,
-          ...attendanceLearners.filter(existing => !canonicalAttendance.some(canonical => String(canonical.id) === String(existing.id))),
-        ];
         setOwnerName(data.owner?.name || authenticatedCoachName);
-        setLearners(canonicalFacts.map(({ learner: source }) => {
-          const normalized = normalizeLearner(source, findAttendanceRecord(source, mergedAttendance));
+        setLearners((data.learners || []).map((source) => {
+          const normalized = normalizeLearner(source, findAttendanceRecord(source, attendanceLearners));
           const reviews = completedReviews.get(normalized.id);
           return {
             ...normalized,
-            lastProgressReview: reviews?.pr || '--',
-            lastReview: reviews?.mcm || '--',
+            lastProgressReview: reviews?.pr || normalized.lastProgressReview,
+            lastReview: reviews?.mcm || normalized.lastReview,
           };
         }));
       } catch (err) {

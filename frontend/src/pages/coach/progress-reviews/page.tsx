@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Swal from 'sweetalert2';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { type EvidenceRecord } from '@/api/evidence';
+import { fetchCoachImportedReviews, importedReviewEvents, isImportedReviewEvent } from '@/api/coachImportedReviews';
 import { type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -1013,8 +1014,14 @@ export default function CoachProgressReviews() {
       setLoading(true);
       setError(null);
       try {
-        const data = await fetchCoachCalendarEvents(controller.signal);
-        const reviews = sortEvents((data.events || []).filter(event => event.source === 'progress-review'));
+        const [data, imported] = await Promise.all([
+          fetchCoachCalendarEvents(controller.signal),
+          fetchCoachImportedReviews(controller.signal).catch(() => []),
+        ]);
+        const reviews = sortEvents([
+          ...(data.events || []).filter(event => event.source === 'progress-review'),
+          ...importedReviewEvents(imported, 'reviews'),
+        ]);
         setEvents(reviews);
         setOwnerName(data.owner?.name || coach.name);
       } catch (err) {
@@ -1072,7 +1079,7 @@ export default function CoachProgressReviews() {
   useEffect(() => {
     if (!visibleReviewsKey) return;
     let cancelled = false;
-    const candidates = paginatedReviews.filter((review) => reviewHasLearnerReference(review) && eventTargetDate(review));
+    const candidates = paginatedReviews.filter((review) => !isImportedReviewEvent(review) && reviewHasLearnerReference(review) && eventTargetDate(review));
 
     Promise.all(candidates.map(async (review) => {
       const learnerId = review.learnerId || review.enrolmentId || '';
@@ -1138,6 +1145,14 @@ export default function CoachProgressReviews() {
   };
 
   const openDetails = (event: CoachCalendarEvent) => {
+    if (isImportedReviewEvent(event)) {
+      const params = new URLSearchParams({ tab: 'reviews' });
+      if (event.learnerId) params.set('id', event.learnerId);
+      if (event.learnerType) params.set('kind', event.learnerType);
+      if (event.enrolmentId) params.set('enrolmentId', event.enrolmentId);
+      navigate(`/coach/learner-case-file?${params.toString()}`, { state: { learnerId: event.learnerId, learnerName: event.learner, kind: event.learnerType, enrolmentId: event.enrolmentId, tab: 'reviews' } });
+      return;
+    }
     navigate(`/coach/progress-reviews/${encodeURIComponent(eventIdentity(event))}`, { state: { returnTo: listUrl() } });
   };
 
@@ -1205,7 +1220,7 @@ export default function CoachProgressReviews() {
   };
 
   const handleBulkGenerateSlides = async () => {
-    const count = events.filter((event) => reviewHasLearnerReference(event) && eventTargetDate(event)).length;
+    const count = events.filter((event) => !isImportedReviewEvent(event) && reviewHasLearnerReference(event) && eventTargetDate(event)).length;
     if (!count) return;
     if (!window.confirm(`Generate Progress Review PPTX decks for ${count} review(s) with a learner and review date? This may take a while.`)) return;
     setBulkGenerating(true);
@@ -1317,11 +1332,12 @@ export default function CoachProgressReviews() {
                   <tbody>
                     {paginatedReviews.map(review => {
                       const reviewKey = eventIdentity(review);
+                      const imported = isImportedReviewEvent(review);
                       const isBusy = busyEventId === reviewKey;
                       const hasSlides = generatedReviewKeys.has(reviewKey);
                       const joinAvailable = canJoinMeeting(review);
-                      const viewOnly = review.status === 'completed' || review.status === 'awaiting-signature';
-                      const canSchedule = !viewOnly && review.status !== 'in-progress';
+                      const viewOnly = imported || review.status === 'completed' || review.status === 'awaiting-signature';
+                      const canSchedule = !imported && !viewOnly && review.status !== 'in-progress';
                       return (
                         <tr key={reviewKey} className="ui-action-row border-t border-primary-100/70 transition hover:bg-primary-50/35" onClick={() => openDetails(review)}>
                           <td className="px-4 py-3 align-middle">

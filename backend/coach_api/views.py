@@ -10103,6 +10103,53 @@ def dashboard_review_history(
     }
 
 
+def _latest_completed_review_date(reviews: list[dict]) -> str | None:
+    """The latest completed imported review date, never a future planned date."""
+    dates = [
+        clean_text(review.get("completedDate"))
+        for review in reviews
+        if clean_text(review.get("status")).casefold() == "completed"
+        and clean_text(review.get("completedDate"))
+    ]
+    return max(dates) if dates else None
+
+
+@coach_access_required
+@require_GET
+def coach_imported_review_history(request):
+    """Imported Aptem reviews and their sections for this coach's caseload."""
+    owner_email = authenticated_coach_email(request)
+    try:
+        rows = fetch_caseload_dashboard_profiles(owner_email)
+        history = dashboard_review_history(rows)
+    except Exception:
+        logger.exception("coach_imported_review_history_failed coach_account_id=%s", owner_email)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load imported review history.",
+            status=503,
+        )
+
+    learners = []
+    for row in rows:
+        learner_history = history.get(int(row.id))
+        if not learner_history:
+            continue
+        learners.append({
+            **learner_history,
+            "name": clean_text(getattr(row, "username", None)) or "Unknown learner",
+            "email": clean_text(getattr(row, "email", None)) or None,
+            "learnerType": (
+                "commercial"
+                if clean_text(getattr(row, "learner_type", None)).casefold() == "commercial"
+                else "apprenticeship"
+            ),
+            "enrolmentId": str(row.enrolment_id) if getattr(row, "enrolment_id", None) else None,
+        })
+    return JsonResponse({"learners": learners})
+
+
 def serialize_attendance_learner(
     learner: dict,
     attendance_metrics: dict | None,
@@ -10721,10 +10768,18 @@ def coach_caseload(request):
         audit_totals = caseload_audit_hour_totals(rows)
         ksb_counts = caseload_evidenced_ksb_counts(rows)
         canonical_metrics = caseload_canonical_metrics(rows)
+        review_history = dashboard_review_history(rows)
         for row, learner in zip(rows, learners):
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
             apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
+            imported = review_history.get(int(row.id), {})
+            last_mcm = _latest_completed_review_date(imported.get("mcm", []))
+            last_pr = _latest_completed_review_date(imported.get("reviews", []))
+            if last_mcm:
+                learner["lastReview"] = last_mcm
+            if last_pr:
+                learner["lastProgressReview"] = last_pr
     except Exception:
         logger.exception("coach_caseload_load_failed coach_account_id=%s", owner_email)
         return coach_error(

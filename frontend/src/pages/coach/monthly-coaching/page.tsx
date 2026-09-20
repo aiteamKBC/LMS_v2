@@ -4,6 +4,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { openReviewInstanceForEvent } from '@/api/reviewInstances';
+import { fetchCoachImportedReviews, importedReviewEvents, isImportedReviewEvent } from '@/api/coachImportedReviews';
 import { monthlyCoachingAgenda } from '@/pages/workspace/coach/monthlyCoachingAgenda';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterSelect, SearchInput } from '@/components/ui/FilterToolbar';
@@ -176,14 +177,20 @@ export default function CoachMonthlyCoaching() {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    fetchCoachCalendarEvents(controller.signal, {
-      start: isoDate(startOfMonth(selectedMonth)),
-      end: isoDate(endOfMonth(selectedMonth)),
-      includeLiveSessions: false,
-      includeSchedulerQueues: false,
-    })
-      .then((data) => {
-        setEvents(sortEvents((data.events || []).filter(event => event.source === 'mcr')));
+    Promise.all([
+      fetchCoachCalendarEvents(controller.signal, {
+        start: isoDate(startOfMonth(selectedMonth)),
+        end: isoDate(endOfMonth(selectedMonth)),
+        includeLiveSessions: false,
+        includeSchedulerQueues: false,
+      }),
+      fetchCoachImportedReviews(controller.signal).catch(() => []),
+    ])
+      .then(([data, imported]) => {
+        setEvents(sortEvents([
+          ...(data.events || []).filter(event => event.source === 'mcr'),
+          ...importedReviewEvents(imported, 'mcm'),
+        ]));
         setOwnerName(data.owner?.name || coach.name);
       })
       .catch((err) => {
@@ -299,6 +306,10 @@ export default function CoachMonthlyCoaching() {
   };
 
   const openDetails = (event: CoachCalendarEvent) => {
+    if (isImportedReviewEvent(event)) {
+      openLearnerReviews(event);
+      return;
+    }
     navigate(`/coach/meetings/${encodeURIComponent(eventIdentity(event))}`, { state: { returnTo: listUrl() } });
   };
 
@@ -420,8 +431,9 @@ export default function CoachMonthlyCoaching() {
             {!loading && sortedFiltered.length > 0 ? <div className="overflow-x-auto rounded-xl border border-primary-100 bg-white shadow-sm"><table className="w-full min-w-[1120px] border-collapse text-left"><caption className="sr-only">Coaching meetings for {selectedMonthLabel}</caption><thead><tr className="bg-primary-50/70 text-[11px] font-bold uppercase tracking-wide text-primary-800"><th className="whitespace-nowrap px-4 py-3 align-middle">Learner</th><th className="whitespace-nowrap px-4 py-3 align-middle">Cohort</th><th className="whitespace-nowrap px-4 py-3 align-middle">Date &amp; time</th><th className="whitespace-nowrap px-4 py-3 text-center align-middle">Status</th><th className="whitespace-nowrap px-4 py-3 align-middle">Schedule</th><th className="whitespace-nowrap px-4 py-3 text-right align-middle">Actions</th></tr></thead><tbody>{paginatedEvents.map(event => {
               const url = meetingUrl(event);
               const rowTone = meetingTone(event);
-              const canSchedule = !['in-progress', 'completed', 'awaiting-signature'].includes(event.status);
-              const viewOnly = event.status === 'completed' || event.status === 'awaiting-signature';
+              const imported = isImportedReviewEvent(event);
+              const canSchedule = !imported && !['in-progress', 'completed', 'awaiting-signature'].includes(event.status);
+              const viewOnly = imported || event.status === 'completed' || event.status === 'awaiting-signature';
               return <tr key={eventIdentity(event)} className="ui-action-row border-t border-primary-100/70 transition hover:bg-primary-50/35" onClick={() => openDetails(event)}>
                 <td className="px-4 py-3 align-middle"><div className="flex items-center gap-3"><LearnerAvatar name={event.learner} tone={rowTone} /><div className="min-w-0"><strong className="block text-[13px] font-bold text-primary-900">{event.learner || 'Unknown learner'}</strong><span className="block text-[11px] text-foreground-500">{event.programme || event.email || 'Monthly coaching meeting'}</span></div></div></td>
                 <td className="px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-group-line text-primary-500" />{event.cohort || event.group || '--'}</span></td>
