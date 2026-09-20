@@ -3,6 +3,7 @@ from contextlib import nullcontext
 from datetime import date, datetime, time, timezone as dt_timezone
 import inspect
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -106,6 +107,12 @@ class RecoverySubmissionTests(SimpleTestCase):
     def test_in_progress_lectures_can_be_reported(self):
         with patch('learner_api.absence_reports.lecture_register', return_value=[register_row(attendance_status='in_progress')]):
             self.assertEqual(_fetch_missed_sessions(SOURCE, 12)[0]['status'], 'in_progress')
+
+    def test_manual_schema_allows_occurrence_scoped_alternative_recovery(self):
+        sql = (Path(__file__).resolve().parents[1] / 'sql' / 'attendance_absence_recovery.sql').read_text()
+        self.assertIn('DROP CONSTRAINT IF EXISTS coach_absence_catchup_event_fk', sql)
+        self.assertIn("recovery_method = 'alternative'", sql)
+        self.assertIn("catchup_event_key LIKE 'alternative:%'", sql)
 
 
 class LiveLecturePayloadTests(SimpleTestCase):

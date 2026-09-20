@@ -42,6 +42,112 @@ class Response(dict):
         self.content = data
 
 
+class AlternativeRecoveryMatchingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.ns = {'defaultdict': defaultdict, 'INACTIVE_STATUSES': {
+            'cancelled', 'canceled', 'deleted', 'failed', 'superseded',
+        }}
+        functions(ROOT.parent / 'learner_api' / 'alternative_recovery.py', {
+            '_active', '_module_key', '_matching_alternative_series',
+        }, cls.ns)
+
+    @staticmethod
+    def row(**values):
+        return types.SimpleNamespace(**values)
+
+    def test_matches_same_module_title_in_other_group_only(self):
+        original_module = self.row(module_catalogue_id='MOD-A', group_id='GROUP-FRI',
+                                   title='Aya  Module')
+        original_series = self.row(id='LIVE-FRI', module_catalogue_id='MOD-A',
+                                   module_title='Aya Module', status='active')
+        wednesday_module = self.row(module_catalogue_id='MOD-B', group_id='GROUP-WED',
+                                    title='  aya module COPY ')
+        unrelated_module = self.row(module_catalogue_id='MOD-C', group_id='GROUP-WED',
+                                    title='Test-cover')
+        wrong_same_group = self.row(module_catalogue_id='MOD-D', group_id='GROUP-FRI',
+                                    title='Aya Module')
+        sessions = [
+            original_series,
+            self.row(id='LIVE-WED', module_catalogue_id='MOD-B', status='active'),
+            self.row(id='LIVE-UNRELATED', module_catalogue_id='MOD-C', status='active'),
+            self.row(id='LIVE-SAME-GROUP', module_catalogue_id='MOD-D', status='active'),
+        ]
+
+        result = self.ns['_matching_alternative_series'](
+            original_series, original_module,
+            [original_module, wednesday_module, unrelated_module, wrong_same_group],
+            sessions,
+        )
+
+        self.assertEqual(set(result), {'GROUP-WED'})
+        self.assertEqual(result['GROUP-WED'][0].module_catalogue_id, 'MOD-B')
+        self.assertEqual(result['GROUP-WED'][1].id, 'LIVE-WED')
+
+    def test_copy_suffix_is_removed_only_at_the_end(self):
+        module_key = self.ns['_module_key']
+
+        self.assertEqual(module_key('Aya  Modual copy'), module_key('aya modual'))
+        self.assertEqual(module_key('Copy skills'), 'copy skills')
+
+    def test_rejects_ambiguous_series_for_the_same_module_delivery(self):
+        original_module = self.row(module_catalogue_id='MOD-A', group_id='GROUP-FRI', title='Module')
+        original_series = self.row(id='LIVE-FRI', module_catalogue_id='MOD-A',
+                                   module_title='Module', status='active')
+        candidate = self.row(module_catalogue_id='MOD-B', group_id='GROUP-WED', title='Module')
+        sessions = [
+            original_series,
+            self.row(id='LIVE-WED-1', module_catalogue_id='MOD-B', status='active'),
+            self.row(id='LIVE-WED-2', module_catalogue_id='MOD-B', status='active'),
+        ]
+
+        result = self.ns['_matching_alternative_series'](
+            original_series, original_module, [original_module, candidate], sessions,
+        )
+
+        self.assertEqual(result, {})
+
+
+class ModuleCalendarLinkingTests(unittest.TestCase):
+    def setUp(self):
+        self.updates = []
+        self.ns = {
+            'LIVE_SESSIONS_TABLE': 'curriculum.live_sessions',
+            'datetime': types.SimpleNamespace(utcnow=lambda: 'NOW'),
+            'ensure_live_sessions_table': lambda: None,
+            'clean_str': lambda value: str(value or '').strip(),
+            'update_authoring_rows': lambda *args: self.updates.append(args),
+        }
+        functions(ROOT / 'views.py', {'link_live_session_series_to_module'}, self.ns)
+
+    def test_full_structure_does_not_reparent_calendar_from_delivery_metadata(self):
+        self.ns['link_live_session_series_to_module']('MOD-COPY', {
+            'weekStructure': [{'components': []}],
+            'deliveryMetadata': {'teamsLiveSessionId': 'LIVE-SOURCE'},
+        })
+
+        self.assertEqual(self.updates, [])
+
+    def test_full_structure_links_calendar_named_by_live_component(self):
+        self.ns['link_live_session_series_to_module']('MOD-COPY', {
+            'weekStructure': [{'components': [{
+                'settings': {'teamsLiveSessionId': 'LIVE-COPY'},
+            }]}],
+            'deliveryMetadata': {'teamsLiveSessionId': 'LIVE-SOURCE'},
+        })
+
+        self.assertEqual(len(self.updates), 1)
+        self.assertEqual(self.updates[0][2], ['LIVE-COPY'])
+
+    def test_legacy_partial_save_keeps_metadata_fallback(self):
+        self.ns['link_live_session_series_to_module']('MOD-LEGACY', {
+            'deliveryMetadata': {'teamsLiveSessionId': 'LIVE-LEGACY'},
+        })
+
+        self.assertEqual(len(self.updates), 1)
+        self.assertEqual(self.updates[0][2], ['LIVE-LEGACY'])
+
+
 def visit(start, end):
     return {'joinDateTime': f'2026-09-16T09:{start}Z', 'leaveDateTime': f'2026-09-16T09:{end}Z'}
 

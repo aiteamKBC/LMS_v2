@@ -1603,10 +1603,19 @@ def link_live_session_series_to_module(module_catalogue_id, payload):
             live_session_id = clean_str(settings_payload.get('teamsLiveSessionId'))
             if live_session_id:
                 live_session_ids.add(live_session_id)
-    delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
-    metadata_id = clean_str(delivery_metadata.get('teamsLiveSessionId'))
-    if metadata_id:
-        live_session_ids.add(metadata_id)
+    # A full structure save is authoritative about which components own a
+    # calendar.  Module responses also carry a convenience copy of the calendar
+    # id in deliveryMetadata; accepting that duplicate field here let a newly
+    # duplicated module steal the source module's live_sessions row even though
+    # every copied component had correctly had its booking identity removed.
+    # Keep the metadata fallback only for legacy partial saves that send no
+    # structure at all.
+    has_explicit_structure = 'weekStructure' in payload or 'weeks' in payload
+    if not has_explicit_structure:
+        delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
+        metadata_id = clean_str(delivery_metadata.get('teamsLiveSessionId'))
+        if metadata_id:
+            live_session_ids.add(metadata_id)
     for live_session_id in live_session_ids:
         update_authoring_rows(
             LIVE_SESSIONS_TABLE,

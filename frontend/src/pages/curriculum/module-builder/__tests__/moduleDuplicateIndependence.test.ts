@@ -84,7 +84,19 @@ function bookedModule(): ModuleCatalogueItem {
       }],
     };
   });
-  return recalculateModule({ ...draft, weekStructure: weeks });
+  return recalculateModule({
+    ...draft,
+    deliveryMetadata: {
+      ...(draft.deliveryMetadata || {}),
+      groupId: 'group-source',
+      weekDays: 'Thursday',
+      teamsLiveSessionId: 'LIVE-SOURCE-1',
+      teamsEventId: 'EVENT-SOURCE-1',
+      teamsMeetingUrl: 'https://teams.microsoft.com/source',
+      liveSessionUrl: 'https://teams.microsoft.com/source',
+    },
+    weekStructure: weeks,
+  });
 }
 
 /** The two Fridays the COPY's own start date puts it on. */
@@ -162,6 +174,14 @@ describe('a duplicated module is its own module', () => {
     });
     // The weeks' own rail dates go with them.
     expect(savedStructure.weekStructure.map(week => week.sessionDate)).toEqual(['', '']);
+    expect(savedStructure.deliveryMetadata).toMatchObject({
+      groupId: 'group-source',
+      weekDays: 'Thursday',
+    });
+    expect(savedStructure.deliveryMetadata).not.toHaveProperty('teamsLiveSessionId');
+    expect(savedStructure.deliveryMetadata).not.toHaveProperty('teamsEventId');
+    expect(savedStructure.deliveryMetadata).not.toHaveProperty('teamsMeetingUrl');
+    expect(savedStructure.deliveryMetadata).not.toHaveProperty('liveSessionUrl');
     // The original is untouched by having been copied.
     expect(source.weekStructure[0].components[0].settings.sessionDate).toBe('2027-12-02');
     expect(source.weekStructure[0].components[0].settings.teamsLiveSessionId).toBe('LIVE-SOURCE-1');

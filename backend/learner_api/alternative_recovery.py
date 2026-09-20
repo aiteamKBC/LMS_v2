@@ -39,6 +39,60 @@ def _active(value) -> bool:
     return str(value or "").strip().casefold() not in INACTIVE_STATUSES
 
 
+def _module_key(value) -> str:
+    """Compare copied deliveries without depending on their generated IDs.
+
+    The curriculum UI appends ``copy`` when it creates the delivery for a
+    second group, but the module and its session numbers still represent the
+    same authored course.  The database does not retain a module-level source
+    identifier for that copy, so ignore that generated suffix only at the end
+    of the title.
+    """
+    key = " ".join(str(value or "").split()).casefold()
+    return key[:-5].rstrip() if key.endswith(" copy") else key
+
+
+def _matching_alternative_series(original_session, original_module, modules, sessions):
+    """Resolve one unambiguous active series per other group for this module.
+
+    A cohort can contain many modules and every module can have its own Teams
+    series. Grouping every series only by group made an unrelated module with
+    the same occurrence number look like a recovery session. Module copies have
+    independent catalogue IDs, so their normalized authored title is the shared
+    identity available across group deliveries.
+    """
+    original_module_id = str(original_module.module_catalogue_id)
+    original_group_id = str(original_module.group_id)
+    module_key = _module_key(original_module.title or original_session.module_title)
+    if not module_key:
+        return {}
+
+    original_active = [
+        session for session in sessions
+        if str(session.module_catalogue_id or "") == original_module_id and _active(session.status)
+    ]
+    if len(original_active) != 1 or original_active[0].id != original_session.id:
+        return {}
+
+    candidate_modules = {
+        str(module.module_catalogue_id): module
+        for module in modules
+        if str(module.group_id or "") != original_group_id
+        and _module_key(module.title) == module_key
+    }
+    active_by_group = defaultdict(list)
+    for session in sessions:
+        module = candidate_modules.get(str(session.module_catalogue_id or ""))
+        if module is not None and _active(session.status):
+            active_by_group[str(module.group_id)].append((module, session))
+
+    return {
+        group_id: pairs[0]
+        for group_id, pairs in active_by_group.items()
+        if len(pairs) == 1
+    }
+
+
 def _local(value):
     return timezone.localtime(value) if value and timezone.is_aware(value) else value
 
@@ -97,26 +151,16 @@ def eligible_alternative_occurrences(
         )
         .exclude(Q(group_id__isnull=True) | Q(group_id=""))
     )
-    modules_by_id = {module.module_catalogue_id: module for module in modules}
+    modules_by_id = {str(module.module_catalogue_id): module for module in modules}
     sessions = list(
         LiveSession.objects.using(database)
         .filter(module_catalogue_id__in=list(modules_by_id))
     )
-    active_by_group = defaultdict(list)
-    for session in sessions:
-        module = modules_by_id.get(session.module_catalogue_id)
-        if module and _active(session.status):
-            active_by_group[str(module.group_id)].append(session)
-
-    # A cohort is a safe equivalence boundary only while every participating
-    # group has one unambiguous active delivery series.
-    original_group_series = active_by_group.get(str(original_module.group_id), [])
-    if len(original_group_series) != 1 or original_group_series[0].id != _original_session.id:
-        return []
+    matched_series = _matching_alternative_series(
+        _original_session, original_module, modules, sessions,
+    )
     unambiguous_series = {
-        group_id: group_sessions[0]
-        for group_id, group_sessions in active_by_group.items()
-        if len(group_sessions) == 1 and group_id != str(original_module.group_id)
+        group_id: pair[1] for group_id, pair in matched_series.items()
     }
     if not unambiguous_series:
         return []
@@ -130,15 +174,15 @@ def eligible_alternative_occurrences(
         )
         .order_by("scheduled_start", "id")
     )
-    session_group = {
-        session.id: group_id for group_id, session in unambiguous_series.items()
+    session_context = {
+        session.id: (group_id, matched_series[group_id][0])
+        for group_id, session in unambiguous_series.items()
     }
     result = []
     for occurrence in candidates:
         if not _active(occurrence.status):
             continue
-        group_id = session_group.get(occurrence.live_session_id)
-        module = next((item for item in modules if str(item.group_id) == group_id), None)
+        group_id, module = session_context.get(occurrence.live_session_id, (None, None))
         session = unambiguous_series.get(group_id)
         if module is None or session is None:
             continue

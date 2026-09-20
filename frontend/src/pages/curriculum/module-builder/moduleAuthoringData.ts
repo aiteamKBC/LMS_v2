@@ -1190,6 +1190,12 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
     title: `${source.title} copy`,
     status: 'draft',
     sourceModule: undefined,
+    // The structure response also repeats the current calendar in module-level
+    // delivery metadata.  Cleaning only the component settings is insufficient:
+    // the backend accepts deliveryMetadata.teamsLiveSessionId for legacy
+    // partial saves and would otherwise re-parent the source calendar to this
+    // newly-created module during the copy's first full save.
+    deliveryMetadata: independentCopyDeliveryMetadata(source.deliveryMetadata),
     moduleKsbMappings: cloneMappings(source.moduleKsbMappings, 'module'),
     completionCriteria: { ...source.completionCriteria },
     advancedDetails: { ...source.advancedDetails },
@@ -1290,6 +1296,14 @@ const BOOKED_DELIVERY_SETTING_KEYS = [
   'liveSessionUrl',
   'teamsProvider',
 ] as const;
+
+function independentCopyDeliveryMetadata(
+  metadata: ModuleCatalogueItem['deliveryMetadata'],
+): NonNullable<ModuleCatalogueItem['deliveryMetadata']> {
+  return Object.fromEntries(Object.entries(metadata || {}).filter(([key]) => (
+    key !== 'liveSessionUrl' && !key.startsWith('teams')
+  )));
+}
 
 /**
  * A copied component's settings, with everything that belonged to the original's
