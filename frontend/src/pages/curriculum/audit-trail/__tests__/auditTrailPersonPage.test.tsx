@@ -19,14 +19,14 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-const fetchCurriculumPersonActivity = vi.fn();
+const fetchPersonActivity = vi.fn();
 const fetchCurriculumOverview = vi.fn();
 vi.mock('@/lib/curriculumApi', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('@/lib/curriculumApi');
   return {
     ...actual,
     fetchCurriculumOverview: (...args: unknown[]) => fetchCurriculumOverview(...args),
-    fetchCurriculumPersonActivity: (...args: unknown[]) => fetchCurriculumPersonActivity(...args),
+    fetchPersonActivity: (...args: unknown[]) => fetchPersonActivity(...args),
   };
 });
 
@@ -134,17 +134,17 @@ function renderPage() {
 
 describe("One person's curriculum activity", () => {
   beforeEach(() => {
-    fetchCurriculumPersonActivity.mockReset();
-    fetchCurriculumPersonActivity.mockResolvedValue(activity());
+    fetchPersonActivity.mockReset();
+    fetchPersonActivity.mockResolvedValue(activity());
     fetchCurriculumOverview.mockReset();
     fetchCurriculumOverview.mockResolvedValue({ modules: [] });
   });
 
   it('reads the person from the URL and focuses on saved changes', async () => {
-    fetchCurriculumPersonActivity.mockResolvedValue(activity({ changes: [change({ placed: false })] }));
+    fetchPersonActivity.mockResolvedValue(activity({ changes: [change({ placed: false })] }));
     renderPage();
     expect(await screen.findByRole('heading', { name: 'Activity log' })).toBeInTheDocument();
-    expect(fetchCurriculumPersonActivity).toHaveBeenCalledWith(
+    expect(fetchPersonActivity).toHaveBeenCalledWith(
       'ayman@kentbusinesscollege.com',
       expect.objectContaining({ days: 30 }),
     );
@@ -158,7 +158,7 @@ describe("One person's curriculum activity", () => {
   });
 
   it('lists a change it could not place on a page instead of guessing one', async () => {
-    fetchCurriculumPersonActivity.mockResolvedValue(activity({
+    fetchPersonActivity.mockResolvedValue(activity({
       visits: [{ ...activity().visits[0], changeCount: 0, pages: [{ ...activity().visits[0].pages[0], changes: [] }] }],
       changes: [change({ placed: false })],
       counts: { visits: 1, pageViews: 1, readActions: 1, changes: 1, changesOnAPage: 0, signIns: 1 },
@@ -170,7 +170,7 @@ describe("One person's curriculum activity", () => {
   });
 
   it('links component activity to the exact component location', async () => {
-    fetchCurriculumPersonActivity.mockResolvedValue(activity({
+    fetchPersonActivity.mockResolvedValue(activity({
       changes: [change({
         entity: 'component',
         entityLabel: 'Component',
@@ -192,7 +192,7 @@ describe("One person's curriculum activity", () => {
   it('filters each table column and explains first recorded activity', async () => {
     const first = change({ action: 'recorded', actionLabel: 'First recorded', entity: 'component', entityLabel: 'Component', title: 'Assignment 5', entityId: 'COMP-5', moduleCatalogueId: 'MOD-1', parentId: 'WEEK-1', changes: [] });
     const edited = change({ id: 'rev:2', action: 'updated', actionLabel: 'Edited', entity: 'module', entityLabel: 'Module', title: 'Digital Marketing', entityId: 'MOD-1', moduleCatalogueId: 'MOD-1', changes: [{ field: 'title', label: 'Title', before: 'Old', after: 'New' }] });
-    fetchCurriculumPersonActivity.mockResolvedValue(activity({ changes: [first, edited] }));
+    fetchPersonActivity.mockResolvedValue(activity({ changes: [first, edited] }));
     renderPage();
     await screen.findByText('Assignment 5');
     const firstBadge = screen.getAllByText('First recorded').find(element => element.tagName === 'SPAN');
@@ -208,7 +208,7 @@ describe("One person's curriculum activity", () => {
   });
 
   it('opens the changed fields so before and after values are readable', async () => {
-    fetchCurriculumPersonActivity.mockResolvedValue(activity({
+    fetchPersonActivity.mockResolvedValue(activity({
       changes: [change({ changes: [
         { field: 'session_start_time', label: 'Session start time', before: '09:00', after: '10:00' },
         { field: 'teams_link', label: 'Teams meeting link', before: '', after: 'https://teams.example/meeting' },
@@ -229,7 +229,7 @@ describe("One person's curriculum activity", () => {
       { id: 'MOD-OLD', name: 'Commercial Intelligence copy' },
       { id: 'MOD-NEW', name: 'Commercial Intelligence' },
     ] });
-    fetchCurriculumPersonActivity.mockResolvedValue(activity({
+    fetchPersonActivity.mockResolvedValue(activity({
       changes: [change({ changes: [
         { field: 'module_ids', label: 'Module IDs', before: '["MOD-OLD"]', after: '["MOD-NEW"]' },
       ] })],
@@ -244,7 +244,7 @@ describe("One person's curriculum activity", () => {
 
   it('groups identical unplaced records while keeping their count visible', async () => {
     const repeated = change({ placed: false, at: '2026-09-16T09:16:00Z' });
-    fetchCurriculumPersonActivity.mockResolvedValue(activity({
+    fetchPersonActivity.mockResolvedValue(activity({
       visits: [{ ...activity().visits[0], changeCount: 0, pages: [{ ...activity().visits[0].pages[0], changes: [] }] }],
       changes: [repeated, { ...repeated, id: 'rev:2' }],
       counts: { visits: 1, pageViews: 1, readActions: 1, changes: 2, changesOnAPage: 0, signIns: 1 },
@@ -255,7 +255,7 @@ describe("One person's curriculum activity", () => {
   });
 
   it('says plainly when no visit was ever recorded', async () => {
-    fetchCurriculumPersonActivity.mockResolvedValue(activity({
+    fetchPersonActivity.mockResolvedValue(activity({
       visitsRecorded: false,
       visits: [],
       changes: [change({ placed: false })],

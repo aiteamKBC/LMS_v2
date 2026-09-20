@@ -34,6 +34,8 @@ import {
   permanentlyDeleteGroupWithConfirm,
   restoreGroupWithConfirm,
 } from '../shared/entities/archive';
+import { duplicateGroupWithModules } from '../shared/entities/cloneStructure';
+import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
@@ -51,7 +53,7 @@ import {
 // Every Group in the Curriculum. Programme is offered in the filters and the
 // form purely to narrow the Cohort list — the persisted parent is the Cohort.
 
-const GRID = 'grid grid-cols-[minmax(170px,1.2fr)_minmax(140px,1fr)_minmax(140px,1fr)_minmax(120px,.9fr)_minmax(150px,1fr)_80px_175px]';
+const GRID = 'grid grid-cols-[minmax(170px,1.2fr)_minmax(140px,1fr)_minmax(140px,1fr)_minmax(120px,.9fr)_minmax(150px,1fr)_80px_260px]';
 
 const COLUMNS = [
   { label: 'Group' },
@@ -209,6 +211,28 @@ export default function CurriculumGroupsPage() {
   const deletePermanently = async (group: CurriculumArchivedGroup) => {
     // Nothing to put back into the live list here, so only the archive moves.
     await permanentlyDeleteGroupWithConfirm(group, () => archived.reload());
+  };
+
+  const duplicate = async (group: CurriculumGroup) => {
+    const count = modulesByGroup.get(normaliseKey(group.id)) || 0;
+    await showCurriculumConfirm({
+      title: 'Duplicate group?',
+      text: count
+        ? `A new group is created with the same coach, delivery day and ${count} module${count === 1 ? '' : 's'} — copied across on the same dates, with no Teams meeting and no learners.`
+        : 'A new group is created with the same coach and delivery day. It starts with no learners.',
+      icon: 'question',
+      confirmButtonText: 'Duplicate group',
+      onConfirm: async () => {
+        const result = await duplicateGroupWithModules(group);
+        applyLocal(previous => ({ ...previous, groups: upsertById(previous.groups, result.group) }));
+        revealGroup(result.group);
+        window.clearTimeout(highlightTimer.current);
+        setHighlightId(result.group.id);
+        await reload({ silent: true });
+        highlightTimer.current = window.setTimeout(() => setHighlightId(null), 3000);
+      },
+      successTitle: 'Group duplicated',
+    });
   };
 
   const programmeOptions = useMemo(
@@ -476,6 +500,12 @@ export default function CurriculumGroupsPage() {
                         label: 'Edit',
                         title: 'Edit this group, its coach and its delivery slot',
                         onClick: () => { setEditing(group); setDrawerOpen(true); },
+                      },
+                      {
+                        icon: 'ri-file-copy-line',
+                        label: 'Duplicate',
+                        title: 'Create a new group with the same coach, delivery day and modules — no Teams meeting, no learners',
+                        onClick: () => void duplicate(group),
                       },
                       {
                         icon: 'ri-archive-line',

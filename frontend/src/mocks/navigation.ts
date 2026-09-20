@@ -581,6 +581,9 @@ export const adminNavItems: SidebarNavItem[] = [
       { id: 'admin-roles', label: 'Roles', icon: 'ri-shield-check-line', href: '/admin/roles' },
       { id: 'admin-permissions', label: 'Permissions', icon: 'ri-key-2-line', href: '/admin/permissions' },
       { id: 'admin-access-logs', label: 'Access Logs', icon: 'ri-door-lock-line', href: '/admin/access-logs' },
+      // The system-wide Audit Trail. Access Logs above answers "who signed in";
+      // this answers "who was here, what did they open, and what did they change".
+      { id: 'admin-audit-trail', label: 'Audit Trail', icon: 'ri-history-line', href: '/admin/audit-trail', matchPaths: ['/admin/audit-trail/people'] },
     ],
   },
 

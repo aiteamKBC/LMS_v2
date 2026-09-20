@@ -22,7 +22,7 @@ import {
   type ValidationIssue,
 } from '@/pages/curriculum/module-builder/componentAuthoringModel';
 import { fetchPointsRules } from '@/api/engagement';
-import { fetchCurriculumOverview, type CurriculumGroup, type CurriculumModule, type CurriculumProgramme } from '@/lib/curriculumApi';
+import { fetchCurriculumOverview, type CurriculumCohort, type CurriculumGroup, type CurriculumModule, type CurriculumProgramme } from '@/lib/curriculumApi';
 import { assertComponentUploadAllowed, uploadComponentFile } from '@/pages/curriculum/shared/componentUploadPolicy';
 
 export { componentTypeGroups, componentTypes, createEmptyComponent, getComponentDefinition, makeAuthoringId };
@@ -78,6 +78,7 @@ export const weekPaletteGroups: string[] = Array.from(new Set(weekPaletteTypes.m
 // the request repeatedly and made the pickers pop in late).
 export interface CurriculumScope {
   programmes: CurriculumProgramme[];
+  cohorts: CurriculumCohort[];
   groups: CurriculumGroup[];
   modules: CurriculumModule[];
 }
@@ -90,6 +91,7 @@ export function loadCurriculumScope(options: { force?: boolean } = {}): Promise<
     scopeCache = fetchCurriculumOverview(undefined, { compact: true })
       .then(overview => ({
         programmes: overview.programmes || [],
+        cohorts: overview.cohorts || [],
         groups: overview.groups || [],
         modules: overview.modules || [],
       }))
