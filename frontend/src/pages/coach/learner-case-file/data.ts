@@ -18,7 +18,7 @@ import {
   type CoachCalendarEvent,
   type CoachReviewGenerationIssue,
 } from '@/pages/coach/shared/calendarEvents';
-import { fetchStudentActivity } from '@/api/studentActivity';
+import { fetchLearnerMetrics } from '@/api/learnerMetrics';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
 import { coachFetch } from '@/lib/coachFetch';
@@ -228,6 +228,8 @@ export interface CaseFileReviewGroup {
 
 export interface CoachLearnerCaseFileData {
   learnerId: string;
+  /** enrolment."Created_users" id used by the learner workspace APIs. */
+  enrolmentId: string | null;
   learnerIdentityIds?: string[];
   kind: LearnerKind | null;
   snapshot: CoachCaseloadLearner | null;
@@ -363,7 +365,7 @@ export function useCoachLearnerCaseFileData(args: {
       const directDetailPromise = directEnrolmentId
         ? fetchAnyLearnerDetail(directEnrolmentId, args.kind ?? undefined)
         : null;
-      let auditHours: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null = null;
+      let learnerMetrics: CaseFileLearnerMetrics | null = null;
       let liveAttendance: LearnerAttendance | null = null;
 
       let detail: LearnerDetail | null = null;
@@ -375,8 +377,8 @@ export function useCoachLearnerCaseFileData(args: {
           const detailResult = await directDetailPromise;
           detail = detailResult.detail;
           resolvedKind = detailResult.kind;
-          [auditHours, liveAttendance] = await Promise.all([
-            fetchAuditHours(resolvedKind, directEnrolmentId),
+          [learnerMetrics, liveAttendance] = await Promise.all([
+            fetchCaseFileMetrics(resolvedKind, directEnrolmentId),
             fetchCaseFileAttendance(resolvedKind, directEnrolmentId),
           ]);
 
@@ -384,6 +386,7 @@ export function useCoachLearnerCaseFileData(args: {
           // Coach metrics continue enriching it in the background.
           const initialData = buildCaseFileData({
             learnerId: directId,
+            enrolmentId: directEnrolmentId,
             kind: resolvedKind,
             snapshot: null,
             attendance: null,
@@ -393,7 +396,7 @@ export function useCoachLearnerCaseFileData(args: {
             timetableEvents: [],
             reviewGenerationIssues: [],
             reviewsLoading: true,
-            auditHours,
+            learnerMetrics,
             liveAttendance,
           });
           if (!cancelled && initialData) {
@@ -453,12 +456,12 @@ export function useCoachLearnerCaseFileData(args: {
         }
       }
 
-      if (!auditHours || !liveAttendance) {
-        const [hours, attendanceRecord] = await Promise.all([
-          auditHours ? Promise.resolve(auditHours) : fetchAuditHours(resolvedKind, resolvedEnrolmentId),
+      if (!learnerMetrics || !liveAttendance) {
+        const [metrics, attendanceRecord] = await Promise.all([
+          learnerMetrics ? Promise.resolve(learnerMetrics) : fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId),
           liveAttendance ? Promise.resolve(liveAttendance) : fetchCaseFileAttendance(resolvedKind, resolvedEnrolmentId),
         ]);
-        auditHours = hours;
+        learnerMetrics = metrics;
         liveAttendance = attendanceRecord;
       }
 
@@ -468,6 +471,7 @@ export function useCoachLearnerCaseFileData(args: {
 
       const finalData = buildCaseFileData({
         learnerId: resolvedId || rawLearnerId || '',
+        enrolmentId: resolvedEnrolmentId,
         kind: resolvedKind,
         snapshot,
         attendance: attendanceLearner,
@@ -478,7 +482,7 @@ export function useCoachLearnerCaseFileData(args: {
         timetableEvents,
         reviewGenerationIssues: timetable.reviewGenerationIssues,
         reviewsLoading: false,
-        auditHours,
+        learnerMetrics,
         liveAttendance,
       });
 
@@ -695,23 +699,33 @@ async function fetchCoachTimetable() {
   };
 }
 
-/** The whole-programme OTJ hours the learner sees on their own workspace:
- *  TP Planned from the audit mirror, LMS Actual from the accepted ledger.
- *  The coach case file has to quote these same figures rather than
- *  learner-detail's training-plan reflection totals, which read as 0h.
- *  Returns null whenever the learner has no audit record -- the caller then
- *  keeps whatever it already had. */
-async function fetchAuditHours(kind: LearnerKind | null, enrolmentId: string | null) {
+type CaseFileLearnerMetrics = {
+  programmeCompleted: number | null;
+  programmeTotal: number | null;
+  programmeProgress: number | null;
+  planned: number | null;
+  actual: number | null;
+  ksbCompleted: number | null;
+  ksbProgress: number | null;
+};
+
+/** Canonical totals used by the learner dashboard. Programme, OTJH and KSB
+ * figures must describe the same learner facts on both workspaces. */
+async function fetchCaseFileMetrics(kind: LearnerKind | null, enrolmentId: string | null): Promise<CaseFileLearnerMetrics | null> {
   if (!kind || !enrolmentId) return null;
   try {
-    const activity = await fetchStudentActivity(kind, enrolmentId);
-    const planned = activity?.audit_tp_planned ?? null;
-    const actual = activity?.audit_lms_actual ?? null;
-    const ksbEvidenced = activity?.audit_ksb_evidenced ?? null;
-    if (planned == null && actual == null && ksbEvidenced == null) return null;
-    return { planned, actual, ksbEvidenced };
+    const metrics = await fetchLearnerMetrics(kind, enrolmentId);
+    return {
+      programmeCompleted: metrics.programme.completed,
+      programmeTotal: metrics.programme.total,
+      programmeProgress: metrics.programme.percent,
+      planned: metrics.otjh.planned,
+      actual: metrics.otjh.actual,
+      ksbCompleted: metrics.ksb.completed,
+      ksbProgress: metrics.ksb.percent,
+    };
   } catch {
-    // A learner with no Aptem link 404s here. That is not a case-file error.
+    // Missing canonical metrics must not make the rest of the case file fail.
     return null;
   }
 }
@@ -1019,6 +1033,7 @@ export function buildUpcomingSchedule(
 
 function buildCaseFileData(args: {
   learnerId: string;
+  enrolmentId: string | null;
   kind: LearnerKind | null;
   snapshot: CoachCaseloadLearner | null;
   attendance: CoachAttendanceLearner | null;
@@ -1029,7 +1044,7 @@ function buildCaseFileData(args: {
   timetableEvents: CoachCalendarEvent[];
   reviewGenerationIssues: CoachReviewGenerationIssue[];
   reviewsLoading?: boolean;
-  auditHours?: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null;
+  learnerMetrics?: CaseFileLearnerMetrics | null;
   liveAttendance?: LearnerAttendance | null;
 }): CoachLearnerCaseFileData | null {
   const displayName = args.detail?.name || args.snapshot?.name || args.attendance?.learner || args.evidence?.learner || '';
@@ -1075,25 +1090,20 @@ function buildCaseFileData(args: {
   const allReviewMeetings = buildReviewMeetingItems(reviewEventContext, args.timetableEvents);
   const progressReviews = allReviewMeetings.filter(item => item.source === 'progress-review' || item.reviewTypeName === 'Progress Review');
   const monthlyCoachMeetings = allReviewMeetings.filter(item => item.source === 'mcr' || item.reviewTypeName === 'Monthly Coaching Meeting');
-  // The audit pair wins over learner-detail's training-plan reflection totals,
-  // so the coach reads the same OTJ hours the learner sees on their own
-  // workspace. `targetHours` paces the plan to the current week, so it is
-  // rescaled by that same proportion rather than left against the old plan.
-  const auditActual = args.auditHours?.actual ?? null;
-  const auditPlanned = args.auditHours?.planned ?? null;
-  const rawDetailTarget = parseHoursValue(args.detail?.targetHours);
+  // Use the exact programme/OTJH totals displayed by the learner dashboard.
+  // The coach view must not turn the learner's whole-plan target into a
+  // cumulative target-to-date or substitute OTJH progress for programme progress.
+  const canonicalActual = args.learnerMetrics?.actual ?? null;
+  const canonicalPlanned = args.learnerMetrics?.planned ?? null;
   const rawDetailPlanned = parseHoursValue(args.detail?.plannedHours) ?? (args.detail?.totalExpectedOtjh || null);
-  const detailCompletedHours = auditActual ?? parseHoursValue(args.detail?.completedHours);
-  const pacing = rawDetailTarget != null && rawDetailPlanned ? rawDetailTarget / rawDetailPlanned : null;
-  const detailTargetHours = auditPlanned != null
-    ? (pacing != null && pacing > 0 && pacing <= 1
-        ? Math.round(auditPlanned * pacing * 100) / 100
-        : auditPlanned)
-    : rawDetailTarget;
-  const detailPlannedHours = auditPlanned ?? rawDetailPlanned;
+  const detailCompletedHours = canonicalActual ?? parseHoursValue(args.detail?.completedHours);
+  const detailTargetHours = canonicalPlanned ?? parseHoursValue(args.detail?.targetHours);
+  const detailPlannedHours = canonicalPlanned ?? rawDetailPlanned;
+  const overallProgress = args.learnerMetrics?.programmeProgress ?? args.snapshot?.overallProgress ?? null;
 
   return {
     learnerId: args.learnerId,
+    enrolmentId: args.enrolmentId,
     kind: args.kind,
     snapshot: args.snapshot,
     attendance: args.attendance,
@@ -1113,19 +1123,19 @@ function buildCaseFileData(args: {
     coachEmail: args.snapshot?.coachEmail || '',
     employerEmail: args.snapshot?.employerEmail || '',
     employerPhone: args.snapshot?.employerPhone || '',
-    overallProgress: args.snapshot?.overallProgress ?? null,
-    // Keep the case-file header aligned with the attendance tab, which reads
-    // from the same attendance record. The live summary can lag behind it.
-    attendanceRate: args.attendance?.attendance ?? args.liveAttendance?.attendanceRate ?? null,
-    attendancePresentCount: args.attendance?.present ?? args.liveAttendance?.present ?? null,
-    attendanceSessionCount: args.attendance?.sessions ?? args.liveAttendance?.sessions ?? null,
+    overallProgress,
+    // Prefer the learner's canonical register. The coach attendance projection
+    // remains a fallback so a temporary register failure does not blank the file.
+    attendanceRate: args.liveAttendance?.attendanceRate ?? args.attendance?.attendance ?? null,
+    attendancePresentCount: args.liveAttendance?.present ?? args.attendance?.present ?? null,
+    attendanceSessionCount: args.liveAttendance?.sessions ?? args.attendance?.sessions ?? null,
     otjhCompleted: detailCompletedHours ?? args.snapshot?.otjhCompleted ?? args.attendance?.otjhCompleted ?? null,
     otjhTarget: detailTargetHours ?? args.snapshot?.otjhTarget ?? args.attendance?.otjhTarget ?? null,
     otjhPlanned: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? null,
-    ksbProgress: args.snapshot?.ksbProgress ?? args.attendance?.ksbProgress ?? null,
+    ksbProgress: args.learnerMetrics?.ksbProgress ?? args.snapshot?.ksbProgress ?? args.attendance?.ksbProgress ?? null,
     // Counts remain available to the detailed KSB section, while the header
     // consistently uses the canonical percentage in `ksbProgress`.
-    ksbEvidencedCount: args.auditHours?.ksbEvidenced ?? null,
+    ksbEvidencedCount: args.learnerMetrics?.ksbCompleted ?? null,
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
     startDate: args.detail?.programmeStartDate || args.snapshot?.startDate || '--',
     gatewayReviewDate: args.snapshot?.gatewayReviewDate || '--',

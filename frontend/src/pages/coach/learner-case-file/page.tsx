@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
@@ -8,9 +9,11 @@ import { fetchKsbProfile } from '@/api/curriculum';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { cn } from '@/lib/cn';
-import { statusTone, toneStyle, type StatusTone } from '@/lib/statusTone';
+import { statusTone, type StatusTone } from '@/lib/statusTone';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
+import { DashboardTrainingPlan } from '@/pages/workspace/learner/DashboardTrainingPlan';
+import { useDashboardPlan } from '@/pages/workspace/learner/useDashboardPlan';
 import OTJHTab from './components/OTJHTab';
 import KSBsTab from './components/KSBsTab';
 import EvidenceTab from './components/EvidenceTab';
@@ -34,7 +37,6 @@ import {
   formatPercent,
   selectCaseFileOtjh,
   useCoachLearnerCaseFileData,
-  type CaseFileActivityItem,
   type CaseFileReviewMeeting,
   type CoachLearnerCaseFileData,
 } from './data';
@@ -58,11 +60,13 @@ const CASE_FILE_TABS = [
   { id: 'documents', label: 'Documents', icon: 'ri-folder-line' },
 ] as const;
 
-type TabId = typeof CASE_FILE_TABS[number]['id'] | 'coach-notes';
+type TabId = typeof CASE_FILE_TABS[number]['id'] | 'programme' | 'reviews' | 'coach-notes';
 type EvidencePreviewTarget = {
   title: string;
   activities: Array<{ title: string; type: string; componentId?: string }>;
 };
+type KsbSortKey = 'code' | 'title' | 'category' | 'status' | 'evidence';
+type SortDirection = 'asc' | 'desc';
 const HIDDEN_CASE_FILE_TAB_IDS = new Set<typeof CASE_FILE_TABS[number]['id']>([
   'otjh',
   'ksbs',
@@ -129,6 +133,13 @@ export default function LearnerCaseFile() {
     enrolmentId,
     enabled: coach.isInitialized && coach.hasCoachAccess,
   });
+  const dashboardKind = data?.kind || explicitKind;
+  const dashboardLearnerId = data?.enrolmentId || enrolmentId;
+  const dashboardPlan = useDashboardPlan(
+    dashboardKind,
+    dashboardLearnerId,
+    coach.isInitialized && coach.hasCoachAccess && !!dashboardKind && !!dashboardLearnerId,
+  );
 
   useEffect(() => {
     if (CASE_FILE_TABS.some((tab) => tab.id === requestedTab)) {
@@ -171,7 +182,24 @@ export default function LearnerCaseFile() {
 
     switch (activeTab) {
       case 'overview':
-        return <ReferenceOverviewContent data={data} onSchedule={() => navigate('/coach/timetable')} />;
+        return dashboardKind ? <DashboardTrainingPlan
+          kind={dashboardKind}
+          learnerId={data.enrolmentId || data.learnerId}
+          plan={dashboardPlan}
+          programmeStartDate={data.detail?.programmeStartDate}
+          programmeEndDate={data.detail?.programmeEndDate}
+          canOpenActivities
+          showRewards={false}
+          activityOverviewOnly
+          programmeSnapshot={{
+            overall: data.overallProgress,
+            otjhActual: headerOtjh?.logged ?? null,
+            otjhTarget: headerOtjh?.target ?? null,
+            ksb: data.ksbProgress,
+            attendancePresent: data.attendancePresentCount,
+            attendanceTotal: data.attendanceSessionCount,
+          }}
+        /> : null;
       case 'programme':
         return <ReferenceProgrammeContent data={data} />;
       case 'progress':
@@ -205,7 +233,7 @@ export default function LearnerCaseFile() {
       case 'documents':
         return <DocumentsTab data={data} />;
       default:
-        return <ReferenceOverviewContent data={data} onSchedule={() => navigate('/coach/timetable')} />;
+        return null;
     }
   };
 
@@ -272,6 +300,30 @@ export default function LearnerCaseFile() {
 
             </div>
 
+          {data && (
+            <section className={styles.heroSnapshot} aria-labelledby="profile-snapshot-heading">
+              <div className={styles.heroSnapshotHeading}>
+                <span><AppIcon className="ri-user-line" /></span>
+                <div>
+                  <h2 id="profile-snapshot-heading">Profile Snapshot</h2>
+                  <p>Current progress and support context</p>
+                </div>
+              </div>
+              <div className={styles.heroProfileGrid}>
+                <ProfileInfo icon="ri-calendar-line" label="Planned Gateway" value={data.gatewayReviewDate} />
+                <ProfileInfo icon="ri-group-line" label="Cohort" value={data.cohort} />
+                <ProfileInfo icon="ri-building-line" label="Employer" value={data.employer} />
+                <ProfileInfo icon="ri-box-3-line" label="Group" value={data.group} />
+                <ProfileInfo icon="ri-user-line" label="Coach" value={data.coachName} />
+                <ProfileInfo icon="ri-calendar-event-line" label="Start Date" value={data.startDate} />
+                <ProfileInfo icon="ri-graduation-cap-line" label="Programme" value={data.programme} />
+                <ProfileInfo icon="ri-checkbox-circle-line" label="Status" value={data.programStatus} />
+                <ProfileInfo icon="ri-calendar-check-line" label="Planned End" value={data.plannedEndDate} />
+                <ProfileInfo icon="ri-mail-line" label="Email" value={data.email} />
+              </div>
+            </section>
+          )}
+
           <div className={styles.metrics}>
               <CaseFileHeroMetric icon="ri-focus-3-line" label="Overall" value={formatPercent(data?.overallProgress ?? null)} />
               <CaseFileHeroMetric icon="ri-time-line" label="OTJH (Actual / Target)" value={headerOtjh ? formatFraction(headerOtjh.logged, headerOtjh.target) : '--'} />
@@ -318,82 +370,6 @@ function CaseFileHeroMetric({ icon, label, value }: { icon: string; label: strin
         <span className={styles.metricLabel}>{label}</span>
         <strong className={styles.metricValue} title={value}>{value}</strong>
       </div>
-    </div>
-  );
-}
-
-function ReferenceOverviewContent({
-  data,
-  onSchedule,
-}: {
-  data: CoachLearnerCaseFileData;
-  onSchedule: () => void;
-}) {
-  const activities = data.activityItems.slice(0, 6);
-  const upcomingSessions = data.upcomingSessions;
-  const otjh = selectCaseFileOtjh(data);
-  return (
-    <div className={styles.stack}>
-      <div className={styles.overviewGrid}>
-        <ReferencePanel title="Profile Snapshot" subtitle="Current progress and support context" icon="ri-user-line" tone="primary">
-          <div className={styles.profileGrid}>
-            <ProfileInfo icon="ri-calendar-line" label="Planned Gateway" value={data.gatewayReviewDate} />
-            <ProfileInfo icon="ri-group-line" label="Cohort" value={data.cohort} />
-            <ProfileInfo icon="ri-building-line" label="Employer" value={data.employer} />
-            <ProfileInfo icon="ri-box-3-line" label="Group" value={data.group} />
-            <ProfileInfo icon="ri-user-line" label="Coach" value={data.coachName} />
-            <ProfileInfo icon="ri-calendar-event-line" label="Start Date" value={data.startDate} />
-            <ProfileInfo icon="ri-graduation-cap-line" label="Programme" value={data.programme} />
-            <ProfileInfo icon="ri-checkbox-circle-line" label="Status" value={data.programStatus} />
-            <ProfileInfo icon="ri-calendar-check-line" label="Planned End" value={data.plannedEndDate} />
-            <ProfileInfo icon="ri-mail-line" label="Email" value={data.email} />
-          </div>
-        </ReferencePanel>
-        <ReferencePanel title="Progress Summary" subtitle="Current progress against key targets" icon="ri-bar-chart-box-line" tone="emerald">
-          <div className={styles.progressStack}>
-            <ProfileProgress label="Overall Progress" value={data.overallProgress} tone="primary" />
-            <ProfileProgress label="OTJH Progress" value={otjh.progressPercent} tone="primary" />
-            <ProfileProgress label="KSB Coverage" value={data.ksbProgress} tone="emerald" />
-            <ProfileValue label="Attendance" value={formatAttendanceFraction(data.attendancePresentCount, data.attendanceSessionCount)} />
-          </div>
-        </ReferencePanel>
-        <ReferencePanel title="Recent Activity" subtitle="Latest updates, evidence and interactions" icon="ri-time-line" tone="muted">
-          {activities.length === 0 ? <ProfileEmpty text="No recent activity yet. Activity such as evidence uploads, meeting notes and progress updates will appear here." /> : <div className={styles.activityList}>{activities.map((item) => (
-            <div key={item.id} className={styles.activityRow}>
-              <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-full', toneStyle(activityStatusTone(item.tone)).bg, toneStyle(activityStatusTone(item.tone)).text)}><AppIcon className="ri-history-line text-xs"></AppIcon></span>
-              <div className="min-w-0 flex-1"><p className="text-[12px] font-bold text-foreground-800">{item.event}</p><p className="truncate text-[12px] text-foreground-400">{item.detail || 'No details available.'}</p></div>
-              <span className="text-[12px] text-foreground-300">{item.date}</span>
-            </div>
-          ))}</div>}
-        </ReferencePanel>
-      </div>
-      <ReferencePanel title="Upcoming Sessions & Reviews" subtitle="Scheduled coaching sessions, reviews and key dates" icon="ri-calendar-event-line" tone="primary"
-        actions={<button type="button" className={styles.solidButton} onClick={onSchedule}><AppIcon className="ri-calendar-event-line" />Schedule session</button>}>
-        {upcomingSessions.length === 0 ? <ProfileEmpty text="No upcoming sessions scheduled. Schedule a coaching session or review to keep this learner on track." /> : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {upcomingSessions.map((session) => (
-              <div key={session.id} className="rounded-xl border border-primary-100 bg-primary-50/35 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[12px] font-bold text-foreground-800">{session.title}</p>
-                    <p className="mt-1 text-[12px] text-primary-700">{session.day} · {session.date}</p>
-                    <p className="mt-1 text-[12px] font-medium text-foreground-500">{session.time}</p>
-                  </div>
-                  <div className="flex flex-wrap justify-end gap-1.5">
-                    <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[12px] font-semibold text-primary-700">
-                      {session.kind === 'review' ? 'Review' : 'Live'}
-                    </span>
-                    <span className={`rounded-full px-2 py-0.5 text-[12px] font-semibold ${reviewStatusPillClass(session.status)}`}>
-                      {session.statusLabel}
-                    </span>
-                  </div>
-                </div>
-                <p className="mt-2 text-[12px] text-foreground-500">{session.detail}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </ReferencePanel>
     </div>
   );
 }
@@ -451,6 +427,8 @@ function ReferenceProgrammeContent({ data }: { data: CoachLearnerCaseFileData })
 function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearnerCaseFileData; onViewEvidence: (evidence: EvidencePreviewTarget) => void }) {
   const [activeKsbCategory, setActiveKsbCategory] = useState('All');
   const [ksbSearch, setKsbSearch] = useState('');
+  const [ksbSortKey, setKsbSortKey] = useState<KsbSortKey>('code');
+  const [ksbSortDirection, setKsbSortDirection] = useState<SortDirection>('asc');
   const [fallbackKsbs, setFallbackKsbs] = useState<Array<{ code: string; description: string; type: string; number: string }>>([]);
   const [fallbackKsbsLoading, setFallbackKsbsLoading] = useState(false);
   const otjh = selectCaseFileOtjh(data);
@@ -548,7 +526,35 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
       || item.description.toLowerCase().includes(normalizedSearch)
       || item.category.toLowerCase().includes(normalizedSearch);
     return matchesCategory && matchesSearch;
+  }).sort((left, right) => {
+    const value = (item: typeof left): string | number => {
+      switch (ksbSortKey) {
+        case 'title': return item.description;
+        case 'category': return item.category;
+        case 'status': return item.linked ? 1 : 0;
+        case 'evidence': return item.evidenceCount;
+        default: return item.code;
+      }
+    };
+    const leftValue = value(left);
+    const rightValue = value(right);
+    const delta = typeof leftValue === 'number'
+      ? leftValue - Number(rightValue)
+      : leftValue.localeCompare(String(rightValue), undefined, { numeric: ksbSortKey === 'code', sensitivity: 'base' });
+    return (ksbSortDirection === 'asc' ? delta : -delta)
+      || left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' });
   });
+  const sortKsbs = (key: KsbSortKey) => {
+    setKsbSortDirection((current) => ksbSortKey === key ? (current === 'asc' ? 'desc' : 'asc') : 'asc');
+    setKsbSortKey(key);
+  };
+  const ksbSortHeader = (label: string, key: KsbSortKey) => {
+    const active = ksbSortKey === key;
+    return <button type="button" className={styles.columnLabel} onClick={() => sortKsbs(key)} aria-label={`Sort by ${label}`}>
+      <span>{label}</span>
+      {active ? (ksbSortDirection === 'asc' ? <ArrowUp aria-hidden="true" /> : <ArrowDown aria-hidden="true" />) : <ArrowUpDown aria-hidden="true" />}
+    </button>;
+  };
   return (
     <div className={styles.stack}>
       <ReferencePanel title="Off-the-Job Hours (OTJH)" subtitle="Track on-the-job learning hours against your programme requirements." icon="ri-time-line" tone="primary">
@@ -607,11 +613,11 @@ function ReferenceProgressContent({ data, onViewEvidence }: { data: CoachLearner
           <div className={styles.tableScroll}>
             <table className={styles.ksbTable}>
               <thead><tr>
-                <th><span className={styles.columnLabel}>KSB Code <AppIcon className="ri-expand-up-down-line" /></span></th>
-                <th><span className={styles.columnLabel}>Title <AppIcon className="ri-expand-up-down-line" /></span></th>
-                <th><span className={styles.columnLabel}>Category <AppIcon className="ri-expand-up-down-line" /></span></th>
-                <th><span className={styles.columnLabel}>Status <AppIcon className="ri-expand-up-down-line" /></span></th>
-                <th><span className={styles.columnLabel}>Evidence <AppIcon className="ri-expand-up-down-line" /></span></th>
+                <th aria-sort={ksbSortKey === 'code' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('KSB Code', 'code')}</th>
+                <th aria-sort={ksbSortKey === 'title' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('Title', 'title')}</th>
+                <th aria-sort={ksbSortKey === 'category' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('Category', 'category')}</th>
+                <th aria-sort={ksbSortKey === 'status' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('Status', 'status')}</th>
+                <th aria-sort={ksbSortKey === 'evidence' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('Evidence', 'evidence')}</th>
                 <th>Actions</th>
               </tr></thead>
               <tbody>
@@ -804,6 +810,9 @@ function KsbOverviewCard({
 function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }) {
   const attendance = data.attendance;
   const [attendanceSessions, setAttendanceSessions] = useState<AttendanceDetailSession[]>([]);
+  const [attendanceSearch, setAttendanceSearch] = useState('');
+  const [attendanceStatus, setAttendanceStatus] = useState('all');
+  const [attendanceMonth, setAttendanceMonth] = useState('all');
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsLoaded, setDetailsLoaded] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
@@ -869,119 +878,77 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
 
   if (!attendance || !attendance.hasAttendance) return <ReferencePanel title="Attendance" icon="ri-calendar-check-line" tone="primary"><ProfileEmpty text="Live attendance data is not available for this learner." /></ReferencePanel>;
   const missedSessions = attendanceSessions.filter((session) => session.status === 'absent' && !session.catchupCompleted);
-  const completedCatchups = detailsLoaded
-    ? attendanceSessions.filter((session) => session.catchupCompleted).length
-    : attendance.catchup;
   const outstandingAbsences = detailsLoaded ? missedSessions.length : attendance.absent;
-  const firstResolvedSessionIndex = attendanceSessions.findIndex(
-    (session) => session.status !== 'absent' || session.catchupCompleted,
-  );
-  const displayedConsecutiveMissed = detailsLoaded
-    ? firstResolvedSessionIndex === -1 ? attendanceSessions.length : firstResolvedSessionIndex
-    : attendance.consecutiveMissed;
-  const recentSessions = attendanceSessions.slice(0, 8);
+  const monthOptions = Array.from(new Set(attendanceSessions
+    .map((session) => session.sessionDate?.slice(0, 7))
+    .filter((month): month is string => Boolean(month))))
+    .sort((left, right) => right.localeCompare(left));
+  const normalizedSearch = attendanceSearch.trim().toLowerCase();
+  const filteredSessions = attendanceSessions.filter((session) => {
+    const resolvedStatus = session.catchupCompleted ? 'catchup' : session.status.toLowerCase();
+    const matchesStatus = attendanceStatus === 'all' || resolvedStatus === attendanceStatus;
+    const matchesMonth = attendanceMonth === 'all' || session.sessionDate?.startsWith(attendanceMonth);
+    const matchesSearch = !normalizedSearch || [session.sessionTitle, session.sessionType, session.reason]
+      .some((value) => String(value || '').toLowerCase().includes(normalizedSearch));
+    return matchesStatus && matchesMonth && matchesSearch;
+  });
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <BigMetric value={formatAttendanceFraction(attendance.present, attendance.sessions)} label="Attendance" tone="primary" />
         <BigMetric value={String(attendance.sessions ?? '--')} label="Total Sessions" tone="muted" />
         <BigMetric value={String(attendance.present ?? '--')} label="Attended" tone="emerald" />
         <BigMetric value={String(outstandingAbsences ?? '--')} label="Absent" tone="red" />
-      </div>
-      <div className={styles.attendanceDetailGrid}>
-        <ReferencePanel title="Attendance Breakdown" icon="ri-bar-chart-line" tone="primary" className={styles.attendanceBreakdownPanel}>
-          <div className={styles.attendanceBreakdownGrid}>
-            <AttendanceBreakdownMetric icon="ri-check-line" label="Attended" value={formatCount(attendance.present)} tone="emerald" />
-            <AttendanceBreakdownMetric icon="ri-close-line" label="Outstanding absences" value={formatCount(outstandingAbsences)} tone="red" />
-            <AttendanceBreakdownMetric icon="ri-refresh-line" label="Completed catch-ups" value={formatCount(completedCatchups)} tone="primary" />
-          </div>
-        </ReferencePanel>
-        <ReferencePanel title="Missed Sessions" icon="ri-close-circle-line" tone="red">
-          {detailsLoading ? (
-            <div className="p-2"><RowsSkeleton rows={3} avatar={false} /></div>
-          ) : detailsError ? (
-            <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-[12px] text-red-700">{detailsError}</div>
-          ) : missedSessions.length > 0 ? (
-            <div className="space-y-3">
-              <div className="rounded-xl border border-red-100 bg-red-50 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[12px] font-bold text-red-700">{missedSessions.length} session(s) missed</p>
-                    <p className="mt-1 text-[12px] text-red-500">Latest absence reasons and catch-up status are shown below.</p>
-                  </div>
-                  {(displayedConsecutiveMissed || 0) > 0 && (
-                    <span className="rounded-full border border-red-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-red-600">
-                      {displayedConsecutiveMissed} consecutive
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="space-y-2">
-                {missedSessions.slice(0, 3).map((session, index) => (
-                  <div key={`${session.sessionId}-${session.sessionDate || index}`} className="rounded-xl border border-foreground-100 bg-background-100/55 p-3">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[12px] font-semibold text-red-700">Absent</span>
-                          <span className="text-[12px] text-foreground-400">{displayInline(session.sessionType)}</span>
-                        </div>
-                        <p className="mt-2 truncate text-[12px] font-bold text-foreground-900">{displayInline(session.sessionTitle)}</p>
-                        <p className="mt-1 text-[12px] text-foreground-500">
-                          Reason: {displayInline(session.reason, 'No reason recorded')}
-                        </p>
-                        <p className="mt-1 text-[12px] text-foreground-400">
-                          Catch-up not completed
-                        </p>
-                      </div>
-                      <div className="shrink-0 rounded-xl bg-background-50 px-3 py-2 text-left sm:text-right">
-                        <p className="text-[12px] font-bold text-foreground-900">{displayInline(session.sessionDateLabel)}</p>
-                        <p className="mt-0.5 text-[12px] text-foreground-400">{formatSessionTime(session.startTime, session.endTime)}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {missedSessions.length > 3 && (
-                <p className="text-[12px] text-foreground-400">Showing the latest 3 missed sessions out of {missedSessions.length}.</p>
-              )}
-            </div>
-          ) : (
-            <p className="text-[12px] text-emerald-600">No missed sessions recorded.</p>
-          )}
-        </ReferencePanel>
+        <BigMetric value={String(outstandingAbsences ?? '--')} label="Outstanding Absences" tone="red" />
       </div>
       <ReferencePanel title="Session History" icon="ri-table-line" tone="primary">
         {detailsLoading ? (
           <div className="p-2"><RowsSkeleton rows={3} avatar={false} /></div>
         ) : detailsError ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-[12px] text-amber-800">{detailsError}</div>
-        ) : recentSessions.length ? (
-          <div className="space-y-2">
-            {recentSessions.map((session, index) => (
-              <div key={`${session.sessionId}-${session.sessionDate || index}-history`} className="rounded-xl border border-foreground-100 bg-background-100/45 p-3">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full border px-2 py-0.5 text-[12px] font-semibold ${session.catchupCompleted || session.status === 'present' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : session.status === 'absent' ? 'border-red-200 bg-red-50 text-red-700' : 'border-foreground-200 bg-background-50 text-foreground-600'}`}>
-                        {session.catchupCompleted ? 'Catch-up completed' : displayInline(session.status)}
-                      </span>
-                      <span className="text-[12px] text-foreground-400">{displayInline(session.sessionType)}</span>
-                    </div>
-                    <p className="mt-2 truncate text-[12px] font-bold text-foreground-900">{displayInline(session.sessionTitle)}</p>
-                    <p className="mt-1 text-[12px] text-foreground-500">Reason: {displayInline(session.reason, 'No reason recorded')}</p>
-                  </div>
-                  <div className="shrink-0 rounded-xl bg-background-50 px-3 py-2 text-left sm:text-right">
-                    <p className="text-[12px] font-bold text-foreground-900">{displayInline(session.sessionDateLabel)}</p>
-                    <p className="mt-0.5 text-[12px] text-foreground-400">{formatSessionTime(session.startTime, session.endTime)}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-            {attendanceSessions.length > recentSessions.length && (
-              <p className="text-[12px] text-foreground-400">Showing the latest {recentSessions.length} attendance sessions.</p>
-            )}
-          </div>
+        ) : attendanceSessions.length ? (
+          <>
+            <div className={styles.attendanceToolbar}>
+              <label className={styles.attendanceSearch}>
+                <span className="sr-only">Search sessions</span>
+                <AppIcon className="ri-search-line" />
+                <input value={attendanceSearch} onChange={(event) => setAttendanceSearch(event.target.value)} placeholder="Search session, type or reason" />
+              </label>
+              <label className={styles.attendanceFilter}>
+                <span>Status</span>
+                <select value={attendanceStatus} onChange={(event) => setAttendanceStatus(event.target.value)}>
+                  <option value="all">All statuses</option>
+                  <option value="present">Attended</option>
+                  <option value="absent">Absent</option>
+                  <option value="catchup">Catch-up completed</option>
+                </select>
+              </label>
+              <label className={styles.attendanceFilter}>
+                <span>Month</span>
+                <select value={attendanceMonth} onChange={(event) => setAttendanceMonth(event.target.value)}>
+                  <option value="all">All dates</option>
+                  {monthOptions.map((month) => <option key={month} value={month}>{formatAttendanceMonth(month)}</option>)}
+                </select>
+              </label>
+            </div>
+            <p className={styles.attendanceResults}>{filteredSessions.length} of {attendanceSessions.length} sessions</p>
+            <div className={styles.attendanceTableScroll}>
+              <table className={styles.attendanceTable}>
+                <thead><tr><th>Session</th><th>Type</th><th>Date &amp; time</th><th>Status</th><th>Reason</th></tr></thead>
+                <tbody>{filteredSessions.map((session, index) => (
+                  <tr key={`${session.sessionId}-${session.sessionDate || index}-history`}>
+                    <td><strong>{displayInline(session.sessionTitle)}</strong></td>
+                    <td>{displayInline(session.sessionType)}</td>
+                    <td><strong>{displayInline(session.sessionDateLabel)}</strong><span>{formatSessionTime(session.startTime, session.endTime)}</span></td>
+                    <td><span className={cn(styles.attendanceStatus, session.catchupCompleted || session.status === 'present' ? styles.attendanceStatusPositive : session.status === 'absent' ? styles.attendanceStatusNegative : styles.attendanceStatusNeutral)}>{session.catchupCompleted ? 'Catch-up completed' : displayInline(session.status)}</span></td>
+                    <td>{displayInline(session.reason, 'No reason recorded')}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            {filteredSessions.length === 0 && <ProfileEmpty text="No sessions match the selected filters." />}
+          </>
         ) : (
           <ProfileEmpty text="No session history is available for this learner yet." />
         )}
@@ -1356,23 +1323,6 @@ function ProfileProgress({ label, value, tone, color }: { label: string; value: 
   return <div className={styles.progressRow}><div className={styles.progressMeta}><span>{label}</span><strong>{value === null ? '--' : `${Math.round(value)}%`}</strong></div><div className={cn(styles.track, resolvedTone === 'striped' && styles.striped)}><div className={styles.fill} data-tone={resolvedTone} style={{ width: `${value || 0}%` }} /></div></div>;
 }
 
-function ProfileValue({ label, value }: { label: string; value: string }) {
-  return <div className={styles.progressRow}><div className={styles.progressMeta}><span>{label}</span><strong>{value}</strong></div></div>;
-}
-
-function AttendanceBreakdownMetric({ icon, label, value, tone }: {
-  icon: string;
-  label: string;
-  value: string;
-  tone: 'primary' | 'emerald' | 'red';
-}) {
-  return <div className={styles.attendanceBreakdownMetric} data-tone={tone}>
-    <span className={styles.attendanceBreakdownIcon}><AppIcon className={icon} /></span>
-    <span className={styles.attendanceBreakdownLabel}>{label}</span>
-    <strong className={styles.attendanceBreakdownValue}>{value}</strong>
-  </div>;
-}
-
 function BigMetric({ value, label, tone }: { value: string; label: string; tone: 'primary' | 'emerald' | 'red' | 'amber' | 'muted' }) {
   const color = { primary: 'text-primary-700', emerald: 'text-emerald-600', red: 'text-red-600', amber: 'text-amber-600', muted: 'text-foreground-700' }[tone];
   return <div className={styles.bigMetric}><p className={cn(styles.bigMetricValue, color)}>{value}</p><p className={styles.bigMetricLabel}>{label}</p></div>;
@@ -1389,6 +1339,12 @@ function reviewStatusPillClass(status: CaseFileReviewMeeting['status']) {
 function displayInline(value?: string | null, fallback = '--') {
   const text = String(value || '').trim();
   return text && text !== '--' ? text : fallback;
+}
+
+function formatAttendanceMonth(month: string) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  if (!year || !monthNumber) return month;
+  return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
 }
 
 function formatCount(value: number | null) {
@@ -1426,23 +1382,6 @@ function parseLearnerKind(value?: string | null) {
     return value;
   }
   return null;
-}
-
-/**
- * The activity feed's tone is a locally-computed tier (data.ts's
- * `CaseFileActivityItem['tone']`), not a raw backend status string, so it maps
- * onto the shared `StatusTone` vocabulary explicitly rather than through
- * `statusTone()`.
- */
-function activityStatusTone(tone: CaseFileActivityItem['tone']): StatusTone {
-  const map: Record<CaseFileActivityItem['tone'], StatusTone> = {
-    primary: 'brand',
-    emerald: 'positive',
-    amber: 'caution',
-    accent: 'info',
-    red: 'critical',
-  };
-  return map[tone];
 }
 
 function buildContacts(data: CoachLearnerCaseFileData) {

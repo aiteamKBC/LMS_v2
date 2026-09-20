@@ -33,6 +33,7 @@ from coach_api.views import (
     curriculum_monthly_target_hours,
     curriculum_monthly_target_hours_weeks,
     apply_audit_hour_totals,
+    apply_canonical_learner_metrics,
     apply_evidenced_ksb_count,
     caseload_audit_hour_totals,
     caseload_aptem_ids,
@@ -49,6 +50,7 @@ from coach_api.views import (
     route_absence_report_evidence,
     serialize_caseload_learner,
 )
+from learner_api.learner_detail import otjh_status_from_variance
 
 
 def call_coach_view(view, request):
@@ -119,12 +121,11 @@ class CaseloadAptemIdTests(SimpleTestCase):
 
 
 class DashboardAttendanceTests(SimpleTestCase):
-    """The dashboard's caseload modal renders attendance, so the payload it used
-    to send empty now carries the learner's own KBC register figures."""
+    """The dashboard uses the learner's combined attendance summary."""
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates")
-    def test_rows_carry_the_register_rate(self, rates):
-        rates.return_value = {"4321": {"sessions": 62, "present": 59, "absent": 3, "rate": 95}}
+    @patch("coach_api.views.caseload_canonical_attendance")
+    def test_rows_carry_the_register_rate(self, summaries):
+        summaries.return_value = {7: {"sessions": 62, "present": 59, "absent": 3, "attendanceRate": 95}}
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
         learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
 
@@ -135,18 +136,18 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.assertTrue(payload[0]["hasAttendance"])
         self.assertEqual(payload[0]["present"], 59)
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates", return_value={})
-    def test_learners_with_no_register_are_left_out(self, rates):
+    @patch("coach_api.views.caseload_canonical_attendance", return_value={})
+    def test_learners_with_no_register_are_left_out(self, summaries):
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
         learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
 
         self.assertEqual(dashboard_attendance_rows(rows, learners), [])
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates")
-    def test_a_partial_learner_dict_does_not_break_the_dashboard(self, rates):
+    @patch("coach_api.views.caseload_canonical_attendance")
+    def test_a_partial_learner_dict_does_not_break_the_dashboard(self, summaries):
         """This helper enriches whatever the serializer produced; a missing key
         must never turn the whole dashboard into a 503."""
-        rates.return_value = {"4321": {"sessions": 4, "present": 4, "absent": 0, "rate": 100}}
+        summaries.return_value = {2: {"sessions": 4, "present": 4, "absent": 0, "attendanceRate": 100}}
         rows = [SimpleNamespace(id=2, _caseload_source=SimpleNamespace(aptem_id="4321"))]
 
         payload = dashboard_attendance_rows(rows, [{"id": "2"}])
@@ -154,16 +155,16 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.assertEqual(payload[0]["learner"], None)
         self.assertEqual(payload[0]["attendance"], 100)
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates", side_effect=RuntimeError("register down"))
-    def test_an_unreachable_register_leaves_the_dashboard_renderable(self, rates):
+    @patch("coach_api.views.caseload_canonical_attendance", return_value={})
+    def test_an_unreachable_register_leaves_the_dashboard_renderable(self, summaries):
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
 
         self.assertEqual(dashboard_attendance_rows(rows, [{"id": "7", "name": "A"}]), [])
 
     def test_no_query_runs_for_an_empty_caseload(self):
-        with patch("coach_api.views.fetch_kbc_attendance_rates") as rates:
+        with patch("coach_api.views.caseload_canonical_attendance") as summaries:
             self.assertEqual(dashboard_attendance_rows([], []), [])
-        rates.assert_not_called()
+        summaries.assert_not_called()
 
 
 class DashboardReviewHistoryTests(SimpleTestCase):
@@ -308,6 +309,44 @@ class AuditHourOverlayTests(SimpleTestCase):
                 {},
             )
         connection.assert_not_called()
+
+
+class CanonicalCoachMetricsTests(SimpleTestCase):
+    def test_otjh_status_uses_agreed_variance_boundaries(self):
+        self.assertEqual(otjh_status_from_variance(Decimal("-0.04")), "On track")
+        self.assertEqual(otjh_status_from_variance(Decimal("-0.05")), "On track")
+        self.assertEqual(otjh_status_from_variance(Decimal("-0.051")), "Need attention")
+        self.assertEqual(otjh_status_from_variance(Decimal("-0.15")), "Need attention")
+        self.assertEqual(otjh_status_from_variance(Decimal("-0.151")), "At risk")
+
+    def test_live_metrics_match_learner_facts_but_keep_coach_target_pacing(self):
+        payload = {
+            "otjhCompleted": 56.7, "otjhTarget": 82.9, "otjhPlanned": 400,
+            "overallProgress": 68, "overallProgressAvailable": True,
+            "ksbCompleted": 3, "ksbTarget": 20, "ksbProgress": 14,
+            "ksbProgressAvailable": True, "enrollmentStatus": "active",
+            "progressVariance": "-0.05", "otjhStatus": "Need attention",
+        }
+        metrics = {
+            "programme": {"completed": 34, "total": 379, "percent": 8.97, "status": "ready"},
+            "otjh": {"actual": 74.71, "planned": 581.75},
+            "ksb": {"completed": 14, "total": 20, "percent": 70, "status": "ready"},
+        }
+
+        result = apply_canonical_learner_metrics(payload, metrics)
+
+        self.assertEqual(result["otjhCompleted"], 74.71)
+        self.assertEqual(result["otjhTarget"], 120.57)
+        self.assertEqual(result["overallProgress"], 62)
+        self.assertEqual(result["otjhStatus"], "On track")
+        self.assertEqual(result["programmeProgress"], 8.97)
+        self.assertEqual((result["componentsCompleted"], result["componentsPlanned"]), (34, 379))
+        self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (14, 20, 70))
+        self.assertEqual(result["metricsSource"], "learner-dashboard")
+
+    def test_unavailable_metrics_leave_the_existing_snapshot_untouched(self):
+        payload = {"otjhCompleted": 4, "otjhTarget": 5}
+        self.assertIs(apply_canonical_learner_metrics(payload, None), payload)
 
 
 class SourceProfileIdentityTests(SimpleTestCase):

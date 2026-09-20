@@ -37,6 +37,10 @@
 .table .primaryHead th { border-bottom: 1px solid #eceaf4; }
 .table .primaryHead th[colspan] { padding-bottom: 9px; }
 .table .progressHead th { padding-block: 8px; background: #fafafe; text-transform: none; }
+.sortButton { display: inline-flex; align-items: center; gap: 6px; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+.sortButton svg { width: 14px; height: 14px; flex: 0 0 auto; color: #6d5cae; }
+.sortButton:hover { color: #513c97; }
+.sortButton:focus-visible { border-radius: 4px; outline: 2px solid #7659c4; outline-offset: 3px; }
 .table td { padding: 12px 14px; border-top: 1px solid #eceaf4; border-bottom: 1px solid #eceaf4; background: #fff; vertical-align: middle; }
 .table tbody td:first-child { border-left: 1px solid #eceaf4; border-radius: 10px 0 0 10px; }
 .table tbody td:last-child { border-right: 1px solid #eceaf4; border-radius: 0 10px 10px 0; }

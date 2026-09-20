@@ -1,7 +1,8 @@
 import { AppIcon } from '@/components/feature/AppIcon';
+import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { EMPTY_VALUE, displayValue, getOtjhStatusKey, hasValue } from '../lib/format';
 import type { InsightMap } from '../lib/attention';
-import type { Learner } from '../types';
+import type { Learner, SortDirection, SortKey } from '../types';
 import styles from '../caseload.module.css';
 
 function percent(value: number | null | undefined, available = true) {
@@ -65,28 +66,42 @@ function bestActivity(learner: Learner) {
   return EMPTY_VALUE;
 }
 
-export function LearnerTable({ learners, insights, selectionMode, selectedLearnerIds, onToggleSelect, onOpenProfile }: {
+export function LearnerTable({ learners, insights, sortKey, sortDirection, onSort, selectionMode, selectedLearnerIds, onToggleSelect, onOpenProfile }: {
   learners: Learner[];
   insights: InsightMap;
+  sortKey: SortKey;
+  sortDirection: SortDirection;
+  onSort: (key: SortKey) => void;
   selectionMode: boolean;
   selectedLearnerIds: Set<string>;
   onToggleSelect: (learnerId: string) => void;
   onOpenProfile: (learner: Learner) => void;
 }) {
+  const sortHeader = (label: string, key: SortKey) => {
+    const active = sortKey === key;
+    return <button type="button" className={styles.sortButton} onClick={() => onSort(key)} aria-label={`Sort by ${label}`}>
+      <span>{label}</span>
+      {active ? (sortDirection === 'asc' ? <ArrowUp aria-hidden="true" /> : <ArrowDown aria-hidden="true" />) : <ArrowUpDown aria-hidden="true" />}
+    </button>;
+  };
+
   return <div className={styles.tableScroll}>
     <table className={styles.table}>
       <caption className="sr-only">Learners, progress, activity and actions</caption>
       <thead>
         <tr className={styles.primaryHead}>
           {selectionMode ? <th rowSpan={2} aria-label="Select learner" /> : null}
-          <th rowSpan={2}>Learner</th><th colSpan={4}>Progress</th>
-          <th rowSpan={2}>Last Activity</th><th rowSpan={2}>Last PR</th><th rowSpan={2}>Last MCM</th><th rowSpan={2}>Actions</th>
+          <th rowSpan={2} aria-sort={sortKey === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Learner', 'name')}</th><th colSpan={4}>Progress</th>
+          <th rowSpan={2} aria-sort={sortKey === 'activity' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Last Activity', 'activity')}</th>
+          <th rowSpan={2} aria-sort={sortKey === 'progress-review' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Last PR', 'progress-review')}</th>
+          <th rowSpan={2} aria-sort={sortKey === 'monthly-coaching' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Last MCM', 'monthly-coaching')}</th>
+          <th rowSpan={2}>Actions</th>
         </tr>
         <tr className={styles.progressHead}>
-          <th>OTJH</th>
-          <th>KSBs</th>
-          <th>Activities</th>
-          <th>Attendance</th>
+          <th aria-sort={sortKey === 'otjh' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('OTJH', 'otjh')}</th>
+          <th aria-sort={sortKey === 'ksb' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('KSBs', 'ksb')}</th>
+          <th aria-sort={sortKey === 'components' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Activities', 'components')}</th>
+          <th aria-sort={sortKey === 'attendance' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Attendance', 'attendance')}</th>
         </tr>
       </thead>
       <tbody>{learners.map(learner => {

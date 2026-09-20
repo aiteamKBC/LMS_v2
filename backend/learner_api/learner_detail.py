@@ -806,20 +806,25 @@ def _append_week_quizzes(weeks, components, assigned_modules=None):
     return next_weeks, next_components
 
 
-def _otjh_status(variance):
+def otjh_status_from_variance(variance):
     """RAG status from progress_variance (a decimal fraction):
-        On track       : variance > -0.05          (-4.999...% and better)
-        Need attention : -0.15 < variance <= -0.05  (-5% to -14.999...%)
-        At risk        : variance <= -0.15          (-15% and worse)
+        On track       : variance >= -0.05          (-5% and better)
+        Need attention : -0.15 <= variance < -0.05  (below -5% through -15%)
+        At risk        : variance < -0.15           (worse than -15%)
     With no target yet (variance None) there's nothing to be behind on -> On track.
     """
     if variance is None:
         return "On track"
-    if variance > -0.05:
+    if variance >= -0.05:
         return "On track"
-    if variance > -0.15:
+    if variance >= -0.15:
         return "Need attention"
     return "At risk"
+
+
+def _otjh_status(variance):
+    """Backward-compatible wrapper for the shared OTJH RAG rule."""
+    return otjh_status_from_variance(variance)
 
 
 def _week_target_rows(detail):

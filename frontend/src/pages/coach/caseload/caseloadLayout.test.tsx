@@ -54,8 +54,9 @@ describe('My Learners table design', () => {
 
   it('shows real learner progress and profile actions without a status column', () => {
     const onOpenProfile = vi.fn();
+    const onSort = vi.fn();
     render(<LearnerTable learners={[learner]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      onToggleSelect={vi.fn()} onOpenProfile={onOpenProfile} />);
+      sortKey="risk" sortDirection="desc" onSort={onSort} onToggleSelect={vi.fn()} onOpenProfile={onOpenProfile} />);
     const row = screen.getByText('Emma Carter').closest('tr')!;
     expect(within(row).getByText('EC')).toBeInTheDocument();
     expect(within(row).queryByText('Customer Service Excellence')).not.toBeInTheDocument();
@@ -66,7 +67,14 @@ describe('My Learners table design', () => {
     expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
     expect(within(row).queryByText('On Track')).not.toBeInTheDocument();
     expect(within(row).getByLabelText('OTJH: 78%')).toHaveAttribute('data-tone', 'positive');
-    expect(screen.getByRole('table').querySelector('thead svg')).not.toBeInTheDocument();
+    for (const label of ['Learner', 'OTJH', 'KSBs', 'Activities', 'Attendance', 'Last Activity', 'Last PR', 'Last MCM']) {
+      expect(screen.getByRole('button', { name: `Sort by ${label}` })).toBeInTheDocument();
+    }
+    expect(screen.getAllByRole('button', { name: /Sort by/ })[0].querySelector('.lucide-arrow-up-down')).toBeInTheDocument();
+    expect(screen.getByRole('table').querySelector('.lucide-circle')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sort by Actions' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by OTJH' }));
+    expect(onSort).toHaveBeenCalledWith('otjh');
     fireEvent.click(within(row).getByRole('button', { name: 'View Profile' }));
     expect(onOpenProfile).toHaveBeenCalledWith(learner);
   });
@@ -77,7 +85,7 @@ describe('My Learners table design', () => {
     ['on-track', 'positive'],
   ] as const)('uses the OTJH status to colour OTJH: %s', (otjhStatus, tone) => {
     render(<LearnerTable learners={[{ ...learner, otjhStatus }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
     expect(screen.getByLabelText('OTJH: 78%')).toHaveAttribute('data-tone', tone);
   });
 });

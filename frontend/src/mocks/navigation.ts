@@ -89,14 +89,11 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/marking-queue',
   },
   {
-    id: 'coach-group-reports',
-    label: 'Reports',
+    id: 'coach-monthly-logs',
+    label: 'Monthly Logs',
     icon: 'ri-file-list-3-line',
-    href: '',
-    children: [
-      { id: 'coach-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/coach/monthly-logs', matchPaths: ['/coach/monthly-cycle'] },
-      { id: 'coach-monthly-reports', label: 'Monthly Reports', icon: 'ri-file-list-3-line', href: '/coach/monthly-reports' },
-    ],
+    href: '/coach/monthly-logs',
+    matchPaths: ['/coach/monthly-cycle'],
   },
 ];
 

@@ -70,13 +70,17 @@ from learner_api.active_users import components_target_to_date, completed_hours_
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
-from learner_api.learner_detail import refresh_learner_otjh_snapshot
+from learner_api.learner_detail import otjh_status_from_variance, refresh_learner_otjh_snapshot
+from learner_api.dashboard_metrics import read_metrics
 from learner_api.ksb_codes import extract_ksb_codes, normalize_ksb_parent_code
 from learner_api.progress_rules import progress_record_counts_as_achieved
 from audit_api.last_audit_ledger_views import _connection as audit_connection
 from learner_api.student_activity_access import student_activity_available
 from learner_api.student_activity_data import read_audit_hour_totals_bulk, read_evidenced_ksb_counts_bulk
-from learner_api.attendance import fetch_kbc_attendance_rates
+from learner_api.attendance import (
+    _summarize_attendance,
+    combined_attendance_rows,
+)
 from learner_api.review_history import REVIEW_TYPES, _serialize_review
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
@@ -1706,7 +1710,9 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
         .prefetch_related("plan_modules__weeks__components")
         .order_by("full_name", "id")
     )
-    return [row for row in queryset if clean_text(row.username)]
+    rows = [row for row in queryset if clean_text(row.username)]
+    attach_caseload_source_rows(rows)
+    return rows
 
 
 def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
@@ -2167,6 +2173,124 @@ def caseload_audit_hour_totals(rows) -> dict[int, dict]:
         for profile_id, aptem_id in aptem_by_profile.items()
         if aptem_id in totals
     }
+
+
+def caseload_canonical_metrics(rows) -> dict[int, dict]:
+    """Read the same live programme/KSB/OTJH facts as the learner dashboard.
+
+    Coach list endpoints keep this server-side so clients do not issue one
+    request per learner. Individual failures retain that learner's existing
+    snapshot without making the rest of the caseload unavailable.
+    """
+    work = []
+    for row in rows or []:
+        source = getattr(row, "_caseload_source", None)
+        if source is None:
+            continue
+        kind = "commercial" if clean_text(getattr(row, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
+        work.append((int(row.id), source, kind))
+    if not work:
+        return {}
+
+    def load(item):
+        profile_id, source, kind = item
+        try:
+            return profile_id, read_metrics(source, kind)
+        except (DatabaseError, ValueError) as exc:
+            logger.warning("Could not read canonical coach metrics for learner %s: %s", profile_id, exc)
+            return profile_id, None
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=min(4, len(work)), thread_name_prefix="coach-metrics") as executor:
+        results = executor.map(load, work)
+        return {profile_id: metrics for profile_id, metrics in results if metrics is not None}
+
+
+def caseload_canonical_attendance(rows) -> dict[int, dict]:
+    """Return the exact combined attendance summaries used by learner pages."""
+    work = [
+        (int(row.id), getattr(row, "_caseload_source", None))
+        for row in rows or []
+        if getattr(row, "_caseload_source", None) is not None
+    ]
+    if not work:
+        return {}
+
+    def load(item):
+        profile_id, source = item
+        try:
+            return profile_id, _summarize_attendance(combined_attendance_rows(source))
+        except Exception as exc:
+            logger.warning("Could not read canonical coach attendance for learner %s: %s", profile_id, exc)
+            return profile_id, None
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=min(4, len(work)), thread_name_prefix="coach-attendance") as executor:
+        results = executor.map(load, work)
+        return {profile_id: summary for profile_id, summary in results if summary is not None}
+
+
+def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict:
+    """Overlay live learner-dashboard facts while preserving coach OTJH pacing."""
+    if not metrics:
+        return payload
+    programme = metrics.get("programme") or {}
+    ksb = metrics.get("ksb") or {}
+    otjh = metrics.get("otjh") or {}
+
+    old_plan = to_number(payload.get("otjhPlanned"))
+    old_target = to_number(payload.get("otjhTarget"))
+    canonical_plan = otjh.get("planned")
+    if canonical_plan is not None:
+        ratio = old_target / old_plan if old_plan > 0 else 0
+        if old_target > 1 and 0 < ratio <= 1:
+            payload["otjhTarget"] = max(round(to_number(canonical_plan) * ratio, 2), 1)
+        payload["otjhPlanned"] = to_number(canonical_plan)
+    if otjh.get("actual") is not None:
+        payload["otjhCompleted"] = to_number(otjh["actual"])
+
+    payload["programmeCompleted"] = programme.get("completed")
+    payload["programmeTarget"] = programme.get("total")
+    payload["programmeProgress"] = programme.get("percent")
+    payload["programmeProgressAvailable"] = programme.get("status") == "ready"
+    payload["componentsCompleted"] = programme.get("completed")
+    payload["componentsPlanned"] = programme.get("total")
+    payload["ksbCompleted"] = ksb.get("completed")
+    payload["ksbTarget"] = ksb.get("total")
+    payload["ksbProgress"] = ksb.get("percent") or 0
+    payload["ksbProgressAvailable"] = ksb.get("status") == "ready"
+    payload["ksbStatus"] = derive_ksb_status(ksb.get("completed"), ksb.get("total"))
+
+    target = to_number(payload.get("otjhTarget"))
+    actual = to_number(payload.get("otjhCompleted"))
+    hours_available = target > 0
+    hours_progress = percentage(actual, target) if hours_available else 0
+    payload["overallProgress"] = hours_progress
+    payload["overallProgressAvailable"] = hours_available
+    progress_variance = clean_text(payload.get("progressVariance"))
+    if progress_variance and progress_variance != "--":
+        payload["otjhStatus"] = otjh_status_from_variance(to_decimal(progress_variance))
+    component_available = programme.get("status") == "ready"
+    component_progress = int(round(to_number(programme.get("percent")))) if component_available else 0
+    ksb_available = payload["ksbProgressAvailable"]
+    ksb_progress = int(round(to_number(payload["ksbProgress"]))) if ksb_available else 0
+    payload["status"] = determine_active_user_status(
+        program_status=payload.get("rawProgramStatus") or payload.get("enrollmentStatus") or "",
+        otjh_status=payload.get("otjhStatus") or "", progress_variance=progress_variance,
+        hours_progress=hours_progress, hours_available=hours_available,
+        ksb_progress=ksb_progress, ksb_available=ksb_available,
+        component_progress=component_progress, component_available=component_available,
+    )
+    payload["riskFlags"] = build_active_user_risk_flags(
+        otjh_status=payload.get("otjhStatus") or "", ksb_status=payload["ksbStatus"], progress_variance=progress_variance,
+        hours_progress=hours_progress, hours_available=hours_available,
+        ksb_progress=ksb_progress, ksb_available=ksb_available,
+        component_progress=component_progress, component_available=component_available,
+    )
+    payload["metricsSource"] = "learner-dashboard"
+    return payload
 
 
 def apply_evidenced_ksb_count(payload: dict, evidenced: int | None) -> dict:
@@ -9793,37 +9917,20 @@ def dashboard_attendance_rows(
     cards do not show attendance -- but the caseload modal on the same page
     does, so every learner there read "--".
 
-    This reads the KBC register keyed by Aptem id, which is the same source
-    the learner's own workspace quotes. The coach attendance page's verified
-    Teams projection is a different dataset that is empty for many learners,
-    so using it here would have shown a coach "--" next to a learner page
-    reading 95%. One batched query for the whole caseload, unlike the
-    per-learner KSB recomputation that keeps the rest of this payload lean.
+    This uses the learner workspace's combined KBC + verified Teams register,
+    including the same de-duplication and date cut-off rules.
 
     The shape is only what `mergeAttendanceRates` on the client reads: the
     identity to match on plus the rate and whether one was actually recorded.
     """
     if not learners:
         return []
-    # Shared resolver: reads `_caseload_source` where the caller attached it,
-    # and falls back to the lean id-only query where it did not.
-    aptem_by_profile = {
-        profile_id: str(aptem_id)
-        for profile_id, aptem_id in (
-            aptem_by_profile if aptem_by_profile is not None else caseload_aptem_ids(rows)
-        ).items()
-    }
-    try:
-        rates = fetch_kbc_attendance_rates(aptem_by_profile.values())
-    except Exception as exc:
-        # Attendance is an enrichment here, not the reason the dashboard loads.
-        logger.warning("Could not load dashboard attendance metrics: %s", exc)
-        return []
+    summaries = caseload_canonical_attendance(rows)
 
     payload = []
     for learner in learners:
         learner_id = to_int(learner.get("id"))
-        metrics = rates.get(aptem_by_profile.get(learner_id, "")) if learner_id else None
+        metrics = summaries.get(learner_id) if learner_id else None
         # A row with no register behind it carries nothing the client can
         # use -- `mergeAttendanceRates` would read it as "no attendance"
         # either way -- so it is left out rather than padding the payload.
@@ -9835,7 +9942,7 @@ def dashboard_attendance_rows(
             "id": learner.get("id"),
             "learner": learner.get("name"),
             "email": learner.get("email"),
-            "attendance": metrics["rate"],
+            "attendance": metrics["attendanceRate"],
             "hasAttendance": True,
             "sessions": metrics["sessions"],
             "present": metrics["present"],
@@ -10038,13 +10145,17 @@ def coach_attendance_details(request):
         attach_caseload_source_rows(caseload_rows)
         detail_audit_totals = caseload_audit_hour_totals(caseload_rows)
         detail_ksb_counts = caseload_evidenced_ksb_counts(caseload_rows)
+        detail_canonical_metrics = caseload_canonical_metrics(caseload_rows)
         learners = [
-            apply_evidenced_ksb_count(
-                apply_audit_hour_totals(
-                    serialize_attendance_source_learner(row),
-                    detail_audit_totals.get(int(row.id)),
+            apply_canonical_learner_metrics(
+                apply_evidenced_ksb_count(
+                    apply_audit_hour_totals(
+                        serialize_attendance_source_learner(row),
+                        detail_audit_totals.get(int(row.id)),
+                    ),
+                    detail_ksb_counts.get(int(row.id)),
                 ),
-                detail_ksb_counts.get(int(row.id)),
+                detail_canonical_metrics.get(int(row.id)),
             )
             for row in caseload_rows
         ]
@@ -10249,9 +10360,11 @@ def coach_dashboard(request):
             learners = [serialize_caseload_dashboard_learner(row) for row in rows]
             audit_totals = caseload_audit_hour_totals(rows)
             ksb_counts = caseload_evidenced_ksb_counts(rows)
+            canonical_metrics = caseload_canonical_metrics(rows)
             for row, learner in zip(rows, learners):
                 apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
                 apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
+                apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
             monthly_risk = dashboard_monthly_risk_history(rows, today=timezone.localdate())
             # The profile rows carry the `_caseload_source` bridge to Aptem,
             # which the attendance lookup below needs and the serialized
@@ -10497,9 +10610,11 @@ def coach_caseload(request):
         # own workspace, rather than the training-plan reflection totals.
         audit_totals = caseload_audit_hour_totals(rows)
         ksb_counts = caseload_evidenced_ksb_counts(rows)
+        canonical_metrics = caseload_canonical_metrics(rows)
         for row, learner in zip(rows, learners):
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
+            apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
     except Exception:
         logger.exception("coach_caseload_load_failed coach_account_id=%s", owner_email)
         return coach_error(
@@ -10578,15 +10693,19 @@ def coach_attendance(request):
         attach_caseload_source_rows(caseload_rows)
         attendance_audit_totals = caseload_audit_hour_totals(caseload_rows)
         attendance_ksb_counts = caseload_evidenced_ksb_counts(caseload_rows)
+        attendance_canonical_metrics = caseload_canonical_metrics(caseload_rows)
         caseload_learners = [
             learner
             for learner in [
-                apply_evidenced_ksb_count(
-                    apply_audit_hour_totals(
-                        serialize_attendance_source_learner(row),
-                        attendance_audit_totals.get(int(row.id)),
+                apply_canonical_learner_metrics(
+                    apply_evidenced_ksb_count(
+                        apply_audit_hour_totals(
+                            serialize_attendance_source_learner(row),
+                            attendance_audit_totals.get(int(row.id)),
+                        ),
+                        attendance_ksb_counts.get(int(row.id)),
                     ),
-                    attendance_ksb_counts.get(int(row.id)),
+                    attendance_canonical_metrics.get(int(row.id)),
                 )
                 for row in caseload_rows
             ]
@@ -10624,6 +10743,7 @@ def coach_attendance(request):
         ]
         fallback_attendance_data = fetch_learner_absence_data(missing_fallback_emails)
         fallback_metrics_by_email = fallback_attendance_data["metrics"]
+        canonical_attendance_by_profile = caseload_canonical_attendance(caseload_rows)
         catchup_records = list(
             CoachCalendarEvent.objects.filter(
                 owner_email__iexact=owner_email,
@@ -10639,7 +10759,8 @@ def coach_attendance(request):
         attendance_learners = [
             serialize_attendance_learner(
                 learner,
-                metrics_by_id.get(int(learner["id"]))
+                canonical_attendance_by_profile.get(int(learner["id"]))
+                or metrics_by_id.get(int(learner["id"]))
                 or metrics_by_email.get(normalize_email(learner.get("email")))
                 or fallback_metrics_by_email.get(normalize_email(learner.get("email"))),
                 catchups_by_learner_id.get(int(learner["id"]), 0),

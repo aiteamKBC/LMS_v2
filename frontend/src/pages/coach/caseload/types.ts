@@ -30,12 +30,13 @@ export type StatusFilter =
 export type SortKey =
   | 'risk'
   | 'name'
-  | 'progress'
+  | 'activity'
+  | 'progress-review'
+  | 'monthly-coaching'
   | 'attendance'
   | 'otjh'
   | 'components'
-  | 'ksb'
-  | 'gateway';
+  | 'ksb';
 
 export type SortDirection = 'asc' | 'desc';
 

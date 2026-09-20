@@ -1,35 +1,21 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { toneStyle, type StatusTone } from '@/lib/statusTone';
-import type { JourneyComponent, JourneyModule, JourneyWeek } from '@/utils/learnerJourney';
+import { completedComponentIds, isComponentComplete, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
 import {
   flattenJourney,
   formatAttemptGrade,
-  formatDisplayDate,
-  formatQuizAttemptScore,
   formatHours,
   formatPercent,
-  quizGradeValue,
-  resolveQuizAttemptModule,
-  resolveQuizAttemptTitle,
   type CaseFileTabProps,
 } from '../data';
 import styles from '../learnerCaseFile.module.css';
 
 export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { onOpenNotes?: () => void }) {
-  const navigate = useNavigate();
   const flatComponents = flattenJourney(data);
   const totalWeeks = data.journey.reduce((count, module) => count + module.weeks.length, 0);
-  const completedComponentIds = new Set([
-    ...(data.detail?.videoProgress || []).map((item) => item.componentId),
-    ...(data.detail?.componentProgress || []).map((item) => item.componentId),
-  ].filter((value): value is string => Boolean(value)));
-  const latestAttempts = [...(data.detail?.quizAttempts || [])]
-    .sort((left, right) => new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime())
-    .slice(0, 6);
+  const completedIds = completedComponentIds(data.detail);
 
   return (
     <div className="space-y-5">
@@ -87,88 +73,11 @@ export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { 
             </div>
           ) : (
             <div className="max-h-[680px] overflow-y-auto bg-background-100/35 p-4 md:p-5">
-              <CoachPlanView modules={data.journey} completedComponentIds={completedComponentIds} />
+              <CoachPlanView modules={data.journey} completedComponentIds={completedIds} />
             </div>
           )}
         </section>
-
       </div>
-
-      <section className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden">
-        <div className="p-5 md:p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <AppIcon className="ri-question-answer-line text-secondary-500"></AppIcon> Recent Assessments
-            </h2>
-            <span className="text-[12px] text-foreground-400">{data.detail?.quizAttempts.length || 0} total attempt(s)</span>
-          </div>
-          {latestAttempts.length === 0 ? (
-            <EmptyState
-              variant="empty"
-              size="sm"
-              title="No quiz attempts"
-              description="No quiz attempts have been recorded for this learner yet."
-            />
-          ) : (
-            <div className="space-y-3">
-              {latestAttempts.map((attempt, index) => {
-                const tone: StatusTone = attempt.passed ? 'positive' : 'caution';
-                const style = toneStyle(tone);
-                const attemptTitle = resolveQuizAttemptTitle(data.detail, attempt);
-                const matchingSubmissions = data.markingSubmissions?.filter((submission) => (
-                  submission.activityId === String(attempt.componentId || '')
-                  || submission.activityId === String(attempt.quizId)
-                  || submission.activityTitle.trim().toLowerCase() === attemptTitle.trim().toLowerCase()
-                )) || [];
-                const attemptSubmittedAt = Date.parse(attempt.submittedAt);
-                const markingSubmission = matchingSubmissions.find((submission) => (
-                  submission.submittedAt
-                  && Number.isFinite(attemptSubmittedAt)
-                  && Date.parse(submission.submittedAt) === attemptSubmittedAt
-                )) || matchingSubmissions[0];
-                return (
-                  <div
-                    key={`${attempt.quizId}-${attempt.attempt ?? 0}-${attempt.submittedAt}-${index}`}
-                    className="flex flex-col gap-4 rounded-xl border border-foreground-200/60 bg-background-100/60 p-3 sm:flex-row sm:items-center"
-                  >
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${style.bg} ${style.text}`}>
-                      <AppIcon className="ri-questionnaire-line text-base"></AppIcon>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-semibold text-foreground-900">{attemptTitle}</p>
-                      <p className="text-[12px] text-foreground-400">
-                        {resolveQuizAttemptModule(data.detail, attempt) || 'Quiz'} - Submitted {formatDisplayDate(attempt.submittedAt)}
-                      </p>
-                    </div>
-                    <div className="flex w-full shrink-0 items-center justify-between gap-3 sm:w-auto sm:justify-start">
-                      <div className="text-right">
-                      <StatusBadge tone={tone} label={attempt.passed ? 'Passed' : 'Submitted'} />
-                      <p className="text-[12px] font-semibold text-foreground-900 mt-1">
-                        {[formatAttemptGrade(attempt), formatQuizAttemptScore(attempt)].filter(Boolean).join(' - ') || '--'}
-                      </p>
-                      <p className="text-[12px] text-foreground-400">
-                        {attempt.ksbs?.length ? `${attempt.ksbs.length} KSB link(s)` : `${quizGradeValue(attempt)}%`}
-                      </p>
-                      </div>
-                      {markingSubmission && (
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/coach/marking-queue/${markingSubmission.id}`)}
-                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[12px] font-semibold text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                          aria-label={`Open marking: ${attemptTitle}`}
-                        >
-                          Open marking
-                          <AppIcon className="ri-arrow-right-line text-sm" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
     </div>
   );
 }
@@ -292,6 +201,7 @@ function CoachWeekCard({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const componentCount = week.components.length;
+  const completedCount = week.components.filter((component) => isComponentComplete(component, completedComponentIds)).length;
 
   return (
     <div className="relative pl-6 md:pl-7">
@@ -308,7 +218,7 @@ function CoachWeekCard({
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-heading font-bold text-foreground-800">{week.week}</span>
             <span className="mt-0.5 block text-[12px] text-foreground-400">
-              {componentCount} {componentCount === 1 ? 'component' : 'components'}
+              {completedCount} / {componentCount} completed
             </span>
           </span>
           <span className="flex shrink-0 items-center gap-3">

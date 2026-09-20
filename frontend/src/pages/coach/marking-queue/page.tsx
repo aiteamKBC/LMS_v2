@@ -103,7 +103,7 @@ function activityLabel(item: MarkingSubmission, kind: MarkingKind) {
 }
 
 export default function CoachMarkingQueue() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const personal = searchParams.get('scope') === 'personal';
   const apiEndpoint = personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
   const scopeQuery = personal ? '?scope=personal' : '';
@@ -183,23 +183,8 @@ export default function CoachMarkingQueue() {
               <h1>Pending submissions</h1>
               <p>AI drafts support your review. Your professional judgement is the final decision.</p>
             </div>
-            <div className={styles.judgementBadge}>
-              <i className="ri-shield-check-line" aria-hidden="true" />
-              Coach judgement final
-            </div>
           </div>
         </header>
-
-        <section className={styles.controls} aria-label="Coursework source">
-          <div className={styles.kindTabs} role="group" aria-label="Coursework source">
-            <button type="button" aria-pressed={!personal} onClick={() => { setSearchParams({}); setPage(1); }}>
-              Learner coursework
-            </button>
-            <button type="button" aria-pressed={personal} onClick={() => { setSearchParams({ scope: 'personal' }); setPage(1); }}>
-              Personal learning
-            </button>
-          </div>
-        </section>
 
         <section className={styles.controls} aria-label="Marking queue filters">
           <div className={styles.kindTabs} role="group" aria-label="Submission type">

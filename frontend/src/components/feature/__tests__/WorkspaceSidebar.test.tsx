@@ -234,13 +234,16 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
 });
 
 it('filters restricted groups and children in non-admin workspaces', () => {
-  const groups = roleNavMap.coach.items.filter(item => (item.children?.length ?? 0) > 1);
+  const groups: SidebarNavItem[] = [
+    { id: 'restricted-group', label: 'Restricted group', icon: 'ri-lock-line', children: [{ id: 'restricted-page', label: 'Restricted page', icon: 'ri-lock-line', href: '/restricted' }] },
+    { id: 'visible-group', label: 'Visible group', icon: 'ri-folder-line', children: [{ id: 'restricted-child', label: 'Restricted child', icon: 'ri-file-line', href: '/restricted-child' }] },
+  ];
   denied.add(groups[0].id);
   denied.add(groups[1].children![0].id);
-  const { rail } = showWorkspace('coach');
+  const { rail } = showWorkspace('coach', undefined, groups);
   expect(within(rail).queryByRole('button', { name: groups[0].label })).toBeNull();
-  fireEvent.click(within(rail).getByRole('button', { name: groups[1].label }));
-  expect(within(rail).getAllByRole('link').some(link => link.getAttribute('href') === groups[1].children![0].href)).toBe(false);
+  expect(within(rail).queryByRole('button', { name: groups[1].label })).toBeNull();
+  expect(within(rail).queryAllByRole('link').some(link => link.getAttribute('href') === groups[1].children![0].href)).toBe(false);
 });
 
 it.each([false, true])('navigates directly to a standalone page without opening a subsidebar (already open: %s)', open => {

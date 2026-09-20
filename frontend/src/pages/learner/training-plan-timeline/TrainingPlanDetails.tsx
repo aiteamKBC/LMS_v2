@@ -12,7 +12,7 @@ import styles from './trainingPlan.module.css';
 import layout from './TrainingPlanDetails.module.css';
 import { ModuleTimeline } from './ModuleTimeline';
 import { ModuleOverview } from './ModuleOverview';
-import { ProgressCharts } from './ProgressCharts';
+import { ProgressCharts, type ProgrammeProgressSnapshot } from './ProgressCharts';
 import MeetingBookingDialog from '../reviews/MeetingBookingDialog';
 
 type Props = {
@@ -20,6 +20,8 @@ type Props = {
   onRefresh: () => void; refreshing?: boolean; onRetryContract: () => void;
   initialSubjectId?: string; initialMonth?: string; canOpenActivities?: boolean; weeklyFocus?: ReactNode;
   programmeStartDate?: string | null; programmeEndDate?: string | null;
+  activityOverviewOnly?: boolean;
+  programmeSnapshot?: ProgrammeProgressSnapshot;
 };
 
 type TimelineModule = ReturnType<typeof buildPlanModules>[number];
@@ -41,7 +43,8 @@ function bookingEvent(review: PlanReview): LearnerCalendarEvent {
 
 /** Weekly learning and monthly coaching share the dashboard above the linked module panels. */
 export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh, refreshing = false,
-  onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate }: Props) {
+  onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
+  activityOverviewOnly = false, programmeSnapshot }: Props) {
   const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -100,7 +103,8 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
     'not-scheduled': reviewDate(review) && reviewDate(review) < today ? 'Overdue' : 'Not booked',
     'awaiting-signature': 'Awaiting signatures', 'in-progress': 'In progress' }[review.status] || 'Not booked');
   return <div className={`${styles.root} ${layout.root}`}>
-    <div className={`${layout.topRow} ${weeklyFocus ? layout.withWeeklyFocus : ''}`}>
+    <div className={`${layout.topRow} ${weeklyFocus ? layout.withWeeklyFocus : ''} ${activityOverviewOnly ? layout.activityOverviewTopRow : ''}`}
+      data-layout="split">
       {weeklyFocus}
       <section className={layout.engagement} aria-label="Monthly study plan">
         <div className={styles.panelHeading}><div><p className={styles.eyebrow}>Monthly focus</p><h2>{monthLabel(selectedMonth)}</h2></div><div className={styles.controls}><button className={styles.iconButton} onClick={() => shiftMonth(-1)} disabled={!canGoPrevious} aria-label="Previous month"><ChevronLeft size={16} /></button><button className={styles.iconButton} onClick={() => shiftMonth(1)} disabled={!canGoNext} aria-label="Next month"><ChevronRight size={16} /></button></div></div>
@@ -184,7 +188,8 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
         {canOpenActivities && selected && <Link className={`${styles.textLink} ${layout.monthFooterLink}`} to={subjectHref(selected.id)}>View all activities for {monthLabel(selectedMonth)}<ArrowRight size={14} /></Link>}
       </section>
     </div>
-    <section id="training-plan-details" aria-label="Monthly learning and coaching">
+    <section id="training-plan-details" aria-label={activityOverviewOnly ? 'Learner progress charts' : 'Monthly learning and coaching'}>
+    {!activityOverviewOnly && <>
     <div className={layout.toolbar}>
       <div className={layout.title}><h2>Your training plan</h2><a className={styles.textLink} href="#module-timeline">View full timeline<ArrowRight size={14} /></a></div>
       <div className={layout.filters}>
@@ -194,15 +199,16 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
       </div>
     </div>
     {refreshing && <p role="status" className={layout.refreshing}>Refreshing your training plan…</p>}
-    <div className={layout.cards}>
+    </>}
+    <div className={`${layout.cards} ${activityOverviewOnly ? layout.activityOverviewCards : ''}`}>
       <div className={layout.learningVisuals}>
-      <ModuleTimeline canOpenActivities={canOpenActivities} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
-        programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id} onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />
+      {!activityOverviewOnly && <ModuleTimeline canOpenActivities={canOpenActivities} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
+        programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id} onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />}
       <ProgressCharts modules={modules} selected={selected} data={data} onModuleSelect={module => setSelectedId(module.id)}
-        programmeStartMonth={minMonth} programmeEndMonth={maxMonth} />
+        programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} />
       </div>
-      <ModuleOverview module={selected} hasModules={modules.length > 0} coachName={data.coach.name}
-        href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} />
+      {!activityOverviewOnly && <ModuleOverview module={selected} hasModules={modules.length > 0} coachName={data.coach.name}
+        href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} />}
     </div>
     </section>
     {bookingReview && <MeetingBookingDialog
