@@ -64,6 +64,12 @@ describe('RequireAuth after integrating the record loading shell', () => {
     expect(screen.getByLabelText('Loading page')).not.toHaveAttribute('data-workspace-role');
   });
 
+  it('omits the temporary sidebar while the coach session is pending', () => {
+    const { container } = renderGate('/workspace/coach');
+    expect(screen.getByLabelText('Loading page')).toHaveAttribute('data-workspace-role', 'coach');
+    expect(container.querySelector('[style*="width"]')).toBeNull();
+  });
+
   it('keeps session failures retryable without redirecting to login', () => {
     session.isInitialized = true;
     session.initializationError = 'We could not check your session.';

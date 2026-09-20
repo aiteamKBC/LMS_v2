@@ -66,7 +66,6 @@ const COLUMNS: PdfColumn[] = [
   { label: 'Name', width: 30 },
   { label: 'Risk', width: 20 },
   { label: 'Status', width: 18 },
-  { label: 'RAG', width: 13 },
   { label: 'Progress', width: 15 },
   { label: 'OTJH', width: 20 },
   { label: 'Attend.', width: 14 },
@@ -135,7 +134,6 @@ export function downloadLearnersPdf(learners: Learner[], ownerName: string, insi
       learner.name,
       insight?.riskLabel || EMPTY_VALUE,
       displayValue(learner.rawProgramStatus),
-      displayValue(learner.coachRag),
       learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE,
       learner.overallProgressAvailable
         ? `${formatHours(learner.otjhCompleted)} / ${formatHours(learner.otjhTarget)}`

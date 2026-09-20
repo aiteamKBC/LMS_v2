@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Target, Users, Video } from 'lucide-react';
+import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Target, Users, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
@@ -146,7 +146,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
     <div className={cn(planLayout.weekDetail, 'min-w-0 rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm')}>
       {!selectedWeek ? <Panel><EmptyState title="No weeks scheduled yet" description="This module's weekly schedule isn't available yet." /></Panel> : <>
         <div className="overflow-hidden">
-          <div className="flex flex-col gap-4 border-b border-foreground-100 pb-4 md:flex-row md:items-start md:justify-between">
+          <div className="flex flex-col gap-4 border-b border-foreground-100 pb-5 md:flex-row md:items-start md:justify-between">
             <div className="min-w-0 border-l-4 border-primary-600 pl-3">
           <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-primary-700">
             {selectedWeek.kind === 'reading-week' ? 'Reading week' : `Week ${selectedWeek.sessionNumber}`}
@@ -160,7 +160,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
 
             </div>
 
-            {isTeachingWeek && <div className="w-full shrink-0 md:w-[230px]">
+            {isTeachingWeek && <div className="w-full shrink-0 rounded-xl border border-foreground-100 bg-background-50 p-4 shadow-sm md:w-[300px]">
               <div className="flex items-end justify-between gap-3">
                 <span className="text-xs font-bold text-foreground-700">Week progress</span>
                 <strong className="text-2xl font-bold tabular-nums text-foreground-900">{progress.percent}%</strong>
@@ -170,8 +170,8 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
             </div>}
           </div>
 
-          {isTeachingWeek && <>
-            <section aria-labelledby="weekly-outcomes-heading" className="mt-4 flex gap-4 rounded-xl border border-primary-100 bg-primary-50/45 p-4">
+          {isTeachingWeek && <div className="mt-5 grid gap-4 xl:grid-cols-2">
+            <section aria-labelledby="weekly-outcomes-heading" className="flex min-h-[136px] gap-4 rounded-xl border border-primary-100 bg-primary-50/45 p-5">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700 ring-1 ring-primary-200/70">
                 <Target size={23} aria-hidden="true" />
               </span>
@@ -182,23 +182,23 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
               </ul> : <p className="mt-2 text-sm leading-6 text-foreground-500">Learning outcomes for this week have not been published yet.</p>}
               </div>
             </section>
-          </>}
 
-          <section aria-labelledby="weekly-session-heading" className="mt-4">
-            {selectedWeek.kind === 'reading-week' ? <ReadingWeekPanel week={selectedWeek} />
-              : selectedWeek.start ? <LiveSessionSummary week={selectedWeek} now={now} headingId="weekly-session-heading" />
-                : <p id="weekly-session-heading" className="text-sm text-foreground-500">No live session is scheduled for this week.</p>}
+          <section aria-labelledby="weekly-session-heading">
+            {selectedWeek.start ? <LiveSessionSummary week={selectedWeek} now={now} headingId="weekly-session-heading" />
+              : <p id="weekly-session-heading" className="flex min-h-[136px] items-center rounded-xl border border-foreground-100 bg-background-50 p-5 text-sm text-foreground-500">No live session is scheduled for this week.</p>}
           </section>
+          </div>}
+
+          {!isTeachingWeek && <section aria-labelledby="weekly-session-heading" className="mt-5">
+            <ReadingWeekPanel week={selectedWeek as ReadingWeekRow} />
+          </section>}
         </div>
 
-        {isTeachingWeek && <section aria-labelledby="weekly-activities-heading" className="mt-5">
-          <h3 id="weekly-activities-heading" className="text-sm font-bold text-foreground-900">
-            Week activities {components.length > 0 && <span className="font-normal text-foreground-400">({components.length})</span>}
-          </h3>
-          <div className="mt-3">
+        {isTeachingWeek && <section aria-labelledby="weekly-activities-heading" className="mt-5 overflow-hidden rounded-xl border border-foreground-100 bg-background-50 shadow-sm">
+          <div>
             {detailError && !real ? <Panel><EmptyState variant="error" title="Could not load this week's activities" description={detailError}
               action={<button type="button" onClick={refreshDetail} className="rounded-lg bg-primary-600 px-3.5 py-2 text-xs font-semibold text-white">Try again</button>} /></Panel>
-              : detailLoading && !real ? <Panel><RowsSkeleton rows={3} avatar={false} /></Panel>
+              : detailLoading && !real ? <><ActivitiesHeading count={components.length} /><Panel><RowsSkeleton rows={3} avatar={false} /></Panel></>
                 : <ActivitiesTableModern components={components} completedIds={completedIds} kind={kind} learnerId={learnerId} week={selectedWeek.weekTitle} />}
           </div>
         </section>}
@@ -243,16 +243,16 @@ function LiveSessionSummary({ week, now, headingId }: { week: SessionRow; now: n
   const end = week.minutes ? new Date(startMs + week.minutes * 60_000) : null;
   const hasJoinUrl = !!week.joinUrl;
   const sessionEnded = Number.isFinite(startMs) && startMs <= now;
-  return <div className="flex flex-col gap-4 rounded-xl border border-foreground-100 bg-background-50 p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+  return <div className="flex min-h-[136px] flex-col gap-4 rounded-xl border border-emerald-100 bg-emerald-50/45 p-5 md:flex-row md:items-center md:justify-between">
     <div className="flex min-w-0 gap-4">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700 ring-1 ring-primary-200/70">
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200/70">
         <Users size={22} aria-hidden="true" />
       </span>
       <div className="min-w-0">
         <h3 id={headingId} className="text-sm font-bold text-foreground-900">Scheduled live session</h3>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <p className="font-semibold text-foreground-950">{week.title}</p>
-          <StatusBadge tone="info" label="Live session" size="sm" dot={false} className="bg-primary-100 text-primary-700" />
+          <StatusBadge tone="positive" label="Live session" size="sm" dot={false} className="bg-emerald-100 text-emerald-700" />
         </div>
         <dl className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs font-medium text-foreground-600">
           <div className="inline-flex items-center gap-1.5">
@@ -278,7 +278,7 @@ function LiveSessionSummary({ week, now, headingId }: { week: SessionRow; now: n
       </div>
     </div>
     {hasJoinUrl ? <a href={week.joinUrl!} target="_blank" rel="noopener noreferrer"
-      className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-foreground-950 px-4 text-xs font-bold text-white shadow-sm hover:bg-primary-700 md:min-w-[128px]">
+      className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-800 md:min-w-[128px]">
       Join session<ExternalLink size={13} aria-hidden="true" />
     </a> : null}
   </div>;
@@ -301,7 +301,13 @@ function ReadingWeekPanel({ week }: { week: ReadingWeekRow }) {
 }
 
 function KsbChips({ codes }: { codes: string[] }) {
-  if (!codes.length) return <span className="text-foreground-400">—</span>;
+  if (!codes.length) {
+    return (
+      <span className="inline-flex whitespace-nowrap rounded-full bg-background-100 px-2 py-1 text-[10px] font-medium text-foreground-400">
+        No KSB mapped
+      </span>
+    );
+  }
   return <div className="flex flex-wrap gap-1">
     {codes.map(code => {
       const type = ksbTypeCode(undefined, code);
@@ -314,64 +320,124 @@ function KsbChips({ codes }: { codes: string[] }) {
   </div>;
 }
 
+function ActivitiesHeading({ count, controls }: { count: number; controls?: ReactNode }) {
+  return <div className="flex flex-col gap-3 border-b border-foreground-100 px-4 py-3.5 md:flex-row md:items-center md:justify-between">
+    <h3 id="weekly-activities-heading" className="text-base font-bold text-foreground-950">
+      Week activities <span className="font-normal text-foreground-400">({count})</span>
+    </h3>
+    {controls}
+  </div>;
+}
+
 function ActivitiesTableModern({ components, completedIds, kind, learnerId, week }: {
   components: JourneyComponent[]; completedIds: Set<string>; kind: LearnerKind; learnerId: string; week?: string;
 }) {
+  const [query, setQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | ActivityStatus>('all');
+  const typeOptions = useMemo(() => Array.from(new Set(components.map(activityTypeLabel))).sort(), [components]);
+  const filteredComponents = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return components.filter(component => {
+      const status = activityStatus(component, completedIds);
+      const type = activityTypeLabel(component);
+      const matchesQuery = !normalizedQuery || `${type} ${component.title}`.toLowerCase().includes(normalizedQuery);
+      return matchesQuery && (typeFilter === 'all' || type === typeFilter) && (statusFilter === 'all' || status === statusFilter);
+    });
+  }, [components, completedIds, query, statusFilter, typeFilter]);
   const componentPageKey = components.map(component => component.componentId || component.title).join('|');
   const [page, setPage] = useState(0);
-  const pageCount = Math.max(1, Math.ceil(components.length / ACTIVITY_PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(filteredComponents.length / ACTIVITY_PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const visibleComponents = components.slice(safePage * ACTIVITY_PAGE_SIZE, safePage * ACTIVITY_PAGE_SIZE + ACTIVITY_PAGE_SIZE);
+  const visibleComponents = filteredComponents.slice(safePage * ACTIVITY_PAGE_SIZE, safePage * ACTIVITY_PAGE_SIZE + ACTIVITY_PAGE_SIZE);
   useEffect(() => { setPage(0); }, [componentPageKey]);
+  useEffect(() => { setPage(0); }, [query, typeFilter, statusFilter]);
   useEffect(() => { if (page >= pageCount) setPage(Math.max(0, pageCount - 1)); }, [page, pageCount]);
 
   if (!components.length) return <Panel><EmptyState size="sm" title="No activities yet" description="Activities will appear here once they are added to this week." /></Panel>;
 
-  return <div className="overflow-hidden rounded-xl border border-foreground-100 bg-background-50 shadow-sm">
+  const controls = <div className="flex flex-wrap items-center gap-2">
+    <label className="relative min-w-[180px] flex-1 md:flex-none">
+      <span className="sr-only">Search activities</span>
+      <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" aria-hidden="true" />
+      <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search activities..."
+        className="h-9 w-full rounded-lg border border-foreground-200 bg-background-50 pl-9 pr-3 text-xs text-foreground-900 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100 md:w-[210px]" />
+    </label>
+    <select aria-label="Filter activities by type" value={typeFilter} onChange={event => setTypeFilter(event.target.value)}
+      className="h-9 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-semibold text-foreground-700 outline-none focus:border-primary-400">
+      <option value="all">All types</option>
+      {typeOptions.map(type => <option key={type} value={type}>{type}</option>)}
+    </select>
+    <select aria-label="Filter activities by status" value={statusFilter} onChange={event => setStatusFilter(event.target.value as 'all' | ActivityStatus)}
+      className="h-9 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-semibold text-foreground-700 outline-none focus:border-primary-400">
+      <option value="all">All status</option>
+      <option value="not-started">Not started</option>
+      <option value="in-progress">In progress</option>
+      <option value="completed">Completed</option>
+    </select>
+  </div>;
+
+  return <div className="overflow-hidden bg-background-50">
+    <ActivitiesHeading count={components.length} controls={controls} />
+    {!filteredComponents.length ? <EmptyState size="sm" title="No matching activities" description="Try changing your search or filters." className="m-4" /> : <>
     <div className="max-w-full" style={{ overflowX: 'auto' }}>
-      <table className="w-full min-w-[680px] text-left text-[11px]">
+      <table className="w-full min-w-[860px] table-fixed text-left text-[11px]">
         <caption className="sr-only">This week's learning activities</caption>
+        <colgroup><col className="w-12" /><col className="w-32" /><col /><col className="w-32" /><col className="w-32" /><col className="w-32" /><col className="w-28" /></colgroup>
         <thead className="bg-background-100/90">
           <tr>
-            {['Type', 'Title', 'Expected time', 'KSB mapping', 'Status', 'Action'].map(label => (
-              <th key={label} scope="col" className="px-2 py-2 text-[9px] font-bold uppercase tracking-[0.06em] text-foreground-500">
+            {['#', 'Type', 'Title', 'Expected time', 'KSB mapping', 'Status', 'Action'].map(label => (
+              <th key={label} scope="col" className={cn(
+                'px-3 py-3 text-left text-[10px] font-bold uppercase tracking-[0.06em] text-foreground-500',
+                ['Expected time', 'KSB mapping', 'Status', 'Action'].includes(label) && 'text-center',
+              )}>
                 {label}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {visibleComponents.map(component => {
+          {visibleComponents.map((component, index) => {
             const status = activityStatus(component, completedIds);
             const href = activityHref(component, week, kind, learnerId, status === 'completed');
             const typeLabel = activityTypeLabel(component);
             const meta = resourceTypeMeta(component.type || typeLabel);
-            return <tr key={component.componentId || component.title} className="border-t border-foreground-100">
-              <td className="w-14 px-2 py-2 align-middle">
-                <span className={cn('inline-flex h-7 w-7 items-center justify-center rounded-lg', meta.bg, meta.color)}>
+            return <tr key={component.componentId || component.title} className="border-t border-foreground-100 transition-colors hover:bg-primary-50/30">
+              <td className="px-3 py-3 text-center align-middle font-semibold tabular-nums text-foreground-500">{safePage * ACTIVITY_PAGE_SIZE + index + 1}</td>
+              <td className="px-3 py-2.5 align-middle">
+                <div className="flex min-w-0 items-center gap-2">
+                <span className={cn('inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', meta.bg, meta.color)}>
                   <AppIcon className={meta.icon} size={14} aria-label={typeLabel} />
                 </span>
+                <span className="truncate text-[11px] font-semibold text-foreground-700" title={typeLabel}>{typeLabel}</span>
+                </div>
               </td>
-              <td className="max-w-[240px] px-2 py-2 align-middle">
-                <p className="text-xs font-semibold leading-4 text-foreground-900">{component.title}</p>
+              <td className="px-3 py-2.5 text-left align-middle">
+                <p className="line-clamp-2 text-xs font-semibold leading-4 text-foreground-900" title={component.title}>{component.title}</p>
               </td>
-              <td className="w-24 px-2 py-2 align-middle text-[11px] font-semibold tabular-nums text-foreground-700">
-                <span className="inline-flex items-center gap-1"><Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{activityExpectedTimeLabel(component)}</span>
+              <td className="px-3 py-2.5 text-center align-middle text-[11px] font-semibold tabular-nums text-foreground-700">
+                <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap"><Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{activityExpectedTimeLabel(component)}</span>
               </td>
-              <td className="w-24 px-2 py-2 align-middle"><KsbChips codes={activityKsbCodes(component)} /></td>
-              <td className="w-24 px-2 py-2 align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="text-[10px]" /></td>
-              <td className="w-24 px-2 py-2 text-right align-middle">
+              <td className="px-3 py-2.5 text-center align-middle"><div className="flex justify-center"><KsbChips codes={activityKsbCodes(component)} /></div></td>
+              <td className="px-3 py-2.5 text-center align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" /></td>
+              <td className="px-3 py-2.5 text-center align-middle">
                 {href ? <Link to={href} className={cn(
                   'inline-flex min-h-7 min-w-[72px] items-center justify-center whitespace-nowrap rounded-lg px-2 text-[10px] font-bold leading-none transition',
                   status === 'in-progress' ? 'bg-primary-600 text-white shadow-sm hover:bg-primary-700' : 'border border-primary-200 bg-background-50 text-primary-700 hover:border-primary-300 hover:bg-primary-50',
-                )}>{activityActionLabel(status)}</Link> : <span className="text-[11px] text-foreground-400">Not available</span>}
+                )}>{activityActionLabel(status)}</Link> : <span className="inline-block whitespace-nowrap text-[10px] text-foreground-400">Not available</span>}
               </td>
             </tr>;
           })}
         </tbody>
       </table>
     </div>
-    <PaginationControls page={safePage} pageCount={pageCount} onPageChange={setPage} label="activities" className="border-t border-foreground-100 px-3 py-3" />
+    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-t border-foreground-100 px-4 py-3">
+      <p className="text-[11px] font-medium text-foreground-500">
+        Showing {visibleComponents.length} of {filteredComponents.length} activities
+      </p>
+      <PaginationControls page={safePage} pageCount={pageCount} onPageChange={setPage} label="activities" className="col-start-3 justify-self-end" />
+    </div>
+    </>}
   </div>;
 }
 

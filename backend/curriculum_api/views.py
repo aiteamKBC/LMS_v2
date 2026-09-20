@@ -2657,6 +2657,9 @@ def curriculum_teams_meeting(request):
     try:
         event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
         targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
+        non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings))
+        if non_delivery_reason:
+            return json_error(non_delivery_reason, status=400, code='non_delivery_date')
         payload = {**payload, 'hideAttendees': True, 'scheduledOccurrences': [
             {'sessionNumber': item['session_number'], 'startDateTimeUtc': item['start'].isoformat(),
              'durationMinutes': int((item['end'] - item['start']).total_seconds() / 60)} for item in targets
@@ -3168,6 +3171,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or series.get('repeat_occurrences') or 1)))
     try:
         targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
+        if not payload.get('peopleOnly'):
+            non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings))
+            if non_delivery_reason:
+                return json_error(non_delivery_reason, status=400, code='non_delivery_date')
         recurrence = local_calendar_recurrence(targets, repeat, graph_timezone_iana(graph_settings),
                                                graph_settings.get('timezone') or 'GMT Standard Time')
     except (ValueError, TypeError, KeyError) as exc:
@@ -3359,6 +3366,13 @@ def curriculum_teams_meeting_occurrence_schedule(request, live_session_id, sessi
         return json_error('A valid meeting start date and time is required.', status=400)
     if new_start.tzinfo is not None:
         new_start = new_start.astimezone(timezone.utc).replace(tzinfo=None)
+
+    non_delivery_reason = teams_non_delivery_reason(
+        [{'session_number': session_number, 'start': new_start.replace(tzinfo=timezone.utc)}],
+        graph_timezone_iana(teams_schedule_settings({}, series=series_rows[0])),
+    )
+    if non_delivery_reason:
+        return json_error(non_delivery_reason, status=400, code='non_delivery_date')
 
     series = series_rows[0]
     occurrence = occurrence_rows[0]
@@ -7366,6 +7380,53 @@ def get_holiday_rows_safe():
     except (Exception, AssertionError):
         logger.debug('Unable to read the holiday calendar.', exc_info=True)
         return []
+
+
+NON_DELIVERY_WEEKEND_MESSAGE = 'Sessions and meetings can only be booked Monday to Friday.'
+
+
+def england_non_delivery_reason(value, holiday_rows=None):
+    """Return why a date cannot host a session or meeting in England."""
+    day = value.date() if isinstance(value, datetime) else parse_date(value)
+    if not day:
+        return ''
+    if day.weekday() >= 5:
+        return NON_DELIVERY_WEEKEND_MESSAGE
+    rows = get_holiday_rows_safe() if holiday_rows is None else (holiday_rows or [])
+    bank_holidays = [row for row in rows if holiday_row_source(row) == HOLIDAY_SOURCE_GOVUK]
+    match = next((row for row in bank_holidays if day in holiday_date_set([row])), None)
+    if not match:
+        return ''
+    label = clean_str(match.get('title') or match.get('label') or match.get('name'))
+    suffix = f' ({label})' if label else ''
+    return f'Sessions and meetings cannot be booked on an England and Wales bank holiday{suffix}.'
+
+
+def teams_non_delivery_reason(targets, time_zone='Europe/London', holiday_rows=None):
+    """Validate Teams target instants against the England business calendar."""
+    try:
+        zone = ZoneInfo(time_zone or 'Europe/London')
+    except (KeyError, ValueError):
+        zone = ZoneInfo('Europe/London')
+    holidays = get_holiday_rows_safe() if holiday_rows is None else (holiday_rows or [])
+    for target in targets or []:
+        instant = (
+            target.get('start') or target.get('startDateTimeUtc') or target.get('start_datetime')
+            if isinstance(target, dict) else target
+        )
+        if not isinstance(instant, datetime):
+            instant = parse_graph_datetime(instant)
+        if not instant:
+            continue
+        local = instant.replace(tzinfo=instant.tzinfo or timezone.utc).astimezone(zone)
+        reason = england_non_delivery_reason(local.date(), holidays)
+        if reason:
+            session_number = parse_int(
+                target.get('session_number') or target.get('sessionNumber'), 0,
+            ) if isinstance(target, dict) else 0
+            prefix = f'Session {session_number}: ' if session_number else ''
+            return f'{prefix}{reason}'
+    return ''
 
 
 def holiday_table_name():
@@ -27233,6 +27294,9 @@ def curriculum_session_detail(request, identifier):
             'tutor_name': canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else current.get('tutor_name'),
         }
         if payload.get('date'):
+            non_delivery_reason = england_non_delivery_reason(payload.get('date'))
+            if non_delivery_reason:
+                return json_error(non_delivery_reason, status=400, code='non_delivery_date', fields=['date'])
             if int(week_number) != 1:
                 return json_error('Only week 1 generated sessions can update start_date directly. Later session dates are calculated from the parent module start date.', status=409)
             updates['start_date'] = payload.get('date')

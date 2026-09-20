@@ -11,15 +11,6 @@
 // ============================================================================
 import { memo } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { MenuSelect } from './MenuSelect';
-
-const PAGE_SIZE_OPTIONS = [
-  { value: '12', label: '12 per page' },
-  { value: '24', label: '24 per page' },
-  { value: '50', label: '50 per page' },
-  { value: '100', label: '100 per page' },
-];
-
 const WINDOW = 5;
 
 function pageWindow(page: number, totalPages: number): number[] {
@@ -37,14 +28,12 @@ export const Pagination = memo(function Pagination({
   total,
   pageSize,
   onPageChange,
-  onPageSizeChange,
 }: {
   page: number;
   totalPages: number;
   total: number;
   pageSize: number;
   onPageChange: (page: number) => void;
-  onPageSizeChange: (size: number) => void;
 }) {
   const first = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const last = Math.min(page * pageSize, total);
@@ -57,14 +46,6 @@ export const Pagination = memo(function Pagination({
       </p>
 
       <div className="flex items-center gap-3">
-        <MenuSelect
-          value={String(pageSize)}
-          onChange={(value) => onPageSizeChange(Number(value))}
-          options={PAGE_SIZE_OPTIONS}
-          align="right"
-          widthClass="w-[132px]"
-        />
-
         <div className="flex items-center gap-1">
           <button
             type="button"

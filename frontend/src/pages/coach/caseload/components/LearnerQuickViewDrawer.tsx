@@ -13,7 +13,6 @@
 import { memo, useEffect, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
-import { CoachRagSelector } from './CoachRagSelector';
 import {
   AttentionReasonLine,
   LearnerAvatar,
@@ -373,17 +372,13 @@ export const LearnerQuickViewDrawer = memo(function LearnerQuickViewDrawer({
   learner,
   insight,
   initialTab,
-  savingCoachRag,
   onClose,
-  onCoachRagChange,
   onOpenProfile,
 }: {
   learner: Learner | null;
   insight: LearnerInsight | null;
   initialTab: QuickViewTab;
-  savingCoachRag: boolean;
   onClose: () => void;
-  onCoachRagChange: (learnerId: string, value: string) => void;
   onOpenProfile: (learner: Learner, tab: string) => void;
 }) {
   const [tab, setTab] = useState<QuickViewTab>(initialTab);
@@ -422,15 +417,6 @@ export const LearnerQuickViewDrawer = memo(function LearnerQuickViewDrawer({
             </div>
 
             <div className="mt-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-foreground-400">Coach RAG</span>
-                <CoachRagSelector
-                  value={learner.coachRag}
-                  learnerName={learner.name}
-                  saving={savingCoachRag}
-                  onChange={(value) => onCoachRagChange(learner.id, value)}
-                />
-              </div>
               {learner.email ? (
                 <a
                   href={`mailto:${learner.email}`}
