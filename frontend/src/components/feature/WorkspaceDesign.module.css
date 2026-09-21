@@ -1,5 +1,27 @@
 /* Super Admin is the shared visual reference. Keep these rules scoped to the
    shell so legacy workspace styles cannot restore oversized gradient heroes. */
+:global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-workspace-topbar) {
+  margin: 0;
+  height: 76px;
+  padding-inline: 22px;
+  border-radius: 0;
+  border-color: transparent;
+  background: #f7f5fc !important;
+  box-shadow: none;
+}
+:global(.workspace-shell[data-workspace-role="coach"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu), :global(.kbc-workspace-switcher-button)) { color: #302149 !important; }
+:global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-topbar-subtitle) { color: #77718d !important; }
+:global(.workspace-shell[data-workspace-role="coach"]).shell :global(.coach-header-search) { display: flex; align-items: center; gap: 8px; min-width: 0; width: min(320px, 24vw); padding: 8px 10px; border: 1px solid #ece7f5; border-radius: 5px; background: white; color: #77718d; font-size: 11px; text-align: left; }
+:global(.coach-header-search) span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+:global(.coach-header-search) svg { width: 14px; height: 14px; color: #622bd1; }
+:global(.coach-header-search) kbd { flex-shrink: 0; font-size: 10px; }
+:global(.coach-header-search):focus-visible { outline: 2px solid #622bd1; outline-offset: 2px; }
+@media (max-width: 1023px) {
+  :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.coach-header-search) { width: 34px; height: 34px; justify-content: center; padding: 0; }
+  :global(.coach-header-search) :is(span, kbd) { display: none; }
+}
+:global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-workspace-topbar) { background: #231b32 !important; }
+:global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="coach"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu), :global(.kbc-workspace-switcher-button)) { color: #eee8fa !important; }
 /* Scrolling stays enabled by each panel's overflow rules; only the visible
    scrollbar and its reserved gutter are removed, across all workspaces. */
 :global(.dashboard-theme[data-workspace-role]).shell,
@@ -18,6 +40,27 @@
 :global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) {
   padding: 0;
   background-image: none !important;
+}
+
+/* A 1920px display at 150% browser zoom exposes about 1280 CSS pixels. Keep
+   every coach route inside that effective viewport and let wide data tables
+   own their horizontal scrolling instead of widening the whole workspace. */
+@media (max-width: 1280px) {
+  :global(.dashboard-theme[data-workspace-role="coach"]).shell :global(.workspace-main) {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  :global(.dashboard-theme[data-workspace-role="coach"]).shell :global(.workspace-main) > * {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  :global(.dashboard-theme[data-workspace-role="coach"]).shell :global(.workspace-main) :is(:global(.page-container), main, section) {
+    min-width: 0;
+    max-width: 100%;
+  }
 }
 
 :global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :global(.page-container) {

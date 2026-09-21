@@ -47,7 +47,7 @@ export const AttentionQueue = memo(function AttentionQueue({
       filter: 'at-risk',
       title: 'Critical',
       count: counts.critical,
-      description: 'Overdue gateway, red RAG or serious learner risk.',
+      description: 'Overdue gateway or serious learner risk.',
       dot: 'bg-red-500',
       activeClass: 'bg-red-50/70 ring-1 ring-red-200',
       idleClass: 'bg-white hover:bg-red-50/40',

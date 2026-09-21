@@ -6,7 +6,7 @@ import sys
 import types
 import unittest
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -247,11 +247,18 @@ class CoachAttendanceContractTests(unittest.TestCase):
             "fetch_verified_teams_attendance_rows": self.reader,
             "normalize_email": lambda value: str(value or "").strip().lower(),
             "clean_text": lambda value: str(value or "").strip(), "to_int": int,
+            "format_iso_date_value": lambda value: value.isoformat(),
+            "format_date_value": lambda value: value.strftime("%d %b %Y"),
             "empty_attendance_detail_summary": lambda: {"empty": True},
             "build_attendance_detail_summary_payload": lambda rows: {"rows": rows},
         }
         load_functions(BACKEND / "coach_api/views.py",
-                       {"fetch_attendance_detail_summary_data", "fetch_attendance_detail_rows"}, self.namespace)
+                       {
+                           "fetch_attendance_detail_summary_data",
+                           "fetch_attendance_detail_rows",
+                           "normalize_attendance_detail_status",
+                           "serialize_attendance_register_row",
+                       }, self.namespace)
 
     def test_other_summary_consumers_keep_the_existing_roster(self):
         self.namespace["fetch_attendance_detail_summary_data"]([1], ["one@example.invalid"])
@@ -264,6 +271,67 @@ class CoachAttendanceContractTests(unittest.TestCase):
     def test_profile_details_use_the_same_expanded_source(self):
         self.assertEqual(self.namespace["fetch_attendance_detail_rows"]({"id": "1", "email": "one@example.invalid"}), [])
         self.reader.assert_called_once_with([1], ["one@example.invalid"], include_reported_participants=True)
+
+    def test_attendance_register_row_exposes_the_existing_verified_record(self):
+        row = self.namespace["serialize_attendance_register_row"]({
+            "learner_id": 1,
+            "learner_name": "One Learner",
+            "learner_email": "one@example.invalid",
+            "session_id": "occurrence-1",
+            "session_title": "Data Analysis — Session 2",
+            "session_date": date(2026, 9, 10),
+            "attendance_status": "attended",
+        })
+
+        self.assertEqual(row, {
+            "learnerId": "1",
+            "learnerName": "One Learner",
+            "learnerEmail": "one@example.invalid",
+            "sessionId": "occurrence-1",
+            "sessionTitle": "Data Analysis — Session 2",
+            "sessionDate": "2026-09-10",
+            "sessionDateLabel": "10 Sep 2026",
+            "status": "present",
+        })
+
+
+class DashboardKbcAttendanceTests(unittest.TestCase):
+    def setUp(self):
+        self.kbc = Mock(return_value={
+            "4321": {"sessions": 4, "present": 3, "absent": 1, "rate": 75,
+                     "lastSessionDate": date(2026, 9, 18)},
+        })
+        self.canonical = Mock(return_value={
+            8: {"sessions": 3, "present": 2, "absent": 1, "attendanceRate": 67},
+        })
+        self.namespace = {
+            "to_int": lambda value: int(value or 0),
+            "caseload_aptem_ids": lambda rows: {7: 4321},
+            "caseload_canonical_attendance": self.canonical,
+            "fetch_kbc_attendance_rates": self.kbc,
+            "format_date_value": lambda value: value.strftime("%d %b %Y") if value else "--",
+            "logger": Mock(),
+        }
+        load_functions(BACKEND / "coach_api/views.py", {"dashboard_attendance_rows"}, self.namespace)
+
+    def test_aptem_uses_id_keyed_kbc_and_other_learner_keeps_existing_source(self):
+        rows = [SimpleNamespace(id=7), SimpleNamespace(id=8)]
+        learners = [{"id": "7", "name": "A"}, {"id": "8", "name": "B"}]
+
+        payload = self.namespace["dashboard_attendance_rows"](rows, learners)
+
+        self.assertEqual([(row["id"], row["attendance"]) for row in payload], [("7", 75), ("8", 67)])
+        self.assertEqual(payload[0]["lastSessionDate"], "2026-09-18")
+        self.assertEqual(list(self.kbc.call_args.args[0]), [4321])
+        self.canonical.assert_called_once_with([rows[1]])
+
+    def test_missing_kbc_rows_do_not_use_teams_for_aptem_learner(self):
+        self.kbc.return_value = {}
+        rows = [SimpleNamespace(id=7), SimpleNamespace(id=8)]
+
+        payload = self.namespace["dashboard_attendance_rows"](rows, [{"id": "7"}, {"id": "8"}])
+
+        self.assertEqual([row["id"] for row in payload], ["8"])
 
 
 if __name__ == "__main__":

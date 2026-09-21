@@ -59,4 +59,11 @@ describe('PageSkeleton', () => {
     const { container } = render(<PageSkeleton />);
     expect(container.querySelector<HTMLElement>('[style*="width"]')?.style.width).toBe(`${SIDEBAR_EXPANDED_WIDTH}px`);
   });
+
+  it('can omit the sidebar while preserving the loading chrome', () => {
+    const { container } = render(<PageSkeleton workspaceRole="coach" hideSidebar />);
+    expect(container.querySelector('[style*="width"]')).toBeNull();
+    expect(container.querySelector('.h-16')).not.toBeNull();
+    expect(container.firstElementChild).toHaveAttribute('data-workspace-role', 'coach');
+  });
 });

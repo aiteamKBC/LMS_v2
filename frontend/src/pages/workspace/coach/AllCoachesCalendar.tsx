@@ -42,7 +42,7 @@ function startOfWeek(value: Date) {
 }
 
 function weekDays(anchor: Date) {
-  return Array.from({ length: 7 }, (_, index) => {
+  return Array.from({ length: 5 }, (_, index) => {
     const date = new Date(anchor);
     date.setDate(anchor.getDate() + index);
     return date;
@@ -72,7 +72,7 @@ export function AllCoachesCalendar({
   const [loading, setLoading] = useState(false);
   const [failedCoaches, setFailedCoaches] = useState<string[]>([]);
   const days = useMemo(() => weekDays(weekStart), [weekStart]);
-  const weekEnd = days[6];
+  const weekEnd = days[4];
 
   useEffect(() => {
     if (!coaches.length) {
@@ -208,13 +208,13 @@ export function AllCoachesCalendar({
 
       <div className="p-4 md:p-6">
         {loading ? (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-7">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
             {days.map(day => <div key={isoDate(day)} className="h-40 animate-pulse rounded-xl bg-background-100" />)}
           </div>
         ) : !visibleEvents.length ? (
           <EmptyState variant="empty" icon="ri-calendar-check-line" title="No calendar activity this week" description="There are no sessions or reviews for the selected coaches in this week." />
         ) : (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-7">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
             {days.map(day => {
               const key = isoDate(day);
               const dayEvents = eventsByDay.get(key) || [];

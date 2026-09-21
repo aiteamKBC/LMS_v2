@@ -64,54 +64,36 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
-  { id: 'coach-previous-records', label: 'Previous learning records', icon: 'ri-history-line', href: '/old-otjh/coach' },
   {
-    id: 'coach-group-learners',
-    label: 'My Learners',
-    icon: 'ri-group-line',
-    href: '/coach/caseload',
-  },
-  {
-    id: 'coach-group-attendance',
-    label: 'Attendance',
-    icon: 'ri-calendar-2-line',
-    href: '',
+    id: 'coach-meetings',
+    label: 'Meetings',
+    icon: 'ri-calendar-event-line',
+    href: '/coach/monthly-coaching',
     children: [
-      { id: 'coach-attendance', label: 'Attendance & Catch-up', icon: 'ri-calendar-check-line', href: '/coach/attendance' },
-      { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports' },
-    ],
-  },
-  {
-    id: 'coach-group-marking',
-    label: 'Marking & Evidence',
-    icon: 'ri-edit-line',
-    href: '',
-    children: [
-      { id: 'coach-marking-queue', label: 'Marking Queue', icon: 'ri-edit-line', href: '/coach/marking-queue' },
-    ],
-  },
-  {
-    id: 'coach-group-coaching',
-    label: 'Coaching & Reviews',
-    icon: 'ri-calendar-schedule-line',
-    href: '',
-    children: [
-      { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
-      { id: 'coach-meetings', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
+      { id: 'coach-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/monthly-coaching' },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
-      { id: 'coach-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/coach/monthly-logs', matchPaths: ['/coach/monthly-cycle'] },
+      { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-refresh-line', href: '/coach/catchup-queue' },
+      { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
     ],
   },
   {
-    id: 'coach-group-intelligence',
-    label: 'Progress Intelligence',
-    icon: 'ri-bar-chart-2-line',
-    href: '',
-    children: [
-      { id: 'coach-ksb-impact', label: 'KSB Impact', icon: 'ri-bar-chart-2-line', href: '/coach/ksb-impact' },
-      { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
-      { id: 'coach-monthly-reports', label: 'Monthly Reports', icon: 'ri-file-list-3-line', href: '/coach/monthly-reports' },
-    ],
+    id: 'coach-attendance',
+    label: 'Attendance',
+    icon: 'ri-calendar-check-line',
+    href: '/coach/attendance',
+  },
+  {
+    id: 'coach-marking-queue',
+    label: 'Marking',
+    icon: 'ri-edit-line',
+    href: '/coach/marking-queue',
+  },
+  {
+    id: 'coach-monthly-logs',
+    label: 'Monthly Logs',
+    icon: 'ri-file-list-3-line',
+    href: '/coach/monthly-logs',
+    matchPaths: ['/coach/monthly-cycle'],
   },
 ];
 

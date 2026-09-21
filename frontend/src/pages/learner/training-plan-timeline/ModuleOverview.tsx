@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { ArrowRight, CalendarDays, Clock3, GraduationCap, Layers3, Target, Users, type LucideIcon } from 'lucide-react';
-import type { TimelineModule } from './model';
+import { percent, type TimelineModule } from './model';
 import { CurriculumTimeline } from './CurriculumTimeline';
 import { dateLabel, hours, Meter, moduleStatus, State } from './presentation';
 import styles from './trainingPlan.module.css';
@@ -21,6 +21,8 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
   const outcomes = detail?.learning_outcomes || [];
   const codes = module?.ksbCodes || [];
   const deliveryEnd = (detail?.effectiveEndDate || '').slice(0, 10);
+  const studyHoursProgress = detail?.total_otjh != null && module?.actual != null
+    ? percent(module.actual, detail.total_otjh) : null;
   return <section className={`${styles.panel} ${layout.overview}`} aria-label="Module overview">
     <div className={styles.panelHeading}>
       <div><p className={styles.eyebrow}>In focus</p><h2>Module overview</h2></div>
@@ -34,7 +36,7 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
       </div>}
       {detail?.description && <p className={layout.moduleDescription}>{detail.description}</p>}
       <div className={layout.overviewGroups}>
-        <div className={layout.overviewGroup}><h3>Schedule</h3><dl className={layout.factGrid}>
+        <div className={`${layout.overviewGroup} ${layout.scheduleGroup}`}><h3>Schedule</h3><dl className={`${layout.factGrid} ${layout.scheduleFacts}`}>
           <OverviewFact icon={CalendarDays} label="Start date">{module.start ? dateLabel(module.start) : 'To be confirmed'}</OverviewFact>
           <OverviewFact icon={CalendarDays} label="Planned end">{module.end ? dateLabel(module.end) : 'To be confirmed'}</OverviewFact>
           {/* Only when a holiday has actually moved the run. The scheduler
@@ -50,14 +52,14 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
           <OverviewFact icon={Layers3} label="Teaching weeks">{detail?.weeks_number ?? (module.weeks || 'To be confirmed')}</OverviewFact>
           <OverviewFact icon={Clock3} label="Weekly timetable">{timetable || 'To be confirmed'}{detail?.session_start_time && <small>UK time</small>}</OverviewFact>
         </dl></div>
-        <div className={layout.overviewGroup}><h3>People</h3><dl className={layout.factGrid}>
+        <div className={layout.overviewGroup}><h3>Staff</h3><dl className={layout.factGrid}>
           <OverviewFact icon={Users} label="Coach">{detail?.coach_name || coachName || 'To be assigned'}</OverviewFact>
           <OverviewFact icon={GraduationCap} label="Tutor">{detail?.tutor_name || 'To be assigned'}</OverviewFact>
         </dl></div>
         <div className={layout.overviewGroup}><h3>Study hours</h3><dl className={layout.factGrid}>
-          <OverviewFact icon={Target} label="Planned OTJH">{detail?.total_otjh == null ? 'Not provided' : `${hours(detail.total_otjh)} hours`}<small>Module training plan</small></OverviewFact>
-          <OverviewFact icon={Clock3} label="Hours recorded">{module.actual == null ? 'Unavailable' : `${hours(module.actual)} hours`}<small>Accepted study hours</small></OverviewFact>
-        </dl></div>
+          <OverviewFact icon={Target} label="Planned OTJH">{detail?.total_otjh == null ? 'Not provided' : `${hours(detail.total_otjh)} hours`}</OverviewFact>
+          <OverviewFact icon={Clock3} label="Hours recorded">{module.actual == null ? 'Unavailable' : `${hours(module.actual)} hours`}</OverviewFact>
+        </dl><div className={layout.studyHoursProgress}><Meter value={studyHoursProgress} label="Study hours progress" /><span>{studyHoursProgress == null ? '—' : `${studyHoursProgress}%`}</span></div></div>
       </div>
       {/* The curriculum as the Module Builder holds it: the taught weeks on the
           dates they are delivered, and the delivery days a cohort holiday

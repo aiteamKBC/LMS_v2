@@ -14,7 +14,7 @@
 // more than it sounds: the commonest "the page is broken" report on screens like
 // these is a filter someone forgot was on.
 // ============================================================================
-import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
 import { recordAction, recordSearch } from '@/lib/activityTrail';
@@ -74,14 +74,17 @@ export const SearchInput = memo(function SearchInput({
   onChange,
   placeholder = 'Search',
   ariaLabel,
+  suggestions,
   className,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   ariaLabel?: string;
+  suggestions?: string[];
   className?: string;
 }) {
+  const suggestionListId = useId();
   // Reported here, by name, rather than left to the LMS-wide capture listener:
   // this component knows what the box is for, and the listener would only be
   // able to guess it from the placeholder. `data-audit="manual"` keeps the two
@@ -93,6 +96,7 @@ export const SearchInput = memo(function SearchInput({
       <input
         type="search"
         value={value}
+        list={suggestions?.length ? suggestionListId : undefined}
         onChange={(event) => {
           recordSearch(event.target.value, label);
           onChange(event.target.value);
@@ -110,6 +114,11 @@ export const SearchInput = memo(function SearchInput({
         >
           <AppIcon className="ri-close-line text-[13px]"></AppIcon>
         </button>
+      ) : null}
+      {suggestions?.length ? (
+        <datalist id={suggestionListId}>
+          {suggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
+        </datalist>
       ) : null}
     </div>
   );

@@ -10,31 +10,94 @@
 // ============================================================================
 import { AppIcon } from '@/components/feature/AppIcon';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
+import styles from '../caseload.module.css';
 
-function CardSkeleton() {
+function SummarySkeleton() {
   return (
-    <div className="rounded-lg border border-foreground-200/70 bg-white p-3.5">
-      <div className="flex items-start gap-2.5">
-        <SkeletonBlock className="h-10 w-10 rounded-full" />
-        <div className="flex-1 space-y-2">
-          <SkeletonBlock className="h-3 w-32" />
-          <SkeletonBlock className="h-2.5 w-44" />
-          <SkeletonBlock className="h-2.5 w-24" />
+    <div className={styles.summaryCard}>
+      <SkeletonBlock className="h-9 w-9 rounded-full" />
+      <div>
+        <SkeletonBlock className="h-2.5 w-24" />
+        <SkeletonBlock className="mt-2 h-5 w-12" />
+        <SkeletonBlock className="mt-2 h-2 w-28" />
+      </div>
+    </div>
+  );
+}
+
+export function CaseloadSummaryLoading() {
+  return (
+    <section className={styles.summary} aria-hidden="true">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <SummarySkeleton key={index} />
+      ))}
+    </section>
+  );
+}
+
+function ProgressSkeleton() {
+  return (
+    <div className={styles.miniProgress}>
+      <SkeletonBlock className="h-2.5 w-7" />
+      <SkeletonBlock className="mt-1 h-[7px] w-full rounded-full" />
+      <SkeletonBlock className="mt-1 h-2 w-14" />
+    </div>
+  );
+}
+
+function LearnerRowSkeleton() {
+  return (
+    <tr>
+      <td>
+        <div className={styles.learner}>
+          <span className="space-y-2">
+            <SkeletonBlock className="h-2.5 w-24" />
+            <SkeletonBlock className="h-2 w-32" />
+          </span>
         </div>
-        <SkeletonBlock className="h-4 w-16 rounded" />
-      </div>
-      <SkeletonBlock className="mt-4 h-1.5 w-full rounded-full" />
-      <div className="mt-4 grid grid-cols-4 gap-3">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="space-y-1.5">
-            <SkeletonBlock className="h-2 w-12" />
-            <SkeletonBlock className="h-3 w-14" />
-          </div>
-        ))}
-      </div>
-      <div className="mt-4 space-y-2 border-t border-foreground-100 pt-3">
-        <SkeletonBlock className="h-2.5 w-40" />
-        <SkeletonBlock className="h-2.5 w-32" />
+      </td>
+      {Array.from({ length: 4 }).map((_, index) => <td key={index} className={styles.progressCell}><ProgressSkeleton /></td>)}
+      <td>
+        <div className="space-y-2">
+          <SkeletonBlock className="h-2.5 w-20" />
+          <SkeletonBlock className="h-2 w-14" />
+        </div>
+      </td>
+      <td>
+        <div className="space-y-2">
+          <SkeletonBlock className="h-2.5 w-20" />
+          <SkeletonBlock className="h-2 w-24" />
+        </div>
+      </td>
+      <td>
+        <div className="space-y-2">
+          <SkeletonBlock className="h-2.5 w-20" />
+          <SkeletonBlock className="h-2 w-24" />
+        </div>
+      </td>
+      <td>
+        <div className="flex justify-end gap-2">
+          <SkeletonBlock className="h-8 w-20 rounded-md" />
+          <SkeletonBlock className="h-8 w-8 rounded-md" />
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function ToolbarSkeleton() {
+  return (
+    <div className={styles.toolbar} aria-hidden="true">
+      <div className="flex flex-wrap items-center gap-2">
+        <SkeletonBlock className="h-9 min-w-[200px] flex-1 rounded-md lg:max-w-[340px]" />
+        <SkeletonBlock className="h-9 w-[150px] rounded-md" />
+        <SkeletonBlock className="h-9 w-[140px] rounded-md" />
+        <SkeletonBlock className="h-9 w-[145px] rounded-md" />
+        <SkeletonBlock className="h-9 w-28 rounded-md" />
+        <div className="ml-auto flex gap-2">
+          <SkeletonBlock className="h-9 w-[210px] rounded-md" />
+          <SkeletonBlock className="h-9 w-9 rounded-md" />
+        </div>
       </div>
     </div>
   );
@@ -42,12 +105,33 @@ function CardSkeleton() {
 
 export function CaseloadLoading() {
   return (
-    <div
-      aria-busy="true"
-      aria-live="polite"
-      className="grid grid-cols-1 gap-3 p-3.5 md:grid-cols-2 xl:grid-cols-3 min-[1600px]:grid-cols-4"
-    >
-      {Array.from({ length: 6 }).map((_, index) => <CardSkeleton key={index} />)}
+    <div aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading learners</span>
+      <ToolbarSkeleton />
+      <div className={styles.tableScroll}>
+        <table className={styles.table}>
+          <caption className="sr-only">Learners are loading</caption>
+          <thead>
+            <tr className={styles.primaryHead}>
+              <th rowSpan={2}>Learner</th><th colSpan={4}>Progress</th><th rowSpan={2}>Last Activity</th>
+              <th rowSpan={2}>Last PR</th><th rowSpan={2}>Last MCM</th><th rowSpan={2}>Actions</th>
+            </tr>
+            <tr className={styles.progressHead}><th>OTJH</th><th>KSBs</th><th>Activities</th><th>Attendance</th></tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: 12 }).map((_, index) => (
+              <LearnerRowSkeleton key={index} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-foreground-100 px-3 py-2.5" aria-hidden="true">
+        <SkeletonBlock className="h-3 w-40" />
+        <div className="flex items-center gap-2">
+          <SkeletonBlock className="h-8 w-24 rounded-md" />
+          <SkeletonBlock className="h-8 w-28 rounded-md" />
+        </div>
+      </div>
     </div>
   );
 }

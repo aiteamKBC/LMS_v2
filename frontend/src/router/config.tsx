@@ -47,7 +47,6 @@ const ClubDetailPage = lazyRoute(() => import("../pages/learner/clubs/detail/pag
 const ClubDiscussionDetailPage = lazyRoute(() => import("../pages/learner/clubs/discussion-detail/page"));
 const ClubEventsPage = lazyRoute(() => import("../pages/learner/clubs/events/page"));
 const ClubsPage = lazyRoute(() => import("../pages/learner/clubs/page"));
-const CoachAbsenceReports = lazyRoute(() => import("../pages/coach/absence-reports/page"));
 const CoachAiMarking = lazyRoute(() => import("../pages/coach/ai-marking/page"));
 const CoachAttendance = lazyRoute(() => import("../pages/coach/attendance/page"));
 const CoachAttendanceProfile = lazyRoute(() => import("../pages/coach/attendance-profile/page"));
@@ -59,8 +58,9 @@ const CoachEvidenceValidation = lazyRoute(() => import("../pages/coach/evidence-
 const CoachKsbImpact = lazyRoute(() => import("../pages/coach/ksb-impact/page"));
 const CoachMarkingQueue = lazyRoute(() => import("../pages/coach/marking-queue/page"));
 const CoachMarkingReviewPage = lazyRoute(() => import("../pages/coach/marking-review/page"));
-const CoachMeetings = lazyRoute(() => import("../pages/coach/meetings/page"));
+const CoachMonthlyCoaching = lazyRoute(() => import("../pages/coach/monthly-coaching/page"));
 const CoachMeetingDetail = lazyRoute(() => import("../pages/coach/meeting-detail/page"));
+const CoachReviewInstancePage = lazyRoute(() => import("../pages/coach/review-instance/page"));
 const MonthlyLogsPage = lazyRoute(() => import("../features/monthly-logs/page"));
 const CoachOtjhReports = lazyRoute(() => import("../pages/coach/otjh-reports/page"));
 const CoachMonthlyReports = lazyRoute(() => import("../pages/coach/monthly-reports/page"));
@@ -758,7 +758,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/coach/absence-reports",
-    element: <CoachAbsenceReports />,
+    element: <Navigate to="/coach/attendance" replace />,
   },
   {
     path: "/coach/catchup-queue",
@@ -777,8 +777,8 @@ const routes: RouteObject[] = [
     element: <CoachAiMarking />,
   },
   {
-    path: "/coach/meetings",
-    element: <CoachMeetings />,
+    path: "/coach/monthly-coaching",
+    element: <CoachMonthlyCoaching />,
   },
   {
     path: "/coach/meetings/:eventKey",
@@ -803,6 +803,10 @@ const routes: RouteObject[] = [
   {
     path: "/coach/reviews/:eventKey",
     element: <CoachMeetingDetail />,
+  },
+  {
+    path: "/coach/review-instances/:instanceId",
+    element: <CoachReviewInstancePage />,
   },
   {
     path: "/coach/ksb-impact",

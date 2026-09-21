@@ -30,6 +30,9 @@ function setup(calendar = schedule(), failed = '', overview = week()) {
     const url = String(input);
     if (failed && url.includes(failed)) return new Response(JSON.stringify({ error: 'Offline' }), { status: 503 });
     if (url.includes('rewards-summary')) return new Response(JSON.stringify({ points: { learnerId: '125', earned: 350, committed: 100, balance: 250 }, rewards: [] }));
+    if (url.includes('/monthly-logs/125/')) return new Response(JSON.stringify({
+      learner: { id: 125, aptem_id: null, name: 'Learner', programme: 'Programme', coach_name: '' }, months: [],
+    }));
     return new Response(JSON.stringify(url.includes('overview-week') ? overview
       : url.includes('section=contract') ? { months: calendar.months, contractStatus: calendar.contractStatus } : calendar));
   });
