@@ -219,13 +219,22 @@ def read_dashboard(source, section=None):
                 GROUP BY month,group_id ORDER BY month,group_id''', [aptem_id])
             actual = [{'month': row['month'], 'groupId': str(row['group_id']) if row['group_id'] is not None else None,
                        'hours': number(row['hours']) or 0, 'count': row['activity_count']} for row in rows(cur)]
-        refs = [f'current:{module_id}' for module_id in _effective_plan_ids(source, {})]
+        # Effective current assignments are authoritative for the schedule.
+        # Builder metadata enriches those assignments (and supplies legacy
+        # links), but a missing builder row must not hide an assigned module.
+        current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, {})))
+        refs = [f'current:{module_id}' for module_id in current_module_ids]
         if aptem_id and historical:
             cur.execute('''SELECT gl.group_id FROM "Last_audit".group_learners gl
                 JOIN "Last_audit".learners l ON l.learner_id=gl.learner_id WHERE l.aptem_id=%s''', [aptem_id])
             refs.extend(f'legacy:{row[0]}' for row in cur.fetchall())
         _, links = _builder_subject_metadata(cur, refs)
-        ids = sorted({item['id'] for item in links.values()})
+        builder_ids = {
+            item['id'] for item in links.values() if item.get('id')
+        }
+        has_valid_aptem_id = aptem_id is not None and aptem_id > 0
+        authoritative_ids = set() if has_valid_aptem_id else set(current_module_ids)
+        ids = sorted(builder_ids | authoritative_ids)
         if ids:
             # cohort_id is read so the curriculum scheduler can resolve this
             # module's cohort holidays -- including the ones a delivery team

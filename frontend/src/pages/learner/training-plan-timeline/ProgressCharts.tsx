@@ -19,6 +19,7 @@ export type ProgrammeProgressSnapshot = {
   otjhActual: number | null;
   otjhTarget: number | null;
   ksb: number | null;
+  ksbAvailable?: boolean;
   attendancePresent: number | null;
   attendanceTotal: number | null;
 };
@@ -112,7 +113,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         ? null : percent(programmeSnapshot.otjhActual, programmeSnapshot.otjhTarget),
         detail: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
           ? 'Recorded hours unavailable' : `${hourNumber.format(programmeSnapshot.otjhActual)} / ${hourNumber.format(programmeSnapshot.otjhTarget)} hours` },
-      { label: 'KSBs', value: programmeSnapshot.ksb, detail: percentage(programmeSnapshot.ksb) },
+      { label: 'KSBs', value: programmeSnapshot.ksbAvailable === false ? null : programmeSnapshot.ksb, detail: programmeSnapshot.ksbAvailable === false ? 'KSB progress unavailable' : percentage(programmeSnapshot.ksb) },
       { label: 'Reviews', value: programmeReviews.length
         ? percent(programmeReviews.filter(review => review.status === 'completed').length, programmeReviews.length) : null,
         detail: programmeReviews.length

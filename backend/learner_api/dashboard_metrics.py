@@ -272,6 +272,33 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
             historical_refs = list(set(historical_refs) | {row['source_ref'] for row in ledger if row.get('source_ref')})
     new_hours = (round(actual_hours - old_hours, 4)
                  if actual_hours is not None and old_hours is not None else round(_direct_progress_otjh(direct_progress), 4))
+    # Private evidence rows are consumed by the coach case-file serializer to
+    # enrich the existing KSB browser payload. They deliberately remain
+    # separate from the canonical percentage calculation below.
+    ksb_evidence_sources = []
+    if migrated:
+        for index, item in enumerate([*(historical or []), *(ledger or [])]):
+            if not isinstance(item, dict):
+                continue
+            if item in (historical or []) and not _is_completed(item):
+                continue
+            codes = point_codes(item.get('ksb_mappings'))
+            if not codes:
+                continue
+            source_id = str(item.get('source_ref') or f"audit:{item.get('group_id')}:{item.get('activity_id')}:{index}")
+            ksb_evidence_sources.append({
+                'id': source_id,
+                'title': str(item.get('activity_title') or item.get('title') or 'Historical Activity'),
+                'typeLabel': 'Historical Activity',
+                'source': 'Aptem',
+                'activityId': str(item.get('activity_id') or '') or None,
+                'completedAt': item.get('completed_at') or None,
+                'activityDate': item.get('activity_date') or None,
+                'status': item.get('status') or None,
+                'module': item.get('module_title') or None,
+                'componentId': str(item.get('component_ref') or '') or None,
+                'codes': sorted(codes),
+            })
     return {
         'migrated': migrated,
         'aptem_planned_total': aptem_planned_total,
@@ -283,6 +310,7 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
                  'actual': actual_hours, 'planned': planned},
         'ksb': ksb_totals(native, progress, historical, attempts, links, ledger) if history_ready
                else unavailable('historical_activities_missing'),
+        '_ksb_evidence_sources': ksb_evidence_sources,
     }
 
 
@@ -336,7 +364,8 @@ def read_metrics(source, kind, preloaded=None):
                 if audit_input is not None:
                     historical = audit_input.get('historical', [])
                 else:
-                    cursor.execute('''SELECT gl.group_id,ga.activity_id,r.status,r.video_completed,
+                    cursor.execute('''SELECT gl.group_id,ga.activity_id,
+                    r.status,r.video_completed,
                     r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
                     CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
                     CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb
@@ -361,6 +390,31 @@ def read_metrics(source, kind, preloaded=None):
                 # view and can contain newly published, unmapped activities;
                 # mixing it here changes both the denominator and KSB status.
                     historical = rows(cursor)
+                # Human-readable evidence labels are optional.  Keep this query
+                # separate from the core historical inputs above so a retired or
+                # partially migrated metadata column cannot take metrics down.
+                if history_ready and historical:
+                    try:
+                        cursor.execute('''SELECT ga.group_id,ga.activity_id,g.group_name,
+                                a.title,a.activity_date
+                            FROM "Last_audit".learners l
+                            JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
+                            JOIN "Last_audit".groups g ON g.group_id=gl.group_id
+                            JOIN "Last_audit".group_activities ga ON ga.group_id=gl.group_id
+                            JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
+                            WHERE l.aptem_id=%s''', [aptem_id])
+                        metadata = {
+                            (str(group_id), str(activity_id)): {
+                                'module_title': module_title,
+                                'activity_title': title,
+                                'activity_date': activity_date,
+                            }
+                            for group_id, activity_id, module_title, title, activity_date in cursor.fetchall()
+                        }
+                        for item in historical:
+                            item.update(metadata.get((str(item.get('group_id')), str(item.get('activity_id'))), {}))
+                    except (DatabaseError, psycopg.Error, StopIteration):
+                        log.warning('Optional historical evidence metadata unavailable for %s', aptem_id, exc_info=True)
                 if preloaded is not None and 'subject_attempts' in preloaded:
                     attempts = preloaded['subject_attempts']
                 else:
@@ -387,11 +441,12 @@ def read_metrics(source, kind, preloaded=None):
                     if component and activity:
                         candidates.setdefault(str(component), set()).add((str(group), str(activity)))
                 links = {component: next(iter(keys)) for component, keys in candidates.items() if len(keys) == 1}
-    return metrics_from_loaded(source, kind, migrated=migrated, native=native,
+    result = metrics_from_loaded(source, kind, migrated=migrated, native=native,
         progress=progress, direct_progress=direct_progress, historical=historical,
         attempts=attempts, links=links, history_ready=history_ready,
         manual_hours=(preloaded.get('manual_hours', _MISSING) if preloaded is not None else _MISSING),
         preloaded=preloaded)
+    return result
 
 
 @require_GET
@@ -407,9 +462,14 @@ def learner_metrics(request, kind, pk):
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except ValueError as error:
         return JsonResponse({'error': str(error)}, status=409)
-    except DatabaseError:
+    except DatabaseError as error:
+        log.warning(
+            '[learner_metrics] learner=%s stage=read_metrics failed exception=%s message=%s',
+            pk, type(error).__name__, str(error), exc_info=True,
+        )
         log.warning('Learner metrics unavailable for %s', pk, exc_info=True)
         return JsonResponse({'error': 'Could not load programme totals. Please try again.'}, status=503)
+    payload.pop('_ksb_evidence_sources', None)
     response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'
     return response

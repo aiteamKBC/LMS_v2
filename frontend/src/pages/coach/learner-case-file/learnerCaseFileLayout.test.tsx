@@ -97,6 +97,7 @@ const caseFileData = {
   otjhTarget: 38.5,
   otjhPlanned: 132,
   ksbProgress: 20,
+  ksbStatus: 'ready',
   ksbEvidencedCount: 14,
   ksbTotalCount: 40,
   mappedKsbCodes: [],
@@ -151,7 +152,7 @@ describe('Learner Case File design', () => {
     for (const activitySection of ['Weekly learning plan', 'Monthly study plan', 'Whole programme progress', 'Programme progress', 'Off-The-Job Hours']) {
       expect(screen.getByRole('heading', { name: activitySection })).toBeInTheDocument();
     }
-    expect(screen.getByText('25% · 10/38.5 · 20% · 7/10')).toBeInTheDocument();
+    expect(screen.getByText('25% · 10/38.5 · 0% · 7/10')).toBeInTheDocument();
     expect(screen.getByText('Activity overview only')).toBeInTheDocument();
     expect(screen.getByText('Rewards hidden')).toBeInTheDocument();
     expect(mocks.useDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true);
@@ -160,15 +161,23 @@ describe('Learner Case File design', () => {
     expect(screen.queryByRole('tab', { name: 'Reviews & Meetings' })).not.toBeInTheDocument();
   });
 
+  it('uses browser evidence rather than canonical KSB status for the header metric', () => {
+    mocks.data = { ...caseFileData, ksbStatus: 'unavailable', ksbProgress: null, touchedKsbCodes: ['K1'] };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+    const summary = screen.getByRole('region', { name: 'Learner profile summary' });
+    const ksbMetric = within(summary).getByText('KSB', { selector: 'span' }).parentElement;
+    expect(ksbMetric?.querySelector('strong')).toHaveTextContent('100%');
+  });
+
   it('switches between the redesigned progress and learning plan views', () => {
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
 
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
     expect(screen.getByRole('heading', { name: 'Off-the-Job Hours (OTJH)' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'KSB Detailed Breakdown' })).toBeInTheDocument();
-    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('40');
-    expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('14');
-    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('26');
+    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('1');
+    expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('0');
+    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('1');
     for (const label of ['KSB Code', 'Title', 'Category', 'Status', 'Evidence']) {
       expect(screen.getByRole('button', { name: `Sort by ${label}` }).querySelector('svg')).toBeInTheDocument();
     }
@@ -204,14 +213,103 @@ describe('Learner Case File design', () => {
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
 
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
-    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('40');
-    expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('14');
-    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('26');
-    expect(screen.getAllByText('Knowledge')[0].parentElement).toHaveTextContent('6 / 24');
+    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('14');
+    expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('10');
+    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('4');
+    expect(screen.getAllByText('Knowledge')[0].parentElement).toHaveTextContent('6 / 6');
     expect(screen.getByRole('button', { name: 'All (14)' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Knowledge (6)' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Skills (4)' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Behaviours (4)' })).toBeInTheDocument();
+  });
+
+  it('uses the same 58 browser rows for header, totals, remaining and category summaries', () => {
+    const ksbs = [
+      ...Array.from({ length: 18 }, (_, index) => ({ code: `K${index + 1}`, type: 'Knowledge', number: String(index + 1), description: `Knowledge ${index + 1}` })),
+      ...Array.from({ length: 27 }, (_, index) => ({ code: `S${index + 1}`, type: 'Skills', number: String(index + 1), description: `Skill ${index + 1}` })),
+      ...Array.from({ length: 13 }, (_, index) => ({ code: `B${index + 1}`, type: 'Behaviours', number: String(index + 1), description: `Behaviour ${index + 1}` })),
+    ];
+    mocks.data = {
+      ...caseFileData,
+      detail: { ...caseFileData.detail, ksbs },
+      ksbStatus: 'unavailable',
+      ksbProgress: null,
+      ksbEvidencedCount: null,
+      ksbTotalCount: null,
+      mappedKsbCodes: [],
+      touchedKsbCodes: ksbs.slice(0, 10).map((item) => item.code),
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    const header = screen.getByRole('region', { name: 'Learner profile summary' });
+    expect(within(header).getByText('KSB', { selector: 'span' }).parentElement?.querySelector('strong')).toHaveTextContent('17%');
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('58');
+    expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('10');
+    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('48');
+    expect(screen.getAllByText('Knowledge')[0].parentElement).toHaveTextContent('10 / 18');
+    expect(screen.getAllByText('Skills')[0].parentElement).toHaveTextContent('0 / 27');
+    expect(screen.getAllByText('Behaviours')[0].parentElement).toHaveTextContent('0 / 13');
+    expect(screen.getByRole('button', { name: 'All (58)' })).toBeInTheDocument();
+  });
+
+  it('uses normalized parent evidence for child KSB rows and deduplicates sources', () => {
+    mocks.data = {
+      ...caseFileData,
+      detail: {
+        ...caseFileData.detail,
+        ksbs: [
+          { code: 'B1', type: 'Behaviours', number: '1', description: 'Parent behaviour' },
+          { code: 'B1.1', type: 'Behaviours', number: '1.1', description: 'Child behaviour' },
+        ],
+      },
+      touchedKsbCodes: ['B1'],
+      mappedKsbCodes: [],
+      snapshot: {
+        ...caseFileData.snapshot,
+        ksbCompletedDetails: [{
+          code: 'B1',
+          sources: [
+            { id: 'audit:1', title: 'Accepted journal', typeLabel: 'Journal' },
+            { id: 'audit:1', title: 'Accepted journal', typeLabel: 'Journal' },
+          ],
+        }],
+      },
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    const childRow = screen.getByText('B1.1', { selector: 'strong' }).closest('tr');
+    expect(childRow).not.toBeNull();
+    expect(within(childRow!).getByText('Evidence linked')).toBeInTheDocument();
+    expect(within(childRow!).getByText('1')).toBeInTheDocument();
+
+    fireEvent.click(within(childRow!).getByRole('button', { name: 'View' }));
+    expect(screen.getByText('Accepted journal')).toBeInTheDocument();
+    expect(screen.getAllByText('Accepted journal')).toHaveLength(1);
+  });
+
+  it('keeps parent and child rows not evidenced when no parent evidence exists', () => {
+    mocks.data = {
+      ...caseFileData,
+      detail: {
+        ...caseFileData.detail,
+        ksbs: [
+          { code: 'B1', type: 'Behaviours', number: '1', description: 'Parent behaviour' },
+          { code: 'B1.1', type: 'Behaviours', number: '1.1', description: 'Child behaviour' },
+        ],
+      },
+      touchedKsbCodes: [],
+      mappedKsbCodes: [],
+      snapshot: { ...caseFileData.snapshot, ksbCompletedDetails: [] },
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    for (const code of ['B1', 'B1.1']) {
+      const row = screen.getByText(code, { selector: 'strong' }).closest('tr');
+      expect(within(row!).getByText('Not evidenced')).toBeInTheDocument();
+      expect(within(row!).getByText('0')).toBeInTheDocument();
+    }
   });
 
   it('shows completed components out of the weekly total and omits recent assessments', () => {

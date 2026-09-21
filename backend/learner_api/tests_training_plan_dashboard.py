@@ -88,6 +88,72 @@ class TrainingPlanDashboardTests(SimpleTestCase):
             ['current:SAVED', 'current:GROUP-NEW'],
         )
 
+    def test_effective_current_module_is_projected_without_builder_metadata(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com')
+        connection = MagicMock()
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '',
+                  'start_date': date(2026, 10, 5), 'end_date': date(2027, 2, 11),
+                  'weeks_number': 1, 'total_otjh': 10, 'sessions_number': 1,
+                  'session_week_day': 'Thursday', 'session_start_time': '09:00',
+                  'session_end_time': '10:00', 'coach_name': '',
+                  'programme_name': '', 'cohort_name': '', 'group_name': ''}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
+            result = read_dashboard(source, section='learning')
+
+        self.assertEqual([item['id'] for item in result['modules']], ['M1'])
+        self.assertEqual(result['moduleLinks'], {})
+
+    def test_valid_aptem_does_not_project_unlinked_effective_current_module(self):
+        source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
+        connection = MagicMock()
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.training_plan_dashboard.rows', return_value=[]):
+            result = read_dashboard(source, section='learning')
+
+        self.assertEqual(result['modules'], [])
+        sql = ' '.join(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list)
+        self.assertNotIn('FROM curriculum.modules', sql)
+
+    def test_valid_aptem_keeps_builder_linked_current_module(self):
+        source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
+        connection = MagicMock()
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '',
+                  'start_date': date(2026, 10, 5), 'end_date': date(2027, 2, 11),
+                  'weeks_number': 1, 'total_otjh': 10, 'sessions_number': 1,
+                  'session_week_day': 'Thursday', 'session_start_time': '09:00',
+                  'session_end_time': '10:00', 'coach_name': '',
+                  'programme_name': '', 'cohort_name': '', 'group_name': ''}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {'current:M1': {'id': 'M1'}})), \
+             patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
+            result = read_dashboard(source, section='learning')
+
+        self.assertEqual([item['id'] for item in result['modules']], ['M1'])
+
+    def test_zero_and_negative_aptem_ids_use_native_projection(self):
+        for aptem_id in (0, -1):
+            with self.subTest(aptem_id=aptem_id):
+                source = SimpleNamespace(pk=125, aptem_id=aptem_id, email='learner@example.com')
+                connection = MagicMock()
+                module = {'id': 'M1', 'title': 'Marketing', 'description': '',
+                          'start_date': date(2026, 10, 5), 'end_date': date(2027, 2, 11),
+                          'weeks_number': 1, 'total_otjh': 10, 'sessions_number': 1,
+                          'session_week_day': 'Thursday', 'session_start_time': '09:00',
+                          'session_end_time': '10:00', 'coach_name': '',
+                          'programme_name': '', 'cohort_name': '', 'group_name': ''}
+                with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+                     patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+                     patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
+                     patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
+                    result = read_dashboard(source, section='learning')
+                self.assertEqual([item['id'] for item in result['modules']], ['M1'])
+
+
     def test_coach_fallback_uses_only_the_current_programme_cohort_and_group(self):
         source = SimpleNamespace(programme=' Marketing Level 4 ', cohort='October 2026', group='G1')
         current = {'programme_name': 'Marketing Level 4', 'cohort_name': 'October 2026', 'group_name': 'g1', 'coach_name': 'Omar'}

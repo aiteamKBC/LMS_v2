@@ -36,6 +36,7 @@ from coach_api.views import (
     apply_attendance_summary,
     apply_audit_hour_totals,
     apply_canonical_learner_metrics,
+    apply_canonical_ksb_evidence,
     apply_evidenced_ksb_count,
     caseload_audit_hour_totals,
     caseload_aptem_ids,
@@ -410,7 +411,8 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         self.assertEqual(otjh_status_from_variance(Decimal("-19.99")), "On track")
         self.assertEqual(otjh_status_from_variance(Decimal("-20")), "Need attention")
         self.assertEqual(otjh_status_from_variance(Decimal("-39.99")), "Need attention")
-        self.assertEqual(otjh_status_from_variance(Decimal("-40")), "At risk")
+        self.assertEqual(otjh_status_from_variance(Decimal("-40")), "Need attention")
+        self.assertEqual(otjh_status_from_variance(Decimal("-41")), "At risk")
         self.assertEqual(otjh_status_from_variance(Decimal("5")), "On track")
 
     def test_live_metrics_match_learner_facts_but_keep_coach_target_pacing(self):
@@ -484,18 +486,45 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         result = apply_canonical_learner_metrics(payload, metrics)
         self.assertEqual(result["ksbStatus"], derive_ksb_status(2, 4))
 
+    def test_aptem_canonical_ksb_evidence_is_merged_and_parent_normalized(self):
+        payload = {"ksbCompletedDetails": [{"code": "B1", "sources": []}]}
+        metrics = {"_ksb_evidence_sources": [{
+            "id": "audit:7:11",
+            "title": "Historical activity",
+            "typeLabel": "manual",
+            "codes": ["B1.1", "B1"],
+        }]}
+        result = apply_canonical_ksb_evidence(payload, metrics, 987)
+        self.assertEqual(len(result["ksbCompletedDetails"]), 1)
+        self.assertEqual(len(result["ksbCompletedDetails"][0]["sources"]), 1)
+        self.assertEqual(result["ksbCompletedDetails"][0]["sources"][0]["id"], "audit:7:11")
+
+    def test_aptem_canonical_ksb_evidence_is_deduplicated(self):
+        payload = {"ksbCompletedDetails": []}
+        source = {"id": "manual:42", "title": "Accepted journal", "codes": ["K1"]}
+        metrics = {"_ksb_evidence_sources": [source, dict(source)]}
+        result = apply_canonical_ksb_evidence(payload, metrics, 987)
+        self.assertEqual(len(result["ksbCompletedDetails"]), 1)
+        self.assertEqual(len(result["ksbCompletedDetails"][0]["sources"]), 1)
+
+    def test_failed_or_non_aptem_evidence_is_not_added(self):
+        payload = {"ksbCompletedDetails": []}
+        metrics = {"_ksb_evidence_sources": [{"id": "failed:1", "codes": ["S1"]}]}
+        self.assertEqual(apply_canonical_ksb_evidence(payload, metrics, None)["ksbCompletedDetails"], [])
+
 
 class SourceProfileIdentityTests(SimpleTestCase):
-    @patch("coach_api.views.EnrolmentUser.all_learners.annotate")
-    def test_source_rows_are_keyed_by_profile_id_after_email_match(self, annotate):
+    @patch("coach_api.views.EnrolmentUser.all_learners")
+    def test_source_rows_are_keyed_by_stable_enrolment_id(self, manager):
         source = SimpleNamespace(
             id=19,
             email="Mahmoud.Fouda@kentbusinesscollege.com",
             learner_type="commercial",
         )
-        annotate.return_value.filter.return_value = [source]
+        manager.filter.return_value = [source]
         profile = SimpleNamespace(
             id=2,
+            enrolment_id=19,
             email="mahmoud.fouda@kentbusinesscollege.com",
         )
 
@@ -503,9 +532,7 @@ class SourceProfileIdentityTests(SimpleTestCase):
 
         self.assertEqual(commercial, {2: source})
         self.assertEqual(apprenticeship, {})
-        annotate.return_value.filter.assert_called_once_with(
-            source_email_key__in={"mahmoud.fouda@kentbusinesscollege.com": 2}
-        )
+        manager.filter.assert_called_once_with(pk__in={19: 2})
 
 
 class CoachKsbEvidenceTests(SimpleTestCase):

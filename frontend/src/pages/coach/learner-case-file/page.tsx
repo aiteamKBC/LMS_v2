@@ -35,6 +35,7 @@ import {
   formatFraction,
   formatHours,
   formatPercent,
+  normalizeKsbCode,
   selectCaseFileOtjh,
   useCoachLearnerCaseFileData,
   type CaseFileReviewMeeting,
@@ -62,8 +63,11 @@ const CASE_FILE_TABS = [
 
 type TabId = typeof CASE_FILE_TABS[number]['id'] | 'programme' | 'reviews' | 'coach-notes';
 type EvidencePreviewTarget = {
+  code?: string;
   title: string;
-  activities: Array<{ title: string; type: string; componentId?: string }>;
+  category?: string;
+  linked?: boolean;
+  activities: Array<{ title: string; type: string; componentId?: string; source?: string; activityId?: string; completedAt?: string; status?: string; module?: string }>;
 };
 type KsbSortKey = 'code' | 'title' | 'category' | 'status' | 'evidence';
 type SortDirection = 'asc' | 'desc';
@@ -95,10 +99,10 @@ interface AttendanceDetailSession {
   sessionType: string;
   sessionDate: string | null;
   sessionDateLabel: string;
-  startTime: string;
-  endTime: string;
+  startTime?: string | null;
+  endTime?: string | null;
   status: string;
-  reason: string;
+  reason?: string | null;
   catchupCompleted?: boolean;
 }
 
@@ -152,6 +156,7 @@ export default function LearnerCaseFile() {
   const pageSubtitle = subtitle || 'Live learner view for coaching support';
   const nextLiveSession = data?.upcomingSessions.find((session) => session.kind === 'live') || null;
   const headerOtjh = data ? selectCaseFileOtjh(data) : null;
+  const headerKsb = data?.metricsAvailable === false ? null : data ? selectCaseFileKsbSummary(selectCaseFileKsbRows(data)) : null;
 
   const handleOpenReviewMeeting = (item: CaseFileReviewMeeting) => {
     const returnParams = new URLSearchParams(location.search);
@@ -195,7 +200,8 @@ export default function LearnerCaseFile() {
             overall: data.overallProgress,
             otjhActual: headerOtjh?.logged ?? null,
             otjhTarget: headerOtjh?.target ?? null,
-            ksb: data.ksbProgress,
+            ksb: headerKsb?.percent ?? null,
+            ksbAvailable: Boolean(headerKsb?.total),
             attendancePresent: data.attendancePresentCount,
             attendanceTotal: data.attendanceSessionCount,
           }}
@@ -228,7 +234,7 @@ export default function LearnerCaseFile() {
             showRewards={false}
             timelineOnly
           /> : null}
-          <LearningPlanTab data={data} onOpenNotes={() => setActiveTab('coach-notes')} />
+          <LearningPlanTab data={data} ksbSummary={headerKsb || undefined} onOpenNotes={() => setActiveTab('coach-notes')} />
         </div>;
       case 'otjh':
         return <OTJHTab data={data} />;
@@ -339,7 +345,7 @@ export default function LearnerCaseFile() {
           <div className={styles.metrics}>
               <CaseFileHeroMetric icon="ri-focus-3-line" label="Overall" value={formatPercent(data?.overallProgress ?? null)} />
               <CaseFileHeroMetric icon="ri-time-line" label="OTJH (Actual / Target)" value={headerOtjh ? formatFraction(headerOtjh.logged, headerOtjh.target) : '--'} />
-              <CaseFileHeroMetric icon="ri-stack-line" label="KSB" value={formatPercent(data?.ksbProgress ?? null)} />
+              <CaseFileHeroMetric icon="ri-stack-line" label="KSB" value={headerKsb?.percent == null ? '--' : formatPercent(headerKsb.percent)} />
               <CaseFileHeroMetric icon="ri-group-line" label="Attendance" value={formatAttendanceFraction(data?.attendancePresentCount ?? null, data?.attendanceSessionCount ?? null)} />
               <CaseFileHeroMetric icon="ri-calendar-line" label="Gateway" value={data?.gatewayReviewDate || '--'} />
               <CaseFileHeroMetric icon="ri-calendar-event-line" label="Next session" value={nextLiveSession?.summary || '--'} />
@@ -501,31 +507,8 @@ function ReferenceProgressContent({ data, onViewEvidence }: {
     };
   }, [primaryKsbs.length, data.programme]);
 
-  const touched = new Set(data.touchedKsbCodes.map((code) => code.toUpperCase()));
-  const mappedKsbCodes = new Set(data.mappedKsbCodes.map((code) => code.toUpperCase()));
-  const sourceKsbs = buildDisplayKsbs(data, fallbackKsbs)
-    .filter((item) => mappedKsbCodes.size === 0 || mappedKsbCodes.has(String(item.code || '').toUpperCase()));
-  const ksbs = sourceKsbs
-    .map((item) => {
-      const code = String(item.code || '').toUpperCase();
-      const evidenceActivities = ksbLearningActivities(data, code);
-      const linked = touched.has(code);
-      return {
-        ...item,
-        code,
-        category: ksbCategoryFromCode(code),
-        evidenceActivities,
-        evidenceCount: evidenceActivities.length,
-        linked,
-      };
-    })
-    .sort((left, right) => left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' }));
-  const linkedCount = ksbs.filter((item) => item.linked).length;
-  const canonicalKsbTotal = data.ksbTotalCount;
-  const summaryKsbTotal = canonicalKsbTotal != null ? Math.max(0, canonicalKsbTotal) : ksbs.length;
-  const summaryKsbCompleted = Math.min(summaryKsbTotal, Math.max(0, data.ksbEvidencedCount ?? linkedCount));
-  const summaryKsbRemaining = Math.max(0, summaryKsbTotal - summaryKsbCompleted);
-  const progressByCode = new Map(data.ksbCodeProgress.map((item) => [item.code.toUpperCase(), item]));
+  const ksbs = selectCaseFileKsbRows(data, fallbackKsbs);
+  const ksbSummary = selectCaseFileKsbSummary(ksbs);
   const categoryOrder = ['Knowledge', 'Skills', 'Behaviours', 'Other'];
   const categoryOptions = Array.from(new Set(ksbs.map((item) => item.category))).sort((left, right) => {
     const leftIndex = categoryOrder.indexOf(left);
@@ -535,14 +518,11 @@ function ReferenceProgressContent({ data, onViewEvidence }: {
     return normalizedLeft - normalizedRight || left.localeCompare(right);
   });
   const categorySummary = categoryOptions.map((category) => {
-    const items = ksbs.filter((item) => item.category === category);
-    const totals = items.reduce((result, item) => {
-      const progress = progressByCode.get(item.code);
-      result.total += progress?.total ?? 1;
-      result.completed += progress?.completed ?? (item.linked ? 1 : 0);
-      return result;
-    }, { completed: 0, total: 0 });
-    return { category, total: totals.total, linked: totals.completed };
+    const summary = category === 'Knowledge' ? ksbSummary.knowledge
+      : category === 'Skills' ? ksbSummary.skills
+        : category === 'Behaviours' ? ksbSummary.behaviours
+          : { total: ksbs.filter((item) => item.category === category).length, achieved: ksbs.filter((item) => item.category === category && item.linked).length };
+    return { category, total: summary.total, linked: summary.achieved, available: summary.total > 0 };
   });
   const categoryCodeCounts = new Map(categoryOptions.map((category) => [
     category,
@@ -600,22 +580,22 @@ function ReferenceProgressContent({ data, onViewEvidence }: {
         {fallbackKsbsLoading && ksbs.length === 0 ? <div className="p-2"><RowsSkeleton rows={4} avatar={false} /></div> : ksbs.length === 0 ? <ProfileEmpty text="No learner KSB snapshot or programme KSB framework is available yet." /> : (
           <div className="space-y-5">
             <div className={styles.ksbSummary}>
-              <KsbOverviewCard icon="ri-stack-line" label="Total KSB points" value={String(summaryKsbTotal)} tone="primary" />
-              <KsbOverviewCard icon="ri-links-line" label="Points achieved" value={String(summaryKsbCompleted)} tone="emerald" />
-              <KsbOverviewCard icon="ri-focus-3-line" label="Points remaining" value={String(summaryKsbRemaining)} tone="muted" />
+              <KsbOverviewCard icon="ri-stack-line" label="Total KSB points" value={String(ksbSummary.total)} tone="primary" />
+              <KsbOverviewCard icon="ri-links-line" label="Points achieved" value={String(ksbSummary.achieved)} tone="emerald" />
+              <KsbOverviewCard icon="ri-focus-3-line" label="Points remaining" value={String(ksbSummary.remaining)} tone="muted" />
             </div>
 
             <div>
               <p className="text-[12px] font-bold text-foreground-900">KSB points by category</p>
-              <p className="mt-1 text-[11px] text-foreground-500">Each category shows completed activity points out of the learner's 40 mapped KSB points.</p>
+              <p className="mt-1 text-[11px] text-foreground-500">Counts use the same normalized KSB rows and evidence as the browser below.</p>
               <div className={styles.coverageGrid}>
                 {categorySummary.map((group) => (
                   <div key={group.category} className={styles.coverageCard}>
                     <div className={styles.coverageHead}>
                       <span className="inline-flex items-center gap-2"><AppIcon className={ksbCategoryIcon(group.category)} />{group.category}</span>
-                      <span>{group.linked} / {group.total}</span>
+                      <span>{group.available ? `${group.linked} / ${group.total}` : '--'}</span>
                     </div>
-                    <ProfileProgress label="" value={group.total ? Math.round((group.linked / group.total) * 100) : 0} tone={group.category === 'Behaviours' ? 'amber' : 'primary'} />
+                    <ProfileProgress label="" value={group.available && group.total ? Math.round((group.linked / group.total) * 100) : null} tone={group.category === 'Behaviours' ? 'amber' : 'primary'} />
                   </div>
                 ))}
               </div>
@@ -662,7 +642,7 @@ function ReferenceProgressContent({ data, onViewEvidence }: {
                       <button
                         type="button"
                         className={styles.tableButton}
-                        onClick={() => onViewEvidence({ title: item.description, activities: item.evidenceActivities })}
+                        onClick={() => onViewEvidence({ code: item.code, title: item.description, category: item.category, linked: item.linked, activities: item.evidenceActivities })}
                       >
                         View <AppIcon className="ri-arrow-right-s-line" />
                       </button>
@@ -689,42 +669,110 @@ function EvidencePreviewModal({ evidence, onClose, onOpenAssignment }: { evidenc
         role="dialog"
         aria-modal="true"
         aria-labelledby="evidence-preview-title"
-        className="w-full max-w-sm rounded-xl border border-foreground-200/60 bg-background-50 p-5 shadow-xl"
+        className="max-h-[84vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-foreground-200/60 bg-white shadow-2xl"
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 id="evidence-preview-title" className="mt-1 break-words text-sm font-semibold leading-5 text-foreground-900">{evidence.title}</h2>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close evidence" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
-            <AppIcon className="ri-close-line" />
-          </button>
-        </div>
-        <div className="mt-4 space-y-2">
-          {evidence.activities.length ? evidence.activities.map((activity, index) => (
-            <button
-              key={`${activity.title}-${activity.type}-${index}`}
-              type="button"
-              onClick={() => activity.type === 'Assignment' && activity.componentId && onOpenAssignment(activity.componentId)}
-              className={`w-full rounded-lg border border-background-200 bg-background-100/50 p-3 text-left ${activity.type === 'Assignment' && activity.componentId ? 'cursor-pointer hover:border-primary-300 hover:bg-primary-50/40' : 'cursor-default'}`}
-            >
-              <p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">{activity.type}</p>
-              <p className="mt-1 break-words text-[12px] text-foreground-900">{activity.title}</p>
+        <div className="border-b border-primary-100 bg-primary-50/40 px-6 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-primary-600">KSB Evidence Details</p>
+              <h2 id="evidence-preview-title" className="mt-1 break-words text-lg font-semibold leading-6 text-foreground-900">{evidence.title || 'KSB evidence'}</h2>
+              <p className="mt-1 text-xs text-foreground-500">View completed activities and evidence linked to this KSB.</p>
+            </div>
+            <button type="button" onClick={onClose} aria-label="Close evidence" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-white hover:text-foreground-700">
+              <AppIcon className="ri-close-line" />
             </button>
-          )) : <p className="text-[12px] text-foreground-500">No linked learning activity type is available.</p>}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+            {evidence.code && <span className="rounded-md bg-white px-2.5 py-1 font-bold text-primary-700">{evidence.code}</span>}
+            {evidence.category && <span className="rounded-md border border-primary-100 bg-white px-2.5 py-1 text-foreground-600">{evidence.category}</span>}
+            <span className={`rounded-md px-2.5 py-1 font-semibold ${evidence.linked ? 'bg-emerald-100 text-emerald-700' : 'bg-background-100 text-foreground-600'}`}>{evidence.linked ? 'Evidence linked' : 'Not evidenced'}</span>
+            <span className="text-foreground-500">{evidence.activities.length} evidence {evidence.activities.length === 1 ? 'item' : 'items'}</span>
+          </div>
         </div>
-        <div className="mt-4 flex justify-end">
-          <button type="button" onClick={onClose} className="rounded-lg bg-primary-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-primary-700">Close</button>
+        <div className="max-h-[calc(84vh-190px)] overflow-y-auto p-6">
+          {evidence.activities.length ? <div className="grid gap-3 md:grid-cols-2">{evidence.activities.map((activity, index) => (
+            <div
+              key={`${activity.title}-${activity.type}-${index}`}
+              className="rounded-xl border border-background-200 bg-background-50 p-4"
+            >
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">{activity.type}</p><p className="mt-1 break-words text-sm font-semibold text-foreground-900">{activity.title || 'Aptem evidence'}</p></div>{activity.componentId && <button type="button" aria-label={`${activity.type} ${activity.title}`} onClick={() => onOpenAssignment(activity.componentId!)} className="shrink-0 rounded-md border border-primary-200 px-2 py-1 text-[10px] font-semibold text-primary-700 hover:bg-primary-50">View Details</button>}</div>
+              <p className="mt-3 text-xs text-foreground-500">{activity.type === 'Historical Activity' ? 'Historical Activity' : `Source: ${activity.source || activity.type}`}</p>
+              {activity.source && <p className="mt-1 text-[11px] text-foreground-500">Source: {activity.source}</p>}
+              {activity.completedAt && <p className="mt-1 text-[11px] text-foreground-500">Completed: {activity.completedAt}</p>}
+              {activity.activityId && <p className="mt-1 text-[11px] text-foreground-500">Activity ID: {activity.activityId}</p>}
+              {activity.status && <p className="mt-1 text-[11px] text-foreground-500">Status: {activity.status}</p>}
+              {activity.module && <p className="mt-1 text-[11px] text-foreground-500">Module: {activity.module}</p>}
+            </div>
+          ))}</div> : <p className="rounded-xl border border-dashed border-background-300 p-6 text-sm text-foreground-500">No evidence details are available for this KSB.</p>}
         </div>
       </section>
     </div>
   );
 }
 
+type CaseFileKsbBrowserRow = {
+  code: string;
+  description: string;
+  type: string;
+  number: string;
+  category: string;
+  evidenceActivities: EvidencePreviewTarget['activities'];
+  evidenceCount: number;
+  linked: boolean;
+};
+
+function selectCaseFileKsbRows(
+  data: CoachLearnerCaseFileData,
+  fallbackKsbs: Array<{ code: string; description: string; type: string; number: string }> = [],
+): CaseFileKsbBrowserRow[] {
+  const touched = new Set(data.touchedKsbCodes.map((code) => normalizeKsbCode(code)));
+  const mapped = new Set(data.mappedKsbCodes.map((code) => normalizeKsbCode(code)));
+  return buildDisplayKsbs(data, fallbackKsbs)
+    .filter((item) => mapped.size === 0 || mapped.has(normalizeKsbCode(item.code)))
+    .map((item) => {
+      const code = String(item.code || '').trim().toUpperCase();
+      const evidenceActivities = ksbLearningActivities(data, code);
+      return {
+        ...item,
+        code,
+        category: ksbCategoryFromCode(code),
+        evidenceActivities,
+        evidenceCount: evidenceActivities.length,
+        linked: touched.has(normalizeKsbCode(code)),
+      };
+    })
+    .sort((left, right) => left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function selectCaseFileKsbSummary(rows: CaseFileKsbBrowserRow[]) {
+  const total = rows.length;
+  const achieved = rows.filter((row) => row.linked).length;
+  const byCategory = (category: string) => {
+    const categoryRows = rows.filter((row) => row.category === category);
+    const categoryTotal = categoryRows.length;
+    const categoryAchieved = categoryRows.filter((row) => row.linked).length;
+    return {
+      total: categoryTotal,
+      achieved: categoryAchieved,
+      percent: categoryTotal ? Math.round((categoryAchieved / categoryTotal) * 100) : null,
+    };
+  };
+  return {
+    total,
+    achieved,
+    remaining: Math.max(0, total - achieved),
+    percent: total ? Math.round((achieved / total) * 100) : null,
+    knowledge: byCategory('Knowledge'),
+    skills: byCategory('Skills'),
+    behaviours: byCategory('Behaviours'),
+  };
+}
+
 function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): EvidencePreviewTarget['activities'] {
-  const normalizedCode = code.trim().toUpperCase();
+  const normalizedCode = normalizeKsbCode(code);
   const activities: EvidencePreviewTarget['activities'] = [];
   const seen = new Set<string>();
-  const add = (title: string | null | undefined, type: string | null | undefined, key: string, componentId?: string | null) => {
+  const add = (title: string | null | undefined, type: string | null | undefined, key: string, componentId?: string | null, metadata?: Partial<EvidencePreviewTarget['activities'][number]>) => {
     if (!title || seen.has(key)) return;
     seen.add(key);
     const normalizedType = String(type || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
@@ -734,17 +782,20 @@ function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): Ev
       type: normalizedType === 'live session' ? 'Live session'
         : normalizedType ? normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1)
           : 'Activity type unavailable',
+      ...metadata,
     });
   };
 
   const completedDetail = data.snapshot?.ksbCompletedDetails?.find(
-    (item) => String(item.code || '').trim().toUpperCase() === normalizedCode,
+    (item) => normalizeKsbCode(item.code) === normalizedCode,
   );
   for (const [index, source] of (completedDetail?.sources || []).entries()) {
     add(
-      source.title,
+      source.title || source.id || 'Aptem evidence',
       source.typeLabel || source.kind,
       source.id || `completed-source:${normalizedCode}:${index}`,
+      undefined,
+      source,
     );
   }
   // Caseload KSB sources are the authoritative completed evidence records. If
@@ -755,21 +806,21 @@ function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): Ev
   const detail = data.detail;
   if (!detail) return activities;
   for (const component of detail.components) {
-    if (!(component.ksbMappings || []).some((mapping) => mapping.code.trim().toUpperCase() === normalizedCode)) continue;
+    if (!(component.ksbMappings || []).some((mapping) => normalizeKsbCode(mapping.code) === normalizedCode)) continue;
     add(component.component, component.isQuiz ? 'quiz' : component.type, component.componentId || `${component.module}:${component.week}:${component.component}`, component.componentId);
   }
   for (const attempt of detail.quizAttempts) {
-    if (!(attempt.ksbs || []).some((ksb) => ksb.trim().toUpperCase() === normalizedCode)) continue;
+    if (!(attempt.ksbs || []).some((ksb) => normalizeKsbCode(ksb) === normalizedCode)) continue;
     const component = detail.components.find((item) => item.componentId === attempt.componentId || item.quizMeta?.quizId === attempt.quizId);
     add(attempt.componentTitle || component?.component || `Quiz ${attempt.quizId}`, 'quiz', attempt.componentId || component?.componentId || `quiz:${attempt.quizId}`);
   }
   for (const progress of detail.videoProgress || []) {
-    if (!(progress.ksbs || []).some((ksb) => ksb.trim().toUpperCase() === normalizedCode)) continue;
+    if (!(progress.ksbs || []).some((ksb) => normalizeKsbCode(ksb) === normalizedCode)) continue;
     const component = detail.components.find((item) => item.componentId === progress.componentId);
     add(component?.component || 'Video', 'video', progress.componentId);
   }
   for (const progress of detail.componentProgress || []) {
-    if (!(progress.ksbs || []).some((ksb) => ksb.trim().toUpperCase() === normalizedCode)) continue;
+    if (!(progress.ksbs || []).some((ksb) => normalizeKsbCode(ksb) === normalizedCode)) continue;
     const component = detail.components.find((item) => item.componentId === progress.componentId);
     add(progress.componentTitle || component?.component || progress.componentType, progress.componentType || component?.type, progress.componentId);
   }
@@ -945,7 +996,7 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
               <label className={styles.attendanceSearch}>
                 <span className="sr-only">Search sessions</span>
                 <AppIcon className="ri-search-line" />
-                <input value={attendanceSearch} onChange={(event) => setAttendanceSearch(event.target.value)} placeholder="Search session, type or reason" />
+                <input value={attendanceSearch} onChange={(event) => setAttendanceSearch(event.target.value)} placeholder="Search session or reason" />
               </label>
               <label className={styles.attendanceFilter}>
                 <span>Status</span>
@@ -967,14 +1018,13 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
             <p className={styles.attendanceResults}>{filteredSessions.length} of {attendanceSessions.length} sessions</p>
             <div className={styles.attendanceTableScroll}>
               <table className={styles.attendanceTable}>
-                <thead><tr><th>Session</th><th>Type</th><th>Date &amp; time</th><th>Status</th><th>Reason</th></tr></thead>
+                <thead><tr><th>Session</th><th>Date</th><th>Attendance</th><th>Reason</th></tr></thead>
                 <tbody>{filteredSessions.map((session, index) => (
                   <tr key={`${session.sessionId}-${session.sessionDate || index}-history`}>
                     <td><strong>{displayInline(session.sessionTitle)}</strong></td>
-                    <td>{displayInline(session.sessionType)}</td>
-                    <td><strong>{displayInline(session.sessionDateLabel)}</strong><span>{formatSessionTime(session.startTime, session.endTime)}</span></td>
-                    <td><span className={cn(styles.attendanceStatus, session.catchupCompleted || session.status === 'present' ? styles.attendanceStatusPositive : session.status === 'absent' ? styles.attendanceStatusNegative : styles.attendanceStatusNeutral)}>{session.catchupCompleted ? 'Catch-up completed' : displayInline(session.status)}</span></td>
-                    <td>{displayInline(session.reason, 'No reason recorded')}</td>
+                    <td>{displayInline(session.sessionDateLabel, '—')}</td>
+                    <td><span className={cn(styles.attendanceStatus, attendanceStatusClass(session))}>{attendanceStatusLabel(session)}</span></td>
+                    <td>{attendanceReason(session)}</td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -1388,10 +1438,26 @@ function formatAttendanceFraction(present: number | null, sessions: number | nul
   return `${formatCount(present)} / ${formatCount(sessions)}`;
 }
 
-function formatSessionTime(start?: string | null, end?: string | null) {
-  const startLabel = displayInline(start);
-  const endLabel = displayInline(end);
-  return endLabel === '--' ? startLabel : `${startLabel} - ${endLabel}`;
+function attendanceStatusLabel(session: AttendanceDetailSession) {
+  if (session.catchupCompleted) return 'Catch-up';
+  const status = String(session.status || '').trim().toLowerCase();
+  if (status === 'present') return 'Present';
+  if (status === 'late') return 'Late';
+  if (status === 'absent') return 'Absent';
+  return status ? status[0].toUpperCase() + status.slice(1) : '—';
+}
+
+function attendanceStatusClass(session: AttendanceDetailSession) {
+  const status = String(session.status || '').trim().toLowerCase();
+  if (session.catchupCompleted || status === 'present') return styles.attendanceStatusPositive;
+  if (status === 'absent') return styles.attendanceStatusNegative;
+  return styles.attendanceStatusNeutral;
+}
+
+function attendanceReason(session: AttendanceDetailSession) {
+  const reason = String(session.reason || '').trim();
+  if (reason && reason !== '--') return reason;
+  return String(session.status || '').trim().toLowerCase() === 'absent' ? 'No reason provided' : '—';
 }
 
 function ProfileEmpty({ text }: { text: string }) {

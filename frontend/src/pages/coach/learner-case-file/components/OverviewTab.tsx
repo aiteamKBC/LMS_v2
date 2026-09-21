@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { completedComponentIds, isComponentComplete, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
+import { completedComponentIds, isComponentComplete, trainingPlanWeekPosition, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
 import {
   flattenJourney,
   formatAttemptGrade,
@@ -12,19 +12,30 @@ import {
 } from '../data';
 import styles from '../learnerCaseFile.module.css';
 
-export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { onOpenNotes?: () => void }) {
+type CaseFileKsbSummary = {
+  total: number;
+  achieved: number;
+  remaining: number;
+  percent: number | null;
+  knowledge: { total: number; achieved: number; percent: number | null };
+  skills: { total: number; achieved: number; percent: number | null };
+  behaviours: { total: number; achieved: number; percent: number | null };
+};
+
+export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileTabProps & { ksbSummary?: CaseFileKsbSummary; onOpenNotes?: () => void }) {
   const flatComponents = flattenJourney(data);
   const totalWeeks = data.journey.reduce((count, module) => count + module.weeks.length, 0);
   const completedIds = completedComponentIds(data.detail);
+  const weekPosition = trainingPlanWeekPosition(data.detail);
 
   return (
     <div className="space-y-5">
-      <div className={styles.learningMetrics}>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-background-200 bg-white px-4 py-3">
         <LearningMetric label="Overall Progress" value={formatPercent(data.overallProgress)} />
         <LearningMetric label="Attendance" value={formatPercent(data.attendanceRate)} tone="warning" />
         <LearningMetric label="Actual" value={formatHours(data.otjhCompleted)} />
         <LearningMetric label="Planned" value={formatHours(data.totalExpectedOtjh || null)} tone="positive" />
-        <LearningMetric label="Mapped KSBs" value={String(data.detail?.ksbs.length || 0)} />
+        <LearningMetric label="Mapped KSBs" value={ksbSummary ? `${ksbSummary.achieved} / ${ksbSummary.total}` : '--'} />
       </div>
 
       <div className={styles.learningGrid}>
@@ -37,7 +48,7 @@ export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { 
                 <p className={styles.panelSubtitle}>Read-only module, week, and component view for coach context.</p>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               <SummaryPill label="Modules" value={String(data.journey.length)} />
               <SummaryPill label="Weeks" value={String(totalWeeks)} />
               <SummaryPill label="Components" value={String(flatComponents.length)} />
@@ -54,14 +65,21 @@ export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { 
               />
             </div>
           ) : (
-            <div className="max-h-[680px] overflow-y-auto bg-background-100/35 p-4 md:p-5">
-              <CoachPlanView modules={data.journey} completedComponentIds={completedIds} />
+            <div className="max-h-[680px] overflow-y-auto bg-background-100/20 p-3 md:p-4">
+              <div className="mb-3 flex flex-wrap items-center gap-3 border-b border-background-200 pb-3 text-[11px] text-foreground-500">
+                <span className="font-semibold text-foreground-700">Status</span><LegendDot tone="bg-emerald-500" label="Complete" /><LegendDot tone="bg-primary-500" label="In progress" /><LegendDot tone="bg-background-300" label="Not started" />
+              </div>
+              <CoachPlanView modules={data.journey} completedComponentIds={completedIds} weekPosition={weekPosition?.current ?? null} />
             </div>
           )}
         </section>
       </div>
     </div>
   );
+}
+
+function LegendDot({ tone, label }: { tone: string; label: string }) {
+  return <span className="inline-flex items-center gap-1.5"><i className={`h-2 w-2 rounded-full ${tone}`} />{label}</span>;
 }
 
 function LearningMetric({
@@ -84,10 +102,13 @@ function LearningMetric({
 function CoachPlanView({
   modules,
   completedComponentIds,
+  weekPosition,
 }: {
   modules: JourneyModule[];
   completedComponentIds: Set<string>;
+  weekPosition: number | null;
 }) {
+  const moduleOffsets = modules.map((_, index) => modules.slice(0, index).reduce((sum, item) => sum + item.weeks.length, 0));
   return (
     <div className="space-y-3">
       {modules.map((module, index) => (
@@ -97,6 +118,7 @@ function CoachPlanView({
           moduleIndex={index}
           defaultOpen={index === 0}
           completedComponentIds={completedComponentIds}
+          currentWeek={weekPosition != null && weekPosition > moduleOffsets[index] && weekPosition <= moduleOffsets[index] + module.weeks.length ? weekPosition - moduleOffsets[index] : null}
         />
       ))}
     </div>
@@ -108,39 +130,41 @@ function CoachModuleSection({
   moduleIndex,
   defaultOpen,
   completedComponentIds,
+  currentWeek,
 }: {
   module: JourneyModule;
   moduleIndex: number;
   defaultOpen: boolean;
   completedComponentIds: Set<string>;
+  currentWeek: number | null;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const weekCount = module.weeks.length;
   const moduleComponents = module.weeks.flatMap((week) => week.components);
   const componentCount = moduleComponents.length;
   const completedCount = moduleComponents.filter((component) => isComponentComplete(component, completedComponentIds)).length;
+  const progress = componentCount ? Math.round((completedCount / componentCount) * 100) : 0;
   const moduleOtjh = module.weeks.reduce((total, week) => total + (week.otjh || 0), 0);
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-background-300 bg-background-50 shadow-sm">
+    <article className={`overflow-hidden rounded-xl border bg-white ${currentWeek ? 'border-primary-300 ring-1 ring-primary-100' : 'border-background-200'}`}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
         className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-background-100/50 md:px-5"
       >
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
-          <AppIcon className="ri-book-2-line text-base"></AppIcon>
-        </span>
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><AppIcon className="ri-book-2-line text-sm"></AppIcon></span>
         <span className="min-w-0 flex-1">
           <span className="block text-[12px] font-bold uppercase tracking-[0.16em] text-primary-600">
             Module {String(moduleIndex + 1).padStart(2, '0')}
           </span>
           <span className="block truncate text-sm font-heading font-bold text-foreground-950">{module.module}</span>
           <span className="mt-0.5 block text-[12px] text-foreground-400">
-            {weekCount} {weekCount === 1 ? 'week' : 'weeks'} - {componentCount} {componentCount === 1 ? 'component' : 'components'}
+            {weekCount} {weekCount === 1 ? 'week' : 'weeks'} · {componentCount} {componentCount === 1 ? 'component' : 'components'} · {progress}%
           </span>
         </span>
         <span className="hidden shrink-0 items-center gap-2 sm:flex">
+          {currentWeek && <StatusBadge tone="info" label="Current module" size="sm" />}
           {moduleOtjh > 0 && <SummaryPill label="OTJH" value={formatHours(moduleOtjh)} compact />}
           <SummaryPill label="Completed" value={`${completedCount} / ${componentCount}`} compact />
           <SummaryPill label="Items" value={String(componentCount)} compact />

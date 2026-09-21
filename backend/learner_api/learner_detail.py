@@ -818,9 +818,9 @@ def otjh_status_from_variance(variance):
     if variance is None:
         return "On track"
     shortfall = -Decimal(str(variance))
-    if shortfall >= Decimal("40"):
+    if shortfall > Decimal("40"):
         return "At risk"
-    if shortfall >= Decimal("20"):
+    if shortfall > Decimal("20"):
         return "Need attention"
     return "On track"
 

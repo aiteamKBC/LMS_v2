@@ -1807,30 +1807,28 @@ def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile
 def fetch_source_schedule_rows(
     learners: list[LearnerProfile | SimpleNamespace],
 ) -> tuple[dict[int, CommercialUser], dict[int, EnrolmentUser]]:
-    """Map profile ids to Created_users source rows using email identity."""
+    """Map profile ids to Created_users rows using stable enrolment ids."""
     if not learners:
         return {}, {}
 
-    profile_ids_by_email = {
-        normalize_email(getattr(learner, "email", "")): int(learner.id)
+    profile_ids_by_enrolment = {
+        int(getattr(learner, "enrolment_id")): int(learner.id)
         for learner in learners
         if getattr(learner, "id", None) is not None
-        and normalize_email(getattr(learner, "email", ""))
+        and getattr(learner, "enrolment_id", None) is not None
     }
-    if not profile_ids_by_email:
+    if not profile_ids_by_enrolment:
         return {}, {}
 
     try:
-        source_rows = EnrolmentUser.all_learners.annotate(
-            source_email_key=Lower(Trim("email"))
-        ).filter(source_email_key__in=profile_ids_by_email)
+        source_rows = EnrolmentUser.all_learners.filter(pk__in=profile_ids_by_enrolment)
     except DatabaseError:
         return {}, {}
 
     commercial_rows = {}
     enrolment_rows = {}
     for row in source_rows:
-        profile_id = profile_ids_by_email.get(normalize_email(row.email))
+        profile_id = profile_ids_by_enrolment.get(int(row.id))
         if profile_id is None:
             continue
         if clean_text(row.learner_type).casefold() == "commercial":
@@ -2537,6 +2535,48 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
         component_progress=component_progress, component_available=component_available,
     )
     payload["metricsSource"] = "learner-dashboard"
+    return payload
+
+
+def apply_canonical_ksb_evidence(payload: dict, metrics: dict | None, aptem_id) -> dict:
+    """Merge already-loaded Aptem evidence into the existing browser shape."""
+    try:
+        if aptem_id is None or int(aptem_id) <= 0 or not metrics:
+            return payload
+    except (TypeError, ValueError):
+        return payload
+    sources = metrics.get("_ksb_evidence_sources") or []
+    if not sources:
+        return payload
+    details = payload.setdefault("ksbCompletedDetails", [])
+    by_code = {str(item.get("code") or "").upper(): item for item in details if isinstance(item, dict)}
+    seen = {(code, str(source.get("id") or "")) for code, item in by_code.items() for source in item.get("sources", [])}
+    for source in sources:
+        for raw_code in source.get("codes") or []:
+            code = normalize_ksb_parent_code(raw_code)
+            if not code:
+                continue
+            detail = by_code.get(code)
+            if detail is None:
+                detail = {"code": code, "type": ksb_type_label(code), "description": "", "sources": []}
+                details.append(detail)
+                by_code[code] = detail
+            key = (code, str(source.get("id") or ""))
+            if key in seen:
+                continue
+            detail.setdefault("sources", []).append({
+                "id": source.get("id"),
+                "title": source.get("title") or "Historical activity",
+                "typeLabel": source.get("typeLabel") or "Historical activity",
+                "source": source.get("source") or "Aptem",
+                "activityId": source.get("activityId") or source.get("id"),
+                "completedAt": source.get("completedAt"),
+                "status": source.get("status"),
+                "module": source.get("module"),
+                "componentId": source.get("componentId"),
+            })
+            seen.add(key)
+    payload["ksbCompletedDetailCount"] = len(details)
     return payload
 
 
@@ -3352,6 +3392,7 @@ def build_monthly_risk_history(
     for cutoff in cutoffs:
         is_current_month = cutoff.year == today.year and cutoff.month == today.month
         at_risk = 0
+        insufficient_history = False
         for row in active_rows:
             if is_current_month:
                 normalized_status = re.sub(
@@ -3362,6 +3403,8 @@ def build_monthly_risk_history(
 
             learner_start, training_plan = learner_context[int(row.id)]
             if learner_start is None or learner_start > cutoff:
+                if learner_start is None:
+                    insufficient_history = True
                 continue
             target_hours = curriculum_monthly_target_hours(
                 training_plan,
@@ -3371,6 +3414,7 @@ def build_monthly_risk_history(
                 expected_by_id,
             )
             if target_hours <= 0:
+                insufficient_history = True
                 continue
             historical_progress = [
                 record
@@ -3378,14 +3422,15 @@ def build_monthly_risk_history(
                 if (historical_progress_date(record) or date.max) <= cutoff
             ]
             completed_hours = completed_hours_value_from_progress(historical_progress)
-            shortfall = target_hours - completed_hours
-            if shortfall >= 40:
+            shortfall = max(target_hours - completed_hours, 0)
+            if shortfall > 40:
                 at_risk += 1
 
         points.append({
             "month": cutoff.strftime("%Y-%m"),
             "label": cutoff.strftime("%b"),
             "count": at_risk,
+            "available": not insufficient_history,
         })
     return points
 
@@ -8841,6 +8886,10 @@ def collect_generated_timetable(
 
         learner_start_date, learner_end_date = resolve_schedule_window(learner.id, commercial_rows, enrolment_rows, learner)
         if not learner_start_date or not learner_end_date or learner_end_date <= learner_start_date:
+            review_generation_issues.append({
+                "learnerId": str(learner.id),
+                "code": "review_schedule_unavailable",
+            })
             continue
 
         source_row = resolve_caseload_source_row(
@@ -10622,10 +10671,28 @@ def serialize_attendance_register_row(row: dict) -> dict:
         "learnerEmail": clean_text(row.get("learner_email")),
         "sessionId": clean_text(row.get("session_id")) or "--",
         "sessionTitle": clean_text(row.get("session_title")) or "Live session",
+        "subjectId": clean_text(row.get("module_catalogue_id") or row.get("module_id") or row.get("live_session_id") or row.get("session_id")),
+        "subjectTitle": clean_text(row.get("module_title")) or clean_text(row.get("session_title")) or "Live session",
         "sessionDate": format_iso_date_value(row.get("session_date")),
         "sessionDateLabel": format_date_value(row.get("session_date")),
         "status": normalize_attendance_detail_status(row.get("attendance_status")),
     }
+
+
+def coach_attendance_register_rows(caseload_rows) -> list[dict]:
+    """Build the coach register from the canonical learner lecture register."""
+    from learner_api.attendance_lectures import lecture_register
+
+    result: list[dict] = []
+    for profile in caseload_rows:
+        source = getattr(profile, "_caseload_source", None)
+        if source is None:
+            continue
+        try:
+            result.extend(serialize_attendance_register_row(item) for item in lecture_register(source))
+        except Exception:
+            logger.exception("coach_attendance_register_learner_failed learner_id=%s", profile.id)
+    return result
 
 
 def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
@@ -11066,6 +11133,7 @@ def coach_dashboard(request):
             "timetable": {
                 "summary": timetable_payload.get("summary", {}),
                 "events": timetable_payload.get("events", []),
+                "reviewGenerationIssues": timetable_payload.get("reviewGenerationIssues", []),
             },
             "evidence": {"items": []},
             "errors": {},
@@ -11234,7 +11302,9 @@ def coach_caseload(request):
         for row, learner in zip(rows, learners):
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
-            apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
+            learner_metrics = canonical_metrics.get(int(row.id))
+            apply_canonical_learner_metrics(learner, learner_metrics)
+            apply_canonical_ksb_evidence(learner, learner_metrics, getattr(getattr(row, "_caseload_source", None), "aptem_id", None))
             apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
             imported = review_history.get(int(row.id), {})
             last_mcm = _latest_completed_review_date(imported.get("mcm", []))
@@ -11352,10 +11422,7 @@ def coach_attendance(request):
         attendance_data = fetch_attendance_detail_summary_data(
             learner_ids, email_keys, include_reported_participants=True,
         )
-        attendance_records = [
-            serialize_attendance_register_row(row)
-            for row in attendance_data["rows"]
-        ]
+        attendance_records = coach_attendance_register_rows(caseload_rows)
         active_attendance_data = filter_attendance_detail_summary_data(
             attendance_data,
             active_learner_ids,

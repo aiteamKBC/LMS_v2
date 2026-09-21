@@ -19,6 +19,8 @@ interface AttendanceRecord {
   learnerEmail?: string | null;
   sessionId: string;
   sessionTitle: string;
+  subjectId?: string;
+  subjectTitle?: string;
   sessionDate: string | null;
   sessionDateLabel: string;
   status: AttendanceStatus | string;
@@ -29,6 +31,14 @@ interface AttendanceResponse {
 
 function subjectName(sessionTitle: string) {
   return sessionTitle.replace(/\s+[—–-]\s+Session\s+\d+\s*$/i, '').trim() || sessionTitle;
+}
+
+function subjectKey(record: AttendanceRecord) {
+  return record.subjectId || subjectName(record.sessionTitle);
+}
+
+function subjectLabel(record: AttendanceRecord) {
+  return record.subjectTitle || subjectName(record.sessionTitle);
 }
 
 function formatLectureDate(record: AttendanceRecord) {
@@ -85,13 +95,19 @@ export default function CoachAttendance() {
     return () => controller.abort();
   }, [coach.email, coach.isInitialized]);
 
-  const subjects = useMemo(() => [...new Set(records.map(record => subjectName(record.sessionTitle)).filter(Boolean))]
-    .sort((left, right) => left.localeCompare(right)), [records]);
+  const subjects = useMemo(() => {
+    const byId = new Map<string, string>();
+    records.forEach(record => {
+      const key = subjectKey(record);
+      if (key) byId.set(key, subjectLabel(record));
+    });
+    return [...byId.entries()].sort(([, left], [, right]) => left.localeCompare(right));
+  }, [records]);
 
   const lectureDates = useMemo(() => {
     const dates = new Map<string, string>();
     records.forEach((record) => {
-      if (subjectName(record.sessionTitle) === selectedSubject && record.sessionDate) {
+      if (subjectKey(record) === selectedSubject && record.sessionDate) {
         dates.set(record.sessionDate, formatLectureDate(record));
       }
     });
@@ -100,7 +116,7 @@ export default function CoachAttendance() {
 
   const attendanceRows = useMemo(() => records
     .filter(record => (
-      subjectName(record.sessionTitle) === selectedSubject
+      subjectKey(record) === selectedSubject
       && record.sessionDate === selectedDate
       && (record.status === 'present' || record.status === 'absent')
     ))
@@ -153,7 +169,7 @@ export default function CoachAttendance() {
                 disabled={loading || Boolean(loadError)}
               >
                 <option value="">Select subject</option>
-                {subjects.map(subject => <option key={subject} value={subject}>{subject}</option>)}
+                {subjects.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </label>
             <label>
@@ -200,7 +216,7 @@ export default function CoachAttendance() {
                 ) : attendanceRows.map(record => {
                   const isPresent = record.status === 'present';
                   return (
-                    <tr key={`${record.sessionId}-${record.learnerId || record.learnerEmail}`}>
+                    <tr key={`${record.sessionId}-${record.learnerId}`}>
                       <td>
                         <div className={styles.learner}>
                           <span className={styles.avatar}>{initials(record.learnerName)}</span>

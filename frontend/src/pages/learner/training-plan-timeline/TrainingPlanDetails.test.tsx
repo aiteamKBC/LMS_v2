@@ -292,6 +292,19 @@ describe('Dashboard training plan controls', () => {
     expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled();
   });
 
+  it('does not clamp the current month to a stale learner-detail end date when payload data is newer', () => {
+    renderBoard(fixture(), summarySubjects, vi.fn(), '2025-10-01', '2026-08-31');
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-09');
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-10');
+  });
+
+  it('preserves an explicit month supplied in the URL', () => {
+    render(<MemoryRouter initialEntries={['/plan?month=2026-08']}><TrainingPlanDetails data={fixture()} subjects={summarySubjects}
+      kind="commercial" learnerId="125" initialMonth="2026-08" onRefresh={vi.fn()} onRetryContract={vi.fn()} programmeStartDate="2025-10-01" programmeEndDate="2026-08-31" /></MemoryRouter>);
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-08');
+  });
+
   it('bounds the month input and offers Attend for a live upcoming lecture', () => {
     renderBoard();
     const month = screen.getByLabelText('Focus month');

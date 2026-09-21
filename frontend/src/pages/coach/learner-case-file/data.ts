@@ -36,6 +36,11 @@ interface CoachCompletedKsbDetail {
     title?: string;
     typeLabel?: string;
     kind?: string;
+    source?: string;
+    activityId?: string;
+    completedAt?: string;
+    status?: string;
+    module?: string;
   }>;
 }
 
@@ -259,6 +264,8 @@ export interface CoachLearnerCaseFileData {
   otjhTarget: number | null;
   otjhPlanned: number | null;
   ksbProgress: number | null;
+  metricsAvailable?: boolean;
+  ksbStatus?: 'ready' | 'empty' | 'unavailable';
   ksbEvidencedCount: number | null;
   ksbTotalCount: number | null;
   mappedKsbCodes: string[];
@@ -302,6 +309,13 @@ export function selectCaseFileOtjh(data: Pick<CoachLearnerCaseFileData, 'otjhCom
     ? Math.min(100, Math.round((logged / target) * 100))
     : null;
   return { logged, target, programmeTotal, remaining, progressPercent };
+}
+
+/** Match the backend canonical KSB identity: child codes resolve to parent codes. */
+export function normalizeKsbCode(value: string | null | undefined): string {
+  const code = String(value || '').trim().toUpperCase();
+  const match = code.match(/^([KSB])(\d+)(?:\.\d+)?$/);
+  return match ? `${match[1]}${match[2]}` : code;
 }
 
 export interface CaseFileTabProps {
@@ -714,6 +728,7 @@ type CaseFileLearnerMetrics = {
   ksbCodes: string[];
   ksbCodeProgress: Array<{ code: string; completed: number; total: number }>;
   ksbProgress: number | null;
+  ksbStatus: 'ready' | 'empty' | 'unavailable';
 };
 
 /** Canonical totals used by the learner dashboard. Programme, OTJH and KSB
@@ -737,6 +752,7 @@ async function fetchCaseFileMetrics(kind: LearnerKind | null, enrolmentId: strin
         total: item.total,
       })),
       ksbProgress: metrics.ksb.percent,
+      ksbStatus: metrics.ksb.status,
     };
   } catch {
     // Missing canonical metrics must not make the rest of the case file fail.
@@ -1080,7 +1096,7 @@ function buildCaseFileData(args: {
         ...(args.detail?.componentProgress || []).flatMap((entry) => entry.ksbs || []),
         ...(args.snapshot?.ksbCompletedDetails || []).map((entry) => entry.code || ''),
       ]
-        .map((code) => String(code || '').trim().toUpperCase())
+        .map((code) => normalizeKsbCode(code))
         .filter(Boolean),
     ),
   ).sort();
@@ -1113,7 +1129,8 @@ function buildCaseFileData(args: {
   const detailCompletedHours = canonicalActual ?? parseHoursValue(args.detail?.completedHours);
   const detailTargetHours = canonicalPlanned ?? parseHoursValue(args.detail?.targetHours);
   const detailPlannedHours = canonicalPlanned ?? rawDetailPlanned;
-  const overallProgress = args.learnerMetrics?.programmeProgress ?? args.snapshot?.overallProgress ?? null;
+  const metricsAvailable = Boolean(args.learnerMetrics);
+  const overallProgress = metricsAvailable ? args.learnerMetrics?.programmeProgress ?? null : null;
 
   return {
     learnerId: args.learnerId,
@@ -1144,10 +1161,12 @@ function buildCaseFileData(args: {
     attendancePresentCount: args.liveAttendance?.present ?? args.attendance?.present ?? null,
     attendanceSessionCount: args.liveAttendance?.sessions ?? args.attendance?.sessions ?? null,
     attendanceAbsentCount: args.liveAttendance?.absent ?? args.attendance?.absent ?? null,
-    otjhCompleted: detailCompletedHours ?? args.snapshot?.otjhCompleted ?? args.attendance?.otjhCompleted ?? null,
-    otjhTarget: detailTargetHours ?? args.snapshot?.otjhTarget ?? args.attendance?.otjhTarget ?? null,
-    otjhPlanned: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? null,
-    ksbProgress: args.learnerMetrics?.ksbProgress ?? args.snapshot?.ksbProgress ?? args.attendance?.ksbProgress ?? null,
+    otjhCompleted: metricsAvailable ? detailCompletedHours ?? null : null,
+    otjhTarget: metricsAvailable ? detailTargetHours ?? null : null,
+    otjhPlanned: metricsAvailable ? detailPlannedHours ?? null : null,
+    ksbProgress: metricsAvailable ? args.learnerMetrics?.ksbProgress ?? null : null,
+    metricsAvailable,
+    ksbStatus: args.learnerMetrics?.ksbStatus,
     // Counts remain available to the detailed KSB section, while the header
     // consistently uses the canonical percentage in `ksbProgress`.
     ksbEvidencedCount: args.learnerMetrics?.ksbCompleted ?? null,
@@ -1158,7 +1177,7 @@ function buildCaseFileData(args: {
     startDate: args.detail?.programmeStartDate || args.snapshot?.startDate || '--',
     gatewayReviewDate: args.snapshot?.gatewayReviewDate || '--',
     plannedEndDate: args.snapshot?.plannedEndDate || '--',
-    totalExpectedOtjh: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? 0,
+    totalExpectedOtjh: metricsAvailable ? detailPlannedHours ?? 0 : 0,
     touchedKsbCodes,
     activityItems: buildActivityItems(args.snapshot, args.detail, args.evidence),
     upcomingSessions,

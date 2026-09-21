@@ -18,6 +18,15 @@ def extract(names, namespace):
     exec(compile(tree, '<merged-metrics>', 'exec'), namespace)
 
 class MetricsMergeTests(unittest.TestCase):
+    def test_optional_historical_metadata_uses_real_activity_date_only(self):
+        source = (ROOT / 'dashboard_metrics.py').read_text(encoding='utf-8')
+        metadata_query = source.split("Human-readable evidence labels are optional", 1)[1].split("except (DatabaseError", 1)[0]
+        self.assertIn("a.title,a.activity_date", metadata_query)
+        self.assertNotIn("r.completed_at", metadata_query)
+        self.assertNotIn("r.updated_at", metadata_query)
+        self.assertIn("'completedAt': item.get('completed_at') or None", source)
+        self.assertIn("'activityDate': item.get('activity_date') or None", source)
+
     def setup_metrics(self):
         connections = MagicMock()
         cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
@@ -29,6 +38,7 @@ class MetricsMergeTests(unittest.TestCase):
               'read_accepted_ksb_rows': Mock(return_value=[{'source_ref': 'progress:1'}]),
               'completed_otjh': lambda *args: 13, 'completed_actual_otjh': actual,
               '_direct_progress_otjh': lambda progress: 1, 'ksb_totals': lambda *args: {'completed': 2},
+              'point_codes': lambda value: set(),
               'programme_totals': lambda *args: {'total': 4}}
         extract({'metrics_from_loaded'}, ns)
         arguments = dict(source=SimpleNamespace(pk=7, aptem_id='42'), kind='commercial', migrated=True,
