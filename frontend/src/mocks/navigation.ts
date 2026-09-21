@@ -246,6 +246,17 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/version-control',
     ],
   },
+  {
+    // The archive, for the whole of Curriculum rather than per list. Every page
+    // that archives something still has its own "View archived" toggle scoped to
+    // that list; this is where the four of them are read together, and the only
+    // place a record is put back or removed for good without first knowing which
+    // list it left.
+    id: 'curriculum-archive',
+    label: 'Archive',
+    icon: 'ri-archive-line',
+    href: '/curriculum/archive',
+  },
 ];
 
 // ============================================================================

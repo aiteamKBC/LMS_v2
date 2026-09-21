@@ -8058,9 +8058,18 @@ def attach_module_assignment_counts(modules):
     """Set each module row's real `assignments` count, in one bulk pass.
 
     Every card shows this eagerly, so it has to be cheap for a whole list, not
-    one query per module -- see `learner_assignments.bulk_assigned_learner_counts`.
+    one query per module.
+
+    The counting rule lives in `learner_assignments.bulk_assigned_learner_counts`
+    and is still the reference implementation; what runs here is the jsonb
+    rewrite of it, because the original reads every learner row whole -- 11 MB of
+    Learning_plan to produce a few integers, measured at 47-84 s from outside the
+    database's region, which is longer than the statement timeout, so the payload
+    build this feeds never completed and never populated its cache.
+    `manage.py compare_assignment_counts` runs both and diffs every module; it
+    reports 268/268 identical.
     """
-    from .learner_assignments import bulk_assigned_learner_counts
+    from .learner_assignment_counts_sql import bulk_assigned_learner_counts_sql as bulk_assigned_learner_counts
 
     def key_for(module):
         return clean_str(module.get('moduleCatalogueId')) or clean_str(module.get('catalogueId')) or clean_str(module.get('id'))
@@ -15983,7 +15992,17 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     ensure_module_authoring_tables()
     ensure_live_session_tracking_tables()
     requested_id = clean_str(module_catalogue_id)
-    resolved_id = resolve_authoring_catalogue_id(requested_id) or requested_id
+    # The cheap resolver, for the same reason the module structure endpoint uses
+    # it: an identifier that already names a stored module is its own answer,
+    # and one indexed lookup settles it. `resolve_authoring_catalogue_id`
+    # summarises every module in the database to give the general answer -- and
+    # that search only means anything for an identifier that is NOT a stored
+    # module, which the Module Builder never sends here. Measured on this
+    # module, the general resolver was the whole of the dialog's stall: the
+    # request cleared the table probes in 0.57s and was still inside the
+    # resolver when the browser gave up 30s later. An alias still falls through
+    # to the general resolver inside this helper, so nothing resolves differently.
+    resolved_id = resolve_stored_module_catalogue_id(requested_id) or requested_id
     if not authoring_module_exists(resolved_id):
         return json_error('Module authoring structure not found.', status=404)
 
@@ -16040,7 +16059,25 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
             dry_run=True,
         )
 
-    payload = get_authoring_structure_payload(resolved_id)
+    # A second full structure build, on an endpoint the Module Builder calls
+    # every time its Teams dialog opens -- roughly a dozen Neon round trips for
+    # weeks, components, mappings, completion and the quality check, repeating
+    # work the Builder has just paid for to load the very module it is showing.
+    #
+    # A GET here changes nothing, so it is served from the same entry, under the
+    # same invalidation, as the module-structure endpoint -- same key, same
+    # factory, so the two can never disagree. The POST path always rebuilds: it
+    # has just rewritten the components this payload describes, and the revision
+    # stamped into it is what the Builder's next save is checked against.
+    if request.method == 'POST':
+        module_payload = stamp_revision_after_write(get_authoring_structure_payload(resolved_id), resolved_id)
+    else:
+        with curriculum_read_scope(targeted_child_reads=True):
+            module_payload = cached_curriculum_value(
+                f'module-structure:{resolved_id}',
+                lambda: structure_payload_with_revision(lambda: get_authoring_structure_payload(resolved_id), resolved_id),
+                force=request_bypasses_curriculum_cache(request),
+            )
     body = {
         'restored': request.method == 'POST',
         'verificationPending': verification_pending,
@@ -16065,7 +16102,7 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
         # back the pre-restore revision left that module permanently unsaveable:
         # every save was refused as stale, and reloading ran the same restore
         # again.
-        'module': structure_payload_with_revision(payload, resolved_id),
+        'module': module_payload,
     }
     if pending_components is not None:
         # Weeks that have no live-session component yet, so re-attaching has
@@ -16962,17 +16999,59 @@ def module_structure_revision(module_catalogue_id):
     ).hexdigest()[:32]
 
 
-def structure_payload_with_revision(payload, module_catalogue_id):
-    """Stamp a structure payload with the revision it was built from.
+# Stamped on a payload whose revision could not be read at all. It can never
+# equal a real fingerprint, so a save built on such a payload is refused rather
+# than run unchecked. '' would have meant "no revision", which the save path
+# reads as "this caller is not asking to be checked" -- the opposite.
+STRUCTURE_REVISION_UNAVAILABLE = 'unverified'
 
-    Computed alongside the payload, never after it is served, so a payload that
-    comes back from the cache carries the revision of the content in it. That is
-    what makes a stale read safe: the save it feeds sends a superseded revision
-    and is refused, instead of the cached weeks quietly replacing the stored ones.
+
+def structure_payload_with_revision(build_payload, module_catalogue_id):
+    """Build a structure payload and stamp the revision it was built from.
+
+    The revision is read BEFORE the payload, and that order is the whole point.
+    These reads run in autocommit, so each statement sees its own snapshot and
+    another writer can commit in the middle of the build. Whichever of the two
+    is read second describes the later state:
+
+    - payload first, revision second (how this used to work): pre-write weeks
+      carrying the post-write fingerprint. The caller saves its stale structure,
+      the revision matches, the guard lets it through, and the other writer's
+      work is gone with no error raised anywhere. That is precisely the silent
+      overwrite this mechanism exists to make impossible.
+    - revision first: a payload that may contain a write the revision predates.
+      The revision is then already superseded, so the save built on it is
+      refused with 409 and the caller reloads. Wrong in the harmless direction.
+
+    So the pair is never certified as a snapshot it is not. It is either exactly
+    consistent, or provably stale and fails closed.
+
+    ``build_payload`` is a callable rather than an already-built payload so that
+    the ordering cannot be quietly undone at a call site. A caller that has just
+    written the structure itself and needs the revision of its own write uses
+    ``stamp_revision_after_write``.
+    """
+    revision = module_structure_revision(module_catalogue_id) or STRUCTURE_REVISION_UNAVAILABLE
+    payload = build_payload()
+    if not payload:
+        return payload
+    return {**payload, 'structureRevision': revision}
+
+
+def stamp_revision_after_write(payload, module_catalogue_id):
+    """Stamp a payload whose content this request has just written itself.
+
+    The revision has to describe the state *after* that write, so it is read
+    afterwards. Only for a caller that provisioned or saved the structure a
+    moment ago; anything that merely reads must use
+    ``structure_payload_with_revision`` instead.
     """
     if not payload:
         return payload
-    return {**payload, 'structureRevision': module_structure_revision(module_catalogue_id)}
+    return {
+        **payload,
+        'structureRevision': module_structure_revision(module_catalogue_id) or STRUCTURE_REVISION_UNAVAILABLE,
+    }
 
 
 def lock_module_structure_row(module_catalogue_id):
@@ -17001,7 +17080,50 @@ def lock_module_structure_row(module_catalogue_id):
         cursor.fetchall()
 
 
-def get_authoring_structure_payload(module_catalogue_id):
+def module_archive_parent_markers(module_row, module_catalogue_id):
+    """Which ``deleted_via_parent`` markers belong to this module's archive.
+
+    A module archived on its own stamps its children with its own catalogue id,
+    which is what ``restore_rows_via_parent`` matches. A module that came here on
+    a programme's cascade did not stamp anything: that cascade wrote the
+    *programme* id onto the module and onto every week and component under it, so
+    matching on the catalogue id alone would report an archived programme's
+    modules as empty. Whatever marker the module itself carries is therefore
+    accepted alongside its own id.
+    """
+    markers = {clean_str(module_catalogue_id)}
+    via_parent = clean_str((module_row or {}).get('deleted_via_parent'))
+    if via_parent:
+        markers.add(via_parent)
+    return {marker for marker in markers if marker}
+
+
+def row_in_module_archive(row, markers):
+    """Would restoring this module bring this child row back?
+
+    A live row is kept -- the caller is reading an archived module, but a child
+    that was never soft-deleted is still part of it. A deleted one is kept only
+    when its ``deleted_via_parent`` marker is one of this module's, so a
+    component deleted by hand before the module was archived stays out: reading
+    an archived module must show what a restore returns, not everything the table
+    has ever held under that id.
+    """
+    if not curriculum_row_effectively_deleted(row):
+        return True
+    return clean_str(row.get('deleted_via_parent')) in markers
+
+
+def get_authoring_structure_payload(module_catalogue_id, include_archived=False):
+    """The module's authored structure.
+
+    ``include_archived`` is for reading a module that is *in* the archive. The
+    archive cascade soft-deletes every week, component and mapping under the
+    module, so the ``active_*`` filters below -- correct for every live read --
+    return the module with an empty week list. The archive view has to show what
+    is actually sitting inside it, which is the set a restore would bring back;
+    see ``row_in_module_archive``. Nothing else about the payload changes, so the
+    archive renders the same shape the builder does.
+    """
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     if not module_rows:
         return None
@@ -17010,12 +17132,32 @@ def get_authoring_structure_payload(module_catalogue_id):
     group_row = group_rows[0] if group_rows else {}
     group_coach_name = clean_str(group_row.get('coach_name'))
     is_programme_deleted = programme_deleted_row(module) or programme_deleted_row(group_row)
-    week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id'))
-    component_rows = active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, id'))
-    mapping_rows = mappings_with_inferred_sources(
-        active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'created_at, id')),
-        module_rows,
-    )
+    stored_week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id')
+    stored_component_rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, id')
+    stored_mapping_rows = authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'created_at, id')
+    if include_archived:
+        # The type and library exclusions stay: a retired component type and a
+        # detached library row are not this module's content either way, and a
+        # restore does not make them so.
+        markers = module_archive_parent_markers(module, module_catalogue_id)
+        week_rows = [
+            row for row in stored_week_rows
+            if not is_library_row(row) and row_in_module_archive(row, markers)
+        ]
+        component_rows = [
+            row for row in stored_component_rows
+            if not is_retired_component_type(row.get('type'))
+            and not is_library_row(row)
+            and row_in_module_archive(row, markers)
+        ]
+        mapping_source_rows = [
+            row for row in stored_mapping_rows if row_in_module_archive(row, markers)
+        ]
+    else:
+        week_rows = active_week_rows(stored_week_rows)
+        component_rows = active_component_rows(stored_component_rows)
+        mapping_source_rows = active_mapping_rows(stored_mapping_rows)
+    mapping_rows = mappings_with_inferred_sources(mapping_source_rows, module_rows)
     completion_rows = authoring_fetch_all(AUTHORING_COMPLETION_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     advanced_rows = authoring_fetch_all(AUTHORING_ADVANCED_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
 
@@ -21123,11 +21265,16 @@ def curriculum_module_structure(request, module_catalogue_id):
                 if is_training_alias:
                     # A training-plan alias provisions on the way through, so it
                     # is never served from a cache.
-                    payload = structure_payload_with_revision(
-                        get_authoring_structure_payload(resolved_catalogue_id)
+                    payload = (
+                        structure_payload_with_revision(
+                            lambda: get_authoring_structure_payload(resolved_catalogue_id),
+                            resolved_catalogue_id,
+                        )
                         if resolved_catalogue_id != module_catalogue_id
-                        else ensure_training_module_authoring_structure(module_catalogue_id),
-                        resolved_catalogue_id,
+                        else stamp_revision_after_write(
+                            ensure_training_module_authoring_structure(module_catalogue_id),
+                            resolved_catalogue_id,
+                        )
                     )
                 elif stored_catalogue_id:
                     # Cached the way curriculum_module_structure_resolve already
@@ -21154,14 +21301,14 @@ def curriculum_module_structure(request, module_catalogue_id):
                     payload = cached_curriculum_value(
                         f'module-structure:{resolved_catalogue_id}',
                         lambda: structure_payload_with_revision(
-                            get_authoring_structure_payload(resolved_catalogue_id),
+                            lambda: get_authoring_structure_payload(resolved_catalogue_id),
                             resolved_catalogue_id,
                         ),
                         force=bypass_cache,
                     )
                 else:
                     payload = structure_payload_with_revision(
-                        get_authoring_structure_payload(resolved_catalogue_id),
+                        lambda: get_authoring_structure_payload(resolved_catalogue_id),
                         resolved_catalogue_id,
                     )
             # Outside the read scope on purpose: this is a write, and the scope
@@ -21259,7 +21406,27 @@ def curriculum_module_structure(request, module_catalogue_id):
             if expected_revision:
                 lock_module_structure_row(resolved_catalogue_id)
                 current_revision = module_structure_revision(resolved_catalogue_id)
-                if current_revision and current_revision != expected_revision:
+                if not current_revision:
+                    # Fail closed. '' here means the fingerprint could not be
+                    # read at all, never that the module is empty -- an empty
+                    # module still hashes to a real value. Carrying on would run
+                    # this save unchecked, which is the silent overwrite the
+                    # caller asked to be protected from by sending a revision in
+                    # the first place. No module travels with this refusal:
+                    # nothing was compared, so there is no other version to show.
+                    logger.warning(
+                        'Refusing a guarded structure save for %s: the current revision could not be read.',
+                        resolved_catalogue_id,
+                    )
+                    return json_error(
+                        'This module could not be checked against the saved version, so nothing was '
+                        'written. Your changes are still here - try again in a moment.',
+                        status=409,
+                        conflict=True,
+                        expectedRevision=expected_revision,
+                        currentRevision='',
+                    )
+                if current_revision != expected_revision:
                     # Deliberately NOT a merge and NOT a retry. The payload
                     # waiting here replaces every week and component in the
                     # module, so applying it would destroy whatever the other
@@ -21274,7 +21441,7 @@ def curriculum_module_structure(request, module_catalogue_id):
                         expectedRevision=expected_revision,
                         currentRevision=current_revision,
                         module=structure_payload_with_revision(
-                            get_authoring_structure_payload(resolved_catalogue_id),
+                            lambda: get_authoring_structure_payload(resolved_catalogue_id),
                             resolved_catalogue_id,
                         ),
                     )
@@ -26701,6 +26868,45 @@ def curriculum_archived_modules(request):
             if clean_str(row.get('module_catalogue_id'))
         ]
     return JsonResponse({'schema': CURRICULUM_SCHEMA, 'count': len(results), 'results': results})
+
+
+@require_GET
+def curriculum_archived_module_structure(request, module_catalogue_id):
+    """One archived module's weeks and the components inside them.
+
+    The archive is the only place an archived module can be looked at. Every
+    workspace in the app reads the curriculum overview payload, which excludes
+    archived rows, and the live structure endpoint next to this one filters its
+    children through ``active_*`` -- correct for a live read, and the reason an
+    archived module read through it comes back with an empty week list.
+
+    Read-only by design: an archived module is restored or removed, never edited,
+    so there is no PATCH here. Uncached for the same reason the archive lists are
+    revalidated -- this is opened in order to act on it, and the very next thing
+    the reader does is restore or delete the module it belongs to.
+    """
+    identifier = clean_str(module_catalogue_id)
+    catalogue_id = resolve_stored_module_catalogue_id(identifier)
+    module_row = authoring_module_exists(catalogue_id) if catalogue_id else None
+    if not module_row:
+        return json_error('Module not found.', status=404)
+    if not curriculum_row_effectively_deleted(module_row):
+        # The live endpoint is this module's door, and it is the one that can
+        # serve an editable structure. Saying so is better than quietly serving a
+        # second, read-only copy of a module that is not in the archive at all.
+        return json_error(
+            'Module is not archived.', status=409,
+            reason='module-not-archived', id=catalogue_id,
+        )
+    try:
+        with curriculum_read_scope(targeted_child_reads=True):
+            payload = get_authoring_structure_payload(catalogue_id, include_archived=True)
+    except Exception:
+        logger.exception('Unable to load archived module structure for %s.', identifier)
+        return json_error('Unable to load archived module structure.', status=500)
+    if not payload:
+        return json_error('Module authoring structure not found.', status=404)
+    return JsonResponse({**payload, **archive_stamp_fields(module_row), 'status': 'archived'})
 
 
 @csrf_exempt

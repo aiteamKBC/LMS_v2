@@ -486,8 +486,12 @@ export interface ModuleTeamsPlannedSession {
  * from `module_session_clock` when it serves the structure, and dates the weeks
  * from the same planner -- so this is that stored schedule, not a second one
  * worked out in the browser. Unbooked sessions use the delivery slot's clock
- * and duration; confirmed bookings retain their own. `plan` also fills missing
- * dates and names the holidays landing on a date.
+ * and duration; confirmed bookings retain their own.
+ *
+ * `plan` is the authority on WHICH DAY each session runs, because it is
+ * recomputed from the group's delivery days while a component keeps whatever
+ * day it was last stamped with. It also names the holidays landing on a date.
+ * A component's own date answers only when there is no plan to read.
  *
  * An undated session is kept with an empty clock rather than dropped:
  * `calendarInputError` is what tells the reader a session has no time, and a
@@ -507,15 +511,41 @@ export function moduleTeamsPlannedSessions(
   const sessions: ModuleTeamsPlannedSession[] = [];
   (module.weekStructure || []).forEach((week, weekIndex) => {
     const weekDates = liveDatesByWeek[weekIndex] || [];
-    // A week can deliver more than one live session, so its dates are consumed
-    // in order by the live-session components it holds -- the same walk the
-    // Course structure rail makes.
-    let taken = 0;
-    (week.components || []).forEach(component => {
-      if (component.type !== 'live-session') return;
+    const live = (week.components || []).filter(component => component.type === 'live-session');
+    // A week can deliver more than one live session, so it owns one planned date
+    // per delivery day -- the same walk the Course structure rail makes.
+    //
+    // The plan decides WHICH DAY, the component decides WHICH SESSION. Both are
+    // written by the same backend planner, but a component keeps the date it was
+    // last stamped with while the plan is recomputed from the group, so a group
+    // moved from Thursday to Wednesday leaves every component still holding its
+    // Thursday. Taking the day from the plan is what stops this dialog offering
+    // Teams the old one while the Course structure beside it already reads the
+    // new.
+    //
+    // Paired in the order the sessions RUN, never the order the author dragged
+    // them into: the plan's dates are chronological, so a week whose components
+    // were reordered in the rail must still keep its earlier session on the
+    // earlier date rather than swapping the two.
+    const runOrder = live.map((component, index) => ({ component, index })).sort((left, right) => {
+      const leftDate = trimmed(left.component.settings?.sessionDate);
+      const rightDate = trimmed(right.component.settings?.sessionDate);
+      if (leftDate && rightDate && leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+      // An undated session has no place in the running order yet, so it takes
+      // what is left over after the dated ones, in the order it was authored.
+      if (leftDate !== rightDate) return leftDate ? -1 : 1;
+      return left.index - right.index;
+    });
+    const plannedDateByIndex = new Map<number, string>();
+    runOrder.forEach((entry, slot) => {
+      if (weekDates[slot]) plannedDateByIndex.set(entry.index, weekDates[slot]);
+    });
+    live.forEach((component, index) => {
       const settings = component.settings || {};
-      const date = trimmed(settings.sessionDate) || weekDates[taken] || trimmed(week.sessionDate);
-      taken += 1;
+      // The component's own stamp is the fallback for a plan that could not be
+      // read at all -- the caller passes `null` on a failed load -- which is the
+      // one case where that stamp is the best answer available.
+      const date = plannedDateByIndex.get(index) || trimmed(settings.sessionDate) || trimmed(week.sessionDate);
       const planned = plan?.sessions.find(session => session.date === date);
       const { startTime, durationMinutes } = liveSessionClock(module, settings, date, week, planned);
       sessions.push({
@@ -2582,7 +2612,15 @@ export interface SavedModuleTeamsMeeting {
 export function readModuleTeamsMeeting(moduleCatalogueId: string) {
   return apiJson<SavedModuleTeamsMeeting>(
     `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/`,
-    { timeoutMs: 15000 },
+    // The same 30s the dialog gives its session plan, because the two are read
+    // together and the slower of them decides how long the dialog waits.
+    // Headroom only: this endpoint used to resolve its module id by summarising
+    // every module in the database, so it was aborted before it answered every
+    // time and reported "Calendar unavailable" for a calendar that was saved and
+    // intact -- with the server still building a reply nobody was left to
+    // receive. That resolution is now one indexed lookup; the timeout is here
+    // for a slow day, not to paper over a stall.
+    { timeoutMs: 30000 },
   );
 }
 

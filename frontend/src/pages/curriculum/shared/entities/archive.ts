@@ -22,9 +22,11 @@ import {
   permanentlyDeleteCurriculumCohort,
   permanentlyDeleteCurriculumGroup,
   permanentlyDeleteCurriculumModule,
+  permanentlyDeleteCurriculumProgramme,
   restoreCurriculumCohort,
   restoreCurriculumGroup,
   restoreCurriculumModule,
+  restoreCurriculumProgramme,
   curriculumErrorMessage,
   type CurriculumArchivedCohort,
   type CurriculumArchivedGroup,
@@ -303,5 +305,80 @@ export async function permanentlyDeleteGroupWithConfirm(
       await onDeleted();
     },
     successTitle: 'Group deleted permanently',
+  });
+}
+
+
+// ----------------------------------------------------------------------------
+// The programme end of the same pair.
+//
+// A programme archives and restores exactly like the three records above, and
+// the Archive page offers all four side by side, so the wording belongs here
+// with them rather than being written a second time next to the table.
+//
+// The Programmes page keeps its own copies of these two on purpose: the cards
+// there drive optimistic list state (`markProgrammeRestored`, `removeProgramme`)
+// and read the dependency report a refused delete carries, so that flow needs
+// the result object rather than a yes/no. What both sides must agree on is what
+// the action does, which is the sentence -- held once, below.
+// ----------------------------------------------------------------------------
+
+/** Said by the programme restore: a programme's archive cascades, so its undo does too. */
+const PROGRAMME_CHILDREN_RETURN = 'The cohorts, groups and modules archived with it come back too.';
+
+/**
+ * POST /curriculum/programmes/{id}/restore/ — the programme returns to the
+ * active list along with everything its own archive took down. A cohort that was
+ * archived on its own beforehand stays archived, the same asymmetry the cohort
+ * restore has with its groups.
+ */
+export async function restoreProgrammeWithConfirm(
+  programme: { id: string; name: string },
+  onRestored: () => void | Promise<void>,
+): Promise<boolean> {
+  return showCurriculumConfirm({
+    title: 'Restore programme?',
+    text: `${programme.name} goes back into the active list. ${PROGRAMME_CHILDREN_RETURN}`,
+    icon: 'question',
+    confirmButtonText: 'Restore programme',
+    onConfirm: async () => {
+      await withArchiveError('Unable to restore this programme.', () => restoreCurriculumProgramme(programme.id));
+      await onRestored();
+    },
+    successTitle: 'Programme restored',
+  });
+}
+
+/**
+ * DELETE /curriculum/programmes/{id}/?permanent=true — the widest delete here:
+ * the programme and every cohort, group, module, week and component beneath it.
+ *
+ * The endpoint refuses while learner delivery still points at the programme —
+ * learner plans are never deleted with one — and the refusal's own sentence is
+ * what the dialog shows, so the reader is told what to clear rather than only
+ * that it failed.
+ */
+export async function permanentlyDeleteProgrammeWithConfirm(
+  programme: { id: string; name: string; cohorts?: number; groups?: number; modules?: number },
+  onDeleted: () => void | Promise<void>,
+): Promise<boolean> {
+  const beneath = [
+    programme.cohorts ? `${programme.cohorts} cohort${programme.cohorts === 1 ? '' : 's'}` : '',
+    programme.groups ? `${programme.groups} group${programme.groups === 1 ? '' : 's'}` : '',
+    programme.modules ? `${programme.modules} module${programme.modules === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(', ');
+  return showCurriculumConfirm({
+    title: 'Delete permanently?',
+    text: `${programme.name} is removed from the database and cannot be restored.${beneath ? ` Everything beneath it goes too (${beneath}).` : ''} Learner accounts and progress are never touched.`,
+    icon: 'warning',
+    confirmButtonText: 'Delete permanently',
+    onConfirm: async () => {
+      await withArchiveError(
+        'Unable to delete this programme.',
+        () => permanentlyDeleteCurriculumProgramme(programme.id),
+      );
+      await onDeleted();
+    },
+    successTitle: 'Programme deleted permanently',
   });
 }
