@@ -13,6 +13,7 @@ import type { LearningReflectionSubmissionInput } from '@/api/reflectionSubmissi
 import type { AssignmentAnswers } from './AssignmentSubmissionWizard';
 import { CheckCircle2, Circle, Loader2, Info, AlertCircle, ArrowRight } from 'lucide-react';
 import { startLiveDictation } from '@/utils/liveDictation';
+import { parsePersonalLearning } from '@/lib/personalLearning';
 import { Modal } from '@/pages/users/components/Modal';
 import { AssignmentTimeEntries } from './AssignmentTimeEntries';
 import { LocalAiTextCheck, LocalAiWritingHint } from './LocalAiTextCheck';

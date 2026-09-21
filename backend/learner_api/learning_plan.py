@@ -44,7 +44,7 @@ from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .learner_progression import advance_learner
-from .mappers import _s, get_training_plan, stored_training_plan, training_plan_field
+from .mappers import _normalize_free_courses, _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser
 
 logger = logging.getLogger(__name__)
@@ -447,7 +447,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
     not turn a successful staff edit into an error. A lagging mirror is
     recoverable -- ``manage.py sync_learning_plans`` rebuilds it from the plan.
     """
-    from .active_users import replace_training_plan
+    from .active_users import replace_free_courses, replace_training_plan
     from .mappers import get_training_plan
     from .models import LearnerProfile
 
@@ -470,6 +470,10 @@ def sync_learning_plan_mirror(source, *, strict=False):
         profile = mirrors.first()
         if profile is not None:
             replace_training_plan(profile, plan)
+            # Free courses ride the same mirror: the enrolment source holds them
+            # on Created_users."Free_courses", and the coach/learner side reads
+            # the relational learner_free_courses table (no hours/KSBs).
+            replace_free_courses(profile, getattr(source, "free_courses", None) or [])
         EnrolmentUser.all_learners.filter(pk=source.pk).update(
             modules=modules_csv,
             weeks=weeks_csv,
@@ -589,6 +593,11 @@ def _serialize(learner):
             "programmeStatus": _s(learner.programme_status),
         },
         "plan": plan,
+        # Free courses assigned to this learner. A pure list of assignment
+        # records ([{freeCourseId, courseName, addedAt}]) held in its own column,
+        # deliberately outside `plan`/`preset`/`totals` so they never touch hours
+        # or KSBs — see EnrolmentUser.free_courses.
+        "freeCourses": learner.free_courses if isinstance(learner.free_courses, list) else [],
         "preset": preset,
         # Anything in the catalogue not already on the plan, whichever programme
         # it belongs to. The picker defaults to the learner's own programme and
@@ -643,6 +652,13 @@ def learning_plan(request, pk):
     modules = payload.get("modules")
     if not isinstance(modules, list):
         return _error("modules must be a list.", 400)
+
+    # Free courses are optional and independent of the module list: a pure
+    # assignment record with no hours/KSBs, stored in their own column. Absent
+    # key = leave them untouched; present must be a list.
+    has_free_courses = "freeCourses" in payload
+    if has_free_courses and not isinstance(payload.get("freeCourses"), list):
+        return _error("freeCourses must be a list.", 400)
 
     programme = _s(learner.programme)
     try:
@@ -713,8 +729,12 @@ def learning_plan(request, pk):
 
     field = training_plan_field(learner)
     setattr(learner, field, resolved)
+    update_fields = [field]
+    if has_free_courses:
+        learner.free_courses = _normalize_free_courses(payload.get("freeCourses"))
+        update_fields.append("free_courses")
     try:
-        learner.save(update_fields=[field])
+        learner.save(update_fields=update_fields)
     except DatabaseError as exc:
         logger.exception("learning_plan: save failed")
         return _error(f"Database error: {exc}", 502)

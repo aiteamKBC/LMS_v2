@@ -24,6 +24,7 @@
 /* Keep this page's typography and composed search field independent of the
    compatibility rules applied to every heading/input in WorkspaceShell. */
 .learningPage .cardTitle, .learningPage .weekCard h3 { font-size: 17px !important; line-height: 1.45; }
+.learningPage .freeCard .cardTitle { font-size: 19px !important; height: auto; min-height: 52px; line-height: 1.4; }
 .learningPage .subjectHeading h2 { font-size: 22px !important; }
 .learningPage .asidePanel h2 { font-size: 16px !important; }
 .learningPage .search input {
@@ -42,6 +43,27 @@
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
   align-items: stretch;
   gap: 18px;
+}
+
+/* Free courses run as a standalone gallery (no dense 4-up subjects container),
+   so the cards are given more room: wider tracks, a taller cover and roomier
+   body than the programme grid. */
+.freeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  align-items: stretch;
+  gap: 24px;
+}
+.freeCard .cardBody { padding: 24px; }
+.freeCard .cardDescription { min-height: 44px; font-size: 14px; }
+.freeCard .nextActivity { min-height: 66px; }
+.freeCard .cardAction { min-height: 46px; font-size: 13px; }
+@container learning (min-width: 1500px) {
+  .freeGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container learning (max-width: 600px) {
+  .freeGrid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .freeCard .cardBody { padding: 18px; }
 }
 
 .card {
@@ -159,6 +181,26 @@
   font-weight: 700;
   line-height: 1.4;
 }
+
+/* Free-course marker: tinted in each card's own accent tone, so a free course
+   reads as part of the module language rather than a separate widget. */
+.freeBadge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--subject-accent, #673ab7) 30%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--subject-accent, #673ab7) 10%, var(--kbc-surface, #fff));
+  color: var(--subject-ink, #673ab7);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+.freeBadge svg { color: var(--subject-accent, #673ab7); }
 
 .cardBody {
   display: flex;

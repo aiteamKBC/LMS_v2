@@ -3952,6 +3952,32 @@ export function saveFreeProgrammeModules(programmeId: string, input: { programme
   return patchJson<{ saved: boolean; programmeId: string; modules: FreeProgrammeModule[] }>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/modules/`, input);
 }
 
+export interface ConvertFreeCourseInput {
+  courseId: string;
+  mode: 'clone' | 'move';
+  /** The EXISTING group the course is injected into as a new module. */
+  groupId: string;
+}
+
+export interface ConvertFreeCourseResult {
+  mode: 'clone' | 'move';
+  programmeId: string;
+  programmeName: string;
+  cohortId: string;
+  groupId: string;
+  moduleCatalogueId: string;
+}
+
+/**
+ * Inject one free course as a new module into an EXISTING programme group.
+ * `clone` leaves the free course in place; `move` also deletes it and removes it
+ * from any learner it was assigned to. Returns the ids so the caller can
+ * deep-link into the Module Builder to add KSBs/hours.
+ */
+export function injectFreeCourseIntoGroup(programmeId: string, input: ConvertFreeCourseInput) {
+  return postJson<ConvertFreeCourseResult>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/convert/`, input);
+}
+
 export function createGroupModule(groupId: string, input: CurriculumModuleAttachmentInput) {
   return postJson(`/curriculum/groups/${encodeURIComponent(groupId)}/modules/`, input);
 }
