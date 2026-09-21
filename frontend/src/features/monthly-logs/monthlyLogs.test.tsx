@@ -264,3 +264,22 @@ describe('monthly logs', () => {
     expect(await screen.findByText('No monthly logs yet')).toBeInTheDocument();
   });
 });
+
+
+it('keeps monthly activities accessible when the signed target is unavailable', async () => {
+  const target_warning = 'The signed Training Plan is unavailable. Activities remain available.';
+  const missing = { ...retained, training_plan_target: null, target_warning };
+  vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [missing] });
+  page();
+  expect(await screen.findByText(target_warning)).toBeVisible();
+  expect(screen.getByText('Unavailable')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Review month: August 2026' })).toBeVisible();
+});
+
+it('shows the unavailable-target warning and actual activity in the report', async () => {
+  const target_warning = 'The signed Training Plan could not be read.';
+  vi.mocked(getLogMonth).mockResolvedValue({ ...retained, training_plan_target: null, target_warning });
+  page('/learner/monthly-logs/2026-08');
+  expect(await screen.findByText(/Target hours: Unavailable/)).toBeVisible();
+  expect(screen.getByRole('button', { name: /Completed reading/ })).toBeVisible();
+});

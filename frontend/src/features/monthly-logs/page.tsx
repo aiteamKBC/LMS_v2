@@ -131,6 +131,7 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
       </div></div>
     </nav>
     <LearnerInformation summary={summary} data={data} actions={<JournalDownloads summary={summary} month={month} disabled={signing.isPending || (data.source === 'lms' && !(data.student_signature && data.coach_signature))} loadMonth={(selected, signal) => getLogMonth(id, selected, signal, perspective)} />} />
+    {data.target_warning && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Target hours: Unavailable. {data.target_warning}</p>}
     <MonthlyHours data={data} />
     <ActivityLog key={sourceRef ?? 'all'} data={data} initialSourceRef={sourceRef}
       contentScope={`monthly-logs:${perspective}:${id}`} loadContent={rowId => getLogContent(id, month, rowId, perspective)} />
