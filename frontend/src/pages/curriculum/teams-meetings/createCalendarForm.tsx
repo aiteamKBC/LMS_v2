@@ -356,14 +356,20 @@ export function ModuleSessionSchedulePreview({
   // repeated down twenty rows is read as decoration, not as a fact.
   const durations = Array.from(new Set(occurrences.map(item => item.durationMinutes)));
   const uniformDuration = durations.length === 1 ? durations[0] : 0;
-  // State each distinct clock pair once in the compact modal. Use each real
-  // occurrence so differing schedules and daylight-saving changes stay visible.
-  const countryTimes = showAlternateTimeZones ? [] : Array.from(new Set(occurrences.map(item => {
-    const egypt = utcIsoToCalendarParts(item.plannedUtc, 'Africa/Cairo');
-    const england = utcIsoToCalendarParts(item.plannedUtc, 'Europe/London');
-    if (!egypt.time || !england.time) return '';
-    return `Egypt: ${clockLabel(egypt.time)} · England: ${clockLabel(england.time)}${england.date < egypt.date ? ' (previous day)' : ''}`;
-  }).filter(Boolean)));
+  // The compact modal states one clock pair, from the soonest occurrence --
+  // not every distinct pairing a long module can pick up from genuinely
+  // different weekly slots or daylight-saving drift between the two zones.
+  const countryTimes = showAlternateTimeZones ? [] : (() => {
+    const first = occurrences.find(item => {
+      const egypt = utcIsoToCalendarParts(item.plannedUtc, 'Africa/Cairo');
+      const england = utcIsoToCalendarParts(item.plannedUtc, 'Europe/London');
+      return Boolean(egypt.time && england.time);
+    });
+    if (!first) return [];
+    const egypt = utcIsoToCalendarParts(first.plannedUtc, 'Africa/Cairo');
+    const england = utcIsoToCalendarParts(first.plannedUtc, 'Europe/London');
+    return [`Egypt: ${clockLabel(egypt.time)} · England: ${clockLabel(england.time)}${england.date < egypt.date ? ' (previous day)' : ''}`];
+  })();
 
   return (
     <div className="overflow-hidden rounded-xl border border-background-200 bg-background-50">
@@ -375,7 +381,7 @@ export function ModuleSessionSchedulePreview({
             {row.name}
           </p>
         </div>
-        <div className="flex flex-wrap gap-1.5 text-[10px] font-bold uppercase tracking-wide">
+        <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide">
           <span className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 text-foreground-600">
             {occurrences.length} session{occurrences.length === 1 ? '' : 's'}
           </span>
@@ -387,7 +393,7 @@ export function ModuleSessionSchedulePreview({
           {countryTimes.length > 0 && (
             <span role="note" aria-label="Session start times in Egypt and England"
               className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 normal-case text-foreground-600">
-              {countryTimes.map(label => <span key={label} className="block">{label}</span>)}
+              {countryTimes.map(label => <span key={label}>{label}</span>)}
             </span>
           )}
           {/* Counts the dates a holiday lands on, not dates a holiday moved:
@@ -630,7 +636,14 @@ export function TeamsCalendarFormBody({
         </span>
         <p className="text-[12px] text-foreground-600">
           {existingCalendar
-            ? 'Update saves changes to this existing Teams calendar and refreshes the links in the module’s live-session components. The dates below are its saved bookings.'
+            // The dates below are what Update SENDS, not what Teams currently
+            // holds -- they are the module's plan, and the two disagree exactly
+            // when the calendar is out of date, which is when this dialog
+            // matters most. Each row says for itself if Teams is holding it on
+            // another day, so the banner does not have to claim a provenance
+            // that would be wrong on the rare calendar whose live-session
+            // components have all been deleted.
+            ? 'Update sends the dates below to this existing Teams calendar and refreshes the links in the module’s live-session components. A session Teams is still holding on another day is marked on its own row.'
             : row.sessions.length
             ? `Create puts one Teams meeting on each of the ${row.sessions.length} session date${row.sessions.length === 1 ? '' : 's'} below and writes the join link into this module’s live-session components. The dates come from the module, not from this form.`
             : 'This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.'}
@@ -641,7 +654,7 @@ export function TeamsCalendarFormBody({
         <>
           <ModuleSessionSchedulePreview
             row={previewRow}
-            title={existingCalendar ? 'Dates on the existing calendar' : 'Dates the calendar will be created on'}
+            title={existingCalendar ? 'Dates Update will send' : 'Dates the calendar will be created on'}
             holidayLabelFor={holidayLabelFor}
             overrideDuration={override}
             showAlternateTimeZones={showAlternateTimeZones}

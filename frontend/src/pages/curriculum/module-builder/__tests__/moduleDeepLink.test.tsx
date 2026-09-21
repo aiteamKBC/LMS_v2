@@ -27,6 +27,12 @@ const createNewModule = vi.fn(async () => {
   throw new Error('createNewModule must not be called by a deep link');
 });
 
+// The workspace reads the signed-in account. Without this the page throws on
+// its first line and every case below fails before it asserts anything.
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
+}));
+
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
