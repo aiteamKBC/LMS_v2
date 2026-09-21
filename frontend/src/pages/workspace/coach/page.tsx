@@ -113,6 +113,8 @@ interface CoachLearner {
   overallProgressAvailable?: boolean;
   attendanceRate: number;
   attendanceRateAvailable?: boolean;
+  attendanceLastSession?: string | null;
+  attendanceLastSessionDate?: string | null;
   otjhCompleted: number;
   otjhTarget: number;
   otjhVariance?: number | null;
@@ -177,7 +179,9 @@ interface CoachAssignedGroup {
 
 interface CoachDashboardApiResponse extends CaseloadApiResponse {
   monthlyRisk?: MonthlyRiskPoint[] | null;
-  attendance?: AttendanceApiResponse;
+  // Attendance is not a separate dataset: the backend overlays the one
+  // canonical figure directly onto each learners[] entry
+  // (attendanceRate/attendanceRateAvailable/attendanceLastSession*).
   reviewHistory?: {
     learners?: ReviewHistoryApiLearner[];
   };
@@ -187,20 +191,6 @@ interface CoachDashboardApiResponse extends CaseloadApiResponse {
   evidence?: MarkingQueueResponse;
   assignedGroups?: CoachAssignedGroup[];
   errors?: Record<string, string>;
-}
-
-interface AttendanceApiLearner {
-  id: string;
-  learner: string;
-  email?: string | null;
-  attendance: number | null;
-  hasAttendance?: boolean;
-  lastSession?: string | null;
-  lastSessionDate?: string | null;
-}
-
-interface AttendanceApiResponse {
-  learners?: AttendanceApiLearner[];
 }
 
 interface ReviewHistoryApiLearner {
@@ -358,8 +348,12 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     riskFlags,
     overallProgress: clampPercent(learner.overallProgress),
     overallProgressAvailable: learner.overallProgressAvailable,
-    attendanceRate: 0,
-    attendanceRateAvailable: false,
+    // The backend already joined this by stable learner id -- read it
+    // as-is rather than re-deriving it from a separate dataset.
+    attendanceRate: learner.attendanceRateAvailable ? clampPercent(learner.attendanceRate) : 0,
+    attendanceRateAvailable: Boolean(learner.attendanceRateAvailable),
+    attendanceLastSession: learner.attendanceLastSession ?? null,
+    attendanceLastSessionDate: learner.attendanceLastSessionDate ?? null,
     otjhCompleted: toNumber(learner.otjhCompleted),
     otjhTarget: Math.max(toNumber(learner.otjhTarget), 0),
     otjhVariance: learner.otjhVariance ?? null,
@@ -395,24 +389,6 @@ function ksbCellValue(learner: CoachLearner): string {
 }
 
 
-function findAttendanceRecord(learner: CoachLearner, attendanceLearners: AttendanceApiLearner[]) {
-  const learnerId = normalizeIdentity(learner.id);
-  const learnerEmail = normalizeIdentity(learner.email);
-  const learnerName = normalizeIdentity(learner.name);
-
-  return attendanceLearners.find((attendance) => {
-    const attendanceId = normalizeIdentity(attendance.id);
-    const attendanceEmail = normalizeIdentity(attendance.email);
-    const attendanceName = normalizeIdentity(attendance.learner);
-
-    return Boolean(
-      (learnerId && attendanceId && learnerId === attendanceId)
-      || (learnerEmail && attendanceEmail && learnerEmail === attendanceEmail)
-      || (learnerName && attendanceName && learnerName === attendanceName),
-    );
-  });
-}
-
 function eventBelongsToLearner(event: CoachCalendarEvent, learner: CoachLearner) {
   const learnerId = normalizeIdentity(learner.id);
   const learnerEmail = normalizeIdentity(learner.email);
@@ -447,12 +423,14 @@ function formatCompletedSessionDate(value?: string) {
 
 function mergeAttendanceRates(
   learners: CoachLearner[],
-  attendanceLearners: AttendanceApiLearner[],
   events: CoachCalendarEvent[],
 ): CoachLearner[] {
   return learners.map((learner): CoachLearner => {
-    const attendance = findAttendanceRecord(learner, attendanceLearners);
-    const attendanceDate = parseLocalDate(attendance?.lastSessionDate);
+    // Attendance is already joined onto this learner server-side by stable
+    // id (see coach_dashboard/apply_attendance_summary) -- no client-side
+    // matching by name/email against a separate dataset.
+    const hasAttendance = Boolean(learner.attendanceRateAvailable);
+    const attendanceDate = hasAttendance ? parseLocalDate(learner.attendanceLastSessionDate) : undefined;
     const completedEventDate = latestCompletedSessionDate(learner, events);
     const lastMcmDate = latestCompletedSessionDate(learner, events, event => event.source === 'mcr');
     const lastPrDate = latestCompletedSessionDate(learner, events, event => event.source === 'progress-review');
@@ -469,27 +447,19 @@ function mergeAttendanceRates(
     const lastSession = parsedCompletedEventDate
       && (!attendanceDate || parsedCompletedEventDate.getTime() > attendanceDate.getTime())
       ? formatDateLabel(completedEventDate)
-      : displayValue(attendance?.lastSession) !== EMPTY_VALUE
-        ? displayValue(attendance?.lastSession)
-        : formatDateLabel(attendance?.lastSessionDate);
-    const hasAttendance = Boolean(
-      attendance
-      && attendance.attendance !== null
-      && attendance.attendance !== undefined
-      && attendance.hasAttendance !== false,
-    );
+      : displayValue(learner.attendanceLastSession) !== EMPTY_VALUE
+        ? displayValue(learner.attendanceLastSession)
+        : formatDateLabel(learner.attendanceLastSessionDate);
 
     return {
       ...learner,
-      attendanceRate: hasAttendance ? clampPercent(attendance?.attendance) : 0,
-      attendanceRateAvailable: hasAttendance,
       // Use the latest completed occurrence across coaching, progress reviews
       // and live sessions. Future, in-progress and cancelled events are not
       // contacts, and the caseload payload's owner name is intentionally ignored.
       lastContact: lastSession,
       lastActivity: attendanceIsLatestActivity ? lastSession : learner.lastActivity,
       lastActivityDate: attendanceIsLatestActivity
-        ? (parsedCompletedEventDate && latestAttendanceDate === parsedCompletedEventDate ? completedEventDate : attendance?.lastSessionDate || null)
+        ? (parsedCompletedEventDate && latestAttendanceDate === parsedCompletedEventDate ? completedEventDate : learner.attendanceLastSessionDate || null)
         : learner.lastActivityDate,
       lastActivityLabel: attendanceIsLatestActivity ? 'Attendance' : learner.lastActivityLabel,
       lastMcm: formatCompletedSessionDate(lastMcmDate),
@@ -1190,7 +1160,6 @@ export default function CoachDashboard() {
 
         const queueItems = (dashboard.evidence?.items || []).map(normalizeEvidenceQueueLearner);
         const normalizedLearners = (dashboard.learners || []).map(normalizeLearner);
-        const attendanceLearners = dashboard.attendance?.learners || [];
         const reviewHistoryLearners = dashboard.reviewHistory?.learners || [];
         const events = sortEvents(dashboard.timetable?.events || []);
         const completedHistoryEvents = completedSessionHistory.events || [];
@@ -1199,7 +1168,7 @@ export default function CoachDashboard() {
         setOwnerName(displayValue(dashboard.owner?.name) === EMPTY_VALUE ? authenticatedCoachName : String(dashboard.owner?.name));
         setLearners(mergeEvidenceQueueIntoLearners(
           mergeReviewHistory(
-            mergeAttendanceRates(normalizedLearners, attendanceLearners, completedHistoryEvents),
+            mergeAttendanceRates(normalizedLearners, completedHistoryEvents),
             reviewHistoryLearners,
           ),
           queueItems,
