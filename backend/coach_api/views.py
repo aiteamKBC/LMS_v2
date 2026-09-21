@@ -5,7 +5,6 @@ import re
 import hashlib
 from html import escape
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
 from time import perf_counter, sleep as _sleep
@@ -2372,9 +2371,8 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
         finally:
             close_old_connections()
 
-    with ThreadPoolExecutor(max_workers=min(4, len(work)), thread_name_prefix="coach-attendance") as executor:
-        results = executor.map(load, work)
-        return {profile_id: summary for profile_id, summary in results if summary is not None}
+    results = [load(item) for item in work]
+    return {profile_id: summary for profile_id, summary in results if summary is not None}
 
 
 def caseload_kbc_attendance_rates(rows) -> tuple[dict[int, int], dict[int, dict]]:
@@ -2473,7 +2471,7 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
         component_progress=component_progress, component_available=component_available,
     )
     payload["riskFlags"] = build_active_user_risk_flags(
-        otjh_status=payload.get("otjhStatus") or "", ksb_status=payload["ksbStatus"], progress_variance=progress_variance,
+        otjh_status=payload.get("otjhStatus") or "", ksb_status=payload.get("ksbStatus") or "", progress_variance=progress_variance,
         hours_progress=hours_progress, hours_available=hours_available,
         ksb_progress=ksb_progress, ksb_available=ksb_available,
         component_progress=component_progress, component_available=component_available,
@@ -10702,15 +10700,10 @@ def coach_dashboard(request):
             # Keep concurrency bounded: canonical metrics may fan out its own
             # read-only workers, so a large outer pool can exhaust the DB pool
             # during concurrent refreshes.
-            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="coach-dashboard-learners") as executor:
-                latest_future = executor.submit(run_enrichment, caseload_latest_learning_activities)
-                audit_future = executor.submit(run_enrichment, caseload_audit_hour_totals)
-                ksb_future = executor.submit(run_enrichment, caseload_evidenced_ksb_counts)
-                canonical_future = executor.submit(run_enrichment, caseload_canonical_metrics)
-                latest_activities = latest_future.result()
-                audit_totals = audit_future.result()
-                ksb_counts = ksb_future.result()
-                canonical_metrics = canonical_future.result()
+            latest_activities = run_enrichment(caseload_latest_learning_activities)
+            audit_totals = run_enrichment(caseload_audit_hour_totals)
+            ksb_counts = run_enrichment(caseload_evidenced_ksb_counts)
+            canonical_metrics = run_enrichment(caseload_canonical_metrics)
             aptem_by_profile = caseload_aptem_ids(rows)
             for row, learner in zip(rows, learners):
                 apply_latest_learning_activity(learner, latest_activities.get(int(row.id)))
@@ -10765,13 +10758,9 @@ def coach_dashboard(request):
         # These sections use independent read-only connections. Running them
         # together makes initial page latency the duration of the slowest query
         # instead of the sum of both remote-database round trips.
-        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="coach-dashboard") as executor:
-            learners_future = executor.submit(load_dashboard_learners)
-            timetable_future = executor.submit(load_dashboard_timetable)
-            groups_future = executor.submit(load_assigned_groups)
-            dashboard_rows, learners, monthly_risk = learners_future.result()
-            timetable_payload = timetable_future.result()
-            assigned_groups = groups_future.result()
+        dashboard_rows, learners, monthly_risk = load_dashboard_learners()
+        timetable_payload = load_dashboard_timetable()
+        assigned_groups = load_assigned_groups()
         # Depends on the learner list, so it follows the pool rather than
         # joining it.
         try:
@@ -10989,15 +10978,10 @@ def coach_caseload(request):
             finally:
                 close_old_connections()
 
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="coach-caseload") as executor:
-            audit_future = executor.submit(run_optional, caseload_audit_hour_totals)
-            ksb_future = executor.submit(run_optional, caseload_evidenced_ksb_counts)
-            canonical_future = executor.submit(run_optional, caseload_canonical_metrics)
-            review_future = executor.submit(run_optional, dashboard_review_history)
-            audit_totals = audit_future.result()
-            ksb_counts = ksb_future.result()
-            canonical_metrics = canonical_future.result()
-            review_history = review_future.result()
+        audit_totals = run_optional(caseload_audit_hour_totals)
+        ksb_counts = run_optional(caseload_evidenced_ksb_counts)
+        canonical_metrics = run_optional(caseload_canonical_metrics)
+        review_history = run_optional(dashboard_review_history)
         aptem_by_profile = caseload_aptem_ids(rows)
         for row, learner in zip(rows, learners):
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
