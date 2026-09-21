@@ -14,8 +14,11 @@ import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { buildLinkedQuizzes, splitLinkedQuizWeek, type LinkedQuiz } from '@/utils/linkedQuizzes';
 import { gradePercent } from '@/utils/learnerJourney';
+import { BookOpen, Sparkles } from 'lucide-react';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
+import { ModeSwitch } from '@/components/ui/ModeSwitch';
+import { FreeCoursesTab } from './FreeCoursesTab';
 import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { RowAction } from '@/components/ui/ActionRow';
@@ -59,6 +62,17 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
     navigate({ pathname: location.pathname, search: params.toString() });
   };
 
+  // The whole page switches between the programme modules ("My courses") and the
+  // learner's assigned free courses. Map view is always the module workspace.
+  const requestedMode = new URLSearchParams(location.search).get('mode');
+  const mode = view === 'map' ? 'courses' : requestedMode === 'free' ? 'free' : 'courses';
+  const setMode = (next: string) => {
+    if (next === mode) return;
+    const params = new URLSearchParams(location.search);
+    if (next === 'free') params.set('mode', next); else params.delete('mode');
+    navigate({ pathname: location.pathname, search: params.toString() });
+  };
+
   const canTake = !!(kind && id) && canProgress;
 
   const subtitle = real
@@ -84,17 +98,39 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
       breadcrumbCurrentLabel={view === 'map' ? 'Learner’s Map' : 'My Learning'}
     >
       <PageContainer><div className={learningStyles.learningPage}>
-        {view === 'catalogue' && <LearningHero />}
-        {view === 'catalogue' && <PageTabs items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
-
-        {!isRealMode ? (
-          <Panel><EmptyState size="sm" title="No learner selected" description="Open this page from a learner record." /></Panel>
-        ) : tab === 'modules' ? (
-          <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} view={view} onRefresh={refresh} />
-        ) : (
-          tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
-          <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} onRetry={refresh} />
+        {view === 'catalogue' && isRealMode && (
+          <ModeSwitch
+            value={mode}
+            onChange={setMode}
+            label="Switch learning view"
+            options={[
+              { value: 'courses', label: 'My courses', icon: <BookOpen size={13} aria-hidden="true" /> },
+              { value: 'free', label: 'Free courses', icon: <Sparkles size={13} aria-hidden="true" /> },
+            ]}
+          />
         )}
+
+        {/* Keyed by mode so switching remounts the panel and re-runs the slide:
+            Free enters from the right, My courses from the left. */}
+        <div key={mode} className={view === 'catalogue' && isRealMode ? (mode === 'free' ? 'slide-from-right' : 'slide-from-left') : undefined}>
+          {!isRealMode ? (
+            <Panel><EmptyState size="sm" title="No learner selected" description="Open this page from a learner record." /></Panel>
+          ) : mode === 'free' ? (
+            <FreeCoursesTab kind={kind} id={id} />
+          ) : (
+            <>
+              {view === 'catalogue' && <LearningHero />}
+              {view === 'catalogue' && <PageTabs items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
+
+              {tab === 'modules' ? (
+                <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} view={view} onRefresh={refresh} />
+              ) : (
+                tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
+                <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} onRetry={refresh} />
+              )}
+            </>
+          )}
+        </div>
       </div></PageContainer>
     </WorkspaceShell>
   );

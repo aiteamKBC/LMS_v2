@@ -334,7 +334,7 @@ function ActivityGroup({ title, label = title, activities, level, children }: {
 const SUBJECT_CARD_TONES = ['purple', 'navy', 'green', 'gold', 'blue', 'rose'] as const;
 type SubjectCardTone = typeof SUBJECT_CARD_TONES[number];
 
-function Cover({ title, url, large = false }: { title: string; url?: string; large?: boolean }) {
+export function Cover({ title, url, large = false }: { title: string; url?: string; large?: boolean }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [url]);
   return <div className={`${styles.cover} ${large ? styles.coverLarge : ''}`}>

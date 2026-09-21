@@ -21488,6 +21488,216 @@ def curriculum_free_programme_modules(request, programme_id):
     return JsonResponse({'saved': True, 'programmeId': programme_id, 'modules': modules, 'results': modules})
 
 
+def build_free_course_week_structure(source_rows):
+    """Map one free course's week-rows into a module ``weekStructure``.
+
+    One free week -> one module week, one free component -> one normal component.
+    ``settings`` is carried verbatim so a linked quiz / media / manualUnlock
+    survives; KSB mappings start empty and hours carry the free component's own
+    value -- the author adds the apprentice-specific KSBs/hours afterwards. No
+    free ids are carried, so fresh WEEK-/COMP- ids mint and the copy is fully
+    independent of the free-course rows.
+    """
+    ordered = sorted(
+        source_rows,
+        key=lambda row: (parse_int(row.get('displayOrder'), 0), parse_int(row.get('weekNumber'), 0)),
+    )
+    week_structure = []
+    for index, week in enumerate(ordered):
+        components = []
+        for component in week.get('components') or []:
+            components.append({
+                'type': component.get('type'),
+                'title': component.get('title') or '',
+                'description': component.get('description') or '',
+                'expectedOtjh': component.get('expectedOtjh'),
+                'points': component.get('points'),
+                'reflectionRequired': component.get('reflectionRequired'),
+                'tutorValidationRequired': component.get('tutorValidationRequired'),
+                'ksbMappings': [],
+                'settings': component.get('settings') if isinstance(component.get('settings'), dict) else {},
+            })
+        week_structure.append({
+            'weekNumber': parse_int(week.get('weekNumber'), index + 1),
+            'title': clean_str(week.get('weekTitle')) or f'Week {index + 1}',
+            'summary': '',
+            'components': components,
+            'ksbMappings': [],
+        })
+    return week_structure
+
+
+def _delete_single_free_course_rows(course_id):
+    """Delete ONE free course's own rows + its authoring-week mirror.
+
+    Scoped by course_id / free_module_id, so it removes only this course and
+    never the rest of the FREE-COURSES catalogue (the programme-wide
+    ``delete_free_programme_data`` would). Mirrors the authoring-week cleanup the
+    free-course save performs (``save_free_programme_modules``).
+    """
+    course_id = clean_str(course_id)
+    if not course_id:
+        return
+    week_rows = free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id])
+    free_week_ids = [clean_str(row.get('id')) for row in week_rows if clean_str(row.get('id'))]
+    # The authoring_weeks mirror is keyed on both the free week row id and the
+    # authoring week_id it was written under, plus the course id — same predicate
+    # save_free_programme_modules deletes by, scoped to this one course.
+    mirror_ids = set(free_week_ids)
+    for row in week_rows:
+        if clean_str(row.get('week_id')):
+            mirror_ids.add(clean_str(row.get('week_id')))
+    mirror_ids.add(course_id)
+    if free_week_ids:
+        placeholders = ', '.join(['%s'] * len(free_week_ids))
+        free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE, f'free_module_id in ({placeholders})', free_week_ids)
+    mirror_list = [value for value in mirror_ids if value]
+    if mirror_list:
+        placeholders = ', '.join(['%s'] * len(mirror_list))
+        authoring_delete(
+            AUTHORING_WEEKS_TABLE,
+            f'module_catalogue_id in ({placeholders}) or id in ({placeholders})',
+            [*mirror_list, *mirror_list],
+        )
+    free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id])
+    free_programme_delete(FREE_COURSES_TABLE, 'id = %s', [course_id])
+
+
+def _scrub_free_course_learner_assignments(course_id):
+    """Remove a moved free course from every learner it was assigned to.
+
+    ``free_course_ref`` is a plain reference with no FK cascade, so deleting the
+    course would otherwise leave orphans. ``default`` and ``enrolment`` are the
+    same physical Neon database, so this raw cross-schema SQL runs on the
+    curriculum connection and stays inside the convert transaction (the ORM would
+    use the ``enrolment`` alias — a separate connection, a separate transaction).
+    """
+    course_id = clean_str(course_id)
+    if not course_id:
+        return
+    marker = json.dumps([{'freeCourseId': course_id}])
+    with connection.cursor() as cursor:
+        # Enrolment source of truth: drop the matching element from each learner's
+        # Free_courses JSONB. `is distinct from` keeps non-matching and malformed
+        # (null-key) elements rather than silently dropping them.
+        cursor.execute(
+            '''
+            update "enrolment"."Created_users"
+               set "Free_courses" = coalesce((
+                     select jsonb_agg(elem)
+                       from jsonb_array_elements("Free_courses"::jsonb) elem
+                      where elem->>'freeCourseId' is distinct from %s
+                   ), '[]'::jsonb)
+             where "Free_courses"::jsonb @> %s::jsonb
+            ''',
+            [course_id, marker],
+        )
+        # Relational mirror kept by the learner-side sync.
+        cursor.execute(
+            'delete from "Learner"."learner_free_courses" where free_course_ref = %s',
+            [course_id],
+        )
+
+
+def inject_free_course_into_group(course_id, group_id, *, free_programme_id='FREE-COURSES', mode='clone'):
+    """Inject one free course as a new module into an EXISTING programme group.
+
+    The course's weeks/components become a module appended to the group the
+    caller selected (``preserve_missing=True`` keeps the group's other modules).
+    Component ``settings`` are copied verbatim so a linked quiz/media survive;
+    KSB mappings start empty and hours carry the free component's value — the
+    author finishes those in the Module Builder. ``mode='move'`` additionally
+    deletes the source free course (its own rows only) and scrubs the
+    now-dangling learner assignments — everything inside one transaction, so any
+    failure rolls the whole injection back.
+    """
+    course_id = clean_str(course_id)
+    if not course_id:
+        raise ValueError('A free course id is required.')
+    group_id = clean_str(group_id)
+    if not group_id:
+        raise ValueError('A target group is required.')
+    mode = clean_str(mode).lower() or 'clone'
+    if mode not in {'clone', 'move'}:
+        raise ValueError('mode must be "clone" or "move".')
+
+    source_rows = [
+        row for row in get_free_programme_modules_payload(clean_str(free_programme_id) or 'FREE-COURSES')
+        if clean_str(row.get('courseId')) == course_id
+    ]
+    if not source_rows:
+        raise LookupError('Free course not found.')
+    header = source_rows[0]
+    course_title = clean_str(header.get('courseName')) or 'Untitled course'
+
+    module_payload = {
+        'moduleName': course_title,
+        'title': course_title,
+        # module_attachment_authoring_payload reads the description from `notes`
+        # and the cover from `coverImage`.
+        'notes': clean_str(header.get('description')),
+        'coverImage': clean_str(header.get('coverImageUrl')),
+        'weekStructure': build_free_course_week_structure(source_rows),
+    }
+
+    with transaction.atomic(), versioning.source('free-course-convert'):
+        group_row = resolve_group_row(group_id)
+        if not group_row:
+            raise LookupError('Target group not found.')
+        cohort_row = resolve_cohort_row(clean_str(group_row.get('cohort_id')))
+        if not cohort_row:
+            raise LookupError('The selected group has no cohort.')
+        group = curriculum_group_from_authoring_detail(serialize_group_authoring_detail(group_row))
+        cohort = curriculum_cohort_from_authoring_detail(serialize_cohort_authoring_detail(cohort_row))
+        # preserve_missing keeps every other module already in the group — this is
+        # an append, not a replace of the group's module set.
+        saved_modules, _removed = save_tree_group_modules(group, cohort, [module_payload], preserve_missing=True)
+        saved_module = saved_modules[0] if saved_modules else {}
+        module_catalogue_id = clean_str(saved_module.get('catalogueId') or saved_module.get('moduleCatalogueId'))
+        programme_id = clean_str(saved_module.get('programmeId'))
+
+        if mode == 'move':
+            _delete_single_free_course_rows(course_id)
+            _scrub_free_course_learner_assignments(course_id)
+
+        if programme_id:
+            repair_curriculum_parent_links(programme_id)
+        invalidate_curriculum_cache()
+
+    return {
+        'mode': mode,
+        'programmeId': programme_id,
+        'programmeName': clean_str(saved_module.get('programmeName')),
+        'cohortId': clean_str(saved_module.get('cohortId') or group_row.get('cohort_id')),
+        'groupId': group_id,
+        'moduleCatalogueId': module_catalogue_id,
+    }
+
+
+@csrf_exempt
+def curriculum_free_programme_convert(request, programme_id):
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+    try:
+        result = inject_free_course_into_group(
+            clean_str(payload.get('courseId') or payload.get('course_id')),
+            clean_str(payload.get('groupId') or payload.get('group_id')),
+            free_programme_id=clean_str(programme_id),
+            mode=clean_str(payload.get('mode')) or 'clone',
+        )
+    except LookupError as exc:
+        return json_error(str(exc) or 'Not found.', status=404)
+    except ValueError as exc:
+        return json_error(str(exc), status=400)
+    except Exception as exc:
+        logger.exception('Unable to convert free course %s.', clean_str(payload.get('courseId')))
+        return json_error('Unable to convert the free course.', status=500, detail=str(exc))
+    return JsonResponse(result, status=201)
+
+
 @csrf_exempt
 def curriculum_module_settings(request, module_catalogue_id):
     if request.method != 'PATCH':

@@ -46,6 +46,7 @@ urlpatterns = [
     path('curriculum/programmes/', views.curriculum_programme_collection, name='curriculum-programmes'),
     path('curriculum/programmes/tree/', views.curriculum_programme_tree_save, name='curriculum-programme-tree-save'),
     path('curriculum/free-programmes/<str:programme_id>/modules/', views.curriculum_free_programme_modules, name='curriculum-free-programme-modules'),
+    path('curriculum/free-programmes/<str:programme_id>/convert/', views.curriculum_free_programme_convert, name='curriculum-free-programme-convert'),
     path('curriculum/programmes/<str:identifier>/detail/', views.curriculum_programme_tree_detail, name='curriculum-programme-tree-detail'),
     path('curriculum/programmes/<str:programme_id>/audit-assets/', programme_audit.programme_audit_assets, name='curriculum-programme-audit-assets'),
     path('curriculum/programme-audit/status/', programme_audit.programme_audit_status, name='curriculum-programme-audit-status'),
