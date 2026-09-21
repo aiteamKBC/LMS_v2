@@ -1,5 +1,6 @@
 import json
 import logging
+from time import perf_counter
 import os
 import re
 import hashlib
@@ -131,6 +132,17 @@ from learner_api.review_progress_snapshot import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _coach_perf(endpoint, stage, started, *, learner_count=None, **extra):
+    payload = {
+        "event": "coach_perf", "endpoint": endpoint, "stage": stage,
+        "duration_ms": round((perf_counter() - started) * 1000, 2),
+    }
+    if learner_count is not None:
+        payload["learner_count"] = learner_count
+    payload.update(extra)
+    logger.info("coach_perf %s", payload)
 PROGRESS_REVIEW_RESPONSE_IDS = {
     "attendance_issues",
     "workplace_training_since_review",
@@ -2257,6 +2269,7 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     request per learner. Individual failures retain that learner's existing
     snapshot without making the rest of the caseload unavailable.
     """
+    perf_started = perf_counter()
     work = []
     for row in rows or []:
         source = getattr(row, "_caseload_source", None)
@@ -2279,7 +2292,9 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
 
     with ThreadPoolExecutor(max_workers=min(4, len(work)), thread_name_prefix="coach-metrics") as executor:
         results = executor.map(load, work)
-        return {profile_id: metrics for profile_id, metrics in results if metrics is not None}
+        result = {profile_id: metrics for profile_id, metrics in results if metrics is not None}
+        _coach_perf("dashboard", "canonical_metrics", perf_started, learner_count=len(work))
+        return result
 
 
 def caseload_canonical_attendance(rows) -> dict[int, dict]:
@@ -10572,6 +10587,7 @@ def coach_directory(request):
 @require_GET
 def coach_dashboard(request):
     """Return every data set needed by the coach workspace in one request."""
+    endpoint_started = perf_counter()
     owner_email = authenticated_coach_email(request)
     today = date.today()
     calendar_end = today + timedelta(days=90)
@@ -10725,6 +10741,7 @@ def coach_dashboard(request):
             status=503,
         )
 
+    _coach_perf("dashboard", "total", endpoint_started, learner_count=len(learners))
     return JsonResponse(
         {
             "owner": {
@@ -10869,6 +10886,7 @@ def coach_monthly_activity(request):
 @coach_access_required
 @require_GET
 def coach_caseload(request):
+    endpoint_started = perf_counter()
     owner_email = authenticated_coach_email(request)
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
     summary_only = clean_text(request.GET.get("summary")).casefold() in {"1", "true", "yes", "on"}
@@ -10915,6 +10933,7 @@ def coach_caseload(request):
         (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
         "Coach",
     )
+    _coach_perf("caseload", "total", endpoint_started, learner_count=len(learners))
     return JsonResponse(
         {
             "owner": {"name": owner_name, "email": owner_email},
@@ -10973,6 +10992,7 @@ def coach_caseload_coach_rag(request, learner_id):
 @coach_access_required
 @require_GET
 def coach_attendance(request):
+    endpoint_started = perf_counter()
     owner_email = authenticated_coach_email(request)
 
     try:
@@ -11136,6 +11156,7 @@ def coach_attendance(request):
     active_trends = active_attendance_data["trends"]
     if not any(active_trends.values()):
         active_trends = fetch_learner_absence_data(active_email_keys)["trends"]
+    _coach_perf("attendance", "total", endpoint_started, learner_count=len(caseload_learners))
     return JsonResponse(
         {
             "owner": {"name": owner_name, "email": owner_email},
