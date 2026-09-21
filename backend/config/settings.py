@@ -489,6 +489,16 @@ if USE_SQLITE_FOR_TESTS:
     MIGRATION_MODULES = {
         'chat': None,
         'coach_api': None,
+        # Same reason curriculum_api is skipped on the Neon test build below:
+        # several of its migrations run raw DDL against externally owned
+        # (managed = False) curriculum tables that no fresh test database has --
+        # 0054 alters curriculum.components, and 0058 indexes
+        # curriculum.live_sessions. On sqlite that aborts the build with
+        # "no such table: main.live_sessions" before any test runs. Every model
+        # in the app is managed = False, so skipping creates no tables and needs
+        # no schema; suites that need a curriculum table provision it themselves
+        # (e.g. review_instances.provision_review_instance_tables).
+        'curriculum_api': None,
     }
 elif "test" in sys.argv and not USE_SECURITY_TEST_BRANCH:
     # Neon test build only. Some apps' migrations DDL or query their externally
@@ -557,6 +567,21 @@ if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment']['TEST'] = {
         'NAME': os.environ.get('ENROLMENT_TEST_DB_NAME', 'test_neondb_enrolment'),
     }
+elif USE_SQLITE_FOR_TESTS:
+    # Isolated sqlite runs still need the alias to EXIST: ~29 suites declare
+    # `databases = {'default', 'enrolment'}`, and without an entry here Django's
+    # system checks abort the whole run with ConnectionDoesNotExist before any
+    # test executes. A TEST MIRROR (not a second NAME) is what is wanted: on
+    # sqlite the two aliases are one database, so mirroring makes `enrolment`
+    # reuse `default`'s test connection instead of creating an empty second one
+    # that none of the unmanaged tables would exist in.
+    #
+    # The production-safety reasoning above does not apply here and is not
+    # weakened: this branch is unreachable unless DJANGO_USE_SQLITE is set, in
+    # which case `default` is a local sqlite file and login.test_runner's
+    # Neon-branch provisioning never runs.
+    DATABASES['enrolment'] = dict(DATABASES['default'])
+    DATABASES['enrolment']['TEST'] = {'MIRROR': 'default'}
 
 # Learner Log Pro reads Audit.mre from its own Neon branch. Keeping it on a
 # separate alias prevents the imported audit workspace from changing the LMS's

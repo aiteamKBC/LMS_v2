@@ -1,13 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
-import { calculateReviewInstanceProgress, completeReviewInstance, downloadReviewInstancePdf, fetchReviewInstanceForm, generateReviewMeetingSummary, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
+import { calculateReviewInstanceProgress, completeReviewInstance, downloadReviewInstancePdf, fetchReviewInstanceForm, generateReviewMeetingSummary, reopenReviewInstance, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
 vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/reviewInstances')>(),
-  fetchReviewInstanceForm: vi.fn(), saveReviewInstanceAnswers: vi.fn(), completeReviewInstance: vi.fn(), signReviewInstance: vi.fn(),
+  fetchReviewInstanceForm: vi.fn(), saveReviewInstanceAnswers: vi.fn(), completeReviewInstance: vi.fn(), reopenReviewInstance: vi.fn(), signReviewInstance: vi.fn(),
   downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(), generateReviewMeetingSummary: vi.fn(),
 }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
@@ -65,6 +65,24 @@ beforeEach(() => {
   vi.mocked(fetchReviewInstanceForm).mockResolvedValue(definition());
   vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(definition());
   vi.mocked(completeReviewInstance).mockResolvedValue(definition('awaiting-signature'));
+  vi.mocked(reopenReviewInstance).mockResolvedValue(definition('in-progress'));
+});
+
+describe('review reopen flow', () => {
+  it('reopens a completed review with a reason and returns it to editing', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(definition('completed'));
+    const { onStatusChange } = mount();
+    expect(await screen.findByRole('button', { name: 'Edit' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent(/Everyone must sign this Review again/);
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    await waitFor(() => expect(reopenReviewInstance).toHaveBeenCalledWith('instance-1', {
+      reasonCode: 'correction-required',
+      note: 'Reopened for correction; all required signatures must be collected again.',
+    }));
+    expect(onStatusChange).toHaveBeenCalledWith('in-progress');
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeVisible();
+  });
 });
 afterEach(cleanup);
 
@@ -304,6 +322,7 @@ describe('MCM Meeting Summary integration', () => {
     });
     mount();
     fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    expect(screen.getByRole('button', { name: 'Upload .vtt & Generate' })).toBeVisible();
 
     const transcript = new File(
       ['WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nUploaded meeting notes.'],
@@ -315,6 +334,64 @@ describe('MCM Meeting Summary integration', () => {
     await waitFor(() => expect(generateReviewMeetingSummary).toHaveBeenCalledWith('instance-1', transcript));
     expect(await screen.findByDisplayValue('Summary from uploaded transcript.')).toBeVisible();
     expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+  });
+
+  it('keeps a truncated-transcript caveat visible after the generated text is applied', async () => {
+    const existing = mcmDefinition('in-progress');
+    existing.meetingSummarySource = { fieldId: 'summary-field', status: 'unavailable', summaryText: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    vi.mocked(generateReviewMeetingSummary).mockResolvedValue({
+      meetingSummarySource: {
+        fieldId: 'summary-field',
+        status: 'ready',
+        summaryText: 'Summary from the earlier part.',
+        message: 'The uploaded transcript was longer than this summary can cover, so only its earlier part was used.',
+      },
+    });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+
+    const transcript = new File(
+      ['WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nA very long meeting.'],
+      'meeting.vtt',
+      { type: 'text/vtt' },
+    );
+    fireEvent.change(screen.getByLabelText('Select .vtt transcript'), { target: { files: [transcript] } });
+
+    // The step instruction must not displace the caveat: a recap built from
+    // part of the meeting cannot be handed over looking complete.
+    expect(await screen.findByText(/only its earlier part was used/)).toBeVisible();
+    expect(screen.getByText(/Save the draft when you are satisfied with it/)).toBeVisible();
+  });
+
+  it('saves an uploaded AI summary with the other Review answers when Save draft is selected', async () => {
+    const existing = mcmDefinition('in-progress');
+    existing.meetingSummarySource = { fieldId: 'summary-field', status: 'unavailable', summaryText: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    vi.mocked(generateReviewMeetingSummary).mockResolvedValue({
+      meetingSummarySource: { fieldId: 'summary-field', status: 'ready', summaryText: 'Summary from uploaded transcript.' },
+    });
+    vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(existing);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+
+    const transcript = new File(
+      ['WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nUploaded meeting notes.'],
+      'meeting.vtt',
+      { type: 'text/vtt' },
+    );
+    fireEvent.change(screen.getByLabelText('Select .vtt transcript'), { target: { files: [transcript] } });
+
+    expect(await screen.findByDisplayValue('Summary from uploaded transcript.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+
+    await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(
+      'instance-1',
+      expect.objectContaining({
+        'field-1': 'Review the next module',
+        'summary-field': 'Summary from uploaded transcript.',
+      }),
+    ));
   });
 
   it('supports a manually entered summary when no AI artifact is available', async () => {

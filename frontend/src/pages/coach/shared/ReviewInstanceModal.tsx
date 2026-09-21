@@ -11,6 +11,7 @@ import {
   fetchReviewInstanceForm,
   flattenReviewFields,
   generateReviewMeetingSummary,
+  reopenReviewInstance,
   saveReviewInstanceAnswers,
   signReviewInstance,
   type ReviewInstanceFormDefinition,
@@ -214,6 +215,8 @@ export function ReviewInstanceModal({
   const answersRef = useRef<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [reopening, setReopening] = useState(false);
+  const [showReopenConfirmation, setShowReopenConfirmation] = useState(false);
   const signatureSaveInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [openSectionId, setOpenSectionId] = useState('');
@@ -222,6 +225,7 @@ export function ReviewInstanceModal({
   const [generatingSummary, setGeneratingSummary] = useState(false);
   const [uploadingTranscript, setUploadingTranscript] = useState(false);
   const [summaryMessage, setSummaryMessage] = useState('');
+  const [summaryNotice, setSummaryNotice] = useState('');
   const [pendingSummaryReplacement, setPendingSummaryReplacement] = useState('');
   const [summaryDraftSaved, setSummaryDraftSaved] = useState(false);
   const [expandedSummaryFieldId, setExpandedSummaryFieldId] = useState<string | null>(null);
@@ -261,6 +265,9 @@ export function ReviewInstanceModal({
           setSummaryMessage('');
         }
         setPendingSummaryReplacement('');
+        // Caveats describe one generated result, so a freshly loaded Review
+        // must not inherit the previous one's.
+        setSummaryNotice('');
         setSummaryDraftSaved(false);
         setExpandedSummaryFieldId(null);
         answersRef.current = initialAnswers;
@@ -393,6 +400,26 @@ export function ReviewInstanceModal({
     }
   };
 
+  const reopen = async () => {
+    if (!definition || reopening) return;
+    setReopening(true);
+    setError(null);
+    try {
+      const updated = await reopenReviewInstance(definition.instance.id, {
+        reasonCode: 'correction-required',
+        note: 'Reopened for correction; all required signatures must be collected again.',
+      });
+      setDefinition(updated);
+      setShowReopenConfirmation(false);
+      onStatusChanged?.(updated.instance.status);
+    } catch (err) {
+      if (isAbortError(err)) return;
+      setError(err instanceof Error ? err.message : 'This review cannot be reopened.');
+    } finally {
+      setReopening(false);
+    }
+  };
+
   const generateMeetingSummary = async (transcript?: File) => {
     if (!definition || generatingSummary || uploadingTranscript || isSignatureStage) return;
     if (transcript) setUploadingTranscript(true);
@@ -402,6 +429,12 @@ export function ReviewInstanceModal({
       const { meetingSummarySource: source } = await generateReviewMeetingSummary(definition.instance.id, transcript);
       setDefinition(current => current ? { ...current, meetingSummarySource: source } : current);
       const currentText = typeof answers[source.fieldId] === 'string' ? String(answers[source.fieldId]).trim() : '';
+      // A server message alongside a generated summary is a caveat about that
+      // summary -- currently, a transcript too long to be covered in full. It
+      // is held separately from the step instruction below so that replacing
+      // or saving the text cannot scroll it away and leave a partial recap
+      // looking like a complete one.
+      setSummaryNotice(source.summaryText ? (source.message || '').trim() : '');
       if (!source.summaryText) {
         setSummaryMessage(source.message || 'No generated Meeting Summary is available yet.');
       } else if (currentText && currentText !== source.summaryText.trim()) {
@@ -442,7 +475,7 @@ export function ReviewInstanceModal({
     }
   };
 
-  const busy = saving || calculating || generatingSummary || uploadingTranscript;
+  const busy = saving || calculating || generatingSummary || uploadingTranscript || reopening;
   const pageMode = presentation === 'page';
   const headingLabel = definition ? reviewTypeLabel(definition) : '';
 
@@ -516,6 +549,36 @@ export function ReviewInstanceModal({
 
         {!loading && definition ? (
           <>
+            {isSignatureStage ? (
+              <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4" aria-label="Edit completed review">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-bold text-amber-950">This Review is read-only</p>
+                    <p className="mt-1 text-xs leading-5 text-amber-900">Select Edit to reopen the same Review for correction. Existing signatures will be recorded in the audit history and cleared before editing.</p>
+                  </div>
+                  <button type="button" onClick={() => setShowReopenConfirmation(true)} disabled={busy} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-amber-700 disabled:opacity-60">
+                      <AppIcon className="ri-edit-2-line" />Edit
+                  </button>
+                </div>
+              </section>
+            ) : null}
+            {showReopenConfirmation ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground-950/50 p-4" role="presentation">
+                <div role="dialog" aria-modal="true" aria-labelledby="reopen-confirmation-title" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+                  <div className="flex items-start gap-3">
+                    <AppIcon className="ri-error-warning-line mt-0.5 text-xl text-amber-600" />
+                    <div>
+                      <h2 id="reopen-confirmation-title" className="text-base font-bold text-foreground-900">Edit this completed Review?</h2>
+                      <p className="mt-2 text-sm leading-6 text-foreground-600">Reopening will clear the current signatures after recording an audit snapshot. Everyone must sign this Review again before it can be completed.</p>
+                    </div>
+                  </div>
+                  <div className="mt-5 flex justify-end gap-2">
+                    <button type="button" onClick={() => setShowReopenConfirmation(false)} disabled={reopening} className="h-10 rounded-lg border border-background-300 bg-white px-4 text-xs font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-60">Cancel</button>
+                    <button type="button" onClick={() => { void reopen(); }} disabled={reopening} className="inline-flex h-10 items-center gap-2 rounded-lg bg-amber-600 px-4 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-60"><AppIcon className={reopening ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />{reopening ? 'Reopening...' : 'OK'}</button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
             <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/80 px-4 py-3 text-[13px] leading-5 text-primary-800 shadow-sm">
               <AppIcon className="ri-information-line mt-0.5 shrink-0 text-primary-600"></AppIcon>
               <span>These answers are saved to this {definition.template.name} and follow the sections/questions configured in Curriculum.</span>
@@ -578,7 +641,7 @@ export function ReviewInstanceModal({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <p className="text-[12px] font-bold text-primary-900">AI Meeting Summary</p>
-                        <p className="mt-0.5 text-[12px] leading-5 text-primary-700">Generate a draft from the linked Teams transcript, or upload a .vtt fallback, then review and edit it before saving. It is not saved automatically.</p>
+                        <p className="mt-0.5 text-[12px] leading-5 text-primary-700">Generate a draft from the linked Teams transcript, or upload a .vtt transcript if the meeting was held outside Teams, then review and edit it before saving. It is not saved automatically.</p>
                       </div>
                       {!formReadOnly ? (
                         <div className="flex flex-wrap items-center gap-2">
@@ -606,7 +669,7 @@ export function ReviewInstanceModal({
                             className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-300 bg-white px-3 text-[12px] font-bold text-primary-700 shadow-sm transition hover:bg-primary-100 disabled:opacity-60"
                           >
                             <AppIcon className={uploadingTranscript ? 'ri-loader-4-line animate-spin' : 'ri-upload-2-line'}></AppIcon>
-                            {uploadingTranscript ? 'Uploading...' : 'Upload .vtt'}
+                            {uploadingTranscript ? 'Uploading & generating...' : 'Upload .vtt & Generate'}
                           </button>
                           <button
                             type="button"
@@ -620,6 +683,9 @@ export function ReviewInstanceModal({
                         </div>
                       ) : null}
                     </div>
+                    {summaryNotice ? (
+                      <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] leading-4 font-bold text-amber-800">{summaryNotice}</p>
+                    ) : null}
                     {summaryMessage ? (
                       <p role={definition.meetingSummarySource?.status === 'failed' ? 'alert' : 'status'} className="text-[11px] leading-4 text-primary-800">{summaryMessage}</p>
                     ) : null}
@@ -645,6 +711,9 @@ export function ReviewInstanceModal({
                           type="button"
                           onClick={() => {
                             setPendingSummaryReplacement('');
+                            // The generated text was discarded, so its caveat
+                            // no longer describes anything on screen.
+                            setSummaryNotice('');
                             setSummaryMessage('The current editor text was kept.');
                           }}
                           className="h-8 rounded-lg border border-amber-300 bg-white px-3 text-[11px] font-bold text-amber-800"

@@ -10,9 +10,13 @@ from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from coach_api.models import CoachCalendarEvent
 from coach_api.views import (
+    COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS,
+    MeetingSummaryContext,
+    coach_meeting_transcript_text,
     coach_review_instance_meeting_summary,
     coach_timetable_event_artifacts,
     ensure_coach_meeting_summary,
+    meeting_summary_transcript_excerpt,
     openai_meeting_summary,
     should_reuse_coach_meeting_summary,
     uploaded_coach_meeting_transcript_text,
@@ -59,6 +63,31 @@ class CoachMeetingSummaryGenerationTests(SimpleTestCase):
                     self.assertEqual(summary["overview"], payload["overview"])
                     normalize.assert_called_once_with(payload, event_type)
                     normalize.reset_mock()
+
+            request_options = openai_client.return_value.chat.completions.create.call_args.kwargs
+            self.assertEqual(request_options["max_completion_tokens"], 4000)
+            self.assertEqual(request_options["reasoning_effort"], "low")
+
+    @override_settings(OPENAI_API_KEY="test-key")
+    def test_openai_summary_reports_safe_empty_response_diagnostics(self):
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=""),
+                finish_reason="length",
+            )],
+            usage=SimpleNamespace(
+                completion_tokens=1200,
+                completion_tokens_details=SimpleNamespace(reasoning_tokens=1200),
+            ),
+        )
+
+        with patch("openai.OpenAI") as openai_client:
+            openai_client.return_value.chat.completions.create.return_value = response
+            with self.assertRaisesMessage(
+                RuntimeError,
+                "finish_reason=length, completion_tokens=1200, reasoning_tokens=1200",
+            ):
+                openai_meeting_summary(self.record, "A useful transcript.")
 
     @override_settings(OPENAI_API_KEY="test-key")
     def test_openai_summary_rejects_an_empty_overview(self):
@@ -312,6 +341,96 @@ class ReviewMeetingSummaryEndpointTests(SimpleTestCase):
         graph.assert_not_called()
         stored_generation.assert_not_called()
 
+    def test_uploaded_vtt_works_without_a_linked_teams_meeting(self):
+        """The whole point of the fallback: the meeting was not held in Teams.
+
+        Requiring a linked meeting here made the upload unreachable in exactly
+        the case it exists for, so the review returned 409 instead.
+        """
+        request = RequestFactory().post(
+            "/coach/reviews/REVI-1/meeting-summary",
+            {"transcript": SimpleUploadedFile(
+                "meeting.vtt",
+                b"WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nHeld over a phone call.",
+                content_type="text/vtt",
+            )},
+        )
+        request.coach_email = "coach@example.test"
+        summary = {
+            "title": "Monthly Coaching Meeting",
+            "overview": "The call was summarised.",
+            "keyPoints": [], "actions": [], "nextSteps": [], "support": [],
+        }
+        context = MeetingSummaryContext(
+            review_template_id="REVT-1", learner_name="Test Learner", owner_name="Test Coach",
+        )
+        contexts = self.patches()
+        with contexts[0], contexts[1], contexts[2], patch(
+            "coach_api.views._review_instance_calendar_record", return_value=None,
+        ), patch(
+            "coach_api.views._review_instance_meeting_summary_context", return_value=context,
+        ), patch(
+            "coach_api.views.openai_meeting_summary", return_value=(summary, "test-model"),
+        ) as generate, patch(
+            "coach_api.views.fetch_coach_meeting_graph_snapshot",
+        ) as graph:
+            response = unwrap(coach_review_instance_meeting_summary)(request, "REVI-1")
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["meetingSummarySource"]["status"], "ready")
+        self.assertIn("call was summarised", payload["meetingSummarySource"]["summaryText"])
+        generate.assert_called_once_with(context, "Held over a phone call.")
+        graph.assert_not_called()
+
+    def test_generating_from_teams_still_requires_a_linked_meeting(self):
+        """Only the upload was unblocked: there is no transcript to fetch."""
+        contexts = self.patches()
+        with contexts[0], contexts[1], contexts[2], patch(
+            "coach_api.views._review_instance_calendar_record", return_value=None,
+        ), patch("coach_api.views.fetch_coach_meeting_graph_snapshot") as graph, patch(
+            "coach_api.views.openai_meeting_summary",
+        ) as generate:
+            response = unwrap(coach_review_instance_meeting_summary)(self.request, "REVI-1")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("not linked to a scheduled Teams meeting", response.content.decode())
+        graph.assert_not_called()
+        generate.assert_not_called()
+
+    def test_a_clean_upload_sends_no_caveat_message(self):
+        response = self.upload_transcript("A short discussion.")
+        self.assertEqual(json.loads(response.content)["meetingSummarySource"]["message"], "")
+
+    def test_a_truncated_upload_says_only_part_of_the_meeting_was_used(self):
+        """A partial recap must never be handed over as a complete one."""
+        response = self.upload_transcript(
+            "Long discussion. " * (COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS // 10)
+        )
+        message = json.loads(response.content)["meetingSummarySource"]["message"]
+        self.assertIn("longer than this summary can cover", message)
+
+    def upload_transcript(self, spoken_text: str):
+        """POST one valid .vtt carrying ``spoken_text`` as its only cue."""
+        request = RequestFactory().post(
+            "/coach/reviews/REVI-1/meeting-summary",
+            {"transcript": SimpleUploadedFile(
+                "meeting.vtt",
+                ("WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n" + spoken_text).encode("utf-8"),
+                content_type="text/vtt",
+            )},
+        )
+        request.coach_email = "coach@example.test"
+        summary = {
+            "title": "Monthly Coaching Meeting", "overview": "Summarised.",
+            "keyPoints": [], "actions": [], "nextSteps": [], "support": [],
+        }
+        contexts = self.patches()
+        with contexts[0], contexts[1], contexts[2], contexts[3], patch(
+            "coach_api.views.openai_meeting_summary", return_value=(summary, "test-model"),
+        ):
+            return unwrap(coach_review_instance_meeting_summary)(request, "REVI-1")
+
     def test_uploaded_non_vtt_is_rejected_before_generation(self):
         request = RequestFactory().post(
             "/coach/reviews/REVI-1/meeting-summary",
@@ -334,3 +453,84 @@ class UploadedMeetingTranscriptTests(SimpleTestCase):
         upload = SimpleUploadedFile("meeting.vtt", b"Plain text pretending to be VTT")
         with self.assertRaisesMessage(ValueError, "not a valid WebVTT"):
             uploaded_coach_meeting_transcript_text(upload)
+
+    def test_keeps_the_webvtt_header_block_out_of_the_transcript(self):
+        upload = SimpleUploadedFile(
+            "meeting.vtt",
+            b"WEBVTT\nKind: captions\nLanguage: en-GB\n\n"
+            b"00:00:01.000 --> 00:00:03.000\nWe agreed the next milestone.\n",
+        )
+        self.assertEqual(
+            uploaded_coach_meeting_transcript_text(upload),
+            "We agreed the next milestone.",
+        )
+
+
+class MeetingTranscriptExtractionTests(SimpleTestCase):
+    """A real Teams export, not the simplified shape the fixtures above use."""
+
+    TEAMS_EXPORT = (
+        "WEBVTT\n"
+        "\n"
+        "0d0e2c4a-1111-4b22-9c33-aaaabbbbcccc/6-0\n"
+        "00:00:02.416 --> 00:00:05.128\n"
+        "<v Coach Example>Shall we start with last month?</v>\n"
+        "\n"
+        "0d0e2c4a-1111-4b22-9c33-aaaabbbbcccc/7-0\n"
+        "00:00:05.700 --> 00:00:09.004\n"
+        "<v Learner Example>Yes, I finished the budgeting module.</v>\n"
+    )
+
+    def test_drops_the_guid_cue_identifier_teams_writes(self):
+        extracted = coach_meeting_transcript_text(self.TEAMS_EXPORT)
+        self.assertNotIn("0d0e2c4a", extracted)
+
+    def test_keeps_speaker_attribution(self):
+        self.assertEqual(
+            coach_meeting_transcript_text(self.TEAMS_EXPORT),
+            "Coach Example: Shall we start with last month?\n"
+            "Learner Example: Yes, I finished the budgeting module.",
+        )
+
+    def test_keeps_payload_lines_when_the_export_has_no_cue_identifiers(self):
+        # The cue identifier is optional in WebVTT. A payload line must not be
+        # mistaken for one just because the next cue's timing line follows it.
+        extracted = coach_meeting_transcript_text(
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\nFirst point.\n\n"
+            "00:00:04.000 --> 00:00:06.000\nSecond point.\n"
+        )
+        self.assertEqual(extracted, "First point.\nSecond point.")
+
+    def test_keeps_a_multi_line_cue_payload(self):
+        extracted = coach_meeting_transcript_text(
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\n<v Coach Example>First half</v>\n"
+            "<v Coach Example>second half.</v>\n"
+        )
+        self.assertEqual(
+            extracted, "Coach Example: First half\nCoach Example: second half.",
+        )
+
+
+class MeetingSummaryTranscriptBudgetTests(SimpleTestCase):
+    def test_a_transcript_within_the_budget_is_sent_whole(self):
+        transcript = "A short coaching conversation."
+        self.assertEqual(
+            meeting_summary_transcript_excerpt(transcript), (transcript, False),
+        )
+
+    def test_an_over_long_transcript_reports_that_it_was_cut(self):
+        excerpt, truncated = meeting_summary_transcript_excerpt(
+            "x" * (COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS + 1)
+        )
+        self.assertTrue(truncated)
+        self.assertEqual(len(excerpt), COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS)
+
+    def test_an_hour_of_coaching_is_no_longer_cut(self):
+        # The previous 18,000-character budget cut a normal meeting short and
+        # said nothing, so the agreed actions stated at the end never reached
+        # the model.
+        hour_of_speech = "Coach Example: A sentence of about sixty characters here.\n" * 1000
+        self.assertGreater(len(hour_of_speech), 18_000)
+        self.assertFalse(meeting_summary_transcript_excerpt(hour_of_speech)[1])

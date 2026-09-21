@@ -304,6 +304,24 @@ export async function markReviewInstanceInProgressManually(
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
 
+export type ReviewReopenReasonCode = 'correction-required' | 'incorrect-answer' | 'signature-error' | 'other';
+
+export async function reopenReviewInstance(
+  instanceId: string,
+  params: { reasonCode: ReviewReopenReasonCode; note?: string },
+) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/reopen`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reasonCode: params.reasonCode, note: params.note || '' }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as ReviewCompletionError;
+    throw Object.assign(new Error(data.detail || 'This review cannot be reopened.'), { errors: data.errors });
+  }
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
 export async function signReviewInstance(
   instanceId: string,
   role: ReviewParticipantRole,

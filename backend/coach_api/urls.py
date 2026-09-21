@@ -25,6 +25,7 @@ from .views import (
     coach_review_instance_for_event,
     coach_review_instance_mark_in_progress_manually,
     coach_review_instance_meeting_summary,
+    coach_review_instance_reopen,
     coach_review_instance_signature,
     coach_review_learner_addition_templates,
     coach_review_learner_additions_create,
@@ -89,6 +90,9 @@ urlpatterns = [
     path('coach/reviews/<str:instance_id>/answers', coach_review_instance_answers, name='coach-review-instance-answers'),
     path('coach/reviews/<str:instance_id>/meeting-summary', coach_review_instance_meeting_summary, name='coach-review-instance-meeting-summary'),
     path('coach/reviews/<str:instance_id>/complete', coach_review_instance_complete, name='coach-review-instance-complete'),
+    # Reopens a completed/awaiting-signature review for correction. Clears every
+    # signature already collected -- see reopen_review_instance_for_editing.
+    path('coach/reviews/<str:instance_id>/reopen', coach_review_instance_reopen, name='coach-review-instance-reopen'),
     # Progress Review only: freeze this instance's learner-progress figures.
     # An explicit coach action -- no other route ever recalculates them.
     path('coach/reviews/<str:instance_id>/progress', coach_review_instance_progress, name='coach-review-instance-progress'),
