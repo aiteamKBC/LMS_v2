@@ -167,11 +167,35 @@ export function daysUntil(value?: string | null): number | null {
 
 const WHOLE_FORMAT = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
 
+export function hoursToRoundedMinutes(value?: number | null): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.round(value * 60);
+}
+
+export function roundedMinutesToHours(totalMinutes: number): number {
+  if (!Number.isFinite(totalMinutes)) return 0;
+  return Math.round(totalMinutes) / 60;
+}
+
+export function splitHoursMinutes(value?: number | null): { hours: number; minutes: number } {
+  const absoluteMinutes = Math.max(0, Math.abs(hoursToRoundedMinutes(value)));
+  return {
+    hours: Math.floor(absoluteMinutes / 60),
+    minutes: absoluteMinutes % 60,
+  };
+}
+
+export function hoursMinutesToHours(hours: number, minutes: number): number {
+  const safeHours = Number.isFinite(hours) ? Math.max(0, Math.floor(hours)) : 0;
+  const safeMinutes = Number.isFinite(minutes) ? Math.min(59, Math.max(0, Math.floor(minutes))) : 0;
+  return roundedMinutesToHours(safeHours * 60 + safeMinutes);
+}
+
 /** Decimal hours -> a user-facing hours/minutes label.
  * 21.58 -> "21h 35m", 1.5 -> "1h 30m", 0.5 -> "30m". */
 export function formatHoursMinutes(value?: number | null): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return EMPTY_VALUE;
-  const roundedMinutes = Math.round(value * 60);
+  const roundedMinutes = hoursToRoundedMinutes(value);
   const sign = roundedMinutes < 0 ? '-' : '';
   const absoluteMinutes = Math.abs(roundedMinutes);
   const hours = Math.floor(absoluteMinutes / 60);

@@ -1,3 +1,4 @@
+import { requestSessionSync } from '@/api/sessionResults';
 import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
 import {
   CurriculumApiError,
@@ -9,6 +10,9 @@ import {
   assertComponentUploadAllowed,
   uploadComponentFile,
 } from '@/pages/curriculum/shared/componentUploadPolicy';
+import { hoursToRoundedMinutes, roundedMinutesToHours } from '@/lib/format';
+import { reviewCalendar } from '../teams-meetings/calendarReview';
+import { normalizedClock } from '../teams-meetings/calendarTime';
 import {
   componentTypeGroups,
   componentTypes,
@@ -95,6 +99,8 @@ export interface ModuleComponent {
 
 export interface ModuleWeek {
   id: string;
+  /** The week this independent copy was placed from, when it has one. */
+  copiedFromId?: string;
   moduleId: string;
   weekNumber: number;
   title: string;
@@ -179,10 +185,55 @@ function monthLabelOf(key: string) {
  * after it.
  */
 export interface ModuleWeekSessionPlan {
-  sessions: Array<{ sessionNumber: number; date: string; day: string; slotDate?: string; slotDay?: string; skippedHolidays: string[] }>;
+  /**
+   * `weekNumber` is the Monday-to-Sunday window this date falls in, counting
+   * the module's own starting week as 1. It is what pairs a planned date with
+   * an authored week: week N owns the sessions stamped N, however many that is.
+   * Absent on payloads generated before weeks were calendar weeks.
+   */
+  sessions: Array<{ sessionNumber: number; weekNumber?: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; rescheduled?: boolean; slotDate?: string; slotDay?: string; skippedHolidays: string[] }>;
+  /** The curriculum spine: every delivery slot, open or closed. See `ModuleSessionSlot`. */
+  slots?: ModuleSessionSlot[];
   skippedHolidays: string[];
   finalEndDate: string;
+  /** Where the run would have ended with nothing closed, stated by the planner. */
+  originalEndDate?: string;
   warnings: string[];
+}
+
+/** One holiday, exactly as the curriculum already stores and serves it. */
+export interface ModuleSlotHoliday {
+  id?: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  type?: string;
+  notes?: string;
+  /** 'gov.uk' for a mirrored bank holiday, 'authored' for one entered here. */
+  source?: string;
+}
+
+/**
+ * One position in the module's curriculum, open or closed.
+ *
+ * The backend walks the module's own delivery pattern and emits a slot for
+ * every delivery day it passes, so this is the curriculum as a reader sees it,
+ * not the session list. A `live-session` slot names the session delivered in
+ * it. A `reading-week` slot is a delivery day a holiday closed: it keeps its
+ * place in the curriculum, it consumes NO session, and it carries the holidays
+ * that closed it so the week can say why there is nothing to attend. Every
+ * closure therefore makes the spine one slot longer than the session list,
+ * which is what moves the delivery end date out by exactly one delivery slot
+ * per closure -- in the module's own pattern, never a hardcoded seven days.
+ */
+export interface ModuleSessionSlot {
+  slotNumber: number;
+  date: string;
+  day: string;
+  type: 'live-session' | 'reading-week';
+  cause?: string;
+  sessionNumber: number | null;
+  holidays: ModuleSlotHoliday[];
 }
 
 /**
@@ -201,47 +252,75 @@ export function moduleDeliveryDaysPerWeek(module: ModuleCatalogueItem): number {
   return Math.max(1, Math.round((module.sessionsNumber || weeks) / weeks));
 }
 
+/** Imported content may have one row per live session, plus reading-only rows. */
+export function moduleUsesSessionRows(module: ModuleCatalogueItem, plannedSessionCount = module.sessionsNumber || 0): boolean {
+  const counts = module.weekStructure.map(week => week.components.filter(component => component.type === 'live-session').length);
+  const days = module.weeklySchedule?.length
+    || String(module.deliveryMetadata?.weekDays || '').split(',').filter(day => day.trim()).length
+    || moduleDeliveryDaysPerWeek(module);
+  return plannedSessionCount > 0
+    && counts.reduce((sum, count) => sum + count, 0) === plannedSessionCount
+    && counts.every(count => count <= 1)
+    && counts.length > Math.ceil(plannedSessionCount / days);
+}
+
 /**
  * How many planned session dates each authored week consumes, in week order.
  *
- * This is THE walk. A module delivered Mon+Fri spends two of its twenty planned
- * dates on every week it authors, so week 2 starts on session 3 -- and it spends
- * them whether or not the second live-session component that will sit on the
- * second date has been authored yet. Counting a week's live components instead
- * left a ten-week Mon+Fri module consuming eleven of its twenty dates, so the
- * back half of the run belonged to no week at all and the sessions drawer read
- * "No week authored for this session" against nine dates of a fully authored
- * module.
+ * This is THE walk. **Authored week N is calendar week N.** Weeks run Monday to
+ * Sunday from the module's own starting week, and a week owns the group's
+ * delivery days that fall inside its own window -- so a Mon+Fri module gives
+ * every full week two dates because the calendar holds two of them, and a
+ * module that starts on a Wednesday gives its first week only the delivery days
+ * from Wednesday on.
  *
- * A week over-authored with more live sessions than it has delivery days gets a
- * slot for each ONLY while the plan has dates to spare -- every week owes its
- * delivery days first. A ten-week, ten-session module with one week carrying a
- * second live session has no spare date, so granting that week two dates pushed
- * every week below it a session early and left week 10 with no date at all.
- * Over-authoring a week moves nothing: the extra component reads as authored on
- * a day the module does not deliver, which is what it is.
+ * That is why the plan is read rather than divided. `sessionsNumber / weeks`
+ * can only ever give every week the same number, so it described a mid-week
+ * start as a full week and slid the whole run by the days that week never had.
+ * The backend stamps each planned session with the `weekNumber` it falls in
+ * (`build_module_session_plan`) and this groups by it, which is exactly what
+ * `apply_module_session_plan_to_weeks` does on the other side.
  *
- * `plannedSessionCount` is the length of the dated plan being walked. Callers
- * that hold the plan pass it; the rest fall back to the module's own session
- * count, which is what the plan is generated from.
+ * A week over-authored with more live sessions than its window has delivery
+ * days leaves the extras with no date. There is no date to give them -- the
+ * group does not deliver again that week -- and inventing one would put a real
+ * meeting on a day nobody chose.
+ *
+ * `plannedSessions` is the dated plan being walked. Callers that hold it pass
+ * it; the rest fall back to the module's own delivery-days-per-week ratio,
+ * which is the best a screen with no plan can say.
  *
  * Every screen that pairs weeks with dates reads this -- the Course structure
- * rail, the sessions drawer, the module workspace -- and the backend's
- * `apply_module_session_plan_to_weeks` walks it the same way.
+ * rail, the sessions drawer, the module workspace.
  */
 export function moduleWeekSessionSlots(
   module: ModuleCatalogueItem | null | undefined,
-  plannedSessionCount?: number,
+  plannedSessions?: ModuleWeekSessionPlan['sessions'],
 ): number[] {
   if (!module) return [];
-  const perWeek = moduleDeliveryDaysPerWeek(module);
   const weeks = module.weekStructure;
-  // The dates left over once every week has claimed its delivery days. Only
-  // these can go to an over-authored week, and only in week order.
-  const planned = Number(plannedSessionCount);
-  const total = Number.isFinite(planned) && planned > 0
-    ? Math.floor(planned)
-    : (module.sessionsNumber || weeks.length * perWeek);
+  const plan = plannedSessions || [];
+  // The plan, counted into the Mon-Sun windows the backend numbered it into.
+  // A week with no delivery day in its own window gets nothing rather than
+  // borrowing the next week's date.
+  if (plan.some(session => Number(session.weekNumber) > 0)) {
+    const countByWeekNumber = new Map<number, number>();
+    plan.forEach(session => {
+      const weekNumber = Number(session.weekNumber) || 0;
+      if (weekNumber > 0) countByWeekNumber.set(weekNumber, (countByWeekNumber.get(weekNumber) || 0) + 1);
+    });
+    return weeks.map((_week, index) => countByWeekNumber.get(index + 1) || 0);
+  }
+  // No week numbers to read: an older payload, or a screen holding no plan at
+  // all. The module's own delivery pattern is the only thing left to answer
+  // with, so this stays exactly the walk it was before weeks became calendar
+  // weeks -- including the imported-content shape, which carries one week per
+  // live session plus content-only rows that deliver nothing.
+  const perWeek = moduleDeliveryDaysPerWeek(module);
+  const total = plan.length || module.sessionsNumber || weeks.length * perWeek;
+  if (moduleUsesSessionRows(module, total)) {
+    return weeks.map(week => week.components.filter(component => component.type === 'live-session').length);
+  }
   let spare = Math.max(0, total - weeks.length * perWeek);
   return weeks.map(week => {
     const authored = (week.components || []).filter(component => component.type === 'live-session').length;
@@ -258,26 +337,23 @@ export function moduleWeekSessionSlots(
  * of them. The rail shows the whole run so a Mon+Fri week reads as the two
  * delivery days it actually occupies.
  *
- * These are the week's SLOT dates — where the week sits on the calendar. A
- * closure pushes the live session out of the week and into the next open slot,
- * but the week itself does not follow it, so a week whose session was moved is
- * still read, still grouped under its own month, and still holds every other
- * component on the day it was authored for. Where the live sessions ended up is
- * `moduleWeekLiveSessionDates`.
+ * These are the week's delivered dates after holidays have pushed closed
+ * delivery days forward. `slotDate` remains available on the raw session plan
+ * for explaining which date was closed, but the structure rail reads the date
+ * the learner actually sees.
  */
 export function moduleWeekSessionDates(
   module: ModuleCatalogueItem | null | undefined,
   sessions: ModuleWeekSessionPlan['sessions'] | undefined,
 ): string[][] {
-  return moduleWeekPlanDates(module, sessions, session => session.slotDate || session.date);
+  return moduleWeekPlanDates(module, sessions, session => session.date);
 }
 
 /**
  * Where each authored week's live sessions actually run, in week order.
  *
- * The same walk as `moduleWeekSessionDates`, reading the other of the two dates
- * a planned session carries. Equal to the week's own run until a holiday closes
- * a delivery day; one slot later per closure after that.
+ * The same delivered dates as `moduleWeekSessionDates`, used separately because
+ * live-session components can each take one date inside a multi-session week.
  */
 export function moduleWeekLiveSessionDates(
   module: ModuleCatalogueItem | null | undefined,
@@ -293,14 +369,316 @@ function moduleWeekPlanDates(
 ): string[][] {
   const plan = sessions || [];
   if (!module || !plan.length) return [];
-  const slotCounts = moduleWeekSessionSlots(module, plan.length);
+  const slotCounts = moduleWeekSessionSlots(module, plan);
   let sessionIndex = 0;
   return module.weekStructure.map((_week, weekIndex) => {
-    const slotCount = slotCounts[weekIndex] || 1;
+    const slotCount = slotCounts[weekIndex] ?? 1;
     const dates = plan.slice(sessionIndex, sessionIndex + slotCount).map(session => dateOf(session) || '').filter(Boolean);
     sessionIndex += slotCount;
     return dates;
   });
+}
+
+/**
+ * Which authored week delivers each planned session number.
+ *
+ * The same walk `applyModuleWeekSessionPlan` and the backend's
+ * `apply_module_session_plan_to_weeks` make: a week owns one planned date per
+ * DELIVERY DAY, so a Mon+Fri week owns two session numbers. Shared rather than
+ * re-derived per screen, because every off-by-one bug in this area has been a
+ * second copy of this walk drifting from the first.
+ */
+export function moduleWeekIdBySessionNumber(
+  module: ModuleCatalogueItem | null | undefined,
+  sessions: ModuleWeekSessionPlan['sessions'] | undefined,
+): Map<number, string> {
+  const byNumber = new Map<number, string>();
+  const plan = sessions || [];
+  if (!module || !plan.length) return byNumber;
+  const slotCounts = moduleWeekSessionSlots(module, plan);
+  let cursor = 0;
+  module.weekStructure.forEach((week, weekIndex) => {
+    const slotCount = slotCounts[weekIndex] ?? 1;
+    for (let offset = 0; offset < slotCount; offset += 1) {
+      const session = plan[cursor];
+      cursor += 1;
+      if (session) byNumber.set(Number(session.sessionNumber) || cursor, week.id);
+    }
+  });
+  return byNumber;
+}
+
+/** `String(value).trim()`, for the optional text an authored row carries. */
+function trimmed(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
+/** The length a live session falls back to when nothing stored says otherwise. */
+const FALLBACK_SESSION_MINUTES = 60;
+
+/** Resolve the delivery slot without changing an already booked occurrence. */
+function liveSessionClock(
+  module: ModuleCatalogueItem,
+  settings: ComponentSettings,
+  date: string,
+  week?: ModuleWeek,
+  planned?: ModuleWeekSessionPlan['sessions'][number],
+): { startTime: string; durationMinutes: number } {
+  const booked = Boolean(settings.teamsLiveSessionId && Number(settings.teamsSessionNumber || 0) > 0);
+  if (!booked && (!settings.sessionRescheduled || planned?.rescheduled)) {
+    const day = new Date(`${date}T12:00:00Z`);
+    const weekday = !Number.isNaN(day.getTime())
+      ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(day)
+      : '';
+    const weekly = module.weeklySchedule?.length ? module.weeklySchedule : module.sourceModule?.weeklySchedule;
+    const slot = weekly?.find(item => item.day.toLowerCase() === weekday.toLowerCase());
+    const candidates = [
+      planned,
+      slot,
+      { startTime: module.startTime || module.deliveryMetadata?.startTime || module.sourceModule?.startTime,
+        endTime: module.endTime || module.deliveryMetadata?.endTime || module.sourceModule?.endTime },
+      // A week's header only describes its first delivery day.
+      ...(week?.sessionDate === date ? [{ startTime: week.sessionStartTime, durationMinutes: week.sessionDurationMinutes }] : []),
+    ];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        const startTime = normalizedClock(candidate.startTime);
+        const endTime = 'endTime' in candidate && candidate.endTime ? normalizedClock(candidate.endTime) : '';
+        const minutes = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+        const durationMinutes = endTime ? minutes(endTime) - minutes(startTime)
+          : ('durationMinutes' in candidate ? Number(candidate.durationMinutes) : 0);
+        if (Number.isFinite(durationMinutes) && durationMinutes > 0) return { startTime, durationMinutes };
+      } catch { /* An incomplete slot falls back to the next stored source. */ }
+    }
+  }
+  return {
+    startTime: trimmed(settings.sessionTime) || trimmed(week?.sessionStartTime),
+    durationMinutes: Number(settings.durationMinutes || settings.teamsDurationMinutes || week?.sessionDurationMinutes || 0) || 0,
+  };
+}
+
+/** `HH:MM` plus a number of minutes, wrapped inside the same day. */
+function clockPlusMinutes(startTime: string, minutes: number): string {
+  const match = trimmed(startTime).match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return '';
+  const total = Number(match[1]) * 60 + Number(match[2]) + Math.max(0, Math.round(minutes));
+  const wrapped = ((total % 1440) + 1440) % 1440;
+  return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
+}
+
+/** One dated live session, in the shape the Teams create form reads. */
+export interface ModuleTeamsPlannedSession {
+  timeZone?: string;
+  componentId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  skippedHolidays?: string[];
+}
+
+/**
+ * This module's live sessions as dates a Teams calendar can be built on.
+ *
+ * Read off the structure the builder is already holding rather than out of the
+ * whole curriculum's session collection. The backend stamps each live-session
+ * component with its own `sessionDate`, `sessionTime` and `durationMinutes`
+ * from `module_session_clock` when it serves the structure, and dates the weeks
+ * from the same planner -- so this is that stored schedule, not a second one
+ * worked out in the browser. Unbooked sessions use the delivery slot's clock
+ * and duration; confirmed bookings retain their own. `plan` also fills missing
+ * dates and names the holidays landing on a date.
+ *
+ * An undated session is kept with an empty clock rather than dropped:
+ * `calendarInputError` is what tells the reader a session has no time, and a
+ * session that quietly vanished from the list would read as a shorter module.
+ */
+export function moduleTeamsPlannedSessions(
+  module: ModuleCatalogueItem | null | undefined,
+  plan?: ModuleWeekSessionPlan | null,
+): ModuleTeamsPlannedSession[] {
+  if (!module) return [];
+  const liveDatesByWeek = moduleWeekLiveSessionDates(module, plan?.sessions);
+  const closuresByDate = new Map<string, string[]>();
+  (plan?.sessions || []).forEach(session => {
+    const date = trimmed(session.date);
+    if (date && session.skippedHolidays?.length) closuresByDate.set(date, session.skippedHolidays);
+  });
+  const sessions: ModuleTeamsPlannedSession[] = [];
+  (module.weekStructure || []).forEach((week, weekIndex) => {
+    const weekDates = liveDatesByWeek[weekIndex] || [];
+    // A week can deliver more than one live session, so its dates are consumed
+    // in order by the live-session components it holds -- the same walk the
+    // Course structure rail makes.
+    let taken = 0;
+    (week.components || []).forEach(component => {
+      if (component.type !== 'live-session') return;
+      const settings = component.settings || {};
+      const date = trimmed(settings.sessionDate) || weekDates[taken] || trimmed(week.sessionDate);
+      taken += 1;
+      const planned = plan?.sessions.find(session => session.date === date);
+      const { startTime, durationMinutes } = liveSessionClock(module, settings, date, week, planned);
+      sessions.push({
+        componentId: component.id,
+        timeZone: trimmed(settings.sessionTimeZone),
+        date,
+        startTime,
+        endTime: clockPlusMinutes(startTime, durationMinutes || FALLBACK_SESSION_MINUTES),
+        skippedHolidays: closuresByDate.get(date),
+      });
+    });
+  });
+  // The calendar is built in date order, and the rail's order is the author's,
+  // not the timetable's -- a week dragged up the rail must not reorder the
+  // meetings Teams is asked to create.
+  return sessions.sort((left, right) => `${left.date}T${left.startTime}`.localeCompare(`${right.date}T${right.startTime}`));
+}
+
+/** One authored live session: the component that IS that session. */
+export interface AuthoredLiveSession {
+  componentId: string;
+  weekId: string;
+  /** The component's own name, which is what the session is called. */
+  title: string;
+  /** `YYYY-MM-DD`. Empty for a live session nobody has dated yet. */
+  date: string;
+  /** `HH:MM` in the business zone, as the component stores it. */
+  startTime: string;
+  durationMinutes: number;
+}
+
+/**
+ * Every live session this module delivers, in Course structure order.
+ *
+ * **One live-session component is one session.** The module drawer says how
+ * many WEEKS there are; the live sessions are whatever the author put inside
+ * them. So this -- not `sessionsNumber` -- is how many sessions the module
+ * runs, and each one's own `sessionDate` is when it runs.
+ *
+ * `date` is the component's OWN date and nothing else. A live session nobody
+ * has dated comes back with an empty `date` and is a gap for the screen to
+ * report -- never a date borrowed from its week or from the generated plan.
+ * Both stand-ins read as a scheduled session to everyone downstream, so a
+ * module that was never finished would quietly get a calendar entry and a Teams
+ * meeting on a day no author ever chose.
+ *
+ * Dates mirror `authoring_session_links_by_catalogue` in curriculum_api/views.py.
+ * Clocks follow the same delivery/booking rule as `module_live_session_clock`,
+ * so the module, session list and Teams preview agree.
+ */
+export function moduleAuthoredLiveSessions(
+  module: ModuleCatalogueItem | null | undefined,
+): AuthoredLiveSession[] {
+  if (!module) return [];
+  const sessions: AuthoredLiveSession[] = [];
+  (module.weekStructure || []).forEach(week => {
+    (week.components || []).forEach(component => {
+      if (component.type !== 'live-session') return;
+      const settings = component.settings || {};
+      const clock = liveSessionClock(module, settings, trimmed(settings.sessionDate), week);
+      sessions.push({
+        componentId: component.id,
+        weekId: week.id,
+        title: trimmed(component.title) || trimmed(week.title),
+        date: trimmed(settings.sessionDate),
+        // The week's slot time is the module's own stored value, not a guess,
+        // so it may stand in for the time of day. The DATE never may.
+        startTime: clock.startTime,
+        durationMinutes: clock.durationMinutes,
+      });
+    });
+  });
+  return sessions;
+}
+
+/**
+ * Which authored weeks have a delivery day a ticked holiday falls on.
+ *
+ * States the fact, decides nothing: the plan stays exactly as authored, every
+ * week keeps its own date, and what a week becomes -- a reading week, a live
+ * session that runs anyway, or something else -- is the author's call, made on
+ * the week itself. This is only where the rail hangs the warning.
+ *
+ * Keyed by week id because one week can own more than one delivery day: a
+ * Mon+Fri week with only its Monday on a holiday is still a live week that has
+ * to say why one of its two days needs a look.
+ *
+ * Returns an empty map when the plan carries no spine, so a screen talking to
+ * an older payload renders exactly as it did before.
+ */
+export function weeksTouchedByHoliday(
+  module: ModuleCatalogueItem | null | undefined,
+  plan: Pick<ModuleWeekSessionPlan, 'sessions' | 'slots'> | null | undefined,
+): Map<string, ModuleSessionSlot[]> {
+  const byWeekId = new Map<string, ModuleSessionSlot[]>();
+  const slots = plan?.slots || [];
+  if (!module || !slots.length) return byWeekId;
+  const weekIdBySessionNumber = moduleWeekIdBySessionNumber(module, plan?.sessions);
+  slots.forEach(slot => {
+    if (!slot.holidays?.length) return;
+    const weekId = weekIdBySessionNumber.get(Number(slot.sessionNumber));
+    if (!weekId) return;
+    byWeekId.set(weekId, [...(byWeekId.get(weekId) || []), slot]);
+  });
+  return byWeekId;
+}
+
+/** A live session held on a Teams-confirmed date its week no longer runs on. */
+export interface LiveSessionDateDrift {
+  componentId: string;
+  weekId: string;
+  /** The date Microsoft has the meeting on, and so the date this session keeps. */
+  storedDate: string;
+  /** The dates the week is planned to run on; `[0]` is the one its header shows. */
+  weekDates: string[];
+}
+
+/**
+ * Live sessions the planner deliberately left behind, and why.
+ *
+ * Every live session now follows its week: `applyModuleWeekSessionPlan` and
+ * `apply_module_session_plan_to_weeks` re-date it from the plan, so a changed
+ * start date or a reordered week moves the session with its week instead of
+ * leaving it on the date it was first stamped with.
+ *
+ * One date is not the planner's to move -- an occurrence Microsoft has
+ * confirmed (`teamsLiveSessionId` with a `teamsSessionNumber`). That date is
+ * where a meeting real people were invited to actually sits, and it changes
+ * through `rescheduleTeamsOccurrence`, which asks Microsoft, or through a push
+ * from the Teams Meetings page. So when such a session's week moves, the two
+ * genuinely disagree -- and the screens say so rather than quietly re-dating a
+ * booking the calendar would then contradict.
+ *
+ * States the fact and decides nothing, like `weeksTouchedByHoliday`. Keyed by
+ * component id, and empty with no plan loaded: nothing to compare against is an
+ * unknown, not a disagreement.
+ */
+export function moduleLiveSessionDateDrift(
+  module: ModuleCatalogueItem | null | undefined,
+  plan: Pick<ModuleWeekSessionPlan, 'sessions'> | null | undefined,
+): Map<string, LiveSessionDateDrift> {
+  const drift = new Map<string, LiveSessionDateDrift>();
+  const sessions = plan?.sessions || [];
+  if (!module || !sessions.length) return drift;
+  const datesByWeek = moduleWeekLiveSessionDates(module, sessions);
+  (module.weekStructure || []).forEach((week, weekIndex) => {
+    // The week's whole run, not just its first date: a Mon+Fri week delivers on
+    // two days, and a session on the Friday is exactly where it belongs.
+    const weekDates = datesByWeek[weekIndex] || [];
+    if (!weekDates.length) return;
+    (week.components || []).forEach(component => {
+      if (component.type !== 'live-session') return;
+      const settings = component.settings || {};
+      const storedDate = trimmed(settings.sessionDate);
+      // An undated session is a different story with its own mark on the rail.
+      if (!storedDate || weekDates.includes(storedDate)) return;
+      // Anything else the planner has already moved onto its week's date; only
+      // a confirmed booking can still be sitting here.
+      if (!(trimmed(settings.teamsLiveSessionId) && Number(settings.teamsSessionNumber || 0) > 0)) return;
+      drift.set(component.id, { componentId: component.id, weekId: week.id, storedDate, weekDates });
+    });
+  });
+  return drift;
 }
 
 /**
@@ -310,12 +688,10 @@ function moduleWeekPlanDates(
  * added to a six-week module takes the seventh delivery day from the start, and
  * the weeks before it keep the dates they already had.
  *
- * A week and the live session it holds can land on different days. The week
- * takes its planned SLOT -- the delivery day it was due on before any holiday
- * was ticked -- while the live session takes the date the plan walked it to,
- * past every closed day in the way. That is the whole of the holiday rule on
- * this screen: a closure moves the session out of the week, and everything else
- * the week holds stays on the week it was authored into.
+ * A week follows the delivered session date after holidays are skipped. The
+ * raw plan still carries `slotDate` -- the date that was closed -- so the UI can
+ * explain the shift, but the structure itself shows the replacement date the
+ * learner actually receives.
  *
  * With `followEndDate`, the module's end date follows the plan only when it *was*
  * the plan: an end date that is one of the planned session dates was calculated
@@ -341,18 +717,20 @@ export function applyModuleWeekSessionPlan(
   // component at a time instead left an authored week holding a single date, so
   // ten weeks consumed ten of the twenty dates and the back half of the run
   // (the months past the halfway point) belonged to no week at all.
-  const slotCounts = moduleWeekSessionSlots(module, sessions.length);
+  const slotCounts = moduleWeekSessionSlots(module, sessions);
   let weeksMoved = false;
   let sessionIndex = 0;
   const weekStructure = module.weekStructure.map((week, weekIndex) => {
     const liveComponents = week.components.filter(component => component.type === 'live-session');
-    const slotCount = slotCounts[weekIndex] || 1;
+    const slotCount = slotCounts[weekIndex] ?? 1;
     const slots = sessions.slice(sessionIndex, sessionIndex + slotCount);
     sessionIndex += slotCount;
     const firstSession: ModuleWeekSessionPlan['sessions'][number] | undefined = slots[0];
-    // The week's own day, not the one its session was pushed to.
-    const slotDate = firstSession ? (firstSession.slotDate || firstSession.date || '') : '';
-    const slotDay = firstSession ? (firstSession.slotDay || firstSession.day || '') : '';
+    // The week runs on the delivered day. The raw plan still carries slotDate
+    // for the "this date was closed" explanation, but the structure itself
+    // follows the actual session date after holiday shifts.
+    const sessionDate = firstSession ? (firstSession.date || '') : '';
+    const sessionDay = firstSession ? (firstSession.day || '') : '';
     let components = week.components;
     if (liveComponents.length) {
       const plannedByComponentId = new Map<string, ModuleWeekSessionPlan['sessions'][number] | undefined>();
@@ -361,15 +739,45 @@ export function applyModuleWeekSessionPlan(
       });
       let componentsMoved = false;
       const plannedComponents = week.components.map(component => {
-        if (component.type !== 'live-session') return component;
+      if (component.type !== 'live-session') return component;
         const planned = plannedByComponentId.get(component.id);
         if (!planned?.date) return component;
         const settings = component.settings || {};
-        const trackedOccurrence = Boolean(
-          settings.sessionDateTimeUtc
-          || (settings.teamsLiveSessionId && Number(settings.teamsSessionNumber || 0) > 0),
+        // A live session runs on the day its week runs on. The date stored on
+        // the component is a copy of the plan's, not a second opinion, so it
+        // follows the plan whenever the plan moves -- which is what a changed
+        // start date, a week dragged up the rail or a week inserted ahead of
+        // this one all do. Holding the first-stamped date instead left the week
+        // header and the session inside it naming different days, and the
+        // session's was the one the calendar and Teams then used.
+        //
+        // The single exception is an occurrence Microsoft has confirmed: that
+        // date is not a copy of anything, it is where a meeting real people
+        // have been invited to actually sits, and it moves through
+        // `rescheduleTeamsOccurrence` rather than behind the author's back.
+        // `sessionDateTimeUtc` deliberately does NOT count -- the planner writes
+        // it on every stamp, so treating it as a Teams booking froze every date
+        // the planner had ever set.
+        const bookedAtMicrosoft = Boolean(
+          settings.teamsLiveSessionId && Number(settings.teamsSessionNumber || 0) > 0,
         );
-        if (settings.sessionDate || trackedOccurrence) return component;
+        if (bookedAtMicrosoft) return component;
+        const { startTime, durationMinutes } = liveSessionClock(module, settings, planned.date, week, planned);
+        const instant = startTime ? zonedNaiveToUtcIso(`${planned.date}T${startTime}`, trimmed(settings.sessionTimeZone) || undefined) : '';
+        // Compared as instants, not as strings. The backend writes this stamp
+        // with Python's `+00:00` and this writes it with `.000Z`; the same
+        // moment spelled two ways would otherwise read as a change on every
+        // load, and mark a module nobody has touched as having unsaved work.
+        const sameInstant = !instant
+          || parseUtcInstant(settings.sessionDateTimeUtc).getTime() === parseUtcInstant(instant).getTime();
+        if (
+          trimmed(settings.sessionDate) === planned.date
+          && trimmed(settings.sessionDay) === (planned.day || '')
+          && trimmed(settings.sessionTime) === startTime
+          && Number(settings.durationMinutes || 0) === durationMinutes
+          && Number(settings.teamsDurationMinutes || durationMinutes) === durationMinutes
+          && sameInstant
+        ) return component;
         componentsMoved = true;
         weeksMoved = true;
         return {
@@ -378,6 +786,13 @@ export function applyModuleWeekSessionPlan(
             ...settings,
             sessionDate: planned.date,
             sessionDay: planned.day || '',
+            ...(startTime ? { sessionTime: startTime } : {}),
+            ...(durationMinutes ? { durationMinutes, teamsDurationMinutes: durationMinutes } : {}),
+            ...(planned.rescheduled ? { sessionRescheduled: true } : {}),
+            // Re-derived, never left behind: the learner timeline and the
+            // programme calendar read this instant, so a stale one would keep
+            // pointing at the old day after the date above had moved.
+            ...(instant ? { sessionDateTimeUtc: instant, teamsStartDateTimeUtc: instant } : {}),
           },
         };
       });
@@ -385,11 +800,11 @@ export function applyModuleWeekSessionPlan(
     }
     if (
       components === week.components
-      && (week.sessionDate || '') === slotDate
-      && (week.sessionDay || '') === slotDay
+      && (week.sessionDate || '') === sessionDate
+      && (week.sessionDay || '') === sessionDay
     ) return week;
     weeksMoved = true;
-    return { ...week, components, sessionDate: slotDate, sessionDay: slotDay };
+    return { ...week, components, sessionDate, sessionDay };
   });
   const currentEndDate = String(module.endDate || '').trim();
   const endDateFollowsPlan = options.followEndDate !== false
@@ -421,7 +836,7 @@ export function liveSessionNamesByNumber(module: ModuleCatalogueItem | null | un
   const slotCounts = moduleWeekSessionSlots(module);
   (module?.weekStructure || []).forEach((week, weekIndex) => {
     const liveComponents = (week.components || []).filter(component => component.type === 'live-session');
-    const slotCount = slotCounts[weekIndex] || 1;
+    const slotCount = slotCounts[weekIndex] ?? 1;
     // One entry per date the week consumes, not per live session it holds. A
     // Mon+Fri week carrying a single live session still delivers on both days,
     // and the second date is a real gap in the authoring -- reported as `null`,
@@ -463,6 +878,11 @@ export function resequenceWeekSessionDates(weeks: ModuleWeek[]): ModuleWeek[] {
 }
 
 export interface ModuleCatalogueItem {
+  startTime?: string;
+  endTime?: string;
+  weeklySchedule?: CurriculumModule['weeklySchedule'];
+  sessionHolidays?: CurriculumModule['sessionHolidays'];
+  deliveryWeeks?: number;
   id: string;
   catalogueId: string;
   programmeId: string;
@@ -504,6 +924,8 @@ export interface ModuleCatalogueItem {
   lessonCount: number;
   quizCount: number;
   qualityScore: number;
+  /** Learners currently assigned this module, from the bulk overview count. */
+  assignedLearnerCount?: number;
   moduleKsbMappings: KsbMapping[];
   completionCriteria: CompletionCriteria;
   advancedDetails: AdvancedModuleDetails;
@@ -512,6 +934,16 @@ export interface ModuleCatalogueItem {
   qualificationOutcomes: string[];
   weekStructure: ModuleWeek[];
   sourceModule?: CurriculumModule;
+  /**
+   * The stored structure this copy was built from, as the backend fingerprints it.
+   *
+   * A save on this endpoint replaces every week and component, so it is only
+   * ever safe against the version the server holds. Sending this back as
+   * `expectedRevision` is what lets the server refuse a payload built before
+   * somebody else's write instead of performing it. Absent on a local draft
+   * that has never been stored.
+   */
+  structureRevision?: string;
 }
 
 export interface KsbOption {
@@ -651,6 +1083,14 @@ function isGeneratedWeekPlaceholderComponent(component: ModuleComponent, week: P
   return !hasKsbMappings && weekKeys.includes(titleKey) && (typeKey.includes('live') || typeKey.includes('session'));
 }
 
+/** A week's OTJH is exactly the sum of Expected OTJH on its own components. */
+export function weekExpectedOtjhTotal(week: Pick<ModuleWeek, 'components'>): number {
+  const totalMinutes = (week.components || []).reduce((total, component) => (
+    total + hoursToRoundedMinutes(Number(component.expectedOtjh || 0))
+  ), 0);
+  return roundedMinutesToHours(totalMinutes);
+}
+
 export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string }): ModuleCatalogueItem {
   const catalogueId = input.catalogueId || makeAuthoringId('MOD');
   const id = `local-${catalogueId}`;
@@ -741,7 +1181,30 @@ export async function createNewModule(input: { programme: string; title: string;
   }
 }
 
-export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
+export interface DuplicateModuleStructureOptions {
+  /**
+   * Cloning a cohort or group keeps the source's dates and delivery day on the
+   * copy — there is no "own start date" to redate against, since the new
+   * group/cohort is meant to run in parallel with the one it was cloned from.
+   * The module-builder's own "Duplicate module" button leaves this false: a
+   * standalone copy has nothing scheduling it yet, so it is dated from its own
+   * module's start date instead (see the note this used to always carry).
+   */
+  keepDates?: boolean;
+  /** Append " copy" to the title. Off when the group/cohort it lands in already carries that suffix. */
+  renameCopy?: boolean;
+  /** Attach the copy to a different group/cohort than the source (a cohort/group clone target) instead of the source's own. */
+  cohortId?: string;
+  cohortName?: string;
+  groupId?: string;
+  groupName?: string;
+}
+
+export async function duplicateModuleStructure(
+  source: ModuleCatalogueItem,
+  options: DuplicateModuleStructureOptions = {},
+) {
+  const { keepDates = false, renameCopy = true } = options;
   const copyId = `copy-${Date.now().toString(36)}`;
   const cloneMappings = (mappings: KsbMapping[] = [], scope: string) => mappings.map((mapping, index) => ({
     ...mapping,
@@ -751,9 +1214,52 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
     ...source,
     id: copyId,
     catalogueId: makeAuthoringId('MOD'),
-    title: `${source.title} copy`,
+    title: renameCopy ? `${source.title} copy` : source.title,
     status: 'draft',
     sourceModule: undefined,
+    // The copy is an authored module in its own right, never a second claim on
+    // whatever the original was made from. `source_id` is how a training-plan
+    // row finds its module (`matching_authoring_module_for_training_row`), so a
+    // copy carrying the original's made two modules answer to one row and which
+    // one answered was whichever the candidate scan reached first. `sourceId` is
+    // re-pointed at the copy's OWN catalogue id below, once the row exists --
+    // which is how an authored module names itself.
+    sourceType: 'module_authoring',
+    // The fingerprint of the STORED structure this object was read from -- the
+    // original's. The copy has not been stored yet, and carrying a revision that
+    // belongs to another module's row is only ever wrong.
+    structureRevision: undefined,
+    // Read back off the original's own weeks by the structure endpoint, so it
+    // arrives holding the original's `teamsLiveSessionId` even though every
+    // component here is about to be stripped of it. The backend does not treat
+    // this as description: `link_live_session_series_to_module` takes every
+    // live-session id the payload mentions -- components AND this object -- and
+    // points those `curriculum.live_sessions` rows at the module being saved. So
+    // saving the copy MOVED the original's real meeting onto the copy: the
+    // original kept the ids in its components but no longer owned the row, and
+    // everything that reads the table by module (the Teams Meetings page,
+    // attendance, recordings, the sync) followed the meeting to the copy.
+    // Stripped the same way the components are, and for the same reason.
+    deliveryMetadata: source.deliveryMetadata
+      ? independentCopySettings(structuredClone(source.deliveryMetadata), { keepDates })
+      : source.deliveryMetadata,
+    // The run the source is on is the source's, not the copy's. `createNewModule`
+    // below already withholds these, but the structure save right after it sends
+    // the whole module -- so leaving them here put the original's start date back
+    // on the copy's row, and every date the copy has is generated from that row:
+    // `module_session_plan_for_count` walks forward from `start_date`, so the
+    // copy's weeks and live sessions were re-dated onto the original's days the
+    // moment they were planned. Assigning the copy to another group did not save
+    // it either -- that group supplies its own delivery days, not a start date,
+    // so the sessions simply landed on the old run's dates spelled in new days.
+    // Undated is the honest state: the module drawer asks for a start date before
+    // it will save, and the plan fills the weeks from the answer.
+    startDate: keepDates ? source.startDate : '',
+    endDate: keepDates ? source.endDate : '',
+    cohortId: options.cohortId ?? source.cohortId,
+    cohort: options.cohortName ?? source.cohort,
+    groupId: options.groupId ?? source.groupId,
+    group: options.groupName ?? source.group,
     moduleKsbMappings: cloneMappings(source.moduleKsbMappings, 'module'),
     completionCriteria: { ...source.completionCriteria },
     advancedDetails: { ...source.advancedDetails },
@@ -765,6 +1271,13 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
         ...week,
         id: weekId,
         moduleId: copyId,
+        // The copy is dated by its own module's start date, not the source's,
+        // unless `keepDates` says this copy IS meant to run on the source's own
+        // dates (a cohort/group clone). `applyModuleWeekSessionPlan` fills these
+        // from the plan when left blank; carrying them over otherwise left the
+        // new module's rail showing the dates the original runs on.
+        sessionDate: keepDates ? week.sessionDate : '',
+        sessionDay: keepDates ? week.sessionDay : '',
         learningOutcomes: [...(week.learningOutcomes || [])],
         ksbMappings: cloneMappings(week.ksbMappings, `week-${weekIndex + 1}`),
         components: week.components.map((component, componentIndex) => ({
@@ -772,7 +1285,13 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
           id: makeId(`component-copy-${weekIndex + 1}-${componentIndex + 1}`),
           weekId,
           ksbMappings: cloneMappings(component.ksbMappings, `component-${weekIndex + 1}-${componentIndex + 1}`),
-          settings: { ...(component.settings || {}) },
+          // Cloned before it is stripped, like `duplicateWeekInModule` does:
+          // `independentCopySettings` spreads one level, so the copy would go on
+          // sharing the source's ARRAYS -- its attendees, presenters and KSB
+          // lists. The source here is the object `loadModuleStructure` cached,
+          // so an edit through the copy would reach both the original on screen
+          // and everything else reading that cache entry.
+          settings: independentCopySettings(structuredClone(component.settings || {}), { keepDates }),
         })),
       };
     }),
@@ -785,8 +1304,22 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
       description: duplicate.description,
       weeks: Math.max(1, duplicate.weekStructure.length),
       status: 'draft',
+      cohortId: duplicate.cohortId,
+      cohortName: duplicate.cohort,
+      groupId: duplicate.groupId,
+      groupName: duplicate.group,
+      startDate: keepDates ? duplicate.startDate : undefined,
+      endDate: keepDates ? duplicate.endDate : undefined,
     });
-    const payload = recalculateModule({ ...duplicate, catalogueId: created.catalogueId, id: created.id || duplicate.id });
+    const payload = recalculateModule({
+      ...duplicate,
+      catalogueId: created.catalogueId,
+      id: created.id || duplicate.id,
+      // An authored module's `source_id` is its own catalogue id -- that is what
+      // the estate holds for the modules the builder made. The copy names
+      // itself here rather than the module it was copied from.
+      sourceId: created.catalogueId,
+    });
     const saved = await saveModuleStructure(payload.catalogueId, payload);
     return saved;
   } catch (err) {
@@ -813,6 +1346,84 @@ const GROUP_ASSIGNMENT_SETTING_KEYS = [
 function withoutGroupAssignmentSettings(settings: ComponentSettings): ComponentSettings {
   const next = { ...settings };
   GROUP_ASSIGNMENT_SETTING_KEYS.forEach(key => { delete next[key]; });
+  return next;
+}
+
+// What a live-session component holds about ONE delivery of itself: the date it
+// runs on, and the Microsoft records that date produced. A duplicate is a
+// different module — its own weeks, its own components, its own place in the
+// calendar — so none of this belongs to it.
+//
+// Carrying them forward is what let a copy open on the original's dates: the
+// plan only ever fills a component with no date and no tracked occurrence
+// (`applyModuleWeekSessionPlan`), so a copy holding the source's `sessionDate`
+// could never be re-dated from its own module's start date, and the Teams
+// create-form — which reads the components' stored dates — offered to book the
+// original's calendar under the copy's name.
+//
+// The Microsoft ids are the more serious half. `teamsLiveSessionId` is a row id
+// in `curriculum.live_sessions`; two modules sharing it share one meeting, its
+// join link, its occurrences, its attendance and its recordings, so editing the
+// copy reaches into the original's calendar. Duplicating is not the feature
+// that shares a meeting across cohorts — that is "Assigned groups"
+// (`placedCopy*` above), which places a copy deliberately and is stripped here
+// for the same reason.
+const SESSION_DATE_SETTING_KEYS = [
+  'sessionDate',
+  'sessionDay',
+  'sessionDateTimeUtc',
+  // The instant Microsoft holds the booked occurrence at. It is the same date
+  // said a second way, and the week builder falls back to it when reading a
+  // session's calendar instant, so a copy that kept it still pointed at the
+  // original's day after `sessionDate` had been cleared.
+  'teamsStartDateTimeUtc',
+] as const;
+
+const TEAMS_MEETING_SETTING_KEYS = [
+  'teamsLiveSessionId',
+  'teamsSessionNumber',
+  'teamsEventId',
+  'teamsOnlineMeetingId',
+  'teamsCalendarSeries',
+  'teamsMeetingOptionsUrl',
+  'teamsMeetingUrl',
+  'liveSessionUrl',
+  'teamsProvider',
+  // The rest of what the Teams attachment path stamps per occurrence
+  // (`LIVE_SESSION_TRACKING_SETTING_KEYS` in componentAuthoringModel.ts). Every
+  // one of them names the ORIGINAL's meeting: `teamsOccurrenceId` is its Graph
+  // instance, `teamsWebLink` opens its calendar entry, `teamsDurationMinutes`
+  // is the length Microsoft booked it for, and `sessionRescheduled` records
+  // that its occurrence was moved. `durationMinutes` -- what the author chose
+  // -- is a different key and survives the copy.
+  'teamsOccurrenceId',
+  'teamsWebLink',
+  'teamsDurationMinutes',
+  'sessionRescheduled',
+] as const;
+
+/**
+ * A copied component's settings, with everything that belonged to the original's
+ * own delivery removed.
+ *
+ * What the author wrote survives — the session's purpose and preparation, its
+ * clock and duration, the organizer mailbox and the meeting options — because
+ * that is authoring, and a copy that dropped it would only have to be typed
+ * again. What does not survive is the meeting it runs in — the Microsoft ids
+ * are a row in `curriculum.live_sessions`; a copy that kept `teamsLiveSessionId`
+ * would not be a second meeting, it would be the SAME meeting claimed twice.
+ *
+ * The date it runs on drops too, by default — `keepDates: true` is for a
+ * cohort/group clone, whose copy is meant to run in parallel with the source
+ * on the same delivery day, not be redated from its own module's start date.
+ */
+export function independentCopySettings(
+  settings: ComponentSettings,
+  options: { keepDates?: boolean } = {},
+): ComponentSettings {
+  const next = withoutGroupAssignmentSettings(settings);
+  TEAMS_MEETING_SETTING_KEYS.forEach(key => { delete next[key]; });
+  if (!options.keepDates) SESSION_DATE_SETTING_KEYS.forEach(key => { delete next[key]; });
   return next;
 }
 
@@ -902,6 +1513,141 @@ export function copyComponentToWeek(
   };
 }
 
+/**
+ * An independent copy of a complete week for a different delivery module.
+ *
+ * The target module owns its own timetable, so the copy deliberately has no
+ * date and every live-session component has its Microsoft booking removed.
+ * The authoring settings, KSB mappings, outcomes and all non-booking component
+ * details remain intact.
+ */
+export function copyWeekToModule(
+  source: ModuleWeek,
+  targetModuleId: string,
+  targetWeekNumber: number,
+): ModuleWeek {
+  const copyId = makeAuthoringId('WEEK');
+  return {
+    ...source,
+    id: copyId,
+    copiedFromId: source.id,
+    moduleId: targetModuleId,
+    weekNumber: targetWeekNumber,
+    sessionDate: '',
+    sessionDay: '',
+    sessionStartTime: '',
+    sessionDurationMinutes: undefined,
+    summary: source.summary || '',
+    learningOutcomes: [...(source.learningOutcomes || [])],
+    ksbMappings: (source.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
+    components: (source.components || []).map(component => ({
+      ...component,
+      id: makeAuthoringId('COMP'),
+      copiedFromId: component.id,
+      moduleId: targetModuleId,
+      weekId: copyId,
+      ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
+      settings: independentCopySettings(structuredClone(component.settings || {})),
+    })),
+  };
+}
+
+/**
+ * A week's twin, inserted directly beneath it in the same module.
+ *
+ * Everything the author wrote comes across in full — title, summary, learning
+ * outcomes, week KSBs, and every component with its own description, settings,
+ * KSB mappings, OTJH, points and assurance flags — as an independent snapshot.
+ * Every id is regenerated and every settings object is deep-copied, so editing
+ * or deleting the twin never reaches back into the week it came from, and vice
+ * versa (the same convention as `copyComponentToWeek`, which is why the
+ * components carry `copiedFromId` for provenance).
+ *
+ * The live session comes across too, but as authoring only: its purpose, its
+ * clock, its duration, its organizer mailbox and its meeting options are things
+ * somebody typed, and a copy that dropped them would only have to be typed
+ * again. What it does NOT bring is the booking — the meeting ids and the join
+ * link, stripped by `independentCopySettings`. A copy holding
+ * `teamsLiveSessionId` is not a second meeting, it is the SAME meeting named
+ * twice: one join link, one set of occurrences, one attendance record and one
+ * recording, now claimed by two weeks, so editing the copy would reach into the
+ * calendar of the week it was copied from. The twin's session is therefore
+ * planned but not booked, and `isUnbookedCopiedLiveSession` is how the rail says
+ * so until somebody books it.
+ *
+ * Dates do not come across either. They belong to the module's dated session
+ * plan, not to the week being copied, so the twin arrives undated and
+ * `applyModuleWeekSessionPlan` re-dates the run around it — exactly what already
+ * happens when a week is dragged up the rail.
+ *
+ * Weeks after the insertion point are renumbered, and a title that only ever
+ * repeated its own number ("Week 5") is renumbered with it; an authored title is
+ * left alone apart from the copy's own " copy" suffix.
+ */
+export function duplicateWeekInModule(module: ModuleCatalogueItem, weekId: string): ModuleCatalogueItem {
+  const sourceIndex = module.weekStructure.findIndex(week => week.id === weekId);
+  if (sourceIndex < 0) return module;
+  const source = module.weekStructure[sourceIndex];
+  const copyId = makeAuthoringId('WEEK');
+  const copy: ModuleWeek = {
+    ...source,
+    id: copyId,
+    copiedFromId: source.id,
+    moduleId: source.moduleId || module.id,
+    title: weekAuthoredTitle(source) ? `${String(source.title).trim()} copy` : source.title,
+    sessionDate: '',
+    sessionDay: '',
+    summary: source.summary || '',
+    learningOutcomes: [...(source.learningOutcomes || [])],
+    ksbMappings: (source.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
+    components: (source.components || []).map(component => ({
+      ...component,
+      id: makeAuthoringId('COMP'),
+      copiedFromId: component.id,
+      moduleId: module.id,
+      weekId: copyId,
+      ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
+      settings: independentCopySettings(structuredClone(component.settings || {})),
+    })),
+  };
+  const weekStructure = [
+    ...module.weekStructure.slice(0, sourceIndex + 1),
+    copy,
+    ...module.weekStructure.slice(sourceIndex + 1),
+  ].map((week, index) => ({
+    ...week,
+    weekNumber: index + 1,
+    // Only a title that IS its own number gets renumbered. A week whose title
+    // the author cleared stays cleared — filling one in here would write over a
+    // decision, not follow one.
+    title: String(week.title || '').trim() && !weekAuthoredTitle(week) ? `Week ${index + 1}` : week.title,
+  }));
+  // `weeks`, `sessionsNumber` and the derived totals are `recalculateModule`'s
+  // to fill in -- the twin's own live session is one more authored session, and
+  // the reloaded plan dates it from the module's own start date.
+  return { ...module, weekStructure };
+}
+
+/**
+ * A live session that was copied and has not been booked in its own right.
+ *
+ * `duplicateWeekInModule` hands the twin a live session with everything the
+ * author wrote and nothing Microsoft made: no meeting id, no join link. That is
+ * the only safe copy — sharing the booking would share one meeting between two
+ * weeks — but it leaves a session that looks completely ordinary while having
+ * nowhere for anybody to join, which is not something a reader can see. This is
+ * the test the Course structure rail prints its note from, and it stops being
+ * true the moment the week's meeting is created.
+ */
+export function isUnbookedCopiedLiveSession(component: ModuleComponent): boolean {
+  if (component.type !== 'live-session') return false;
+  if (!String(component.copiedFromId || '').trim()) return false;
+  const settings = component.settings || {};
+  return !String(settings.teamsLiveSessionId || '').trim()
+    && !String(settings.teamsMeetingUrl || '').trim()
+    && !String(settings.liveSessionUrl || '').trim();
+}
+
 export async function deleteModuleStructure(moduleCatalogueId: string) {
   await apiJson<{ deleted?: boolean; archived?: boolean; deletedAuthoring?: boolean; id?: string }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/`, {
     method: 'DELETE',
@@ -921,12 +1667,21 @@ export async function deleteModuleStructure(moduleCatalogueId: string) {
  * them twice in development. Uncached, that was four to six identical requests
  * for one payload, queued behind each other on the server until their timeout
  * aborted them; shared, it is one request and a two-minute answer.
+ *
+ * `skipCache` is for the callers that are about to WRITE the whole structure
+ * back. A save on this endpoint replaces every week and component, so it is only
+ * ever safe against the version the server holds right now -- a two-minute-old
+ * answer would have the builder write its stale copy over whatever was edited in
+ * the meantime, here or by somebody else.
  */
-export async function loadModuleStructure(catalogueId: string): Promise<ModuleCatalogueItem | null> {
+export async function loadModuleStructure(
+  catalogueId: string,
+  options: { skipCache?: boolean } = {},
+): Promise<ModuleCatalogueItem | null> {
   try {
     return recalculateModule(await fetchCurriculumJson<ModuleCatalogueItem>(
       `/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`,
-      { timeoutMs: 30000 },
+      { timeoutMs: 30000, skipCache: options.skipCache },
     ));
   } catch (err) {
     const status = err instanceof ApiError || err instanceof CurriculumApiError ? err.status : 0;
@@ -947,13 +1702,13 @@ export async function loadModuleStructure(catalogueId: string): Promise<ModuleCa
  * Returns null for a module the backend has never stored (a local draft), where
  * there is no schedule to plan from yet.
  */
-export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks: number): Promise<ModuleWeekSessionPlan | null> {
+export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks: number, sessions?: number): Promise<ModuleWeekSessionPlan | null> {
   const catalogueId = String(moduleCatalogueId || '').trim();
   const count = Math.max(0, Math.round(Number(weeks) || 0));
   if (!catalogueId || !count) return null;
   try {
     return await apiJson<ModuleWeekSessionPlan>(
-      `/curriculum/modules/${encodeURIComponent(catalogueId)}/session-plan/?weeks=${count}`,
+      `/curriculum/modules/${encodeURIComponent(catalogueId)}/session-plan/?${sessions ? `sessions=${Math.max(1, Math.round(sessions))}` : `weeks=${count}`}`,
     );
   } catch (err) {
     // A module with no stored schedule simply has no dates to show. Failing the
@@ -972,10 +1727,17 @@ export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks
  * else's module (a group save, say) knows the module only by id -- the server
  * falls back to the module's own stored count.
  */
-export function fetchModuleSessionPlan(moduleCatalogueId: string, weeks?: number): Promise<ModuleWeekSessionPlan> {
+export function fetchModuleSessionPlan(
+  moduleCatalogueId: string,
+  weeks?: number,
+  options: { timeoutMs?: number } = {},
+): Promise<ModuleWeekSessionPlan> {
   const count = Math.max(0, Math.round(Number(weeks) || 0));
   return apiJson<ModuleWeekSessionPlan>(
     `/curriculum/modules/${encodeURIComponent(String(moduleCatalogueId || '').trim())}/session-plan/${count ? `?weeks=${count}` : ''}`,
+    // A caller rendering a spinner needs a budget: without one a slow backend
+    // leaves it spinning on the browser's own default, which is minutes.
+    options.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined,
   );
 }
 
@@ -1057,6 +1819,18 @@ export function createLegacyLocalModule(input: { programme: string; title: strin
   });
 }
 
+/**
+ * How many authored week/live-session titles the module has.
+ *
+ * A `?compact=true` list omits `sessionNames` outright -- the strings are the
+ * bulk of that response and nothing here renders them -- and sends
+ * `sessionNamesCount` in their place. The full response still carries the array,
+ * so both shapes have to answer.
+ */
+function sessionNameCount(module: CurriculumModule): number {
+  return module.sessionNames?.length || module.sessionNamesCount || 0;
+}
+
 export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCatalogueItem {
   const canonicalId = canonicalModuleCatalogueId(module);
   // Temporary legacy fallback: unlinked delivery rows still open through their delivery identifier.
@@ -1066,6 +1840,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
   const description = cleanUserFacingText(module.notes || '');
   const tutor = String(module.tutor || '').trim();
   const coach = String(module.coach || '').trim();
+  const totalOtjh = Number(module.declaredTotalOtjh ?? module.totalOtjh ?? 0) || 0;
   const weekStructure = (module.weekStructure || []).map((week, index): ModuleWeek => {
     const weekId = String(week.id || makeAuthoringId('WEEK'));
     return {
@@ -1119,26 +1894,34 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     ksbProfileSourceId: module.ksbProfileSourceId || '',
     tutor,
     coach,
+    weeklySchedule: module.weeklySchedule || [],
+    sessionHolidays: module.sessionHolidays || [],
+    deliveryWeeks: module.deliveryWeeks,
     deliveryMetadata: {
       tutor,
       coach,
+      weekDays: module.weekDays || '',
+      startTime: module.startTime || '',
+      endTime: module.endTime || '',
       cohortId: module.cohortId || '',
       cohort: module.cohort || '',
       groupId: module.groupId || '',
       group: module.group || '',
     },
-    sessionsNumber: module.sessionsNumber || module.weeks || module.sessionNames?.length || 0,
+    sessionsNumber: module.sessionsNumber || module.weeks || sessionNameCount(module) || 0,
     startDate: module.startDate || '',
     endDate: module.endDate || '',
     // `sessionsNumber` is a last-resort fallback for payloads predating the
     // weeks/sessions split, where the two were the same number. Current
     // responses always carry `weeks`, so it is normally never reached.
-    weeks: module.weeks || module.sessionNames?.length || module.sessionsNumber || 1,
-    totalOtjh: 0,
+    weeks: module.weeks || sessionNameCount(module) || module.sessionsNumber || 1,
+    totalOtjh,
+    declaredTotalOtjh: totalOtjh,
     ksbCount: module.ksbCount || module.ksbCodes?.length || 0,
-    lessonCount: module.lessons || module.sessionNames?.length || 0,
+    lessonCount: module.lessons || sessionNameCount(module) || 0,
     quizCount: module.quizzes || 0,
     qualityScore: 0,
+    assignedLearnerCount: module.assignments ?? 0,
     moduleKsbMappings: (module.ksbCodes || []).map((code, index) => ({
       id: makeAuthoringId('KSBMAP'),
       ksbId: code,
@@ -1165,7 +1948,7 @@ export function getDefaultStructure(module: ModuleCatalogueItem): ModuleCatalogu
   // Weeks first: this builds the week skeleton, and `sessionsNumber` is the
   // delivery-day-multiplied calendar total, which would over-create weeks for
   // any group running more than one session a week.
-  const weekCount = Math.max(1, module.weeks || source?.weeks || source?.sessionNames?.length || module.sessionsNumber || source?.sessionsNumber || 1);
+  const weekCount = Math.max(1, module.weeks || source?.weeks || (source ? sessionNameCount(source) : 0) || module.sessionsNumber || source?.sessionsNumber || 1);
   const weekStructure = Array.from({ length: weekCount }, (_, index) => {
     const week = createEmptyWeek(module.id, index + 1);
     return week;
@@ -1197,9 +1980,17 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
           moduleId,
           weekId,
           workplaceEvidenceRequired: false,
-          // A component stored before the flag existed comes back without it,
-          // and absent means on - nobody has turned coach validation off.
-          coachValidationRequired: component.coachValidationRequired !== false,
+          // Normalised only when the component actually carries it. Filling in
+          // `true` for a component object that had lost the key looked harmless
+          // -- absent did mean on -- but this value goes straight into the next
+          // structure save, so it did not describe the component, it OVERWROTE
+          // it: an author who had turned coach validation off got it switched
+          // back on by a save they never made a decision in. What the component
+          // does not say, only the stored row knows, and the backend keeps it
+          // (see component_assurance_flag).
+          ...(component.coachValidationRequired === undefined
+            ? {}
+            : { coachValidationRequired: component.coachValidationRequired !== false }),
           ksbMappings: normaliseKsbMappings(component.ksbMappings || [], fallbackKsbSource),
           settings: normaliseComponentSettings(component.type, component.settings || {}),
         })),
@@ -1210,7 +2001,8 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
   const componentKsbCodes = new Set(allComponents.flatMap(component => component.ksbMappings.map(mapping => mapping.code)));
   moduleKsbMappings.forEach(mapping => componentKsbCodes.add(mapping.code));
   normalisedWeeks.forEach(week => week.ksbMappings.forEach(mapping => componentKsbCodes.add(mapping.code)));
-  const totalOtjh = allComponents.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
+  const componentTotalOtjh = normalisedWeeks.reduce((total, week) => total + weekExpectedOtjhTotal(week), 0);
+  const totalOtjh = hasStructure ? componentTotalOtjh : Number(module.totalOtjh || 0);
   const totalPoints = allComponents.reduce((total, component) => total + Number(component.points || 0), 0);
   const quality = calculateQualityScore({ ...module, completionCriteria, totalOtjh, ksbCount: componentKsbCodes.size, moduleKsbMappings, weekStructure: normalisedWeeks });
 
@@ -1221,12 +2013,10 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
     // week makes this a seven-week module, and a save has to carry that rather
     // than the stale stored number.
     weeks: hasStructure ? normalisedWeeks.length : (module.weeks || module.sessionsNumber || 0),
-    // NOT re-derived from the weeks. A module delivered twice a week runs two
-    // calendar sessions per authored week, so overwriting this with the week
-    // count silently halved the session plan and the Teams series. It belongs to
-    // the delivery slot, and only the module form (which knows the group's
-    // delivery days) recomputes it.
-    sessionsNumber: module.sessionsNumber,
+    // Keep planned dates for unfinished weeks, while imported live sessions
+    // cannot leave the calendar on the smaller count from the original draft.
+    // Reading-only rows add no calendar session.
+    sessionsNumber: Math.max(module.sessionsNumber || 0, allComponents.filter(component => component.type === 'live-session').length),
     totalOtjh,
     // The module's OTJH is the sum of every component's Expected OTJH, across
     // every week -- nothing else. `declaredTotalOtjh` is kept only because the
@@ -1311,10 +2101,7 @@ export function calculateQualityChecklist(module: ModuleCatalogueItem) {
     module.completionCriteria.averageScoreRequiredEnabled ||
     module.completionCriteria.totalScoreRequiredEnabled ||
     Boolean(module.completionCriteria.additionalNotes.trim());
-  const expectedTotal = module.weekStructure.reduce(
-    (total, week) => total + week.components.reduce((weekTotal, component) => weekTotal + Number(component.expectedOtjh || 0), 0),
-    0,
-  );
+  const expectedTotal = module.weekStructure.reduce((total, week) => total + weekExpectedOtjhTotal(week), 0);
   const declaredTotal = typeof module.declaredTotalOtjh === 'number' && module.declaredTotalOtjh > 0 ? module.declaredTotalOtjh : module.totalOtjh;
 
   return [
@@ -1356,16 +2143,73 @@ export function flattenKsbEntries(entries: CurriculumKsbEntry[] = []): KsbOption
   }));
 }
 
-export async function saveModuleStructure(moduleCatalogueId: string, payload: ModuleCatalogueItem) {
+/**
+ * A save refused because the module moved on after this copy of it was read.
+ *
+ * Its own type rather than a status code the caller has to remember to check,
+ * because the two outcomes need opposite handling: an ordinary failure is worth
+ * retrying with the same payload, and this one is never worth retrying -- the
+ * payload replaces every week and component in the module, so re-sending it is
+ * precisely the destruction the refusal prevented.
+ */
+export class ModuleStructureConflictError extends Error {
+  /** What the server holds now, so the workspace can show it or re-open it. */
+  currentRevision: string;
+  serverModule: ModuleCatalogueItem | null;
+
+  constructor(message: string, currentRevision: string, serverModule: ModuleCatalogueItem | null) {
+    super(message);
+    this.name = 'ModuleStructureConflictError';
+    this.currentRevision = currentRevision;
+    this.serverModule = serverModule;
+    Object.setPrototypeOf(this, ModuleStructureConflictError.prototype);
+  }
+}
+
+/**
+ * Write a module's whole structure back.
+ *
+ * `expectedRevision` is the `structureRevision` that came with the copy being
+ * saved. The backend refuses the write if the stored material has moved since,
+ * which is the only thing standing between two open tabs and one of them
+ * silently replacing the other's weeks and components. Omitting it restores
+ * last-write-wins, so only a caller with nothing to have read -- a first save,
+ * an import -- should leave it out.
+ *
+ * `source` says which kind of save this is, for the audit trail. It is metadata
+ * and nothing more: the backend decides the actor, the action and the values
+ * itself, and ignores any label it does not recognise. Auto-save is a *source*,
+ * never an action -- the recorded event is still "component updated", so a
+ * module left open all afternoon produces one entry per real edit rather than
+ * one per timer tick.
+ */
+export async function saveModuleStructure(
+  moduleCatalogueId: string,
+  payload: ModuleCatalogueItem,
+  options: { expectedRevision?: string; source?: 'auto-save' | 'manual' } = {},
+) {
   const recalculated = recalculateModule(payload);
   // `weeksNumber` states the authored week count outright. `weeks` cannot carry
   // it: on this endpoint that name is the legacy alias for the week *list*, and
   // the backend rejects a number there.
-  const body = { ...recalculated, weeksNumber: recalculated.weekStructure.length || recalculated.weeks };
+  const body = {
+    ...recalculated,
+    weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
+    ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
+  };
   const saved = recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
     body: JSON.stringify(body),
+    headers: { 'X-Curriculum-Save-Source': options.source || 'manual' },
     timeoutMs: 90000,
+  }).catch((err: unknown) => {
+    if (!(err instanceof ApiError) || err.status !== 409 || !err.data?.conflict) throw err;
+    const server = err.data.module as ModuleCatalogueItem | undefined;
+    throw new ModuleStructureConflictError(
+      typeof err.data.error === 'string' ? err.data.error : err.message,
+      String(err.data.currentRevision || ''),
+      server ? recalculateModule(server) : null,
+    );
   }));
   // `apiJson` writes go straight to the network, so nothing above invalidates
   // the read this save just made stale. `loadModuleStructure` is cached now, and
@@ -1399,7 +2243,72 @@ export async function uploadComponentResource(input: { moduleCatalogueId: string
   return uploadComponentFile<ComponentUploadResult>(`${API_BASE_URL}/curriculum/components/${encodeURIComponent(input.componentId)}/upload/`, form);
 }
 
+/**
+ * The AI Material book a module carries: one uploaded file per module, stored
+ * in the curriculum Azure container and served back through the same
+ * `/curriculum_api/curriculum/uploads/...` route every component upload uses.
+ */
+export interface AiMaterialRecord {
+  fileName: string;
+  storedPath: string;
+  url: string;
+  size: number;
+  contentType: string;
+  uploadedAt: string;
+}
+
+export interface AiMaterialResult {
+  moduleCatalogueId: string;
+  hasMaterial: boolean;
+  material: AiMaterialRecord | null;
+  replaced?: boolean;
+  uploaded?: boolean;
+  removed?: boolean;
+}
+
+/** The book formats the upload accepts, kept in step with the backend's list. */
+export const AI_MATERIAL_ACCEPT = '.pdf,.epub,.doc,.docx,.txt,.rtf,.odt';
+
+const aiMaterialUrl = (moduleCatalogueId: string) =>
+  `${API_BASE_URL}/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/ai-material/`;
+
+export async function loadAiMaterial(moduleCatalogueId: string, signal?: AbortSignal) {
+  const response = await fetch(aiMaterialUrl(moduleCatalogueId), { signal });
+  if (!response.ok) {
+    let message = `Curriculum API returned ${response.status} for the AI material`;
+    try {
+      const payload = await response.json();
+      if (payload?.error) message = payload.error;
+    } catch {
+      // Keep the status message when a proxy returns a non-JSON body.
+    }
+    throw new Error(message);
+  }
+  return response.json() as Promise<AiMaterialResult>;
+}
+
+/**
+ * Upload the book, or replace the one already there -- the same call either way.
+ * The backend only deletes the file it replaced once the new one is stored and
+ * recorded, so a failed replace leaves the existing book readable.
+ */
+export async function uploadAiMaterial(moduleCatalogueId: string, file: File) {
+  assertComponentUploadAllowed(file);
+  const form = new FormData();
+  form.set('file', file);
+  form.set('moduleCatalogueId', moduleCatalogueId);
+  return uploadComponentFile<AiMaterialResult>(aiMaterialUrl(moduleCatalogueId), form);
+}
+
+export async function removeAiMaterial(moduleCatalogueId: string) {
+  const response = await fetch(aiMaterialUrl(moduleCatalogueId), { method: 'DELETE' });
+  if (!response.ok) throw new Error('The book could not be removed. Please retry.');
+  return response.json() as Promise<AiMaterialResult>;
+}
+
 export interface TeamsMeetingInput {
+  scheduleTimeZone?: 'Africa/Cairo' | 'Europe/London';
+  seriesMode?: 'auto' | 'shared' | 'per_day';
   title: string;
   organizerEmail: string;
   attendees: string[];
@@ -1434,6 +2343,7 @@ export interface TeamsMeetingInput {
 export interface TeamsMeetingResult {
   created: boolean;
   meeting: {
+    calendarSeries?: Array<{ day: string; eventId: string; joinUrl: string; onlineMeetingId?: string; sessionNumbers: number[] }>;
     liveSessionId: string;
     eventId: string;
     onlineMeetingId: string;
@@ -1657,6 +2567,25 @@ export function restoreModuleTeamsMeeting(moduleCatalogueId: string, options: { 
   });
 }
 
+export interface SavedModuleTeamsMeeting {
+  verificationPending: boolean;
+  module: ModuleCatalogueItem;
+  meeting: Record<string, unknown>;
+  calendar: {
+    title: string;
+    seriesMode: 'shared' | 'per_day';
+    occurrences: Array<{ sessionNumber: number; startDateTimeUtc: string; durationMinutes: number; joinUrl: string; eventId: string }>;
+  };
+}
+
+/** Read this module's saved calendar without creating or sending invitations. */
+export function readModuleTeamsMeeting(moduleCatalogueId: string) {
+  return apiJson<SavedModuleTeamsMeeting>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/`,
+    { timeoutMs: 15000 },
+  );
+}
+
 /**
  * How many weeks re-attaching would give a live-session component to.
  *
@@ -1687,10 +2616,13 @@ export function fetchModuleMeetingInvitees(moduleCatalogueId: string) {
   return apiJson<ModuleMeetingInvitees>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/meeting-invitees/`);
 }
 
-export function createTeamsMeeting(input: TeamsMeetingInput) {
+export async function createTeamsMeeting(input: TeamsMeetingInput) {
+  // Review and send the same snapshot, even if a background refresh changes the form.
+  const reviewed: TeamsMeetingInput = JSON.parse(JSON.stringify({ ...input, hideAttendees: true }));
+  await reviewCalendar({ ...reviewed, summaryEmail: true }, reviewed.scheduleTimeZone || getCalendarTimeZone());
   return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify(reviewed),
     timeoutMs: 45000,
   }).then(result => {
     // This POST goes through this module's own client, so it never triggers the
@@ -1707,10 +2639,31 @@ export function createTeamsMeeting(input: TeamsMeetingInput) {
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[] }) {
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean }) {
+  const reviewed = JSON.parse(JSON.stringify(input)) as typeof input;
+  const { series: rawSeries, occurrences } = await loadTeamsMeetingArtifacts(liveSessionId);
+  const series = calendarSeriesForReview(rawSeries);
+  if (reviewed.peopleOnly) {
+    const held = occurrences.filter(item => item.status !== 'cancelled')
+      .sort((a, b) => parseUtcInstant(a.scheduled_start).getTime() - parseUtcInstant(b.scheduled_start).getTime());
+    if (!held.length) throw new Error('The saved session dates could not be loaded. Review the calendar dates before changing invitations.');
+    reviewed.scheduledOccurrences = held.map(item => ({ sessionNumber: item.session_number,
+      startDateTimeUtc: parseUtcInstant(item.scheduled_start).toISOString(),
+      durationMinutes: (parseUtcInstant(item.scheduled_end).getTime() - parseUtcInstant(item.scheduled_start).getTime()) / 60000,
+    }));
+    reviewed.startDateTimeUtc = reviewed.scheduledOccurrences[0].startDateTimeUtc;
+    reviewed.durationMinutes = reviewed.scheduledOccurrences[0].durationMinutes;
+  }
+  await reviewCalendar({ ...reviewed, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+    attendees: reviewed.attendees ?? series.attendees, presenters: reviewed.presenters ?? series.presenters,
+    coOrganizers: reviewed.coOrganizers ?? series.co_organizers,
+    recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
+    calendarSeries: series.calendar_series, previousOccurrences: occurrences,
+    seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
+  }, series.timeZoneIana || getCalendarTimeZone());
   return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
-    body: JSON.stringify(input),
+    body: JSON.stringify(reviewed),
     timeoutMs: 45000,
   }).then(result => {
     clearCurriculumGetCache();
@@ -1736,16 +2689,27 @@ export interface TeamsOccurrenceRescheduleResult {
  * every other session — and the module's default time — untouched. The tracked
  * occurrence keeps its own duration unless `durationMinutes` is passed.
  */
-export function rescheduleTeamsOccurrence(
+export async function rescheduleTeamsOccurrence(
   liveSessionId: string,
   sessionNumber: number,
   input: { startDateTimeUtc: string; durationMinutes?: number },
 ) {
+  const reviewed = { ...input };
+  const detail = await loadTeamsMeetingArtifacts(liveSessionId);
+  const series = calendarSeriesForReview(detail.series);
+  const occurrence = detail.occurrences.find(item => item.session_number === sessionNumber);
+  if (!occurrence) throw new Error('Load this session before reviewing a time change.');
+  const duration = reviewed.durationMinutes ?? (parseUtcInstant(occurrence.scheduled_end).getTime() - parseUtcInstant(occurrence.scheduled_start).getTime()) / 60000;
+  await reviewCalendar({ title: series.module_title, organizerEmail: series.organizer_email,
+    joinUrl: occurrence.join_url || series.join_url, attendees: series.attendees,
+    presenters: series.presenters, coOrganizers: series.co_organizers, previousOccurrences: [occurrence], seriesMode: 'shared',
+    scheduledOccurrences: [{ sessionNumber, startDateTimeUtc: reviewed.startDateTimeUtc, durationMinutes: duration }],
+  }, getCalendarTimeZone());
   return apiJson<TeamsOccurrenceRescheduleResult>(
     `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/occurrences/${sessionNumber}/schedule/`,
     {
       method: 'PATCH',
-      body: JSON.stringify(input),
+      body: JSON.stringify(reviewed),
       timeoutMs: 45000,
     },
   ).then(result => {
@@ -1807,26 +2771,47 @@ export interface TeamsMeetingOccurrence {
 
 export interface TeamsMeetingArtifactsResult {
   series: {
+    timezone?: string;
+    timeZoneIana?: string;
     id: string;
     module_title: string;
     organizer_email: string;
     join_url: string;
     online_meeting_id: string;
+    attendees?: string[];
+    presenters?: string[];
+    co_organizers?: string[];
+    recording?: string;
+    lobby_bypass?: string;
+    spoken_language?: string;
+    calendar_series?: Array<{ day: string; joinUrl: string; sessionNumbers: number[] }>;
   };
   occurrences: TeamsMeetingOccurrence[];
 }
 
-export function syncTeamsMeetingArtifacts(liveSessionId: string) {
-  return apiJson<TeamsArtifactSyncResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
-    method: 'POST',
-    timeoutMs: 45000,
-  });
+export function syncTeamsMeetingArtifacts(liveSessionId: string): Promise<TeamsArtifactSyncResult | { state: 'queued'; message: string }> {
+  return requestSessionSync(liveSessionId);
 }
 
 export function loadTeamsMeetingArtifacts(liveSessionId: string) {
   return apiJson<TeamsMeetingArtifactsResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
     timeoutMs: 30000,
   });
+}
+
+function calendarSeriesForReview(series: TeamsMeetingArtifactsResult['series']) {
+  // Raw SQL JSON columns may arrive serialized, depending on the DB driver.
+  const list = <T,>(value: unknown): T[] => {
+    let decoded = value;
+    try { if (typeof value === 'string') decoded = JSON.parse(value); } catch { decoded = undefined; }
+    if (decoded === null) return [];
+    if (!Array.isArray(decoded)) throw new Error('The saved invitation details could not be loaded. Reload the calendar before saving.');
+    return decoded as T[];
+  };
+  return { ...series, attendees: list<string>(series.attendees), presenters: list<string>(series.presenters),
+    co_organizers: list<string>(series.co_organizers),
+    calendar_series: list<NonNullable<typeof series.calendar_series>[number]>(series.calendar_series ?? []),
+  };
 }
 
 export function teamsMeetingArtifactContentUrl(liveSessionId: string, artifactId: string) {
@@ -1875,14 +2860,24 @@ export function saveTeamsRecordingEvents(
   );
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   detail?: string;
+  /**
+   * The handler's own JSON body, when it sent one.
+   *
+   * `message` is flattened for display and loses everything structured with
+   * it. A refusal a caller has to ACT on rather than only show -- a 409 from
+   * the structure PATCH carries the current revision and the current module --
+   * needs the body itself.
+   */
+  data?: Record<string, unknown>;
 
-  constructor(status: number, message: string, detail?: string) {
+  constructor(status: number, message: string, detail?: string, data?: Record<string, unknown>) {
     super(message);
     this.status = status;
     this.detail = detail;
+    this.data = data;
   }
 }
 
@@ -1902,8 +2897,10 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
     });
     if (!response.ok) {
       let message = `Curriculum API returned ${response.status} for ${path}`;
+      let body: Record<string, unknown> | undefined;
       try {
         const payload = await response.json();
+        if (payload && typeof payload === 'object') body = payload as Record<string, unknown>;
         const validation = Array.isArray(payload?.validationErrors)
           ? payload.validationErrors.map((item: { message?: string }) => item.message).filter(Boolean).join('; ')
           : '';
@@ -1913,16 +2910,22 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
       } catch {
         // Ignore body parsing failures so the original status remains visible.
       }
-      throw new ApiError(response.status, message);
+      throw new ApiError(response.status, message, undefined, body);
     }
     return response.json();
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error('The curriculum request is taking too long. It was stopped so you can retry without waiting indefinitely.');
+      throw new CurriculumRequestTimeout();
     }
     throw err;
   } finally {
     if (timeout) window.clearTimeout(timeout);
+  }
+}
+
+export class CurriculumRequestTimeout extends Error {
+  constructor() {
+    super('The response timed out. The server may still be processing this request. Check its saved status before retrying.');
   }
 }
 

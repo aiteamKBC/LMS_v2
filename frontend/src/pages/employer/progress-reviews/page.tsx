@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
+import { useAuth } from '@/hooks/useAuth';
+import { fetchEmployerLearner, fetchEmployerPortal, type EmployerReviewRow } from '@/api/employerPortal';
 
 const employerNav = roleNavMap.employer;
 
@@ -19,9 +22,12 @@ interface Review {
   otjhSinceLast: number;
   summary: string;
   actionRequired: string;
+  kind?: 'apprenticeship' | 'commercial';
+  learnerId?: string;
+  eventKey?: string;
 }
 
-const REVIEWS: Review[] = [
+const DEMO_REVIEWS: Review[] = [
   { id: 'rv-01', apprentice: 'Sophie Williams', initials: 'SW', programme: 'Marketing Executive L4', date: '25 Jun 2026', type: 'Monthly Progress Review', period: 'June 2026', coach: 'Med Maher', status: 'Scheduled', progressAtReview: 42, attendanceSinceLast: 86, otjhSinceLast: 16, summary: 'First quarterly review covering initial modules and workplace integration', actionRequired: 'Prepare evidence of workplace application' },
   { id: 'rv-02', apprentice: 'Sophie Williams', initials: 'SW', programme: 'Marketing Executive L4', date: '28 May 2026', type: 'Monthly Progress Review', period: 'May 2026', coach: 'Med Maher', status: 'Awaiting Employer', progressAtReview: 28, attendanceSinceLast: 90, otjhSinceLast: 22, summary: 'Strong start. Sophie has settled well into the programme structure.', actionRequired: 'Employer sign-off required' },
   { id: 'rv-03', apprentice: 'Tom Richards', initials: 'TR', programme: 'Marketing Executive L4', date: '25 Jun 2026', type: 'Monthly Progress Review', period: 'June 2026', coach: 'Med Maher', status: 'Scheduled', progressAtReview: 38, attendanceSinceLast: 82, otjhSinceLast: 14, summary: 'Attendance concerns — 3 missed sessions this period', actionRequired: 'Discuss attendance improvement plan' },
@@ -32,20 +38,72 @@ const REVIEWS: Review[] = [
   { id: 'rv-08', apprentice: 'Mark Jensen', initials: 'MJ', programme: 'Digital Marketer L3', date: '22 May 2026', type: 'Monthly Progress Review', period: 'May 2026', coach: 'Med Maher', status: 'Completed', progressAtReview: 66, attendanceSinceLast: 90, otjhSinceLast: 25, summary: 'On track for planned end date', actionRequired: '' },
 ];
 
+function curriculumReview(learner: { id: string; kind: 'apprenticeship' | 'commercial'; name: string; programme: string }, row: EmployerReviewRow): Review {
+  const status: Review['status'] = row.signed
+    ? 'Completed'
+    : !row.completed
+      ? 'Scheduled'
+      : !row.adminSigned
+        ? 'Awaiting Coach'
+        : 'Awaiting Employer';
+  return {
+    id: row.reviewInstanceId || row.eventKey,
+    apprentice: learner.name,
+    initials: learner.name.split(/\s+/).filter(Boolean).map((part) => part[0]).slice(0, 2).join('').toUpperCase(),
+    programme: learner.programme,
+    date: row.scheduledDate || 'Not scheduled',
+    type: row.reviewType || 'Review',
+    period: row.scheduledDate || 'Current cycle',
+    coach: 'Assigned coach',
+    status,
+    progressAtReview: 0,
+    attendanceSinceLast: 0,
+    otjhSinceLast: 0,
+    summary: row.completed ? 'Curriculum review form is ready for review.' : 'This review is scheduled and is not ready for signing yet.',
+    actionRequired: status === 'Awaiting Employer' ? 'Employer sign-off required' : '',
+    kind: learner.kind,
+    learnerId: learner.id,
+    eventKey: row.eventKey,
+  };
+}
+
 export default function EmployerProgressReviews() {
+  const { auth } = useAuth();
+  const navigate = useNavigate();
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const employerId = auth.account?.role === 'employer' ? String(auth.account.subjectId) : '';
+    if (!employerId) {
+      setReviews(DEMO_REVIEWS);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    fetchEmployerPortal(employerId)
+      .then((portal) => Promise.all(portal.learners.map(async (learner) => {
+        const detail = await fetchEmployerLearner(employerId, learner.kind, learner.id);
+        return detail.reviews.map((row) => curriculumReview(learner, row));
+      })))
+      .then((groups) => setReviews(groups.flat()))
+      .catch((cause: Error) => setError(cause.message))
+      .finally(() => setLoading(false));
+  }, [auth.account]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [expandedReview, setExpandedReview] = useState<string | null>(null);
 
-  const filtered = REVIEWS.filter(r => {
+  const filtered = reviews.filter(r => {
     if (search && !r.apprentice.toLowerCase().includes(search.toLowerCase()) && !r.type.toLowerCase().includes(search.toLowerCase())) return false;
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     return true;
   });
 
-  const awaiting = REVIEWS.filter(r => r.status === 'Awaiting Employer').length;
-  const scheduled = REVIEWS.filter(r => r.status === 'Scheduled').length;
-  const completed = REVIEWS.filter(r => r.status === 'Completed').length;
+  const awaiting = reviews.filter(r => r.status === 'Awaiting Employer').length;
+  const scheduled = reviews.filter(r => r.status === 'Scheduled').length;
+  const completed = reviews.filter(r => r.status === 'Completed').length;
 
   return (
     <WorkspaceShell role="employer" roleLabel={employerNav.label} navItems={employerNav.items} workspaceLabel={employerNav.workspaceLabel} pageTitle="Progress Reviews" pageSubtitle="Review and sign off apprentice progress reviews" userName="Lauren Mitchell" userRole="Line Manager — Tim Hortons UK">
@@ -61,7 +119,7 @@ export default function EmployerProgressReviews() {
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Progress Reviews</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{REVIEWS.length} reviews</strong> · {awaiting} awaiting your signature · {scheduled} upcoming · {completed} completed
+                <strong>{reviews.length} reviews</strong> · {awaiting} awaiting your signature · {scheduled} upcoming · {completed} completed
               </p>
             </div>
             <div className="flex items-center gap-3 shrink-0">
@@ -100,7 +158,7 @@ export default function EmployerProgressReviews() {
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search reviews..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
-            {[{ key: 'all', label: 'All', count: REVIEWS.length },{ key: 'Awaiting Employer', label: 'Need Signing', count: awaiting },{ key: 'Scheduled', label: 'Upcoming', count: scheduled },{ key: 'Completed', label: 'Completed', count: completed }].map(f => (
+            {[{ key: 'all', label: 'All', count: reviews.length },{ key: 'Awaiting Employer', label: 'Need Signing', count: awaiting },{ key: 'Scheduled', label: 'Upcoming', count: scheduled },{ key: 'Completed', label: 'Completed', count: completed }].map(f => (
               <button key={f.key} onClick={() => setStatusFilter(f.key)} className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${statusFilter === f.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 {f.label} <span className="ml-1 text-[10px] opacity-60">{f.count}</span>
               </button>
@@ -109,6 +167,8 @@ export default function EmployerProgressReviews() {
         </div>
 
         {/* Reviews List */}
+        {loading && <p className="py-8 text-center text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-2" />Loading reviews...</p>}
+        {error && <p className="py-4 text-center text-[13px] text-red-600">{error}</p>}
         <div className="space-y-3">
           {filtered.map(review => {
             const isOpen = expandedReview === review.id;
@@ -168,11 +228,11 @@ export default function EmployerProgressReviews() {
                     </div>
                     <div className="flex items-center gap-2">
                       {review.status === 'Awaiting Employer' ? (
-                        <button className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                        <button onClick={(event) => { event.stopPropagation(); if (review.kind && review.learnerId) navigate(`/employers/${auth.account?.subjectId}/learner/${review.kind}/${review.learnerId}`); }} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                           <AppIcon className="ri-pen-nib-line mr-1"></AppIcon> Sign Now
                         </button>
                       ) : (
-                        <button className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                        <button onClick={(event) => { event.stopPropagation(); if (review.kind && review.learnerId) navigate(`/employers/${auth.account?.subjectId}/learner/${review.kind}/${review.learnerId}`); }} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                           <AppIcon className="ri-eye-line mr-1"></AppIcon> View Full Review
                         </button>
                       )}

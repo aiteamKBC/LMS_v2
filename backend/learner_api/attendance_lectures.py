@@ -5,7 +5,9 @@ import logging
 import re
 
 from django.db import connections
+from django.conf import settings
 from django.http import JsonResponse
+from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 
@@ -82,7 +84,7 @@ def _aware(value):
 def session_key(row):
     """Keep existing KBC keys compatible; namespace native occurrences."""
     raw = _text(row.get('session_id'))
-    return raw if row.get('source', 'kbc-attendance') == 'kbc-attendance' else f'teams:{raw}'
+    return raw if row.get('source', 'kbc-attendance') in {'kbc-attendance', 'coaching-meeting'} else f'teams:{raw}'
 
 
 def report_id(row):
@@ -95,22 +97,50 @@ def report_id(row):
 
 
 def read_native_occurrences(source):
-    """Invite-scoped occurrences, including future and unsynced sessions."""
+    """Current assigned-module occurrences expected for, or attended by, the learner.
+
+    The saved Teams invite list remains authoritative for sessions with no
+    attendance evidence. A completed Teams report is stronger evidence for an
+    attendee, though, and must not be hidden merely because the series invite
+    list is stale (for example after a learner joined the cohort later).
+    """
     if not source.email:
         return []
     with connections['enrolment'].cursor() as cur:
+        # An old Teams invitation is not a current curriculum assignment.
+        # Use the same saved plan as My Learning and Training Plan, then exclude
+        # deleted delivery modules and replaced meeting series below.
+        cur.execute(CURRENT_SUBJECTS_SQL, [source.id])
+        module_ids = [row[0] for row in cur.fetchall()]
+        if not module_ids:
+            return []
         cur.execute('''SELECT o.id AS session_id,o.id AS occurrence_id,
-            s.id AS live_session_id,s.module_catalogue_id,s.module_title,
+            s.id AS live_session_id,s.module_catalogue_id,m.title AS module_title,
             o.scheduled_start,o.scheduled_end,o.updated_at,o.session_number,
-            o.attendance_report_id,s.organizer_email AS coach_name
+            COALESCE(NULLIF(o.join_url,''),s.join_url) AS join_url,
+            o.attendance_report_id,coalesce(nullif(m.tutor_name,''),s.organizer_email) AS tutor_name,
+            CASE WHEN o.attendance_report_id IS NULL OR o.attendance_report_id='' THEN false
+                 ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
+                     WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s
+                       AND a.total_attendance_seconds>180) END AS attended
             FROM curriculum.live_session_occurrences o
             JOIN curriculum.live_sessions s ON s.id=o.live_session_id
-            WHERE lower(s.status) NOT IN ('cancelled','canceled','deleted')
-              AND lower(o.status) NOT IN ('cancelled','canceled','deleted')
-              AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(
-                CASE WHEN jsonb_typeof(s.attendees)='array' THEN s.attendees ELSE '[]'::jsonb END) e
-                WHERE lower(btrim(e))=%s)
-            ORDER BY o.scheduled_start,o.id''', [_key(source.email)])
+            JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
+            WHERE s.module_catalogue_id=ANY(%s)
+              AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+              AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+              AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+              AND (EXISTS (SELECT 1 FROM jsonb_array_elements_text(
+                    CASE WHEN jsonb_typeof(s.attendees)='array' THEN s.attendees ELSE '[]'::jsonb END) e
+                    WHERE lower(btrim(e))=%s)
+                   OR (o.attendance_report_id IS NOT NULL AND o.attendance_report_id<>''
+                       AND EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
+                           WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s
+                             AND a.total_attendance_seconds>0))
+                   OR EXISTS(SELECT 1 FROM curriculum.live_session_join_launches j
+                       WHERE j.occurrence_id=o.id AND lower(btrim(j.viewer_email))=%s))
+            ORDER BY o.scheduled_start,o.id''', [_key(source.email), module_ids,
+                                                _key(source.email), _key(source.email), _key(source.email)])
         result = dict_rows(cur)
     now = timezone.now()
     for row in result:
@@ -124,7 +154,8 @@ def read_native_occurrences(source):
             source='microsoft-teams', session_type='live_session',
             session_title=f"{row['module_title'] or 'Live session'} — Session {row['session_number']}",
             session_date=start.date(), session_start_time=start.time(), session_end_time=end.time(),
-            attendance_status='upcoming' if row['scheduled_start'] > now else
+            attendance_status='present' if row.get('attended') else
+                              'upcoming' if row['scheduled_start'] > now else
                               'in_progress' if row['scheduled_end'] > now else 'pending',
             minutes_late=0, catchup_completed=False,
         )
@@ -149,11 +180,25 @@ def lecture_register(source):
                 row = {**schedule, **row, 'scheduled_start': schedule['scheduled_start'],
                        'scheduled_end': schedule['scheduled_end'], 'session_date': schedule['session_date'],
                        'session_start_time': schedule['session_start_time'], 'session_end_time': schedule['session_end_time']}
-        elif row['session_date'] > timezone.localdate():
+        elif row['session_date'] > timezone.localdate() or (
+                row['session_date'] == timezone.localdate() and row['attendance_status'] == 'absent'):
             row = {**row, 'attendance_status': 'upcoming'}
         result.append({**row, 'updated_at': _aware(row.get('updated_at'))})
     result.extend(by_occurrence.values())
-    return result
+    # Once a Teams occurrence has ended, an unresolved attendance record is a
+    # missed session until stronger evidence (a Teams report or a saved
+    # confirmation) says otherwise. Keep live and future occurrences pending.
+    result = [
+        {**row, 'attendance_status': 'absent'}
+        if row.get('source') == 'microsoft-teams'
+        and row.get('attendance_status') == 'pending'
+        and row.get('scheduled_end')
+        and _aware(row['scheduled_end']) <= now
+        else row
+        for row in result
+    ]
+    from .attendance_confirmation import apply_confirmations, read_confirmations
+    return apply_confirmations(result, read_confirmations(source.id))
 
 
 def read_legacy_metadata(source, register):
@@ -260,6 +305,19 @@ def read_native_components(source, module_refs=None):
     return components, progress
 
 
+def read_assigned_modules(source):
+    """Return the learner's current assigned catalogue modules.
+
+    Attendance rows are historical/source data and may not exist yet for every
+    module on the learner's training plan. The module selector still needs to
+    expose those assignments so the learner can select an empty module and see
+    its zero/upcoming state.
+    """
+    with connections['enrolment'].cursor() as cur:
+        cur.execute(CURRENT_SUBJECTS_SQL, [source.id])
+        return [{'id': row[0], 'title': row[1]} for row in cur.fetchall()]
+
+
 def _component_for(row, components):
     candidates = []
     for component in components:
@@ -312,9 +370,15 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             'source': source, 'startTime': row['session_start_time'].strftime('%H:%M') if row.get('session_start_time') else '',
             'endTime': row['session_end_time'].strftime('%H:%M') if row.get('session_end_time') else '',
             'durationMinutes': _duration(row), 'contentSummary': '', 'ksbs': [], 'ksbScope': None, 'activities': [],
+            'startsAt': _aware(row['scheduled_start']).isoformat() if row.get('scheduled_start') else None,
+            'endsAt': _aware(row['scheduled_end']).isoformat() if row.get('scheduled_end') else None,
+            'joinUrl': (f"/learner_api/session-results/{kind}/{learner_id}/{row['live_session_id']}/sessions/{row['session_number']}/join/" if source == 'microsoft-teams' and row.get('live_session_id') and row.get('session_number') else _text(row.get('join_url'))),
+            'tutor': _text(row.get('tutor_name')), 'coach': _text(row.get('coach_name')),
+            'attendanceConfirmed': bool(row.get('attendance_confirmed')),
+            'creditedMinutes': row.get('credited_minutes'),
             'status': {'present': 'completed', 'late': 'late', 'absent': 'absent',
                        'upcoming': 'upcoming', 'in_progress': 'in_progress'}.get(row['attendance_status'], 'pending'),
-            'catchupStatus': None, 'updatedAt': row['updated_at'].isoformat() if row.get('updated_at') else None,
+            'excused': bool(row.get('excused')), 'catchupStatus': 'completed' if row.get('catchup_completed') else None, 'updatedAt': row['updated_at'].isoformat() if row.get('updated_at') else None,
         }
         if source == 'kbc-attendance':
             meta = legacy_meta.get(row['session_id']) or {}
@@ -372,9 +436,13 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
                 if key not in module_ksbs:
                     module_ksbs[key] = _activity_ksbs(module_activities)
                 _fill_ksbs(lecture, linked, module_activities, module_ksbs[key])
+        if lecture['attendanceConfirmed']:
+            lecture['durationMinutes'] = lecture['creditedMinutes']
+            if source == 'kbc-attendance':
+                lecture['monthlyLog']['month'] = lecture['date'][:7]
         if lecture['status'] == 'absent':
             activities = lecture['activities']
-            lecture['catchupStatus'] = 'completed' if activities and all(a['completed'] for a in activities) else 'pending'
+            lecture['catchupStatus'] = ('pending' if source == 'microsoft-teams' else 'completed' if activities and all(a['completed'] for a in activities) else 'pending')
         lectures.append(lecture)
     return sorted(lectures, key=lambda r: (r['date'], r['startTime'], r['id']))
 
@@ -395,8 +463,15 @@ def read_workspace(source, kind):
     native_modules = {row['module_catalogue_id'] for row in register if row.get('source') == 'microsoft-teams'}
     components, progress = read_native_components(source, native_modules)
     lectures = build_lectures(register, metadata, activities, components, kind, source.id)
+    # Include every current assignment, even when it has no attendance row yet.
+    # Historical/source-only modules remain available through the lecture list.
+    assigned_modules = read_assigned_modules(source)
     mode = read_mode(source, kind)
     with connections['enrolment'].cursor() as cur:
+        cur.execute('''SELECT coach_name,coach_email FROM "Learner".learners
+            WHERE enrolment_id=%s''', [source.id])
+        profiles = dict_rows(cur)
+        coach = (profiles[0].get('coach_name') or profiles[0].get('coach_email') or '') if len(profiles) == 1 else ''
         cur.execute('''SELECT id,attendance_id,status,session_title,created_at,updated_at
             FROM "Coach".coach_absence_report WHERE learner_id=%s ORDER BY created_at DESC''', [source.id])
         reports = dict_rows(cur)
@@ -410,14 +485,17 @@ def read_workspace(source, kind):
             FROM "Learner".learner_progress_entries p
             JOIN "Learner".learners l ON l.id=p.learner_id
             WHERE l.enrolment_id=%s AND p.kind='activity_event' AND p.feed_occurred_at IS NOT NULL
+              AND coalesce(p.feed_kind,'')<>'attendance_confirmation'
             ORDER BY p.feed_occurred_at DESC,p.id DESC LIMIT 20''', [source.id])
         events = dict_rows(cur)
     reported = {str(report['attendance_id']): report for report in reversed(reports)}
     recent = []
     for lecture in lectures:
+        lecture['coach'] = coach or lecture['coach']
         report = reported.get(lecture['reportId'])
         lecture['absenceReport'] = {'id': report['id'], 'status': report['status']} if report else None
-        lecture['canReportAbsence'] = lecture['status'] in {'absent', 'upcoming'} and not report
+        lecture['canReportAbsence'] = (lecture['status'] in {'absent', 'upcoming', 'in_progress'} or
+            (lecture['status'] == 'pending' and lecture['date'] == timezone.localdate().isoformat())) and not report
         if lecture['status'] in {'completed', 'late'} and lecture['updatedAt']:
             recent.append({'id': lecture['id'], 'title': f"{lecture['title']} attended", 'at': lecture['updatedAt'], 'type': 'attendance'})
     for report in reports:
@@ -445,9 +523,14 @@ def read_workspace(source, kind):
     mode['unmappedPlannedLectures'] = sum(r['durationMinutes'] is None for r in lectures if r['status'] == 'upcoming')
     mode['plannedLiveHours'] = round(planned, 2) if mode['mode'] == 'live' else 0
     mode['plannedRecordedHours'] = round(planned, 2) if mode['mode'] == 'lazy' else 0
+    module_options = {(r['moduleId'], r['module']) for r in lectures}
+    module_options.update(
+        (f"native:{row['id']}", row['title'])
+        for row in assigned_modules if row.get('id') and row.get('title')
+    )
     return {'lectures': lectures, 'totals': lecture_totals(lectures),
-            'summary': _summarize_attendance(register), 'mode': mode,
-            'modules': [{'id': key, 'title': title} for key, title in sorted({(r['moduleId'], r['module']) for r in lectures}, key=lambda v: v[1])],
+            'summary': _summarize_attendance(register), 'mode': mode, 'timeZone': settings.TIME_ZONE,
+            'modules': [{'id': key, 'title': title} for key, title in sorted(module_options, key=lambda v: v[1].casefold())],
             'recentActivity': sorted(recent, key=lambda r: r['at'], reverse=True)[:30]}
 
 
@@ -462,6 +545,7 @@ def attendance_lectures(request, kind, learner_id):
         if source is None:
             return JsonResponse({'error': 'Learner not found.'}, status=404)
         payload = read_workspace(source, kind)
+        payload['csrfToken'] = get_token(request)
     except Exception:
         log.exception('Could not read lecture workspace for learner %s', learner_id)
         return JsonResponse({'error': 'Could not refresh lectures. Please try again.'}, status=502)

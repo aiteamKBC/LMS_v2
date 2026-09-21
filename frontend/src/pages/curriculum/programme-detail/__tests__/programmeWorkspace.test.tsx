@@ -144,6 +144,14 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumConfirm: vi.fn(async () => undefined),
 }));
 
+vi.mock('@/api/curriculumLearnerAssignments', () => ({
+  fetchLearnerAssignments: vi.fn(async (target: { id: string; name: string; scope: string }) => ({
+    target: { ...target, moduleCount: 1, programmeName: 'Data Analyst' },
+    learners: [], totals: { learnerCount: 0, assignedCount: 0 },
+  })),
+  assignCurriculumLearners: vi.fn(),
+}));
+
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   fetchCurriculumProgrammeDetail: vi.fn(async () => ({
@@ -192,6 +200,24 @@ async function openTab(name: RegExp) {
 }
 
 describe('Programme workspace', { timeout: 15000 }, () => {
+  it('opens cohort and module assignment with the correct independent scope', async () => {
+    const { fetchLearnerAssignments } = await import('@/api/curriculumLearnerAssignments');
+    await renderWorkspace();
+    await openTab(/Cohorts/);
+    await userEvent.click(screen.getByRole('button', { name: 'Assign learners' }));
+    await screen.findByText('Selected learners will join this cohort and receive all 1 modules in it.');
+    expect(fetchLearnerAssignments).toHaveBeenCalledWith(
+      { scope: 'cohort', id: 'COHORT-1', name: 'Sept 2026' }, expect.any(AbortSignal),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await openTab(/Modules/);
+    await userEvent.click(screen.getAllByRole('button', { name: 'Assign learners' })[0]);
+    await screen.findByText(/Selected learners will receive this module only/);
+    expect(fetchLearnerAssignments).toHaveBeenCalledWith(
+      { scope: 'module', id: 'MOD-1', name: 'Data Foundations' }, expect.any(AbortSignal),
+    );
+  });
+
   it('opens with the programme in a header, not straight into a records table', async () => {
     await renderWorkspace();
 
@@ -380,6 +406,37 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(otjhCard).toHaveTextContent('0h');
   });
 
+  it('uses the same component Expected OTJH total as Module Builder in the Modules tab', async () => {
+    const api = await import('@/lib/curriculumApi');
+    const authoredComponents = [
+      { ...components[0], id: 'COMP-A', type: 'Reading Material', expectedOtjh: 0.33 },
+      { ...components[0], id: 'COMP-B', type: 'Quiz', title: 'Knowledge check', expectedOtjh: 0.33 },
+      { ...components[0], id: 'COMP-C', type: 'PowerPoint', title: 'Slides', expectedOtjh: 0.33 },
+      { ...components[0], id: 'COMP-OLD', moduleCatalogueId: '', moduleId: '', title: 'Old same-title row', expectedOtjh: 200 },
+    ] as unknown as CurriculumComponent[];
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+      schema: 'test',
+      programme,
+      cohorts: [],
+      flat: {
+        cohorts,
+        groups,
+        groupIds: ['GROUP-1'],
+        modules: [modules[0]],
+        sessions: [],
+        components: authoredComponents,
+      },
+    });
+    vi.mocked(api.fetchCurriculumComponents).mockResolvedValueOnce(authoredComponents);
+
+    await renderWorkspace();
+    await openTab(/Modules/);
+
+    const moduleRow = screen.getByRole('link', { name: /^Data Foundations/ }).parentElement;
+    expect(moduleRow).not.toBeNull();
+    expect(moduleRow).toHaveTextContent('1h');
+  });
+
   it('keeps empty table structure visible and disables filters until records exist', async () => {
     const api = await import('@/lib/curriculumApi');
     vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
@@ -414,10 +471,16 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     await renderWorkspace();
     await openTab(/Modules/);
 
-    expect(screen.getByRole('link', { name: /^Data Foundations/ })).toHaveAttribute('href', '/curriculum/modules/MOD-1?moduleName=Data+Foundations');
+    // The row opens the Module Builder: authoring the weeks, components and
+    // material is what a reader comes to a module for from here.
+    expect(screen.getByRole('link', { name: /^Data Foundations/ })).toHaveAttribute(
+      'href',
+      '/curriculum/module-builder?module=MOD-1&moduleTitle=Data+Foundations&programme=PROG-DATA&programmeName=Data+Analyst',
+    );
     // Row actions say what they do rather than leaving the reader to decode a
-    // glyph, and there is one per module.
-    expect(screen.getAllByRole('button', { name: 'Builder' })).toHaveLength(2);
+    // glyph, and there is one per module. The module's read-only home stays one
+    // named action away.
+    expect(screen.getAllByRole('button', { name: 'Workspace' })).toHaveLength(2);
     // A module's Teams series, week timeline and KSB weights are its own page's
     // job. Repeating them here is what made this tab a second module workspace.
     expect(screen.queryByText(/Fetch attendance & recordings/)).not.toBeInTheDocument();

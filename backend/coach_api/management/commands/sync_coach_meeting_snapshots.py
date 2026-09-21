@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from coach_api.models import CoachCalendarEvent
 from coach_api.views import (
+    apply_teams_attendance_status_transition,
     coach_meeting_snapshot_tables_ready,
     fetch_coach_meeting_graph_snapshot,
     persist_coach_meeting_snapshots,
@@ -27,13 +28,27 @@ class Command(BaseCommand):
         parser.add_argument(
             "--recent",
             action="store_true",
-            help="Sync coach calendar events that ended recently. Intended for cron/scheduled jobs.",
+            help=(
+                "Sync coach calendar events whose scheduled meeting time is close to now: "
+                "already started (or starting within --lead-minutes) and either still running "
+                "or ended within --lookback-hours. Intended for a periodic (e.g. every 5 "
+                "minutes) cron/scheduled job -- this is what actually catches a Teams meeting "
+                "moving to in-progress shortly after someone joins, not just its final artifacts."
+            ),
         )
         parser.add_argument(
             "--lookback-hours",
             type=int,
             default=24,
-            help="With --recent, sync meetings that ended within this many hours. Default: 24.",
+            help="With --recent, keep syncing a meeting for this many hours after it ended (its attendance "
+                 "report/artifacts can take a while to appear). Default: 24.",
+        )
+        parser.add_argument(
+            "--lead-minutes",
+            type=int,
+            default=10,
+            help="With --recent, also sync a meeting starting within this many minutes "
+                 "(Teams often allows joining slightly before the scheduled start). Default: 10.",
         )
         parser.add_argument(
             "--event-key",
@@ -71,6 +86,7 @@ class Command(BaseCommand):
         owner_email = (options["owner_email"] or "").strip()
         limit = options["limit"]
         lookback_hours = options["lookback_hours"]
+        lead_minutes = options["lead_minutes"]
         dry_run = bool(options["dry_run"])
         allow_missing_tables = bool(options["allow_missing_tables"])
 
@@ -80,6 +96,8 @@ class Command(BaseCommand):
             raise CommandError("--limit must be 0 or greater.")
         if lookback_hours < 1:
             raise CommandError("--lookback-hours must be 1 or greater.")
+        if lead_minutes < 0:
+            raise CommandError("--lead-minutes must be 0 or greater.")
 
         database = router.db_for_write(CoachCalendarEvent) or "default"
         if not dry_run and not coach_meeting_snapshot_tables_ready(database):
@@ -99,6 +117,7 @@ class Command(BaseCommand):
             owner_email=owner_email,
             limit=limit,
             lookback_hours=lookback_hours,
+            lead_minutes=lead_minutes,
         )
         if not records:
             self.stdout.write(self.style.WARNING("No coach calendar events matched this sync scope."))
@@ -127,6 +146,13 @@ class Command(BaseCommand):
                     )
                 )
                 continue
+
+            # This is the primary, cron-friendly path for the scheduled ->
+            # in-progress transition: a linked MCM/Progress Review only moves
+            # once this sync actually sees a real Teams join, using the
+            # attendance records this command already fetched for its own
+            # snapshot-persistence purposes below -- no second Graph call.
+            apply_teams_attendance_status_transition(record, (snapshot.get("attendance") or {}).get("records") or [])
 
             storage = persist_coach_meeting_snapshots(
                 record,
@@ -173,6 +199,7 @@ class Command(BaseCommand):
         owner_email: str,
         limit: int,
         lookback_hours: int,
+        lead_minutes: int = 10,
     ) -> list[CoachCalendarEvent]:
         queryset = (
             CoachCalendarEvent.objects.exclude(meeting_link="")
@@ -187,15 +214,27 @@ class Command(BaseCommand):
         if sync_recent:
             now = timezone.now()
             window_start = now - timedelta(hours=lookback_hours)
+            lead = timedelta(minutes=max(int(lead_minutes), 0))
+            # Widened window (Phase 3): the original condition only matched a
+            # meeting that had ALREADY ENDED within --lookback-hours -- fine
+            # for "go fetch final artifacts", but it would never catch a
+            # meeting still in progress, since its end time is still in the
+            # future at the moment someone actually joins. A meeting now
+            # qualifies once it has started (within `lead_minutes` early, in
+            # case Teams let someone in ahead of the scheduled time) and its
+            # end/lookback window hasn't gone stale -- covering "about to
+            # start" through "still running" through "recently ended", not
+            # just the last of those three.
             queryset = queryset.filter(
                 scheduled_date__gte=window_start.date(),
-                scheduled_date__lte=now.date(),
+                scheduled_date__lte=(now + lead).date(),
             )
             records = [
                 record
                 for record in queryset
-                if self._event_end_at(record) is not None
-                and window_start <= self._event_end_at(record) <= now
+                if self._event_start_at(record) is not None
+                and self._event_start_at(record) - lead <= now
+                and self._event_end_at(record) >= window_start
             ]
             records.sort(key=lambda record: self._event_end_at(record) or now)
             return records[:limit] if limit else records
@@ -212,12 +251,18 @@ class Command(BaseCommand):
             f"{date_value} {time_value} | owner={record.owner_email} | learner={record.learner_name}"
         )
 
-    def _event_end_at(self, record: CoachCalendarEvent):
+    def _event_start_at(self, record: CoachCalendarEvent):
         if not record.scheduled_date:
             return None
         scheduled_time = record.scheduled_time or time(0, 0)
         start_at = datetime.combine(record.scheduled_date, scheduled_time)
         if timezone.is_naive(start_at):
             start_at = timezone.make_aware(start_at, timezone.get_current_timezone())
+        return start_at
+
+    def _event_end_at(self, record: CoachCalendarEvent):
+        start_at = self._event_start_at(record)
+        if start_at is None:
+            return None
         duration = max(int(record.duration_minutes or 60), 1)
         return start_at + timedelta(minutes=duration)

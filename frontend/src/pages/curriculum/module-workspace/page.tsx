@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LearnerPreview } from '../module-builder/LearnerPreview';
+import { ModuleSessions } from './ModuleSessions';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -7,15 +9,17 @@ import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
 import {
   fetchCurriculumModuleKsbCoverage,
   onCalendarOccurrences,
-  previewModuleSessionPlan,
   type CurriculumKsbCoverageResponse,
   type CurriculumModule,
   type CurriculumSessionPlanPreview,
 } from '@/lib/curriculumApi';
 import {
   formatCalendarDateTime,
+  weeksTouchedByHoliday,
   liveSessionNamesByNumber,
-  moduleWeekSessionSlots,
+  moduleAuthoredLiveSessions,
+  moduleLiveSessionDateDrift,
+  fetchModuleSessionPlan,
   loadModuleStructure,
   loadTeamsMeetingArtifacts,
   teamsMeetingArtifactPreviewUrl,
@@ -24,6 +28,7 @@ import {
   zonedNaiveToUtcIso,
   type KsbMapping,
   type ModuleCatalogueItem,
+  type ModuleWeekSessionPlan,
   type TeamsAttendanceRecord,
   type TeamsMeetingArtifact,
   type TeamsMeetingArtifactsResult,
@@ -34,6 +39,7 @@ import {
   findModule,
   formatDateLabel,
   formatDateTimeLabel,
+  holidaysForScheduling,
   moduleIdentity,
   namedCurriculumWorkspacePath,
   normaliseKey,
@@ -44,7 +50,7 @@ import {
 } from '../shared/entities/model';
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
 import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
-import { buildHolidayShiftPlan, CompactSchedulePreview } from '../shared/entities/sessionShiftPreview';
+import { buildHolidayShiftPlan, CompactSchedulePreview, WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
 import {
   DetailRow,
   EntityEmptyState,
@@ -72,7 +78,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // tutor-assignment notification firing.
 // ============================================================================
 
-type Tab = 'overview' | 'schedule' | 'components' | 'ksbs' | 'achievement';
+type Tab = 'sessions' | 'overview' | 'schedule' | 'components' | 'ksbs' | 'achievement';
 
 // The same categorical palette the Week Builder authors components with
 // (driven by each type's own `tone` in the authoring model) — a component
@@ -106,6 +112,13 @@ function moduleBuilderUrl(catalogueId: string, programmeId: string, programmeNam
 
 const DEFAULT_START_TIME = '09:00';
 const DEFAULT_DURATION_MINUTES = 60;
+
+/** `2026-09-16` -> `Wednesday`. Empty for anything that is not a date. */
+function weekdayNameOf(value: string): string {
+  const parsed = new Date(`${cleanText(value).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleDateString('en-GB', { weekday: 'long' });
+}
 
 /** `HH:mm`, with anything the group stored past the minute dropped. */
 function clockTime(value: unknown, fallback = ''): string {
@@ -146,6 +159,7 @@ export default function ModuleWorkspacePage() {
   const rawInitialTab = searchParams.get('tab');
   const initialTab = (rawInitialTab === 'teams' ? 'schedule' : (rawInitialTab as Tab)) || 'overview';
   const [tab, setTab] = useState<Tab>(initialTab);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [structure, setStructure] = useState<ModuleCatalogueItem | null>(null);
   const [structureError, setStructureError] = useState<string | null>(null);
   const [structureLoading, setStructureLoading] = useState(true);
@@ -241,15 +255,10 @@ export default function ModuleWorkspacePage() {
     }
   }, [context, loaded, loading, module, reload, retriedUnlinkedModule]);
 
-  // The three values the session dates are generated from. They are read from
-  // the saved module (and its group's timetable) rather than typed here: the
-  // module form is the one place they are edited.
-  const scheduleStartDate = cleanText(module?.startDate) || cleanText(structure?.startDate);
-  const scheduleSessions = Number(module?.sessionsNumber || structure?.sessionsNumber || 1) || 1;
-  const scheduleWeekDays = cleanText(context?.group?.weekDays);
-
+  // Nothing on this page generates session dates any more, so the start date,
+  // session count and delivery day it used to generate them from are gone with
+  // the generator. What the module delivers is what its Course structure holds.
   const [plan, setPlan] = useState<CurriculumSessionPlanPreview | null>(null);
-  const [planLoading, setPlanLoading] = useState(false);
 
   const [coverage, setCoverage] = useState<CurriculumKsbCoverageResponse | null>(null);
   const [coverageLoading, setCoverageLoading] = useState(false);
@@ -294,12 +303,16 @@ export default function ModuleWorkspacePage() {
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [modules, tutors]);
 
-  // The holidays that apply here are the ones the parent cohort selected — the
-  // same set the backend uses when it generates this module's session dates.
-  const cohortHolidays = useMemo(() => {
-    const ids = new Set((cohort?.holidayIds || []).map(holidayId => normaliseKey(holidayId)));
-    return holidays.filter(holiday => ids.has(normaliseKey(holiday.id)));
-  }, [cohort, holidays]);
+  // The holidays that move this module's sessions: every England bank holiday
+  // from the parent cohort's start date onwards, minus the ones the cohort has
+  // unticked, which is the set the backend plans with. Not the cohort's own
+  // in-period list -- a plan pushed past the cohort's end date by the holidays
+  // it stepped over still has to step over the ones it lands on after it. It
+  // also names them below, so a session that moved says which holiday moved it.
+  const cohortHolidays = useMemo(
+    () => holidaysForScheduling(holidays, cohort?.startDate, cohort?.excludedHolidayIds),
+    [cohort, holidays],
+  );
 
   // ------------------------------------------------------------- structure
 
@@ -327,24 +340,86 @@ export default function ModuleWorkspacePage() {
 
   // ------------------------------------------------------- session preview
 
+  /**
+   * The live sessions this module actually delivers: one per live-session
+   * component in the Course structure, on that component's own date.
+   *
+   * The same list the backend builds the session calendar and the Teams
+   * occurrences from, so these rows, the Teams calendar and what pressing
+   * Update sends are one thing.
+   *
+   * There is deliberately no stand-in. A module with no live sessions, or with
+   * live sessions nobody has dated, gets `null` here and the panel says what is
+   * missing. Drawing the plan its stored counts imply instead showed dates no
+   * author had chosen, for sessions no author had written, on the screen people
+   * use to check the Teams calendar against.
+   */
+  const authoredLiveSessions = useMemo(() => moduleAuthoredLiveSessions(structure), [structure]);
+  const undatedLiveSessions = useMemo(
+    () => authoredLiveSessions.filter(session => !cleanText(session.date)),
+    [authoredLiveSessions],
+  );
+  const authoredSessionPlan = useMemo<CurriculumSessionPlanPreview | null>(() => {
+    const dated = authoredLiveSessions.filter(session => cleanText(session.date));
+    if (!dated.length) return null;
+    const sessions = dated.map((session, index) => {
+      const date = cleanText(session.date);
+      // A ticked holiday on this date is named and does nothing else.
+      const holiday = cohortHolidays.find(item => (
+        String(item.startDate) <= date && date <= String(item.endDate || item.startDate)
+      ));
+      return {
+        sessionNumber: index + 1,
+        date,
+        day: weekdayNameOf(date),
+        startTime: cleanText(session.startTime) || undefined,
+        durationMinutes: session.durationMinutes || undefined,
+        skippedHolidays: holiday ? [date] : [],
+      };
+    });
+    return {
+      sessions,
+      skippedHolidays: sessions.flatMap(session => session.skippedHolidays),
+      finalEndDate: sessions[sessions.length - 1]?.date || '',
+      warnings: [],
+    };
+  }, [authoredLiveSessions, cohortHolidays]);
+
   useEffect(() => {
     if (tab !== 'schedule') return undefined;
-    if (!scheduleStartDate) { setPlan(null); return undefined; }
+    // The authored live sessions are the schedule, and they are already in
+    // hand: no round trip, and no second answer to disagree with.
+    setPlan(authoredSessionPlan);
+    return undefined;
+  }, [authoredSessionPlan, tab]);
+
+  /**
+   * The module's own dated plan, read only to check the authored dates against.
+   *
+   * The rows above stay built from the components themselves -- they are the
+   * schedule, and this must not become a second answer that disagrees with them.
+   * This is the other question: whether a session is still on the day its week
+   * runs on. A week's date is recomputed from the plan on every read and a
+   * session's is stamped once, so moving the module's start date or reordering
+   * its weeks leaves sessions behind on dates the calendar and Teams still use.
+   * One module row, not the whole curriculum, and only while this tab is open.
+   */
+  const [weekPlan, setWeekPlan] = useState<ModuleWeekSessionPlan | null>(null);
+  useEffect(() => {
+    if (tab !== 'schedule' || !catalogueId) return undefined;
     let active = true;
-    setPlanLoading(true);
-    const timer = setTimeout(() => {
-      previewModuleSessionPlan({
-        startDate: scheduleStartDate,
-        numberOfSessions: scheduleSessions,
-        weekDays: scheduleWeekDays,
-        holidays: cohortHolidays,
-      })
-        .then(result => { if (active) setPlan(result); })
-        .catch(() => { if (active) setPlan(null); })
-        .finally(() => { if (active) setPlanLoading(false); });
-    }, 300);
-    return () => { active = false; clearTimeout(timer); };
-  }, [cohortHolidays, scheduleSessions, scheduleStartDate, scheduleWeekDays, tab]);
+    fetchModuleSessionPlan(catalogueId, structure?.weekStructure?.length, { timeoutMs: 30000 })
+      // A plan we could not read is not a disagreement: the notice stays away
+      // rather than claiming a drift it has nothing to measure.
+      .then(result => { if (active) setWeekPlan(result); })
+      .catch(() => { if (active) setWeekPlan(null); });
+    return () => { active = false; };
+  }, [catalogueId, structure?.weekStructure?.length, tab]);
+
+  const driftedLiveSessions = useMemo(
+    () => Array.from(moduleLiveSessionDateDrift(structure, weekPlan).values()),
+    [structure, weekPlan],
+  );
 
   // ------------------------------------------------------------- KSBs tab
 
@@ -399,16 +474,18 @@ export default function ModuleWorkspacePage() {
   const plannedOccurrences = useMemo(
     () => (plan?.sessions || []).map((session, index) => ({
       sessionNumber: session.sessionNumber || index + 1,
-      startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${sessionStartTime}`),
-      durationMinutes: sessionDurationMinutes,
+      startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || sessionStartTime}`),
+      durationMinutes: session.durationMinutes || sessionDurationMinutes,
     })),
     [plan, sessionDurationMinutes, sessionStartTime],
   );
+  const scheduleDurations = [...new Set((plan?.sessions || []).map(session => session.durationMinutes || sessionDurationMinutes))];
 
   /** What Teams holds today, session number first and position as the fallback. */
   const teamsOccurrenceFor = useCallback((sessionNumber: number, index: number) => {
-    const occurrences = onCalendarOccurrences(teams?.occurrences);
-    return occurrences.find(occurrence => Number(occurrence.session_number) === sessionNumber) || occurrences[index];
+    const occurrences = teams?.occurrences || [];
+    return occurrences.find(occurrence => Number(occurrence.session_number) === sessionNumber)
+      || (occurrences.every(occurrence => !occurrence.session_number) ? occurrences[index] : undefined);
   }, [teams]);
 
   // A preview session carries the ISO dates it stepped over, not their names.
@@ -431,10 +508,13 @@ export default function ModuleWorkspacePage() {
     ));
   }, [plannedOccurrences, teams, teamsSummary]);
 
-  // The same month-grouped "shifted to replacement" / "replacement delivered"
-  // timeline the Teams Meetings page uses, so a holiday-moved date reads the
-  // same way in both places.
+  // The same month-grouped timeline the Teams Meetings page uses, so a session
+  // a holiday falls on reads the same way in both places: an ordinary row with
+  // a warning under it. The shift/replacement half of this is parked -- nothing
+  // moves a session any more.
   const scheduleShiftPlan = useMemo(
+    // No original end date to pass: nothing shifts a session any more, so the
+    // authored plan has no "before the holidays" end date to be measured from.
     () => buildHolidayShiftPlan(plan?.sessions || [], holidayLabelFor),
     [plan, holidayLabelFor],
   );
@@ -460,14 +540,12 @@ export default function ModuleWorkspacePage() {
       session,
       name: sessionNames[sessionNumber - 1] || '',
       plannedUtc: plannedOccurrences[index]?.startDateTimeUtc || '',
-      durationMinutes: sessionDurationMinutes,
+      durationMinutes: session.durationMinutes || sessionDurationMinutes,
       shift: scheduleShiftPlan.shifts[index],
       actions: teamsSummary ? (
         <>
           {occurrence ? (
-            <span>
-              {formatCalendarDateTime(occurrence.scheduled_start)} · {cleanText(occurrence.status, 'scheduled')} · {occurrence.participant_count || occurrence.attendance?.filter(record => record.attended !== false).length || 0} attended
-            </span>
+            <MeetingChip status={cleanText(occurrence.status, 'scheduled')} attended={attended} />
           ) : (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">
               {teamsLoading ? 'Loading…' : 'Not on the calendar'}
@@ -496,6 +574,13 @@ export default function ModuleWorkspacePage() {
     };
   }), [openMeetings, plan, plannedOccurrences, scheduleShiftPlan, sessionDurationMinutes, sessionNames, teamsLoading, teamsOccurrenceFor, teamsSummary, toggleMeeting]);
 
+  const weekStructure = useMemo(() => structure?.weekStructure || [], [structure?.weekStructure]);
+
+  useEffect(() => {
+    if (!catalogueId || !weekStructure.length || collapsedWeeksInitRef.current === catalogueId) return;
+    collapsedWeeksInitRef.current = catalogueId;
+    setCollapsedWeeks(new Set(weekStructure.map(week => week.id)));
+  }, [catalogueId, weekStructure]);
   // Not found only once both readings have come back empty: the overview knows
   // nothing about an unattached module, and the structure is what settles it.
   if (!loading && loaded && !structureLoading && !module) {
@@ -520,41 +605,41 @@ export default function ModuleWorkspacePage() {
     );
   }
 
-  const weekStructure = structure?.weekStructure || [];
-
-  useEffect(() => {
-    if (!catalogueId || !weekStructure.length || collapsedWeeksInitRef.current === catalogueId) return;
-    collapsedWeeksInitRef.current = catalogueId;
-    setCollapsedWeeks(new Set(weekStructure.map(week => week.id)));
-  }, [catalogueId, weekStructure]);
   const componentCount = weekStructure.reduce((sum, week) => sum + (week.components?.length || 0), 0);
   const totalOtjh = structure?.totalOtjh ?? 0;
 
   // A week's date is the first date it consumes, and a week can consume more
-  // than one: a group delivering Mon+Thu runs two sessions of the same week, so
-  // week 2 starts on session 3 rather than session 2. Pairing week number with
-  // session number reads a week onto the wrong day the moment a group delivers
-  // more than once a week.
+  // than one: a group delivering Mon+Thu runs two live sessions of the same
+  // week, so week 2 starts on session 3 rather than session 2. Pairing week
+  // number with session number reads a week onto the wrong day the moment a
+  // group delivers more than once a week.
   //
-  // How many dates each week takes is `moduleWeekSessionSlots` -- the delivery
-  // days a week runs on, whether or not a live session has been authored for
-  // each of them. Counting the week's live components instead made a week that
-  // is one live session short consume one date rather than two, and every week
-  // below it slid a day early.
+  // This plan is `authoredSessionPlan` -- built one entry per DATED live-session
+  // component, in course-structure order -- so how many dates a week consumes is
+  // simply how many dated live sessions it holds. A week holding none consumes
+  // none: there is no entry in this list for it, and giving it the delivery-day
+  // count instead swallowed the dates belonging to the weeks below it.
   //
-  // The date read here is the week's SLOT -- the delivery day it was authored
-  // into, before any holiday was ticked. A closure moves the live session out
-  // of the week and nothing else, so the week is still grouped under, and read
-  // in, the month it runs in. Taking the session's own date instead slid every
-  // week after a closure into a month it does not teach in, and disagreed with
-  // the Course structure rail, which reads the same slots.
-  const planSessionDates = (plan?.sessions || []).map(session => session.slotDate || session.date);
-  const weekSlotCounts = moduleWeekSessionSlots(structure, planSessionDates.length);
+  // The date read here is the day the week is DELIVERED on. A closed delivery
+  // slot is not this week: it stays in the curriculum as a reading week of its
+  // own (rendered from `plan.slots` below), and the authored week keeps the
+  // session it holds. Reading `slotDate` instead dated the week to a day the
+  // module is shut, and disagreed with the Course structure rail, which has read
+  // the delivered date all along.
+  const planSessionDates = (plan?.sessions || []).map(session => session.date);
+  const weekSlotCounts = weekStructure.map(week => (
+    (week.components || []).filter(component => (
+      component.type === 'live-session' && cleanText(component.settings?.sessionDate)
+    )).length
+  ));
+  // Which authored weeks have a delivery day a ticked holiday falls on. The
+  // week keeps its own date and its own live session; this only flags it.
+  const weekHolidayNoticesByWeekId = weeksTouchedByHoliday(structure, plan);
   const weekDateByNumber = new Map<number, string>();
   let planDateCursor = 0;
   weekStructure.forEach((week, weekIndex) => {
     weekDateByNumber.set(week.weekNumber, planSessionDates[planDateCursor] || '');
-    planDateCursor += weekSlotCounts[weekIndex] || 1;
+    planDateCursor += weekSlotCounts[weekIndex] || 0;
   });
   const weekMonthGroups: Array<{ key: string; label: string; weeks: typeof weekStructure }> = [];
   weekStructure.forEach(week => {
@@ -573,6 +658,7 @@ export default function ModuleWorkspacePage() {
   const tabs = [
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'schedule', label: 'Schedule & Teams meeting', icon: 'ri-calendar-line' },
+    { key: 'sessions', label: 'Sessions & Recordings', icon: 'ri-video-line' },
     { key: 'components', label: 'Weeks & Components', icon: 'ri-layout-4-line', count: componentCount },
     { key: 'ksbs', label: 'KSBs', icon: 'ri-node-tree', count: ksbMappingCount },
     { key: 'achievement', label: 'Achievement KSBs', icon: 'ri-medal-line' },
@@ -670,6 +756,9 @@ export default function ModuleWorkspacePage() {
         )}
 
         <WorkspaceTabs tabs={tabs} active={tab} onChange={key => setTab(key as Tab)} />
+        {structure && <button type="button" onClick={() => setPreviewId('')} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">Preview module as learner</button>}
+        {previewId !== null && structure && <LearnerPreview module={structure} initialComponentId={previewId || undefined} onClose={() => setPreviewId(null)} />}
+        {tab === 'sessions' && <ModuleSessions moduleId={catalogueId} />}
 
         {/* ------------------------------------------------------- Overview */}
         {tab === 'overview' && (
@@ -792,9 +881,8 @@ export default function ModuleWorkspacePage() {
                   </div>
                 ) : (
                   <p className="text-[12px] text-foreground-500">
-                    {planLoading && !plannedOccurrences.length && 'Reading this module’s generated session dates…'}
-                    {!planLoading && !plannedOccurrences.length && 'No Teams calendar yet, and no session dates to put on one. Set the start date, the weeks and the delivery day with Edit module first.'}
-                    {Boolean(plannedOccurrences.length) && `No Teams calendar yet. Create one on the Teams Meetings page: it puts a meeting on each of the ${plannedOccurrences.length} session date${plannedOccurrences.length === 1 ? '' : 's'} below, holiday shifts included, and writes the join link into this module’s live-session components.`}
+                    {!plannedOccurrences.length && 'No Teams calendar yet, and no dated live sessions to put on one. Add them to this module’s Course structure in the Module Builder first.'}
+                    {Boolean(plannedOccurrences.length) && `No Teams calendar yet. Create one on the Teams Meetings page: it puts a meeting on each of the ${plannedOccurrences.length} session date${plannedOccurrences.length === 1 ? '' : 's'} below, and writes the join link into this module’s live-session components.`}
                   </p>
                 )}
               </div>
@@ -802,13 +890,30 @@ export default function ModuleWorkspacePage() {
 
             <WorkspacePanel
               title="Session schedule"
-              description={`Generated from the module's saved plan — ${scheduleSessions} session${scheduleSessions === 1 ? '' : 's'} from ${scheduleStartDate ? formatDateLabel(scheduleStartDate) : 'a start date that is not set yet'}${scheduleWeekDays ? ` on ${scheduleWeekDays}` : ''}. Change the dates with Edit module.`}
+              description={plan
+                ? `The module's ${plan.sessions.length} authored live session${plan.sessions.length === 1 ? '' : 's'}, each on its own date. Add, remove or re-date them in the Module Builder's Course structure.`
+                : 'One live session in the Course structure is one session here. Nothing is generated: what this module delivers is what has been authored.'}
             >
-              {planLoading && <p className="text-[12px] text-foreground-400">Recalculating…</p>}
-              {!planLoading && !plan && (
-                <p className="text-[12px] text-foreground-500">
-                  This module has no start date or delivery day yet, so there are no session dates to generate. Set them with Edit module.
-                </p>
+              {/* Nothing stands in for an unfinished module. The panel says
+                  which part of the job is not done and where to do it, rather
+                  than drawing a plan the stored counts imply -- that plan read
+                  as a real schedule and was then compared against Teams. */}
+              {!plan && (
+                <ScheduleGap
+                  authored={authoredLiveSessions.length}
+                  undated={undatedLiveSessions.length}
+                  builderUrl={moduleBuilderUrl(catalogueId, context?.programmeId || '', context?.programmeName || '')}
+                />
+              )}
+              {/* Stated, never corrected here. Re-dating these is a Microsoft
+                  operation that mails the attendees, and that lives on the
+                  Teams Meetings page -- so this links out rather than growing a
+                  second door onto the same write. */}
+              {Boolean(driftedLiveSessions.length) && (
+                <ScheduleDriftNotice
+                  drifted={driftedLiveSessions}
+                  teamsUrl={`/curriculum/teams-meetings?module=${encodeURIComponent(catalogueId)}`}
+                />
               )}
               {plan && (
                 <>
@@ -818,9 +923,13 @@ export default function ModuleWorkspacePage() {
                       fact anyone reads. */}
                   <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <ScheduleStat icon="ri-calendar-check-line" tone="blue" label="Sessions" value={plan.sessions.length} />
-                    <ScheduleStat icon="ri-time-line" tone="teal" label="Each session" value={`${sessionDurationMinutes} min`} />
+                    <ScheduleStat icon="ri-time-line" tone="teal" label={scheduleDurations.length > 1 ? 'Session durations' : 'Each session'}
+                      value={scheduleDurations.length > 1 ? `${Math.min(...scheduleDurations)}–${Math.max(...scheduleDurations)} min` : `${scheduleDurations[0] || sessionDurationMinutes} min`} />
                     <ScheduleStat icon="ri-flag-line" tone="violet" label="Final session" value={formatDateLabel(plan.finalEndDate)} />
-                    <ScheduleStat icon="ri-sun-line" tone="amber" label="Holidays skipped" value={plan.skippedHolidays.length} />
+                    {/* Not "skipped": the sessions on these dates are still
+                        in the plan and still run. This counts the dates a
+                        holiday falls on, so the author can go and look. */}
+                    <ScheduleStat icon="ri-sun-line" tone="amber" label="On a holiday" value={plan.skippedHolidays.length} />
                   </div>
                   {plan.warnings?.map(warning => (
                     <p key={warning} className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-800">
@@ -829,14 +938,14 @@ export default function ModuleWorkspacePage() {
                   ))}
 
                   {/* The same month-grouped timeline as the Teams Meetings
-                      page: a red "shifted to replacement" card next to the
-                      green delivered date, and — while a Teams calendar
-                      exists — that meeting's own status on the row itself. */}
+                      page: one row per session on its own date, a holiday
+                      warning under any row a closed date falls on, and — while
+                      a Teams calendar exists — that meeting's own status. */}
                   <div className="overflow-hidden rounded-xl border border-background-200 bg-background-50">
                     <CompactSchedulePreview
                       occurrences={scheduleOccurrences}
                       formatLabel={(plannedUtc, date) => (plannedUtc ? formatCalendarDateTime(plannedUtc) : formatDateLabel(date))}
-                      showDuration={false}
+                      showDuration={scheduleDurations.length > 1}
                     />
                   </div>
                   {teamsSummary && (
@@ -848,7 +957,7 @@ export default function ModuleWorkspacePage() {
               )}
               {!cohortHolidays.length && cohort && (
                 <p className="mt-4 text-[11px] text-foreground-400">
-                  This cohort has no holidays selected, so no dates are skipped.
+                  No bank holidays fall on or after this cohort's start date, so no session carries a holiday warning.
                 </p>
               )}
             </WorkspacePanel>
@@ -900,7 +1009,9 @@ export default function ModuleWorkspacePage() {
                     {group.label}
                   </p>
                   <div className="space-y-6">
-                    {group.weeks.map(week => {
+                    {group.weeks.map(week => (
+                      <Fragment key={`week-group-${week.id}`}>
+                      {(() => {
                       const components = week.components || [];
                       const weekOtjh = components.reduce((sum, component) => sum + (component.expectedOtjh || 0), 0);
                       const isCollapsed = collapsedWeeks.has(week.id);
@@ -949,6 +1060,9 @@ export default function ModuleWorkspacePage() {
                               )}
                             </div>
                           </button>
+                          {(weekHolidayNoticesByWeekId.get(week.id) || []).map(slot => (
+                            <WeekHolidayNotice key={`holiday-${slot.date}`} slot={slot} weekDate={weekDate} />
+                          ))}
                           {!isCollapsed && (
                             components.length ? (
                               // Each component is its own card with air around it,
@@ -970,6 +1084,7 @@ export default function ModuleWorkspacePage() {
                                         <p className="truncate text-[13px] font-semibold text-foreground-900">
                                           {component.title || 'Untitled component'}
                                         </p>
+                                        <button type="button" onClick={() => setPreviewId(component.id)} className="mt-1 text-xs font-semibold text-primary-700 underline">View as learner</button>
                                         <span className={`mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone.chip}`}>
                                           {definition.label}
                                         </span>
@@ -1006,7 +1121,9 @@ export default function ModuleWorkspacePage() {
                           )}
                         </div>
                       );
-                    })}
+                      })()}
+                      </Fragment>
+                    ))}
                   </div>
                 </div>
               ))}
@@ -1122,6 +1239,86 @@ export default function ModuleWorkspacePage() {
 // A stat tile that carries the same tone identity as a component chip
 // (COMPONENT_TONE), so "this is going well" / "this needs attention" reads
 // as color the moment the tab opens, not just in a line of text underneath.
+/**
+ * What is missing, instead of a schedule.
+ *
+ * Three different unfinished states, and they need different work, so the
+ * panel names the one it is actually in rather than a single "no dates yet".
+ */
+function ScheduleGap({ authored, undated, builderUrl }: {
+  authored: number;
+  undated: number;
+  builderUrl: string;
+}) {
+  const dated = Math.max(0, authored - undated);
+  const headline = !authored
+    ? 'This module has no live sessions'
+    : !dated
+      ? `None of this module’s ${authored} live session${authored === 1 ? '' : 's'} has a date`
+      : `${undated} of this module’s ${authored} live sessions has no date`;
+  const detail = !authored
+    ? 'A module delivers the live sessions its Course structure holds, and this one holds none — so it has no session dates, and there is nothing for a Teams calendar to be created from.'
+    : 'A live session with no date cannot be placed on the calendar or sent to Teams, and nothing here will choose a date for it.';
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3.5">
+      <p className="flex items-center gap-2 text-[13px] font-heading font-bold text-amber-900">
+        <AppIcon className="ri-error-warning-line text-base text-amber-600"></AppIcon>
+        {headline}
+      </p>
+      <p className="mt-1 text-[12px] leading-relaxed text-amber-900">{detail}</p>
+      <Link
+        to={builderUrl}
+        className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-amber-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-amber-700"
+      >
+        <AppIcon className="ri-layout-masonry-line text-sm"></AppIcon>
+        {authored ? 'Date them in the Module Builder' : 'Add live sessions in the Module Builder'}
+      </Link>
+    </div>
+  );
+}
+
+/**
+ * Live sessions still sitting on the date they were first stamped with.
+ *
+ * Named one by one rather than counted, because which session moved is the
+ * whole of the question, and the stored date is repeated because that -- not
+ * the week's -- is the date the calendar shows and the Teams push sends.
+ */
+function ScheduleDriftNotice({ drifted, teamsUrl }: {
+  drifted: { componentId: string; storedDate: string; weekDates: string[] }[];
+  teamsUrl: string;
+}) {
+  return (
+    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3.5">
+      <p className="flex items-center gap-2 text-[13px] font-heading font-bold text-amber-900">
+        <AppIcon className="ri-calendar-schedule-line text-base text-amber-600"></AppIcon>
+        {drifted.length === 1
+          ? 'One session is still on the date Teams has it booked for'
+          : `${drifted.length} sessions are still on the dates Teams has them booked for`}
+      </p>
+      <p className="mt-1 text-[12px] leading-relaxed text-amber-900">
+        Live sessions follow their week: change the module’s start date or move a week and the dates move with it.
+        {drifted.length === 1 ? ' This one was' : ' These were'} left where {drifted.length === 1 ? 'it is' : 'they are'},
+        because real attendees were invited to the booked date and only Microsoft can move a meeting.
+      </p>
+      <ul className="mt-2 space-y-0.5 text-[12px] text-amber-900">
+        {drifted.map(session => (
+          <li key={session.componentId} className="tabular-nums">
+            {formatDateLabel(session.storedDate)} — its week now runs {session.weekDates.map(formatDateLabel).join(' and ')}
+          </li>
+        ))}
+      </ul>
+      <Link
+        to={teamsUrl}
+        className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-amber-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-amber-700"
+      >
+        <AppIcon className="ri-team-line text-sm"></AppIcon>
+        Move {drifted.length === 1 ? 'it' : 'them'} on the Teams Meetings page
+      </Link>
+    </div>
+  );
+}
+
 function ScheduleStat({ icon, tone, label, value }: { icon: string; tone: string; label: string; value: string | number }) {
   const t = COMPONENT_TONE[tone] || COMPONENT_TONE.slate;
   return (
@@ -1162,13 +1359,7 @@ function MeetingChip({ status, attended }: { status: string; attended: number })
       : 'bg-background-100 text-foreground-600';
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${tone}`}>
-      {status}
-      {attended > 0 && (
-        <span className="inline-flex items-center gap-1">
-          <AppIcon className="ri-team-line text-[11px]"></AppIcon>
-          {attended}
-        </span>
-      )}
+      {key === 'scheduled' && attended === 0 ? status : `${status} · ${attended} attended`}
     </span>
   );
 }

@@ -14,16 +14,19 @@ export function MonthList({ summary, base, perspective }: { summary: LogSummary;
   const years = [...new Set(summary.months.map(item => item.month.slice(0, 4)))];
   const selectedYear = years.includes(year) ? year : 'all';
   const yearMonths = summary.months.filter(item => selectedYear === 'all' || item.month.startsWith(selectedYear));
-  const pending = yearMonths.filter(item => !item[signature]);
+  const pending = yearMonths.filter(item => !item.is_open && !item[signature]);
   const visible = pendingOnly ? pending : yearMonths;
   const groups = new Map<string, LogMonth[]>();
   visible.forEach(item => {
     const key = item.month.slice(0, 4);
     groups.set(key, [...(groups.get(key) || []), item]);
   });
-  const signed = summary.months.filter(item => item[signature]).length;
-  const total = summary.months.length;
+  const closed = summary.months.filter(item => !item.is_open);
+  const signed = closed.filter(item => item[signature]).length;
+  const total = closed.length;
+  const recordedTotal = summary.months.length;
   const percent = total ? Math.round(signed / total * 100) : 0;
+  const targetWarnings = [...new Set(summary.months.map(item => item.target_warning).filter(Boolean))];
   const signer = perspective === 'learner' ? 'Learner' : 'Coach';
 
   return <div className={styles.index}>
@@ -35,10 +38,11 @@ export function MonthList({ summary, base, perspective }: { summary: LogSummary;
       <div className={styles.completion}>
         <div><span>{signer} signatures</span><strong>{signed}<span> / {total}</span></strong></div>
         <div className={styles.progress} role="progressbar" aria-label={`${signer} signatures saved`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{ width: `${percent}%` }} /></div>
-        <p>{total - signed ? `${total - signed} ${total - signed === 1 ? 'month awaits' : 'months await'} a signature` : total ? 'All signatures saved' : 'No months recorded yet'}</p>
+        <p>{total - signed ? `${total - signed} ${total - signed === 1 ? 'month awaits' : 'months await'} a signature` : total ? 'All closed-month signatures saved' : recordedTotal ? 'Current month in progress' : 'No months recorded yet'}</p>
       </div>
     </header>
-    {!total ? <EmptyState title="No monthly logs yet" description="Your recorded activities will appear here at the end of the month, ready to review and sign." /> : <>
+    {targetWarnings.map(warning => <p key={warning} role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{warning}</p>)}
+    {!recordedTotal ? <EmptyState title="No monthly logs yet" description="Your recorded activities will appear here as you complete them." /> : <>
       <div className={styles.toolbar}>
         <div className={styles.filters} role="group" aria-label="Filter monthly logs">
           <button type="button" aria-pressed={!pendingOnly} onClick={() => setPendingOnly(false)}>All months<span>{yearMonths.length}</span></button>
@@ -53,14 +57,14 @@ export function MonthList({ summary, base, perspective }: { summary: LogSummary;
           <header className={styles.yearHeading}><h2>{value}</h2><span>{months.length} {months.length === 1 ? 'month' : 'months'}</span></header>
           <div className={styles.months}>{months.map(item => <article key={item.month} className={styles.month}>
             <div className={styles.monthIdentity}><span className={styles.monthIcon}><AppIcon className="ri-file-text-line" /></span><div><h3>{monthLabel(item.month)}</h3><p>{item.row_count} {item.row_count === 1 ? 'activity' : 'activities'}</p></div></div>
-            <dl className={styles.hours}><div><dt>Accepted hours</dt><dd>{duration(item.actual_hours)}</dd></div><div><dt>Target hours</dt><dd>{item.training_plan_target == null ? '—' : `${hours(item.training_plan_target)} h`}</dd></div></dl>
-            <div className={styles.signatures}><SignatureState role="Learner" signed={!!item.student_signature} /><SignatureState role="Coach" signed={!!item.coach_signature} /></div>
-            <span className={`${styles.status} ${item.status === 'complete' ? styles.complete : ''}`}><AppIcon className={item.status === 'complete' ? 'ri-check-line' : 'ri-time-line'} />{monthStatus(item)}</span>
-            <Link className={styles.openMonth} to={`${base}/${item.month}`} aria-label={`Review month: ${monthLabel(item.month)}`}><span>View report</span><AppIcon className="ri-arrow-right-line" /></Link>
+            <dl className={styles.hours}><div><dt>Accepted hours</dt><dd>{duration(item.actual_hours)}</dd></div><div><dt>Target hours</dt><dd>{item.training_plan_target == null ? 'Unavailable' : `${hours(item.training_plan_target)} h`}</dd></div></dl>
+            <div className={styles.signatures}>{item.is_open ? <span className={styles.unsigned}><AppIcon className="ri-time-line" />Month in progress</span> : <><SignatureState role="Learner" signed={!!item.student_signature} /><SignatureState role="Coach" signed={!!item.coach_signature} /></>}</div>
+            <span className={`${styles.status} ${item.status === 'complete' ? styles.complete : ''}`}><AppIcon className={item.status === 'complete' ? 'ri-check-line' : 'ri-time-line'} />{item.is_open ? 'In progress' : monthStatus(item)}</span>
+            <Link className={styles.openMonth} to={`${base}/${item.month}`} aria-label={`Review month: ${monthLabel(item.month)}`}><span>{item.is_open ? 'View current log' : 'View report'}</span><AppIcon className="ri-arrow-right-line" /></Link>
           </article>)}</div>
         </section>)}</div>}
     </>}
-    <p className={styles.scheduleNote}><AppIcon className="ri-information-line" />New months appear here after month-end with your recorded activities, ready to review and sign.</p>
+    <p className={styles.scheduleNote}><AppIcon className="ri-information-line" />The current month updates as activities are recorded. Signatures become available after month-end.</p>
   </div>;
 }
 

@@ -32,6 +32,11 @@ def register_row(**overrides):
 
 
 class AttendanceLectureTests(SimpleTestCase):
+    def setUp(self):
+        confirmations = patch('learner_api.attendance_confirmation.read_confirmations', return_value={})
+        confirmations.start()
+        self.addCleanup(confirmations.stop)
+
     def test_monthly_log_link_uses_exact_source_key_and_saved_report_month(self):
         row = register_row()
         result = build_lectures([row], {row['session_id']: {'log_month': '2026-08'}}, [], [], 'commercial', 12)[0]
@@ -48,6 +53,7 @@ class AttendanceLectureTests(SimpleTestCase):
     def test_native_timestamp_columns_are_interpreted_as_utc(self):
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         conn = MagicMock()
+        conn.cursor.return_value.__enter__.return_value.fetchall.return_value = [('business', 'Business')]
         raw = {'scheduled_start': datetime(2026, 9, 1, 23, 30), 'scheduled_end': datetime(2026, 9, 2, 0, 30),
                'updated_at': datetime(2026, 9, 1, 12), 'module_title': 'Business', 'session_number': 1}
         with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
@@ -57,6 +63,65 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result['session_date'], date(2026, 9, 2))
         self.assertEqual(result['session_start_time'].strftime('%H:%M'), '00:30')
         self.assertEqual(result['scheduled_start'].tzinfo, datetime_timezone.utc)
+
+    def test_schedule_requires_assignment_and_accepts_invitation_or_confirmed_attendance(self):
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = [('assigned-module', 'Current module title')]
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+            read_native_occurrences(SimpleNamespace(id=12, email=' LEARNER@example.test '))
+        assignment_sql, assignment_params = cur.execute.call_args_list[0].args
+        self.assertIn('enrolment."Created_users" WHERE id=%s', assignment_sql)
+        self.assertEqual(assignment_params, [12])
+        schedule_sql, schedule_params = cur.execute.call_args_list[1].args
+        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module'],
+                                           'learner@example.test', 'learner@example.test',
+                                           'learner@example.test'])
+        self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
+        self.assertIn('jsonb_array_elements_text', schedule_sql)
+        self.assertIn('curriculum.live_session_attendance', schedule_sql)
+        self.assertIn('a.total_attendance_seconds>0', schedule_sql)
+        self.assertIn('m.title AS module_title', schedule_sql)
+
+    def test_confirmed_teams_attendee_is_present_when_the_saved_invite_is_missing(self):
+        source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__.return_value.fetchall.return_value = [('business', 'Business')]
+        now = timezone.now()
+        raw = {'session_id': 'occ-1', 'occurrence_id': 'occ-1', 'live_session_id': 'live-1',
+               'scheduled_start': now-timedelta(hours=2), 'scheduled_end': now-timedelta(hours=1),
+               'updated_at': now, 'module_title': 'Business', 'module_catalogue_id': 'business',
+               'session_number': 1, 'attended': True}
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[raw]):
+            result = read_native_occurrences(source)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['attendance_status'], 'present')
+        self.assertEqual(result[0]['source'], 'microsoft-teams')
+
+    def test_schedule_excludes_deleted_modules_and_superseded_or_failed_series_and_occurrences(self):
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = [('assigned-module', 'Assigned')]
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+            read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test'))
+        sql = cur.execute.call_args.args[0]
+        self.assertIn('m.deleted_at IS NULL', sql)
+        self.assertIn('NOT coalesce(m.is_programme_deleted,false)', sql)
+        for alias in ('s', 'o'):
+            self.assertIn(f"lower(btrim({alias}.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')", sql)
+
+    def test_empty_plan_cannot_fall_back_to_all_teams_invitations(self):
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = []
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows') as read_rows:
+            self.assertEqual(read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test')), [])
+        cur.execute.assert_called_once()
+        read_rows.assert_not_called()
 
     def test_exact_audit_key_and_learner_owned_activity_completion(self):
         row = register_row()
@@ -177,13 +242,28 @@ class AttendanceLectureTests(SimpleTestCase):
     def test_native_schedule_deduplicates_reports_and_excludes_cancelled(self, combined, scheduled):
         now = timezone.now()
         ended = register_row(source='microsoft-teams', session_id='occ-1',
-                             scheduled_start=now-timedelta(hours=2), scheduled_end=now-timedelta(hours=1))
+                             attendance_status='pending', scheduled_start=now-timedelta(hours=2),
+                             scheduled_end=now-timedelta(hours=1))
         scheduled.return_value = [{**ended, 'attendance_status': 'pending'}]
         combined.return_value = [ended, {**ended, 'session_id': 'cancelled'}]
         source = SimpleNamespace(id=12)
         result = lecture_register(source)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['attendance_status'], 'absent')
+
+    @patch('learner_api.attendance_lectures.read_native_occurrences')
+    @patch('learner_api.attendance_lectures.combined_attendance_rows')
+    def test_only_ended_pending_teams_sessions_become_absent(self, combined, scheduled):
+        now = timezone.now()
+        ended = register_row(source='microsoft-teams', session_id='ended', attendance_status='pending',
+                             scheduled_start=now-timedelta(hours=2), scheduled_end=now-timedelta(hours=1))
+        active = register_row(source='microsoft-teams', session_id='active', attendance_status='in_progress',
+                              scheduled_start=now-timedelta(minutes=30), scheduled_end=now+timedelta(minutes=30))
+        attended = {**ended, 'session_id': 'attended', 'attendance_status': 'present'}
+        scheduled.return_value = [ended, active, attended]
+        combined.return_value = [ended, active, attended]
+        result = {row['session_id']: row['attendance_status'] for row in lecture_register(SimpleNamespace(id=12))}
+        self.assertEqual(result, {'ended': 'absent', 'active': 'in_progress', 'attended': 'present'})
 
     @patch('learner_api.attendance_lectures.read_native_occurrences')
     @patch('learner_api.attendance_lectures.combined_attendance_rows')
@@ -262,7 +342,7 @@ class AttendanceLectureTests(SimpleTestCase):
 class AttendanceAbsenceTests(SimpleTestCase):
     def test_reason_only_report_saves_without_optional_evidence(self):
         request = RequestFactory().post('/', {'sessionId': 'teams:future', 'sessionTitle': 'Lecture',
-                                             'sessionDate': '2026-10-01', 'reasonCategory': 'illness'})
+                                             'sessionDate': '2026-10-01', 'reasonCategory': 'illness', 'recoveryMethod': 'recorded'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
              patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
@@ -276,10 +356,12 @@ class AttendanceAbsenceTests(SimpleTestCase):
         self.assertEqual(response.status_code, 201)
         self.assertFalse(manager.create.call_args.kwargs['evidence_provided'])
         self.assertEqual(manager.create.call_args.kwargs['evidence_kind'], 'none')
+        self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'recorded')
+        self.assertIsNone(manager.create.call_args.kwargs['catchup_event_key'])
 
     def test_duplicate_report_is_rejected_before_writing(self):
         request = RequestFactory().post('/', {'sessionId': 'same', 'sessionTitle': 'Lecture',
-                                             'sessionDate': '2026-09-01', 'reasonCategory': 'illness'})
+                                             'sessionDate': '2026-09-01', 'reasonCategory': 'illness', 'recoveryMethod': 'recorded'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
              patch('learner_api.absence_reports._resolve_absent_attendance', return_value=123), \
@@ -325,7 +407,8 @@ class AttendanceLearnerLookupTests(SimpleTestCase):
                     match = resolve(path)
                     response = match.func(RequestFactory().get(path), **match.kwargs)
                     self.assertEqual(response.status_code, 200)
-                    self.assertEqual(json.loads(response.content), {'lectures': []})
+                    self.assertEqual(json.loads(response.content)['lectures'], [])
+                    self.assertTrue(json.loads(response.content)['csrfToken'])
                     read.assert_called_with(self.source, kind)
                     self.model.all_learners.filter.return_value.only.assert_called_with(*ATTENDANCE_SOURCE_FIELDS)
 

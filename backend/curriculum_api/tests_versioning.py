@@ -96,9 +96,14 @@ class HistoryCaptureTests(CurriculumPersistenceHarness):
             cursor.execute(f'delete from {versioning.qualified(versioning.VERSIONS_TABLE)}')
             cursor.execute(f'delete from {versioning.qualified(versioning.REVISIONS_TABLE)}')
         versioning.set_actor(None)
+        # A sibling suite whose transaction rolled back leaves its buffer on this
+        # thread. In a served request the middleware clears it on the way in;
+        # here nothing does, so these say so themselves.
+        versioning.discard_pending()
 
     def tearDown(self):
         versioning.set_actor(None)
+        versioning.discard_pending()
         super().tearDown()
 
     def revisions(self, entity_type='component', entity_id='COMP-1'):
@@ -109,6 +114,18 @@ class HistoryCaptureTests(CurriculumPersistenceHarness):
             [entity_type, entity_id],
         )
 
+    def committed(self, write):
+        """Run one write and let its history land, as a real request would.
+
+        A revision is recorded when the transaction that produced it commits, not
+        when the row is written -- that is what lets a save which withdraws a
+        component and writes it straight back record the edit rather than an
+        archive/restore pair. ``TestCase`` never commits, so every test here has
+        to say where the save it is describing ends.
+        """
+        with self.captureOnCommitCallbacks(execute=True):
+            return write()
+
     def save_component(self, **overrides):
         payload = {
             'id': 'COMP-1', 'module_catalogue_id': 'MOD-1', 'week_id': 'WEEK-1',
@@ -116,7 +133,9 @@ class HistoryCaptureTests(CurriculumPersistenceHarness):
             'settings_json': views.json_db_value({'version': '0.1', 'contentStatus': 'Draft'}),
         }
         payload.update(overrides)
-        return views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], payload)
+        return self.committed(
+            lambda: views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], payload)
+        )
 
     def test_first_save_creates_one_revision(self):
         self.save_component()
@@ -172,9 +191,9 @@ class HistoryCaptureTests(CurriculumPersistenceHarness):
 
     def test_archiving_records_what_the_record_held(self):
         self.save_component()
-        views.authoring_soft_delete(
+        self.committed(lambda: views.authoring_soft_delete(
             views.AUTHORING_COMPONENTS_TABLE, 'id = %s', ['COMP-1'], deleted_by='component-delete',
-        )
+        ))
         rows = self.revisions()
         self.assertEqual(rows[-1]['action'], 'archived')
         # Recorded once, not twice: soft_delete_rows writes through update_rows.

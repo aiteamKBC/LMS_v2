@@ -11,12 +11,13 @@ from django.views.decorators.http import require_GET, require_POST
 
 from audit_api.last_audit_ledger_views import _connection, _is_completed
 from audit_api.learner_exclusions import is_excluded_learner
-from login.permissions import learner_self_or_staff, learner_self_only, staff_only
+from login.permissions import learner_self_or_staff, learner_self_or_admin, staff_only
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
-from .models import LearnerProfile
+from .models import EnrolmentUser, LearnerProfile
+from .learning_plan import _effective_plan_ids
 from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
                                     read_student_activity, read_student_material)
 from .student_activity_access import student_activity_available
@@ -43,7 +44,7 @@ CURRENT_SUBJECTS_SQL = '''
     )
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
-    WHERE (cm.deleted_at IS NULL OR cm.deleted_via_parent IS NOT NULL)
+    WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
 '''
 
 def _direct_progress_records(enrolment_id):
@@ -72,7 +73,7 @@ def _direct_progress_records(enrolment_id):
             'submitted_at', 'passed',
         )
     )
-    return [{
+    records = [{
         'kind': row['kind'],
         'componentId': row['component_ref'],
         'quizId': row['quiz_ref'],
@@ -88,6 +89,29 @@ def _direct_progress_records(enrolment_id):
         'submittedAt': row['submitted_at'].isoformat() if row['submitted_at'] else '',
         'passed': row['passed'],
     } for row in entries]
+    component_ids = sorted({str(row['componentId']) for row in records if row.get('componentId')})
+    if not component_ids:
+        return records
+
+    # Assignment marking is stored separately from the progress row. Keep the
+    # coach decision beside the record so OTJH reporting can distinguish a
+    # hand-in from an accepted assignment without changing quiz semantics.
+    candidates = {str(enrolment_id), str(profile.id), str(profile.enrolment_id)}
+    try:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute('''SELECT DISTINCT ON (activity_id) activity_id,status
+                FROM "Learner"."learning_reflection_submissions"
+                WHERE learner_id::text=ANY(%s) AND activity_id=ANY(%s)
+                ORDER BY activity_id,submitted_at DESC NULLS LAST''', [sorted(candidates), component_ids])
+            statuses = {str(activity_id): str(status or '') for activity_id, status in cursor.fetchall()}
+    except DatabaseError:
+        # Older installations may not have the marking table yet. Preserve the
+        # existing progress response rather than making the overview unavailable.
+        statuses = {}
+    for record in records:
+        if record.get('componentId') in statuses:
+            record['markingStatus'] = statuses[record['componentId']]
+    return records
 
 
 def _direct_progress_otjh(progress):
@@ -200,10 +224,8 @@ def student_activity(request, kind, pk):
         direct_otjh,
     )
     payload['direct_otjh_activities'] = direct_progress
-    payload['persistence_ready'] = saved['ready']
     allowed = {f"legacy:{item['group_id']}" for item in payload['activities']}
     payload['covers'] = {key: _cover_url(value) for key, value in saved['covers'].items() if key in allowed}
-    payload['can_manage_covers'] = False
     response = JsonResponse(payload)
     response["Cache-Control"] = "private, no-store"
     return response
@@ -292,7 +314,10 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
                               'passed': row.get('quiz_passed'), 'attempt_number': row.get('quiz_attempt_number'),
                               'answers': historical_answers, 'status': row.get('status')},
                'persistence_ready': saved['ready'],
-               'can_attempt': bool(account and account.role == 'learner' and int(account.subject_id) == pk and saved['ready']),
+               'can_attempt': bool(account and saved['ready'] and (
+                   account.role == 'admin'
+                   or (account.role == 'learner' and int(account.subject_id) == pk)
+               )),
                'csrf_token': get_token(request)}
     return _private(payload)
 
@@ -345,7 +370,7 @@ def subject_file(request, kind, pk, group_id, activity_id, attachment_id):
 
 
 @require_POST
-@learner_self_only(kwarg='pk')
+@learner_self_or_admin(kwarg='pk')
 def start_subject_attempt(request, kind, pk, group_id, activity_id):
     try:
         aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
@@ -366,7 +391,7 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
 
 
 @require_POST
-@learner_self_only(kwarg='pk')
+@learner_self_or_admin(kwarg='pk')
 def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id):
     try:
         if len(request.body) > 256 * 1024:
@@ -412,7 +437,7 @@ def _builder_subject_metadata(cursor, refs):
     cursor.execute('''
         SELECT m.module_catalogue_id,m.title,m.cover_image_url
         FROM curriculum.modules m
-        WHERE (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)
+        WHERE (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
           AND m.module_catalogue_id=ANY(%s)
     ''', [native])
     covers, links = {}, {}
@@ -423,6 +448,34 @@ def _builder_subject_metadata(cursor, refs):
             covers[ref] = row['cover']
             links[ref] = {'id': row['id'], 'title': row['title']}
     return covers, links
+
+
+def _effective_current_subjects(cursor, learner_id):
+    """Return the same effective module set shown by the enrolment plan.
+
+    A saved plan can gain modules inherited from its group after it was last
+    agreed.  Reading only the stored JSON made My Learning omit those modules
+    until somebody saved the plan again, while the enrolment modal already
+    counted them.  Reuse the plan's effective-assignment rule so both screens
+    agree without writing anything during a learner read.
+    """
+    learner = EnrolmentUser.all_learners.only(
+        'programme', 'group', 'learning_plan', 'training_plan',
+    ).get(pk=learner_id)
+    module_ids = _effective_plan_ids(learner, {})
+    if not module_ids:
+        return []
+    cursor.execute('''
+        SELECT module_catalogue_id,title
+        FROM curriculum.modules
+        WHERE module_catalogue_id=ANY(%s)
+          AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)
+    ''', [module_ids])
+    titles = {module_id: title for module_id, title in cursor.fetchall()}
+    return [
+        {'id': module_id, 'title': titles[module_id]}
+        for module_id in module_ids if module_id in titles
+    ]
 
 
 @require_GET
@@ -438,16 +491,13 @@ def subject_covers(request, pk):
             if available:
                 cur.execute(f'SELECT subject_ref,storage_path FROM {subject_store.COVERS} WHERE subject_ref=ANY(%s)', [refs])
                 covers = {key: _cover_url(path) for key, path in cur.fetchall()}
-            cur.execute(CURRENT_SUBJECTS_SQL, [pk])
-            current_subjects = [{'id': module_id, 'title': title} for module_id, title in cur.fetchall()]
+            current_subjects = _effective_current_subjects(cur, pk)
             builder_covers, builder_subjects = _builder_subject_metadata(
                 cur, list(dict.fromkeys(refs + [f"current:{subject['id']}" for subject in current_subjects])),
             )
             covers.update(builder_covers)
             dates = read_builder_activity_dates(cur, [subject['id'] for subject in current_subjects])
-        return _private({'covers': covers, 'can_manage': False,
-                         'persistence_ready': available, 'csrf_token': get_token(request),
-                         'activity_dates': dates, 'current_subjects': current_subjects,
+        return _private({'covers': covers, 'activity_dates': dates, 'current_subjects': current_subjects,
                          'builder_subjects': builder_subjects})
     except DatabaseError:
         return _error('Could not load subject images.', 503)

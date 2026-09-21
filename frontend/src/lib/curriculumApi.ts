@@ -31,9 +31,23 @@ export function isRetryableError(error: unknown): boolean {
       }
     }
 
-    // Network/timeout errors (no HTTP response)
-    if (msg.includes('network') || msg.includes('timeout')) {
-      return true; // Network errors are transient and should be retried
+    // A client-side timeout (`fetchJsonOnce`'s own "Curriculum API timed out for
+    // …" message) is deliberately excluded here: the request already spent its
+    // whole budget once, so retrying it spends that budget again for the same
+    // outcome instead of surfacing the failure. This used to read
+    // `msg.includes('timeout')`, which never matched the word "timed out" this
+    // codebase actually throws -- every timeout fell through to "retry unknown
+    // errors" below and got retried up to RETRY_ATTEMPTS times, each attempt
+    // paying the full timeout again, which is how one slow endpoint turned into
+    // several minutes of retries stacked on top of each other.
+    if (msg.includes('timed out')) {
+      return false;
+    }
+
+    // A network error with no response at all (offline, DNS, connection reset)
+    // is the transient case this retry exists for.
+    if (msg.includes('network')) {
+      return true;
     }
   }
 
@@ -56,6 +70,7 @@ export function isRetryableError(error: unknown): boolean {
 
 interface CurriculumRequestInit {
   method?: string;
+  credentials?: RequestCredentials;
   headers?: Record<string, string>;
   body?: string;
   signal?: AbortSignal;
@@ -145,7 +160,7 @@ export function tutorConflictMessage(error: unknown): string | null {
 }
 
 /**
- * The backend's own sentence for any refused write, or `fallback`.
+ * The backend's own sentence and validation details for a refused write, or `fallback`.
  *
  * Same reasoning as `tutorConflictMessage` above, generalised: every handler
  * answers a refusal with `{ error: '...' }` saying what to do about it, and
@@ -153,11 +168,23 @@ export function tutorConflictMessage(error: unknown): string | null {
  * for /path: …". A dialog should show the sentence, not the diagnostic.
  */
 export function curriculumErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof CurriculumApiError && error.data && typeof error.data === 'object') {
-    const message = (error.data as { error?: unknown }).error;
-    if (typeof message === 'string' && message.trim()) return message;
-  }
-  return fallback;
+  return error instanceof CurriculumApiError ? curriculumPayloadErrorMessage(error.data) || fallback : fallback;
+}
+
+function curriculumPayloadErrorMessage(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const payload = data as Record<string, unknown>;
+  const message = typeof payload.error === 'string' && payload.error.trim() ? payload.error : '';
+  const details = [payload.validationErrors, payload.errors]
+    .flatMap(errors => Array.isArray(errors) ? errors : [])
+    .map((item: unknown) => typeof item === 'string'
+      ? item
+      : item && typeof item === 'object' ? (item as { message?: unknown }).message : undefined)
+    .filter((detail): detail is string => typeof detail === 'string' && Boolean(detail.trim()))
+    .map(detail => detail.trim())
+    .filter(detail => detail !== message.trim());
+  const validation = [...new Set(details)].join('; ');
+  return message && validation ? `${message} - ${validation}` : message || validation;
 }
 
 export interface CurriculumProgramme {
@@ -199,6 +226,12 @@ export interface CurriculumProgramme {
   // Off-the-job hours a learner must complete for the whole programme. null means no
   // target has been set, which is different from a target of zero.
   requiredOtjh?: number | null;
+}
+
+export interface CurriculumWeeklySession {
+  day: string;
+  startTime: string;
+  endTime: string;
 }
 
 export interface CurriculumModule {
@@ -244,18 +277,37 @@ export interface CurriculumModule {
    * every edit round-trip multiply the weeks by the delivery days.
    */
   sessionsNumber?: number;
+  weeklySchedule?: CurriculumWeeklySession[];
+  sessionHolidays?: CurriculumHoliday[];
+  /** Teaching weeks, separate from imported content rows. */
+  deliveryWeeks?: number;
+  weekDays?: string;
+  startTime?: string;
+  endTime?: string;
   startDate?: string;
   endDate?: string;
+  totalOtjh?: number;
+  declaredTotalOtjh?: number;
   ksbCount: number;
   ksbProfileSourceId?: string;
   lessons: number;
   quizzes: number;
-  assignments: number;
+  /**
+   * Learners currently assigned this module -- computed in bulk once per
+   * overview build (see `attach_module_assignment_counts` server-side), not
+   * per row, so listing many modules costs one pass over learners, not one
+   * query per module.
+   */
+  assignments?: number;
   status: 'published' | 'draft' | 'review' | string;
   authoringStatus?: 'published' | 'draft' | 'review' | string;
   sourceType?: string;
   deliveryStatus?: string;
-  author: string;
+  /**
+   * Always blank: no module builder has ever set it. Omitted from a
+   * `?compact=true` list.
+   */
+  author?: string;
   tutor?: string;
   coach?: string;
   lastUpdated: string;
@@ -269,7 +321,16 @@ export interface CurriculumModule {
    */
   coverImage?: string;
   notes: string;
-  sessionNames: string[];
+  /**
+   * Every authored week and live-session title on the module.
+   *
+   * Absent from a `?compact=true` list: a full catalogue of these strings is
+   * what dominates that response once `weekStructure` is gone, and nothing
+   * renders them from a list read. Take the count from `sessionNamesCount`.
+   */
+  sessionNames?: string[];
+  /** How many `sessionNames` the module has. Compact responses only. */
+  sessionNamesCount?: number;
   ksbCodes: string[];
   moduleKsbMappings?: CurriculumComponent['ksbMappings'];
 }
@@ -1127,7 +1188,10 @@ export interface CurriculumCohort {
   color: string;
   progress: number;
   attendance: number;
+  /** The holidays that actually apply: every one in the cohort's period, less excludedHolidayIds. */
   holidayIds?: Array<string | number>;
+  /** The holidays a human unticked in the cohort drawer, from the same in-period list. */
+  excludedHolidayIds?: Array<string | number>;
   /** When the record was first written. Blank on rows predating the column. */
   createdAt?: string;
   updatedAt?: string;
@@ -1161,6 +1225,7 @@ export interface CurriculumGroup {
 }
 
 export interface CurriculumSession {
+  timeZone?: string;
   id: string;
   trainingPlanId: number | string;
   programmeId?: string;
@@ -1203,6 +1268,7 @@ export interface CurriculumSession {
  * full week structure just to inspect a live-session component's settings.
  */
 export interface CurriculumTeamsMeetingSummary {
+  timeZone?: string;
   moduleCatalogueId: string;
   liveSessionId: string;
   status: string;
@@ -1350,6 +1416,21 @@ export function onCalendarOccurrences<T extends { status?: string }>(
   ));
 }
 
+/**
+ * One holiday on the curriculum calendar, from either of its two sources.
+ *
+ * `/curriculum/holidays/` serves both in this one shape:
+ *
+ * - `source: 'gov.uk'` — an England and Wales bank holiday, mirrored from
+ *   https://www.gov.uk/bank-holidays.json. A single day, so `startDate` and
+ *   `endDate` are equal. Read-only: it changes when GOV.UK changes it.
+ * - `source: 'authored'` — one of this college's own closure periods, added on
+ *   the Holidays page. These usually span a *range*, which is why every holiday
+ *   carries a start and an end.
+ *
+ * Everything downstream measures the period and does not care which it is: a day
+ * is closed or it is not.
+ */
 export interface CurriculumHoliday {
   id: string | number;
   label: string;
@@ -1357,6 +1438,77 @@ export interface CurriculumHoliday {
   endDate: string;
   type?: string;
   color?: string;
+  /** Which of the two calendars this came from. Only an authored one can be edited. */
+  source?: 'gov.uk' | 'authored';
+  /** GOV.UK rows only, and only ever 'Substitute day' — the holiday moved off a weekend. */
+  notes?: string;
+  /** GOV.UK rows only: whether the day is marked as a flag-flying one. */
+  bunting?: boolean;
+}
+
+/** The fields the Holidays page writes. Only an authored holiday accepts them. */
+export type CurriculumHolidayInput = Partial<Pick<CurriculumHoliday, 'label' | 'startDate' | 'endDate' | 'type' | 'color'>>;
+
+/** One holiday as a recorded GOV.UK check reports it. */
+export interface EnglandHolidayChange {
+  id: string;
+  title: string;
+  date: string;
+  notes?: string;
+  bunting?: boolean;
+  /** Moves only: the date this holiday used to fall on. */
+  previousDate?: string;
+  /** Changes only: the title, note and bunting flag as they were before. */
+  previous?: { title?: string; notes?: string; bunting?: boolean };
+}
+
+/**
+ * One recorded check against GOV.UK — the answer to "what changed on the site?".
+ *
+ * A check that found nothing is recorded too, and matters: without it the last
+ * real change reads as the last time anyone looked.
+ */
+export interface EnglandHolidaySync {
+  id: string;
+  checkedAt: string;
+  /** 'auto' (the background refresh), 'manual' (the button), 'command' (the CLI). */
+  source: string;
+  status: 'ok' | 'error' | string;
+  feedCount: number;
+  added: EnglandHolidayChange[];
+  changed: EnglandHolidayChange[];
+  /** Holidays GOV.UK moved to a different date. */
+  moved: EnglandHolidayChange[];
+  /** Holidays GOV.UK withdrew. They are removed here too. */
+  withdrawn: EnglandHolidayChange[];
+  /** Dates that fell off the back of GOV.UK's rolling window. Kept, not removed. */
+  agedOut: EnglandHolidayChange[];
+  /** Why a failed check failed. */
+  message: string;
+}
+
+/** How current the GOV.UK mirror is, and when it refreshes itself next. */
+export interface EnglandHolidaySyncStatus {
+  autoSync: boolean;
+  intervalHours: number;
+  lastCheckedAt: string;
+  lastSuccessAt: string;
+  nextCheckDueAt: string;
+  source: string;
+}
+
+// GOV.UK's published bank holidays, mirrored into the curriculum schema. Read
+// only: these are not authored here, unlike CurriculumHoliday above.
+export interface EnglandHoliday {
+  id: string;
+  division: string;
+  title: string;
+  date: string;
+  // Only ever 'Substitute day' — the holiday moved because the real date fell
+  // on a weekend.
+  notes: string;
+  bunting: boolean;
+  fetchedAt?: string;
 }
 
 export interface CurriculumCohortAuthoringDetail {
@@ -1380,6 +1532,7 @@ export interface CurriculumCohortAuthoringDetail {
   holidayIds: string[];
   selectedHolidays: CurriculumHoliday[];
   holidaysInRange: CurriculumHoliday[];
+  excludedHolidayIds: string[];
   holidaySummary: {
     global?: number;
     inRange?: number;
@@ -1411,27 +1564,117 @@ export interface CurriculumStaffProfile {
   [key: string]: unknown;
 }
 
-export type CurriculumAuditAction = 'created' | 'updated' | 'archived';
+export type CurriculumAuditAction =
+  | 'created'
+  | 'updated'
+  | 'archived'
+  | 'restored'
+  | 'deleted'
+  | 'moved'
+  | 'reordered'
+  /** Already existed when history started; its real author is unknown. */
+  | 'recorded'
+  | 'file_uploaded'
+  | 'file_replaced'
+  | 'file_removed'
+  /** The system worked this out from something else that moved. */
+  | 'recalculated'
+  | 'imported';
+
+/**
+ * How a save arrived. Never an action: an auto-saved edit is still an edit.
+ * These are the stored machine-readable values; `sourceLabel` is the words.
+ */
+export type CurriculumAuditSource =
+  | 'manual' | 'auto-save' | 'module-builder' | 'tree-save' | 'import' | 'upload'
+  | 'duplicate' | 'wizard' | 'recalculation' | 'scheduled-job' | 'system' | 'api' | '';
+
+/**
+ * Who acted. `system` is the LMS on its own account - a cascade, a
+ * recalculation - and is never a claim about intent, only the honest reading of
+ * a write no person directly made.
+ */
+export type CurriculumAuditActorType = 'user' | 'system' | 'integration' | 'job' | '';
+
+/** One field that moved, ready to render: `label` is what a reader should see. */
+export interface CurriculumAuditChange {
+  field: string;
+  label: string;
+  before: string;
+  after: string;
+  truncated?: boolean;
+}
 
 export interface CurriculumAuditEvent {
   id: string;
   /** ISO stamp of the write itself, not a display date. */
   at: string;
   action: CurriculumAuditAction;
+  /** "Edited", "Archived" - what the row leads with, instead of the event name. */
+  actionLabel: string;
   entity: 'programme' | 'module' | 'week' | 'component' | 'cohort' | 'group' | string;
   entityLabel: string;
   entityId: string;
+  revisionNo: number;
   title: string;
-  /** The record's parent - a programme name, or a module catalogue id. */
+  /** The record's ancestry as one line, from the names it was saved with. */
   context: string;
+  /** Those same ancestors as ids and names, as they were at the time. */
+  parents: Record<string, string>;
+  moduleCatalogueId: string;
+  parentId: string;
+  versionLabel: string;
+  contentStatus: string;
+  /** The signed-in account that made the change. Empty when none was recorded. */
+  actorName: string;
+  actorEmail: string;
+  actorType: CurriculumAuditActorType;
+  /** "Person", "System", "Scheduled job" - `actorType` in words. */
+  actorTypeLabel: string;
   /**
-   * The write handler's reason code on an archive (`component-delete`,
-   * `programme-archive`). It is NOT a person: no authoring table records an
-   * author, which is what `authorRecorded: false` states.
+   * Who caused a SYSTEM action. Empty for a person's own edit - they are the
+   * actor, not the trigger - and empty for a scheduled run, where there is no
+   * person and naming one would be a fabrication.
+   */
+  triggeredByEmail: string;
+  triggeredByName: string;
+  /** `auto-save`, `tree-save`, ... - what KIND of save, never the action itself. */
+  source: CurriculumAuditSource;
+  /** The same thing in words, for display. */
+  sourceLabel: string;
+  /**
+   * Small descriptive context about the write: the file an upload attached, the
+   * batch an import belonged to. Allowlisted server-side, so it never carries
+   * content, credentials or a signed URL.
+   */
+  metadata: Record<string, string | number | boolean | null>;
+  /**
+   * The write handler's code (`component-delete`). It is NOT a person; the
+   * person is `actorName`.
    */
   reason: string;
-  viaParent: string;
+  /** Only the fields that actually moved. Empty for a create. */
+  changes: CurriculumAuditChange[];
+  /**
+   * The stored record, carried inline only for a create (where it is the
+   * "after") and a delete (where it is the "before", and the only copy left).
+   */
+  snapshot: Record<string, unknown> | null;
+  viaParent?: string;
   href: string;
+  /**
+   * Only set by the per-person activity read: true when the backend could
+   * place this save on a page the person was recorded as having open. The
+   * change feed never sets it, because it has no pages to place against.
+   */
+  placed?: boolean;
+}
+
+/** Someone who changed something in the window, for the actor filter. */
+export interface CurriculumAuditActor {
+  email: string;
+  name: string;
+  changes: number;
 }
 
 export interface CurriculumAuditTrail {
@@ -1445,9 +1688,203 @@ export interface CurriculumAuditTrail {
   entityCounts: Record<string, number>;
   /** Entities whose table could not be read, so the page can name the gap. */
   unreadable: string[];
-  /** Always false today: the authoring tables carry no author column. */
+  /**
+   * True when the trail is read from the revision log, which records the
+   * signed-in account on every write. False when it falls back to reading record
+   * timestamps, which cannot name anyone — the page says which it is looking at
+   * rather than showing an empty column.
+   */
   authorRecorded: boolean;
+  /** `revisions` (who + before/after) or `timestamps` (what + when only). */
+  source: 'revisions' | 'timestamps';
+  /**
+   * True once the audit metadata lives in its own columns rather than being
+   * parsed out of the legacy `reason` string. The page only offers the source
+   * and actor-type filters when this is true, because before the Phase 2 SQL
+   * has run there is no column to filter on.
+   */
+  structuredMetadata: boolean;
+  /** The source and actor-type values the server recognises, for the filters. */
+  sources: CurriculumAuditSource[];
+  actorTypes: CurriculumAuditActorType[];
+  /**
+   * The record types this workspace actually audits, named by the server.
+   * Named there rather than listed here because the answer differs per
+   * workspace and grows as each one is wired up — a list held in the browser
+   * was the curriculum's ten types, so the system-wide trail offered a filter
+   * that could not name a learner, a coaching meeting or an employer.
+   */
+  entityTypes?: { value: string; label: string }[];
+  actors: CurriculumAuditActor[];
   events: CurriculumAuditEvent[];
+}
+
+/**
+ * Who used Curriculum Studio, as opposed to what they changed.
+ *
+ * Three sources sit behind these shapes and the page has to be able to tell
+ * them apart, which is why each is flagged separately rather than merged into
+ * one silent total:
+ *
+ * * `visitsRecorded` - `curriculum.activity_events` exists, so pages opened and
+ *   read actions are being recorded. False means the table has not been created
+ *   yet and the reading half of the trail is simply not there. It is never
+ *   retroactive: nothing was recorded before the table existed.
+ * * `changesRecorded` - the revision log exists, so saves can be named.
+ * * `signInsRecorded` - `login."Login_audit"` could be read. Sign-ins are
+ *   account-wide, not curriculum-only, and are labelled as such.
+ */
+export interface CurriculumActivityPerson {
+  email: string;
+  name: string;
+  /** Their role at the time the activity was recorded. Empty if unknown. */
+  role: string;
+  firstSeen: string;
+  lastSeen: string;
+  /** Distinct browser sittings in the window. */
+  visits: number;
+  pageViews: number;
+  readActions: number;
+  /** How many DIFFERENT curriculum pages they opened, not how many times. */
+  pagesOpened: number;
+  /** Saves recorded against them in the revision log. */
+  changes: number;
+  signIns: number;
+  lastPageKey: string;
+  lastPageLabel: string;
+  /** The workspace of the last page they opened. */
+  lastWorkspace: string;
+  /**
+   * Which workspaces they were in over the window, most recent first.
+   * Empty when page opens are not being recorded: it is a fact about visits,
+   * so with no visits recorded there is nothing to say rather than nowhere
+   * to have been.
+   */
+  workspaces: { workspace: string; label: string; hits: number; lastAt: string }[];
+}
+
+export interface CurriculumActivityPeople {
+  generatedAt: string;
+  windowDays: number;
+  since: string;
+  /** The workspace this response was scoped to; empty means all of them. */
+  workspace: string;
+  /** Every workspace the server recognises, for the filter. */
+  workspaces: { value: string; label: string }[];
+  /**
+   * True once each row carries its own workspace column. False means the
+   * workspace is derived from the stored path on read -- the same answer,
+   * reached without an index.
+   */
+  workspaceRecorded: boolean;
+  /**
+   * The workspaces whose saves the Changes feed can actually name. The
+   * reading half covers every workspace; the writing half covers the ones
+   * wired into a revision log, and the page says which rather than letting an
+   * empty feed read as "nobody changed anything".
+   */
+  changeWorkspaces: string[];
+  visitsRecorded: boolean;
+  changesRecorded: boolean;
+  signInsRecorded: boolean;
+  truncated: boolean;
+  /** How many rows this response carries; `totals.people` counts everyone who matched. */
+  shown: number;
+  /** The server-side cap that `truncated` reports against. */
+  limit: number;
+  totals: {
+    people: number;
+    visits: number;
+    pageViews: number;
+    readActions: number;
+    changes: number;
+    signIns: number;
+  };
+  people: CurriculumActivityPerson[];
+}
+
+/** One thing done on a page that was not a save. */
+export interface CurriculumActivityAction {
+  id: string;
+  at: string;
+  kind: string;
+  /** "Searched", "Exported" - `kind` in words, resolved server-side. */
+  label: string;
+  targetType: string;
+  targetId: string;
+  targetLabel: string;
+  /** Short descriptive context: the term searched, the filter changed. */
+  detail: Record<string, string>;
+}
+
+/** One page opened during a visit, and everything that happened on it. */
+export interface CurriculumActivityPage {
+  id: string;
+  at: string;
+  /** When the last thing on this page happened, not when it was closed. */
+  endedAt: string;
+  path: string;
+  pageKey: string;
+  pageLabel: string;
+  targetType: string;
+  targetId: string;
+  targetLabel: string;
+  /** How long it was open. Null when the tab closed before it could be sent. */
+  durationMs: number | null;
+  actions: CurriculumActivityAction[];
+  /** Recorded saves that happened while this page was open. */
+  changes: CurriculumAuditEvent[];
+}
+
+/** One sitting in one browser tab. */
+export interface CurriculumActivityVisit {
+  id: string;
+  startedAt: string;
+  endedAt: string;
+  ip: string;
+  userAgent: string;
+  pages: CurriculumActivityPage[];
+  pageCount: number;
+  actionCount: number;
+  changeCount: number;
+}
+
+export interface CurriculumActivitySignIn {
+  at: string;
+  ip: string;
+  userAgent: string;
+}
+
+export interface CurriculumPersonActivity {
+  generatedAt: string;
+  windowDays: number;
+  since: string;
+  visitsRecorded: boolean;
+  changesRecorded: boolean;
+  signInsRecorded: boolean;
+  person: {
+    email: string;
+    name: string;
+    role: string;
+    firstSeen: string;
+    lastSeen: string;
+  };
+  counts: {
+    visits: number;
+    pageViews: number;
+    readActions: number;
+    changes: number;
+    /**
+     * How many of their changes could be placed on a page they were recorded
+     * as having open. The rest are still listed - a save whose navigation was
+     * never recorded is still a save.
+     */
+    changesOnAPage: number;
+    signIns: number;
+  };
+  visits: CurriculumActivityVisit[];
+  signIns: CurriculumActivitySignIn[];
+  changes: CurriculumAuditEvent[];
 }
 
 export type CurriculumVersionEntityType = 'module' | 'week' | 'component';
@@ -1608,7 +2045,7 @@ export interface CurriculumProgrammeDetail {
 }
 
 export interface CurriculumSessionPlanPreview {
-  sessions: Array<{ sessionNumber: number; date: string; day: string; skippedHolidays: string[] }>;
+  sessions: Array<{ sessionNumber: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; skippedHolidays: string[] }>;
   skippedHolidays: string[];
   finalEndDate: string;
   warnings: string[];
@@ -2535,16 +2972,8 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
     let payload: unknown;
     try {
       payload = await response.json();
-      const payloadRecord = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-      const validationErrors = Array.isArray(payloadRecord.validationErrors) ? payloadRecord.validationErrors : [];
-      const validation = validationErrors
-        .map((item: unknown) => item && typeof item === 'object' ? (item as { message?: string }).message : '')
-        .filter(Boolean)
-        .join('; ');
-      const errorText = typeof payloadRecord.error === 'string' ? payloadRecord.error : '';
-      detail = errorText
-        ? `: ${errorText}${validation ? ` - ${validation}` : ''}`
-        : '';
+      const errorText = curriculumPayloadErrorMessage(payload);
+      detail = errorText ? `: ${errorText}` : '';
     } catch {
       detail = '';
     }
@@ -2584,10 +3013,16 @@ async function fetchCollection<T>(path: string, init?: CurriculumRequestInit): P
   return payload.results;
 }
 
-// `compact` drops weekStructure (~94% of this payload) server-side. Only pass it
-// from callers that read module identity/metadata alone: anything that reads
-// weekStructure, its nested components, or ranks duplicate modules by component
-// count must keep the full response. See fetchCurriculumModules callers.
+// `compact` asks the server for a whitelist of fields rather than the whole
+// module: see COMPACT_MODULE_LIST_FIELDS in backend/curriculum_api/views.py for
+// the set, and COMPACT_MODULE_LIST_DROPPED beside it for why each omission is
+// safe. The whitelist was traced from this function's callers, so adding a
+// caller that reads a field outside it means widening the set server-side --
+// the field will not simply appear. Dropped today: weekStructure and its nested
+// components, sessionNames (use `sessionNamesCount`), deliveryMetadata,
+// qualityScore, author, assignments, sourceType, deliveryRowId, legacyModuleId
+// and invalidModuleCatalogueId. Anything that reads one of those must take the
+// full response.
 export function fetchCurriculumModules(signal?: AbortSignal, options: {
   compact?: boolean;
   programmeId?: string;
@@ -2608,7 +3043,12 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+  // Without a timeout this hangs on the browser's own default (minutes) when the
+  // backend is slow, leaving the catalogue's loading skeleton up long after a
+  // sibling request against the same server has already timed out and reported
+  // it. Matching that 30s budget lets the list fail into its own error+Retry
+  // banner instead of spinning forever.
+  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 30000 });
 }
 
 export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
@@ -2984,8 +3424,23 @@ export function fetchCurriculumHolidays(signal?: AbortSignal, options: { skipCac
   return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
+export function fetchEnglandHolidays(signal?: AbortSignal, options: { skipCache?: boolean; revalidate?: boolean } = {}): Promise<EnglandHoliday[]> {
+  return fetchCollection<EnglandHoliday>('/curriculum/england-holidays/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+}
+
+// `compact` skips the collections a structure read does not need (sessions,
+// holidays, staff, authoring details) and, on each module, drops `sessionNames`
+// in favour of `sessionNamesCount` -- the same projection
+// `fetchCurriculumModules` applies. Nothing that reads this endpoint renders
+// those titles; the module workspace derives its own from the authored week
+// structure. A caller that needs them must take the full response.
 export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumOverview> {
-  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs });
+  // Every other collection fetcher below (modules, tutors, coaches) caps itself at
+  // 30s so a slow backend fails into its own error+Retry banner instead of hanging
+  // on the browser's own multi-minute default. This one was missing that default,
+  // so a slow overview rebuild could sit open for minutes -- and every one of its
+  // callers inherited the gap, since none of them pass their own timeoutMs.
+  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 30000 });
 }
 
 export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumProgrammeDetail> {
@@ -3049,8 +3504,26 @@ export function fetchCurriculumAuditTrail(
     entity?: string;
     action?: string;
     search?: string;
+    /** Email of one person, to see only their changes. */
+    actor?: string;
+    /** How the save arrived: `auto-save`, `import`, `recalculation`, ... */
+    source?: string;
+    /** `user` for people only, `system` for what the LMS did on its own. */
+    actorType?: string;
+    /** Narrow to one branch of the curriculum, as it was at the time. */
+    scope?: 'programme' | 'cohort' | 'group' | 'module';
+    scopeId?: string;
+    /**
+     * Which workspace's saves to read; '' or omitted reads every one.
+     *
+     * One revision log now holds the whole LMS, so the scoped door has to
+     * ask for its own workspace -- otherwise /curriculum/audit-trail would
+     * start showing learner and coaching saves the day those were wired in.
+     */
+    workspace?: string;
     signal?: AbortSignal;
     skipCache?: boolean;
+    revalidate?: boolean;
   } = {},
 ): Promise<CurriculumAuditTrail> {
   const query = new URLSearchParams();
@@ -3059,12 +3532,64 @@ export function fetchCurriculumAuditTrail(
   if (options.entity && options.entity !== 'all') query.set('entity', options.entity);
   if (options.action && options.action !== 'all') query.set('action', options.action);
   if (options.search) query.set('search', options.search);
+  if (options.actor) query.set('actor', options.actor);
+  if (options.source && options.source !== 'all') query.set('source', options.source);
+  if (options.actorType && options.actorType !== 'all') query.set('actorType', options.actorType);
+  if (options.workspace) query.set('workspace', options.workspace);
+  if (options.scope && options.scopeId) {
+    query.set('scope', options.scope);
+    query.set('scopeId', options.scopeId);
+  }
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumAuditTrail>(`/curriculum/quality/audit-trail/${suffix}`, {
     signal: options.signal,
     skipCache: options.skipCache,
+    revalidate: options.revalidate,
     timeoutMs: 30000,
   });
+}
+
+/**
+ * Everyone who used Curriculum Studio in the window, one row each.
+ *
+ * Cached briefly like other read-only curriculum data. The page can request a
+ * network revalidation when the user presses Refresh without discarding the
+ * response for the next visit.
+ */
+export function fetchActivityPeople(
+  options: { days?: number; search?: string; workspace?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
+): Promise<CurriculumActivityPeople> {
+  const query = new URLSearchParams();
+  if (options.days) query.set('days', String(options.days));
+  if (options.search) query.set('search', options.search);
+  if (options.workspace) query.set('workspace', options.workspace);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumActivityPeople>(`/activity/people/${suffix}`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
+    timeoutMs: 30000,
+  });
+}
+
+/** One person: their visits, the pages in each, and what they did there. */
+export function fetchPersonActivity(
+  email: string,
+  options: { days?: number; workspace?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
+): Promise<CurriculumPersonActivity> {
+  const query = new URLSearchParams();
+  if (options.days) query.set('days', String(options.days));
+  if (options.workspace) query.set('workspace', options.workspace);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumPersonActivity>(
+    `/activity/people/${encodeURIComponent(email)}/${suffix}`,
+    {
+      signal: options.signal,
+      skipCache: options.skipCache,
+      revalidate: options.revalidate,
+      timeoutMs: 30000,
+    },
+  );
 }
 
 function postJson<T>(path: string, body: unknown): Promise<T> {
@@ -3102,6 +3627,7 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   endDate?: string;
   tutor?: string;
   coach?: string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -3120,11 +3646,10 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   allowTutorConflict?: boolean;
 };
 export type CurriculumComponentInput = Partial<Omit<CurriculumComponent, 'lastEdited'>>;
-export type CurriculumCohortInput = { id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; epaMonths?: number | null; /** null clears the manual apprenticeship end date and restores the calculated one. */ apprenticeshipEndOverride?: string | null; color?: string; moduleName?: string; sessionsNumber?: number; holidayIds?: Array<string | number> };
+export type CurriculumCohortInput = { id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; epaMonths?: number | null; /** null clears the manual apprenticeship end date and restores the calculated one. */ apprenticeshipEndOverride?: string | null; color?: string; moduleName?: string; sessionsNumber?: number; /** The ticked ids -- the holidays this cohort's module sessions must skip. */ holidayIds?: Array<string | number>; /** The unticked ids, from the same in-period list. Sent alongside `holidayIds` so an explicit empty array ("Select all") is never mistaken for the key being omitted. */ excludedHolidayIds?: Array<string | number> };
 export type CurriculumGroupInput = { id?: string; groupId?: string; name?: string; cohortId?: string; programmeId?: string; tutor?: string; coach?: string; color?: string; weekDays?: string; startTime?: string; endTime?: string; startDate?: string; endDate?: string; moduleName?: string; sessionsNumber?: number; /** Honoured by PATCH /curriculum/groups/<id>/ only. */ status?: string; /** See CurriculumModuleInput.allowTutorConflict. */ allowTutorConflict?: boolean };
 export type CurriculumSessionInput = Partial<Pick<CurriculumSession, 'date' | 'startTime' | 'endTime' | 'tutor'>>;
 export type CurriculumStaffingInput = { groupId?: string; tutor?: string; coach?: string; /** See CurriculumModuleInput.allowTutorConflict. */ allowTutorConflict?: boolean };
-export type CurriculumHolidayInput = Partial<Pick<CurriculumHoliday, 'label' | 'startDate' | 'endDate' | 'type' | 'color'>>;
 export type CurriculumModuleAttachmentInput = {
   moduleName: string;
   programmeId?: string;
@@ -3138,6 +3663,7 @@ export type CurriculumModuleAttachmentInput = {
   endDate?: string;
   coach?: string;
   tutor?: string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -3358,6 +3884,30 @@ export interface CurriculumArchivedGroup extends CurriculumArchiveStamp {
   cohortArchived: boolean;
 }
 
+export interface CurriculumArchivedModule extends CurriculumArchiveStamp {
+  id: string;
+  catalogueId: string;
+  title: string;
+  programmeId: string;
+  programme: string;
+  cohortId: string;
+  cohort: string;
+  groupId: string;
+  group: string;
+  tutor: string;
+  /** What a restore brings back, and a permanent delete destroys. */
+  weeks: number;
+  sessions: number;
+  components: number;
+  status: 'archived';
+  /**
+   * Its programme is archived too, so the module has nothing to come back to:
+   * every catalogue list is scoped by programme, and a module restored under an
+   * archived one returns invisible. Restore the programme instead.
+   */
+  programmeArchived: boolean;
+}
+
 /**
  * `revalidate` on both reads below: the archive is opened in order to act on it,
  * and the very next thing the reader does is restore or delete something, so a
@@ -3371,6 +3921,10 @@ export function fetchArchivedCurriculumCohorts(signal?: AbortSignal): Promise<Cu
 
 export function fetchArchivedCurriculumGroups(signal?: AbortSignal): Promise<CurriculumArchivedGroup[]> {
   return fetchCollection<CurriculumArchivedGroup>('/curriculum/groups/archived/', { signal, revalidate: true });
+}
+
+export function fetchArchivedCurriculumModules(signal?: AbortSignal): Promise<CurriculumArchivedModule[]> {
+  return fetchCollection<CurriculumArchivedModule>('/curriculum/modules/archived/', { signal, revalidate: true });
 }
 
 export type CurriculumRestoreResult = {
@@ -3390,6 +3944,19 @@ export type CurriculumRestoreResult = {
  */
 export function restoreCurriculumCohort(id: string) {
   return postJson<CurriculumRestoreResult>(`/curriculum/cohorts/${encodeURIComponent(id)}/restore/`, {});
+}
+
+/**
+ * Brings back the weeks, components and KSB mappings archived with the module --
+ * matched on the marker its own archive stamped, so a component deleted by hand
+ * beforehand stays deleted. Refused with 409 while its programme is archived.
+ *
+ * Quizzes are the one thing it cannot return: archiving a module sends the
+ * quizzes only it owned to the Quiz Archive, which is the Quiz Workspace's own
+ * state. The response says so in `message`.
+ */
+export function restoreCurriculumModule(id: string) {
+  return postJson<CurriculumRestoreResult>(`/curriculum/modules/${encodeURIComponent(id)}/restore/`, {});
 }
 
 export function restoreCurriculumGroup(id: string) {
@@ -3417,6 +3984,15 @@ export function permanentlyDeleteCurriculumCohort(id: string) {
 
 export function permanentlyDeleteCurriculumGroup(id: string) {
   return deleteJson<CurriculumPermanentDeleteResult>(`/curriculum/groups/${encodeURIComponent(id)}/?permanent=true`);
+}
+
+/**
+ * Unlike the cohort and group deletes above, this one does destroy authoring:
+ * the module row and every week, component, KSB mapping, completion rule and
+ * advanced detail under it. There is nothing left to restore afterwards.
+ */
+export function permanentlyDeleteCurriculumModule(id: string) {
+  return deleteJson<CurriculumPermanentDeleteResult>(`/curriculum/modules/${encodeURIComponent(id)}/?permanent=true`);
 }
 
 export function fetchFreeProgrammeModules(programmeId: string, signal?: AbortSignal): Promise<FreeProgrammeModule[]> {
@@ -3458,7 +4034,7 @@ export function previewCohortEndDate(input: {
   return postJson<CurriculumCohortEndDatePreview>('/curriculum/preview/cohort-end-date/', input);
 }
 
-export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
+export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
   return postJson<CurriculumSessionPlanPreview>('/curriculum/preview/module-session-plan/', input);
 }
 
@@ -3466,6 +4042,7 @@ export function previewModuleSessionPlan(input: { startDate?: string; numberOfSe
 export interface CurriculumTutorAvailabilityInput {
   startDate?: string;
   sessionsNumber?: number | string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -3589,6 +4166,9 @@ export function deleteStaffingAssignment(id: string) {
   return deleteJson(`/curriculum/staffing/${encodeURIComponent(id)}/`);
 }
 
+// Holidays: the authored half of the calendar is written through these three.
+// A GOV.UK bank holiday is not — the endpoint answers 405 for one, because it
+// changes when GOV.UK changes it and not before. See `refreshEnglandHolidays`.
 
 export function createCurriculumHoliday(input: CurriculumHolidayInput) {
   return postJson('/curriculum/holidays/', input);
@@ -3600,6 +4180,38 @@ export function updateCurriculumHoliday(id: string | number, input: CurriculumHo
 
 export function archiveCurriculumHoliday(id: string | number) {
   return deleteJson(`/curriculum/holidays/${encodeURIComponent(String(id))}/`);
+}
+
+/**
+ * Every recent check against GOV.UK, newest first, with the current state.
+ *
+ * The England Holidays page reads this to show what the site changed and when it
+ * was last looked at. Deliberately a separate call from the holidays themselves:
+ * it is a log, it is only read on that one page, and it must never be cached
+ * alongside the dates.
+ */
+export function fetchEnglandHolidaySyncs(signal?: AbortSignal, limit = 20): Promise<{
+  status: EnglandHolidaySyncStatus;
+  results: EnglandHolidaySync[];
+}> {
+  return fetchJson(`/curriculum/england-holidays/syncs/?limit=${encodeURIComponent(String(limit))}`, {
+    signal,
+    skipCache: true,
+  });
+}
+
+/**
+ * Check GOV.UK now and report what moved.
+ *
+ * The mirror refreshes itself on an interval; this is the "I have just read that
+ * a bank holiday changed and need it today" path. `dryRun` reports without
+ * writing.
+ */
+export function refreshEnglandHolidays(options: { dryRun?: boolean } = {}): Promise<{
+  summary: EnglandHolidaySync & { applied: boolean; unchanged: number };
+  status: EnglandHolidaySyncStatus;
+}> {
+  return postJson('/curriculum/england-holidays/refresh/', { dryRun: Boolean(options.dryRun) });
 }
 
 // ---------------------------------------------------------------------------
@@ -3634,7 +4246,8 @@ export type ReviewFieldType =
   | 'phone'
   | 'postcode_address'
   | 'title_description'
-  | 'text_multiline';
+  | 'text_multiline'
+  | 'action_button';
 
 export const REVIEW_FIELD_TYPE_LABELS: Record<ReviewFieldType, string> = {
   text: 'Text',
@@ -3648,6 +4261,7 @@ export const REVIEW_FIELD_TYPE_LABELS: Record<ReviewFieldType, string> = {
   postcode_address: 'Post code and address',
   title_description: 'Title & description',
   text_multiline: 'Text (multiline)',
+  action_button: 'Action button',
 };
 
 export const REVIEW_FIELD_TYPES: ReviewFieldType[] = Object.keys(REVIEW_FIELD_TYPE_LABELS) as ReviewFieldType[];
@@ -3656,7 +4270,7 @@ export const REVIEW_FIELD_TYPES: ReviewFieldType[] = Object.keys(REVIEW_FIELD_TY
 export const CONDITIONAL_FIELD_TYPE: ReviewFieldType = 'boolean_case_block';
 
 /** Field types with no learner-entered answer -- Required/Optional is not shown for these. */
-export const DISPLAY_ONLY_FIELD_TYPES: ReviewFieldType[] = ['title_description'];
+export const DISPLAY_ONLY_FIELD_TYPES: ReviewFieldType[] = ['title_description', 'action_button'];
 
 export type ReviewParticipantRole = 'advisor' | 'employer' | 'participant' | 'referrer';
 
@@ -3664,6 +4278,11 @@ export type ReviewConditionValue = 'yes' | 'no';
 
 export interface ListItemConfiguration {
   options: string[];
+  /** Marks this question as the one carrying a defined business meaning, so
+   * readers find it by the template's own stable marker instead of matching a
+   * question title. 'rag_status' is the Progress Review's RAG question -- see
+   * curriculum_api.review_instances.RAG_SEMANTIC_KEY. */
+  semanticKey?: string;
 }
 
 export interface TitleDescriptionConfiguration {
@@ -3738,6 +4357,28 @@ export interface ReviewNotificationFlags {
   participant: boolean;
 }
 
+/** A Review's classification, chosen in the Review editor's General tab.
+ *
+ *  Type is NOT name and NOT schedule: a Review named "Monthly Learner
+ *  Catch-up" of type Monthly Coaching Meeting still filters as MCM on the
+ *  coach calendar, and it may recur every 6 weeks -- the type never implies a
+ *  recurrence. `code` is generated once from the name and frozen, so routing
+ *  survives a rename; `id` is the only thing a Review ever stores. */
+export interface ReviewType {
+  id: string;
+  name: string;
+  /** Stable routing code. 'mcm' and 'progress_review' are the system types. */
+  code: string;
+  /** System types can never be renamed or deleted. */
+  isSystem: boolean;
+  isActive: boolean;
+}
+
+export interface ReviewApplicability {
+  scope: 'programme' | 'cohort' | 'group';
+  ids: string[];
+}
+
 export interface ReviewSummary {
   id: string;
   programmeId: string;
@@ -3746,7 +4387,16 @@ export interface ReviewSummary {
   recurrence: { interval: number; unit: ReviewRecurrenceUnit };
   /** The date the first occurrence is calculated from -- see the Review Schedule below. */
   scheduleAnchorDate: string;
+  /** How many times this review recurs before it stops; null/undefined means unlimited. */
+  occurrenceCount: number | null;
+  /** The Review Type this review is classified as -- a review_types.id, the
+   *  stable identity every downstream consumer keys on. */
+  reviewTypeId: string;
+  /** Echoed for display and calendar routing; never written by a client. */
+  reviewTypeCode: string;
+  reviewTypeName: string;
   applicableStatuses: string[];
+  applicability?: ReviewApplicability;
   fieldCount: number;
   createdAt: string;
   updatedAt: string;
@@ -3756,6 +4406,10 @@ export interface ReviewDetail extends ReviewSummary {
   signatures: ReviewRoleFlags;
   visibleTo: ReviewRoleFlags;
   recordTimeSpent: boolean;
+  /** Hours one occurrence of this review is expected to take. */
+  expectedOtjh: number;
+  /** Whether completing an occurrence adds expectedOtjh to the learner's total OTJH. */
+  countsTowardsOtjh: boolean;
   allowEditingPriorDays: number;
   notifications: ReviewNotificationFlags;
   incompleteMarker: string;
@@ -3773,10 +4427,17 @@ export interface CreateReviewInput {
   recurrence: { interval: number; unit: ReviewRecurrenceUnit };
   /** Optional -- defaults to today on the backend when omitted. */
   scheduleAnchorDate?: string;
+  /** Optional -- omit or leave null for a review that recurs indefinitely. */
+  occurrenceCount?: number | null;
+  /** Required -- a Review cannot be saved without a Review Type. */
+  reviewTypeId: string;
   applicableStatuses: string[];
+  applicability?: ReviewApplicability;
   signatures: ReviewRoleFlags;
   visibleTo: ReviewRoleFlags;
   recordTimeSpent: boolean;
+  expectedOtjh: number;
+  countsTowardsOtjh: boolean;
   allowEditingPriorDays: number;
   notifications: ReviewNotificationFlags;
   incompleteMarker: string;
@@ -3802,6 +4463,34 @@ export interface FetchReviewsOptions {
   signal?: AbortSignal;
   skipCache?: boolean;
   revalidate?: boolean;
+}
+
+/** Every active Review Type, system types first. */
+export function fetchReviewTypes(options: FetchReviewsOptions = {}) {
+  return fetchCollection<ReviewType>('/curriculum/review-types/', {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
+  });
+}
+
+/** Create a custom Review Type. The name is the ONLY thing a user supplies:
+ *  the backend generates the id, the stable code, and the system/active
+ *  flags, so none of them appear in the create UI. */
+export async function createReviewType(name: string) {
+  const payload = await postJson<{ created: boolean; reviewType: ReviewType }>(
+    '/curriculum/review-types/', { name },
+  );
+  return payload.reviewType;
+}
+
+/** Deactivate a custom Review Type. Never a hard delete -- Reviews already
+ *  classified with it keep working and keep classifying. System types are
+ *  refused by the backend. */
+export function archiveReviewType(reviewTypeId: string) {
+  return deleteJson<{ deleted: boolean; archived: boolean; id: string; reviewType: ReviewType }>(
+    `/curriculum/review-types/${encodeURIComponent(reviewTypeId)}/`,
+  );
 }
 
 export function fetchProgrammeReviews(programmeId: string, options: FetchReviewsOptions = {}) {

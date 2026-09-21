@@ -271,7 +271,7 @@ export const USER_GUIDES: GuideSection[] = [
     pagePath: '/learner/progress-reviews',
     role: 'learner',
     steps: [
-      { step: 1, title: 'View Your Review Dashboard', description: 'The Progress Reviews page shows your review schedule, upcoming review date, preparation status, and past review history. Reviews happen every 12 weeks.', icon: 'ri-dashboard-line' },
+      { step: 1, title: 'View Your Review Dashboard', description: 'The Progress Reviews page shows your review schedule, upcoming review date, preparation status, and past review history. Your review dates are set by your programme.', icon: 'ri-dashboard-line' },
       { step: 2, title: 'Check Your Next Review', description: 'The "Next Review" card shows the date, time, attendees (you, your coach, your employer), and the review number. Click "Prepare" to start getting ready.', icon: 'ri-calendar-event-line', action: 'Click Prepare' },
       { step: 3, title: 'Complete Preparation Forms', description: 'Before each review, you need to complete preparation forms. These include: Self-Assessment, Workplace Feedback, OTJH Summary, and KSB Progress. Click each form to fill it in.', icon: 'ri-file-list-3-line', action: 'Click each form' },
       { step: 4, title: 'Review Areas Dashboard', description: 'The Review Areas section shows the 10 review areas: Attendance, OTJH, KSB Progress, Module Progress, Quizzes, Evidence, Workplace Practice, Maths/English, Behaviour, and Safeguarding. Each has a RAG rating.', icon: 'ri-layout-grid-line' },
@@ -386,10 +386,10 @@ export const USER_GUIDES: GuideSection[] = [
     title: 'Learner Caseload',
     description: 'View, search, and manage all your assigned learners.',
     icon: 'ri-group-line',
-    pagePath: '/coach/caseload',
+    pagePath: '/workspace/coach#learner-caseload',
     role: 'coach',
     steps: [
-      { step: 1, title: 'View Your Learner List', description: 'The caseload page shows all your learners in a table or card view. Each learner shows their name, programme, cohort, start date, and overall status.', icon: 'ri-list-check' },
+      { step: 1, title: 'View Your Learner List', description: 'The Learners at Risk section on the dashboard contains the full learner table. Each learner shows their name, programme, cohort, start date, and overall status.', icon: 'ri-list-check' },
       { step: 2, title: 'Search and Filter', description: 'Use the search bar to find learners by name, or use the filters (Programme, Cohort, Status, At-Risk) to narrow the list. The filter panel is at the top of the table.', icon: 'ri-search-line', action: 'Type in search bar or use filter dropdowns' },
       { step: 3, title: 'View Learner Quick Stats', description: 'Each learner row shows quick stats: KSB %, OTJH hours, attendance rate, and next review date. Click any stat to view the detailed report.', icon: 'ri-bar-chart-line' },
       { step: 4, title: 'Open a Learner Case File', description: 'Click the learner\'s name or the "View Case File" button to open their full case file. This shows their complete learning journey, evidence, attendance, and communication history.', icon: 'ri-folder-user-line', action: 'Click learner name or View Case File' },
@@ -419,7 +419,7 @@ export const USER_GUIDES: GuideSection[] = [
     title: 'Coaching Meetings',
     description: 'Schedule, manage, and record coaching sessions and progress reviews.',
     icon: 'ri-calendar-check-line',
-    pagePath: '/coach/meetings',
+    pagePath: '/coach/monthly-coaching',
     role: 'coach',
     steps: [
       { step: 1, title: 'View Your Meeting Calendar', description: 'The meetings page shows a calendar view of all your coaching sessions, progress reviews, and employer meetings. Click any day to see scheduled meetings.', icon: 'ri-calendar-line' },

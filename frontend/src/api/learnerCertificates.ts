@@ -1,5 +1,9 @@
+import { learningFetch } from '@/lib/personalLearning';
 import { readLearnerJson } from './learnerRead';
 import type { CertificateTemplate } from './platformAdmin';
+
+export type CertificateTemplateSummary = Pick<CertificateTemplate,
+  'id' | 'version' | 'title' | 'minimumProgress' | 'requireFinalTest'>;
 
 export interface LearnerCertificateEligibility {
   eligible: boolean;
@@ -33,6 +37,8 @@ export interface LearnerCertificate {
     layoutConfig?: CertificateTemplate['layoutConfig'];
     learner?: LearnerCertificateEligibility['learner'];
     programme?: string;
+    moduleRef?: string;
+    moduleTitle?: string;
     progressPercent?: number;
     minimumProgress?: number;
     finalTestPassed?: boolean;
@@ -41,11 +47,13 @@ export interface LearnerCertificate {
   pdfBlobUrl: string;
   verificationToken: string;
   verificationUrl: string;
+  moduleRef?: string;
+  moduleTitle?: string;
 }
 
 export interface LearnerCertificateStatus {
   configured: boolean;
-  template: CertificateTemplate | null;
+  template: CertificateTemplate | CertificateTemplateSummary | null;
   certificate: LearnerCertificate | null;
   eligibility?: LearnerCertificateEligibility;
 }
@@ -60,17 +68,17 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 export async function fetchLearnerCertificateTemplate(kind: string, id: number | string) {
-  return readLearnerJson<{ configured: boolean; template: CertificateTemplate | null }>(`/learner_api/certificates/${kind}/${id}/template/`);
+  return readLearnerJson<{ configured: boolean; template: CertificateTemplateSummary | null; csrfToken?: string }>(
+    `/learner_api/certificates/${kind}/${id}/template/?summary=1`, { ttlMs: 30_000 },
+  );
 }
 
-export async function fetchLearnerCertificateStatus(kind: string, id: number | string) {
-  return readLearnerJson<LearnerCertificateStatus>(`/learner_api/certificates/${kind}/${id}/`);
-}
-
-export async function issueLearnerCertificate(kind: string, id: number | string) {
-  const response = await fetch(`/learner_api/certificates/${kind}/${id}/issue/`, {
+export async function issueLearnerModuleCertificate(kind: string, id: number | string, subjectRef: string, csrfToken: string) {
+  if (!csrfToken) throw new Error('Request verification is unavailable. Please reload the page.');
+  const response = await learningFetch(`/learner_api/certificates/${kind}/${id}/modules/${encodeURIComponent(subjectRef)}/issue/`, {
     method: 'POST',
     credentials: 'include',
+    headers: { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' },
   });
   return readJson<LearnerCertificateStatus & { issued: boolean }>(response);
 }

@@ -4,12 +4,13 @@ import { dateKey } from '@/pages/learner/training-plan-timeline/model';
 type Placement = { programme?: string; cohort?: string; group?: string };
 const normalise = (value?: string) => (value || '').trim().toLowerCase();
 
+/** Resolve `current` when opening learning, after activity delivery dates have loaded. */
 export function learnerModuleHref(kind?: string, learnerId?: string, moduleId?: string, links: TrainingPlanDashboard['moduleLinks'] = {}) {
-  const base = kind && learnerId ? `/learner/modules/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}` : '/learner/modules';
-  if (!moduleId) return base;
+  const base = kind && learnerId ? `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}` : '/learner/my-learning';
+  if (!moduleId) return `${base}?week=current`;
   const imported = Object.entries(links).filter(([subject, module]) => subject.startsWith('legacy:') && module.id === moduleId);
   const subject = imported.length === 1 ? imported[0][0] : `current:${moduleId}`;
-  return `${base}?subject=${encodeURIComponent(subject)}`;
+  return `${base}?subject=${encodeURIComponent(subject)}&week=current`;
 }
 
 /** The header follows the learner's current placement and teaching dates, not creation order. */

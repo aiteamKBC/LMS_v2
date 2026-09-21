@@ -15,6 +15,9 @@ export type MonthState = {
   training_plan_target?: number | string | null;
   student_signature: Signature | null;
   coach_signature: Signature | null;
+  locked?: boolean;
+  locked_at?: string | null;
+  can_unlock?: boolean;
   pending_revisions: number;
   can_complete: boolean;
   source_finalization: { event_type: string; created_at: string } | null;
@@ -108,6 +111,8 @@ export async function request<T>(path: string, init: globalThis.RequestInit = {}
     throw new RecordError(body?.error || 'Previous learning records are temporarily unavailable.', response.status, body?.code);
   }
   invalidateLearnerReads();
+  // This only requests a new server check; the event never grants access.
+  window.dispatchEvent(new Event('previous-record-updated'));
   return body as T;
 }
 
@@ -137,6 +142,9 @@ const post = <T>(path: string, body: object) => request<T>(path, {
 export const getSummary = (aptemId?: number) => request<Summary>(aptemId === undefined
   ? '/old-otjh/me/summary/' : `/last-audit/manual/summary${query(aptemId)}`);
 export const startReview = (aptemId?: number) => post<Summary>(`/old-otjh/start/${query(aptemId)}`, {});
+export const getWorkspaceRecordLink = (learnerId?: string) => request<{ href: string | null }>(
+  `/old-otjh/workspace-link/${learnerId === undefined ? '' : `?learner_id=${encodeURIComponent(learnerId)}`}`,
+);
 export const getMonth = (month: string, aptemId?: number, signal?: AbortSignal) => request<MonthDetail>(`/last-audit/manual/rows${query(aptemId, month)}`, { signal });
 export const getActivityContent = (month: string, rowId: number, aptemId?: number) =>
   request<ActivityContent>(`/last-audit/manual/rows${query(aptemId, month)}&activity_id=${rowId}`);

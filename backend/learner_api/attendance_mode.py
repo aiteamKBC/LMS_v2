@@ -17,7 +17,7 @@ from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_http_methods
 
 from login.email_azure import is_configured, send_mail
-from login.permissions import learner_self_only
+from login.permissions import learner_self_or_admin
 from .learner_detail import SOURCE_MODELS
 from .models import Employer
 from .training_plan_dashboard import rows
@@ -97,7 +97,7 @@ def _send_request(source, kind, state):
 
 @csrf_exempt
 @require_http_methods(['GET', 'POST'])
-@learner_self_only(kwarg='learner_id')
+@learner_self_or_admin(kwarg='learner_id')
 def attendance_mode(request, kind, learner_id):
     model = SOURCE_MODELS.get(kind)
     source = model.all_learners.filter(pk=learner_id).first() if model else None

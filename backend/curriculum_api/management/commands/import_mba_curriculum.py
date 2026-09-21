@@ -39,7 +39,7 @@ from urllib.parse import unquote, urlparse
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 
-from curriculum_api import upload_storage, views
+from curriculum_api import upload_storage, versioning, views
 
 LEGACY_SCHEMA = 'MBA'
 LEGACY_TABLE = 'course_curriculum'
@@ -417,13 +417,28 @@ class Command(BaseCommand):
             raise CommandError('The legacy export returned no courses.')
         self.stdout.write(f'Legacy courses: {len(rows)}')
 
-        if not options['skip_structure']:
-            self.import_structure(rows, programme, options['default_otjh'])
-        if options['files']:
-            kinds = ALL_FILE_KINDS if options['file_kinds'] == 'all' else tuple(
-                kind.strip().lower() for kind in options['file_kinds'].split(',') if kind.strip()
-            )
-            self.download_files(rows, kinds, options['max_file_mb'])
+        # Everything written below is an import, not somebody's edit. Saying so
+        # here rather than at each write keeps the label on every module, week
+        # and component this run touches, including the ones the file phase
+        # re-points -- and keeps the actor honest: a command has no signed-in
+        # person, so the trail names the job rather than whoever happens to be
+        # in the room.
+        with versioning.audit_context(
+            actor_type=versioning.ACTOR_JOB,
+            source='import',
+            metadata={
+                'import_type': 'mba-legacy-curriculum',
+                'command': 'import_mba_curriculum',
+                'row_count': len(rows),
+            },
+        ):
+            if not options['skip_structure']:
+                self.import_structure(rows, programme, options['default_otjh'])
+            if options['files']:
+                kinds = ALL_FILE_KINDS if options['file_kinds'] == 'all' else tuple(
+                    kind.strip().lower() for kind in options['file_kinds'].split(',') if kind.strip()
+                )
+                self.download_files(rows, kinds, options['max_file_mb'])
 
     # -- helpers ------------------------------------------------------------
 

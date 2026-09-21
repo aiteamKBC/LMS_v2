@@ -47,10 +47,26 @@ class CurriculumChangeLogMiddleware:
         # Imported here rather than at module scope: views.py is large and
         # imports plenty of its own, and middleware is constructed during
         # settings load.
-        from .views import record_curriculum_change, shared_curriculum_epoch
+        from .views import (
+            begin_curriculum_write_scope,
+            end_curriculum_write_scope,
+            record_curriculum_change,
+            shared_curriculum_epoch,
+        )
 
         before = shared_curriculum_epoch()
-        response = self.get_response(request)
+        # The shared epoch is moved once here, after the view, rather than at
+        # each of invalidate_curriculum_cache()'s 94 call sites: a tree save
+        # invalidates per written row, and the counter now lives in the database
+        # so that other workers can see it at all. One save, one UPDATE -- and
+        # the new generation appears only once the rows it describes have
+        # committed, so no worker can cache pre-write data under a post-write
+        # epoch.
+        begin_curriculum_write_scope()
+        try:
+            response = self.get_response(request)
+        finally:
+            end_curriculum_write_scope()
         if response.status_code >= 400:
             return response
         after = shared_curriculum_epoch()

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -7,29 +7,24 @@ import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
 import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
-import { useReducedMotion } from '@/hooks/useReducedMotion';
-import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes } from '@/lib/format';
-// Assigning learners to a module is a learning-plan save, not a roster of its
-// own: the picker ticks this module on and off each learner's plan on
-// enrolment."Created_users". See backend/learner_api/learning_plan.py.
+import { curriculumNavItems } from '@/mocks/navigation';
+import { fetchLearnerAssignments, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import {
-  fetchModuleLearners,
-  saveModuleLearners,
-  type ModuleLearnerRow,
-} from '@/api/learningPlan';
-import {
+  curriculumErrorMessage,
   fetchCurriculumHolidays,
   fetchCurriculumOverview,
+  fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
-  updateCurriculumModuleCover,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumHoliday,
   type CurriculumKsbSet,
+  type CurriculumProgrammeAssignedLearner,
   type CurriculumProgramme,
+  type CurriculumScopeLearnerKsbImpactResponse,
   type LibraryComponent,
   type CurriculumStaffProfile,
   type CurriculumStandard,
@@ -41,46 +36,36 @@ import {
 // module workspace where that delivery (tutor included) is edited.
 import {
   cleanText,
+  findByIdentifierThenName,
   formatDateLabel,
   moduleIdentity,
   namedCurriculumWorkspacePath,
   sortEntities,
   MODULE_SORT_OPTIONS,
 } from '../shared/entities/model';
-// The same holiday-shift reading the module sessions drawer shows, reused here
-// so the Course structure rail says a week moved in exactly the words (and the
-// red/green pairing) the sessions timeline already uses.
-/**
- * One live session a holiday closed the day for.
- *
- * `slotDate` is its week's own day -- the one the holiday shut -- and
- * `blockedBy` names the holiday. Where the plan moves the session to is
- * deliberately not here: the rail states what was closed and leaves the new
- * date to the session itself, which is where it can be acted on.
- * The rail only states these; it does not act on them.
- */
-interface ClashingLiveSession {
-  sessionNumber: number;
-  slotDate: string;
-  blockedBy: string;
-  /**
-   * The closures behind `blockedBy`, each with the whole period it covers.
-   *
-   * The name alone said which holiday moved the session but not how far it
-   * reaches, so a reader could not tell a single closed day from a fortnight
-   * without opening the holidays page. Kept as rows rather than one string
-   * because two holidays can close one day's sessions between them, and
-   * "A, B (01-02 Aug, 10-16 Aug)" cannot say which period belongs to which.
-   */
-  closures: { label: string; startDate: string; endDate: string }[];
-}
+import { fetchArchivedCurriculumModules, type CurriculumArchivedModule } from '@/lib/curriculumApi';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
+import { LearnerPreview } from './LearnerPreview';
+import { AiMaterialModal } from './AiMaterialModal';
+import { ModuleLearnerProgressDialog } from './ModuleLearnerProgressDialog';
+import { LearnerAssignmentDrawer } from '../shared/entities/LearnerAssignmentDrawer';
+import { PersonalLearningEntry } from '@/components/feature/PersonalLearningEntry';
+import { useAuth } from '@/hooks/useAuth';
+import { SessionResultsDialog } from '../module-workspace/ModuleSessions';
 import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
+// The holiday notice, shared with the module workspace so a week touched by a
+// ticked holiday reads the same wherever the curriculum is shown.
+import { WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
+import { showFullTextWhenTruncated } from '../shared/entities/truncationTitle';
+import { moduleCountForGroup, moduleMatchesGroup } from '../shared/entities/groupModuleMatch';
+import { permanentlyDeleteModuleWithConfirm, restoreModuleWithConfirm } from '../shared/entities/archive';
+import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
+import { PlaceWeekDrawer } from './PlaceWeekDrawer';
 import {
   calculateQualityChecklist,
   componentTypeGroups,
@@ -93,6 +78,8 @@ import {
   deleteModuleStructure,
   curriculumModuleToCatalogue,
   duplicateModuleStructure,
+  duplicateWeekInModule,
+  isUnbookedCopiedLiveSession,
   flattenKsbEntries,
   getDefaultStructure,
   getDefaultComponentSettings,
@@ -103,20 +90,30 @@ import {
   // Read from the weeks in the editor, so the timeline names a session the way
   // the rail behind it does.
   liveSessionNamesByNumber,
-  // The same weeks-vs-sessions ratio the plan dates weeks by, so "Generate live
-  // sessions" tops a week up to exactly the number of dates it was given.
-  moduleDeliveryDaysPerWeek,
   // The one walk that pairs weeks with planned dates. A week owns a RUN of
   // dates, not one date, the moment a group delivers more than once a week.
   moduleWeekSessionDates,
   moduleWeekLiveSessionDates,
+  moduleUsesSessionRows,
+  // Every live session the module delivers: one entry per live-session
+  // component, which is what the count in the rail and the Teams series are
+  // both built from.
+  moduleAuthoredLiveSessions,
+  // Which authored weeks a ticked holiday falls on. States the fact only --
+  // the plan is unchanged, and what the week becomes is the author's call.
+  weeksTouchedByHoliday,
+  // Live sessions left behind on an old date when their week was re-planned.
+  // States the fact; the correction is a button the author presses.
+  moduleLiveSessionDateDrift,
   resequenceWeekSessionDates,
   makeAuthoringId,
   recalculateModule,
   restoreModuleTeamsMeeting,
+  ModuleStructureConflictError,
   saveModuleStructure,
   uploadComponentResource,
   utcIsoToCalendarParts,
+  weekExpectedOtjhTotal,
   weekPlacementLabel,
   type AdvancedModuleDetails,
   type CompletionCriteria,
@@ -129,6 +126,8 @@ import {
   type ModuleComponentType,
   type ModuleWeek,
   type ModuleWeekSessionPlan,
+  type TeamsMeetingInput,
+  type TeamsMeetingResult,
 } from './moduleAuthoringData';
 // The shared week-authoring UI arrives through curriculum/shared/components rather
 // than from week-builder/page directly: these three components only render once a
@@ -136,14 +135,14 @@ import {
 // and the RichTextEditor included) off the initial Module Builder load. Types come
 // from the non-lazy barrel — type imports are erased and pull in no runtime code.
 import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel } from '@/pages/curriculum/shared/components/weekAuthoringLazy';
-import { LiveSessionScheduleEditor } from './LiveSessionScheduleEditor';
 import type { GroupOption, WeekComponentUploader, WeekScope } from '@/pages/curriculum/shared/components/weekAuthoring';
-import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDetail, filterWeekTemplatesForScope, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
+import { fetchComponentPointsDefaults, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
+import { WeekTemplateImportModal } from './WeekTemplateImportModal';
+import { appendWeekTemplateCopies } from './weekTemplateImport';
 // Round-trip the module's components to Excel so KSBs can be filled in ChatGPT
 // and imported back. xlsx is dynamically imported inside these helpers, so it
 // stays off this page's initial bundle.
 import { buildKsbMappingPrompt, describeKsbImport, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbProfileEntry } from './ksbExcel';
-import { exportModuleTemplate, importModuleTemplate } from './moduleExcel';
 // Shared labelled form atoms and the Teams meeting modal live in their own files
 // so the modal (rendered by the shared week editor, which the Week Builder also
 // uses) can reuse them without importing this page.
@@ -165,86 +164,71 @@ import { RichTextDraft } from './RichTextEditor';
 
 // Course structure accordion: whether expanding a week collapses the others.
 // false = classic single-open accordion (the current default look/feel).
+/**
+ * How long the workspace waits for the typing to stop before it saves.
+ *
+ * Not zero, because a save PATCHes the module's WHOLE week structure back --
+ * every week, every component, every KSB mapping. One request per keystroke in
+ * a week title would be hundreds of full-structure writes, each of which also
+ * retires the curriculum caches behind it. The quiet period is what turns a
+ * burst of edits into a single save without the reader having to think about it.
+ *
+ * A second is long enough to swallow ordinary typing and short enough that
+ * nobody watching the footer wonders whether it noticed.
+ */
+const AUTO_SAVE_QUIET_MS = 1000;
+
+/**
+ * Same shape the backend hands out as a module's canonical catalogue id
+ * (`moduleAuthoringData.ts`'s own `isCanonicalModuleCatalogueId`, not
+ * importable from here without a page <-> data-module cycle). A deep link
+ * carrying one of these names its module outright, so opening it can skip the
+ * catalogue lookup entirely -- see the mount effect below.
+ */
+const MODULE_CATALOGUE_ID_PATTERN = /^MOD-[A-Z0-9][A-Z0-9_-]*$/i;
+
+/**
+ * Auto save starts off, every time, on every module.
+ *
+ * Deliberately not remembered. A save on this endpoint replaces the whole
+ * module -- every week, every component, every KSB mapping -- so the workspace
+ * writing on its own is something the reader turns on for the module in front
+ * of them, not a setting that follows them into the next one without being
+ * asked for again.
+ */
+
+/**
+ * What the workspace has done with the reader's edits.
+ *
+ * Kept as one value rather than a pair of booleans because the states are
+ * genuinely exclusive and two of them are refusals -- a footer that reads
+ * "Unsaved changes" after a save was turned down says nothing about why, and
+ * "Saved" must never appear for a write the backend has not confirmed.
+ */
+type WorkspaceSaveStatus = 'saved' | 'pending' | 'manual' | 'saving' | 'saving-more' | 'failed' | 'conflict' | 'locked';
+
+const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: string; icon: string }> = {
+  saved: { text: 'All changes saved', tone: 'text-emerald-700', icon: 'ri-checkbox-circle-line' },
+  pending: { text: 'Unsaved changes', tone: 'text-foreground-600', icon: 'ri-edit-line' },
+  // Auto save is off, so nothing is coming to collect these edits. The sentence
+  // has to name the thing the reader must do, not just report the state.
+  manual: { text: 'Unsaved changes - press Save', tone: 'text-amber-700', icon: 'ri-edit-line' },
+  saving: { text: 'Saving module structure...', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
+  // The reader kept typing while a save was in flight. Those keystrokes are not
+  // in the request that is running, and saying "Saving..." on its own would
+  // claim they were.
+  'saving-more': { text: 'Saving... later edits still pending', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
+  failed: { text: 'Save failed - your changes are still here', tone: 'text-rose-700', icon: 'ri-error-warning-line' },
+  conflict: { text: 'Conflict - reload before saving again', tone: 'text-rose-700', icon: 'ri-git-branch-line' },
+  locked: { text: 'Read-only - archived programme', tone: 'text-amber-700', icon: 'ri-lock-line' },
+};
+
+/** A save the backend turned down. `conflict` is never worth retrying as-is. */
+type WorkspaceSaveFailure = { kind: 'error' | 'conflict'; message: string };
+
 const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
 const FILTER_SELECT_CLASS = 'h-10 min-w-40 rounded-lg border border-background-200 bg-background-100 px-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50';
-
-// How many weeks one pick of a week template may become. A term is the longest
-// run anyone authors in one go, so the ceiling is there to catch a typed 150,
-// not to stop a real module.
-const MAX_TEMPLATE_REPEAT = 52;
-
-/**
- * A copied component, with any booking that belonged to the original removed.
- *
- * A live session's join link, Teams ids and date name one real meeting in one
- * real calendar. Copying them would give the new week a link to a meeting it
- * does not own, on the date the week it came from runs -- and would make the
- * rail count the copy as already scheduled. Everything an author wrote (the
- * purpose, duration, attendee settings) is kept, so the copy is a session ready
- * to be created rather than an emptied one.
- */
-function unbookedComponentSettings(component: ModuleComponent): ModuleComponent['settings'] {
-  if (component.type !== 'live-session') return component.settings;
-  return {
-    ...component.settings,
-    sessionDate: '',
-    sessionTime: '',
-    sessionDateTimeUtc: '',
-    liveSessionUrl: '',
-    teamsMeetingUrl: '',
-    teamsEventId: '',
-    teamsLiveSessionId: '',
-    teamsMeetingOptionsUrl: '',
-  };
-}
-
-/**
- * The run of dates a week delivers on, said once.
- *
- * A Mon+Fri week owns two dates, and the rail is too narrow to print both in
- * full -- "03 Aug 2026 · 07 Aug 2026" pushed the components count onto a second
- * row. The run is shown as its span instead, collapsing whatever the two dates
- * share: "03-07 Aug 2026" inside one month, "28 Sept - 05 Oct 2026" across two.
- * Every date in the run is still available in full on the row's tooltip.
- */
-function formatSessionRunLabel(dates: string[]): string {
-  const run = dates.map(date => cleanText(date).slice(0, 10)).filter(Boolean);
-  if (!run.length) return '';
-  const first = run[0];
-  const last = run[run.length - 1];
-  if (first === last) return formatDateLabel(first);
-  const firstLabel = formatDateLabel(first);
-  const lastLabel = formatDateLabel(last);
-  // "03 Aug 2026" -> ["03", "Aug", "2026"]. Same month and year, so the span
-  // only needs the two day numbers in front of them.
-  const firstParts = firstLabel.split(' ');
-  const lastParts = lastLabel.split(' ');
-  if (firstParts.length === 3 && lastParts.length === 3) {
-    if (firstParts[1] === lastParts[1] && firstParts[2] === lastParts[2]) {
-      return `${firstParts[0]}-${lastLabel}`;
-    }
-    if (firstParts[2] === lastParts[2]) {
-      return `${firstParts[0]} ${firstParts[1]} - ${lastLabel}`;
-    }
-  }
-  return `${firstLabel} - ${lastLabel}`;
-}
-
-/**
- * The title a duplicated week carries.
- *
- * "Induction" copies as "Induction (copy)", and copying that again gives
- * "Induction (copy 2)" rather than "Induction (copy) (copy)" -- the rail is
- * narrow, and a week duplicated five times should still read as five weeks of
- * one thing rather than a stack of nested brackets.
- */
-function duplicatedWeekTitle(title: string): string {
-  const base = String(title || '').trim() || 'Untitled week';
-  const match = base.match(/^(.*?)\s*\(copy(?:\s+(\d+))?\)$/i);
-  if (!match) return `${base} (copy)`;
-  return `${match[1]} (copy ${Number(match[2] || 1) + 1})`;
-}
 
 type Selection =
   | { kind: 'week'; weekId: string }
@@ -281,6 +265,9 @@ type ModuleDeliveryUsage = {
   startDate?: string;
   endDate?: string;
   sessions: number;
+  weekDays?: string;
+  startTime?: string;
+  endTime?: string;
 };
 
 type ModuleBuilderListItem = ModuleCatalogueItem & {
@@ -347,8 +334,8 @@ async function showBuilderDeleteSwal({
   warning?: string;
   confirmButtonText: string;
   processingText: string;
-  successTitle: string;
-  successText: string;
+  successTitle?: string;
+  successText?: string;
   onConfirm: () => Promise<void>;
 }) {
   return showCurriculumConfirm({
@@ -363,24 +350,8 @@ async function showBuilderDeleteSwal({
   });
 }
 
-/**
- * Coach validation is on for every component. Turning it off is the exception,
- * so it costs a confirmation rather than one stray click on a checkbox sitting
- * between two that toggle freely.
- */
-function confirmCoachValidationOff(onConfirm: () => void) {
-  return showCurriculumConfirm({
-    title: 'Turn off coach validation?',
-    text: 'Coach validation is on for every component. Turn it off and no coach has to sign this component off before it counts.',
-    icon: 'warning',
-    confirmButtonText: 'Turn it off',
-    cancelButtonText: 'Keep it on',
-    onConfirm,
-  });
-}
-
 export default function ModuleBuilder() {
-  const reduceMotion = useReducedMotion();
+  const { auth } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCreateScopeRef = useRef({
     programmeId: (searchParams.get('programme') || searchParams.get('programmeId') || '').trim(),
@@ -389,8 +360,6 @@ export default function ModuleBuilder() {
     groupId: (searchParams.get('group') || '').trim(),
   });
   const [search, setSearch] = useState('');
-  // Which order the catalogue is in. Empty is the order the endpoint returned.
-  const [sort, setSort] = useState('');
   const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
@@ -406,15 +375,11 @@ export default function ModuleBuilder() {
   // catalogue no longer carries a third change-tutor drawer of its own.
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [focusedComponentId, setFocusedComponentId] = useState('');
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
-  const [coverModule, setCoverModule] = useState<ModuleCatalogueItem | null>(null);
   const [createOpen, setCreateOpen] = useState(() => searchParams.get('create') === '1');
-  // The create drawer can fan one module out into several group deliveries.
-  // Keep the catalogue visibly busy until creation and its silent reload both
-  // finish, matching the progress line used by the Groups table.
-  const [moduleCreating, setModuleCreating] = useState(false);
   // Programme -> cohort -> group tree plus the holiday list: read only by the
   // module form, so it is fetched the first time that drawer opens rather than
   // on every Module Builder load.
@@ -424,29 +389,33 @@ export default function ModuleBuilder() {
   const [duplicatingModule, setDuplicatingModule] = useState<ModuleCatalogueItem | null>(null);
   const [duplicatingModuleComplete, setDuplicatingModuleComplete] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [sessionResultsOpen, setSessionResultsOpen] = useState(false);
+  const [aiMaterialOpen, setAiMaterialOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
+  // Which list the catalogue is showing. Nothing is read until the archive is
+  // opened; see useCurriculumArchive, which Cohorts and Groups share.
+  const [showArchived, setShowArchived] = useState(() => searchParams.get('view') === 'archive');
+  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
-  // Adding a component and selecting it cannot happen against the same render:
-  // the editor must wait until the new component exists in workingModule.
-  const [pendingComponentSelection, setPendingComponentSelection] = useState<{ weekId: string; componentId: string } | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
-  // Which week a picked template should be added to. Null means the picker was
-  // opened from the module header, where a template still becomes a new week.
-  const [weekTemplateTargetWeekId, setWeekTemplateTargetWeekId] = useState<string | null>(null);
-  const [bulkTeamsMeetingOpen, setBulkTeamsMeetingOpen] = useState(false);
+  // The Course structure rail's own Teams create dialog. Module-wide, not tied
+  // to one live-session component, so it carries no component of its own.
+  const [moduleTeamsMeetingOpen, setModuleTeamsMeetingOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
   const [programmeKsbMap, setProgrammeKsbMap] = useState<ProgrammeKsbMapState | null>(null);
-  // The module whose learner assignment is open. Holds the catalogue id the
-  // plan refers to plus the title, so the modal names the module it is about
-  // without keeping a whole list item alive.
-  const [assignLearnersModule, setAssignLearnersModule] = useState<{ moduleId: string; title: string } | null>(null);
   const [ksbMapLoadingId, setKsbMapLoadingId] = useState<string | null>(null);
   const [programmeKsbLoading, setProgrammeKsbLoading] = useState(false);
   const [sessionKsbMappingOpen, setSessionKsbMappingOpen] = useState(false);
+  const [learnerAssignmentTarget, setLearnerAssignmentTarget] = useState<LearnerAssignmentTarget | null>(null);
+  const [learnerProgress, setLearnerProgress] = useState<{
+    target: LearnerAssignmentTarget;
+    impact: CurriculumScopeLearnerKsbImpactResponse;
+    assignedLearners: CurriculumProgrammeAssignedLearner[];
+  } | null>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [quizPackages, setQuizPackages] = useState<QuizPackageSummary[]>([]);
   const [quizzesLoading, setQuizzesLoading] = useState(false);
@@ -454,17 +423,56 @@ export default function ModuleBuilder() {
   const [standardsLoading, setStandardsLoading] = useState(false);
   const [storageVersion, setStorageVersion] = useState(0);
   const [saving, setSaving] = useState(false);
-  const [restoringTeamsModuleId, setRestoringTeamsModuleId] = useState<string | null>(null);
+  const [saveFailure, setSaveFailure] = useState<WorkspaceSaveFailure | null>(null);
+  // The state the in-flight save is carrying. Anything the reader types after
+  // this is not in that request, which is what the footer has to be able to say.
+  const [savingSnapshot, setSavingSnapshot] = useState('');
   const [saveStartedAt, setSaveStartedAt] = useState<number | null>(null);
   const [saveElapsedSeconds, setSaveElapsedSeconds] = useState(0);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  // Set alongside `actionMessage` only when the failure is one the same click can
+  // just try again -- opening a module that timed out reading its structure.
+  // Left null for every other action-failure banner, which have no single retry
+  // step (a delete, an export) and are better dismissed than re-run blind.
+  const [actionMessageRetry, setActionMessageRetry] = useState<(() => void) | null>(null);
   const deepLinkedModuleRef = useRef('');
+  // `setSearchParams` and the editor state are scheduled independently. This
+  // marks the short hand-off while a catalogue click adds its module param.
+  const pendingModuleNavigationRef = useRef('');
   // Until the user drives a filter themselves the URL is read-only: the existing
   // programme deep link resolves an id into a name a beat later, and a sync that
   // deleted params it had not written would erase it before that happens.
   const filtersTouchedRef = useRef(false);
   const savedModuleSnapshotRef = useRef('');
   const saveRequestRef = useRef(0);
+  /**
+   * `saving`, readable from inside a callback that has already started.
+   *
+   * The state is a render away; the overlap guard cannot wait for it. Two saves
+   * of the same module in flight at once is the race this exists to prevent --
+   * whichever reply lands second would decide what the module is.
+   */
+  const savingRef = useRef(false);
+  /**
+   * The stored revision this workspace's copy was built from.
+   *
+   * Sent with every save. The backend refuses the write if the module has moved
+   * since, so a tab that has been open while somebody else saved is told rather
+   * than allowed to replace their weeks and components with its own.
+   */
+  const serverRevisionRef = useRef('');
+  /**
+   * Whether the workspace may save without being asked.
+   *
+   * Only for a module whose stored structure this workspace actually read. A
+   * local draft, or a module opened from the compact catalogue row, has weeks
+   * that were fabricated rather than loaded -- saving those unprompted is the
+   * accident `openModule`'s own guard exists to prevent. Also dropped after a
+   * conflict: the payload in hand is the one the server just refused, and
+   * re-sending it every time the reader types is noise at best.
+   */
+  const autoSaveArmedRef = useRef(false);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
   const moduleTemplateImportInputRef = useRef<HTMLInputElement>(null);
   // Both revalidate rather than skipCache. The request still goes to the network
@@ -477,13 +485,13 @@ export default function ModuleBuilder() {
   const programmeDesignUrl = useMemo(() => {
     const requested = (searchParams.get('programme') || searchParams.get('programmeId') || '').trim();
     if (!requested) return '';
-    const requestedKey = normaliseDeepLinkValue(requested);
-    const programme = curriculumProgrammes.find(item => (
-      [item.id, item.sourceId, item.name, item.standard]
-        .map(normaliseDeepLinkValue)
-        .filter(Boolean)
-        .includes(requestedKey)
-    ));
+    const programme = findByIdentifierThenName(
+      curriculumProgrammes,
+      requested,
+      item => [item.id, item.sourceId, item.standard],
+      item => [item.name],
+      normaliseDeepLinkValue,
+    );
     const programmeId = String(programme?.sourceId || programme?.id || requested).trim();
     return programmeId ? `/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=modules` : '';
   }, [curriculumProgrammes, searchParams]);
@@ -512,13 +520,81 @@ export default function ModuleBuilder() {
   useEffect(() => {
     let active = true;
     const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
-    loadCurriculumScope().then(({ groups }) => {
+    loadCurriculumScope().then(({ groups, modules, programmes }) => {
       if (!active) return;
-      const scoped = groups.filter(group => norm(group.programmeId) === norm(workingModule?.programmeId) || norm(group.programme) === norm(workingModule?.programmeName));
-      setComponentGroupOptions((scoped.length ? scoped : groups).map(group => ({ key: group.id, name: group.name, cohort: group.cohort })));
+      // The picker only ever offers live programmes — an archived programme
+      // has nothing left to deliver into, so its cohorts and groups would
+      // just be dead ends in the dropdown.
+      const archivedProgrammeKeys = new Set<string>();
+      programmes.forEach(programme => {
+        if (programme.isArchived || programme.status === 'archived') {
+          [programme.id, programme.sourceId, programme.name].forEach(key => {
+            if (key) archivedProgrammeKeys.add(norm(key));
+          });
+        }
+      });
+      const liveGroups = groups.filter(group => (
+        ![group.programmeId, group.programme].some(key => key && archivedProgrammeKeys.has(norm(key)))
+      ));
+      // Every group stays reachable here, not just this module's own programme:
+      // a live-session component is routinely shared across a duplicated
+      // module living in a *different* programme/cohort (same Teams link, two
+      // cohorts), and "Assigned groups" is exactly where that other group is
+      // picked to place the shared copy. Own-programme groups are only
+      // surfaced first for convenience.
+      const ownProgramme = liveGroups.filter(group => norm(group.programmeId) === norm(workingModule?.programmeId) || norm(group.programme) === norm(workingModule?.programmeName));
+      const ownProgrammeIds = new Set(ownProgramme.map(group => group.id));
+      const ordered = [...ownProgramme, ...liveGroups.filter(group => !ownProgrammeIds.has(group.id))];
+      // A group's own `programme` name is blank on plenty of records — the raw
+      // programmeId (e.g. "PROG-20260827123438706373") is meaningless to a
+      // tutor, so resolve the readable name from the programme list instead,
+      // the same id/sourceId keys `moduleBelongsToVisibleProgramme` matches on.
+      const programmeNameByKey = new Map<string, string>();
+      programmes.forEach(programme => {
+        [programme.id, programme.sourceId, programme.name].forEach(key => {
+          if (key && !programmeNameByKey.has(norm(key))) programmeNameByKey.set(norm(key), programme.name);
+        });
+      });
+      const resolveProgrammeName = (group: typeof groups[number]) => (
+        group.programme || programmeNameByKey.get(norm(group.programmeId)) || group.programmeId || ''
+      );
+      setComponentGroupOptions(ordered.map(group => ({
+        key: group.id,
+        name: group.name,
+        cohort: group.cohort,
+        cohortId: group.cohortId,
+        programmeId: group.programmeId,
+        programme: resolveProgrammeName(group),
+        moduleCount: moduleCountForGroup(modules, {
+          groupId: group.id,
+          groupName: group.name,
+          programmeId: group.programmeId,
+        }),
+      })));
     }).catch(() => {});
     return () => { active = false; };
   }, [workingModule?.programmeId, workingModule?.programmeName]);
+
+  // The cohort and group filters below list the records themselves, not only the
+  // ones a module already reaches: a programme with two cohorts and no modules
+  // must still show its two cohorts, or the filter contradicts every other page.
+  // Same cached compact overview the component picker above already loads.
+  const [scopeCohorts, setScopeCohorts] = useState<CurriculumCohort[]>([]);
+  const [scopeGroups, setScopeGroups] = useState<CurriculumGroup[]>([]);
+  // Settled either way — a failed load must not hold the cascade below forever.
+  const [scopeLoaded, setScopeLoaded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    loadCurriculumScope()
+      .then((scope) => {
+        if (!active) return;
+        setScopeCohorts(scope.cohorts);
+        setScopeGroups(scope.groups);
+      })
+      .catch(() => {})
+      .finally(() => { if (active) setScopeLoaded(true); });
+    return () => { active = false; };
+  }, []);
 
   const catalogueModules = useMemo(() => {
     void storageVersion;
@@ -530,51 +606,21 @@ export default function ModuleBuilder() {
       ));
   }, [modules, storageVersion, hiddenModuleIds, curriculumProgrammes]);
 
-  // Every programme identifier at least one catalogue module answers to. A
-  // programme with no modules only ever renders "no modules match", so it is
-  // not worth offering in the filter.
-  const programmeKeysWithModules = useMemo(() => new Set(
-    catalogueModules
-      .flatMap(module => [
-        module.programmeName,
-        module.programmeId,
-        module.sourceModule?.programme,
-        module.sourceModule?.programmeId,
-        ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
-      ])
-      .map(normaliseDeepLinkValue)
-      .filter(Boolean),
-  ), [catalogueModules]);
-
   const programmeOptions = useMemo(() => {
-    // The programme the page was deep linked into, and whatever is currently
-    // selected, stay listed even if archived after the fact - so the <select>
-    // never holds a value with no matching option, and an explicit deep link
-    // is honoured rather than silently dropped.
-    const stickyKeys = [
-      requestedCreateScopeRef.current.programmeId,
-      requestedCreateScopeRef.current.programmeName,
-      programmeFilter === 'All' ? '' : programmeFilter,
-    ].map(normaliseDeepLinkValue).filter(Boolean);
     const byName = new Map<string, string>();
-    curriculumProgrammes.forEach(programme => {
-      const name = String(programme.name || programme.sourceId || programme.id || '').trim();
-      if (!name) return;
-      const keys = [programme.name, programme.id, programme.sourceId, programme.standard]
-        .map(normaliseDeepLinkValue)
-        .filter(Boolean);
-      const isSticky = keys.some(key => stickyKeys.includes(key));
-      // curriculumProgrammes is fetched with visibility: 'all' so a module whose
-      // programme was archived can still resolve its identity. The picker itself
-      // is for choosing where to work next, so an archived programme is left out
-      // of it the same way the Programmes page hides it from the active list. An
-      // active programme is offered even with zero modules yet - the catalogue
-      // then says so plainly (see emptyProgrammeScope) instead of hiding it.
-      if (programmeIsArchived(programme) && !isSticky) return;
-      byName.set(normaliseDeepLinkValue(name) || name.toLowerCase(), name);
-    });
+    curriculumProgrammes
+      // `curriculumProgrammes` is fetched with visibility 'all' so archived
+      // programmes stay resolvable elsewhere (naming an already-archived
+      // module's programme) — but the filter itself should only ever offer
+      // programmes still open for delivery.
+      .filter(programme => !programme.isArchived && programme.status !== 'archived')
+      .forEach(programme => {
+        const name = String(programme.name || programme.sourceId || programme.id || '').trim();
+        if (!name) return;
+        byName.set(normaliseDeepLinkValue(name) || name.toLowerCase(), name);
+      });
     return ['All', ...Array.from(byName.values()).sort((a, b) => a.localeCompare(b))];
-  }, [curriculumProgrammes, programmeFilter]);
+  }, [curriculumProgrammes]);
 
   const programmeLookup = useMemo(() => {
     const lookup = new Map<string, { id: string; name: string }>();
@@ -691,6 +737,33 @@ export default function ModuleBuilder() {
     [resolveModuleScopeLock, workingModule],
   );
 
+  /**
+   * The module sits under an archived programme and is still visible, so the
+   * backend refuses its structure save.
+   *
+   * Same rule as `archived_programme_module_edit_error` on the server, which is
+   * what actually enforces it -- this only stops someone authoring a whole
+   * module before the Save tells them. Saving would re-derive
+   * `is_programme_deleted` from the archived programme and withdraw the module
+   * from every list, which is the "I edited it and it vanished" report.
+   *
+   * A module that is ALREADY withdrawn is deliberately left editable: moving it
+   * onto a live programme is how it is brought back, and locking it would
+   * strand it. `useCurriculumProgrammes` is read with `visibility: 'all'` here,
+   * so the archived programme is in the list to be recognised at all.
+   */
+  const workingModuleProgrammeArchived = useMemo(() => {
+    if (!workingModule) return false;
+    if (workingModule.isProgrammeDeleted) return false;
+    const programme = programmeForScope(curriculumProgrammes, [
+      workingModule.programmeId,
+      workingModule.programmeName,
+      workingModule.sourceModule?.programmeId,
+      workingModule.sourceModule?.programme,
+    ]);
+    return Boolean(programme) && programmeRecordArchived(programme);
+  }, [curriculumProgrammes, workingModule]);
+
   // "Module settings" used to reopen the structure wizard on its Modules step
   // just to move a module between programmes, cohorts and groups. That is the
   // same job the Add-module drawer does, so it opens that instead.
@@ -712,19 +785,18 @@ export default function ModuleBuilder() {
   useEffect(() => {
     if (!moduleFormOpen || moduleFormScopeLoadedRef.current) return undefined;
     let active = true;
-    void fetchCurriculumOverview(undefined, { compact: true })
-      .catch(() => null)
-      .then(overview => {
-        if (!active) return;
-        moduleFormScopeLoadedRef.current = true;
-        // Holidays are loaded by their own effect below and may already be
-        // here, so they are merged rather than replaced.
-        setModuleFormScope(current => ({
-          ...current,
-          cohorts: overview?.cohorts || [],
-          groups: overview?.groups || [],
-        }));
+    void Promise.all([
+      fetchCurriculumOverview(undefined, { compact: true }).catch(() => null),
+      fetchCurriculumHolidays().catch(() => [] as CurriculumHoliday[]),
+    ]).then(([overview, holidays]) => {
+      if (!active) return;
+      moduleFormScopeLoadedRef.current = true;
+      setModuleFormScope({
+        cohorts: overview?.cohorts || [],
+        groups: overview?.groups || [],
+        holidays,
       });
+    });
     return () => { active = false; };
   }, [moduleFormOpen]);
 
@@ -759,45 +831,49 @@ export default function ModuleBuilder() {
     }, { replace: true });
   }, [setSearchParams]);
 
-  const openSavedModule = useCallback(async (saved: SavedModuleRef) => {
-    await reload({ silent: true });
-    if (!saved.created || !saved.catalogueId) return;
-    setSearchParams(previous => {
-      const next = new URLSearchParams(previous);
-      next.delete('create');
-      next.set('module', saved.catalogueId);
-      return next;
-    }, { replace: true });
-  }, [reload, setSearchParams]);
-
   const requestedHierarchy = requestedCreateScopeRef.current;
   const hierarchyProgramme = useMemo(() => {
-    const keys = [
+    // Tried in this order, and each candidate is spent against every programme's
+    // ids before any programme's name is considered. Collapsing all three into
+    // one key set let the weakest candidate (the name-shaped filter) claim a
+    // programme that the stronger one (the id) named outright.
+    const candidates = [
       requestedHierarchy.programmeId,
       requestedHierarchy.programmeName,
       programmeFilter === 'All' ? '' : programmeFilter,
-    ].map(normaliseDeepLinkValue).filter(Boolean);
-    if (!keys.length) return null;
-    return curriculumProgrammes.find(programme => (
-      [programme.id, programme.sourceId, programme.name, programme.standard]
-        .map(normaliseDeepLinkValue)
-        .filter(Boolean)
-        .some(key => keys.includes(key))
-    )) || null;
+    ];
+    for (const candidate of candidates) {
+      const match = findByIdentifierThenName(
+        curriculumProgrammes,
+        candidate,
+        programme => [programme.id, programme.sourceId, programme.standard],
+        programme => [programme.name],
+        normaliseDeepLinkValue,
+      );
+      if (match) return match;
+    }
+    return null;
   }, [curriculumProgrammes, programmeFilter, requestedHierarchy.programmeId, requestedHierarchy.programmeName]);
   const hierarchyCohort = useMemo(() => {
-    const key = normaliseDeepLinkValue(requestedHierarchy.cohortId || cohortFilter);
-    if (!key) return null;
-    return moduleFormScope.cohorts.find(cohort => (
-      [cohort.id, cohort.name].map(normaliseDeepLinkValue).includes(key)
-    )) || null;
+    // Cohort names repeat across programmes ("October 2026"), so the id has to
+    // be spent across every cohort before any name is tried.
+    return findByIdentifierThenName(
+      moduleFormScope.cohorts,
+      requestedHierarchy.cohortId || cohortFilter,
+      cohort => [cohort.id],
+      cohort => [cohort.name],
+      normaliseDeepLinkValue,
+    ) || null;
   }, [cohortFilter, moduleFormScope.cohorts, requestedHierarchy.cohortId]);
   const hierarchyGroup = useMemo(() => {
-    const key = normaliseDeepLinkValue(requestedHierarchy.groupId || groupFilter);
-    if (!key) return null;
-    return moduleFormScope.groups.find(group => (
-      [group.id, group.name].map(normaliseDeepLinkValue).includes(key)
-    )) || null;
+    // Group names repeat harder than cohort names do ("G1", "Group A").
+    return findByIdentifierThenName(
+      moduleFormScope.groups,
+      requestedHierarchy.groupId || groupFilter,
+      group => [group.id],
+      group => [group.name],
+      normaliseDeepLinkValue,
+    ) || null;
   }, [groupFilter, moduleFormScope.groups, requestedHierarchy.groupId]);
 
   const catalogueHierarchy = useMemo(() => {
@@ -845,98 +921,6 @@ export default function ModuleBuilder() {
     [workingModule?.catalogueId],
   );
 
-  const restoreTeamsMeetingForWorkingModule = useCallback(async () => {
-    const module = workingModule;
-    if (!module?.catalogueId || restoringTeamsModuleId) return;
-    setRestoringTeamsModuleId(module.catalogueId);
-    setActionMessage(null);
-    setNoticeAlert(null);
-    const wasDirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(module) !== savedModuleSnapshotRef.current);
-    try {
-      const [result, sessionPlan] = await Promise.all([
-        restoreModuleTeamsMeeting(module.catalogueId),
-        loadModuleWeekSessionPlan(module.catalogueId, module.weekStructure.length),
-      ]);
-      const meetingSettings = result.meeting as ModuleComponent['settings'];
-      // What a live-session component can inherit from the series before it has a
-      // stored twin — everything except the per-session schedule. The date keys
-      // are stripped so the series' first-session date can never overwrite a
-      // session's own; applyModuleWeekSessionPlan dates each session below. This
-      // is the frontend mirror of the backend's shared_series_settings, and it is
-      // what keeps the join link on an unsaved or freshly generated session
-      // instead of leaving it blank until the next restore pairs it by id.
-      const seriesDateKeys = new Set(['sessionDate', 'sessionDay', 'sessionTime', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc']);
-      const seriesLinkSettings = Object.fromEntries(
-        Object.entries(meetingSettings || {}).filter(([key]) => !seriesDateKeys.has(key)),
-      ) as ModuleComponent['settings'];
-      // The endpoint answers with the module as it now stands, and each week's
-      // live-session component carries that week's own session — so the stored
-      // component is what is merged in, not one set of series settings applied
-      // to every week. Unsaved local edits are kept: only live sessions change.
-      const restoredWeeks = new Map((result.module?.weekStructure || []).map(week => [week.id, week]));
-      let nextSnapshot = '';
-      setWorkingModule(current => {
-        if (!current || current.catalogueId !== module.catalogueId) return current;
-        const restoredModule = recalculateModule({
-          ...current,
-          deliveryMetadata: {
-            ...(current.deliveryMetadata || {}),
-            ...meetingSettings,
-          },
-          weekStructure: current.weekStructure.map(week => {
-            const restored = restoredWeeks.get(week.id);
-            const restoredById = new Map((restored?.components || []).map(component => [component.id, component]));
-            const localIds = new Set(week.components.map(component => component.id));
-            return {
-              ...week,
-              sessionDate: restored?.sessionDate ?? week.sessionDate,
-              sessionDay: restored?.sessionDay ?? week.sessionDay,
-              components: [
-                ...week.components.map(component => {
-                  if (component.type !== 'live-session') return component;
-                  const restoredComponent = restoredById.get(component.id);
-                  if (restoredComponent) {
-                    // The stored twin carries this session's own date and link.
-                    return { ...component, settings: { ...component.settings, ...restoredComponent.settings } };
-                  }
-                  // No stored twin yet (unsaved or freshly generated). Give it the
-                  // series' join link now — but not the series' date — so it stops
-                  // reading as "no meeting" the moment re-attach succeeds, rather
-                  // than only after a later restore pairs it by id.
-                  if (component.settings.liveSessionUrl || component.settings.teamsMeetingUrl) return component;
-                  return { ...component, settings: { ...component.settings, ...seriesLinkSettings } };
-                }),
-                // A week that had no live session now has the one the re-attach
-                // created for it; without this the module would only show it
-                // after a reload.
-                ...(restored?.components || []).filter(component => component.type === 'live-session' && !localIds.has(component.id)),
-              ],
-            };
-          }),
-        });
-        const next = sessionPlan
-          ? applyModuleWeekSessionPlan(restoredModule, sessionPlan, { followEndDate: false })
-          : restoredModule;
-        nextSnapshot = moduleSnapshot(next);
-        return next;
-      });
-      if (!wasDirty && nextSnapshot) {
-        savedModuleSnapshotRef.current = nextSnapshot;
-      }
-      setStorageVersion(version => version + 1);
-      setNoticeAlert({
-        title: 'Teams data restored',
-        message: result.updatedComponents
-          ? `Restored the saved Teams meeting into ${result.updatedComponents} live session component${result.updatedComponents === 1 ? '' : 's'}.`
-          : 'Loaded the saved Teams meeting for this module.',
-      });
-      reload({ silent: true });
-    } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : 'Unable to restore saved Teams data.');
-    } finally {
-      setRestoringTeamsModuleId(null);
-    }
-  }, [reload, restoringTeamsModuleId, workingModule]);
 
   // Staff and Teams state are additive: the catalogue must still render if either
   // request fails, so neither is allowed to surface as a page-level error.
@@ -956,19 +940,49 @@ export default function ModuleBuilder() {
     [catalogueModules],
   );
 
+  /**
+   * The cohorts of the programme in the filter, whether or not a module reaches
+   * them. The deliveries are folded in afterwards so a module scoped to a cohort
+   * the overview does not carry still gets an option to be found by — but they
+   * are no longer the only source, which is what made a programme with two
+   * cohorts and no modules report "no cohorts".
+   */
   const cohortFilterOptions = useMemo(() => {
+    // The catalogue filter follows the delivery hierarchy. Showing every
+    // cohort before its programme is chosen makes it possible to assemble an
+    // impossible Programme / Cohort / Group combination.
+    if (programmeFilter === 'All') return [];
     const options = new Map<string, string>();
+    scopeCohorts
+      .filter(cohort => recordMatchesProgrammeFilter(cohort.programme, cohort.programmeId, programmeFilter, curriculumProgrammes))
+      .forEach(cohort => {
+        const value = deliveryFilterValue(cohort.id, cohort.name);
+        if (value) options.set(value, cleanModuleMeta(cohort.name) || value);
+      });
     deliveryUsages
       .filter(usage => usageMatchesProgrammeFilter(usage, programmeFilter, curriculumProgrammes))
       .forEach(usage => {
         const value = deliveryFilterValue(usage.cohortId, usage.cohort);
-        if (value) options.set(value, cleanModuleMeta(usage.cohort) || value);
+        if (value && !options.has(value)) options.set(value, cleanModuleMeta(usage.cohort) || value);
       });
     return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [curriculumProgrammes, deliveryUsages, programmeFilter]);
+  }, [curriculumProgrammes, deliveryUsages, programmeFilter, scopeCohorts]);
 
+  /** The groups of the programme and cohort in the filter, on the same terms. */
   const groupFilterOptions = useMemo(() => {
+    // A group is always owned by one cohort, so it is not a meaningful filter
+    // until both of its parents have been selected.
+    if (programmeFilter === 'All' || !cohortFilter) return [];
     const options = new Map<string, string>();
+    scopeGroups
+      .filter(group => (
+        recordMatchesProgrammeFilter(group.programme, group.programmeId, programmeFilter, curriculumProgrammes)
+        && deliveryFilterMatches(cohortFilter, group.cohortId, group.cohort)
+      ))
+      .forEach(group => {
+        const value = deliveryFilterValue(group.id, group.name);
+        if (value) options.set(value, cleanModuleMeta(group.name) || value);
+      });
     deliveryUsages
       .filter(usage => (
         usageMatchesProgrammeFilter(usage, programmeFilter, curriculumProgrammes)
@@ -976,10 +990,10 @@ export default function ModuleBuilder() {
       ))
       .forEach(usage => {
         const value = deliveryFilterValue(usage.groupId, usage.group);
-        if (value) options.set(value, cleanModuleMeta(usage.group) || value);
+        if (value && !options.has(value)) options.set(value, cleanModuleMeta(usage.group) || value);
       });
     return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [cohortFilter, curriculumProgrammes, deliveryUsages, programmeFilter]);
+  }, [cohortFilter, curriculumProgrammes, deliveryUsages, programmeFilter, scopeGroups]);
 
   /** Every tutor who could be assigned: the staff roster plus anyone already on a delivery. */
   const tutorNames = useMemo(() => {
@@ -993,13 +1007,18 @@ export default function ModuleBuilder() {
   }, [deliveryUsages, tutorProfiles]);
 
   // Drop a child filter its parent no longer contains, so the cascade can never
-  // show a contradictory Programme / Cohort / Group combination.
+  // show a contradictory Programme / Cohort / Group combination. Held until the
+  // cohort and group records have landed: until then the options are the
+  // deliveries alone, and a deep link to a cohort with no modules would be
+  // thrown away a beat before the option that justifies it arrives.
   useEffect(() => {
+    if (!scopeLoaded) return;
     if (cohortFilter && !cohortFilterOptions.some(option => option.value === cohortFilter)) setCohortFilter('');
-  }, [cohortFilter, cohortFilterOptions]);
+  }, [cohortFilter, cohortFilterOptions, scopeLoaded]);
   useEffect(() => {
+    if (!scopeLoaded) return;
     if (groupFilter && !groupFilterOptions.some(option => option.value === groupFilter)) setGroupFilter('');
-  }, [groupFilter, groupFilterOptions]);
+  }, [groupFilter, groupFilterOptions, scopeLoaded]);
 
   useEffect(() => {
     if (!filtersTouchedRef.current) return;
@@ -1029,15 +1048,7 @@ export default function ModuleBuilder() {
 
   const deliveryFiltersActive = Boolean(cohortFilter || groupFilter || tutorFilter);
 
-  // A programme scope that genuinely holds nothing - reached by deep link from
-  // its workspace, since the filter no longer offers empty programmes. The
-  // empty state should name it and offer a module, not blame the filters.
-  const emptyProgrammeScope = programmeFilter !== 'All'
-    && !search.trim()
-    && !deliveryFiltersActive
-    && !programmeFilterKeys(programmeFilter, curriculumProgrammes).some(key => programmeKeysWithModules.has(key));
-
-  const filteredModules = catalogueModules.filter(module => {
+  const filtered = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
@@ -1051,9 +1062,6 @@ export default function ModuleBuilder() {
       && (!tutorFilter || normaliseDeepLinkValue(usage.tutor) === normaliseDeepLinkValue(tutorFilter))
     ));
   });
-  // Sorted after filtering, so the chosen order applies to what is on screen
-  // rather than to the whole catalogue behind it.
-  const filtered = sortEntities(filteredModules, MODULE_SORT_OPTIONS, sort);
 
   const deliveryStats = useMemo(() => ({
     deliveries: deliveryUsages.length,
@@ -1082,23 +1090,58 @@ export default function ModuleBuilder() {
       deliveryUsages: ksbMapModule.deliveryUsages,
     };
   }, [ksbMapModule, workingModule]);
+  // Serialising the whole module is the dirty check, the auto-save trigger and
+  // the "is this still what we sent" comparison, so it is done once per render
+  // rather than three times.
+  const workingModuleSnapshot = useMemo(() => moduleSnapshot(workingModule), [workingModule]);
   const hasUnsavedWorkingModuleChanges = Boolean(
-    workingModule && savedModuleSnapshotRef.current && moduleSnapshot(workingModule) !== savedModuleSnapshotRef.current,
+    workingModule && savedModuleSnapshotRef.current && workingModuleSnapshot !== savedModuleSnapshotRef.current,
   );
+  const workspaceSaveStatus: WorkspaceSaveStatus = workingModuleProgrammeArchived
+    ? 'locked'
+    : saving
+      ? (savingSnapshot && workingModuleSnapshot !== savingSnapshot ? 'saving-more' : 'saving')
+      : saveFailure?.kind === 'conflict'
+        ? 'conflict'
+        : saveFailure
+          ? 'failed'
+          : !hasUnsavedWorkingModuleChanges
+            ? 'saved'
+            : autoSaveEnabled ? 'pending' : 'manual';
 
   const finishLoadingProgress = useCallback(async (markComplete: (value: boolean) => void) => {
     markComplete(true);
     await new Promise(resolve => window.setTimeout(resolve, 120));
   }, []);
 
-  const openModule = useCallback(async (module: ModuleCatalogueItem, openSettings = false) => {
+  const openModule = useCallback(async (
+    module: ModuleCatalogueItem,
+    openSettings = false,
+    historyMode: 'replace' | 'push' = 'replace',
+  ) => {
     const structureId = moduleStructureIdentifier(module);
     setOpeningModule({ title: module.title, mode: openSettings ? 'settings' : 'builder' });
     setOpeningModuleComplete(false);
     setActionMessage(null);
+    setActionMessageRetry(null);
     setNoticeAlert(null);
     try {
-      const remote = await loadModuleStructure(structureId);
+      // Read fresh, never from the two-minute cache: the workspace saves the
+      // WHOLE structure back, so anything it opens stale it later writes over.
+      const remote = structureId ? await loadModuleStructure(structureId, { skipCache: true }) : null;
+      // A stored module whose structure could not be read must not be opened.
+      // `getDefaultStructure` below fabricates empty week shells for a module
+      // that arrives without weeks -- right for a brand new draft, catastrophic
+      // here, because the catalogue row is compact (it carries no weeks at all)
+      // and the first save would replace every authored week and component with
+      // the fabricated blanks while reporting itself as saved.
+      if (structureId && !remote) {
+        setActionMessage(
+          `${module.title} could not be opened: its saved weeks and components could not be read. `
+          + 'Reload the page and try again - do not rebuild it here, or the save would overwrite what is stored.',
+        );
+        return;
+      }
       const loadedBase = remote
         ? {
             ...module,
@@ -1133,34 +1176,82 @@ export default function ModuleBuilder() {
       }
       const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
+      // The version every save from here on is measured against. It came with
+      // the structure that was just read, so a save based on this copy is
+      // accepted only while the module is still that copy.
+      serverRevisionRef.current = next.structureRevision || '';
+      // Armed only for a module whose stored structure was actually read back.
+      // Anything else is a fabricated shell -- see the guard above, which is the
+      // same reason spelt out for the manual save.
+      autoSaveArmedRef.current = Boolean(remote);
+      autoSaveAttemptRef.current = '';
+      // Opening a module is where the default applies: a workspace left saving
+      // itself does not carry that into the next module the reader opens.
+      setAutoSaveEnabled(false);
+      setSaveFailure(null);
+      // The workspace is a place, so the address bar has to name it. Without
+      // this the module lived in component state alone: a browser reload -- or
+      // Back, or restoring the tab -- landed on the catalogue, and a person who
+      // had been authoring for an hour was shown a module list instead of their
+      // module and read that as their work being gone.
+      //
+      // A direct link and a newly created module replace their provisional
+      // address: Back should leave the workspace. A catalogue action is a real
+      // drill-in, though, so it pushes one entry and Back returns to the same
+      // filtered module list instead of skipping to the page before it.
+      //
+      // The ref is stamped here as well as in the deep-link effect below. It is
+      // that effect's "this key is already dealt with" mark, and without it
+      // closing the module -- which clears the param -- could be raced by the
+      // effect re-reading the param that is still there and re-opening it.
+      deepLinkedModuleRef.current = next.catalogueId || '';
+      pendingModuleNavigationRef.current = next.catalogueId || '';
+      setSearchParams(previous => {
+        const params = new URLSearchParams(previous);
+        if (next.catalogueId) params.set('module', next.catalogueId);
+        params.delete('moduleTitle');
+        return params;
+      }, { replace: historyMode === 'replace' });
       setWorkingModule(next);
-      const firstWeek = next.weekStructure[0];
-      const firstComponent = firstWeek?.components[0];
-      const defaultSelection: Selection | null = firstComponent
-        ? { kind: 'component', weekId: firstWeek.id, componentId: firstComponent.id }
-        : firstWeek
-          ? { kind: 'week', weekId: firstWeek.id }
-          : null;
-      setSelection(deepLinkTarget.selection || defaultSelection);
+      setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
+      setFocusedComponentId(deepLinkTarget.selection?.kind === 'component' && new URLSearchParams(window.location.search).get('focus') === 'component'
+        ? deepLinkTarget.selection.componentId
+        : '');
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to load module structure.');
+      // Whatever failed was reading this same module's structure, so the same
+      // click tried again is a real retry, not a guess.
+      setActionMessageRetry(() => () => { void openModule(module, openSettings); });
     } finally {
       setOpeningModule(null);
       setOpeningModuleComplete(false);
     }
-  }, [finishLoadingProgress, resolveModuleScopeLock]);
+  }, [finishLoadingProgress, resolveModuleScopeLock, setSearchParams]);
 
-  // The plan refers to modules by their catalogue id, so a module with no
-  // canonical one cannot be assigned. The picker says so itself rather than
-  // this hiding the button, so the gap is named where it is acted on.
-  const openAssignLearners = useCallback((module: ModuleCatalogueItem) => {
-    setAssignLearnersModule({
-      moduleId: moduleStructureIdentifier(module) || '',
-      title: module.title,
-    });
-  }, []);
+  /**
+   * What happens once the Add module form has written the module.
+   *
+   * Straight into the workspace for the module that was just created, with no
+   * wait in between: the reader pressed Create, so the module is what they
+   * asked to see.
+   */
+  const openSavedModule = useCallback(async (saved: SavedModuleRef) => {
+    // Deliberately not awaited. The catalogue list is a full rebuild that takes
+    // seconds (see the comment on useCurriculumModules above), and opening the
+    // module that was just created does not depend on it: `openModule` reads
+    // that module's own structure from its own endpoint. Awaiting the list
+    // first is what left the drawer closed over an untouched page for seconds
+    // before the workspace finally appeared. It still runs, so the list behind
+    // is current for whenever the reader presses "Back to modules".
+    void reload({ silent: true });
+    if (!saved.created || !saved.catalogueId) return;
+    // `openModule` fills everything real in from the structure it reads back;
+    // this shell only carries what it needs before that lands -- the id to read
+    // and the title to name the module while it is loading.
+    await openModule(moduleShellForOpening(saved.catalogueId, saved.name));
+  }, [openModule, reload]);
 
   const openKsbMap = useCallback(async (module: ModuleBuilderListItem) => {
     const loadingId = module.catalogueId || moduleStructureIdentifier(module) || module.title;
@@ -1190,6 +1281,46 @@ export default function ModuleBuilder() {
       setKsbMapLoadingId(null);
     }
   }, [workingModule]);
+
+  const openLearnerAction = useCallback(async (module: ModuleBuilderListItem) => {
+    const identifier = moduleLearnerIdentifier(module);
+    if (!identifier) {
+      setActionMessage(`Unable to open learner assignments for ${module.title}: no module identifier was returned.`);
+      return null;
+    }
+    const target: LearnerAssignmentTarget = { scope: 'module', id: identifier, name: module.title };
+    setActionMessage(null);
+    setActionMessageRetry(null);
+    try {
+      const directory = await fetchLearnerAssignments(target);
+      // The assignment directory is the membership authority. The impact
+      // endpoint adds OTJH/KSB progress, but may not return a newly/directly
+      // assigned learner that has no placement or activity to aggregate yet.
+      const assignedLearners: CurriculumProgrammeAssignedLearner[] = directory.learners
+        .filter(learner => learner.assigned)
+        .map(learner => ({
+          id: learner.id,
+          name: learner.name,
+          email: learner.email,
+          programme: learner.programme,
+          programmeStatus: learner.programmeStatus,
+          cohort: learner.cohort,
+          group: learner.group,
+          lifecycleStatus: learner.programmeStatus,
+        }));
+      const assignedCount = assignedLearners.length;
+      if (assignedCount === 0) {
+        setLearnerAssignmentTarget(target);
+        return 0;
+      }
+      const impact = await fetchCurriculumScopeLearnerKsbImpact('module', identifier, { learnerStatus: 'all' });
+      setLearnerProgress({ target, impact, assignedLearners });
+      return assignedCount;
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : `Unable to load learners for ${module.title}.`);
+      return null;
+    }
+  }, []);
 
   const openProgrammeKsbMap = useCallback(async () => {
     if (programmeFilter === 'All' || programmeKsbLoading) return;
@@ -1248,16 +1379,11 @@ export default function ModuleBuilder() {
     // Same trigger as needsKsbData: standards only feed KSB source
     // resolution, never the plain catalogue list.
     if (!needsKsbData || standardsLoadedRef.current) return undefined;
+    standardsLoadedRef.current = true;
     const controller = new AbortController();
     setStandardsLoading(true);
     fetchCurriculumStandards(controller.signal)
-      .then(result => {
-        setStandards(result);
-        // As with the KSB-set hook, only a response delivered to this mounted
-        // effect counts as loaded. Otherwise StrictMode can abort the first
-        // subscriber and the second effect will never issue a usable request.
-        standardsLoadedRef.current = true;
-      })
+      .then(result => setStandards(result))
       .catch(error => {
         if (controller.signal.aborted) return;
         console.warn('Unable to load Skills England standards.', error);
@@ -1287,12 +1413,13 @@ export default function ModuleBuilder() {
     const requestedNormalised = normaliseDeepLinkValue(requestedProgramme);
     // The Programme workspace links with a canonical id, not a name, so resolve
     // the id back to its programme before matching the (name-based) options.
-    const byIdentifier = curriculumProgrammes.find(programme => (
-      [programme.id, programme.sourceId, programme.name, programme.standard]
-        .map(normaliseDeepLinkValue)
-        .filter(Boolean)
-        .includes(requestedNormalised)
-    ));
+    const byIdentifier = findByIdentifierThenName(
+      curriculumProgrammes,
+      requestedProgramme,
+      programme => [programme.id, programme.sourceId, programme.standard],
+      programme => [programme.name],
+      normaliseDeepLinkValue,
+    );
     const resolvedName = normaliseDeepLinkValue(byIdentifier?.name);
     const match = programmeOptions.find(option => (
       option !== 'All' && (
@@ -1306,27 +1433,42 @@ export default function ModuleBuilder() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || '';
+    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || params.get('moduleTitle') || '';
     const requestedKey = requestedModule.trim();
-    // Read separately from the id, rather than only as the last resort when no
-    // id-shaped param is present: the delivery side and the catalogue
-    // sometimes disagree on which id is canonical for the same module, so a
-    // guessed id that matches nothing here still deserves a second try by name
-    // before the link is declared dead.
+    // Carried only so the not-found message can name the module the way the
+    // reader saw it. It is NOT a lookup key: titles are not unique (the same
+    // title is authored in more than one programme), so resolving by name can
+    // only ever guess, and a guess here opens a different module's weeks and
+    // OTJH under the name the reader clicked.
     const requestedTitle = (params.get('moduleTitle') || '').trim();
     const dedupeKey = requestedKey || requestedTitle;
-    if (!dedupeKey || loading || error || workingModule || deepLinkedModuleRef.current === dedupeKey) return;
+    if (!dedupeKey || workingModule || deepLinkedModuleRef.current === dedupeKey) return;
 
-    const requestedNormalised = normaliseDeepLinkValue(requestedKey);
-    const requestedTitleNormalised = normaliseDeepLinkValue(requestedTitle);
-    const target = catalogueModules.find(module => {
-      const identifiers = moduleDeepLinkIdentifiers(module);
-      const titles = [module.title, module.sourceModule?.name];
-      return (!!requestedKey && (
-        identifiers.some(value => value === requestedKey)
-        || titles.some(value => normaliseDeepLinkValue(value) === requestedNormalised)
-      )) || (!!requestedTitleNormalised && titles.some(value => normaliseDeepLinkValue(value) === requestedTitleNormalised));
-    });
+    // A canonical id names its module outright -- every link this workspace
+    // itself writes uses one (openModule stamps it into the address bar,
+    // openSavedModule opens a brand new module by it before it is even in the
+    // catalogue). Opening it does not need the catalogue list at all, so a
+    // browser refresh, or a link followed straight in, goes right into the
+    // module instead of sitting on the skeleton catalogue for however long the
+    // full list rebuild takes -- which, mid-edit, reads as the workspace
+    // having kicked the reader out to the list and lost their place.
+    if (MODULE_CATALOGUE_ID_PATTERN.test(requestedKey)) {
+      deepLinkedModuleRef.current = dedupeKey;
+      openModule(moduleShellForOpening(requestedKey, requestedTitle || requestedKey));
+      return;
+    }
+
+    // Anything else -- a legacy delivery id, a bare sourceId, a title -- only
+    // resolves by scanning the catalogue for a matching row, so those still
+    // wait for the list.
+    if (loading || error) return;
+
+    // The id, and nothing else. An id that matches no catalogue module is a
+    // dead link, and saying so is the honest answer -- falling back to the
+    // title produced a module that looked right and was not.
+    const target = requestedKey
+      ? catalogueModules.find(module => moduleDeepLinkIdentifiers(module).some(value => value === requestedKey))
+      : undefined;
 
     // A deep link only ever *opens* a module. It used to fall through to creating
     // one from the rest of the query string, which meant a link naming a module
@@ -1334,176 +1476,74 @@ export default function ModuleBuilder() {
     if (!target) {
       if (catalogueModules.length) {
         deepLinkedModuleRef.current = dedupeKey;
-        setActionMessage(`Unable to find module "${requestedKey || requestedTitle}" in Module Builder.`);
+        // Named the way the reader saw it, with the id that failed alongside --
+        // that id is the whole diagnosis when a link goes dead.
+        const label = requestedTitle || requestedKey;
+        const identifier = requestedTitle && requestedKey ? ` (${requestedKey})` : '';
+        setActionMessage(`Unable to find module "${label}"${identifier} in Module Builder.`);
       }
       return;
     }
 
-    deepLinkedModuleRef.current = dedupeKey;
+    deepLinkedModuleRef.current = requestedKey;
     openModule(target);
   }, [catalogueModules, error, loading, openModule, workingModule]);
 
   const updateWorkingModule = useCallback((updater: (module: ModuleCatalogueItem) => ModuleCatalogueItem) => {
+    // One chokepoint for every authoring edit in the workspace, so the
+    // archived-programme lock is a single guard rather than a second read-only
+    // editing path bolted alongside this one. The structure stays on screen and
+    // fully readable -- only writing to it is refused.
+    if (workingModuleProgrammeArchived) {
+      setActionMessage(ARCHIVED_PROGRAMME_BUILDER_NOTICE);
+      return;
+    }
     setActionMessage(null);
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
-  }, []);
+  }, [workingModuleProgrammeArchived]);
 
-  const openAddedComponent = useCallback((weekId: string, componentId: string) => {
-    setExpandedWeekIds(current => {
-      const next = new Set(current);
-      next.add(weekId);
-      return next;
-    });
-    setPendingComponentSelection({ weekId, componentId });
-  }, []);
-
-  useEffect(() => {
-    if (!pendingComponentSelection || !workingModule) return;
-    const week = workingModule.weekStructure.find(item => item.id === pendingComponentSelection.weekId);
-    if (!week?.components.some(component => component.id === pendingComponentSelection.componentId)) return;
-    setSelection({ kind: 'component', ...pendingComponentSelection });
-    setPendingComponentSelection(null);
-  }, [pendingComponentSelection, workingModule]);
-
-  // Import a saved week template as NEW weeks in this module: copy the week's
-  // fields + components, regenerating ids so they're independent of the source.
-  //
-  // `repeat` is how many weeks the one template should become. A module that
-  // teaches the same shape of week all term is authored by picking the template
-  // once and saying 15, not by picking it fifteen times; each copy is still a
-  // week of its own, with its own ids, free to be edited apart from the rest.
-  const importWeekTemplateAsNewWeek = useCallback((template: WeekTemplate, repeat = 1) => {
-    const count = Math.max(1, Math.min(MAX_TEMPLATE_REPEAT, Math.floor(repeat) || 1));
-    updateWorkingModule(module => {
-      const newWeeks = Array.from({ length: count }, (_, offset) => {
-        const shell = createEmptyWeek(module.id, module.weekStructure.length + offset + 1);
-        const newWeek: ModuleWeek = {
-          ...shell,
-          title: template.title || shell.title,
-          summary: template.summary || '',
-          learningOutcomes: template.learningOutcomes || [],
-          ksbMappings: (template.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-          components: (template.components || []).map(component => ({
-            ...component,
-            id: makeAuthoringId('component'),
-            weekId: shell.id,
-            ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-          })),
-        };
-        return newWeek;
-      });
-      return { ...module, weekStructure: [...module.weekStructure, ...newWeeks] };
-    });
+  // One state update appends the requested number of independent template copies.
+  const importWeekTemplateAsNewWeek = useCallback((template: WeekTemplate, count: number) => {
+    updateWorkingModule(module => appendWeekTemplateCopies(module, template, count));
     setWeekTemplateImportOpen(false);
   }, [updateWorkingModule]);
-
-  // Duplicate a week in place: the copy lands directly under the week it came
-  // from, carrying its title, summary, outcomes and every component, with fresh
-  // ids throughout so the two weeks are editable apart from each other.
-  //
-  // The dates are re-sequenced rather than copied. The timetable belongs to the
-  // module, not to a week, so inserting a week shifts what is taught down the
-  // existing run of dates -- the same reading as dragging a week to a new place.
-  const duplicateWeek = useCallback((weekId: string) => {
-    if (!workingModule) return;
-    const index = workingModule.weekStructure.findIndex(item => item.id === weekId);
-    if (index < 0) return;
-    const source = workingModule.weekStructure[index];
-    const shell = createEmptyWeek(workingModule.id, source.weekNumber + 1);
-    const copy: ModuleWeek = {
-      ...source,
-      id: shell.id,
-      moduleId: workingModule.id,
-      weekNumber: shell.weekNumber,
-      title: duplicatedWeekTitle(source.title || `Week ${source.weekNumber}`),
-      // A copy is not the original's slot. `resequenceWeekSessionDates` hands
-      // the run of dates back out in order once the copy is in the list.
-      sessionDate: undefined,
-      sessionDay: undefined,
-      learningOutcomes: [...(source.learningOutcomes || [])],
-      ksbMappings: (source.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-      components: (source.components || []).map(component => ({
-        ...component,
-        id: makeAuthoringId('component'),
-        weekId: shell.id,
-        settings: unbookedComponentSettings(component),
-        ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-      })),
-    };
-    updateWorkingModule(module => {
-      const at = module.weekStructure.findIndex(item => item.id === weekId);
-      if (at < 0) return module;
-      const weekStructure = [
-        ...module.weekStructure.slice(0, at + 1),
-        copy,
-        ...module.weekStructure.slice(at + 1),
-      ].map((week, position) => (week.weekNumber === position + 1 ? week : { ...week, weekNumber: position + 1 }));
-      return { ...module, weekStructure: resequenceWeekSessionDates(weekStructure) };
-    });
-    setSelection({ kind: 'week', weekId: copy.id });
-  }, [updateWorkingModule, workingModule]);
-
-  // Add a template's components to a week that already exists, keeping whatever
-  // is in it. Appended, not replaced: a template is a set of lessons to drop in
-  // beside the ones already authored, and picking one should never quietly
-  // discard a week's existing work.
-  //
-  // Every component is given a fresh id and rebound to this week, exactly as
-  // importing a template as a new week does -- reusing the template's own ids
-  // would make two modules claim the same component.
-  const addWeekTemplateToWeek = useCallback((weekId: string, template: WeekTemplate) => {
-    if (!workingModule) return;
-    const week = workingModule.weekStructure.find(item => item.id === weekId);
-    if (!week) return;
-    const copies = (template.components || []).map(component => ({
-      ...component,
-      id: makeAuthoringId('component'),
-      weekId: week.id,
-      ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-    }));
-    const lastComponent = copies.at(-1);
-    updateWorkingModule(module => ({
-      ...module,
-      weekStructure: module.weekStructure.map(item => {
-        if (item.id !== weekId) return item;
-        return {
-          ...item,
-          // The week keeps its own title and summary. Only the KSB mappings are
-          // merged, because those describe the components being added.
-          components: [...item.components, ...copies],
-          ksbMappings: [
-            ...(item.ksbMappings || []),
-            ...(template.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
-          ],
-        };
-      }),
-    }));
-    setWeekTemplateImportOpen(false);
-    setWeekTemplateTargetWeekId(null);
-    if (lastComponent) openAddedComponent(weekId, lastComponent.id);
-  }, [openAddedComponent, updateWorkingModule, workingModule]);
 
   // Copy components chosen from the reuse library into an existing week. The
   // copies land in client state and are persisted by the normal module save -
   // a per-component write would be undone by it, because saving re-upserts the
   // module's whole week structure.
   const addLibraryComponentsToWeek = useCallback((weekId: string, picked: LibraryComponent[]) => {
-    if (!workingModule) return;
-    const week = workingModule.weekStructure.find(item => item.id === weekId);
-    if (!week) return;
-    const copies = picked.map(source => copyComponentIntoWeek(source, week.id, workingModule.id));
-    const lastComponent = copies.at(-1);
-    if (!lastComponent) return;
+    let lastComponentId = '';
     updateWorkingModule(module => ({
       ...module,
       weekStructure: module.weekStructure.map(week => {
         if (week.id !== weekId) return week;
+        const copies = picked.map(source => copyComponentIntoWeek(source, week.id, module.id));
+        if (copies.length) lastComponentId = copies[copies.length - 1].id;
         return { ...week, components: [...week.components, ...copies] };
       }),
     }));
+    if (lastComponentId) setSelection({ kind: 'component', weekId, componentId: lastComponentId });
     setReusePickerWeekId(null);
-    openAddedComponent(weekId, lastComponent.id);
-  }, [openAddedComponent, updateWorkingModule, workingModule]);
+  }, [updateWorkingModule]);
+
+  // Clone a week in place: the twin lands directly beneath its source, carrying
+  // every component in full except the live session (`duplicateWeekInModule`
+  // says why). Client state only -- the normal module save writes the whole week
+  // structure, so a per-week write here would only be undone by it.
+  const duplicateWeek = useCallback((weekId: string) => {
+    let copyId = '';
+    updateWorkingModule(module => {
+      const next = duplicateWeekInModule(module, weekId);
+      const sourceIndex = module.weekStructure.findIndex(week => week.id === weekId);
+      if (sourceIndex >= 0) copyId = next.weekStructure[sourceIndex + 1]?.id || '';
+      return next;
+    });
+    if (!copyId) return;
+    // Open it straight away: the point of a clone is the edit you make to it.
+    setExpandedWeekIds(prev => new Set(prev).add(copyId));
+    setSelection({ kind: 'week', weekId: copyId });
+  }, [updateWorkingModule]);
 
   const confirmDeleteWeek = async (weekId: string) => {
     if (!workingModule) return;
@@ -1517,8 +1557,6 @@ export default function ModuleBuilder() {
       warning: 'This removes the week, its components, KSB mappings, OTJH and points from the module totals.',
       confirmButtonText: 'Delete week',
       processingText: 'Deleting week...',
-      successTitle: 'Week deleted',
-      successText: `${title} was removed and the remaining weeks were renumbered.`,
       onConfirm: async () => {
         const deletedIndex = workingModule.weekStructure.findIndex(item => item.id === weekId);
         const remainingWeeks = workingModule.weekStructure.filter(item => item.id !== weekId);
@@ -1542,8 +1580,19 @@ export default function ModuleBuilder() {
   // arrived as `options`, `options.closeAfterSave` read undefined, and every
   // save threw up a "Returning to the modules list" alert and then closed the
   // workspace. Leaving is what the guarded Back button is for.
-  const persistWorkingModule = useCallback(async () => {
+  // `source` only labels the save for the audit trail; it changes nothing about
+  // what is sent or how. Callers that are the reader pressing Save leave it
+  // alone, and the auto-save effect names itself so its writes are recorded as
+  // ordinary edits with an auto-save source rather than as an action of their
+  // own. Never passed straight to an onClick -- see the note above.
+  const persistWorkingModule = useCallback(async (source: 'auto-save' | 'manual' = 'manual') => {
     if (!workingModule) return null;
+    // The backend refuses this with a 400 anyway; saying so here keeps the
+    // reader's unsaved work in the workspace instead of round-tripping it.
+    if (workingModuleProgrammeArchived) {
+      setActionMessage(ARCHIVED_PROGRAMME_BUILDER_NOTICE);
+      return null;
+    }
     const scopedWorkingModule = workingModuleScopeLock?.locked ? {
       ...workingModule,
       programmeId: workingModuleScopeLock.programmeId || workingModule.programmeId,
@@ -1555,8 +1604,20 @@ export default function ModuleBuilder() {
       setActionMessage(firstValidationMessage(validationIssues));
       return null;
     }
+    // One save of this module at a time. A second request started while the
+    // first is running is not a second save, it is a race: the two replies can
+    // land in either order, and the loser's payload would decide what the
+    // module is. The edit that prompted this is not lost -- clearing the
+    // attempt mark below lets the auto-save effect pick it up the moment the
+    // save in flight settles, which is what "save the latest pending state"
+    // means here.
+    if (savingRef.current) {
+      autoSaveAttemptRef.current = '';
+      return null;
+    }
     const requestId = saveRequestRef.current + 1;
     saveRequestRef.current = requestId;
+    savingRef.current = true;
     setSaving(true);
     setSaveStartedAt(Date.now());
     setActionMessage(null);
@@ -1568,42 +1629,175 @@ export default function ModuleBuilder() {
         ? selectedKsbSourceId
         : '',
     });
+    // Exactly what this request carries. Everything below compares against it
+    // rather than against "is the module dirty", because those become different
+    // questions the moment somebody types while the request is in the air.
+    const sentSnapshot = moduleSnapshot(moduleToSave);
+    setSavingSnapshot(sentSnapshot);
+    // What was actually attempted, which is not what the auto-save timer saw:
+    // the payload is normalised and recalculated on the way out, and
+    // `setWorkingModule(moduleToSave)` below makes that the workspace's state.
+    // Marking the pre-normalisation snapshot alone left the two disagreeing, so
+    // a refused save came straight back round as a second attempt at the same
+    // payload -- the one thing a refusal must not do.
+    autoSaveAttemptRef.current = sentSnapshot;
     try {
       setWorkingModule(moduleToSave);
-      const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave);
-      const stillCurrent = saveRequestRef.current === requestId;
-      if (!stillCurrent) return;
+      const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
+        expectedRevision: serverRevisionRef.current,
+        source,
+      });
+      if (saveRequestRef.current !== requestId) return null;
+      // The write landed, so this is the version the next save is measured
+      // against, whether or not its result is adopted below.
+      serverRevisionRef.current = saved.structureRevision || '';
       setWorkingModule(current => {
         if (!current || current.catalogueId !== moduleToSave.catalogueId) return current;
-        return saved;
+        // The server normalises what it stores -- session counts, dates, the
+        // quality score -- so adopting its answer is what keeps the screen and
+        // the database telling the same story. But only when the reader has not
+        // typed since: otherwise adopting it would put their keystrokes back to
+        // what was sent, which is the out-of-order overwrite in person. Their
+        // copy stays, still marked as needing a save, and the effect below
+        // sends it next.
+        //
+        // Writing the ref from here is deliberate and idempotent: the branch
+        // depends only on `current`, so a repeated call cannot leave the two
+        // disagreeing.
+        const unchangedSinceSent = moduleSnapshot(current) === sentSnapshot;
+        savedModuleSnapshotRef.current = unchangedSinceSent ? moduleSnapshot(saved) : sentSnapshot;
+        return unchangedSinceSent ? saved : current;
       });
-      savedModuleSnapshotRef.current = moduleSnapshot(saved);
       setStorageVersion(version => version + 1);
       setActionMessage(null);
-      // A brief, self-dismissing confirmation rather than a click-to-close modal:
-      // the footer already reads "All changes saved" with a green Saved button, and
-      // a dialog that waits on the reader is an interruption in a screen people save
-      // constantly. This only confirms the save landed — it is not a readiness
-      // check, so it shows the same "Saved" on a week that still has unmapped KSBs.
-      void showCurriculumAlert({ title: 'Saved', icon: 'success', timer: 1200 });
+      setSaveFailure(null);
+      // No dialog on a successful save. The footer already reads "All changes
+      // saved" with a green Saved button, and a modal on every save is an
+      // interruption in a screen people save constantly.
       reload();
       return saved;
     } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : 'Unable to save module structure.');
+      // Nothing is reset, reloaded or refetched here on purpose. Every refusal
+      // leaves the weeks, components, OTJH and KSB mappings the reader has
+      // authored exactly where they are -- `savedModuleSnapshotRef` is left
+      // alone too, so the workspace still knows it has unsaved work.
+      if (err instanceof ModuleStructureConflictError) {
+        // Somebody else's write is already in the module. Re-sending this
+        // payload would replace every week and component with the pre-edit
+        // ones, so the auto-save is disarmed until the module is read again --
+        // the reader is told what happened and keeps everything they typed.
+        autoSaveArmedRef.current = false;
+        setSaveFailure({ kind: 'conflict', message: err.message });
+        setActionMessage(err.message);
+        return null;
+      }
+      // `curriculumErrorMessage` unwraps the handler's own sentence -- the
+      // archived-programme refusal among them -- from the "Curriculum API
+      // returned 400 for /path:" diagnostic CurriculumApiError carries.
+      const message = curriculumErrorMessage(err, err instanceof Error ? err.message : 'Unable to save module structure.');
+      setSaveFailure({ kind: 'error', message });
+      setActionMessage(message);
       return null;
     } finally {
       if (saveRequestRef.current === requestId) {
+        savingRef.current = false;
         setSaving(false);
         setSaveStartedAt(null);
+        setSavingSnapshot('');
       }
     }
-  }, [curriculumProgrammes, ksbSets, reload, standards, workingModule, workingModuleScopeLock]);
+  }, [curriculumProgrammes, ksbSets, reload, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
+
+  /**
+   * The state the auto-save has already tried, so a refused one cannot loop.
+   *
+   * A save the backend or the validator turns down leaves the module dirty,
+   * and "dirty" is this effect's trigger -- without this it would retry the
+   * same refused structure every quiet period for as long as the workspace is
+   * open. Stamped with the state that was attempted; editing again produces a
+   * different state, which is a new attempt.
+   */
+  const autoSaveAttemptRef = useRef('');
+
+  // Auto-save. Every authoring edit in this workspace funnels through
+  // `updateWorkingModule`, so the module's snapshot moving is the whole signal:
+  // a week title typed, a quiz added, a PDF uploaded onto a component, a
+  // reading material placed, a KSB mapped. None of it waits for the Save
+  // button, which stays as a "save it now" and as the way back after a refusal.
+  useEffect(() => {
+    if (!workingModule || !hasUnsavedWorkingModuleChanges) return;
+    // Turned off in the footer. Nothing else changes: the Save button, the
+    // revision check and the unsaved-change guards are the same pipeline, so
+    // this is a choice about *when* a save is sent, not about how.
+    if (!autoSaveEnabled) return;
+    // Archived programmes are read-only: the save would be refused, and saying
+    // so once (when the reader tries to edit) is enough.
+    if (workingModuleProgrammeArchived) return;
+    // Not a structure this workspace read back, or one the server has already
+    // refused as stale. Either way an unprompted full-structure write would be
+    // the wrong thing to do with it; the Save button still works.
+    if (!autoSaveArmedRef.current) return;
+    // A save is already in flight. `saving` is a dependency, so the edits made
+    // during it are picked up the moment it settles.
+    if (saving) return;
+    if (autoSaveAttemptRef.current === workingModuleSnapshot) return;
+    const timer = window.setTimeout(() => {
+      // Stamped with the state being attempted, so a refusal cannot loop: the
+      // module is still dirty afterwards, and dirty is this effect's trigger.
+      // Editing again produces a different state, which is a new attempt.
+      autoSaveAttemptRef.current = workingModuleSnapshot;
+      void persistWorkingModule('auto-save');
+    }, AUTO_SAVE_QUIET_MS);
+    // Every further edit cancels the pending save and starts the wait again, so
+    // a long burst of typing costs one request rather than one per pause.
+    return () => window.clearTimeout(timer);
+  }, [
+    autoSaveEnabled,
+    hasUnsavedWorkingModuleChanges,
+    persistWorkingModule,
+    saving,
+    workingModule,
+    workingModuleProgrammeArchived,
+    workingModuleSnapshot,
+  ]);
+
+  /**
+   * Turn the workspace's own saving on or off.
+   *
+   * Switching off cancels whatever quiet period was running -- the effect above
+   * re-runs and clears its timer -- and leaves every edit exactly where it is,
+   * to be sent when the reader presses Save. Switching on clears the attempt
+   * mark so work that was typed while it was off is picked up straight away
+   * rather than being treated as already tried.
+   */
+  const toggleAutoSave = useCallback(() => {
+    setAutoSaveEnabled(current => {
+      const next = !current;
+      if (next) autoSaveAttemptRef.current = '';
+      return next;
+    });
+  }, []);
+
+  /**
+   * Save now, without waiting out the quiet period.
+   *
+   * The same pipeline as the auto-save rather than a second one beside it --
+   * the revision check, the overlap guard and the conflict handling are the
+   * save, not decoration on one route to it. Clearing the attempt mark is what
+   * makes this work after a refusal: the state is otherwise recorded as already
+   * tried, which is exactly what stops the auto-save retrying it.
+   */
+  const saveWorkingModuleNow = useCallback(() => {
+    autoSaveAttemptRef.current = '';
+    return persistWorkingModule();
+  }, [persistWorkingModule]);
 
   // Export every component to an Excel sheet, one row each, for a curriculum
   // worker to have ChatGPT fill the KSBs against each title/description.
   const exportKsbSheet = useCallback(async () => {
     if (!workingModule) return;
     setActionMessage(null);
+    setNoticeAlert(null);
     // Guard before exporting so an empty module never downloads a blank sheet.
     if (!workingModule.weekStructure.some(week => week.components.length)) {
       setActionMessage('This module has no components to export yet.');
@@ -1622,6 +1816,7 @@ export default function ModuleBuilder() {
   const importKsbSheet = useCallback(async (file: File) => {
     if (!workingModule) return;
     setActionMessage(null);
+    setNoticeAlert(null);
     try {
       const { module: nextModule, summary } = await importModuleKsbWorkbook(file, workingModule);
       if (!summary.rowsWithKsbs) {
@@ -1632,31 +1827,6 @@ export default function ModuleBuilder() {
       setNoticeAlert({ title: 'KSB sheet imported', message: describeKsbImport(summary) });
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to read the uploaded KSB sheet.');
-    }
-  }, [updateWorkingModule, workingModule]);
-
-  const exportTemplate = useCallback(async () => {
-    if (!workingModule) return;
-    setActionMessage(null);
-    try {
-      const { rows, fileName } = await exportModuleTemplate(workingModule);
-      setNoticeAlert({ title: 'Template exported', message: `Downloaded ${fileName} with ${rows} component${rows === 1 ? '' : 's'} across sheets grouped by component type.` });
-    } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : 'Unable to export the module template.');
-    }
-  }, [workingModule]);
-
-  const importTemplate = useCallback(async (file: File) => {
-    if (!workingModule) return;
-    setActionMessage(null);
-    try {
-      const { module: nextModule, summary } = await importModuleTemplate(file, workingModule);
-      updateWorkingModule(() => nextModule);
-      const unmatched = summary.unmatchedIds.length ? ` ${summary.unmatchedIds.length} unmatched row${summary.unmatchedIds.length === 1 ? '' : 's'} were skipped.` : '';
-      const invalid = summary.invalidRows.length ? ` ${summary.invalidRows.length} row warning${summary.invalidRows.length === 1 ? '' : 's'} found (unknown types stay unchanged).` : '';
-      setNoticeAlert({ title: 'Template imported', message: `Updated ${summary.componentsUpdated} component${summary.componentsUpdated === 1 ? '' : 's'} and ${summary.weeksUpdated} week name${summary.weeksUpdated === 1 ? '' : 's'}.${unmatched}${invalid} Review the changes, then save.` });
-    } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : 'Unable to read the module template.');
     }
   }, [updateWorkingModule, workingModule]);
 
@@ -1700,8 +1870,40 @@ export default function ModuleBuilder() {
       reload({ silent: true });
     } catch (err) {
       setDeletingModuleId(null);
-      setActionMessage(err instanceof Error ? err.message : 'Unable to delete module.');
+      setActionMessage(err instanceof Error ? err.message : 'Unable to archive module.');
       throw err;
+    }
+  };
+
+  // Read only once the archive is opened, and re-read after every restore or
+  // permanent delete: the list has to lose the row that was just dealt with.
+  const archive = useCurriculumArchive(fetchArchivedCurriculumModules, showArchived);
+
+  const restoreArchivedModule = async (module: CurriculumArchivedModule) => {
+    if (archiveBusyId) return;
+    setArchiveBusyId(module.id);
+    try {
+      await restoreModuleWithConfirm(module, async () => {
+        archive.reload();
+        // The module is back in the catalogue, so the catalogue behind this
+        // view has to hear about it too.
+        await reload({ silent: true });
+      });
+    } finally {
+      setArchiveBusyId(null);
+    }
+  };
+
+  const deleteArchivedModule = async (module: CurriculumArchivedModule) => {
+    if (archiveBusyId) return;
+    setArchiveBusyId(module.id);
+    try {
+      await permanentlyDeleteModuleWithConfirm(module, async () => {
+        archive.reload();
+        await reload({ silent: true });
+      });
+    } finally {
+      setArchiveBusyId(null);
     }
   };
 
@@ -1710,42 +1912,77 @@ export default function ModuleBuilder() {
     const weekCount = module.weekStructure.length || module.weeks || 0;
     const componentCount = module.lessonCount || module.weekStructure.reduce((total, week) => total + week.components.length, 0);
     await showCurriculumConfirm({
-      title: 'Delete this module?',
-      text: `${module.title} and its authoring structure will be removed. This deletes ${weekCount} weeks, ${componentCount} components, KSB mappings, completion criteria and advanced details from Module Builder.`,
+      title: 'Archive this module?',
+      text: `${module.title} leaves the catalogue with its ${weekCount} weeks, ${componentCount} components, KSB mappings, completion criteria and advanced details. Nothing is deleted - it can be brought back from View archive.`,
       icon: 'warning',
-      confirmButtonText: 'Yes, delete module',
+      confirmButtonText: 'Yes, archive module',
       cancelButtonText: 'Cancel',
-      successTitle: 'Module deleted',
-      successText: `${module.title} and all authoring components were deleted.`,
+      successTitle: 'Module archived',
+      successText: `${module.title} is in the archive, with everything authored under it.`,
       onConfirm: async () => {
         await deleteModule(module);
       },
     });
   };
 
-  const closeWorkingModule = () => {
+  const clearWorkingModule = useCallback(() => {
     savedModuleSnapshotRef.current = '';
+    // Everything the save pipeline knows belonged to the module being left.
+    // Carrying a revision or an armed auto-save into the next one would have it
+    // write the module just closed, or refuse a module it has never read.
+    serverRevisionRef.current = '';
+    autoSaveArmedRef.current = false;
+    autoSaveAttemptRef.current = '';
+    setSaveFailure(null);
+    setSavingSnapshot('');
     setWorkingModule(null);
     setSelection(null);
     setSettingsOpen(false);
     setPreviewOpen(false);
     setLessonPickerWeekId(null);
-    setPendingComponentSelection(null);
     setNoticeAlert(null);
     setActionMessage(null);
+    // Browser Forward must reload the module from the restored address.
+    deepLinkedModuleRef.current = '';
+  }, []);
+
+  const closeWorkingModule = () => {
+    clearWorkingModule();
+    // Back out of the address too, or a reload from the catalogue would re-open
+    // the module the reader just left. The week/component deep-link targets go
+    // with it: they only mean anything inside the module that owns them.
     setSearchParams(previous => {
-      const next = new URLSearchParams(previous);
-      ['module', 'moduleId', 'catalogueId', 'moduleTitle', 'week', 'weekId', 'component', 'componentId', 'focus', 'settings']
-        .forEach(key => next.delete(key));
-      return next;
+      const params = new URLSearchParams(previous);
+      ['module', 'moduleId', 'catalogueId', 'moduleTitle', 'week', 'weekId', 'component', 'componentId', 'settings', 'focus']
+        .forEach(key => params.delete(key));
+      return params;
     }, { replace: true });
   };
+
+  // A catalogue click adds the editor to browser history. This route stays
+  // mounted after browser Back, so clear the editor when its catalogue URL
+  // returns instead of leaving the previous module on screen.
+  useEffect(() => {
+    const moduleTarget = ['module', 'moduleId', 'catalogueId', 'moduleTitle']
+      .map(key => searchParams.get(key) || '')
+      .find(Boolean) || '';
+    if (moduleTarget) {
+      pendingModuleNavigationRef.current = '';
+      return;
+    }
+    if (!workingModule || pendingModuleNavigationRef.current) return;
+    clearWorkingModule();
+  }, [clearWorkingModule, searchParams, workingModule]);
 
   const restoreSavedWorkingModule = useCallback(() => {
     if (!savedModuleSnapshotRef.current) return workingModule;
     try {
       const restored = recalculateModule(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem);
       setWorkingModule(restored);
+      // Discarding puts the workspace back to what was last stored, so whatever
+      // the server refused is no longer waiting to be sent.
+      setSaveFailure(null);
+      autoSaveAttemptRef.current = '';
       return restored;
     } catch {
       return workingModule;
@@ -1778,7 +2015,11 @@ export default function ModuleBuilder() {
     if (!current) return;
     const structureId = moduleStructureIdentifier(current);
     if (!structureId) return;
-    const remote = await loadModuleStructure(structureId).catch(() => null);
+    // Fresh, not the shared two-minute cache: this runs because the drawer has
+    // just written, and a cached answer would hand back the pre-write module --
+    // together with the pre-write revision, which would then refuse the
+    // workspace's own next save as stale.
+    const remote = await loadModuleStructure(structureId, { skipCache: true }).catch(() => null);
     if (!remote) return;
     const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
     const merged = {
@@ -1791,6 +2032,7 @@ export default function ModuleBuilder() {
     } as ModuleBuilderListItem;
     const stored = recalculateModule(getDefaultStructure(merged));
     savedModuleSnapshotRef.current = moduleSnapshot(stored);
+    serverRevisionRef.current = remote.structureRevision || '';
     const next = dirty ? recalculateModule({ ...stored, weekStructure: current.weekStructure }) : stored;
     setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? next : latest));
     if (selection) applySelectionSafely(selection, next);
@@ -1837,8 +2079,15 @@ export default function ModuleBuilder() {
   }, [hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
 
   const requestSelectionChange = useCallback((nextSelection: Selection) => {
+    setFocusedComponentId('');
     applySelectionSafely(nextSelection);
   }, [applySelectionSafely]);
+
+  useEffect(() => {
+    if (!focusedComponentId) return undefined;
+    const timer = window.setTimeout(() => setFocusedComponentId(''), 6000);
+    return () => window.clearTimeout(timer);
+  }, [focusedComponentId]);
 
   // The dates the weeks run on come from the module's own session plan, so
   // adding or removing a week has to re-read it: week N is session N, and the
@@ -1851,17 +2100,14 @@ export default function ModuleBuilder() {
   // saved yet) the dates the rest of the module already runs to. Only a change
   // in the count moves the module's end date -- opening a module is not an edit
   // to when it finishes.
-  const plannedWeekCountRef = useRef<{ catalogueId: string; weeks: number } | null>(null);
+  const plannedWeekCountRef = useRef<{ catalogueId: string; weeks: number; sessions?: number } | null>(null);
   const workingModuleCatalogueId = workingModule?.catalogueId || '';
   const workingModuleWeekCount = workingModule?.weekStructure.length || 0;
-  // The plan is kept, not just applied: the dates it hands the weeks say when
-  // each week runs, and the `skippedHolidays` it carries alongside them say
-  // which of those dates only moved because a closure blocked the one before.
-  // Tagged with the module it was read for, so a plan never colours another
-  // module's weeks while its own is still loading.
+  const workingModuleFlatSessionCount = workingModule && moduleUsesSessionRows(workingModule)
+    ? workingModule.sessionsNumber : undefined;
+  // Keep the fetched plan alongside the module it belongs to. The plan drives
+  // both holiday-clash messaging and the dated session preview.
   const [weekSessionPlanState, setWeekSessionPlanState] = useState<{ catalogueId: string; plan: ModuleWeekSessionPlan } | null>(null);
-  // The plan belongs to whichever module produced it, so a rail opened on the
-  // next module must not read the one before it out of state.
   const workingModuleSessionPlan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId
     ? weekSessionPlanState.plan
     : null;
@@ -1872,11 +2118,11 @@ export default function ModuleBuilder() {
       return undefined;
     }
     const planned = plannedWeekCountRef.current;
-    if (planned?.catalogueId === workingModuleCatalogueId && planned.weeks === workingModuleWeekCount) return undefined;
+    if (planned?.catalogueId === workingModuleCatalogueId && planned.weeks === workingModuleWeekCount && planned.sessions === workingModuleFlatSessionCount) return undefined;
     const countChanged = planned?.catalogueId === workingModuleCatalogueId;
-    plannedWeekCountRef.current = { catalogueId: workingModuleCatalogueId, weeks: workingModuleWeekCount };
+    plannedWeekCountRef.current = { catalogueId: workingModuleCatalogueId, weeks: workingModuleWeekCount, sessions: workingModuleFlatSessionCount };
     let active = true;
-    void loadModuleWeekSessionPlan(workingModuleCatalogueId, workingModuleWeekCount).then(plan => {
+    void loadModuleWeekSessionPlan(workingModuleCatalogueId, workingModuleWeekCount, workingModuleFlatSessionCount).then(plan => {
       if (!active || !plan) return;
       setWeekSessionPlanState({ catalogueId: workingModuleCatalogueId, plan });
       setWorkingModule(current => (
@@ -1886,80 +2132,43 @@ export default function ModuleBuilder() {
       ));
     });
     return () => { active = false; };
-  }, [workingModuleCatalogueId, workingModuleWeekCount]);
+  }, [workingModuleCatalogueId, workingModuleWeekCount, workingModuleFlatSessionCount]);
 
-  /**
-   * The holiday that closed one skipped date. A skipped date is a bare ISO day
-   * and does not explain itself; the days only ever come from the cohort's own
-   * ticked holidays, so any stored holiday covering one is the one that moved
-   * the session.
-   */
-  const holidayClosureFor = useCallback((date: string) => {
-    const day = cleanText(date);
-    if (!day) return null;
-    const match = moduleFormScope.holidays.find(holiday => (
-      String(holiday.startDate) <= day && day <= String(holiday.endDate || holiday.startDate)
+  // How many live sessions each week holds, in week order. Adding one is the
+  // edit that creates a session needing a date, and nothing about the week
+  // count changes when it happens -- so the plan effect above never re-ran and
+  // the new component sat undated until the next save round-trip told the
+  // author it had no date.
+  const workingModuleLiveSessionShape = useMemo(
+    () => (workingModule?.weekStructure || [])
+      .map(week => week.components.filter(component => component.type === 'live-session').length)
+      .join(','),
+    [workingModule],
+  );
+
+  // Date a live session the moment it is added, by the same rule everything
+  // else uses: its week owns the group's delivery days inside its own Monday-to-
+  // Sunday window, and the session takes the next of them. This only ever fills
+  // a component that has no date and no meeting tracked against it, and returns
+  // the module untouched when there is nothing to fill, so re-running it cannot
+  // move an authored date or a booked occurrence.
+  //
+  // A week already carrying a live session for each of its delivery days has no
+  // date left to give, and an extra session there stays undated rather than
+  // being put on a day the group does not deliver.
+  useEffect(() => {
+    if (!workingModuleSessionPlan || !workingModuleCatalogueId) return;
+    setWorkingModule(current => (
+      current && current.catalogueId === workingModuleCatalogueId
+        ? applyModuleWeekSessionPlan(current, workingModuleSessionPlan, { followEndDate: false })
+        : current
     ));
-    const label = cleanText(match?.label);
-    if (!match || !label) return null;
-    // `endDate` is optional on a stored holiday and means a single day when it
-    // is absent, which is also what the span formatter prints for it.
-    return {
-      label,
-      startDate: cleanText(match.startDate),
-      endDate: cleanText(match.endDate) || cleanText(match.startDate),
-    };
-  }, [moduleFormScope.holidays]);
+  }, [workingModuleLiveSessionShape, workingModuleSessionPlan, workingModuleCatalogueId]);
 
   /**
-   * Every live session whose own day a holiday closed, in slot order.
-   *
-   * Only a session that hit a closed date itself is here. One merely carried a
-   * slot later because the session in front of it moved clashed with nothing --
-   * saying so against its week was reporting the knock-on of a closure as a
-   * second closure, and it turned one ticked holiday into a red row on every
-   * week below it.
-   *
-   * Nothing here changes the plan. The rail states the clash and where the
-   * session is due to move to; the plan itself, the Teams calendar and the
-   * module's end date are unchanged, and the decision is made on the session.
-   */
-  const clashingLiveSessions = useMemo(() => {
-    const plan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId ? weekSessionPlanState.plan : null;
-    if (!plan) return [] as ClashingLiveSession[];
-    return (plan.sessions || []).flatMap((session, index) => {
-      const slotDate = cleanText(session.slotDate || session.date);
-      const actualDate = cleanText(session.date);
-      const closures = (session.skippedHolidays || [])
-        .map(date => cleanText(date))
-        .filter(Boolean);
-      if (!slotDate || !actualDate || !closures.length) return [];
-      // One holiday closing four days of a week is one closure, not four:
-      // keyed on the period so the same holiday found through each of its days
-      // is listed once.
-      const byPeriod = new Map<string, { label: string; startDate: string; endDate: string }>();
-      closures.forEach(date => {
-        const closure = holidayClosureFor(date);
-        if (closure) byPeriod.set(`${closure.label}|${closure.startDate}|${closure.endDate}`, closure);
-      });
-      const holidays = Array.from(byPeriod.values());
-      return [{
-        sessionNumber: Number(session.sessionNumber) || index + 1,
-        slotDate,
-        blockedBy: holidays.map(holiday => holiday.label).join(', ') || 'a holiday',
-        closures: holidays,
-      }];
-    });
-  }, [weekSessionPlanState, workingModuleCatalogueId, holidayClosureFor]);
-
-  /**
-   * The day each week's live session runs on, keyed by week.
-   *
-   * A live-session component with no date of its own falls back to its week's,
-   * and after a closure the two are different: the week keeps its own slot while
-   * the session it lost runs later. Falling back to the week's date there would
-   * date a new live session onto a day the room is shut, so the fallback reads
-   * the plan's session date rather than the week's.
+   * The day each week's live session runs on, keyed by week. This is the same
+   * delivered date the week now shows after holiday shifts, so a new live
+   * session never lands on the closed slot the plan skipped.
    */
   const liveSessionDateByWeekId = useMemo(() => {
     const plan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId ? weekSessionPlanState.plan : null;
@@ -1971,6 +2180,66 @@ export default function ModuleBuilder() {
     });
     return byWeekId;
   }, [workingModule, weekSessionPlanState, workingModuleCatalogueId]);
+
+  /**
+   * Put a freshly created module-wide Teams series onto the live sessions it was
+   * created for.
+   *
+   * One create from the Course structure rail covers every live session in the
+   * module, so the join link each one keeps is the link for the day it actually
+   * runs on -- not the first day's link copied down the module. A series with no
+   * entry for a session's day leaves that session alone rather than handing it
+   * somebody else's meeting.
+   *
+   * Only the meeting's own facts are written. Dates, durations and titles stay
+   * as authored: the calendar was built from them, so reading them back would be
+   * a round trip that can only lose.
+   */
+  const applyModuleTeamsSeries = useCallback((result: TeamsMeetingResult, input: TeamsMeetingInput) => {
+    const meeting = result.meeting;
+    const series = meeting.calendarSeries || [];
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => ({
+        ...week,
+        components: week.components.map(component => {
+          if (component.type !== 'live-session') return component;
+          const date = String(component.settings.sessionDate || liveSessionDateByWeekId.get(week.id) || week.sessionDate || '');
+          const day = /^\d{4}-\d{2}-\d{2}$/.test(date)
+            ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`))
+            : '';
+          const daySeries = series.find(item => item.day === day);
+          if (series.length && !daySeries) return component;
+          const joinUrl = daySeries?.joinUrl || meeting.joinUrl || meeting.webLink;
+          if (!joinUrl) return component;
+          return {
+            ...component,
+            settings: {
+              ...component.settings,
+              liveSessionUrl: joinUrl,
+              teamsMeetingUrl: joinUrl,
+              teamsCalendarSeries: JSON.stringify(series),
+              teamsEventId: daySeries?.eventId || meeting.eventId,
+              teamsOnlineMeetingId: daySeries?.onlineMeetingId || meeting.onlineMeetingId || '',
+              teamsLiveSessionId: meeting.liveSessionId,
+              teamsMeetingOptionsUrl: meeting.meetingOptionsUrl,
+              teamsOrganizerEmail: meeting.organizerEmail,
+              teamsAttendees: meeting.attendees,
+              teamsPresenters: meeting.presenters,
+              teamsCoOrganizers: meeting.coOrganizers,
+              teamsProvider: meeting.provider,
+              teamsRepeat: meeting.repeat,
+              teamsRepeatOccurrences: meeting.repeatOccurrences,
+              teamsLobbyBypass: input.lobbyBypass,
+              teamsRecording: input.recording,
+              teamsSpokenLanguage: input.spokenLanguage,
+              teamsMeetingType: input.meetingType,
+            },
+          };
+        }),
+      })),
+    }));
+  }, [liveSessionDateByWeekId, updateWorkingModule]);
 
   // Whichever week is selected (directly, or via one of its components) is
   // always expanded in the Course structure accordion — this is the single
@@ -2016,7 +2285,6 @@ export default function ModuleBuilder() {
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${workingModule.title} - authoring workspace`} userName="Rachel Myers" userRole="Curriculum Designer">
         <div className="min-h-[calc(100vh-96px)] bg-background-100 px-3 py-4 sm:px-5 lg:px-6">
           <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-4">
-          {workingHierarchy && <CurriculumHierarchyNav {...workingHierarchy} />}
           <WorkspaceHeader
             module={workingModule}
             programmeOptions={programmeOptions.filter(option => option !== 'All')}
@@ -2042,10 +2310,15 @@ export default function ModuleBuilder() {
               if (workingModuleScopeLock?.locked) return;
               updateWorkingModule(module => ({ ...module, ksbProfileSourceId: cleanKsbSourceId(sourceId) }));
             }}
-            onExportTemplate={() => { void exportTemplate(); }}
-            onImportTemplate={() => moduleTemplateImportInputRef.current?.click()}
           />
 
+          <div className="flex flex-wrap justify-end gap-2 py-3">
+            <button type="button" onClick={() => setPreviewOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">Preview as learner</button>
+            <button type="button" onClick={() => setAiMaterialOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">AI Material</button>
+            <button type="button" onClick={() => setSessionResultsOpen(true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">Sessions & Recordings</button>
+          </div>
+          {sessionResultsOpen && <SessionResultsDialog moduleId={workingModule.catalogueId || workingModule.id} onClose={() => setSessionResultsOpen(false)} />}
+          {aiMaterialOpen && <AiMaterialModal moduleCatalogueId={workingModule.catalogueId || workingModule.id} moduleTitle={workingModule.title} onClose={() => setAiMaterialOpen(false)} />}
           {(saving || (actionMessage && !deletingModuleId)) && (
             <SaveStatusPanel
               saving={saving}
@@ -2055,6 +2328,20 @@ export default function ModuleBuilder() {
             />
           )}
 
+          {workingModuleProgrammeArchived && (
+            <ArchivedProgrammeBuilderNotice programmeName={workingModule.programmeName} />
+          )}
+
+          {/* One `fieldset` rather than a read-only prop threaded through every
+              panel: it disables every control inside it natively, so the weeks,
+              components, OTJH, KSB mappings and notes stay on screen and
+              readable while none of them can be changed. */}
+          <fieldset
+            disabled={workingModuleProgrammeArchived}
+            aria-disabled={workingModuleProgrammeArchived || undefined}
+            data-testid="module-builder-structure"
+            className="m-0 min-w-0 border-0 p-0"
+          >
           <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)_290px] 2xl:grid-cols-[420px_minmax(560px,1fr)_310px]">
             <CourseStructure
               module={workingModule}
@@ -2062,49 +2349,20 @@ export default function ModuleBuilder() {
               dragState={dragState}
               onDragState={setDragState}
               onSelectWeek={weekId => { void requestSelectionChange({ kind: 'week', weekId }); }}
-              onSelectComponent={(weekId, componentId) => {
-                const alreadyExists = workingModule.weekStructure
-                  .find(week => week.id === weekId)
-                  ?.components.some(component => component.id === componentId);
-                if (alreadyExists) {
-                  requestSelectionChange({ kind: 'component', weekId, componentId });
-                } else {
-                  // The rail calls onChange and onSelect in the same browser
-                  // event. React has not committed the new component yet, so
-                  // wait for it instead of validating against the old list and
-                  // falling back to the week overview.
-                  openAddedComponent(weekId, componentId);
-                }
-              }}
+              onSelectComponent={(weekId, componentId) => { void requestSelectionChange({ kind: 'component', weekId, componentId }); }}
               onAddWeekFromTemplate={() => setWeekTemplateImportOpen(true)}
               onReuseComponents={weekId => setReusePickerWeekId(weekId)}
+              onCreateTeamsMeeting={() => setModuleTeamsMeetingOpen(true)}
+              focusedComponentId={focusedComponentId}
               onAddWeek={() => {
                 const week = createEmptyWeek(workingModule.id, workingModule.weekStructure.length + 1);
                 updateWorkingModule(module => ({ ...module, weekStructure: [...module.weekStructure, week] }));
                 setSelection({ kind: 'week', weekId: week.id });
               }}
-              onGenerateLiveSessions={() => {
-                const weekCount = weeksMissingLiveSession(workingModule).length;
-                const addedCount = countAddedLiveSessions(workingModule);
-                if (!addedCount) return;
-                updateWorkingModule(generateMissingLiveSessions);
-                void showCurriculumAlert({
-                  title: 'Live sessions added',
-                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added across ${weekCount} week${weekCount === 1 ? '' : 's'}. Use "Create all Teams meetings" once to create the module calendar and link every session.`,
-                  timer: 3200,
-                });
-              }}
-              onCreateAllTeamsMeetings={() => setBulkTeamsMeetingOpen(true)}
-              onRestoreAllTeamsMeetings={() => { void restoreTeamsMeetingForWorkingModule(); }}
-              hasTrackedTeamsMeeting={
-                teamsMeetings.some(summary => String(summary.moduleCatalogueId || '').trim().toLowerCase() === String(workingModule.catalogueId || '').trim().toLowerCase())
-                || workingModule.weekStructure.some(week => week.components.some(component => component.type === 'live-session' && String(component.settings?.liveSessionUrl || component.settings?.teamsMeetingUrl || '').trim()))
-              }
-              restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
-              onDuplicateWeek={weekId => duplicateWeek(weekId)}
               onDeleteWeek={weekId => {
                 void confirmDeleteWeek(weekId);
               }}
+              onDuplicateWeek={duplicateWeek}
               onDropReorder={targetWeekId => {
                 if (!dragState) return;
                 // Reordering moves what is taught, not when the module meets, so
@@ -2121,9 +2379,8 @@ export default function ModuleBuilder() {
                 weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components } : week)),
               }))}
               pointsByType={componentPointsByType}
-              clashingSessions={clashingLiveSessions}
-              onViewSessions={workingModuleSessionPlan ? () => setSessionPreviewOpen(true) : undefined}
               plannedSessions={workingModuleSessionPlan?.sessions}
+              plannedSlots={workingModuleSessionPlan?.slots}
               expandedWeekIds={expandedWeekIds}
               onExpandedWeekIdsChange={setExpandedWeekIds}
               allowMultipleExpanded={ALLOW_MULTIPLE_EXPANDED_WEEKS}
@@ -2131,45 +2388,66 @@ export default function ModuleBuilder() {
 
             <div className="min-w-0">
               {selectedComponent && selectedWeek ? (
-                <WeekComponentEditor
-                  component={selectedComponent}
-                  onChange={updates => updateWorkingModule(module => {
-                    const updatedSettings = updates.settings as ModuleComponent['settings'] | undefined;
-                    const sharesTeamsLink = selectedComponent.type === 'live-session'
-                      && updatedSettings
-                      && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
-                    const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
-                    return {
-                      ...module,
-                      weekStructure: module.weekStructure.map(week => ({
-                        ...week,
-                        components: week.components.map(component => {
-                          if (component.id === selectedComponent.id) return { ...component, ...updates };
-                          if (sharesTeamsLink && component.type === 'live-session') {
-                            return {
-                              ...component,
-                              settings: { ...component.settings, liveSessionUrl: sharedTeamsUrl },
-                            };
-                          }
-                          return component;
-                        }),
-                      })),
-                    };
-                  })}
-                  onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
-                  groupOptions={componentGroupOptions}
-                  rulePoints={componentPointsByType[selectedComponent.type]}
-                  weekScope={weekScopeForModule}
-                  weekSessionDate={liveSessionDateByWeekId.get(selectedWeek.id) || selectedWeek.sessionDate}
-                  weekSessionTime={selectedWeek.sessionStartTime}
-                  uploadResource={uploadComponentForModule}
-                  restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
-                  restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
-                  liveSessionModule={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
-                />
+                <ModuleBuilderScrollArea className={`h-[calc(100vh-140px)] min-h-[420px] ${focusedComponentId === selectedComponent.id ? 'rounded-xl ring-2 ring-primary-400 ring-offset-2 ring-offset-background-100' : ''}`} contentClassName="pr-2.5">
+                  {focusedComponentId === selectedComponent.id && (
+                    <div className="mb-3 flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-semibold text-primary-800" role="status">
+                      <AppIcon className="ri-focus-3-line shrink-0 text-primary-600" />
+                      This is the component you opened from Audit Trail.
+                    </div>
+                  )}
+                  <WeekComponentEditor
+                    component={selectedComponent}
+                    onChange={updates => updateWorkingModule(module => {
+                      const updatedSettings = updates.settings as ModuleComponent['settings'] | undefined;
+                      const sharesTeamsLink = selectedComponent.type === 'live-session'
+                        && updatedSettings
+                        && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
+                      const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
+                      let calendarSeries: NonNullable<TeamsMeetingResult['meeting']['calendarSeries']> = [];
+                      try { calendarSeries = JSON.parse(String(updatedSettings?.teamsCalendarSeries || '[]')); } catch { /* Legacy manual links have no series manifest. */ }
+                      return {
+                        ...module,
+                        weekStructure: module.weekStructure.map(week => ({
+                          ...week,
+                          components: week.components.map(component => {
+                            if (component.id === selectedComponent.id) return { ...component, ...updates };
+                            if (sharesTeamsLink && component.type === 'live-session') {
+                              const date = String(component.settings.sessionDate || week.sessionDate || '');
+                              const day = /^\d{4}-\d{2}-\d{2}$/.test(date)
+                                ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`)) : '';
+                              const daySeries = calendarSeries.find(series => series.day === day);
+                              if (calendarSeries.length && !daySeries) return component;
+                              return {
+                                ...component,
+                                settings: { ...component.settings, liveSessionUrl: daySeries?.joinUrl || sharedTeamsUrl,
+                                  ...(daySeries ? {
+                                    teamsMeetingUrl: daySeries.joinUrl, teamsEventId: daySeries.eventId,
+                                    teamsOnlineMeetingId: daySeries.onlineMeetingId || '',
+                                    teamsLiveSessionId: updatedSettings.teamsLiveSessionId,
+                                    teamsCalendarSeries: updatedSettings.teamsCalendarSeries,
+                                  } : {}),
+                                },
+                              };
+                            }
+                            return component;
+                          }),
+                        })),
+                      };
+                    })}
+                    onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
+                    groupOptions={componentGroupOptions}
+                    rulePoints={componentPointsByType[selectedComponent.type]}
+                    weekScope={weekScopeForModule}
+                    weekSessionDate={liveSessionDateByWeekId.get(selectedWeek.id) || selectedWeek.sessionDate}
+                    weekSessionTime={selectedWeek.sessionStartTime}
+                    uploadResource={uploadComponentForModule}
+                  />
+                </ModuleBuilderScrollArea>
               ) : selectedWeek ? (
                 <ModuleWeekPanel
                   week={selectedWeek}
+                  module={workingModule}
+                  groupOptions={componentGroupOptions}
                   onChange={updates => updateWorkingModule(module => ({
                     ...module,
                     weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? { ...week, ...updates } : week),
@@ -2178,7 +2456,6 @@ export default function ModuleBuilder() {
                     setLessonPickerWeekId(selectedWeek.id);
                   }}
                   onReuseComponents={() => setReusePickerWeekId(selectedWeek.id)}
-                  onAddFromTemplate={() => { setWeekTemplateTargetWeekId(selectedWeek.id); setWeekTemplateImportOpen(true); }}
                 />
               ) : (
                 <EmptyEditor onAddWeek={() => {
@@ -2196,7 +2473,6 @@ export default function ModuleBuilder() {
                 ksbSourceLabels={ksbSourceLabels}
               ksbPrompt={ksbMappingPrompt}
               ksbProfileCount={workspaceKsbProfileEntries.length}
-              ksbProfileLoading={ksbSetsLoading || standardsLoading}
               onExportKsb={() => { void exportKsbSheet(); }}
               onImportKsb={() => ksbImportInputRef.current?.click()}
               onAddKsb={target => setKsbTarget(target)}
@@ -2205,14 +2481,18 @@ export default function ModuleBuilder() {
               onUpdateKsbWeightClass={(target, mappingId, weightClass) => updateWorkingModule(module => updateKsbMappingWeightClass(module, target, mappingId, weightClass))}
             />
           </div>
+          </fieldset>
           <WorkspaceActionFooter
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
-            onPreview={() => setPreviewOpen(true)}
+            status={workspaceSaveStatus}
+            autoSave={autoSaveEnabled}
+            onToggleAutoSave={toggleAutoSave}
+            locked={workingModuleProgrammeArchived}
             onEditModule={() => openPlacementForm(workingModule)}
             onModuleSettings={() => setSettingsOpen(true)}
             onDelete={() => confirmDeleteModule(workingModule)}
-            onSave={() => { void persistWorkingModule(); }}
+            onSave={() => { void saveWorkingModuleNow(); }}
           />
           <input
             ref={ksbImportInputRef}
@@ -2226,17 +2506,6 @@ export default function ModuleBuilder() {
               if (file) void importKsbSheet(file);
             }}
           />
-          <input
-            ref={moduleTemplateImportInputRef}
-            type="file"
-            accept=".xlsx,.xls"
-            className="hidden"
-            onChange={event => {
-              const file = event.target.files?.[0];
-              event.target.value = '';
-              if (file) void importTemplate(file);
-            }}
-          />
           </div>
         </div>
 
@@ -2247,7 +2516,7 @@ export default function ModuleBuilder() {
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
             onClose={() => setSettingsOpen(false)}
-            onSave={() => { void persistWorkingModule(); }}
+            onSave={() => { void saveWorkingModuleNow(); }}
             onChange={updates => updateWorkingModule(module => ({ ...module, ...updates }))}
             onCompletionChange={updates => updateWorkingModule(module => ({ ...module, completionCriteria: { ...module.completionCriteria, ...updates } }))}
             onAdvancedChange={updates => updateWorkingModule(module => ({ ...module, advancedDetails: { ...module.advancedDetails, ...updates } }))}
@@ -2271,7 +2540,9 @@ export default function ModuleBuilder() {
             await reload({ silent: true });
           }}
         />
-        {previewOpen && <PreviewModal module={workingModule} onClose={() => setPreviewOpen(false)} />}
+        {previewOpen && (auth.account?.role === 'admin'
+          ? <PersonalLearningEntry moduleId={workingModule.catalogueId} title={workingModule.title} unsaved={hasUnsavedWorkingModuleChanges} onClose={() => setPreviewOpen(false)} />
+          : <LearnerPreview module={workingModule} initialComponentId={selectedComponent?.id} onClose={() => setPreviewOpen(false)} />)}
         {sessionKsbMappingOpen && (
           <SessionKsbMappingModal
             module={workingModule}
@@ -2292,86 +2563,42 @@ export default function ModuleBuilder() {
                 ...module,
                 weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...components] } : item),
               }));
+              setSelection({ kind: 'component', weekId: week.id, componentId: components[components.length - 1].id });
               setLessonPickerWeekId(null);
-              openAddedComponent(week.id, components[components.length - 1].id);
             }}
-          />
-        )}
-        {/* The session names come from the weeks on screen rather than from a
-            read of the saved module, which is what the drawer has to do. The
-            editor is the newer copy: a live session renamed a moment ago should
-            appear in the timeline under the name it now has. */}
-        {sessionPreviewOpen && workingModuleSessionPlan && (
-          <ModuleSessionPreview
-            // A panel down the side rather than the drawer's dialog: the rail
-            // says which week owns which run of days and this says what those
-            // days are, so they are read against each other. A dialog covered
-            // the weeks it was there to explain.
-            variant="panel"
-            moduleName={workingModule?.title || 'Module'}
-            plan={workingModuleSessionPlan}
-            holidays={moduleFormScope.holidays}
-            sessionNames={liveSessionNamesByNumber(workingModule)}
-            sessionNamesLoading={false}
-            sessionNamesError={false}
-            onClose={() => setSessionPreviewOpen(false)}
           />
         )}
         {weekTemplateImportOpen && workingModule && (
           <WeekTemplateImportModal
             scope={{ programmeId: workingModule.programmeId, programmeName: workingModule.programmeName }}
-            // Named so the dialog can say where the components will land, which
-            // is the whole difference between the two ways in.
-            targetWeekLabel={(() => {
-              if (!weekTemplateTargetWeekId) return '';
-              const week = workingModule.weekStructure.find(item => item.id === weekTemplateTargetWeekId);
-              return week ? weekPlacementLabel(week, ' — ') : '';
-            })()}
-            existingComponentCount={(() => {
-              if (!weekTemplateTargetWeekId) return 0;
-              const week = workingModule.weekStructure.find(item => item.id === weekTemplateTargetWeekId);
-              return week?.components.length ?? 0;
-            })()}
-            onClose={() => { setWeekTemplateImportOpen(false); setWeekTemplateTargetWeekId(null); }}
-            onImport={(template, repeat) => {
-              if (weekTemplateTargetWeekId) addWeekTemplateToWeek(weekTemplateTargetWeekId, template);
-              else importWeekTemplateAsNewWeek(template, repeat);
-            }}
+            onClose={() => setWeekTemplateImportOpen(false)}
+            onImport={importWeekTemplateAsNewWeek}
           />
         )}
-        {/* Bulk "Create all Teams meetings": the same create form a single live
-            session uses, opened at module level (its defaults come from the first
-            live-session component, its title from the module). One Teams series is
-            built on the module's saved dates; on success the restore endpoint
-            writes the join link + settings into EVERY live-session component and
-            persists them server-side, so there is no separate save step. */}
-        {bulkTeamsMeetingOpen && workingModule && (() => {
-          const liveSessions = workingModule.weekStructure.flatMap(week => week.components.filter(component => component.type === 'live-session'));
-          const base = liveSessions[0];
-          if (!base) return null;
-          return (
-            <TeamsMeetingModal
-              component={{ ...base, title: workingModule.title }}
-              module={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
-              onClose={() => setBulkTeamsMeetingOpen(false)}
-              // The series is now tracked against this module, so re-attaching pulls
-              // its join link into every live-session component and saves them — the
-              // one-step "create and it's saved" the per-component modal can't give.
-              onCreated={() => {
-                // Generated components may still be local. Persist their ids first
-                // so restore can pair every one with its own tracked occurrence.
-                void saveModuleStructure(workingModule.catalogueId, workingModule)
-                  .then(() => restoreTeamsMeetingForWorkingModule())
-                  .catch(err => setActionMessage(err instanceof Error ? err.message : 'Unable to save live sessions before restoring Teams data.'));
-              }}
-            />
-          );
-        })()}
+        {moduleTeamsMeetingOpen && workingModule && (
+          /* The same create form the Teams Meetings page shows, opened over the
+             builder rather than instead of it. No component: the calendar is
+             the module's, so every live session it holds takes its own day's
+             link back from the series that was just created. */
+          <TeamsMeetingModal
+            module={workingModule}
+            unsavedChanges={hasUnsavedWorkingModuleChanges}
+            onRestored={restored => {
+              if (restored.catalogueId !== workingModule.catalogueId) return;
+              const next = recalculateModule({ ...workingModule, ...restored, sourceModule: workingModule.sourceModule || restored.sourceModule });
+              savedModuleSnapshotRef.current = moduleSnapshot(next);
+              serverRevisionRef.current = restored.structureRevision || '';
+              setWorkingModule(next);
+            }}
+            onClose={() => setModuleTeamsMeetingOpen(false)}
+            onCreated={applyModuleTeamsSeries}
+          />
+        )}
         {reusePickerWeekId && (
           <ComponentLibraryModal
             weekLabel={(() => {
               const week = workingModule.weekStructure.find(item => item.id === reusePickerWeekId);
-              return week ? weekPlacementLabel(week, ' — ') : 'this week';
+              return week ? `Week ${week.weekNumber}${week.title ? ` — ${week.title}` : ''}` : 'this week';
             })()}
             onClose={() => setReusePickerWeekId(null)}
             onAddMany={picked => addLibraryComponentsToWeek(reusePickerWeekId, picked)}
@@ -2401,8 +2628,6 @@ export default function ModuleBuilder() {
             ksbSetsLoading={ksbSetsLoading}
             initialSourceId={workspaceKsbProfileValue}
             lockedSourceId={workspaceKsbProfileValue}
-            existingMappings={mappingsForTarget(workingModule, ksbTarget)}
-            limitPerKind={ksbTarget.scope === 'component' ? COMPONENT_KSB_LIMIT_PER_KIND : undefined}
             onClose={() => setKsbTarget(null)}
             onAddMany={(items) => {
               updateWorkingModule(module => items.reduce(
@@ -2419,8 +2644,7 @@ export default function ModuleBuilder() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${published} published - ${draftCount} draft - ${totalComponents} components`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
-        {catalogueHierarchy && <CurriculumHierarchyNav {...catalogueHierarchy} />}
+      <div className="p-4 sm:p-5 space-y-4">
         <div className="rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-3">
@@ -2428,22 +2652,27 @@ export default function ModuleBuilder() {
                 <AppIcon className="ri-layout-4-line text-xl"></AppIcon>
               </span>
               <div className="min-w-0">
-                {programmeDesignUrl && (
-                  <Link to={programmeDesignUrl} className="mb-1 inline-flex items-center gap-1 text-[10px] font-bold text-primary-700 hover:text-primary-900">
-                    <AppIcon className="ri-arrow-left-line"></AppIcon>
-                    Back to Programme Modules
-                  </Link>
-                )}
                 <h2 className="text-lg font-heading font-bold text-foreground-950">Module Builder</h2>
                 <p className="mt-1 max-w-2xl text-[12px] leading-5 text-foreground-500">
                   {loading ? 'Loading live LMS modules...' : 'Manage module structures, delivery scope and KSB mapping in one workspace.'}
                 </p>
               </div>
             </div>
-            <button onClick={() => setCreateOpen(true)} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70">
-              <AppIcon className="ri-add-line"></AppIcon>
-              New module
-            </button>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {/* Count only once the archive has been read: until then there is
+                  nothing to count, and a badge claiming 0 would be a number the
+                  page has not checked. */}
+              <ArchiveToggleButton
+                active={showArchived}
+                count={archive.loaded ? archive.records.length : null}
+                onToggle={() => setShowArchived(current => !current)}
+                label="View archive"
+              />
+              <button onClick={() => setCreateOpen(true)} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70">
+                <AppIcon className="ri-add-line"></AppIcon>
+                New module
+              </button>
+            </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-background-200 pt-3">
             <BuilderStatChip icon="ri-stack-line" label="Modules" value={catalogueModules.length} />
@@ -2463,11 +2692,40 @@ export default function ModuleBuilder() {
           </div>
         )}
         {actionMessage && !deletingModuleId && (
-          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
-            {actionMessage}
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
+            <span>{actionMessage}</span>
+            <span className="flex shrink-0 items-center gap-2">
+              {actionMessageRetry && (
+                <button
+                  type="button"
+                  onClick={() => { const retry = actionMessageRetry; setActionMessage(null); setActionMessageRetry(null); retry?.(); }}
+                  className="rounded-lg border border-red-200 bg-white px-3 py-1.5 font-bold text-red-700 hover:bg-red-100"
+                >
+                  Retry
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { setActionMessage(null); setActionMessageRetry(null); }}
+                aria-label="Dismiss"
+                className="rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-100"
+              >
+                <AppIcon className="ri-close-line text-sm"></AppIcon>
+              </button>
+            </span>
           </div>
         )}
 
+        {showArchived ? (
+          <ArchivedModulesPanel
+            records={archive.records}
+            loading={archive.loading}
+            error={archive.error}
+            busyId={archiveBusyId}
+            onRestore={module => { void restoreArchivedModule(module); }}
+            onDelete={module => { void deleteArchivedModule(module); }}
+          />
+        ) : (
         <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0">
@@ -2494,22 +2752,30 @@ export default function ModuleBuilder() {
               >
                 {programmeOptions.map(option => <option key={option} value={option}>{option === 'All' ? 'All programmes' : option}</option>)}
               </select>
+              {/* Empty here now means the records genuinely do not exist, not
+                  that no module reaches them, so the labels can say so plainly. */}
               <select
                 aria-label="Cohort"
                 value={cohortFilter}
                 onChange={event => changeFilter(() => { setCohortFilter(event.target.value); setGroupFilter(''); })}
+                disabled={programmeFilter === 'All'}
                 className={FILTER_SELECT_CLASS}
               >
-                <option value="">{cohortFilterOptions.length ? 'All cohorts' : 'No cohorts in scope'}</option>
+                <option value="">{cohortFilterOptions.length
+                  ? 'All cohorts'
+                  : programmeFilter === 'All' ? 'Choose programme first' : 'No cohorts in this programme'}</option>
                 {cohortFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
               <select
                 aria-label="Group"
                 value={groupFilter}
                 onChange={event => changeFilter(() => setGroupFilter(event.target.value))}
+                disabled={programmeFilter === 'All' || !cohortFilter}
                 className={FILTER_SELECT_CLASS}
               >
-                <option value="">{groupFilterOptions.length ? 'All groups' : 'No groups in scope'}</option>
+                <option value="">{groupFilterOptions.length
+                  ? 'All groups'
+                  : !cohortFilter ? 'Choose cohort first' : 'No groups in this cohort'}</option>
                 {groupFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
               <select
@@ -2521,26 +2787,15 @@ export default function ModuleBuilder() {
                 <option value="">All tutors</option>
                 {tutorNames.map(name => <option key={name} value={name}>{name}</option>)}
               </select>
-              <select
-                aria-label="Sort modules"
-                value={sort}
-                onChange={event => setSort(event.target.value)}
-                className={FILTER_SELECT_CLASS}
-              >
-                {MODULE_SORT_OPTIONS.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
               <button
                 type="button"
-                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive && !sort}
+                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive}
                 onClick={() => changeFilter(() => {
                   setSearch('');
                   setProgrammeFilter('All');
                   setCohortFilter('');
                   setGroupFilter('');
                   setTutorFilter('');
-                  setSort('');
                 })}
                 className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40 disabled:hover:bg-background-50"
               >
@@ -2549,18 +2804,6 @@ export default function ModuleBuilder() {
               </button>
             </div>
           </div>
-          <div className="relative h-0.5 overflow-hidden" aria-hidden="true">
-            {moduleCreating && !loading && (
-              <span
-                className={reduceMotion
-                  ? 'absolute inset-0 bg-primary-500/40'
-                  : 'absolute inset-y-0 left-0 w-1/4 animate-entity-refresh rounded-full bg-primary-500/70'}
-              />
-            )}
-          </div>
-          <span className="sr-only" role="status" aria-live="polite">
-            {moduleCreating && !loading ? 'Creating module and refreshing the catalogue' : ''}
-          </span>
           <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
             {loading ? (
               <ModuleListSkeleton />
@@ -2573,43 +2816,13 @@ export default function ModuleBuilder() {
                     teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
-                    onAssignLearners={() => openAssignLearners(module)}
+                    onLearners={() => openLearnerAction(module)}
                     onBuild={() => openModule(module)}
                     onSettings={() => openPlacementForm(module)}
-                    onCover={() => setCoverModule(module)}
                     onDuplicate={() => duplicateModule(module)}
                     onDelete={() => confirmDeleteModule(module)}
                   />
                 ))}
-              </div>
-            ) : emptyProgrammeScope ? (
-              <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
-                <span className="grid h-14 w-14 place-items-center rounded-full bg-primary-50 text-primary-500">
-                  <AppIcon className="ri-book-open-line text-2xl"></AppIcon>
-                </span>
-                <div>
-                  <p className="text-[13px] font-semibold text-foreground-700">{programmeFilter} has no modules yet</p>
-                  <p className="mt-1 max-w-xs text-[12px] text-foreground-400">Create the first module for this programme to start mapping its delivery, weeks and KSBs.</p>
-                </div>
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setCreateOpen(true)}
-                    disabled={saving}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70"
-                  >
-                    <AppIcon className="ri-add-line text-sm"></AppIcon>
-                    New module
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => changeFilter(() => setProgrammeFilter('All'))}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
-                  >
-                    <AppIcon className="ri-apps-2-line text-sm"></AppIcon>
-                    Show all programmes
-                  </button>
-                </div>
               </div>
             ) : catalogueModules.length > 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
@@ -2628,7 +2841,6 @@ export default function ModuleBuilder() {
                     setCohortFilter('');
                     setGroupFilter('');
                     setTutorFilter('');
-                    setSort('');
                   })}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
                 >
@@ -2658,21 +2870,19 @@ export default function ModuleBuilder() {
             )}
           </div>
         </div>
+        )}
         <ModuleFormDrawer
           open={createOpen}
           defaults={{
-            programmeId: programmeFilter === 'All'
-              ? requestedHierarchy.programmeId
-              : resolveProgrammeIdentity(programmeFilter).programmeId,
-            cohortId: cohortFilter || requestedHierarchy.cohortId,
-            groupId: groupFilter || requestedHierarchy.groupId,
+            programmeId: programmeFilter === 'All' ? '' : resolveProgrammeIdentity(programmeFilter).programmeId,
+            cohortId: cohortFilter,
+            groupId: groupFilter,
           }}
           programmes={curriculumProgrammes}
           cohorts={moduleFormScope.cohorts}
           groups={moduleFormScope.groups}
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
-          onSavingChange={setModuleCreating}
           onClose={closeCreateDrawer}
           onSaved={openSavedModule}
         />
@@ -2689,14 +2899,6 @@ export default function ModuleBuilder() {
             await reload({ silent: true });
           }}
         />
-        {coverModule && (
-          <ModuleCoverDrawer
-            key={coverModule.catalogueId}
-            module={coverModule}
-            onClose={() => setCoverModule(null)}
-            onSaved={async () => { await reload({ silent: true }); }}
-          />
-        )}
         {ksbMapDisplayModule && (
           <ModuleKsbMapModal
             module={ksbMapDisplayModule}
@@ -2712,19 +2914,32 @@ export default function ModuleBuilder() {
             }}
           />
         )}
-        {assignLearnersModule && (
-          <AssignLearnersModal
-            moduleId={assignLearnersModule.moduleId}
-            moduleTitle={assignLearnersModule.title}
-            onClose={() => setAssignLearnersModule(null)}
-          />
-        )}
         {programmeKsbMap && (
           <ProgrammeKsbMapModal
             programmeName={programmeKsbMap.programmeName}
             modules={programmeKsbMap.modules}
             sourceLabels={ksbSourceLabels}
             onClose={() => setProgrammeKsbMap(null)}
+          />
+        )}
+        <LearnerAssignmentDrawer
+          target={learnerAssignmentTarget}
+          onClose={() => setLearnerAssignmentTarget(null)}
+          onAssigned={() => {
+            setLearnerAssignmentTarget(null);
+            void reload({ silent: true });
+          }}
+        />
+        {learnerProgress && (
+          <ModuleLearnerProgressDialog
+            moduleName={learnerProgress.target.name}
+            impact={learnerProgress.impact}
+            assignedLearners={learnerProgress.assignedLearners}
+            onClose={() => setLearnerProgress(null)}
+            onAssignMore={() => {
+              setLearnerProgress(null);
+              setLearnerAssignmentTarget(learnerProgress.target);
+            }}
           />
         )}
         {openingModule && (
@@ -2794,57 +3009,7 @@ function SaveStatusPanel({ saving, elapsedSeconds, error, module }: {
   );
 }
 
-function CurriculumHierarchyNav({ programme, cohort, group, current }: {
-  programme?: { label: string; href: string };
-  cohort?: { label: string; href: string };
-  group?: { label: string; href: string };
-  current: string;
-}) {
-  const items = [
-    programme ? { kind: 'Programme', icon: 'ri-book-2-line', ...programme } : null,
-    cohort ? { kind: 'Cohort', icon: 'ri-group-line', ...cohort } : null,
-    group ? { kind: 'Group', icon: 'ri-team-line', ...group } : null,
-  ].filter((item): item is { kind: string; icon: string; label: string; href: string } => Boolean(item));
-
-  return (
-    <nav aria-label="Curriculum hierarchy" className="overflow-x-auto rounded-2xl border border-foreground-200/70 bg-background-50 px-3 py-2 shadow-sm">
-      <div className="flex min-w-max items-center gap-1.5">
-        {items.map(item => (
-          <Fragment key={`${item.kind}:${item.label}`}>
-            {item.href ? (
-              <Link to={item.href} className="group inline-flex min-h-10 items-center gap-2 rounded-xl px-2.5 py-1.5 text-left transition-smooth hover:bg-background-100">
-                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-background-100 text-foreground-500 group-hover:bg-background-50 group-hover:text-primary-700">
-                  <AppIcon className={`${item.icon} text-sm`}></AppIcon>
-                </span>
-                <span>
-                  <span className="block text-[9px] font-bold uppercase tracking-wider text-foreground-400">{item.kind}</span>
-                  <span className="block max-w-44 truncate text-[11px] font-bold text-foreground-800">{item.label}</span>
-                </span>
-              </Link>
-            ) : (
-              <span className="inline-flex min-h-10 items-center gap-2 rounded-xl px-2.5 py-1.5">
-                <AppIcon className={`${item.icon} text-foreground-400`}></AppIcon>
-                <span className="text-[11px] font-bold text-foreground-700">{item.label}</span>
-              </span>
-            )}
-            <AppIcon className="ri-arrow-right-s-line text-foreground-300" aria-hidden="true"></AppIcon>
-          </Fragment>
-        ))}
-        <span aria-current="page" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary-50 px-3 py-1.5 text-primary-800 ring-1 ring-primary-100">
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
-            <AppIcon className="ri-stack-line text-sm"></AppIcon>
-          </span>
-          <span>
-            <span className="block text-[9px] font-bold uppercase tracking-wider text-primary-500">{current === 'Modules' ? 'Next step' : 'Module'}</span>
-            <span className="block max-w-52 truncate text-[11px] font-extrabold">{current}</span>
-          </span>
-        </span>
-      </div>
-    </nav>
-  );
-}
-
-function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange, onExportTemplate, onImportTemplate }: {
+function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
   ksbProfileOptions: Array<{ id: string; label: string }>;
@@ -2856,13 +3021,11 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   onBack: () => void;
   onProgrammeChange: (programmeName: string) => void;
   onKsbProfileChange: (sourceId: string) => void;
-  onExportTemplate: () => void;
-  onImportTemplate: () => void;
 }) {
   const moduleMetrics = [
     { label: 'Weeks', value: String(module.weekStructure.length), icon: 'ri-stack-line' },
     { label: 'Components', value: String(module.lessonCount), icon: 'ri-layout-grid-line' },
-    { label: 'OTJH', value: formatHoursMinutes(module.totalOtjh), icon: 'ri-time-line' },
+    { label: 'OTJH', value: module.totalOtjh.toFixed(1), icon: 'ri-time-line' },
   ];
   const programmeLocked = Boolean(scopeLock?.locked);
   const lockedKsbLabel = scopeLock?.ksbSourceLabel || (ksbProfileValue ? ksbProfileValue.replace(/^(profile|standard):/, '') : 'No source selected');
@@ -2884,17 +3047,6 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:justify-end">
-          <div className="flex items-center gap-1.5">
-            <button onClick={onExportTemplate} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" title="Download the editable module template">
-              <AppIcon className="ri-file-excel-2-line text-sm"></AppIcon>
-              <span className="hidden xl:inline">Export Template</span>
-              <span className="xl:hidden">Export</span>
-            </button>
-            <button onClick={onImportTemplate} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" title="Upload an edited module template">
-              <AppIcon className="ri-file-upload-line text-sm"></AppIcon>
-              <span>Import</span>
-            </button>
-          </div>
           <div className="grid grid-cols-3 gap-2">
             {moduleMetrics.map(metric => (
               <div key={metric.label} className="min-w-[78px] rounded-lg border border-background-200 bg-background-100/50 px-2.5 py-1.5">
@@ -2931,10 +3083,47 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   );
 }
 
-function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModuleSettings, onDelete, onSave }: {
+/**
+ * What the Builder says, and the backend's refusal says, about an archived
+ * programme. One sentence pair so the two never drift apart.
+ */
+const ARCHIVED_PROGRAMME_BUILDER_NOTICE = 'This module belongs to an archived programme. Restore the programme, or move the module to a live programme, before editing its structure.';
+
+function ArchivedProgrammeBuilderNotice({ programmeName }: { programmeName?: string }) {
+  return (
+    <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-900">
+      <div className="flex items-start gap-2">
+        <AppIcon className="ri-archive-line mt-0.5 text-base"></AppIcon>
+        <div className="min-w-0">
+          <p>{ARCHIVED_PROGRAMME_BUILDER_NOTICE}</p>
+          <p className="mt-1 font-medium text-amber-800">
+            {programmeName ? `${programmeName} is archived. ` : ''}
+            Everything below stays exactly as it was authored — it is read-only until the module has a live
+            programme to belong to.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Is this programme record archived, however the row spells it? */
+function programmeRecordArchived(programme: CurriculumProgramme | null): boolean {
+  if (!programme) return false;
+  if (programme.isArchived) return true;
+  return String(programme.status || '').trim().toLowerCase() === 'archived';
+}
+
+function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSave, locked = false, onEditModule, onDelete, onSave }: {
   saving: boolean;
   saved: boolean;
-  onPreview: () => void;
+  /** What the workspace has done with the edits — the sentence in the footer. */
+  status: WorkspaceSaveStatus;
+  /** The workspace sends edits itself; off means Save is the only way out. */
+  autoSave: boolean;
+  onToggleAutoSave: () => void;
+  /** The programme is archived, so the structure is read-only and Save is off. */
+  locked?: boolean;
   /** Name, placement, dates and tutor — the shared module form. */
   onEditModule: () => void;
   /** Completion criteria, advanced details and module-level KSBs. */
@@ -2943,23 +3132,50 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModul
   onSave: () => void;
 }) {
   const saveButtonIcon = saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-check-line' : 'ri-save-3-line';
-  const saveButtonLabel = saving ? 'Saving...' : saved ? 'Saved' : 'Save';
-  const stateText = saving ? 'Saving module structure...' : saved ? 'All changes saved' : 'Unsaved changes';
-  const stateTone = saving ? 'text-amber-700' : saved ? 'text-emerald-700' : 'text-foreground-600';
+  // "Save now" while the workspace is saving itself, because the button is then
+  // for not waiting out the quiet period. With auto save off it is the only way
+  // the module is written at all, so it says the plain thing.
+  const saveButtonLabel = saving ? 'Saving module changes...' : saved ? 'Module saved' : autoSave ? 'Save module now' : 'Save module changes';
+  // One sentence for the whole save pipeline. "Saved" is shown only for a write
+  // the backend has confirmed — `saved` comes from the stored snapshot, which
+  // moves on a successful reply and nothing else.
+  const { text: stateText, tone: stateTone, icon: stateIcon } = WORKSPACE_SAVE_STATUS[status];
 
   return (
     <div className="sticky bottom-0 z-20 -mx-3 mt-2 border-t border-background-200/80 bg-background-50/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-6 lg:px-6">
       <div className="mx-auto flex w-full max-w-[1840px] flex-wrap items-center justify-between gap-3 pr-0 lg:pr-44">
         <div className={`flex items-center gap-2 text-[12px] font-semibold ${stateTone}`}>
-          <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-checkbox-circle-line' : 'ri-edit-line'}></AppIcon>
-          {stateText}
+          <AppIcon className={stateIcon}></AppIcon>
+          <span data-testid="module-builder-save-state">{stateText}</span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <IconButton label="Preview" icon="ri-eye-line" onClick={onPreview} />
+          <button
+            type="button"
+            onClick={onToggleAutoSave}
+            data-testid="module-builder-auto-save-toggle"
+            aria-pressed={autoSave}
+            disabled={locked}
+            title={locked
+              ? ARCHIVED_PROGRAMME_BUILDER_NOTICE
+              : autoSave
+                ? 'Auto save is on. Edits are saved a moment after you stop typing.'
+                : 'Auto save is off. Your edits are kept here until you press Save module changes.'}
+            className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border px-3 text-[12px] font-semibold transition-smooth disabled:cursor-not-allowed disabled:opacity-70 whitespace-nowrap ${autoSave
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+              : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+          >
+            <AppIcon className={autoSave ? 'ri-toggle-fill' : 'ri-toggle-line'}></AppIcon>
+            Auto save{autoSave ? ' on' : ' off'}
+          </button>
           <IconButton label="Edit module" icon="ri-edit-line" onClick={onEditModule} />
-          <IconButton label="Module settings" icon="ri-settings-3-line" onClick={onModuleSettings} />
-          <IconButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
-          <button onClick={onSave} disabled={saving} className={`inline-flex h-10 min-w-[120px] items-center justify-center gap-1.5 rounded-lg px-4 text-[12px] font-semibold text-white shadow-sm transition-smooth disabled:opacity-70 whitespace-nowrap ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}>
+          <IconButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
+          <button
+            onClick={onSave}
+            data-testid="module-builder-save"
+            disabled={saving || locked}
+            title={locked ? ARCHIVED_PROGRAMME_BUILDER_NOTICE : undefined}
+            className={`inline-flex h-10 min-w-[120px] items-center justify-center gap-1.5 rounded-lg px-4 text-[12px] font-semibold text-white shadow-sm transition-smooth disabled:cursor-not-allowed disabled:opacity-70 whitespace-nowrap ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}
+          >
             <AppIcon className={saveButtonIcon}></AppIcon>{saveButtonLabel}
           </button>
         </div>
@@ -2968,39 +3184,11 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModul
   );
 }
 
-/** The Monday of the calendar week a session date falls in, as 'YYYY-MM-DD'. */
-function mondayKeyOf(sessionDate: string): string {
-  const date = new Date(`${sessionDate.slice(0, 10)}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return '';
-  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-/**
- * The month a calendar week belongs to: the one holding most of its seven days.
- *
- * A week straddling a month boundary has to be counted once, not in both
- * months — otherwise a module whose last August session lands on the final
- * Monday shows five weeks in August and two in September for six weeks of
- * delivery. Seven days never split evenly, so there is always a clear owner.
- */
-function owningMonthKeyOf(mondayKey: string): string {
-  const monday = new Date(`${mondayKey}T12:00:00`);
-  const daysPerMonth = new Map<string, number>();
-  for (let offset = 0; offset < 7; offset += 1) {
-    const day = new Date(monday);
-    day.setDate(monday.getDate() + offset);
-    const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}`;
-    daysPerMonth.set(key, (daysPerMonth.get(key) || 0) + 1);
-  }
-  return [...daysPerMonth.entries()].sort((left, right) => right[1] - left[1])[0][0];
-}
-
 // Course structure: a week navigator whose rows double as an accordion —
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onViewSessions, onCreateAllTeamsMeetings, onRestoreAllTeamsMeetings, hasTrackedTeamsMeeting, restoringTeamsMeeting, onDuplicateWeek, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, clashingSessions, plannedSessions, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onReuseComponents, onCreateTeamsMeeting, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -3009,42 +3197,46 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onSelectComponent: (weekId: string, componentId: string) => void;
   onAddWeek: () => void;
   onAddWeekFromTemplate: () => void;
-  onGenerateLiveSessions: () => void;
-  /**
-   * Open the module's dated plan. Omitted until there is a plan to open -- the
-   * rail can list weeks long before the module is assigned to a group, and
-   * there are no dates to show until it is.
-   */
-  onViewSessions?: () => void;
-  onCreateAllTeamsMeetings: () => void;
-  onRestoreAllTeamsMeetings: () => void;
-  hasTrackedTeamsMeeting: boolean;
-  restoringTeamsMeeting: boolean;
-  onDuplicateWeek: (weekId: string) => void;
   onDeleteWeek: (weekId: string) => void;
+  onDuplicateWeek: (weekId: string) => void;
   onDropReorder: (targetWeekId: string) => void;
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
   onReuseComponents: (weekId: string) => void;
-  pointsByType: Partial<Record<ModuleComponentType, number>>;
   /**
-   * The live sessions a holiday closed the day for, in slot order. Each is
-   * stated on its own week as a single line; the rail does not act on them.
+   * Opens this module's Teams create dialog here, over the rail that lists the
+   * live sessions it is built from. The Teams Meetings page still owns the
+   * calendar itself -- its detail, its updates, its attendance -- so only the
+   * first create is offered from inside the builder.
    */
-  clashingSessions?: ClashingLiveSession[];
+  onCreateTeamsMeeting: () => void;
+  focusedComponentId?: string;
+  pointsByType: Partial<Record<ModuleComponentType, number>>;
   /**
    * The module's flat dated plan. A week owns one slot per delivery day, so the
    * rail needs the plan itself to say which run of days each week occupies --
    * `week.sessionDate` is only the first of them.
    */
   plannedSessions?: ModuleWeekSessionPlan['sessions'];
+  /**
+   * The curriculum spine, including which delivery slots a ticked holiday
+   * falls on. Those slots stay ordinary live-session slots -- the holiday is
+   * only a notice on the week that owns them.
+   */
+  plannedSlots?: ModuleWeekSessionPlan['slots'];
   expandedWeekIds: Set<string>;
   onExpandedWeekIdsChange: (next: Set<string>) => void;
   allowMultipleExpanded?: boolean;
 }) {
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
-  const missingLiveSessionWeekCount = weeksMissingLiveSession(module).length;
-  const missingLiveSessionCount = countAddedLiveSessions(module);
-  const hasLiveSessions = module.weekStructure.some(week => week.components.some(component => component.type === 'live-session'));
+  const actualWeekCount = module.weekStructure.length;
+  // How many live sessions this module delivers: the live-session components
+  // authored into it, and nothing else. A module can run fourteen weeks and
+  // deliver no live session at all -- the weeks still hold their reading, their
+  // assignments and the rest -- so there is no number of sessions a week count
+  // implies and none is claimed here. Each one of these is one Teams meeting.
+  const authoredLiveSessions = moduleAuthoredLiveSessions(module);
+  const authoredLiveSessionCount = authoredLiveSessions.length;
+  const datedLiveSessionCount = authoredLiveSessions.filter(session => session.date).length;
 
   // The dates each week delivers on, keyed by week. A ten-week module running
   // Mon+Fri delivers twenty sessions, so every row here owns two dates -- the
@@ -3063,6 +3255,11 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     const week = module.weekStructure[index];
     if (week) liveSessionDatesByWeekId.set(week.id, dates);
   });
+  // The live sessions the planner could not move with their week: the ones
+  // Microsoft already has a confirmed meeting for. Only the plan can tell, so
+  // this is empty until it loads -- nothing to compare against is an unknown,
+  // not a disagreement.
+  const dateDriftByComponentId = moduleLiveSessionDateDrift(module, plannedSessions ? { sessions: plannedSessions } : null);
   // Falls back to the single date the week already carries, so a module whose
   // plan has not loaded yet reads exactly as it did before rather than blank.
   const sessionDatesOf = (week: ModuleWeek): string[] => {
@@ -3070,46 +3267,35 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     if (run?.length) return run;
     return week.sessionDate ? [cleanText(week.sessionDate).slice(0, 10)] : [];
   };
+  const deliveryDays = Array.from(new Set([
+    ...(module.weeklySchedule || []).map(slot => cleanText(slot.day)),
+    ...cleanText(module.deliveryMetadata?.weekDays).split(',').map(day => day.trim()),
+  ].filter(Boolean))).join(', ');
+  const moduleStartDate = cleanText(module.startDate).slice(0, 10);
+  const moduleStartWeekday = moduleStartDate
+    ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${moduleStartDate}T12:00:00Z`))
+    : '';
+  const firstDeliveryDate = module.weekStructure.flatMap(sessionDatesOf).find(Boolean) || '';
 
   // The weeks, split into the months they run in. A module is authored week by
   // week but delivered and reported on by month, so the rail says which month
   // each stretch of weeks belongs to. Empty until the module has session dates.
   const monthGroups = groupWeeksByMonth(module.weekStructure);
-  // Which months have sessions in each calendar week the module runs in. A week
-  // is normally counted by the month owning most of its days, but if that month
-  // has no session in it the week would vanish from every count — so it stays
-  // with the month that does deliver in it.
-  const monthKeysByCalendarWeek = new Map<string, Set<string>>();
-  monthGroups.forEach(group => {
-    group.weeks.forEach(week => {
-      // Every date the week delivers on, so a calendar week reached only by a
-      // week's second delivery day is not treated as a week nobody runs in.
-      sessionDatesOf(week).forEach(date => {
-        const mondayKey = mondayKeyOf(date);
-        if (!mondayKey) return;
-        const months = monthKeysByCalendarWeek.get(mondayKey) || new Set<string>();
-        months.add(group.key);
-        monthKeysByCalendarWeek.set(mondayKey, months);
-      });
-    });
-  });
   const monthHeadings = new Map(monthGroups.flatMap(group => {
     const first = group.weeks[0];
     if (!first) return [];
-    const otjh = group.weeks.reduce(
-      (total, week) => total + week.components.reduce((sum, component) => sum + Number(component.expectedOtjh || 0), 0),
-      0,
-    );
+    const otjh = group.weeks.reduce((total, week) => total + weekExpectedOtjhTotal(week), 0);
     const components = group.weeks.reduce((total, week) => total + week.components.length, 0);
     // Every date these weeks deliver on, not just the first of each. A month of
     // four Mon+Fri weeks runs eight sessions, and saying "4 weeks" alone was the
     // gap between this rail and the twenty rows in the sessions drawer.
     const sessionDates = group.weeks.flatMap(week => sessionDatesOf(week));
-    const mondayKeys = new Set(sessionDates.map(mondayKeyOf).filter(Boolean));
-    const calendarWeeks = [...mondayKeys].filter(mondayKey => {
-      const owner = owningMonthKeyOf(mondayKey);
-      return owner === group.key || !monthKeysByCalendarWeek.get(mondayKey)?.has(owner);
-    }).length;
+    const calendarWeeks = new Set(sessionDates.map(value => {
+      const date = new Date(`${value.slice(0, 10)}T12:00:00`);
+      const day = date.getDay();
+      date.setDate(date.getDate() - (day === 0 ? 6 : day - 1));
+      return date.toISOString().slice(0, 10);
+    })).size;
     // How many days a week the module runs on, to explain why the row numbers
     // outrun the week count.
     const daysPerWeek = new Set(
@@ -3125,29 +3311,10 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     if (!first) return [];
     return group.weeks.map(week => [week.id, first.id] as const);
   }));
-  // Which week each clash belongs to -- the week whose own run of days contains
-  // the day the holiday closed. Matched on that day rather than on where the
-  // session is due to move to, because the week that eventually receives it is
-  // not the week it clashed in: it has its own session on its own day, and
-  // reporting the clash there read as the receiving week being the one closed.
-  const clashesByWeekId = new Map<string, ClashingLiveSession[]>();
-  const datedWeeks = module.weekStructure.filter(week => sessionDatesOf(week).length);
-  (clashingSessions || []).forEach(clash => {
-    let ownerId = '';
-    datedWeeks.forEach(week => {
-      const run = sessionDatesOf(week);
-      if (run.includes(clash.slotDate)) ownerId = week.id;
-    });
-    // No run to match against (the plan has not loaded): fall back to the week
-    // that starts last on or before the closed day.
-    if (!ownerId) {
-      datedWeeks.forEach(week => {
-        if ((sessionDatesOf(week)[0] || '') <= clash.slotDate) ownerId = week.id;
-      });
-    }
-    if (!ownerId) return;
-    clashesByWeekId.set(ownerId, [...(clashesByWeekId.get(ownerId) || []), clash]);
-  });
+  // Which authored weeks have a delivery day a ticked holiday falls on. The
+  // plan is unchanged by it -- the week keeps its date and its live session --
+  // this is only where the rail hangs the notice.
+  const holidayNoticesByWeekId = weeksTouchedByHoliday(module, { sessions: plannedSessions, slots: plannedSlots });
 
   const [collapsedMonthIds, setCollapsedMonthIds] = useState<Set<string>>(new Set());
   const toggleMonthCollapsed = (monthId: string) => {
@@ -3175,9 +3342,78 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     onExpandedWeekIdsChange(next);
   };
 
+  const structureScrollRef = useRef<HTMLDivElement | null>(null);
+  const [structureScrollbar, setStructureScrollbar] = useState({ visible: false, top: 0, height: 0 });
+  const updateStructureScrollbar = useCallback(() => {
+    const node = structureScrollRef.current;
+    if (!node) return;
+    const visible = node.scrollHeight > node.clientHeight + 1;
+    if (!visible) {
+      setStructureScrollbar({ visible: false, top: 0, height: 0 });
+      return;
+    }
+    const trackHeight = Math.max(1, node.clientHeight - 20);
+    const height = Math.max(44, Math.round((node.clientHeight / node.scrollHeight) * trackHeight));
+    const maxTop = Math.max(0, trackHeight - height);
+    const maxScroll = Math.max(1, node.scrollHeight - node.clientHeight);
+    const top = Math.round((node.scrollTop / maxScroll) * maxTop);
+    setStructureScrollbar({ visible: true, top, height });
+  }, []);
+  const moveStructureScrollbar = useCallback((clientY: number, track: DOMRect) => {
+    const node = structureScrollRef.current;
+    if (!node) return;
+    const trackHeight = Math.max(1, track.height);
+    const maxTop = Math.max(0, trackHeight - structureScrollbar.height);
+    const nextTop = Math.min(maxTop, Math.max(0, clientY - track.top - structureScrollbar.height / 2));
+    const maxScroll = Math.max(1, node.scrollHeight - node.clientHeight);
+    node.scrollTop = maxTop ? (nextTop / maxTop) * maxScroll : 0;
+    updateStructureScrollbar();
+  }, [structureScrollbar.height, updateStructureScrollbar]);
+  const startStructureScrollbarDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!structureScrollbar.visible) return;
+    event.preventDefault();
+    const track = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    moveStructureScrollbar(event.clientY, track);
+    const handlePointerMove = (moveEvent: PointerEvent) => moveStructureScrollbar(moveEvent.clientY, track);
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  }, [moveStructureScrollbar, structureScrollbar.visible]);
+
+  useEffect(() => {
+    updateStructureScrollbar();
+    const timer = window.setTimeout(updateStructureScrollbar, 0);
+    window.addEventListener('resize', updateStructureScrollbar);
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && structureScrollRef.current) {
+      observer = new ResizeObserver(updateStructureScrollbar);
+      observer.observe(structureScrollRef.current);
+    }
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('resize', updateStructureScrollbar);
+      observer?.disconnect();
+    };
+  }, [expandedWeekIds.size, module.weekStructure.length, updateStructureScrollbar]);
+
+  useEffect(() => {
+    if (!focusedComponentId) return;
+    const focusedWeek = module.weekStructure.find(week => week.components.some(component => component.id === focusedComponentId));
+    if (!focusedWeek) return;
+    if (!expandedWeekIds.has(focusedWeek.id)) {
+      onExpandedWeekIdsChange(new Set([focusedWeek.id]));
+      return;
+    }
+    document.getElementById(`node-${focusedComponentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [expandedWeekIds, focusedComponentId, module.weekStructure, onExpandedWeekIdsChange]);
+
   return (
-    <aside className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm xl:sticky xl:top-4">
-      <div className="border-b border-background-200 bg-background-50 p-3">
+    <aside className="flex h-[calc(100vh-140px)] min-h-0 flex-col overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm xl:sticky xl:top-4">
+      <div className="shrink-0 border-b border-background-200 bg-background-50 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-[13px] font-heading font-bold text-foreground-950">Course structure</h3>
@@ -3188,145 +3424,129 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 library, which is why it is the only one still called a template. */}
             <button onClick={onAddWeekFromTemplate} title="Add a whole new week, built from a saved week template" className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
               <AppIcon className="ri-folder-open-line"></AppIcon>
-              From weeks templates
+              From template
             </button>
-            {/* The same view, and the same words, as the module drawer's
-                "View sessions": the rail says which week owns which run of
-                days, and this says what the dates actually are once the
-                holidays have moved them. */}
-            {onViewSessions && (
-              <button
-                type="button"
-                onClick={onViewSessions}
-                title="The module's dated plan: every session, the ones a holiday closed, and where each of those moved to"
-                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100"
-              >
-                <AppIcon className="ri-calendar-schedule-line"></AppIcon>
-                View sessions
-              </button>
-            )}
             <button onClick={onAddWeek} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
               <AppIcon className="ri-add-line"></AppIcon>
               Week
             </button>
           </div>
         </div>
-        {missingLiveSessionCount > 0 && (
-          <button
-            onClick={onGenerateLiveSessions}
-            title="Add a live-session component for every delivery day a week is still missing one for. It won't be created in Teams until you use Create Teams meeting on it."
-            className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 text-[11px] font-bold text-violet-700 transition-smooth hover:bg-violet-100"
-          >
-            <AppIcon className="ri-group-line"></AppIcon>
-            Generate live sessions ({missingLiveSessionCount} across {missingLiveSessionWeekCount} week{missingLiveSessionWeekCount === 1 ? '' : 's'})
-          </button>
-        )}
-        {/* One whole-module Teams action, on the module's saved session dates,
-            without leaving the editor. If a meeting was already created for this
-            module (e.g. from the Live Teams Meetings tab before these components
-            existed), creating again would duplicate it — so the button switches
-            to Restore, which pulls the existing dates and join links into every
-            live-session component instead. Otherwise it opens the create form. */}
-        {hasLiveSessions && module.catalogueId && (
-          hasTrackedTeamsMeeting ? (
+        {/* Creating is done here, over the weeks the dates come from: sending a
+            reader to another page to press one button lost them the rail they
+            were reading. Everything after the create -- the calendar's detail,
+            its updates, its attendance -- still lives on the Teams page, which
+            "Restore saved Teams data" carries them to. */}
+        {module.catalogueId && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <button
-              onClick={onRestoreAllTeamsMeetings}
-              disabled={restoringTeamsMeeting}
-              title="This module already has a Teams meeting. Restore its saved dates and join links onto every live-session component instead of creating a duplicate."
-              className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60"
+              type="button"
+              onClick={onCreateTeamsMeeting}
+              title="Create one Teams meeting on each of this module's live-session dates, without leaving the builder"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600"
             >
-              <AppIcon className={restoringTeamsMeeting ? 'ri-loader-4-line animate-spin' : 'ri-links-line'}></AppIcon>
-              {restoringTeamsMeeting ? 'Restoring Teams sessions…' : 'Restore Teams sessions & links'}
+              <AppIcon className="ri-calendar-event-line"></AppIcon>
+              Create Teams meeting
             </button>
-          ) : (
-            <button
-              onClick={onCreateAllTeamsMeetings}
-              title="Create the Microsoft Teams meeting for the whole module at once, on its saved session dates, and attach its join link to every live-session component."
-              className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-cyan-50 px-3 text-[11px] font-bold text-cyan-700 transition-smooth hover:bg-cyan-100"
+            <Link
+              to={`/curriculum/teams-meetings?module=${encodeURIComponent(module.catalogueId)}`}
+              title="Restore this module's saved Teams data on the Teams Meetings page"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100"
             >
-              <AppIcon className="ri-microsoft-teams-line"></AppIcon>
-              Create all Teams meetings
-            </button>
-          )
+              <AppIcon className="ri-refresh-line"></AppIcon>
+              Restore saved Teams data
+            </Link>
+          </div>
         )}
+        {/* What this module actually delivers, stated rather than implied: one
+            live-session component is one live session and one Teams meeting, so
+            a module with none delivers none however many weeks it runs. The
+            undated tail is named separately because only a dated session
+            reaches the calendar. */}
+        <p
+          title="Each live-session component in the weeks below is one live session and one Teams meeting. A week count implies nothing — add a live session to a week to deliver one."
+          className="mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 text-[11px] font-bold text-violet-700"
+        >
+          <AppIcon className="ri-group-line"></AppIcon>
+          {authoredLiveSessionCount === 0
+            ? `No live sessions in ${actualWeekCount} week${actualWeekCount === 1 ? '' : 's'}`
+            : `${authoredLiveSessionCount} live session${authoredLiveSessionCount === 1 ? '' : 's'} across ${actualWeekCount} week${actualWeekCount === 1 ? '' : 's'}${
+              datedLiveSessionCount === authoredLiveSessionCount ? '' : ` · ${authoredLiveSessionCount - datedLiveSessionCount} undated`
+            }`}
+        </p>
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <MiniStructureMetric label="Items" value={String(totalComponents)} />
-          <MiniStructureMetric label="OTJH" value={formatHoursMinutes(module.totalOtjh)} />
+          <MiniStructureMetric label="OTJH" value={module.totalOtjh.toFixed(1)} />
           <MiniStructureMetric label="KSBs" value={String(module.ksbCount)} />
         </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
-          <div className="h-full rounded-full bg-primary-500" style={{ width: `${Math.min(100, Math.max(0, module.qualityScore))}%` }} />
-        </div>
       </div>
-      <div className="space-y-2 max-h-[calc(100vh-220px)] overflow-y-auto p-2.5">
-        {module.weekStructure.map((week, index) => {
+      <div className="relative min-h-0 flex-1">
+        {structureScrollbar.visible && (
+          <div
+            aria-hidden
+            onPointerDown={startStructureScrollbarDrag}
+            className="absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full bg-background-200 shadow-inner"
+          >
+            <div
+              className="absolute left-0 right-0 rounded-full bg-foreground-500 shadow-sm"
+              style={{ height: `${structureScrollbar.height}px`, transform: `translateY(${structureScrollbar.top}px)` }}
+            />
+          </div>
+        )}
+        <div ref={structureScrollRef} onScroll={updateStructureScrollbar} className="module-course-structure-scroll min-h-0 h-full overflow-y-scroll py-2.5 pl-4 pr-2.5">
+          <div className="module-course-structure-scroll-content space-y-2">
+          {module.weekStructure.map((week, index) => {
           const selected = selection?.kind === 'week' && selection.weekId === week.id;
           const selectedChild = selection?.kind === 'component' && selection.weekId === week.id;
           const active = selected || selectedChild;
           const dragging = dragState?.type === 'week' && dragState.weekId === week.id;
           const expanded = expandedWeekIds.has(week.id);
-          const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
+          const totalOtjh = weekExpectedOtjhTotal(week);
           const monthHeading = monthHeadings.get(week.id);
-          const monthGroupId = monthGroupIdByWeekId.get(week.id);
-          const monthCollapsed = monthGroupId ? collapsedMonthIds.has(monthGroupId) : false;
-          if (monthCollapsed && !monthHeading) return null;
-          // The heading counts the rows below it: those are authored weeks, and
-          // an authored week is one row however many days a week it delivers on.
-          // The calendar weeks they spread over is a second, different fact, and
-          // it goes in the caption rather than competing with this number.
-          const monthHeadingWeeks = monthHeading ? monthHeading.rows : 0;
-          // The live sessions this week lost to a closure. Each one is its own
-          // red row above the week, and the week card below it still runs on its
-          // own day -- everything a closed room does not touch stays here.
-          const weekClashes = clashesByWeekId.get(week.id) || [];
-          // The dates this week delivers on. More than one wherever the group
-          // runs the module more than once a week.
-          const runDates = sessionDatesOf(week);
-          const runLabel = formatSessionRunLabel(runDates);
+          const monthId = monthGroupIdByWeekId.get(week.id);
+          const monthCollapsed = Boolean(monthId && collapsedMonthIds.has(monthId));
+          const weekHolidayNotices = holidayNoticesByWeekId.get(week.id) || [];
+          // A module can start part-way through a calendar week. If no delivery
+          // day falls in that short opening window, this week is intentionally
+          // undated rather than failed or unsaved.
+          const hasDeliveryDate = sessionDatesOf(week).length > 0;
+          // A copied live session carries no meeting of its own, and nothing
+          // about the row says so -- so the week says it, until it is booked.
+          const unbookedCopiedSessions = week.components.filter(isUnbookedCopiedLiveSession).length;
           return (
             <Fragment key={week.id}>
-            {monthHeading && (
-              <button
-                type="button"
-                onClick={() => toggleMonthCollapsed(week.id)}
-                aria-expanded={!monthCollapsed}
-                className="w-full rounded-lg px-1 pb-1 pt-2 text-left first:pt-0 hover:bg-background-100"
-              >
-                <span className="flex items-baseline justify-between gap-2">
-                  <span className="flex items-center gap-1 text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">
-                    <AppIcon className={monthCollapsed ? 'ri-arrow-right-s-line' : 'ri-arrow-down-s-line'}></AppIcon>
-                    {monthHeading.label}
-                  </span>
-                  <span className="text-[10px] font-semibold text-foreground-400">
-                    {monthHeadingWeeks} {monthHeadingWeeks === 1 ? 'week' : 'weeks'}
-                    {/* Weeks and sessions are two different counts the moment a
-                        group delivers twice a week, so the heading says both.
-                        Saying only "4 weeks" over rows that deliver eight dates
-                        was this rail disagreeing with the module's own session
-                        list, which listed all eight. */}
-                    {monthHeading.sessions > monthHeadingWeeks && ` · ${monthHeading.sessions} sessions`}
-                    {' · '}{formatHoursMinutes(monthHeading.otjh)}
-                  </span>
-                </span>
-                {/* Says why the delivery-day count runs past the week count,
-                    and how far across the calendar those days actually reach. */}
-                {monthHeading.daysPerWeek > 1 && monthHeading.sessions > monthHeading.rows && (
-                  <span className="mt-0.5 block pl-5 text-[10px] font-medium leading-snug text-foreground-400">
-                    {monthHeading.daysPerWeek} delivery days a week, spread over {monthHeading.calendarWeeks || monthHeading.rows} calendar {(monthHeading.calendarWeeks || monthHeading.rows) === 1 ? 'week' : 'weeks'}
-                  </span>
-                )}
-              </button>
-            )}
+            {monthHeading && (monthHeading.key ? (
+              <div className="flex items-baseline justify-between gap-2 px-1 pb-0.5 pt-2 first:pt-0">
+                <p className="text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">{monthHeading.label}</p>
+                <p className="text-[10px] font-semibold text-foreground-400">
+                  {monthHeading.rows} {monthHeading.rows === 1 ? 'week' : 'weeks'} · {monthHeading.otjh.toFixed(1)}h
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                  <AppIcon className="ri-calendar-close-line text-sm"></AppIcon>
+                  No delivery date in this calendar week
+                </p>
+                <p className="mt-1 text-[10px] leading-4 text-amber-800">
+                  {moduleStartDate && moduleStartWeekday && deliveryDays ? (
+                    <>
+                      This module starts on {moduleStartWeekday}, {formatDateLabel(moduleStartDate)}. Its delivery day{deliveryDays.includes(',') ? 's are' : ' is'} {deliveryDays}, which {deliveryDays.includes(',') ? 'do' : 'does'} not fall within this opening calendar week.
+                      {firstDeliveryDate && <> First delivery: {new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${firstDeliveryDate}T12:00:00Z`))}, {formatDateLabel(firstDeliveryDate)}.</>}
+                    </>
+                  ) : (
+                    <>This is not an unsaved week. No scheduled delivery day falls within this short start window, so the next week is shown under its delivery month.</>
+                  )}
+                </p>
+              </div>
+            ))}
             {monthCollapsed ? null : <div
               className={`relative overflow-visible rounded-xl border transition-smooth ${dragging ? 'border-primary-300 bg-background-50 shadow-lg ring-2 ring-primary-200' : active ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
             >
-              {/* An edge, not a coat of paint. The line below says what the
-                  clash is; this only makes the week findable without reading
-                  every card in the month -- which is the whole complaint about
-                  stating it and nothing more. A drawn bar rather than a
-                  border-l utility so it cannot lose to the selected and
-                  dragging borders above, and it survives both. */}
-              {weekClashes.length > 0 && (
+              {/* The holiday mark belongs to the whole week, not to the notice
+                  strip alone: run down the card's full height so an expanded
+                  week's components stay under it. */}
+              {weekHolidayNotices.length > 0 && (
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] rounded-l-xl bg-amber-400"></span>
               )}
               <div
@@ -3349,32 +3569,30 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 </button>
                 <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold shadow-sm ${active ? 'bg-primary-500 text-white ring-4 ring-primary-100' : 'bg-background-200 text-foreground-600'}`}>{index + 1}</span>
                 <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
-                  <p className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
+                  <p onMouseEnter={showFullTextWhenTruncated} className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
-                    <span className="whitespace-nowrap">{week.components.length} components</span>
-                    <span className="h-1 w-1 shrink-0 rounded-full bg-foreground-300"></span>
-                    <span className="whitespace-nowrap">{formatHoursMinutes(totalOtjh)}</span>
-                    {runLabel && (
+                    <span>{week.components.length} components</span>
+                    <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
+                    <span>{totalOtjh.toFixed(1)}h</span>
+                    {week.sessionDate && (
                       <>
-                        <span className="h-1 w-1 shrink-0 rounded-full bg-foreground-300"></span>
-                        {/* The whole run, with every date in it on the tooltip:
-                            a Mon+Fri week delivers two sessions and printing
-                            only the first was the rail disagreeing with the
-                            module's own session list. */}
-                        <span className="truncate" title={runDates.map(date => formatDateLabel(date)).join(' · ')}>{runLabel}</span>
+                        <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
+                        <span className="truncate">{formatDateLabel(week.sessionDate)}</span>
                       </>
                     )}
-                    {runDates.length > 1 && (
+                    {!hasDeliveryDate && (
                       <>
-                        <span className="h-1 w-1 shrink-0 rounded-full bg-foreground-300"></span>
-                        <span className="whitespace-nowrap">{runDates.length} sessions</span>
+                        <span className="h-1 w-1 rounded-full bg-amber-400"></span>
+                        <span className="font-semibold text-amber-700">No delivery date this week</span>
                       </>
                     )}
                   </p>
                 </button>
-                {/* Sits beside Delete and reads the same way: the two row
-                    actions appear together on hover, so a week is copied from
-                    the place it is read rather than from a menu somewhere else. */}
+                {/* Duplicating copies the week's components in full. The live
+                    session comes too, but without the booking behind it -- a
+                    copied meeting id is the ORIGINAL's meeting, not a second one
+                    (see `duplicateWeekInModule`) -- so the twin's card carries
+                    the note above until its own meeting is created. */}
                 <button
                   type="button"
                   onMouseDown={event => event.stopPropagation()}
@@ -3383,7 +3601,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     onDuplicateWeek(week.id);
                   }}
                   className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-600 group-hover/week:opacity-100"
-                  title="Duplicate this week, with all its components, directly below"
+                  title="Duplicate week — copies every component; the live session comes without its Teams meeting"
                   aria-label={`Duplicate ${week.title || `Week ${week.weekNumber}`}`}
                 >
                   <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
@@ -3407,44 +3625,33 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   fourth pushed the components count onto a second row and
                   truncated the date to "2…". Here it also survives selection,
                   which repaints the card primary. */}
-              {/* The clash, stated on the week it belongs to, on the card's
-                  own background. Painting the whole row for it made a single
-                  ticked holiday the loudest thing on a rail whose subject is
-                  the course, so the card stays as it was and the edge above
-                  does the marking instead. Whether the session runs or is
-                  cancelled is still decided on the session, not here. */}
-              {weekClashes.map(clash => (
-                <p key={`clash-${clash.slotDate}`} className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 border-t border-background-200 px-2.5 py-1.5 text-[10px] leading-snug text-foreground-500">
-                  <AppIcon className="ri-error-warning-line self-center text-[12px] text-amber-500"></AppIcon>
-                  <span className="font-semibold text-foreground-700">
-                    Live session {clash.sessionNumber} clashes with{' '}
-                    {/* The holiday's whole period, in the span the rail already
-                        uses for a week's run of dates -- so "10-16 Aug 2026"
-                        here and above mean the same shape of thing. Lighter
-                        than the name: the name is what was hit, the period is
-                        how far it reaches. */}
-                    {clash.closures.length ? clash.closures.map((closure, closureIndex) => (
-                      <Fragment key={`${closure.label}-${closure.startDate}`}>
-                        {closureIndex > 0 && ', '}
-                        {closure.label}
-                        <span className="font-medium text-foreground-500"> ({formatSessionRunLabel([closure.startDate, closure.endDate])})</span>
-                      </Fragment>
-                    )) : clash.blockedBy}
-                  </span>
-                  <span>on {formatDateLabel(clash.slotDate)}</span>
-                </p>
+              {/* Stated on the week it belongs to, on the card's own
+                  background: this week is completely ordinary and its live
+                  session runs as authored. Whether it becomes a reading week,
+                  keeps its session or something else is the author's call. */}
+              {weekHolidayNotices.map(slot => (
+                <WeekHolidayNotice key={`holiday-${slot.date}`} slot={slot} weekDate={week.sessionDate} compact />
               ))}
+              {unbookedCopiedSessions > 0 && <CopiedLiveSessionNotice count={unbookedCopiedSessions} />}
               {expanded && (
                 <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
+                  {/* `holidayDates` is drawn from the same slots the week's
+                      own notice above uses, so the warning on the week and the
+                      warning on its live session always name the same day. It
+                      warns and stops there -- the session keeps its date, its
+                      week and its Teams meeting. */}
                   <WeekComponentRail
                     weekId={week.id}
                     components={week.components}
                     selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
+                    focusedId={focusedComponentId}
                     onSelectId={componentId => { if (componentId) onSelectComponent(week.id, componentId); }}
                     onChange={next => onComponentsChange(week.id, next)}
                     pointsByType={pointsByType}
                     variant="nested"
-                    weekSessionDate={liveSessionDatesByWeekId.get(week.id)?.[0] || week.sessionDate}
+                    weekSessionDate={week.sessionDate}
+                    holidayDates={weekHolidayNotices.map(slot => slot.date)}
+                    dateDriftByComponentId={dateDriftByComponentId}
                     onReuseComponents={() => onReuseComponents(week.id)}
                   />
                 </div>
@@ -3452,9 +3659,42 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             </div>}
             </Fragment>
           );
-        })}
+          })}
+          </div>
+        </div>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The note a duplicated week carries until its live session is booked.
+ *
+ * Duplicating copies the session's authoring and none of its booking, because a
+ * copied `teamsLiveSessionId` is not a second meeting -- it is the original's
+ * meeting, its join link and its attendance, claimed by a second week. What that
+ * leaves behind is a session that reads as completely ordinary and has nowhere
+ * to join, so the week says so plainly rather than letting a reader find out on
+ * the day. It is stated on the week's card, in the same strip the holiday notice
+ * uses, and it disappears by itself once the meeting exists.
+ */
+function CopiedLiveSessionNotice({ count }: { count: number }) {
+  return (
+    <div data-testid="copied-live-session-notice" className="relative border-t border-sky-200 bg-sky-50/70 px-2.5 py-1.5">
+      <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-sky-400"></span>
+      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] font-semibold text-sky-900">
+        <AppIcon className="ri-information-line shrink-0 text-sm text-sky-600"></AppIcon>
+        <span>
+          {count === 1
+            ? 'Copied live session: no Teams meeting yet'
+            : `${count} copied live sessions: no Teams meeting yet`}
+        </span>
+      </p>
+      <p className="mt-0.5 text-[10px] leading-snug text-sky-900">
+        Everything else was copied. Use <span className="font-bold">Create Teams meeting</span> to book
+        {count === 1 ? ' it' : ' them'} and give learners a join link.
+      </p>
+    </div>
   );
 }
 
@@ -3463,6 +3703,85 @@ function MiniStructureMetric({ label, value }: { label: string; value: string })
     <div className="rounded-lg border border-background-200 bg-background-50 px-2 py-1">
       <p className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
       <p className="text-[12px] font-heading font-bold text-foreground-950">{value}</p>
+    </div>
+  );
+}
+
+function ModuleBuilderScrollArea({ children, className = '', contentClassName = '' }: { children: ReactNode; className?: string; contentClassName?: string }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [scrollbar, setScrollbar] = useState({ visible: false, top: 0, height: 0 });
+  const updateScrollbar = useCallback(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const visible = node.scrollHeight > node.clientHeight + 1;
+    if (!visible) {
+      setScrollbar({ visible: false, top: 0, height: 0 });
+      return;
+    }
+    const trackHeight = Math.max(1, node.clientHeight - 20);
+    const height = Math.max(44, Math.round((node.clientHeight / node.scrollHeight) * trackHeight));
+    const maxTop = Math.max(0, trackHeight - height);
+    const maxScroll = Math.max(1, node.scrollHeight - node.clientHeight);
+    const top = Math.round((node.scrollTop / maxScroll) * maxTop);
+    setScrollbar({ visible: true, top, height });
+  }, []);
+  const moveScrollbar = useCallback((clientY: number, track: DOMRect) => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const maxTop = Math.max(0, track.height - scrollbar.height);
+    const nextTop = Math.min(maxTop, Math.max(0, clientY - track.top - scrollbar.height / 2));
+    const maxScroll = Math.max(1, node.scrollHeight - node.clientHeight);
+    node.scrollTop = maxTop ? (nextTop / maxTop) * maxScroll : 0;
+    updateScrollbar();
+  }, [scrollbar.height, updateScrollbar]);
+  const startScrollbarDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!scrollbar.visible) return;
+    event.preventDefault();
+    const track = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    moveScrollbar(event.clientY, track);
+    const handlePointerMove = (moveEvent: PointerEvent) => moveScrollbar(moveEvent.clientY, track);
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  }, [moveScrollbar, scrollbar.visible]);
+
+  useEffect(() => {
+    updateScrollbar();
+    const timer = window.setTimeout(updateScrollbar, 0);
+    window.addEventListener('resize', updateScrollbar);
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && scrollRef.current) {
+      observer = new ResizeObserver(updateScrollbar);
+      observer.observe(scrollRef.current);
+    }
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('resize', updateScrollbar);
+      observer?.disconnect();
+    };
+  }, [children, updateScrollbar]);
+
+  return (
+    <div className={`relative min-h-0 overflow-hidden ${className}`}>
+      {scrollbar.visible && (
+        <div
+          aria-hidden
+          onPointerDown={startScrollbarDrag}
+          className="absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full bg-background-200 shadow-inner"
+        >
+          <div
+            className="absolute left-0 right-0 rounded-full bg-foreground-500 shadow-sm"
+            style={{ height: `${scrollbar.height}px`, transform: `translateY(${scrollbar.top}px)` }}
+          />
+        </div>
+      )}
+      <div ref={scrollRef} onScroll={updateScrollbar} className="module-course-structure-scroll h-full min-h-0 overflow-y-scroll py-2.5 pl-4">
+        <div className={contentClassName}>{children}</div>
+      </div>
     </div>
   );
 }
@@ -3698,16 +4017,17 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
 // covers what "Blank set" was for. "Reuse" is the one that is actually
 // different: it copies real authored components out of the library instead
 // of creating empty ones. The only saved-template control on this screen is
-// "From weeks templates" in the Course structure rail, which builds a whole new week.
-function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents, onAddFromTemplate }: {
+// "From template" in the Course structure rail, which builds a whole new week.
+function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
   week: ModuleWeek;
+  module: ModuleCatalogueItem;
+  groupOptions: GroupOption[];
   onChange: (updates: Partial<ModuleWeek>) => void;
   onOpenSessionKsbMapping?: () => void;
   onAddLesson: () => void;
   onReuseComponents: () => void;
-  onAddFromTemplate: () => void;
 }) {
-  const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
+  const totalOtjh = weekExpectedOtjhTotal(week);
 
   return (
     <section className="space-y-4">
@@ -3716,24 +4036,16 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-full bg-primary-100 px-2.5 py-1 text-[10px] font-bold text-primary-700">Week {week.weekNumber}</span>
             <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{formatHoursMinutes(totalOtjh)} OTJH</span>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
           </div>
           <div className="mt-1.5">
             <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          {/* Adds a template's components to THIS week, beside whatever is
-              already in it. The module header's own template button still
-              creates a whole new week — both ways in are useful, and which one
-              you get follows from where you pressed. */}
-          <button onClick={onAddFromTemplate} title="Add a saved week template's components to this week" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
-            <AppIcon className="ri-layout-masonry-line"></AppIcon>
-            From weeks templates
-          </button>
           <button onClick={onReuseComponents} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
             <AppIcon className="ri-file-copy-line"></AppIcon>
-            Reuse existing components
+            Reuse
           </button>
           <button onClick={onAddLesson} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600">
             <AppIcon className="ri-add-line"></AppIcon>
@@ -3750,6 +4062,114 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
         onChangeSummary={value => onChange({ summary: value })}
         onChangeLearningOutcomes={value => onChange({ learningOutcomes: value })}
       />
+
+      <WeekAssignedGroupsSection week={week} module={module} groupOptions={groupOptions} />
+    </section>
+  );
+}
+
+function WeekAssignedGroupsSection({ week, module, groupOptions }: {
+  week: ModuleWeek;
+  module: ModuleCatalogueItem;
+  groupOptions: GroupOption[];
+}) {
+  const normalise = (value?: string) => String(value || '').trim().toLowerCase();
+  const [programmeFilter, setProgrammeFilter] = useState('');
+  const [cohortFilter, setCohortFilter] = useState('');
+  const [placingGroupKey, setPlacingGroupKey] = useState('');
+  const [placedGroupKeys, setPlacedGroupKeys] = useState<string[]>([]);
+  const [savedPlacedGroupKeys, setSavedPlacedGroupKeys] = useState<string[]>([]);
+  const programmes = useMemo(() => Array.from(new Map(groupOptions
+    .map(option => [option.programmeId || option.programme || '', option.programme || option.programmeId || ''] as const)
+    .filter(([id]) => Boolean(id))).entries()).map(([id, name]) => ({ id, name })), [groupOptions]);
+  const cohorts = useMemo(() => Array.from(new Map(groupOptions
+    .filter(option => !programmeFilter || option.programmeId === programmeFilter || option.programme === programmeFilter)
+    .map(option => [option.cohortId || option.cohort || '', option.cohort || option.cohortId || ''] as const)
+    .filter(([id]) => Boolean(id))).entries()).map(([id, name]) => ({ id, name })), [groupOptions, programmeFilter]);
+  const visibleGroups = groupOptions.filter(option => (
+    (!programmeFilter || option.programmeId === programmeFilter || option.programme === programmeFilter)
+    && (!cohortFilter || option.cohortId === cohortFilter || option.cohort === cohortFilter)
+  ));
+  const sourceGroup = groupOptions.find(option => (
+    normalise(option.key) === normalise(module.groupId)
+    || normalise(option.name) === normalise(module.group)
+  ));
+  const placingGroup = groupOptions.find(option => option.key === placingGroupKey) || null;
+  const visibleGroupKey = visibleGroups.map(option => option.key).join('|');
+
+  // The destination stores an independent week with its source `copiedFromId`.
+  // Read that provenance once a programme/cohort is narrowed so the section
+  // still says Placed after this source module has been reopened.
+  useEffect(() => {
+    if (!programmeFilter || !cohortFilter || !visibleGroups.length) {
+      setSavedPlacedGroupKeys([]);
+      return undefined;
+    }
+    let active = true;
+    void loadCurriculumScope().then(async scope => {
+      const candidates = scope.modules
+        .map(module => ({
+          module,
+          group: visibleGroups.find(option => moduleMatchesGroup(module, {
+            groupId: option.key,
+            groupName: option.name,
+            programmeId: option.programmeId,
+          })),
+        }))
+        .filter((entry): entry is { module: typeof scope.modules[number]; group: GroupOption } => Boolean(entry.group));
+      const matches = await Promise.all(candidates.map(async entry => {
+        const id = entry.module.moduleCatalogueId || entry.module.catalogueId || entry.module.id;
+        const structure = id ? await loadModuleStructure(id) : null;
+        return structure?.weekStructure.some(candidate => candidate.copiedFromId === week.id) ? entry.group.key : '';
+      }));
+      if (active) setSavedPlacedGroupKeys(matches.filter(Boolean));
+    }).catch(() => { if (active) setSavedPlacedGroupKeys([]); });
+    return () => { active = false; };
+  }, [cohortFilter, programmeFilter, visibleGroupKey, week.id]);
+
+  return (
+    <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
+      <div className="flex items-start gap-2">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-group-line" /></span>
+        <div>
+          <h3 className="text-[13px] font-heading font-bold text-foreground-900">Assigned groups</h3>
+          <p className="mt-0.5 text-[11px] leading-4 text-foreground-500">Copy this complete week, including its outcomes, KSBs and components, into another delivery group.</p>
+        </div>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <select aria-label="Week assigned groups programme" value={programmeFilter} onChange={event => { setProgrammeFilter(event.target.value); setCohortFilter(''); }} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300">
+          <option value="">All programmes</option>
+          {programmes.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+        </select>
+        <select aria-label="Week assigned groups cohort" value={cohortFilter} onChange={event => setCohortFilter(event.target.value)} disabled={!programmeFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
+          <option value="">{programmeFilter ? 'All cohorts' : 'Choose programme first'}</option>
+          {cohorts.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+        </select>
+      </div>
+      {!programmeFilter ? <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-3 text-center text-[11px] font-semibold text-foreground-500">Choose a programme, then a cohort, to view delivery groups.</p>
+        : !cohortFilter ? <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-3 text-center text-[11px] font-semibold text-foreground-500">Choose a cohort to view delivery groups.</p>
+          : visibleGroups.length ? <div className="mt-3 grid gap-2 md:grid-cols-2">{visibleGroups.map(option => {
+            const ownGroup = option.key === sourceGroup?.key;
+            const placed = placedGroupKeys.includes(option.key) || savedPlacedGroupKeys.includes(option.key);
+            return <div key={option.key} className="flex items-start gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+              <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full ${ownGroup || placed ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-400'}`}><AppIcon className={ownGroup || placed ? 'ri-check-line text-[11px]' : 'ri-group-line text-[10px]'} /></span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-bold text-foreground-800">{option.name}</span><span className="block truncate text-[10px] text-foreground-400">{option.cohort || 'No cohort'}</span></span>
+              {ownGroup ? <span className="text-[10px] font-bold text-foreground-400">Current</span>
+                : placed ? <span className="text-[10px] font-bold text-emerald-700">Placed</span>
+                  : <button type="button" onClick={() => setPlacingGroupKey(option.key)} className="shrink-0 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-bold text-primary-700 hover:bg-primary-100">Place week</button>}
+            </div>;
+          })}</div> : <p className="mt-3 text-center text-[11px] text-foreground-400">No groups match this programme and cohort.</p>}
+      {placingGroup && <PlaceWeekDrawer
+        week={week}
+        groupId={placingGroup.key}
+        groupName={placingGroup.name}
+        programmeId={placingGroup.programmeId || module.programmeId}
+        onClose={() => setPlacingGroupKey('')}
+        onPlaced={() => {
+          setPlacedGroupKeys(current => current.includes(placingGroup.key) ? current : [...current, placingGroup.key]);
+          setPlacingGroupKey('');
+        }}
+      />}
     </section>
   );
 }
@@ -3787,7 +4207,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <MiniMetric label="OTJH" value={formatHoursMinutes(Number(component.expectedOtjh || 0))} />
+            <MiniMetric label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} />
             <MiniMetric label="Points" value={String(component.points || 0)} />
           </div>
         </div>
@@ -3816,7 +4236,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
         <EditorSection title="Completion and reward" icon="ri-checkbox-circle-line">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <DurationInput label="Expected OTJH" value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
+            <NumberInput label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
             <NumberInput label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
           </div>
         </EditorSection>
@@ -3826,17 +4246,6 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
               <Checkbox label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
               <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
-              <Checkbox
-                label="Coach validation"
-                checked={component.coachValidationRequired}
-                onChange={value => {
-                  if (value) {
-                    onChange({ coachValidationRequired: true });
-                    return;
-                  }
-                  void confirmCoachValidationOff(() => onChange({ coachValidationRequired: false }));
-                }}
-              />
             </div>
             <TextArea label="Completion rule" value={String(component.settings.completionRule ?? 'Mark complete')} onChange={value => onSettingChange('completionRule', value)} rows={2} />
             {/* Only asked for once reflection is required — there is nowhere for
@@ -3902,8 +4311,16 @@ function TypeSpecificFields({
   const [uploadingResource, setUploadingResource] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
+  const [groupProgrammeFilter, setGroupProgrammeFilter] = useState('');
+  const [groupCohortFilter, setGroupCohortFilter] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
+  useEffect(() => {
+    setGroupProgrammeFilter('');
+    setGroupCohortFilter('');
+    setGroupFilter('');
+  }, [component.id, module.catalogueId]);
 
-  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading') => {
+  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment') => {
     setUploadingResource(true);
     setUploadError('');
     try {
@@ -3928,6 +4345,9 @@ function TypeSpecificFields({
       } else if (componentType === 'reading') {
         onSettingChange('readingSource', 'File');
         onSettingChange('resourceUrl', uploaded.url);
+      } else {
+        onSettingChange('assignmentFileName', uploaded.fileName);
+        onSettingChange('assignmentFileUrl', uploaded.url);
       }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Unable to upload file.');
@@ -3936,29 +4356,23 @@ function TypeSpecificFields({
     }
   };
 
-  // Mirror of handleResourceUpload: clears exactly the keys an upload writes so
-  // an author can drop a wrongly attached file without uploading a replacement.
-  const handleResourceRemove = (componentType: 'podcast' | 'powerpoint' | 'reading') => {
-    setUploadError('');
-    onSettingChange('uploadedFileName', '');
-    onSettingChange('uploadedFileUrl', '');
-    onSettingChange('uploadedFileSize', 0);
-    onSettingChange('uploadedFileContentType', '');
-    onSettingChange('uploadSource', '');
-    if (componentType === 'podcast') {
-      onSettingChange('podcastUrl', '');
-    } else if (componentType === 'powerpoint') {
-      onSettingChange('fileName', '');
-      onSettingChange('presentationUrl', '');
-    } else if (componentType === 'reading') {
-      onSettingChange('resourceUrl', '');
-    }
-  };
-
   if (component.type === 'live-session') {
     const groupOptions = liveSessionGroupOptions(module);
     const selectedGroupKeys = getStringArray('selectedGroupKeys');
     const selectedGroupSet = new Set(selectedGroupKeys);
+    const programmeOptions = Array.from(new Map(groupOptions.map(option => [option.programmeId || option.programme, option.programme])).entries())
+      .filter(([value, label]) => value && label)
+      .map(([value, label]) => ({ value, label }));
+    const cohortOptions = Array.from(new Map(groupOptions
+      .filter(option => !groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter)
+      .map(option => [option.cohortId || option.cohort, option.cohort])).entries())
+      .filter(([value, label]) => value && label)
+      .map(([value, label]) => ({ value, label }));
+    const filteredGroupOptions = groupOptions.filter(option => (
+      (!groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter)
+      && (!groupCohortFilter || option.cohortId === groupCohortFilter || option.cohort === groupCohortFilter)
+      && (!groupFilter || option.key === groupFilter)
+    ));
     const updateSelectedGroups = (nextKeys: string[]) => {
       const nextSet = new Set(nextKeys);
       onSettingChange('selectedGroupKeys', nextKeys);
@@ -3981,9 +4395,9 @@ function TypeSpecificFields({
               <p className="text-[10px] font-bold uppercase text-foreground-400">Assigned groups</p>
               <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">{selectedGroupKeys.length} of {groupOptions.length} selected</p>
             </div>
-            {!!groupOptions.length && (
+            {!!groupOptions.length && groupProgrammeFilter && groupCohortFilter && (
               <div className="flex items-center gap-1.5">
-                <button type="button" onClick={() => updateSelectedGroups(groupOptions.map(option => option.key))} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
+                <button type="button" onClick={() => updateSelectedGroups(Array.from(new Set([...selectedGroupKeys, ...filteredGroupOptions.map(option => option.key)])))} disabled={!filteredGroupOptions.length} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200 disabled:opacity-40">
                   Select all
                 </button>
                 <button type="button" onClick={() => updateSelectedGroups([])} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
@@ -3993,8 +4407,26 @@ function TypeSpecificFields({
             )}
           </div>
           {groupOptions.length ? (
-            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-              {groupOptions.map(option => (
+            <>
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                <select aria-label="Assigned groups programme" value={groupProgrammeFilter} onChange={event => { setGroupProgrammeFilter(event.target.value); setGroupCohortFilter(''); setGroupFilter(''); }} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300">
+                  <option value="">Select a programme</option>
+                  {programmeOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <select aria-label="Assigned groups cohort" value={groupCohortFilter} onChange={event => { setGroupCohortFilter(event.target.value); setGroupFilter(''); }} disabled={!groupProgrammeFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
+                  <option value="">{groupProgrammeFilter ? 'Select a cohort' : 'Choose programme first'}</option>
+                  {cohortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <select aria-label="Assigned groups group" value={groupFilter} onChange={event => setGroupFilter(event.target.value)} disabled={!groupCohortFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
+                  <option value="">{groupCohortFilter ? 'All groups in cohort' : 'Choose cohort first'}</option>
+                  {groupOptions.filter(option => (!groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter) && (!groupCohortFilter || option.cohortId === groupCohortFilter || option.cohort === groupCohortFilter)).map(option => <option key={option.key} value={option.key}>{option.group}</option>)}
+                </select>
+              </div>
+              {!groupProgrammeFilter || !groupCohortFilter ? (
+                <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">Choose a programme, then a cohort, to view delivery groups.</p>
+              ) : (
+              <div className="mt-3 grid max-h-64 grid-cols-1 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+              {filteredGroupOptions.map(option => (
                 <label key={option.key} className={`flex min-h-10 items-start gap-2 rounded-lg border px-3 py-2 transition-smooth ${selectedGroupSet.has(option.key) ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-100/50 text-foreground-700 hover:border-primary-200'}`}>
                   <input
                     type="checkbox"
@@ -4008,7 +4440,10 @@ function TypeSpecificFields({
                   </span>
                 </label>
               ))}
-            </div>
+              {!filteredGroupOptions.length && <p className="col-span-full rounded-lg border border-dashed border-background-300 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">No groups match these filters.</p>}
+            </div>)
+            }
+            </>
           ) : (
             <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">
               No delivery groups are linked to this module yet.
@@ -4020,7 +4455,7 @@ function TypeSpecificFields({
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase text-foreground-400">Microsoft Teams meeting</p>
               {getString('liveSessionUrl') ? (
-                <a href={getString('liveSessionUrl')} target="_blank" rel="noreferrer" className="meeting-join-action mt-1 inline-flex max-w-full items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-bold">
+                <a href={getString('liveSessionUrl')} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[12px] font-bold text-primary-600 hover:text-primary-700">
                   <AppIcon className="ri-microsoft-teams-line mr-1"></AppIcon>
                   Open meeting link
                 </a>
@@ -4035,16 +4470,13 @@ function TypeSpecificFields({
               className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
             >
               <AppIcon className="ri-calendar-event-line"></AppIcon>
-              {getString('liveSessionUrl') ? 'Meeting already created' : 'Create Teams meeting'}
+              {getString('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
             </button>
           </div>
           {getString('liveSessionUrl') && (
-            <LiveSessionScheduleEditor
-              component={component}
-              onSettingChange={onSettingChange}
-              fallbackDate={week.sessionDate}
-              fallbackTime={week.sessionStartTime}
-            />
+            <div className="mt-3">
+              <TextInput label="Teams meeting URL" value={getString('liveSessionUrl')} onChange={value => onSettingChange('liveSessionUrl', value)} />
+            </div>
           )}
         </div>
         <TextArea label="Session outline" value={getString('sessionPurpose')} onChange={value => onSettingChange('sessionPurpose', value)} rows={3} />
@@ -4052,36 +4484,24 @@ function TypeSpecificFields({
           <TeamsMeetingModal
             component={component}
             module={module}
+            onRestored={restored => {
+              const saved = restored.weekStructure.flatMap(item => item.components).find(item => item.id === component.id);
+              if (saved) onChange({ settings: { ...component.settings, ...saved.settings } });
+            }}
             onClose={() => setTeamsMeetingOpen(false)}
             onCreated={(result, input) => {
               const meeting = result.meeting;
-              const liveSessionIndex = module.weekStructure
-                .flatMap(item => item.components.filter(candidate => candidate.type === 'live-session'))
-                .findIndex(candidate => candidate.id === component.id);
-              const scheduled = liveSessionIndex >= 0 ? input.scheduledOccurrences?.[liveSessionIndex] : undefined;
-              const scheduledParts = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc) : { date: '', time: '' };
-              const hasExplicitSchedule = Boolean(
-                component.settings.sessionDate
-                || component.settings.sessionDateTimeUtc
-                || (component.settings.teamsLiveSessionId && Number(component.settings.teamsSessionNumber || 0) > 0),
-              );
               onSettingChange('liveSessionUrl', meeting.joinUrl || meeting.webLink);
+              onSettingChange('teamsMeetingUrl', meeting.joinUrl || meeting.webLink);
+              onSettingChange('teamsCalendarSeries', JSON.stringify(meeting.calendarSeries || []));
+              onSettingChange('teamsOnlineMeetingId', meeting.onlineMeetingId);
               onSettingChange('teamsEventId', meeting.eventId);
               onSettingChange('teamsLiveSessionId', meeting.liveSessionId);
               onSettingChange('teamsMeetingOptionsUrl', meeting.meetingOptionsUrl);
               onSettingChange('teamsOrganizerEmail', meeting.organizerEmail);
               onSettingChange('teamsAttendees', meeting.attendees);
               onSettingChange('teamsPresenters', meeting.presenters);
-              onSettingChange('teamsCoOrganizers', meeting.coOrganizers || []);
-              if (scheduled) {
-                onSettingChange('teamsSessionNumber', scheduled.sessionNumber);
-                if (!hasExplicitSchedule) {
-                  onSettingChange('sessionDateTimeUtc', scheduled.startDateTimeUtc);
-                  onSettingChange('teamsStartDateTimeUtc', scheduled.startDateTimeUtc);
-                  if (scheduledParts.date) onSettingChange('sessionDate', scheduledParts.date);
-                  if (scheduledParts.time) onSettingChange('sessionTime', scheduledParts.time);
-                }
-              }
+              onSettingChange('sessionDateTimeUtc', meeting.startDateTimeUtc);
               onSettingChange('durationMinutes', meeting.durationMinutes);
               onSettingChange('teamsProvider', meeting.provider);
               onSettingChange('teamsRepeat', meeting.repeat);
@@ -4158,7 +4578,6 @@ function TypeSpecificFields({
           uploading={uploadingResource}
           error={uploadError}
           onUpload={file => handleResourceUpload(file, 'podcast')}
-          onRemove={() => handleResourceRemove('podcast')}
         />
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <NumberInput label="Duration in minutes" value={getNumber('durationMinutes')} min={0} step={1} onChange={value => onSettingChange('durationMinutes', value)} />
@@ -4191,7 +4610,6 @@ function TypeSpecificFields({
             uploading={uploadingResource}
             error={uploadError}
             onUpload={file => handleResourceUpload(file, 'reading')}
-            onRemove={() => handleResourceRemove('reading')}
           />
         )}
         <RichTextDraft label="Short description of the component" value={getString('shortDescription')} onChange={value => onSettingChange('shortDescription', value)} rows={5} compact />
@@ -4213,7 +4631,6 @@ function TypeSpecificFields({
           uploading={uploadingResource}
           error={uploadError}
           onUpload={file => handleResourceUpload(file, 'powerpoint')}
-          onRemove={() => handleResourceRemove('powerpoint')}
         />
       </EditorBlock>
     );
@@ -4252,10 +4669,18 @@ function TypeSpecificFields({
   if (component.type === 'assignment') {
     return (
       <EditorBlock title="Assignment">
-        <RichTextDraft label="Assignment question" value={getString('assignmentContent') || getString('assignmentBrief')} onChange={value => onSettingChange('assignmentContent', value)} rows={14} htmlOnly />
-        <p className="rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[11px] font-medium leading-5 text-primary-700">
-          Learners complete an eight-step monthly submission: answer and learning statements; evidence cross-references; KSBs and actual hours; full-month reflection; employer impact; action plan and EPA; quality checks; coaching booking and editable PowerPoint. Incomplete work can always be saved as a draft. There is no six-hour cap. Historical imports are handled separately and are exempt from new-submission checks.
-        </p>
+        <TextArea label="Assignment brief" value={getString('assignmentBrief')} onChange={value => onSettingChange('assignmentBrief', value)} rows={4} />
+        <ComponentResourceUpload
+          label="Upload assignment file"
+          accept=".doc,.docx,.pdf,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv,application/zip"
+          uploadedName={getString('uploadedFileName') || getString('assignmentFileName')}
+          uploadedUrl={getString('uploadedFileUrl') || getString('assignmentFileUrl')}
+          uploadedSize={getNumber('uploadedFileSize')}
+          uploading={uploadingResource}
+          error={uploadError}
+          onUpload={file => handleResourceUpload(file, 'assignment')}
+        />
+        <TextArea label="Submission instructions" value={getString('submissionInstructions')} onChange={value => onSettingChange('submissionInstructions', value)} rows={3} />
         <TextInput label="Due timing relative to week" value={getString('dueTiming')} onChange={value => onSettingChange('dueTiming', value)} />
       </EditorBlock>
     );
@@ -4641,6 +5066,9 @@ function moduleDeliveryUsageFallback(module: ModuleCatalogueItem): ModuleDeliver
     startDate: module.startDate || module.sourceModule?.startDate,
     endDate: module.endDate || module.sourceModule?.endDate,
     sessions: module.sourceModule?.sessionsNumber || module.sourceModule?.weeks || module.sessionsNumber || module.weeks || 0,
+    weekDays: String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
+    startTime: String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
+    endTime: String(module.deliveryMetadata?.endTime || module.sourceModule?.endTime || ''),
   };
 }
 
@@ -4660,7 +5088,7 @@ function findModuleForDeliveryPath(
 }
 
 
-function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbPrompt, ksbProfileCount, ksbProfileLoading, onExportKsb, onImportKsb, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbWeightClass }: {
+function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbPrompt, ksbProfileCount, onExportKsb, onImportKsb, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbWeightClass }: {
   module: ModuleCatalogueItem;
   week: ModuleWeek | null;
   component: ModuleComponent | null;
@@ -4669,7 +5097,6 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
   ksbPrompt: string;
   /** How many KSBs the module's source offers — 0 warns the prompt has no profile. */
   ksbProfileCount: number;
-  ksbProfileLoading: boolean;
   onExportKsb: () => void;
   onImportKsb: () => void;
   onAddKsb: (target: KsbTarget) => void;
@@ -4677,7 +5104,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
   onUpdateKsbWeight: (target: KsbTarget, mappingId: string, weight: number) => void;
   onUpdateKsbWeightClass: (target: KsbTarget, mappingId: string, weightClass: KsbWeightClass) => void;
 }) {
-  const ksbExcelPanel = <KsbExcelPanel prompt={ksbPrompt} profileCount={ksbProfileCount} loading={ksbProfileLoading} onExport={onExportKsb} onImport={onImportKsb} />;
+  const ksbExcelPanel = <KsbExcelPanel prompt={ksbPrompt} profileCount={ksbProfileCount} onExport={onExportKsb} onImport={onImportKsb} />;
   if (!week) {
     return (
       <aside className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm xl:sticky xl:top-4">
@@ -4690,13 +5117,13 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
   }
 
   if (!component) {
-    const totalOtjh = week.components.reduce((total, item) => total + Number(item.expectedOtjh || 0), 0);
+    const totalOtjh = weekExpectedOtjhTotal(week);
     const totalPoints = week.components.reduce((total, item) => total + Number(item.points || 0), 0);
     const mappedKsbs = uniqueMappings([...week.ksbMappings, ...week.components.flatMap(item => item.ksbMappings)]);
     const weekWeightSummary = ksbWeightSummary(mappedKsbs);
     const readinessItems = [
       { label: 'Components', ready: week.components.length > 0, value: week.components.length ? `${week.components.length} added` : 'Missing' },
-      { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? formatHoursMinutes(totalOtjh) : 'Missing' },
+      { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? `${totalOtjh.toFixed(1)} h` : 'Missing' },
       { label: 'KSBs', ready: mappedKsbs.length > 0, value: mappedKsbs.length ? `${mappedKsbs.length} mapped` : 'Needs mapping' },
     ];
     const readyCount = readinessItems.filter(item => item.ready).length;
@@ -4707,14 +5134,11 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Week readiness</p>
-              <h3 className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h3>
+              <h3 onMouseEnter={showFullTextWhenTruncated} className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h3>
             </div>
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${readyPercent === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
               {readyPercent}%
             </span>
-          </div>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
-            <div className={`h-full rounded-full ${readyPercent === 100 ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${readyPercent}%` }} />
           </div>
         </div>
         <div className="space-y-4 p-4">
@@ -4763,14 +5187,11 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Component readiness</p>
-            <h3 className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{readableComponentTitle(component.title) || 'Selected component'}</h3>
+            <h3 onMouseEnter={showFullTextWhenTruncated} className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{readableComponentTitle(component.title) || 'Selected component'}</h3>
           </div>
           <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${componentReadyPercent === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
             {componentReadyPercent}%
           </span>
-        </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
-          <div className={`h-full rounded-full ${componentReadyPercent === 100 ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${componentReadyPercent}%` }} />
         </div>
       </div>
       <div className="space-y-4 p-4">
@@ -4785,7 +5206,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
           ))}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <MiniMetric label="OTJH" value={formatHoursMinutes(Number(component.expectedOtjh || 0))} />
+          <MiniMetric label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} />
           <MiniMetric label="Points" value={String(component.points || 0)} />
         </div>
         <KsbWeightSummary summary={componentWeightSummary} />
@@ -4843,11 +5264,7 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
               <TextInput label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
               <SelectInput label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
               <NumberInput label="Weeks" value={module.weeks} min={1} step={1} onChange={value => resizeWeeks(module, value, onChange)} />
-              {/* Derived, never typed: the module total is the sum of every
-                  component's Expected OTJH across every week. It was an editable
-                  box, but the save recomputes it from the components anyway, so
-                  anything typed here was discarded on the next save. */}
-              <ReadOnlyInput label="Total OTJH hours" value={formatHoursMinutes(module.totalOtjh)} />
+              <NumberInput label="Total OTJH hours" value={module.declaredTotalOtjh ?? module.totalOtjh} min={0} step={0.25} onChange={value => onChange({ declaredTotalOtjh: value })} />
             </div>
             <TextArea label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
           </SettingsSection>
@@ -5297,8 +5714,6 @@ function sessionKsbKind(code: string): 'knowledge' | 'skill' | 'behaviour' {
   return 'knowledge';
 }
 
-const COMPONENT_KSB_LIMIT_PER_KIND = 2;
-
 function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComponent) {
   const settings = component.settings || {};
   const names = Array.isArray(settings.selectedGroupNames) ? settings.selectedGroupNames : [];
@@ -5310,15 +5725,13 @@ function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComp
   return [...new Set(labels)];
 }
 
-function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, existingMappings, limitPerKind, onClose, onAddMany }: {
+function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, onClose, onAddMany }: {
   standards: CurriculumStandard[];
   standardsLoading: boolean;
   ksbSets: CurriculumKsbSet[];
   ksbSetsLoading: boolean;
   initialSourceId: string;
   lockedSourceId?: string;
-  existingMappings: KsbMapping[];
-  limitPerKind?: number;
   onClose: () => void;
   onAddMany: (items: Array<{ option: KsbOption; weight: number; weightClass: KsbWeightClass }>) => void;
 }) {
@@ -5329,7 +5742,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   const [sourceMode, setSourceMode] = useState<'standard' | 'profile'>('profile');
   const [addingKsbs, setAddingKsbs] = useState(false);
   const [ksbSearch, setKsbSearch] = useState('');
-  const [ksbTypeFilter, setKsbTypeFilter] = useState<'knowledge' | 'skill' | 'behaviour'>('knowledge');
+  const [ksbTypeFilter, setKsbTypeFilter] = useState<'all' | 'knowledge' | 'skill' | 'behaviour'>('all');
   const sourceLocked = Boolean(lockedSourceId);
   const standardSourceOptions = useMemo(() => standards.map(standard => ({
       id: ksbStandardSourceId(standard),
@@ -5345,10 +5758,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
       options,
     };
   }), [ksbSets]);
-  const sourceOptions = useMemo(
-    () => [...profileSourceOptions, ...standardSourceOptions],
-    [profileSourceOptions, standardSourceOptions],
-  );
+  const sourceOptions = [...profileSourceOptions, ...standardSourceOptions];
   useEffect(() => {
     const preferredSourceId = lockedSourceId;
     if (sourceLocked && preferredSourceId) {
@@ -5368,82 +5778,31 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     ],
     ...sourceOptions.flatMap(source => ksbSourceIdAliases(source.id).map(alias => [alias, source.label])),
   ]);
-  const sourceKsbOptions = useMemo(
-    () => resolvedSelectedSource?.options || [],
-    [resolvedSelectedSource],
-  );
-  const existingMappingByOptionId = useMemo(() => new Map(
-    sourceKsbOptions.flatMap(option => {
-      const existing = existingMappings.find(mapping => (
-        String(mapping.ksbId || '').trim() === String(option.id || '').trim()
-        || (
-          String(mapping.code || '').trim().toUpperCase() === String(option.code || '').trim().toUpperCase()
-          && ksbSourceIdsMatch(mapping.sourceId, option.sourceId)
-        )
-      ));
-      return existing ? [[option.id, existing] as const] : [];
-    }),
-  ), [existingMappings, sourceKsbOptions]);
-  const existingKindCounts = useMemo(() => existingMappings.reduce(
-    (counts, mapping) => {
-      counts[sessionKsbKind(mapping.code)] += 1;
-      return counts;
-    },
-    { knowledge: 0, skill: 0, behaviour: 0 },
-  ), [existingMappings]);
-  const selectedKindCounts = useMemo(() => sourceKsbOptions.reduce(
-    (counts, option) => {
-      if (selectedKsbIds.has(option.id)) counts[sessionKsbKind(option.code)] += 1;
-      return counts;
-    },
-    { knowledge: 0, skill: 0, behaviour: 0 },
-  ), [selectedKsbIds, sourceKsbOptions]);
-  const availableKindCounts = useMemo(() => sourceKsbOptions.reduce(
-    (counts, option) => {
-      counts[sessionKsbKind(option.code)] += 1;
-      return counts;
-    },
-    { knowledge: 0, skill: 0, behaviour: 0 },
-  ), [sourceKsbOptions]);
-  const optionLimitReached = (option: KsbOption) => {
-    if (!limitPerKind || selectedKsbIds.has(option.id)) return false;
-    const kind = sessionKsbKind(option.code);
-    return existingKindCounts[kind] + selectedKindCounts[kind] >= limitPerKind;
-  };
+  const sourceKsbOptions = useMemo(() => resolvedSelectedSource?.options || [], [resolvedSelectedSource]);
   const filteredKsbOptions = useMemo(() => {
     const query = ksbSearch.trim().toLowerCase();
     return sourceKsbOptions.filter(option => {
-      if (sessionKsbKind(option.code) !== ksbTypeFilter) return false;
+      const tone = ksbVisualTone(option.code, option.type);
+      if (ksbTypeFilter !== 'all' && tone.label.toLowerCase() !== ksbTypeFilter) return false;
       if (!query) return true;
       return option.code.toLowerCase().includes(query) || option.description.toLowerCase().includes(query);
     });
   }, [sourceKsbOptions, ksbSearch, ksbTypeFilter]);
-  const weightForOption = (option: KsbOption) => weightsByKsbId[option.id]
-    ?? existingMappingByOptionId.get(option.id)?.weight
-    ?? defaultKsbWeight(weightClassForOption(option));
+  const weightForOption = (option: KsbOption) => weightsByKsbId[option.id] ?? defaultKsbWeight(weightClassForOption(option));
   const updateOptionWeight = (option: KsbOption, value: number) => {
     setWeightsByKsbId(current => ({ ...current, [option.id]: clampKsbWeight(value) }));
   };
-  const weightClassForOption = (option: KsbOption) => weightClassesByKsbId[option.id]
-    ?? normaliseKsbWeightClass(existingMappingByOptionId.get(option.id)?.weightClass || existingMappingByOptionId.get(option.id)?.weight_class);
+  const weightClassForOption = (option: KsbOption) => weightClassesByKsbId[option.id] ?? DEFAULT_KSB_WEIGHT_CLASS;
   const updateOptionWeightClass = (option: KsbOption, value: string) => {
     const nextWeightClass = normaliseKsbWeightClass(value);
     setWeightClassesByKsbId(current => ({ ...current, [option.id]: nextWeightClass }));
     setWeightsByKsbId(current => ({ ...current, [option.id]: defaultKsbWeight(nextWeightClass) }));
   };
   const toggleOption = (option: KsbOption) => {
-    if (existingMappingByOptionId.has(option.id)) return;
     setSelectedKsbIds(current => {
       const next = new Set(current);
       if (next.has(option.id)) next.delete(option.id);
-      else {
-        const kind = sessionKsbKind(option.code);
-        const selectedOfKind = sourceKsbOptions.filter(candidate => (
-          current.has(candidate.id) && sessionKsbKind(candidate.code) === kind
-        )).length;
-        if (limitPerKind && existingKindCounts[kind] + selectedOfKind >= limitPerKind) return current;
-        next.add(option.id);
-      }
+      else next.add(option.id);
       return next;
     });
   };
@@ -5488,16 +5847,13 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     }, 250);
   };
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-2 sm:p-4" onClick={onClose}>
-      <div className="flex max-h-[calc(100dvh-2rem)] w-full min-w-0 max-w-3xl flex-col rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
-        <div className="shrink-0 px-4 py-3 sm:px-5 bg-primary-950 text-white flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-heading font-bold text-white">Choose KSBs</h3>
-            <p className="mt-0.5 text-[10px] text-white/65">Previously added KSBs stay visible and cannot be selected twice.</p>
-          </div>
-          <button onClick={onClose} aria-label="Close KSB chooser" className="w-8 h-8 shrink-0 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
+        <div className="px-5 py-4 bg-primary-950 text-white flex items-center justify-between">
+          <h3 className="text-sm font-heading font-bold text-white">Add KSBs</h3>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
-        <div className="min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-5 space-y-3">
+        <div className="p-5 space-y-4">
           <div className="space-y-3">
             {!sourceLocked ? (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
@@ -5510,63 +5866,41 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                 <p className="mt-0.5 truncate text-[12px] font-bold text-primary-950">{sourceLabels[selectedSourceValue] || selectedSourceValue.replace(/^(profile|standard):/, '')}</p>
               </div>
             )}
-            {limitPerKind ? (
-              <div role='note' className='rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sky-800'>
-                <p className='text-[10px] font-bold uppercase tracking-wide'>Component KSB selection limit</p>
-                <p className='mt-0.5 text-[11px] font-semibold'>Choose up to 2 Knowledge, 2 Skills and 2 Behaviours for this component. Previously added KSBs count towards each limit.</p>
-              </div>
-            ) : null}
           </div>
           {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="KSB categories">
-                {([
-                  { value: 'knowledge', code: 'K', label: 'Knowledge', activeClass: 'border-violet-400 bg-violet-600 text-white', iconClass: 'bg-violet-100 text-violet-700' },
-                  { value: 'skill', code: 'S', label: 'Skills', activeClass: 'border-amber-400 bg-amber-500 text-white', iconClass: 'bg-amber-100 text-amber-700' },
-                  { value: 'behaviour', code: 'B', label: 'Behaviours', activeClass: 'border-emerald-400 bg-emerald-600 text-white', iconClass: 'bg-emerald-100 text-emerald-700' },
-                ] as const).map(category => {
-                  const active = ksbTypeFilter === category.value;
-                  const chosen = existingKindCounts[category.value] + selectedKindCounts[category.value];
-                  return (
-                    <button
-                      key={category.value}
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      onClick={() => setKsbTypeFilter(category.value)}
-                      className={`rounded-xl border px-2 py-2.5 text-left transition-smooth ${active ? category.activeClass : 'border-background-200 bg-background-100 text-foreground-700 hover:border-primary-200 hover:bg-background-50'}`}
-                    >
-                      <span className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
-                        <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[12px] font-black ${active ? 'bg-white/20 text-white' : category.iconClass}`}>{category.code}</span>
-                        <span className="min-w-0">
-                          <span className="block truncate text-[10px] font-black sm:text-[11px]">{category.label}</span>
-                          <span className={`block text-[9px] font-semibold ${active ? 'text-white/75' : 'text-foreground-400'}`}>
-                            {availableKindCounts[category.value]} available{limitPerKind ? ` · ${chosen}/${limitPerKind} chosen` : ''}
-                          </span>
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="relative">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="relative flex-1 sm:max-w-[220px]">
                 <AppIcon className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-foreground-400"></AppIcon>
                 <input
                   type="text"
                   value={ksbSearch}
                   onChange={event => setKsbSearch(event.target.value)}
-                  placeholder={`Search ${ksbTypeFilter} KSBs`}
+                  placeholder="Search KSB code or text"
                   className="h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 pl-7 pr-2 text-[11px] font-semibold text-foreground-900 outline-none focus:border-primary-300"
                 />
               </div>
+              <div className="flex flex-wrap gap-1">
+                {(['all', 'knowledge', 'skill', 'behaviour'] as const).map(filterValue => (
+                  <button
+                    key={filterValue}
+                    type="button"
+                    onClick={() => setKsbTypeFilter(filterValue)}
+                    className={`rounded-full px-2.5 py-1 text-[10px] font-bold capitalize transition-smooth ${
+                      ksbTypeFilter === filterValue
+                        ? 'bg-primary-500 text-white'
+                        : 'bg-background-100 text-foreground-500 hover:bg-background-200'
+                    }`}
+                  >
+                    {filterValue}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
-          <div className="space-y-2">
+          <div className="max-h-96 overflow-y-auto space-y-2">
             {filteredKsbOptions.map(option => {
               const tone = ksbVisualTone(option.code, option.type);
-              const alreadyAdded = existingMappingByOptionId.has(option.id);
-              const limitReached = !alreadyAdded && optionLimitReached(option);
-              const selected = alreadyAdded || selectedKsbIds.has(option.id);
+              const selected = selectedKsbIds.has(option.id);
               return (
               <div key={option.id} className={`rounded-xl border border-l-4 px-3 py-2 transition-smooth ${selected ? tone.selectedRow : tone.row}`}>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -5574,10 +5908,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                     <input
                       type="checkbox"
                       checked={selected}
-                      disabled={alreadyAdded || limitReached}
                       onChange={() => toggleOption(option)}
-                      aria-label={alreadyAdded ? `${option.code} already added` : limitReached ? `${option.code} unavailable because the component limit is reached` : `Select ${option.code}`}
-                      className="mt-1 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300 disabled:cursor-not-allowed disabled:opacity-70"
+                      className="mt-1 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300"
                     />
                     <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${tone.iconClass}`}>
                       <AppIcon className={`${tone.icon} text-[13px]`}></AppIcon>
@@ -5587,7 +5919,6 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                         <span className="text-[12px] font-bold text-foreground-900">{option.code}</span>
                         <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${tone.weightClass}`}>{clampKsbWeight(weightForOption(option))}%</span>
-                        {alreadyAdded && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">Already added</span>}
                       </div>
                       <p className="mt-1 text-[11px] text-foreground-600 leading-relaxed">{option.description}</p>
                     </div>
@@ -5597,9 +5928,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight class</span>
                       <select
                         value={weightClassForOption(option)}
-                        disabled={alreadyAdded || limitReached}
                         onChange={event => updateOptionWeightClass(option, event.target.value)}
-                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
+                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300"
                       >
                         <option value="hard">Hard</option>
                         <option value="soft">Soft</option>
@@ -5613,9 +5943,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                         min={1}
                         step={1}
                         value={clampPositiveKsbWeight(weightForOption(option), weightClassForOption(option))}
-                        disabled={alreadyAdded || limitReached}
                         onChange={event => updateOptionWeight(option, Number(event.target.value))}
-                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
+                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300"
                       />
                     </label>
                   </div>
@@ -5628,138 +5957,17 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
             {resolvedSelectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
             {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && !filteredKsbOptions.length && <EmptyState text="No KSBs match your search or filter." />}
           </div>
-        </div>
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-3 py-3 sm:px-5">
-            <p className="text-[11px] font-semibold text-foreground-500">
-              {existingMappingByOptionId.size ? `${existingMappingByOptionId.size} already added · ` : ''}
-              {selectedItems.length} new selected
-            </p>
+          <div className="flex items-center justify-between gap-3 border-t border-background-200 pt-3">
+            <p className="text-[11px] font-semibold text-foreground-500">{selectedItems.length} KSB{selectedItems.length === 1 ? '' : 's'} selected</p>
             <button
               type="button"
               disabled={!selectedItems.length || addingKsbs}
               onClick={handleAddSelectedKsbs}
-              className="h-9 shrink-0 rounded-lg bg-primary-500 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-foreground-200 disabled:text-foreground-400"
+              className="h-9 rounded-lg bg-primary-500 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-foreground-200 disabled:text-foreground-400"
             >
               {addingKsbs ? 'Adding...' : 'Add KSBs'}
             </button>
           </div>
-      </div>
-    </div>
-  );
-}
-
-function WeekTemplateImportModal({ scope, onClose, onImport, targetWeekLabel = '', existingComponentCount = 0 }: {
-  scope: { programmeId: string; programmeName: string };
-  onClose: () => void;
-  /** The picked template, and how many weeks it should become. The count is
-   *  always 1 when the picker was opened from a week, because there it adds
-   *  components to a week that already exists. */
-  onImport: (template: WeekTemplate, repeat: number) => void;
-  /** Set when the picker was opened from a week, empty when opened from the
-   *  module header. The two do different things — add to this week, or create a
-   *  new one — so the dialog says which is about to happen. */
-  targetWeekLabel?: string;
-  existingComponentCount?: number;
-}) {
-  const [templates, setTemplates] = useState<WeekTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [importingId, setImportingId] = useState<string | null>(null);
-  // How many weeks the picked template becomes. Held as the typed text so the
-  // box can be cleared and retyped; it is read as a number only on import.
-  const [repeatText, setRepeatText] = useState('1');
-  const repeat = Math.max(1, Math.min(MAX_TEMPLATE_REPEAT, Math.floor(Number(repeatText)) || 1));
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    fetchWeekTemplates({})
-      .then(rows => { if (active) { setTemplates(rows); setLoading(false); } })
-      .catch(err => { if (active) { setError(err instanceof Error ? err.message : 'Unable to load week templates.'); setLoading(false); } });
-    return () => { active = false; };
-  }, []);
-
-  const list = filterWeekTemplatesForScope(templates, scope);
-
-  const pick = async (template: WeekTemplate) => {
-    setImportingId(template.id);
-    setError('');
-    try {
-      const detail = await fetchWeekTemplateDetail(template.id);
-      onImport(detail, targetWeekLabel ? 1 : repeat);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load that template.');
-      setImportingId(null);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground-950/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between gap-4 border-b border-background-200 px-5 py-4">
-          <div>
-            <h3 className="font-heading text-[15px] font-bold text-foreground-950">
-              {targetWeekLabel ? 'Add template components to this week' : 'Add a week from a template'}
-            </h3>
-            <p className="mt-0.5 text-[11px] text-foreground-500">
-              {targetWeekLabel
-                ? `Copies the template's components into ${targetWeekLabel}`
-                  + (existingComponentCount
-                    ? `, keeping the ${existingComponentCount} already there.`
-                    : '.')
-                : repeat === 1
-                  ? "Copies the template's components into a new week in this module."
-                  : `Copies the template's components into ${repeat} new weeks in this module.`}
-            </p>
-          </div>
-          <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
-        </div>
-        {/* Only when the picker makes new weeks. Opened from a week it adds
-            components to that one week, where a count would have nothing to
-            repeat over. */}
-        {!targetWeekLabel && (
-          <div className="flex items-center gap-3 border-b border-background-200 bg-background-100/60 px-5 py-3">
-            <label htmlFor="week-template-repeat" className="text-[12px] font-semibold text-foreground-700">
-              Add as
-            </label>
-            <input
-              id="week-template-repeat"
-              type="number"
-              min={1}
-              max={MAX_TEMPLATE_REPEAT}
-              step={1}
-              value={repeatText}
-              onChange={event => setRepeatText(event.target.value)}
-              onBlur={() => setRepeatText(String(repeat))}
-              className="h-9 w-20 rounded-lg border border-background-200 bg-background-50 px-3 text-[13px] font-bold text-foreground-900 outline-none transition-smooth focus:border-primary-400"
-            />
-            <span className="text-[12px] font-semibold text-foreground-700">{repeat === 1 ? 'week' : 'weeks'}</span>
-            <span className="ml-auto text-[11px] text-foreground-500">Each is a separate week you can edit on its own.</span>
-          </div>
-        )}
-        <div className="max-h-[60vh] overflow-y-auto p-4">
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-foreground-500"><span className="h-4 w-4 animate-spin rounded-full border-2 border-background-300 border-t-primary-500" />Loading templates…</div>
-          ) : list.length ? (
-            <div className="space-y-2">
-              {list.map(template => (
-                <button key={template.id} type="button" disabled={Boolean(importingId)} onClick={() => void pick(template)} className="flex w-full items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-300 hover:bg-primary-50 disabled:opacity-60">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-500 text-white"><AppIcon className="ri-calendar-todo-line"></AppIcon></span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-bold text-foreground-900">{template.title || 'Untitled week'}</span>
-                    <span className="block text-[11px] text-foreground-500">{template.componentCount || template.components.length} components{template.programmeName ? ` · ${template.programmeName}` : ''}</span>
-                    {!targetWeekLabel && repeat > 1 && (
-                      <span className="mt-0.5 block text-[11px] font-semibold text-primary-700">Adds {repeat} weeks · {(template.componentCount || template.components.length) * repeat} components</span>
-                    )}
-                  </span>
-                  {importingId === template.id ? <AppIcon className="ri-loader-4-line animate-spin text-foreground-400"></AppIcon> : <AppIcon className="ri-add-line text-primary-600"></AppIcon>}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p className="py-10 text-center text-[12px] text-foreground-400">No week templates found. Create one in the Week Builder first.</p>
-          )}
-          {error && <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
         </div>
       </div>
     </div>
@@ -5882,34 +6090,6 @@ function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeO
           </div>
         )}
       </form>
-    </div>
-  );
-}
-
-function PreviewModal({ module, onClose }: { module: ModuleCatalogueItem; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="w-full max-w-3xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
-        <div className="px-5 py-4 bg-primary-950 text-white flex items-center justify-between">
-          <h3 className="text-sm font-heading font-bold text-white">Preview</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
-        </div>
-        <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
-          <div>
-            <h2 className="text-lg font-heading font-bold text-foreground-950">{module.title}</h2>
-            <p className="text-[12px] text-foreground-500">{module.description || 'No short description set.'}</p>
-          </div>
-          {module.weekStructure.map(week => (
-            <div key={week.id} className="rounded-xl border border-background-200 bg-background-100/50 p-4">
-              <h3 className="text-sm font-bold text-foreground-900">{weekPlacementLabel(week, ': ')}</h3>
-              <p className="text-[11px] text-foreground-500 mt-1">{week.summary}</p>
-              <div className="mt-3 space-y-2">
-                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {formatHoursMinutes(component.expectedOtjh)} OTJH - {component.points} pts</div>)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
@@ -6459,7 +6639,6 @@ function ComponentResourceUpload({
   uploading,
   error,
   onUpload,
-  onRemove,
 }: {
   label: string;
   accept: string;
@@ -6469,17 +6648,8 @@ function ComponentResourceUpload({
   uploading: boolean;
   error: string;
   onUpload: (file: File) => void | Promise<void>;
-  // Clears the stored file without replacing it, for a file attached by mistake.
-  onRemove?: () => void;
 }) {
   const inputId = useMemo(() => `component-upload-${Math.random().toString(36).slice(2)}`, []);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const hasFile = Boolean(uploadedUrl || uploadedName);
-
-  // Don't leave a prompt open against a file that is already gone or replaced.
-  useEffect(() => {
-    if (!hasFile) setConfirmRemove(false);
-  }, [hasFile]);
   return (
     <div className="rounded-xl border border-background-200 bg-background-50 p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -6489,20 +6659,12 @@ function ComponentResourceUpload({
             {uploadedName ? uploadedName : 'No file uploaded yet'}
             {uploadedSize > 0 && <span className="ml-2 text-foreground-400">{formatFileSize(uploadedSize)}</span>}
           </p>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            {uploadedUrl && (
-              <a href={uploadedUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">
-                <AppIcon className="ri-external-link-line"></AppIcon>
-                Open uploaded file
-              </a>
-            )}
-            {onRemove && hasFile && !confirmRemove && (
-              <button type="button" disabled={uploading} onClick={() => setConfirmRemove(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:text-red-700 disabled:opacity-50">
-                <AppIcon className="ri-delete-bin-line"></AppIcon>
-                Remove file
-              </button>
-            )}
-          </div>
+          {uploadedUrl && (
+            <a href={uploadedUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">
+              <AppIcon className="ri-external-link-line"></AppIcon>
+              Open uploaded file
+            </a>
+          )}
         </div>
         <div className="shrink-0">
           <input
@@ -6517,33 +6679,12 @@ function ComponentResourceUpload({
               if (file) void onUpload(file);
             }}
           />
-          <label htmlFor={inputId} className={`primary-action inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
+          <label htmlFor={inputId} className={`inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
             <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'}></AppIcon>
             {uploading ? 'Uploading...' : 'Upload from device'}
           </label>
         </div>
       </div>
-      <p className="mt-2 flex items-center gap-1 text-[10px] font-medium text-foreground-400">
-        <AppIcon className="ri-information-line shrink-0"></AppIcon>
-        Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL}.
-      </p>
-      {onRemove && confirmRemove && (
-        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold text-red-700">
-            <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
-            <span>Remove this file from the component? The component keeps its other details and you can upload a new file later.</span>
-          </p>
-          <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={() => setConfirmRemove(false)} className="inline-flex h-8 items-center justify-center rounded-md border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 hover:bg-background-100">
-              Cancel
-            </button>
-            <button type="button" onClick={() => { setConfirmRemove(false); onRemove(); }} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-red-600 px-3 text-[11px] font-bold text-white hover:bg-red-700">
-              <AppIcon className="ri-delete-bin-line !text-white"></AppIcon>
-              Remove file
-            </button>
-          </div>
-        </div>
-      )}
       {error && <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
     </div>
   );
@@ -6588,443 +6729,178 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
 }
 
 /**
- * Who is taught this module.
+ * The module archive: where "Archive module" puts a module, and the way back.
  *
- * There is no module roster: a learner is taught a module because that module
- * is on their learning plan, so ticking a box here appends it to their plan and
- * unticking removes it (see backend/learner_api/learning_plan.py). The list is
- * every learner in enrolment."Created_users", both apprenticeship and
- * commercial, because a module can be taught outside its own programme.
- *
- * A tick the learner inherited from their group's preset is labelled as the
- * group's rather than shown as an agreed choice, and saving with it untouched
- * writes nothing -- opening this picker must not quietly turn presets into
- * agreed plans.
+ * Restore and Delete permanently are deliberately not the matched pair they
+ * look like. One is reversible and the other is the only permanent delete in
+ * Curriculum Studio that destroys authored content, so they are worded and
+ * coloured apart, and the notice above says so once for the whole list.
  */
-function AssignLearnersModal({ moduleId, moduleTitle, onClose }: {
-  moduleId: string;
-  moduleTitle: string;
-  onClose: () => void;
+function ArchivedModulesPanel({ records, loading, error, busyId, onRestore, onDelete }: {
+  records: CurriculumArchivedModule[];
+  loading: boolean;
+  error: string | null;
+  /** The module a restore or a delete is currently running for. */
+  busyId: string | null;
+  onRestore: (module: CurriculumArchivedModule) => void;
+  onDelete: (module: CurriculumArchivedModule) => void;
 }) {
-  const [learners, setLearners] = useState<ModuleLearnerRow[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [assignedAtLoad, setAssignedAtLoad] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [programmeFilter, setProgrammeFilter] = useState('');
-  const [cohortFilter, setCohortFilter] = useState('');
-  const [groupFilter, setGroupFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [assignedOnly, setAssignedOnly] = useState(false);
+  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get('archiveModule') || '');
+  const [programmeFilter, setProgrammeFilter] = useState('All');
 
-  const applyResponse = useCallback((rows: ModuleLearnerRow[]) => {
-    setLearners(rows);
-    const assigned = new Set(rows.filter(row => row.assigned).map(row => row.id));
-    setSelected(new Set(assigned));
-    setAssignedAtLoad(assigned);
-  }, []);
-
-  useEffect(() => {
-    if (!moduleId) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchModuleLearners(moduleId)
-      .then(response => {
-        if (cancelled) return;
-        applyResponse(response.learners);
-      })
-      .catch(err => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Unable to load learners.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [moduleId, applyResponse]);
-
-  const programmes = useMemo(
-    () => Array.from(new Set(learners.map(row => row.programme).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [learners],
-  );
-  // Cohort and group options narrow to the placement already chosen: a
-  // programme's cohorts, then that cohort's groups. Offering all 60 cohorts
-  // under one programme would be a list of dead ends.
-  const cohorts = useMemo(
-    () => Array.from(new Set(learners
-      .filter(row => !programmeFilter || row.programme === programmeFilter)
-      .map(row => row.cohort)
-      .filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [learners, programmeFilter],
-  );
-  const groups = useMemo(
-    () => Array.from(new Set(learners
-      .filter(row => (!programmeFilter || row.programme === programmeFilter) && (!cohortFilter || row.cohort === cohortFilter))
-      .map(row => row.group)
-      .filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [learners, programmeFilter, cohortFilter],
-  );
-  const learnerTypes = useMemo(
-    () => Array.from(new Set(learners.map(row => row.learnerType.trim().toLowerCase()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [learners],
-  );
-  const statuses = useMemo(
-    () => Array.from(new Set(learners.map(row => row.programmeStatus.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [learners],
-  );
+  const programmeOptions = useMemo(() => {
+    const names = new Set<string>();
+    records.forEach(module => { if (module.programme) names.add(module.programme); });
+    return ['All', ...Array.from(names).sort((a, b) => a.localeCompare(b))];
+  }, [records]);
 
   const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    return learners.filter(row => {
-      if (programmeFilter && row.programme !== programmeFilter) return false;
-      if (cohortFilter && row.cohort !== cohortFilter) return false;
-      if (groupFilter && row.group !== groupFilter) return false;
-      if (typeFilter && row.learnerType.trim().toLowerCase() !== typeFilter) return false;
-      if (statusFilter && row.programmeStatus.trim() !== statusFilter) return false;
-      if (assignedOnly && !selected.has(row.id)) return false;
+    const needle = query.trim().toLowerCase();
+    return records.filter(module => {
+      if (programmeFilter !== 'All' && module.programme !== programmeFilter) return false;
       if (!needle) return true;
-      return [row.name, row.email, row.programme, row.cohort, row.group]
-        .some(value => value.toLowerCase().includes(needle));
+      return [module.title, module.programme, module.cohort, module.group]
+        .some(value => (value || '').toLowerCase().includes(needle));
     });
-  }, [learners, search, programmeFilter, cohortFilter, groupFilter, typeFilter, statusFilter, assignedOnly, selected]);
+  }, [records, query, programmeFilter]);
 
-  const activeFilterCount = [programmeFilter, cohortFilter, groupFilter, typeFilter, statusFilter].filter(Boolean).length
-    + (search.trim() ? 1 : 0)
-    + (assignedOnly ? 1 : 0);
-  const clearFilters = () => {
-    setSearch('');
-    setProgrammeFilter('');
-    setCohortFilter('');
-    setGroupFilter('');
-    setTypeFilter('');
-    setStatusFilter('');
-    setAssignedOnly(false);
-  };
-
-  const toAdd = useMemo(
-    () => Array.from(selected).filter(id => !assignedAtLoad.has(id)).length,
-    [selected, assignedAtLoad],
-  );
-  const toRemove = useMemo(
-    () => Array.from(assignedAtLoad).filter(id => !selected.has(id)).length,
-    [selected, assignedAtLoad],
-  );
-  const dirty = toAdd > 0 || toRemove > 0;
-
-  const toggle = (id: string) => {
-    setSelected(previous => {
-      const next = new Set(previous);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-
-  // Select/clear act on what is on screen, not the whole directory: a filtered
-  // list with a "select all" that silently ticked 400 hidden learners would be
-  // the one mistake this picker must not make.
-  const setAllFiltered = (assign: boolean) => {
-    setSelected(previous => {
-      const next = new Set(previous);
-      filtered.forEach(row => { if (assign) next.add(row.id); else next.delete(row.id); });
-      return next;
-    });
-  };
-
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      const response = await saveModuleLearners(moduleId, Array.from(selected));
-      applyResponse(response.learners);
-      const changed = response.changedCount ?? 0;
-      await showCurriculumAlert({
-        title: 'Learners assigned',
-        text: changed
-          ? `${changed} learner${changed === 1 ? "'s" : "s'"} plan${changed === 1 ? '' : 's'} updated for ${moduleTitle}.`
-          : `No plans needed changing for ${moduleTitle}.`,
-        timer: 1800,
-      });
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save the assignment.');
-    } finally {
-      setSaving(false);
-    }
-  };
+  const filtersActive = Boolean(query) || programmeFilter !== 'All';
 
   return (
-    <div className="fixed inset-0 z-[86] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={saving ? undefined : onClose}>
-      <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="flex flex-col gap-3 bg-primary-950 px-5 py-4 text-white lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">Learning plans</p>
-            <h3 className="mt-0.5 text-base font-heading font-bold text-white">Assign learners</h3>
-            <p className="mt-1 line-clamp-1 text-[12px] font-semibold text-white/70">{moduleTitle}</p>
+    <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[13px] font-bold text-foreground-950">Archived modules</p>
+            <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
+              {filtered.length} of {records.length} archived
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <MetricPill label="Assigned" value={String(selected.size)} />
-            <MetricPill label="Learners" value={String(learners.length)} />
+            <div className="relative min-w-0 grow sm:w-64 sm:grow-0">
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
+              <input
+                type="text"
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder="Search archived modules..."
+                className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50"
+              />
+            </div>
+            <select
+              aria-label="Programme"
+              value={programmeFilter}
+              onChange={event => setProgrammeFilter(event.target.value)}
+              className={FILTER_SELECT_CLASS}
+            >
+              {programmeOptions.map(option => <option key={option} value={option}>{option === 'All' ? 'All programmes' : option}</option>)}
+            </select>
             <button
               type="button"
-              onClick={onClose}
-              disabled={saving}
-              className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20 disabled:opacity-50"
+              disabled={!filtersActive}
+              onClick={() => { setQuery(''); setProgrammeFilter('All'); }}
+              className="h-10 rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <AppIcon className="ri-close-line"></AppIcon>
+              Clear
             </button>
           </div>
         </div>
-
-        {!moduleId ? (
-          <div className="p-6">
-            <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
-              This module has no catalogue id yet, and a learning plan refers to modules by that id. Save the module from Edit module first, then assign learners to it.
-            </p>
+        <ArchiveNotice>
+          Restoring brings a module back into the catalogue with the weeks and components archived
+          with it. Deleting permanently removes those from the database for good - it is the one
+          delete in Curriculum Studio that destroys authored content. Learner accounts and progress
+          are never touched by either.
+        </ArchiveNotice>
+      </div>
+      <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
+        {loading && !records.length ? (
+          <ModuleListSkeleton />
+        ) : error ? (
+          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
+            {error}
+          </div>
+        ) : filtered.length ? (
+          <div className="space-y-3">
+            {filtered.map(module => {
+              const busy = busyId === module.id;
+              // Archived because its programme was, rather than on its own: the
+              // programme is what has to come back, and it brings this with it.
+              const viaProgramme = Boolean(module.archivedViaParent) || module.programmeArchived;
+              return (
+                <div key={module.id} className="rounded-xl border border-background-200 bg-background-50 px-4 py-3 shadow-sm">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-bold text-foreground-900">{module.title || module.id}</p>
+                      <p className="mt-1 truncate text-[11px] text-foreground-500">
+                        {[module.programme, module.cohort, module.group].filter(Boolean).join(' / ') || 'No delivery scope'}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
+                          {module.weeks} week{module.weeks === 1 ? '' : 's'}
+                        </span>
+                        <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
+                          {module.components} component{module.components === 1 ? '' : 's'}
+                        </span>
+                        {module.archivedAt && (
+                          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800">
+                            Archived {formatDateLabel(module.archivedAt)}
+                          </span>
+                        )}
+                      </div>
+                      {viaProgramme && (
+                        <p className="mt-2 text-[11px] font-semibold text-amber-800">
+                          Archived with its programme. Restore the programme and this module comes back with it.
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onRestore(module)}
+                        disabled={busy || module.programmeArchived}
+                        title={module.programmeArchived
+                          ? `${module.programme || 'Its programme'} is archived too - restore the programme and this module comes back with it`
+                          : 'Put this module back in the catalogue, with the weeks and components archived with it'}
+                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:border-background-200 disabled:bg-background-100 disabled:text-foreground-300"
+                      >
+                        <AppIcon className={busy ? 'ri-loader-4-line animate-spin' : 'ri-arrow-go-back-line'}></AppIcon>
+                        Restore module
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDelete(module)}
+                        disabled={busy}
+                        title="Remove this module, its weeks and its components from the database for good"
+                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <AppIcon className="ri-delete-bin-line"></AppIcon>
+                        Delete permanently
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : (
-          <>
-            <div className="space-y-2 border-b border-background-200 bg-background-100/50 px-5 py-3">
-              <label className="relative block">
-                <span className="sr-only">Search learners</span>
-                <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
-                <input
-                  value={search}
-                  onChange={event => setSearch(event.target.value)}
-                  placeholder="Search by name, email, cohort or group"
-                  className="h-9 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[12px] font-semibold text-foreground-800 focus:border-primary-300 focus:outline-none"
-                />
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Changing a placement clears the narrower ones under it, so a
-                    programme's cohort can never sit over another programme's
-                    group and filter the list down to nobody. */}
-                <PickerFilter
-                  label="All programmes"
-                  value={programmeFilter}
-                  options={programmes}
-                  onChange={value => { setProgrammeFilter(value); setCohortFilter(''); setGroupFilter(''); }}
-                />
-                <PickerFilter
-                  label="All cohorts"
-                  value={cohortFilter}
-                  options={cohorts}
-                  onChange={value => { setCohortFilter(value); setGroupFilter(''); }}
-                />
-                <PickerFilter
-                  label="All groups"
-                  value={groupFilter}
-                  options={groups}
-                  onChange={setGroupFilter}
-                />
-                {learnerTypes.length > 1 && (
-                  <PickerFilter
-                    label="All learner types"
-                    value={typeFilter}
-                    options={learnerTypes}
-                    onChange={setTypeFilter}
-                    optionLabel={value => value.charAt(0).toUpperCase() + value.slice(1)}
-                  />
-                )}
-                {statuses.length > 1 && (
-                  <PickerFilter
-                    label="All statuses"
-                    value={statusFilter}
-                    options={statuses}
-                    onChange={setStatusFilter}
-                  />
-                )}
-                <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700">
-                  <input
-                    type="checkbox"
-                    checked={assignedOnly}
-                    onChange={event => setAssignedOnly(event.target.checked)}
-                    className="h-3.5 w-3.5 accent-primary-600"
-                  />
-                  Assigned only
-                </label>
-                {activeFilterCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={clearFilters}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
-                  >
-                    <AppIcon className="ri-filter-off-line text-[12px]"></AppIcon>
-                    Clear {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-background-200 px-5 py-2">
-              <p className="text-[11px] font-semibold text-foreground-500">
-                {loading ? 'Loading learners...' : `Showing ${filtered.length} of ${learners.length} learners`}
+          <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+            <span className="grid h-14 w-14 place-items-center rounded-full bg-primary-50 text-primary-500">
+              <AppIcon className="ri-archive-line text-2xl"></AppIcon>
+            </span>
+            <div>
+              <p className="text-[13px] font-semibold text-foreground-700">
+                {records.length ? 'No archived modules match your search' : 'Nothing archived'}
               </p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setAllFiltered(true)}
-                  disabled={loading || saving || !filtered.length}
-                  className="rounded-lg border border-background-200 bg-background-50 px-2.5 py-1 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-40"
-                >
-                  Select shown
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAllFiltered(false)}
-                  disabled={loading || saving || !filtered.length}
-                  className="rounded-lg border border-background-200 bg-background-50 px-2.5 py-1 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-40"
-                >
-                  Clear shown
-                </button>
-              </div>
+              <p className="mt-1 max-w-xs text-[12px] text-foreground-400">
+                {records.length
+                  ? 'Try a different search or clear the programme filter.'
+                  : 'Archiving a module from the catalogue puts it here, where it can be restored or removed for good.'}
+              </p>
             </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              {loading ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    <div key={index} className="h-14 animate-pulse rounded-xl bg-background-200/60" />
-                  ))}
-                </div>
-              ) : filtered.length ? (
-                <ul className="space-y-2">
-                  {filtered.map(row => {
-                    const checked = selected.has(row.id);
-                    return (
-                      <li key={row.id}>
-                        <label
-                          className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-smooth ${checked
-                            ? 'border-primary-200 bg-primary-50/60'
-                            : 'border-background-200 bg-background-50 hover:border-primary-100 hover:bg-background-100/50'}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={saving}
-                            onChange={() => toggle(row.id)}
-                            className="mt-0.5 h-4 w-4 accent-primary-600"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="flex flex-wrap items-center gap-2">
-                              <span className="truncate text-[12.5px] font-bold text-foreground-950">{row.name}</span>
-                              {row.learnerType.toLowerCase() === 'commercial' && (
-                                <span className="rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[9.5px] font-bold uppercase text-foreground-500">Commercial</span>
-                              )}
-                              {row.programmeStatus && (
-                                <span className="rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[9.5px] font-bold text-foreground-500">{row.programmeStatus}</span>
-                              )}
-                            </span>
-                            <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">
-                              {[row.programme, row.cohort, row.group].filter(Boolean).join(' - ') || 'No programme placement yet'}
-                            </span>
-                            <span className="mt-0.5 block truncate text-[10.5px] text-foreground-400">
-                              {row.email || 'No email on record'}
-                              {' - '}
-                              {row.moduleCount} module{row.moduleCount === 1 ? '' : 's'} on plan
-                            </span>
-                            {row.fromPreset && (
-                              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9.5px] font-bold text-amber-800">
-                                <AppIcon className="ri-group-line text-[10px]"></AppIcon>
-                                From {row.group || 'their group'}&apos;s preset, not an agreed plan
-                              </span>
-                            )}
-                          </span>
-                        </label>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : learners.length ? (
-                <div className="px-4 py-8 text-center">
-                  <p className="text-[12px] font-semibold text-foreground-600">
-                    None of the {learners.length} learners match {activeFilterCount === 1 ? 'this filter' : 'these filters'}.
-                  </p>
-                  {activeFilterCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={clearFilters}
-                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
-                    >
-                      <AppIcon className="ri-filter-off-line text-[12px]"></AppIcon>
-                      Clear {activeFilterCount === 1 ? 'it' : 'them all'}
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <EmptyState text="There are no learners on record yet." />
-              )}
-            </div>
-          </>
-        )}
-
-        <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[11px] font-semibold text-foreground-500">
-            {error
-              ? <span className="text-red-600">{error}</span>
-              : dirty
-                ? `${toAdd} to add, ${toRemove} to remove. Saving writes each learner's plan.`
-                : 'Ticking a learner adds this module to their learning plan.'}
-          </p>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={saving}
-              className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => { void save(); }}
-              disabled={!moduleId || loading || saving || !dirty}
-              aria-busy={saving}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-4 py-2 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-line'}></AppIcon>
-              {saving ? 'Saving...' : 'Save assignment'}
-            </button>
           </div>
-        </div>
+        )}
       </div>
     </div>
-  );
-}
-
-// One filter in the Assign learners picker. Disabled rather than hidden when
-// the rows above it leave nothing to choose from, so the filter bar keeps the
-// same shape and the greyed control says the narrowing already happened.
-function PickerFilter({ label, value, options, onChange, optionLabel }: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-  optionLabel?: (value: string) => string;
-}) {
-  return (
-    <label className="inline-flex">
-      <span className="sr-only">{label}</span>
-      <select
-        value={value}
-        onChange={event => onChange(event.target.value)}
-        disabled={options.length === 0}
-        className={`h-9 max-w-[190px] rounded-lg border px-2 text-[12px] font-semibold focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${value
-          ? 'border-primary-300 bg-primary-50 text-primary-800'
-          : 'border-background-200 bg-background-50 text-foreground-700 focus:border-primary-300'}`}
-      >
-        <option value="">{options.length === 0 ? `${label} (none)` : label}</option>
-        {options.map(option => (
-          <option key={option} value={option}>{optionLabel ? optionLabel(option) : option}</option>
-        ))}
-      </select>
-    </label>
   );
 }
 
@@ -7033,10 +6909,9 @@ function ModuleCatalogueCard({
   teamsSummary,
   onKsbMap,
   ksbMapLoading,
-  onAssignLearners,
+  onLearners,
   onBuild,
   onSettings,
-  onCover,
   onDuplicate,
   onDelete,
 }: {
@@ -7044,10 +6919,9 @@ function ModuleCatalogueCard({
   teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
-  onAssignLearners: () => void;
+  onLearners: () => Promise<number | null>;
   onBuild: () => void;
   onSettings: () => void;
-  onCover: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
@@ -7055,6 +6929,7 @@ function ModuleCatalogueCard({
   // fetched from the catalogue it stays empty, so fall back to lessonCount,
   // which the backend sets to the real authored component count.
   const componentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0) || module.lessonCount || 0;
+  const componentOtjh = module.weekStructure.reduce((total, week) => total + weekExpectedOtjhTotal(week), 0) || Number(module.totalOtjh || 0);
   // The authored week count. `sessionsNumber` is no longer a fallback for it: a
   // module delivered twice a week has twice as many sessions as weeks, so
   // borrowing that number here overstated the card.
@@ -7062,15 +6937,14 @@ function ModuleCatalogueCard({
   const hasContent = componentCount > 0;
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
-  const primaryDeliveryHref = primaryDelivery ? namedCurriculumWorkspacePath('modules', primaryDelivery.deliveryModuleId, module.title) : '';
-  // The module's own artwork replaces the generic icon when it has one. An
-  // address that fails to load falls back to the icon rather than leaving a
-  // broken frame beside the title -- a pasted URL can rot, and a card with a
-  // hole in it reads as a broken module.
-  const [coverBroken, setCoverBroken] = useState(false);
-  const coverImage = String(module.coverImage || '').trim();
-  useEffect(() => { setCoverBroken(false); }, [coverImage]);
-  const showCover = Boolean(coverImage) && !coverBroken;
+  const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
+  // Seeded from the bulk overview count so the badge shows without a click;
+  // a click still refreshes it with the freshest number as the dialog opens.
+  const [assignedLearnerCount, setAssignedLearnerCount] = useState<number | null>(module.assignedLearnerCount ?? null);
+  const [learnersLoading, setLearnersLoading] = useState(false);
+  // The card instance survives a list reload (same key), so a fresh overview
+  // count has to be pushed in rather than only read once at mount.
+  useEffect(() => { setAssignedLearnerCount(module.assignedLearnerCount ?? null); }, [module.assignedLearnerCount]);
   // Legacy fallbacks retained by the merge were:
   // weekCount = module.weekStructure.length || module.weeks || 0
 
@@ -7079,31 +6953,24 @@ function ModuleCatalogueCard({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
         <div className="min-w-0">
           <div className="flex flex-wrap items-start gap-3">
-            {showCover ? (
-              <span className="h-10 w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-background-200">
-                <img
-                  src={coverImage}
-                  alt=""
-                  className="h-full w-full object-cover"
-                  onError={() => setCoverBroken(true)}
-                />
-              </span>
-            ) : (
-              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
-                <AppIcon className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></AppIcon>
-              </span>
-            )}
+            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
+              <AppIcon className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></AppIcon>
+            </span>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[14px] font-heading font-bold text-foreground-950">{module.title}</h3>
               </div>
               {subLabel && <p className="mt-1 text-[11px] text-foreground-500">{subLabel}</p>}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-600">
-                  {cleanModuleMeta(module.programmeName) || 'No programme'}
-                </span>
+                <ModuleFactPill
+                  icon="ri-graduation-cap-line"
+                  label="Programme"
+                  value={cleanModuleMeta(module.programmeName) || 'Not set'}
+                  tone={cleanModuleMeta(module.programmeName) ? 'default' : 'muted'}
+                />
                 <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} weeks`} />
                 <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} components`} tone={hasContent ? 'default' : 'muted'} />
+                <ModuleMetricPill icon="ri-time-line" label={`${formatHoursMinutes(componentOtjh)} OTJH`} tone={componentOtjh ? 'default' : 'muted'} />
               </div>
               <ModuleDeliveryRows module={module} teamsSummary={teamsSummary} expectedSessions={module.sessionsNumber || weekCount} />
             </div>
@@ -7111,6 +6978,26 @@ function ModuleCatalogueCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+          <button
+            type="button"
+            onClick={async () => {
+              if (learnersLoading) return;
+              setLearnersLoading(true);
+              try {
+                const count = await onLearners();
+                if (count !== null) setAssignedLearnerCount(count);
+              } finally {
+                setLearnersLoading(false);
+              }
+            }}
+            disabled={learnersLoading}
+            aria-busy={learnersLoading}
+            title={assignedLearnerCount === 0 ? 'Assign learners to this module' : assignedLearnerCount === null ? 'Assign learners or view learner progress' : 'View assigned learners and their progress'}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
+          >
+            <AppIcon name={learnersLoading ? 'ri-loader-4-line' : assignedLearnerCount ? 'ri-group-line' : 'ri-user-add-line'} className={learnersLoading ? 'animate-spin' : ''} size={15}></AppIcon>
+            {learnersLoading ? 'Loading learners...' : assignedLearnerCount === 0 ? 'Assign learners' : assignedLearnerCount === null ? 'Learners' : `Learners (${assignedLearnerCount})`}
+          </button>
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}
@@ -7120,17 +7007,6 @@ function ModuleCatalogueCard({
               Open delivery
             </Link>
           )}
-          {/* Beside Open delivery, and shown whether or not the module has a
-              delivery row: who is taught a module is their learning plan, which
-              exists before the module is scheduled anywhere. */}
-          <button
-            type="button"
-            onClick={onAssignLearners}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:ring-offset-1"
-          >
-            <AppIcon name="ri-user-add-line" size={15}></AppIcon>
-            Assign learners
-          </button>
           <button
             onClick={onKsbMap}
             disabled={ksbMapLoading}
@@ -7145,38 +7021,12 @@ function ModuleCatalogueCard({
             Edit components
           </button>
           <ModuleCardActionButton label="Edit module" icon="ri-edit-line" onClick={onSettings} />
-          <ModuleCardActionButton label={coverImage ? 'Change image' : 'Upload image'} icon="ri-image-add-line" onClick={onCover} />
           <ModuleCardActionButton label="Duplicate module" icon="ri-file-copy-line" onClick={onDuplicate} />
-          <ModuleCardActionButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
+          <ModuleCardActionButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
         </div>
       </div>
     </article>
   );
-}
-
-function ModuleCoverDrawer({ module, onClose, onSaved }: {
-  module: ModuleCatalogueItem; onClose: () => void; onSaved: () => Promise<void>;
-}) {
-  const [cover, setCover] = useState(module.coverImage || '');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const save = async () => {
-    setSaving(true); setError(null);
-    try {
-      await updateCurriculumModuleCover(module.catalogueId, cover);
-      await onSaved();
-      onClose();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Could not save the module image.');
-    } finally {
-      setSaving(false);
-    }
-  };
-  return <EntityDrawer open title="Module image" subtitle={module.title} onClose={onClose} onSubmit={save}
-    submitLabel="Save image" saving={saving} error={error} dirty={cover !== (module.coverImage || '')}>
-    <p className="text-sm text-foreground-500">This image appears in Module Builder and on learners' subject cards.</p>
-    <CoverImageControl value={cover} onChange={(value) => { setCover(value); setError(null); }} onError={setError} alt={`${module.title} cover`} />
-  </EntityDrawer>;
 }
 
 function ModuleCardActionButton({ label, icon, onClick, tone = 'default' }: { label: string; icon: string; onClick: () => void; tone?: 'default' | 'danger' }) {
@@ -7220,6 +7070,15 @@ type ModuleKsbPlacement = {
   scope: 'Module' | 'Week' | 'Component';
   otjh: number;
   points: number;
+  /**
+   * Which column of the heatmap this placement belongs in: 'module' for a
+   * module-level mapping, `week:<index>` for anything inside a week. Set by
+   * `moduleKsbMapRows` from the week structure itself rather than parsed back
+   * out of the label, so a week titled "Week 3 / Intro" cannot be misread.
+   */
+  columnKey?: string;
+  /** The component's own title, when the placement is a component. */
+  detail?: string;
 };
 
 function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programmes, onClose, onBuild }: {
@@ -7280,6 +7139,22 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
   const visiblePlacementCount = filteredRows.reduce((total, row) => total + row.placements.length, 0);
   const visibleWeight = filteredRows.reduce((total, row) => total + row.weight, 0);
   const visibleOtjh = uniquePlacementOtjh(filteredRows);
+  // The heatmap is the way in — it answers "where in this module is this
+  // taught?" at a glance, the same question the programme heatmap answers one
+  // level up. The card view is kept for the per-placement OTJH and points
+  // breakdown the matrix has no room for.
+  const [view, setView] = useState<'heatmap' | 'cards'>('heatmap');
+  const columns = useMemo(() => moduleKsbHeatmapColumns(module), [module]);
+  const weekCount = module.weekStructure.length;
+  const coveredWeeks = useMemo(() => {
+    const touched = new Set<string>();
+    filteredRows.forEach(row => {
+      row.placements.forEach(placement => {
+        if (placement.columnKey && placement.columnKey !== MODULE_KSB_COLUMN) touched.add(placement.columnKey);
+      });
+    });
+    return touched.size;
+  }, [filteredRows]);
   return (
     <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
@@ -7511,12 +7386,222 @@ function ModuleKsbMapCard({ row }: { row: ModuleKsbMapRow }) {
   );
 }
 
+/**
+ * The module-scope answer to the programme's KSB heatmap. Same question asked
+ * one level down: the programme matrix puts a module in every column, so this
+ * one puts a week there, with the module's own mappings pinned in the first
+ * column. Rows stay grouped by Knowledge / Skills / Behaviours, because a
+ * flat alphabetical list of forty codes is what made the old panel view hard to
+ * read in the first place.
+ */
+function ModuleKsbHeatmapMatrix({ columns, groups, onBuild }: {
+  columns: ReturnType<typeof moduleKsbHeatmapColumns>;
+  groups: { key: 'K' | 'S' | 'B'; title: string; icon: string; rows: ModuleKsbMapRow[] }[];
+  onBuild: () => void;
+}) {
+  // Weeks are narrow because a week column only ever holds a count; the KSB and
+  // the trail are what need room. Everything scrolls inside the box rather than
+  // pushing the modal, so the header stays put while a 40-week module is read.
+  const gridTemplateColumns = `minmax(230px, 1.1fr) repeat(${columns.length}, minmax(60px, 72px)) minmax(96px, 0.4fr) minmax(220px, 1fr)`;
+  const visibleGroups = groups.filter(group => group.rows.length);
+
+  return (
+    <div className="max-h-[58vh] overflow-auto rounded-2xl border border-background-200 bg-background-50 shadow-sm">
+      <div className="min-w-[900px]">
+        <div className="sticky top-0 z-30 grid items-end gap-2 border-b border-background-200 bg-background-100 px-4 py-3" style={{ gridTemplateColumns }}>
+          {/* Frozen both ways, the same way the programme matrix does it: the
+              column heads must survive scrolling down and the KSB column must
+              survive scrolling right, or a cell loses the row it belongs to. */}
+          <span className="sticky left-0 z-10 -ml-4 bg-background-100 pl-4 text-[10px] font-bold uppercase text-foreground-400 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">KSB outcome</span>
+          {columns.map(column => (
+            <span
+              key={column.key}
+              title={column.label}
+              className={`truncate text-center text-[10px] font-bold uppercase ${column.isModule ? 'text-sky-700' : 'text-foreground-400'}`}
+            >
+              {column.short}
+            </span>
+          ))}
+          <span className="text-center text-[10px] font-bold uppercase text-foreground-400">Weight</span>
+          <span className="text-[10px] font-bold uppercase text-foreground-400">Taught in</span>
+        </div>
+        <div className="divide-y divide-background-200">
+          {visibleGroups.map(group => (
+            <div key={group.key}>
+              <div className="sticky top-[45px] z-20 flex items-center gap-2 border-b border-background-200 bg-background-100/95 px-4 py-1.5 backdrop-blur-sm">
+                <AppIcon className={`${group.icon} text-[12px] text-foreground-500`}></AppIcon>
+                <span className="text-[10px] font-black uppercase tracking-wide text-foreground-600">{group.title}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${ksbVisualTone(group.key).badgeClass}`}>{group.rows.length}</span>
+              </div>
+              <div className="divide-y divide-background-200">
+                {group.rows.map(row => (
+                  <ModuleKsbHeatmapRow key={`${row.code}-${row.source}`} row={row} columns={columns} />
+                ))}
+              </div>
+            </div>
+          ))}
+          {!visibleGroups.length && (
+            <div className="px-4 py-10 text-center">
+              <p className="text-[12px] font-bold text-foreground-600">Nothing matches that search.</p>
+              <button type="button" onClick={onBuild} className="mt-2 text-[11px] font-bold text-primary-600 underline-offset-2 hover:underline">
+                Open Edit mappings
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModuleKsbHeatmapRow({ row, columns }: {
+  row: ModuleKsbMapRow;
+  columns: ReturnType<typeof moduleKsbHeatmapColumns>;
+}) {
+  const cells = moduleKsbRowCells(row);
+  const kind = row.code.toUpperCase().slice(0, 1);
+  const tone = ksbVisualTone(kind);
+  const gridTemplateColumns = `minmax(230px, 1.1fr) repeat(${columns.length}, minmax(60px, 72px)) minmax(96px, 0.4fr) minmax(220px, 1fr)`;
+  const touchedColumns = columns.filter(column => (cells.get(column.key) || []).length);
+  const totalOtjh = row.placements.reduce((total, placement) => total + Number(placement.otjh || 0), 0);
+
+  return (
+    // Opaque, because the frozen first cell inherits this background to hide the
+    // week cells sliding underneath it.
+    <div className="grid items-stretch gap-2 bg-background-50 px-4 py-2.5 transition-smooth hover:bg-background-100" style={{ gridTemplateColumns }}>
+      <div className="sticky left-0 z-10 -ml-4 min-w-0 bg-inherit pl-4 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`rounded-lg border px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{row.code}</span>
+          <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
+          {row.source && <span className="truncate rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{row.source}</span>}
+        </div>
+        <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-relaxed text-foreground-700">{row.description || 'No description available.'}</p>
+      </div>
+      {columns.map(column => (
+        <ModuleKsbHeatCell key={column.key} column={column} placements={cells.get(column.key) || []} />
+      ))}
+      <div className="flex flex-col items-center justify-center gap-0.5">
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{formatKsbWeight(row.weight)}</span>
+        <span className="text-[9px] font-semibold text-foreground-400">{formatKsbOtjh(totalOtjh)} · {row.placements.length} place{row.placements.length === 1 ? '' : 's'}</span>
+      </div>
+      <div className="flex min-w-0 flex-wrap content-start items-start gap-1">
+        {touchedColumns.map(column => {
+          const placements = cells.get(column.key) || [];
+          const components = placements.filter(placement => placement.detail).map(placement => placement.detail);
+          return (
+            <span
+              key={column.key}
+              title={components.length ? `${column.label}: ${components.join(', ')}` : `${column.label}: mapped at ${placements[0]?.scope.toLowerCase()} level`}
+              className="inline-flex max-w-full items-center gap-1 truncate rounded-md border border-background-200 bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-600"
+            >
+              <AppIcon className={`${column.isModule ? 'ri-stack-line' : 'ri-calendar-check-line'} text-[10px]`}></AppIcon>
+              <span className="truncate">{column.short}{components.length ? ` · ${components[0]}` : ''}{components.length > 1 ? ` +${components.length - 1}` : ''}</span>
+            </span>
+          );
+        })}
+        {!touchedColumns.length && <span className="text-[9px] font-bold text-foreground-300">Not placed</span>}
+      </div>
+    </div>
+  );
+}
+
+function ModuleKsbHeatCell({ column, placements }: {
+  column: ReturnType<typeof moduleKsbHeatmapColumns>[number];
+  placements: ModuleKsbPlacement[];
+}) {
+  const count = placements.length;
+  // A week can hold the KSB at week level and again on its components; saying
+  // which is what tells an author whether the teaching is actually placed.
+  const scopes = Array.from(new Set(placements.map(placement => placement.scope)));
+  const title = count
+    ? `${column.label} — ${placements.map(placement => placement.label).join(', ')}`
+    : `${column.label} — not mapped`;
+  return (
+    <div
+      title={title}
+      className={`grid min-h-11 place-items-center rounded-lg border text-[11px] font-black ${moduleKsbHeatCellClass(count, column.isModule)}`}
+    >
+      {count ? (
+        <span className="flex flex-col items-center leading-none">
+          <span>{count}</span>
+          <span className="mt-0.5 text-[8px] font-bold uppercase opacity-80">{scopes.includes('Component') ? 'comp' : scopes[0].toLowerCase()}</span>
+        </span>
+      ) : (
+        <span className="text-[10px] font-bold">·</span>
+      )}
+    </div>
+  );
+}
+
+function ModuleKsbHeatmapLegend({ weekCount }: { weekCount: number }) {
+  return (
+    <div className="mb-3 flex flex-col gap-3 rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-wrap items-center gap-2">
+        {(['K', 'S', 'B'] as const).map(key => {
+          const tone = ksbVisualTone(key);
+          return (
+            <span key={key} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${tone.badgeClass}`}>
+              <AppIcon className={`${tone.icon} text-[11px]`}></AppIcon>
+              {tone.label}
+            </span>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-foreground-500">
+        <span>Placements per week</span>
+        <span className="grid h-5 w-8 place-items-center rounded border border-primary-100 bg-primary-50 text-primary-700">1</span>
+        <span className="grid h-5 w-8 place-items-center rounded border border-primary-300 bg-primary-200 text-primary-900">2</span>
+        <span className="grid h-5 w-8 place-items-center rounded border border-primary-500 bg-primary-600 text-white">3+</span>
+        <span className="grid h-5 w-14 place-items-center rounded border border-sky-200 bg-sky-50 text-[9px] text-sky-800">Module</span>
+        <span className="ml-1 text-foreground-400">{weekCount} week{weekCount === 1 ? '' : 's'} across the columns; weight is the mapping total, not a per-week split</span>
+      </div>
+    </div>
+  );
+}
+
 function KsbCoverageMetric({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
   return (
     <div className={`rounded-lg border border-background-200 bg-background-100 ${compact ? 'px-2 py-1.5' : 'min-w-20 px-3 py-2'}`}>
       <p className="text-[8px] font-black uppercase text-foreground-400">{label}</p>
       <p className={`${compact ? 'text-[11px]' : 'text-[13px]'} mt-0.5 font-black text-foreground-900`}>{value}</p>
     </div>
+  );
+}
+
+/**
+ * A catalogue fact with the word for what it is next to it. A bare value —
+ * "Test-Zyad", "Sept 2026 / Group A", a date range — reads as an unexplained
+ * string to anyone who did not author the module, so the card names the field
+ * rather than leaving the reader to infer it from position.
+ */
+function ModuleFactPill({ icon, label, value, tone = 'default' }: { icon: string; label: string; value: string; tone?: 'default' | 'muted' }) {
+  const valueClass = tone === 'muted' ? 'text-foreground-400' : 'text-foreground-700';
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-[10px]"
+      title={`${label}: ${value}`}
+    >
+      <AppIcon className={`${icon} text-[11px] text-primary-600`}></AppIcon>
+      <span className="font-bold uppercase tracking-wide text-foreground-400">{label}</span>
+      <span className={`font-semibold ${valueClass}`}>{value}</span>
+    </span>
+  );
+}
+
+/** The same labelled fact, unboxed, for the delivery rows under the card. */
+function ModuleFact({ icon, label, value, valueClass = 'font-semibold text-foreground-600', title }: {
+  icon: string;
+  label: string;
+  value: string;
+  valueClass?: string;
+  title?: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px]" title={title || `${label}: ${value}`}>
+      <AppIcon className={`${icon} text-[12px] text-foreground-400`}></AppIcon>
+      <span className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</span>
+      <span className={valueClass}>{value}</span>
+    </span>
   );
 }
 
@@ -7574,24 +7659,32 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
         const sessions = usage.sessions || 0;
         const facts = (
           <>
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-foreground-900">
-              <AppIcon className="ri-route-line text-[12px] text-primary-600"></AppIcon>
-              {formatDeliveryUsage(usage)}
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500">
-              <AppIcon className="ri-calendar-event-line text-[12px]"></AppIcon>
-              {formatDateLabel(usage.startDate)} – {formatDateLabel(usage.endDate)}
-            </span>
+            <ModuleFact
+              icon="ri-group-line"
+              label="Cohort / group"
+              value={formatDeliveryUsage(usage)}
+              valueClass="font-bold text-foreground-900"
+            />
+            <ModuleFact
+              icon="ri-calendar-event-line"
+              label="Runs"
+              value={`${formatDateLabel(usage.startDate)} – ${formatDateLabel(usage.endDate)}`}
+            />
             {sessions > 0 && sessions !== expectedSessions && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-700">
-                <AppIcon className="ri-calendar-2-line text-[12px]"></AppIcon>
-                {sessions} session{sessions === 1 ? '' : 's'}
-              </span>
+              <ModuleFact
+                icon="ri-calendar-2-line"
+                label="Sessions"
+                value={String(sessions)}
+                valueClass="font-semibold text-amber-700"
+                title={`Sessions: ${sessions} in this delivery, which differs from the module plan`}
+              />
             )}
-            <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${teams.tone}`}>
-              <AppIcon className="ri-vidicon-line text-[12px]"></AppIcon>
-              {teams.text}
-            </span>
+            <ModuleFact
+              icon="ri-vidicon-line"
+              label="Teams"
+              value={teams.text}
+              valueClass={`font-semibold ${teams.tone}`}
+            />
           </>
         );
         if (!usage.deliveryModuleId) {
@@ -7677,12 +7770,6 @@ function moduleDefinitionKey(module: ModuleCatalogueItem) {
   return `${programme || 'programme'}::${title || module.catalogueId}`;
 }
 
-/** Same rule the Programmes page uses to split its active list from its archive. */
-function programmeIsArchived(programme: CurriculumProgramme) {
-  if (typeof programme.isArchived === 'boolean') return programme.isArchived;
-  return String(programme.status || 'active').trim().toLowerCase() === 'archived';
-}
-
 /** Every identifier the selected programme answers to: name, id, source id, standard. */
 function programmeFilterKeys(programmeName: string, programmes: CurriculumProgramme[]) {
   const selected = programmes.find(programme => normaliseDeepLinkValue(programme.name) === normaliseDeepLinkValue(programmeName));
@@ -7696,9 +7783,17 @@ function programmeFilterKeys(programmeName: string, programmes: CurriculumProgra
 }
 
 function usageMatchesProgrammeFilter(usage: ModuleDeliveryUsage, programmeName: string, programmes: CurriculumProgramme[]) {
+  return recordMatchesProgrammeFilter(usage.programme, usage.programmeId, programmeName, programmes);
+}
+
+/**
+ * The same programme test for a stored cohort or group, which carries its
+ * programme under the same two fields a delivery does.
+ */
+function recordMatchesProgrammeFilter(programme: string | undefined, programmeId: string | undefined, programmeName: string, programmes: CurriculumProgramme[]) {
   if (programmeName === 'All') return true;
   const selectedKeys = programmeFilterKeys(programmeName, programmes);
-  return [usage.programme, usage.programmeId]
+  return [programme, programmeId]
     .map(normaliseDeepLinkValue)
     .filter(Boolean)
     .some(key => selectedKeys.includes(key));
@@ -7721,10 +7816,11 @@ function deliveryFilterMatches(filter: string, id?: string, name?: string) {
 }
 
 function teamsMeetingLabel(summary?: CurriculumTeamsMeetingSummary) {
-  if (!summary) return { text: 'Teams not created', tone: 'text-foreground-400' };
+  // The row prints the field name, so the value says only what the state is.
+  if (!summary) return { text: 'Not created', tone: 'text-foreground-400' };
   if (summary.upcomingCount > 0) return { text: `${summary.upcomingCount} upcoming`, tone: 'text-emerald-700' };
   if (summary.occurrenceCount > 0) return { text: `${summary.occurrenceCount} held`, tone: 'text-foreground-600' };
-  return { text: 'Teams scheduled', tone: 'text-sky-700' };
+  return { text: 'Scheduled', tone: 'text-sky-700' };
 }
 
 function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
@@ -7738,6 +7834,14 @@ function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programme
   ].map(normaliseDeepLinkValue).filter(Boolean);
   return moduleKeys.some(key => selectedKeys.includes(key));
 }
+
+/**
+ * The stand-ins `curriculumModuleToCatalogue` stamps on a module that carries no
+ * programme of its own: `programmeId: 'programme'`, `programmeName: 'Unassigned
+ * programme'`. They are label text for the row, never an identity, so the
+ * visibility check must not read them as a programme the module claims.
+ */
+const UNASSIGNED_PROGRAMME_KEYS = new Set(['programme', 'unassignedprogramme', 'unassigned']);
 
 function moduleBelongsToVisibleProgramme(module: ModuleBuilderListItem, programmes: CurriculumProgramme[]) {
   if (module.isProgrammeDeleted || module.sourceModule?.isProgrammeDeleted) return false;
@@ -7755,10 +7859,10 @@ function moduleBelongsToVisibleProgramme(module: ModuleBuilderListItem, programm
     module.sourceModule?.programmeId,
     ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
   ].map(normaliseDeepLinkValue).filter(key => Boolean(key) && !UNASSIGNED_PROGRAMME_KEYS.has(key));
-  // No programme is a state a module is allowed to be in ("assign later"), and
-  // it reaches here as the placeholder name rather than as a blank. Counting
-  // that placeholder as a programme key hid every unassigned module from the
-  // catalogue, including the one just created.
+  // No programme of its own means nothing to check it against -- the module
+  // stays listed, exactly as the backend keeps it in the operational payload.
+  // Counting the placeholder as a key instead made every unassigned module
+  // paint with the list and then vanish the moment the programmes arrived.
   if (!moduleKeys.length) return true;
   return moduleKeys.some(key => visibleKeys.has(key));
 }
@@ -7766,12 +7870,14 @@ function moduleBelongsToVisibleProgramme(module: ModuleBuilderListItem, programm
 function programmeForScope(programmes: CurriculumProgramme[], values: unknown[]) {
   const wanted = new Set(values.map(normaliseDeepLinkValue).filter(Boolean));
   if (!wanted.size) return null;
-  return programmes.find(programme => (
-    [programme.id, programme.sourceId, programme.name]
-      .map(normaliseDeepLinkValue)
-      .filter(Boolean)
-      .some(key => wanted.has(key))
-  )) || null;
+  const matches = (candidates: unknown[]) => candidates
+    .map(normaliseDeepLinkValue)
+    .filter(Boolean)
+    .some(key => wanted.has(key));
+  // Ids first across the whole list, names only once none matched.
+  return programmes.find(programme => matches([programme.id, programme.sourceId]))
+    || programmes.find(programme => matches([programme.name]))
+    || null;
 }
 
 function deliveryUsageForModuleScope(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
@@ -7813,6 +7919,9 @@ function moduleDeliveryUsage(module: ModuleCatalogueItem): ModuleDeliveryUsage |
     startDate: module.startDate || module.sourceModule?.startDate,
     endDate: module.endDate || module.sourceModule?.endDate,
     sessions: module.sourceModule?.sessionsNumber || module.sourceModule?.weeks || module.sessionsNumber || module.weeks || 0,
+    weekDays: String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
+    startTime: String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
+    endTime: String(module.deliveryMetadata?.endTime || module.sourceModule?.endTime || ''),
   };
 }
 
@@ -7836,13 +7945,15 @@ function liveSessionGroupOptions(module: ModuleCatalogueItem) {
     .map(usage => {
       const group = cleanModuleMeta(usage.group);
       if (!group) return null;
+      const programme = cleanModuleMeta(usage.programme);
+      const programmeId = cleanModuleMeta(usage.programmeId);
       const cohort = cleanModuleMeta(usage.cohort);
       const groupId = cleanModuleMeta(usage.groupId);
       const cohortId = cleanModuleMeta(usage.cohortId);
       const key = groupId || [cohortId || cohort, group].filter(Boolean).join('::') || group;
-      return { key, group, cohort, groupId, cohortId };
+      return { key, group, cohort, groupId, cohortId, programme, programmeId };
     })
-    .filter((option): option is { key: string; group: string; cohort: string; groupId: string; cohortId: string } => Boolean(option?.key && option.group))
+    .filter((option): option is { key: string; group: string; cohort: string; groupId: string; cohortId: string; programme: string; programmeId: string } => Boolean(option?.key && option.group))
     .filter(option => {
       const uniqueKey = normaliseQuizText(option.key);
       if (seen.has(uniqueKey)) return false;
@@ -7876,9 +7987,6 @@ function moduleIdentityText(module: ModuleCatalogueItem) {
 function normaliseDeepLinkValue(value: unknown) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
-
-/** Normalised placeholders a module with no programme carries in place of one. */
-const UNASSIGNED_PROGRAMME_KEYS = new Set(['unassignedprogramme', 'unassigned']);
 
 function isCanonicalModuleCatalogueId(value: unknown) {
   return /^MOD-[A-Z0-9][A-Z0-9_-]*$/i.test(String(value || '').trim());
@@ -7938,6 +8046,12 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     cohortId: usage?.cohortId || module.cohortId,
     groupId: usage?.groupId || module.groupId,
     sessionsNumber: module.sessionsNumber || usage?.sessions,
+    sessionHolidays: module.sessionHolidays || module.sourceModule?.sessionHolidays,
+    deliveryWeeks: module.deliveryWeeks || module.sourceModule?.deliveryWeeks,
+    weeklySchedule: module.weeklySchedule || module.sourceModule?.weeklySchedule || [],
+    weekDays: usage?.weekDays || String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
+    startTime: usage?.startTime || String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
+    endTime: usage?.endTime || String(module.deliveryMetadata?.endTime || module.sourceModule?.endTime || ''),
     weeks: module.weeks || module.weekStructure?.length,
     startDate: module.startDate || usage?.startDate,
     endDate: module.endDate || usage?.endDate,
@@ -7945,8 +8059,54 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     status: module.status,
     notes: module.description,
     color: module.color,
-    coverImage: module.coverImage,
     deliveryUsages: (module as ModuleBuilderListItem).deliveryUsages,
+  };
+}
+
+/**
+ * The least a module can be and still be opened.
+ *
+ * `openModule` reads the real structure from the module's own endpoint and
+ * spreads it over whatever it was handed, so a module that was just created --
+ * and is therefore not in the catalogue list yet -- can be opened from its id
+ * alone. Only two of these fields are ever read before the structure lands: the
+ * id it is read by, and the title the loading overlay names. The rest are here
+ * because the type requires them, and every one of them is overwritten.
+ *
+ * Never use this to open a module that IS in the list: pass the real row, so
+ * the fields the structure endpoint does not carry (delivery usages, the
+ * programme the row was filtered under) survive the merge.
+ */
+function moduleShellForOpening(catalogueId: string, title: string): ModuleCatalogueItem {
+  return {
+    id: catalogueId,
+    catalogueId,
+    programmeId: '',
+    programmeName: '',
+    title,
+    description: '',
+    status: 'draft',
+    weeks: 0,
+    totalOtjh: 0,
+    ksbCount: 0,
+    lessonCount: 0,
+    quizCount: 0,
+    qualityScore: 0,
+    moduleKsbMappings: [],
+    completionCriteria: {
+      quizzesCompletedRequired: false,
+      checkpointsCompletedRequired: false,
+      averageScoreRequiredEnabled: false,
+      averageScoreRequired: 0,
+      totalScoreRequiredEnabled: false,
+      totalScoreRequired: 0,
+      additionalNotes: '',
+    },
+    advancedDetails: { intent: '', learnerBenefit: '', employerBenefit: '', sequencePurpose: '' },
+    background: '',
+    epaRequirements: [],
+    qualificationOutcomes: [],
+    weekStructure: [],
   };
 }
 
@@ -8040,6 +8200,10 @@ function cleanModuleMeta(value?: string) {
   const text = String(value || '').trim();
   if (!text || ['unassigned cohort', 'default group', 'unassigned'].includes(text.toLowerCase())) return '';
   return text;
+}
+
+function moduleLearnerIdentifier(module: Pick<ModuleCatalogueItem, 'catalogueId' | 'id' | 'sourceModule'>) {
+  return cleanModuleMeta(module.catalogueId || module.sourceModule?.moduleCatalogueId || module.sourceModule?.moduleId || module.id);
 }
 
 function IconButton({ label, icon, onClick, tone = 'default' }: { label: string; icon: string; onClick: () => void; tone?: 'default' | 'danger' }) {
@@ -8174,10 +8338,6 @@ function mappingsForTarget(module: ModuleCatalogueItem, target: KsbTarget) {
 function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: KsbOption, weight = defaultKsbWeight(), weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS): ModuleCatalogueItem {
   const nextIdentity = ksbMappingIdentity(option);
   if (mappingsForTarget(module, target).some(mapping => ksbMappingIdentity(mapping) === nextIdentity)) return module;
-  if (
-    target.scope === 'component'
-    && mappingsForTarget(module, target).filter(mapping => sessionKsbKind(mapping.code) === sessionKsbKind(option.code)).length >= COMPONENT_KSB_LIMIT_PER_KIND
-  ) return module;
   const mapping: KsbMapping = {
     id: makeAuthoringId('KSBMAP'),
     ksbId: option.id,
@@ -8272,6 +8432,59 @@ function uniqueMappings(mappings: KsbMapping[]) {
   });
 }
 
+/** The heatmap's first column: mappings made against the module as a whole. */
+const MODULE_KSB_COLUMN = 'module';
+
+function moduleKsbWeekColumnKey(index: number) {
+  return `week:${index}`;
+}
+
+/**
+ * The heatmap's columns, in delivery order. A module's children are its weeks,
+ * which is what the programme heatmap's module columns become one scope down —
+ * so a reader sees the same shape and asks the same question of it: where in the
+ * run is this KSB actually taught?
+ */
+function moduleKsbHeatmapColumns(module: ModuleCatalogueItem) {
+  return [
+    { key: MODULE_KSB_COLUMN, short: 'Module', label: 'Module level', isModule: true },
+    ...module.weekStructure.map((week, index) => ({
+      key: moduleKsbWeekColumnKey(index),
+      short: `W${week.weekNumber || index + 1}`,
+      label: week.title || `Week ${week.weekNumber || index + 1}`,
+      isModule: false,
+    })),
+  ];
+}
+
+/**
+ * One row's placements bucketed by column. A placement with no column key —
+ * only possible for rows built by the programme-wide builder — is dropped
+ * rather than guessed at.
+ *
+ * Deliberately no per-cell weight: the weight lives on the mapping, not the
+ * placement, so it cannot be split between the cells a KSB appears in without
+ * inventing precision. The row total gets its own column, and each cell says
+ * only what it can stand behind — how many times, at what scope, and where.
+ */
+function moduleKsbRowCells(row: ModuleKsbMapRow) {
+  const cells = new Map<string, ModuleKsbPlacement[]>();
+  row.placements.forEach(placement => {
+    if (!placement.columnKey) return;
+    cells.set(placement.columnKey, [...(cells.get(placement.columnKey) || []), placement]);
+  });
+  return cells;
+}
+
+/** Cell shading: how densely this KSB lands in one week, not its weight. */
+function moduleKsbHeatCellClass(count: number, isModule: boolean) {
+  if (!count) return 'border-dashed border-background-200 bg-background-100/40 text-foreground-300';
+  if (isModule) return 'border-sky-200 bg-sky-50 text-sky-800';
+  if (count >= 3) return 'border-primary-500 bg-primary-600 text-white';
+  if (count === 2) return 'border-primary-300 bg-primary-200 text-primary-900';
+  return 'border-primary-100 bg-primary-50 text-primary-700';
+}
+
 function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<string, string>, source?: KsbSourceOption | null, allowSelectedSourceCodeFallback = false): ModuleKsbMapRow[] {
   const rows = new Map<string, ModuleKsbMapRow>();
   const fallbackSourceFull = source ? (sourceLabels[source.id] || source.label) : '';
@@ -8345,24 +8558,30 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
     scope: 'Module' as const,
     otjh: Number(module.declaredTotalOtjh ?? module.totalOtjh ?? 0) || 0,
     points: module.weekStructure.reduce((total, week) => total + week.components.reduce((weekTotal, component) => weekTotal + Number(component.points || 0), 0), 0),
+    columnKey: MODULE_KSB_COLUMN,
   };
   module.moduleKsbMappings.forEach(mapping => addMapping(mapping, modulePlacement));
-  module.weekStructure.forEach(week => {
+  module.weekStructure.forEach((week, index) => {
     const weekLabel = week.title || `Week ${week.weekNumber}`;
+    const columnKey = moduleKsbWeekColumnKey(index);
     const weekPlacement = {
       label: weekLabel,
       scope: 'Week' as const,
-      otjh: week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0),
+      otjh: weekExpectedOtjhTotal(week),
       points: week.components.reduce((total, component) => total + Number(component.points || 0), 0),
+      columnKey,
     };
     week.ksbMappings.forEach(mapping => addMapping(mapping, weekPlacement));
     week.components.forEach(component => {
-      const location = `${weekLabel} / ${readableComponentTitle(component.title) || 'Component'}`;
+      const componentTitle = readableComponentTitle(component.title) || 'Component';
+      const location = `${weekLabel} / ${componentTitle}`;
       const componentPlacement = {
         label: location,
         scope: 'Component' as const,
         otjh: Number(component.expectedOtjh || 0),
         points: Number(component.points || 0),
+        columnKey,
+        detail: componentTitle,
       };
       component.ksbMappings.forEach(mapping => addMapping(mapping, componentPlacement));
     });
@@ -8419,7 +8638,7 @@ function programmeKsbMapRows(modules: ModuleCatalogueItem[], sourceLabels: Recor
       const weekPlacement = {
         label: `${moduleLabel} / ${weekLabel}`,
         scope: 'Week' as const,
-        otjh: week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0),
+        otjh: weekExpectedOtjhTotal(week),
         points: week.components.reduce((total, component) => total + Number(component.points || 0), 0),
       };
       week.ksbMappings.forEach(mapping => addMapping(mapping, weekPlacement));
@@ -8469,7 +8688,8 @@ function uniquePlacementOtjh(rows: ModuleKsbMapRow[]) {
 }
 
 function formatKsbOtjh(value: number) {
-  return formatHoursMinutes(Number(value || 0));
+  const amount = Number(value || 0);
+  return `${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(1)}h`;
 }
 
 function formatKsbWeight(value: number) {
@@ -8530,55 +8750,25 @@ function removeWeekFromModule(module: ModuleCatalogueItem, weekId: string): Modu
     ...module,
     weekStructure,
     weeks: weekStructure.length,
-    sessionsNumber: weekStructure.length,
+    sessionsNumber: moduleUsesSessionRows(module)
+      ? weekStructure.reduce((total, week) => total + week.components.filter(component => component.type === 'live-session').length, 0)
+      : weekStructure.length * moduleDeliveryDaysPerWeek(module),
   };
 }
 
-// Weeks that don't yet carry one live-session component per delivery day —
-// the ones "Generate live sessions" tops up. A week keeps whatever live
-// sessions it already has (created, linked to Teams, or not), so this only
-// ever adds the shortfall, never replaces or removes.
-function liveSessionShortfallByWeek(module: ModuleCatalogueItem) {
-  const perWeek = moduleDeliveryDaysPerWeek(module);
-  return module.weekStructure
-    .map(week => ({ week, shortfall: perWeek - week.components.filter(component => component.type === 'live-session').length }))
-    .filter(entry => entry.shortfall > 0);
+// sessionsNumber is the calendar session count (weeks x delivery days per
+// week) while weekStructure.length is the authored week count — a module
+// delivered twice a week runs two live sessions per authored week, not one.
+function moduleDeliveryDaysPerWeek(module: ModuleCatalogueItem) {
+  const weeks = module.weekStructure.length || module.weeks || 0;
+  if (!weeks) return 1;
+  return Math.max(1, Math.round((module.sessionsNumber || weeks) / weeks));
 }
 
-function weeksMissingLiveSession(module: ModuleCatalogueItem) {
-  return liveSessionShortfallByWeek(module).map(entry => entry.week);
-}
-
-/**
- * Give every week its full set of live-session components — one per delivery
- * day — unattached to any Teams meeting yet. This is the explicit, opt-in
- * counterpart to the Teams tab's "Re-attach to components": that one
- * recreates missing live-session components from a meeting that already
- * exists, this one creates the placeholders before a meeting exists at all.
- * Weeks that already have enough live sessions are left untouched.
- */
-function generateMissingLiveSessions(module: ModuleCatalogueItem): ModuleCatalogueItem {
-  const shortfalls = liveSessionShortfallByWeek(module);
-  if (!shortfalls.length) return module;
-  const shortfallByWeekId = new Map(shortfalls.map(entry => [entry.week.id, entry.shortfall]));
-  return {
-    ...module,
-    weekStructure: module.weekStructure.map(week => {
-      const shortfall = shortfallByWeekId.get(week.id);
-      if (!shortfall) return week;
-      const existingLiveSessions = week.components.filter(component => component.type === 'live-session').length;
-      const additions = Array.from({ length: shortfall }, (_, offset) => {
-        const component = createNamedComponent(week, 'live-session', week.components.length + offset + 1);
-        return { ...component, title: `${component.title} ${existingLiveSessions + offset + 1}` };
-      });
-      return { ...week, components: [...week.components, ...additions] };
-    }),
-  };
-}
-
-function countAddedLiveSessions(module: ModuleCatalogueItem) {
-  return liveSessionShortfallByWeek(module).reduce((total, entry) => total + entry.shortfall, 0);
-}
+// A module's live sessions are the live-session components its author put in
+// its weeks, so there is no shortfall to top up and nothing here generates
+// them: a week delivers a live session when somebody adds one to it. The rail
+// states the authored count; "Add component" is how it grows.
 
 function createNamedComponent(week: ModuleWeek, type: ModuleComponentType, index = week.components.length + 1) {
   const component = createEmptyComponent(week.id, type, index);

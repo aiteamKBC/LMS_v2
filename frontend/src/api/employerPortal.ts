@@ -48,6 +48,7 @@ export interface EmployerReviewRow {
   signedAt: string | null;
   learnerSigned: boolean;
   adminSigned: boolean;
+  reviewInstanceId?: string;
 }
 
 /** A generated compliance PDF awaiting (or carrying) the employer's signature. */
@@ -177,14 +178,26 @@ export function fetchEmployerLearnerPlan(
  * Sign a review as the employer — the same endpoint the learner and admin use,
  * with party="employer". An empty signature withdraws the sign-off.
  */
+export function fetchEmployerReviewInstance(
+  employerId: string,
+  kind: string,
+  learnerId: string,
+  eventKey: string,
+): Promise<unknown> {
+  return request(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`,
+  );
+}
+
 export function signReviewAsEmployer(
+  employerId: string,
   kind: string,
   learnerId: string,
   eventKey: string,
   input: { name: string; signature: string },
 ): Promise<unknown> {
   return request(
-    `/learner_api/reviews/${kind}/${learnerId}/${encodeURIComponent(eventKey)}/sign/`,
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`,
     { method: 'POST', body: JSON.stringify({ party: 'employer', ...input }) },
   );
 }

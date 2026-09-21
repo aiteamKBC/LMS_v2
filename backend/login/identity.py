@@ -224,6 +224,28 @@ def ensure_account(subject_type, subject_id, *, subject=None, activate=True):
         )
 
     if existing is None:
+        # The unique index is per subject_type, so the clash check above does
+        # NOT see a staff member who is now also being enrolled as a learner.
+        # Minting the second account is what breaks them: account_for_email
+        # returns None once an address has two active accounts, and password
+        # sign-in, Microsoft SSO and password reset all go through it — the
+        # person is locked out of all three with "Incorrect email or password"
+        # and nothing to explain it.
+        #
+        # So an address that already signs in keeps the one account it has and
+        # no second row is written. Nothing is lost by that: the learner side is
+        # found by ADDRESS, not by a link from the account -- see the
+        # `existing_learner_record` lookup in `account_payload`, which is what
+        # puts the Learner entry in the workspace switcher. One password, one
+        # identity, two workspaces.
+        #
+        # This is the same rule login.learner_enrolment documents for "Add as
+        # learner". Enforcing it here covers the enrolment form too, which is
+        # where the duplicates actually came from.
+        held = LoginAccount.objects.filter(email=email, is_active=True).first()
+        if held is not None:
+            return held, False
+
         return LoginAccount.objects.create(
             subject_type=subject_type,
             subject_id=subject_id,
@@ -327,6 +349,29 @@ def account_payload(account, *, subject=None):
                 }
                 for value in payload["accesses"]
             ]
+            # A staff member who is also studying. They keep ONE account -- a
+            # second one on the same address would make account_for_email
+            # ambiguous and lock them out of sign-in entirely -- so the learner
+            # side is reached from the workspace switcher instead, exactly like
+            # a coach who also tutors. See login.learner_enrolment.
+            from .learner_enrolment import existing_learner_record
+
+            learner_record = existing_learner_record(account.email)
+            if learner_record is not None:
+                payload["learnerRecordId"] = learner_record.pk
+                # Needed to address the record explicitly: the bare learner
+                # route resolves from the session, which for this person says
+                # "staff", so it would open a remembered or demo learner.
+                payload["learnerRecordKind"] = learner_record.learner_type or "commercial"
+                payload["accessWorkspaces"] = [
+                    *payload["accessWorkspaces"],
+                    {
+                        "access": "learner",
+                        "home": f"/workspace/learner?kind={learner_record.learner_type or 'commercial'}"
+                                f"&id={learner_record.pk}",
+                        "navRole": "learner",
+                    },
+                ]
         elif account.subject_type == SUBJECT_LEARNER:
             payload["learnerType"] = subject.learner_type
             payload["programme"] = subject.programme

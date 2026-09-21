@@ -140,38 +140,6 @@ export default function CoachAttendanceProfile() {
     return () => { cancelled = true; };
   }, [coach.email, coach.isInitialized, learnerId]);
 
-  const monthlyTrend = useMemo(() => {
-    const groups = new Map<string, { label: string; present: number; total: number }>();
-    sessions.forEach((session) => {
-      if (!session.sessionDate || !['present', 'absent'].includes(session.status)) return;
-      const date = new Date(`${session.sessionDate}T00:00:00`);
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      const item = groups.get(key) || {
-        label: date.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }),
-        present: 0,
-        total: 0,
-      };
-      item.total += 1;
-      if (session.status === 'present') item.present += 1;
-      groups.set(key, item);
-    });
-    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-8).map(([key, item]) => ({
-      key,
-      label: item.label,
-      value: item.total ? Math.round((item.present / item.total) * 100) : 0,
-    }));
-  }, [sessions]);
-
-  const absenceTimeline = useMemo(() => sessions
-    .filter((session) => session.status === 'absent')
-    .map((session) => ({
-      date: session.sessionDateLabel,
-      month: session.sessionDate?.slice(0, 7) || null,
-      reason: display(session.reason),
-      title: display(session.sessionTitle),
-    })),
-  [sessions]);
-
   const catchupCompletedCount = sessions.filter((session) => session.catchupCompleted).length;
   const filteredSessions = useMemo(() => sessions.filter((session) => {
     if (historyFilter === 'present' && session.status !== 'present') return false;
@@ -244,8 +212,8 @@ export default function CoachAttendanceProfile() {
               backTo={{ to: '/coach/attendance', label: 'Back to Attendance' }}
               meta={(
                 <>
-                  <StatusBadge tone={riskTone(learner.risk)} label={riskLabel(learner.risk)} size="sm" />
-                  <span className="text-[12px] text-foreground-500">{display(learner.email)}</span>
+                  <StatusBadge tone={riskTone(learner.risk)} label={riskLabel(learner.risk)} size="sm" className={learner.risk === null ? 'text-foreground-700' : undefined} />
+                  <span className="text-[12px] text-foreground-700">{display(learner.email)}</span>
                 </>
               )}
             />
@@ -280,47 +248,6 @@ export default function CoachAttendanceProfile() {
                 onClick={() => openHistory('catchup')}
               />
             </section>
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Panel>
-                <SectionHeader title="Monthly attendance trend" icon="ri-line-chart-line" />
-                <div className="relative mt-4 flex h-[240px] items-end justify-center gap-10 overflow-hidden rounded-xl border border-foreground-100 bg-background-100/50 px-6 pb-4 pt-5">
-                  <div className="pointer-events-none absolute inset-x-5 top-1/4 border-t border-dashed border-foreground-200"></div>
-                  <div className="pointer-events-none absolute inset-x-5 top-1/2 border-t border-dashed border-foreground-200"></div>
-                  <div className="pointer-events-none absolute inset-x-5 top-3/4 border-t border-dashed border-foreground-200"></div>
-                  {monthlyTrend.length ? monthlyTrend.map((item) => (
-                    <button type="button" key={item.key} onClick={() => openHistory('all', item.key)} className="group relative z-10 flex h-full w-20 cursor-pointer flex-col items-center justify-end rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400">
-                      <span className="mb-2 rounded-full bg-primary-50 px-2 py-0.5 text-[12px] font-bold text-primary-700">{item.value}%</span>
-                      <div className="w-11 rounded-t-lg bg-gradient-to-t from-primary-700 to-primary-500 shadow-sm transition group-hover:brightness-110" style={{ height: `${Math.max(5, (item.value / 100) * 165)}px` }}></div>
-                      <span className="mt-2 text-[12px] font-medium text-foreground-500 group-hover:text-primary-700">{item.label}</span>
-                    </button>
-                  )) : (
-                    <EmptyState variant="empty" size="sm" title="No monthly attendance records." />
-                  )}
-                </div>
-              </Panel>
-
-              <Panel>
-                <SectionHeader title="Absence timeline" icon="ri-calendar-close-line" />
-                <div className="mt-4 max-h-[240px] space-y-2.5 overflow-y-auto pr-1">
-                  {absenceTimeline.length ? absenceTimeline.map((item, index) => (
-                    <button type="button" key={`${item.date}-${index}`} onClick={() => openHistory('absent', item.month)} className="group flex w-full cursor-pointer gap-3 rounded-xl border border-red-100 bg-red-50/50 p-3.5 text-left transition hover:border-red-200 hover:bg-red-50 hover:shadow-sm">
-                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-50 text-red-500 ring-1 ring-red-100"><AppIcon className="ri-close-line"></AppIcon></span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-3">
-                          <p className="truncate text-[13px] font-bold text-foreground-900 group-hover:text-red-700">{item.title}</p>
-                          <p className="shrink-0 text-[12px] text-foreground-400">{item.date}</p>
-                        </div>
-                        <span className="mt-2 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[12px] font-semibold text-amber-700">{item.reason}</span>
-                      </div>
-                      <AppIcon className="ri-arrow-right-s-line self-center text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-red-500"></AppIcon>
-                    </button>
-                  )) : (
-                    <EmptyState variant="empty" size="sm" title="No absences are recorded for this learner." />
-                  )}
-                </div>
-              </Panel>
-            </div>
 
             <div ref={historySectionRef} className="scroll-mt-4">
               <Panel padding="none">

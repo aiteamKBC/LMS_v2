@@ -2,11 +2,12 @@
 
 import inspect
 import json
-from datetime import date, time
+from datetime import date, datetime, time
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
+from django.db import DatabaseError
 
 from .booking_calendar import booking_calendar_payload, booking_date_restriction
 
@@ -53,7 +54,88 @@ class BookingDateRestrictionTests(SimpleTestCase):
         self.assertEqual(payload["today"], "2026-09-07")
 
 
+class ImportedReviewBookingTests(SimpleTestCase):
+    def test_sync_targets_the_owned_monthly_review_row(self):
+        from . import calendar as module
+
+        cursor = Mock()
+        cursor.rowcount = 1
+        connection = Mock()
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection.cursor.return_value = cursor_context
+        with patch.object(module, "connection", connection):
+            module._mark_imported_review_scheduled("62", 272, date(2026, 11, 26), time(9, 0))
+
+        params = cursor.execute.call_args.args[1]
+        self.assertEqual(params[:4], ["scheduled", datetime(2026, 11, 26, 9, 0), 62, 272])
+
+    def test_sync_fails_when_the_review_is_not_owned_by_the_learner(self):
+        from . import calendar as module
+
+        cursor = Mock()
+        cursor.rowcount = 0
+        connection = Mock()
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection.cursor.return_value = cursor_context
+        with patch.object(module, "connection", connection):
+            with self.assertRaises(DatabaseError):
+                module._mark_imported_review_scheduled("62", 999, date(2026, 11, 26), time(9, 0))
+
+
 class BookingEndpointRestrictionTests(SimpleTestCase):
+    def test_new_booking_uses_current_assignment_instead_of_stale_profile(self):
+        from . import calendar as module
+
+        learner = SimpleNamespace(pk=101, username='Test Learner', email='learner@example.com',
+                                  case_owner='Test curriculum', coach_name='Test curriculum',
+                                  coach_email='curriculum@example.com')
+        mirror = SimpleNamespace(id=248, coach_email='old@example.com', coach_name='Old coach',
+                                 full_name='Test Learner', email='learner@example.com')
+        source_model = Mock()
+        source_model.all_learners.filter.return_value.first.return_value = learner
+        record = SimpleNamespace(event_key='catch-up:248:1:2026-09-15')
+        with patch.object(module, 'SOURCE_MODELS', {'commercial': source_model}), \
+                patch.object(module, 'learner_profile_for_source', return_value=mirror), \
+                patch('learner_api.booking_calendar.timezone.localdate', return_value=date(2026, 9, 14)), \
+                patch.object(module.CoachCalendarEvent.objects, 'filter') as events, \
+                patch('learner_api.calendar_connections.booking_conflicts', return_value=False), \
+                patch('coach_api.views.reserve_coach_calendar_booking', return_value=(record, True)) as reserve, \
+                patch('coach_api.views.synchronize_reserved_calendar_event') as sync, \
+                patch.object(module, '_serialize_event', return_value={'eventKey': record.event_key}):
+            events.return_value.first.return_value = None
+            request = RequestFactory().post('/book/', data=json.dumps({
+                'sessionType': 'catch-up', 'scheduledDate': '2026-09-15',
+                'scheduledTime': '11:00', 'durationMinutes': 60,
+            }), content_type='application/json')
+            response = inspect.unwrap(module.learner_calendar_book)(request, 'commercial', 101)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(reserve.call_args.kwargs['owner_name'], 'Test curriculum')
+        self.assertEqual(reserve.call_args.kwargs['owner_email'], 'curriculum@example.com')
+        # This existing approval flow must still wait for the coach.
+        self.assertTrue(json.loads(response.content)['approvalRequired'])
+        sync.assert_not_called()
+
+    def test_new_booking_rejects_explicitly_cleared_assignment(self):
+        from . import calendar as module
+
+        learner = SimpleNamespace(case_owner='', coach_name='', coach_email='')
+        mirror = SimpleNamespace(coach_email='old@example.com', coach_name='Old coach')
+        source_model = Mock()
+        source_model.all_learners.filter.return_value.first.return_value = learner
+        with patch.object(module, 'SOURCE_MODELS', {'commercial': source_model}), \
+                patch.object(module, 'learner_profile_for_source', return_value=mirror), \
+                patch('coach_api.views.reserve_coach_calendar_booking') as reserve:
+            request = RequestFactory().post('/book/', data=json.dumps({
+                'sessionType': 'catch-up', 'scheduledDate': '2026-09-15', 'scheduledTime': '11:00',
+            }), content_type='application/json')
+            response = inspect.unwrap(module.learner_calendar_book)(request, 'commercial', 101)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('No coach has been assigned', json.loads(response.content)['error'])
+        reserve.assert_not_called()
+
     def test_every_coach_session_type_is_rejected_on_a_weekend(self):
         from . import calendar as module
 
@@ -145,6 +227,7 @@ class RescheduleEndpointTests(SimpleTestCase):
             meeting_link="https://teams.microsoft.com/l/meetup-join/test",
             graph_web_link="https://outlook.office.com/calendar/item/test",
             graph_event_id="graph-event-1",
+            sync_state="synced",
             notes="",
             review_responses={},
             review_completed_at=None,
@@ -182,6 +265,9 @@ class RescheduleEndpointTests(SimpleTestCase):
         self.assertEqual(record.scheduled_date, date(2026, 9, 9))
         self.assertEqual(record.scheduled_time.strftime("%H:%M"), "11:30")
         self.assertEqual(record.duration_minutes, 45)
+        self.assertEqual(record.owner_name, 'Coach Example')
+        self.assertEqual(record.owner_email, 'coach@example.com')
+        self.assertEqual(record.meeting_link, 'https://teams.microsoft.com/l/meetup-join/test')
         persist.assert_called_once_with(record)
         build_event.assert_called_once_with(record)
         sync.assert_called_once_with(record.pk, {})
@@ -203,6 +289,28 @@ class RescheduleEndpointTests(SimpleTestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn("already has another session", json.loads(response.content)["error"])
         sync.assert_not_called()
+
+    def test_retry_same_time_after_failed_sync_retries_the_existing_event(self):
+        from . import calendar as module
+
+        record = self.scheduled_record()
+        record.scheduled_date = date(2026, 9, 9)
+        record.scheduled_time = time(11, 30)
+        record.duration_minutes = 45
+        record.sync_state = "failed"
+        view = inspect.unwrap(module.learner_calendar_reschedule)
+        with patch.object(module, "SOURCE_MODELS", {"commercial": Mock()}), \
+                patch.object(module, "_learner_booking_record", return_value=record), \
+                patch("learner_api.booking_calendar.timezone.localdate", return_value=date(2026, 9, 7)), \
+                patch("learner_api.calendar_connections.booking_conflicts", return_value=False), \
+                patch("coach_api.views.build_booked_calendar_event", return_value={}), \
+                patch("coach_api.views.persist_calendar_sync_reservation", return_value=record) as persist, \
+                patch("coach_api.views.synchronize_reserved_calendar_event", return_value=(record, "", True)) as sync:
+            response = view(self.request(), "commercial", 101)
+        self.assertEqual(response.status_code, 200)
+        persist.assert_called_once_with(record)
+        sync.assert_called_once_with(record.pk, {})
+        self.assertEqual(record.graph_event_id, "graph-event-1")
 
     def test_booking_lookup_accepts_current_active_users_mirror_id(self):
         from . import calendar as module

@@ -81,6 +81,11 @@ TABLE_OWNER_MIGRATION = {
     # review_occurrence_overrides / review_clash_resolutions tables -- see
     # review_schedule.py) by
     # sql/2026-09-10_curriculum_review_schedule_clash_resolution.sql.
+    # review_types is provisioned the same way, by
+    # sql/2026-09-13_curriculum_review_types.sql, which also adds
+    # review_templates.review_type_id and backfills it from the retired
+    # coach_surface column.
+    'review_types': 'sql/2026-09-13_curriculum_review_types.sql',
 }
 
 

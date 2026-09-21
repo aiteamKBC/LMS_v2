@@ -1,0 +1,41 @@
+-- The AI Material book a module carries, in the Module Builder.
+--
+-- NOT RUN AUTOMATICALLY. Apply against Neon when you are ready.
+--
+-- What this is for
+-- ----------------
+-- "Edit components" now offers an AI Material button beside "Preview as
+-- learner". It uploads one book per module, replaces it, and reads it back.
+-- The bytes go to the kbcdocs curriculum container through the same
+-- upload_storage path every other authoring upload uses, and are served by the
+-- existing /curriculum_api/curriculum/uploads/... route. Only the pointer needs
+-- a home in the database, and that is this column:
+--
+--   {"fileName": "...", "storedPath": "...", "url": "/curriculum_api/...",
+--    "size": 1234, "contentType": "application/pdf", "uploadedAt": "...Z"}
+--
+-- It lives on curriculum.module_details rather than in a table of its own: that
+-- row is already keyed by module_catalogue_id, a module has at most one book,
+-- and the module save writes this row with a partial payload -- so a column the
+-- save never names survives every save untouched. See
+-- curriculum_api/views.py:curriculum_module_ai_material.
+--
+-- Before this runs
+-- ----------------
+-- The endpoint answers 503 with a message naming this column, rather than
+-- accepting a book and silently dropping the record (authoring_upsert discards
+-- any key that is not a column). Nothing else in the application is affected:
+-- the button is simply unusable until this lands.
+
+alter table curriculum.module_details
+    add column if not exists ai_material jsonb;
+
+-- Verification: every module that has a book, newest first.
+--
+-- select module_catalogue_id,
+--        ai_material ->> 'fileName'   as file_name,
+--        ai_material ->> 'size'       as size_bytes,
+--        ai_material ->> 'uploadedAt' as uploaded_at
+-- from curriculum.module_details
+-- where ai_material is not null and ai_material ->> 'storedPath' <> ''
+-- order by ai_material ->> 'uploadedAt' desc;

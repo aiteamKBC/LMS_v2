@@ -15,11 +15,11 @@ import { RecordBadge } from '@/features/old-otjh/RecordDesign';
 import { MonthListSkeleton, MonthReportSkeleton } from '@/features/old-otjh/RecordSkeletons';
 import { displayDate, monthLabel, monthStatus, previousMonthSignature } from '@/features/old-otjh/report';
 import { coachViewAs } from '@/lib/coachViewAs';
-import { completeMonth, type SignatureCaptureMethod } from '@/features/old-otjh/api';
+import type { SignatureCaptureMethod } from '@/features/old-otjh/api';
 import design from '@/features/old-otjh/design.module.css';
 import journal from '@/features/old-otjh/journal.module.css';
 import reportStyles from '@/features/old-otjh/report.module.css';
-import { getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, type LogSummary, type LogPerspective } from './api';
+import { completeLogMonth, getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, unlockLogMonth, type LogSummary, type LogPerspective } from './api';
 import styles from './monthlyLogs.module.css';
 import { MonthList, MonthIndexSkeleton } from './MonthList';
 
@@ -32,7 +32,7 @@ export default function MonthlyLogsPage() {
   const selected = useResolvedLearner(student ? undefined : kind, student ? undefined : routeId);
   const id = student ? String(auth.account?.subjectId ?? '') : perspective === 'learner' ? selected.id : learnerId;
   const base = perspective === 'learner' ? student ? '/learner/monthly-logs' : `/learner/monthly-logs/${selected.kind}/${id}` : `/coach/monthly-logs/${id}`;
-  const overview = student ? '/workspace/learner' : `/workspace/learner/${selected.kind}/${id}`;
+  const overview = student ? '/workspace/learner/dashboard' : `/workspace/learner/${selected.kind}/${id}/dashboard`;
   const nav = roleNavMap[perspective];
   return <WorkspaceShell role={perspective} roleLabel={nav.label} navItems={nav.items}
     workspaceLabel={nav.workspaceLabel} pageTitle="Monthly Logs" pageSubtitle="Your monthly learning record, activities and signatures"
@@ -86,7 +86,7 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
   const navigate = useNavigate();
   const client = useQueryClient();
   const student = auth.account?.role === 'learner';
-  const readOnly = summary.read_only || (perspective === 'learner' && !student);
+  const canActAsStudent = student || (perspective === 'learner' && auth.account?.role === 'admin');
   const key = ['monthly-logs', auth.account?.id, perspective, perspective === 'coach' ? coachViewAs()?.email : null, id, month];
   const query = useQuery({ queryKey: key, queryFn: ({ signal }) => getLogMonth(id, month, signal, perspective), refetchInterval: 7000 });
   const draftDigest = useRef<string | null>(null);
@@ -98,19 +98,25 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
       setMessage('Your signature has been saved for this month.'); void client.invalidateQueries({ queryKey: ['monthly-logs'] });
       if (data.source === 'legacy') void client.invalidateQueries({ queryKey: ['old-otjh'] }); },
     onError: () => { void client.invalidateQueries({ queryKey: ['monthly-logs'] }); } });
-  const completion = useMutation({ mutationFn: () => completeMonth(month), onSuccess: data => {
+  const completion = useMutation({ mutationFn: () => completeLogMonth(id, month, summary.csrf_token, perspective), onSuccess: data => {
     client.setQueryData(key, { ...data, source: 'legacy' });
     setMessage('This month has been reviewed, signed and completed.');
     void client.invalidateQueries({ queryKey: ['monthly-logs'] });
     void client.invalidateQueries({ queryKey: ['old-otjh'] });
   } });
+  const unlocking = useMutation({ mutationFn: () => unlockLogMonth(id, month, summary.csrf_token, 'learner'), onSuccess: data => {
+    client.setQueryData(key, data);
+    setMessage('This monthly log has been unlocked. Existing signatures were kept.');
+    void client.invalidateQueries({ queryKey: ['monthly-logs'] });
+  } });
   if (query.isPending) return <MonthReportSkeleton />;
   if (query.error && !query.data) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   if (!query.data) return null;
   const data = query.data;
+  const readOnly = !!data.is_open || summary.read_only || (perspective === 'learner' && !canActAsStudent);
   const index = summary.months.findIndex(m => m.month === month);
   const previous = summary.months[index - 1], next = summary.months[index + 1];
-  const signatureRows = [{ role: 'Learner', signature: data.student_signature, own: student }, { role: 'Coach', signature: data.coach_signature, own: !student && perspective === 'coach' }];
+  const signatureRows = [{ role: 'Learner', signature: data.student_signature, own: canActAsStudent }, { role: 'Coach', signature: data.coach_signature, own: !canActAsStudent && perspective === 'coach' }];
   return <div className={`${design.reportPage} ${journal.page}`}>
     {message && <p role="status" className={styles.savedMessage}>{message}</p>}
     {query.error && <p role="alert">Updates are temporarily unavailable. <button onClick={() => void query.refetch()}>Try again</button></p>}
@@ -118,37 +124,41 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
       <div className={journal.filterField}><span className={journal.label}>Learner</span><div className={journal.learnerField}><AppIcon className="ri-user-line" />{summary.learner?.name}</div></div>
       <div className={journal.filterField}><label htmlFor="monthly-log-month" className={journal.label}>Report month</label><div className={journal.monthControl}>
         <select id="monthly-log-month" className={journal.monthSelect} value={month} disabled={signing.isPending} onChange={e => navigate(`${base}/${e.target.value}`)}>
-          {summary.months.map(item => <option key={item.month} value={item.month}>{monthLabel(item.month)} · {monthStatus(item)}</option>)}</select>
+          {summary.months.map(item => <option key={item.month} value={item.month}>{monthLabel(item.month)} · {item.is_open ? 'In progress' : monthStatus(item)}</option>)}</select>
         <button className={journal.secondaryButton} disabled={!previous || signing.isPending} onClick={() => navigate(`${base}/${previous.month}`)} aria-label="Previous month"><AppIcon className="ri-arrow-left-s-line" /></button>
         <button className={journal.secondaryButton} disabled={!next || signing.isPending} onClick={() => navigate(`${base}/${next.month}`)} aria-label="Next month"><AppIcon className="ri-arrow-right-s-line" /></button>
         <Link className={journal.secondaryButton} to={base}><AppIcon className="ri-layout-grid-line" />All months</Link>
       </div></div>
     </nav>
-    <LearnerInformation summary={summary} data={data} actions={<JournalDownloads summary={summary} month={month} disabled={signing.isPending} loadMonth={(selected, signal) => getLogMonth(id, selected, signal, perspective)} />} />
+    <LearnerInformation summary={summary} data={data} actions={<JournalDownloads summary={summary} month={month} disabled={signing.isPending || (data.source === 'lms' && !(data.student_signature && data.coach_signature))} loadMonth={(selected, signal) => getLogMonth(id, selected, signal, perspective)} />} />
+    {data.target_warning && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Target hours: Unavailable. {data.target_warning}</p>}
     <MonthlyHours data={data} />
     <ActivityLog key={sourceRef ?? 'all'} data={data} initialSourceRef={sourceRef}
       contentScope={`monthly-logs:${perspective}:${id}`} loadContent={rowId => getLogContent(id, month, rowId, perspective)} />
     <section className={`${journal.card} ${journal.signoff}`} aria-label="Monthly sign-off">
-      <div className={journal.sectionHeading}><div><h2 className="font-heading">Report sign-off</h2><p>Your learner and coach signatures for this month’s record.</p></div></div>
+      <div className={journal.sectionHeading}><div><h2 className="font-heading">Report sign-off</h2><p>{data.is_open ? 'This month is still updating. Signatures become available after month-end.' : 'Your learner and coach signatures for this month’s record.'}</p></div></div>
       <div className={journal.signoffBody}><div className={reportStyles.reportTableWrap}><table className={reportStyles.signTable} aria-label="Report sign-off">
         <thead><tr>{['Role', 'Signature', 'Print name', 'Date', 'Status'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead>
         <tbody>{signatureRows.map(item => <tr key={item.role}>
-          <td data-label="Role">{item.role}{item.own && <span className={journal.ownLabel}>(you)</span>}</td>
+          <td data-label="Role">{item.role}{item.own && <span className={journal.ownLabel}>{canActAsStudent && !student ? '(admin on behalf)' : '(you)'}</span>}</td>
           <td className={reportStyles.signatureCell} data-label="Signature">{item.signature ? <img src={item.signature.url} alt={`${item.role} signature`} className={`${design.signatureImage} ${journal.signatureImage}`} />
-            : item.own && !readOnly ? <SignatureCapture key={captureVersion} name={auth.account?.displayName || ''} busy={signing.isPending} dialogRole={student ? 'learner' : 'coach'}
-              saveError={signing.error?.message} importSignature={previousMonthSignature(summary.months, month, student ? 'learner' : 'coach')}
+            : item.own && !readOnly ? <SignatureCapture key={captureVersion} name={auth.account?.displayName || ''} busy={signing.isPending} dialogRole={canActAsStudent ? 'learner' : 'coach'}
+              saveError={signing.error?.message} importSignature={canActAsStudent && !student ? undefined : previousMonthSignature(summary.months, month, student ? 'learner' : 'coach')}
               confirmationText="I have reviewed this month's activities and confirm this is my signature."
               onDraftStart={() => { draftDigest.current ??= data.snapshot_digest; }} onDraftReset={() => { draftDigest.current = null; signing.reset(); }}
-              onSave={(blob, capture) => signing.mutate({ blob, capture })} /> : <span>Awaiting signature</span>}</td>
+              onSave={(blob, capture) => signing.mutate({ blob, capture })} /> : <span>{data.is_open ? 'Available after month-end' : 'Awaiting signature'}</span>}</td>
           <td data-label="Print name">{item.signature?.signer_name || '—'}</td><td data-label="Date">{displayDate(item.signature?.signed_at)}</td>
-          <td data-label="Status"><RecordBadge tone={item.signature ? 'positive' : 'pending'}>{item.signature ? 'Signed' : 'Awaiting signature'}</RecordBadge></td>
+          <td data-label="Status"><RecordBadge tone={item.signature ? 'positive' : 'pending'}>{item.signature ? 'Signed' : data.is_open ? 'Month in progress' : 'Awaiting signature'}</RecordBadge></td>
         </tr>)}</tbody>
       </table></div></div>
       <div className={`${journal.signoffFooter} space-y-3`}>
-        {student && !readOnly && data.source === 'legacy' && data.can_complete && <button className={journal.primaryButton} disabled={completion.isPending} onClick={() => completion.mutate()}>Complete month</button>}
-        <p className={journal.signingNote}>{readOnly ? 'You are viewing this learner’s record. Each person signs from their own account.' : 'Each person signs from their own account. Saved signatures are retained.'}</p>
+        {data.locked && auth.account?.role === 'admin' && perspective === 'learner' && <button className={journal.secondaryButton} disabled={unlocking.isPending} onClick={() => unlocking.mutate()}><AppIcon className="ri-lock-unlock-line" />{unlocking.isPending ? 'Unlockingâ€¦' : 'Unlock monthly log'}</button>}
+        {data.locked && <p className={journal.signingNote}><AppIcon className="ri-lock-line" /> This record is locked after both signatures were saved.</p>}
+        {canActAsStudent && !readOnly && data.source === 'legacy' && data.can_complete && <button className={journal.primaryButton} disabled={completion.isPending} onClick={() => completion.mutate()}>Complete month</button>}
+        <p className={journal.signingNote}>{data.is_open ? 'Activities recorded this month appear here automatically. Signing opens after the month ends.' : readOnly ? 'You are viewing this learner’s record. Each person signs from their own account.' : 'Each person signs from their own account. Saved signatures are retained.'}</p>
         {signing.error && <p role="alert" className="text-red-700">{signing.error.message}</p>}
         {completion.error && <p role="alert" className="text-red-700">{completion.error.message}</p>}
+        {unlocking.error && <p role="alert" className="text-red-700">{unlocking.error.message}</p>}
       </div>
     </section>
   </div>;

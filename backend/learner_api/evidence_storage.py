@@ -73,7 +73,7 @@ def upload_to_quarantine(file_obj, blob_name, content_type):
 
 def upload_blob(
     file_obj, container, blob_name, content_type, overwrite=True,
-    upload_block_bytes=None, max_concurrency=2, retry_total=None,
+    upload_block_bytes=None, max_concurrency=2, retry_total=None, progress_hook=None,
 ):
     """Write directly to `container`, bypassing the quarantine lifecycle.
 
@@ -92,6 +92,7 @@ def upload_blob(
         max_concurrency=max_concurrency,
         connection_timeout=AZURE_UPLOAD_CONNECTION_TIMEOUT_SECONDS,
         read_timeout=AZURE_UPLOAD_READ_TIMEOUT_SECONDS,
+        **({'progress_hook': progress_hook} if progress_hook is not None else {}),
     )
     return blob_name
 
@@ -167,7 +168,7 @@ def delete_blob(container, blob_name):
     )
 
 
-def get_read_sas(container, blob_name, *, content_disposition=None) -> str:
+def get_read_sas(container, blob_name, *, content_disposition=None, ttl_minutes=None) -> str:
     """Build a short-lived read-only URL for an explicitly authorised blob."""
     token = generate_blob_sas(
         account_name=settings.AZURE_STORAGE_ACCOUNT,
@@ -175,7 +176,7 @@ def get_read_sas(container, blob_name, *, content_disposition=None) -> str:
         blob_name=blob_name,
         account_key=settings.AZURE_STORAGE_KEY,
         permission=BlobSasPermissions(read=True),
-        expiry=datetime.now(timezone.utc) + timedelta(minutes=settings.AZURE_SAS_TTL_MINUTES),
+        expiry=datetime.now(timezone.utc) + timedelta(minutes=settings.AZURE_SAS_TTL_MINUTES if ttl_minutes is None else min(720, max(1, int(ttl_minutes)))),
         content_disposition=content_disposition,
     )
     return f"{blob_url(container, blob_name)}?{token}"

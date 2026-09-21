@@ -1,10 +1,12 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { LearnerAssignmentDrawer } from '@/pages/curriculum/shared/entities/LearnerAssignmentDrawer';
+import type { LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
-import { findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
+import { findByIdentifierThenName, findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
 // Editing the programme, or adding a cohort or group from this page,
 // opens the same drawer that record's own page opens. One form per record type in
 // the whole studio, so nothing behaves differently depending on the door taken.
@@ -38,7 +40,7 @@ import {
 } from '@/pages/curriculum/shared/entities/ui';
 import { archiveCohortWithConfirm, archiveGroupWithConfirm, archiveModuleWithConfirm } from '@/pages/curriculum/shared/entities/archive';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { formatHoursMinutes, formatSystemTimestamp, systemTimeZoneName } from '@/lib/format';
+import { formatHoursMinutes, formatSystemTimestamp, hoursToRoundedMinutes, roundedMinutesToHours, systemTimeZoneName } from '@/lib/format';
 import type {
   CurriculumCohort,
   CurriculumComponent,
@@ -214,10 +216,10 @@ function moduleBuilderUrl(
   const params = new URLSearchParams();
   const moduleId = moduleBuilderIdentifier(module);
   if (moduleId) params.set('module', moduleId);
-  // A genuine second attempt, not only the id's last resort: the delivery
-  // side and Module Builder's own catalogue sometimes disagree on which id is
-  // canonical for the same module, so a guessed id that Module Builder cannot
-  // match still gets found by name rather than reporting the module missing.
+  // A label, not a second lookup key. Module Builder opens the module the id
+  // names and nothing else; if that id matches nothing, this is the name it
+  // reports as missing. Resolving by title instead used to open a namesake from
+  // another programme -- same name, different weeks, different OTJH.
   const moduleName = clean(module.name);
   if (moduleName) params.set('moduleTitle', moduleName);
   const programmeId = clean(programme?.sourceId || programme?.id || programme?.name);
@@ -299,6 +301,8 @@ interface Programme {
    */
   practicalWindow: string;
   apprenticeshipWindow: string;
+  /** Earliest cohort start date across the programme, ISO 'YYYY-MM-DD'. Blank when no cohort has one. */
+  earliestCohortStartDate: string;
   cohorts: Cohort[];
   modules: Module[];
   ksbHeatmap: KsbHeatmapRow[];
@@ -426,6 +430,7 @@ const EMPTY_PROGRAMME: Programme = {
   duration: 'Live curriculum',
   practicalWindow: '',
   apprenticeshipWindow: '',
+  earliestCohortStartDate: '',
   cohorts: [],
   modules: [],
   ksbHeatmap: [],
@@ -899,12 +904,16 @@ function belongsToProgramme(programme: CurriculumProgramme, item: { programmeId?
 
 function findProgramme(data: CurriculumOverview | null, routeId: string) {
   if (!data) return null;
-  const routeKey = normalise(routeId);
-  return data.programmes.find(programme => (
-    normalise(programme.id) === routeKey ||
-    normalise(programme.sourceId) === routeKey ||
-    normalise(programme.name) === routeKey
-  )) ?? null;
+  // Ids before names: a programme named the same as another programme's id used
+  // to win the route purely by sitting earlier in the list. See
+  // findByIdentifierThenName.
+  return findByIdentifierThenName(
+    data.programmes,
+    routeId,
+    programme => [programme.id, programme.sourceId],
+    programme => [programme.name],
+    normalise,
+  ) ?? null;
 }
 
 /** Staff roster plus anyone already named on a record, de-duplicated and sorted. */
@@ -1096,6 +1105,9 @@ function isComponentForModule(component: CurriculumComponent, liveModule: { id: 
   if (componentIdentifierKeys.length) {
     return moduleIdentifierKeys.some(key => componentIdentifierKeys.includes(key));
   }
+  if (moduleIdentifierKeys.length) {
+    return false;
+  }
   const componentModuleKeys = [component.module].map(normalise);
   const moduleKeys = [liveModule.name].map(normalise);
   return moduleKeys.some(key => key && componentModuleKeys.includes(key));
@@ -1140,15 +1152,13 @@ function buildModuleWeeks(
     const sorted = [...weekSessions].sort((a, b) => clean(a.date).localeCompare(clean(b.date)));
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
-    // Programme OTJH is authored curriculum: only a non-quiz component's
-    // explicit expected OTJH contributes. Generated timetable sessions, quiz
-    // components and generic duration must not invent planned OTJH.
-    const componentOtjh = weekComponents.reduce(
-      (sum, component) => normalise(component.type) === 'quiz'
-        ? sum
-        : sum + Math.max(0, Number(component.expectedOtjh) || 0),
+    // Programme OTJH follows the Module Builder: every component's explicit
+    // Expected OTJH contributes, summed as whole minutes so 20m + 20m + 20m
+    // reads as 1h here exactly as it does in the builder.
+    const componentOtjh = roundedMinutesToHours(weekComponents.reduce(
+      (sum, component) => sum + Math.max(0, hoursToRoundedMinutes(Number(component.expectedOtjh) || 0)),
       0,
-    );
+    ));
     const weekTitle = clean(weekComponents.find(component => clean(component.weekTitle))?.weekTitle);
 
     return {
@@ -1234,13 +1244,16 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     ksbCount: number;
     lessons: number;
     quizzes: number;
-    assignments: number;
+    /** Absent from a compact module list; see CurriculumModule. Unread here. */
+    assignments?: number;
     status: string;
-    author: string;
+    /** Absent from a compact module list; see CurriculumModule. Unread here. */
+    author?: string;
     lastUpdated: string;
     color: string;
     notes: string;
-    sessionNames: string[];
+    /** Absent from a compact module list; see CurriculumModule. Unread here. */
+    sessionNames?: string[];
     ksbCodes: string[];
     weekStructure?: Array<{ id?: string; weekNumber?: number; number?: number; title?: string; displayOrder?: number }>;
     startDate?: string;
@@ -1312,9 +1325,11 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     const ksbRollup = componentRollup.length ? componentRollup : fallbackKsbRollup(fallbackKsbCodes, liveModule.name);
     const ksbTags = ksbRollup.map(item => item.ksb);
     // The module's OTJH is the sum of every component's Expected OTJH across
-    // every week -- the same rule the Module Builder header uses. Rounded to the
-    // nearest hundredth only to shed floating-point dust.
-    const moduleOtjh = Math.round(weeksData.reduce((sum, week) => sum + Number(week.otjh || 0), 0) * 100) / 100;
+    // every week -- the same minute-based rule the Module Builder header uses.
+    const moduleOtjh = roundedMinutesToHours(weeksData.reduce(
+      (sum, week) => sum + hoursToRoundedMinutes(Number(week.otjh || 0)),
+      0,
+    ));
     const archived = Boolean(liveModule.isProgrammeDeleted)
       || normalise(liveModule.status) === 'archived'
       || normalise(liveModule.deliveryStatus) === 'archived';
@@ -1529,6 +1544,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       duration: deliveryWindow || 'Live curriculum',
       practicalWindow,
       apprenticeshipWindow,
+      earliestCohortStartDate: deliveryStart,
       cohorts,
       modules,
       ksbHeatmap,
@@ -2135,7 +2151,7 @@ type Tab = 'overview' | 'cohorts' | 'groups' | 'modules' | 'sessions' | 'coverag
 // Actions now carries the "Groups" jump plus Edit and Archive, so the fixed
 // 120px column that fit "Groups" alone is widened to a minmax that keeps room
 // for all three without squeezing them onto a second line.
-const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(200px,auto)]';
+const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(330px,auto)]';
 /**
  * The date window shown on a module row.
  *
@@ -2179,7 +2195,7 @@ function groupDatesLabel(cohort: { startDate: string; endDate: string; apprentic
 // this width EntityTable scrolls horizontally instead of squeezing the buttons
 // or turning a single row into an uneven two-line layout.
 const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_minmax(210px,auto)]';
-const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_minmax(210px,auto)]';
+const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_minmax(340px,auto)]';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: 'Overview',
@@ -2248,7 +2264,7 @@ export default function ProgrammeDetailPage() {
   const [programmeKsbSets, setProgrammeKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [skillsStandards, setSkillsStandards] = useState<CurriculumStandard[]>([]);
   // Completed hours come from learner records. Their comparison value is kept
-  // separate: planned OTJH is authored by non-quiz curriculum components.
+  // separate: planned OTJH is authored by curriculum components.
   const [learnerOtjh, setLearnerOtjh] = useState<{ completed: number; learners: number } | null>(null);
   const [learnerOtjhLoading, setLearnerOtjhLoading] = useState(false);
   const coverageRequestKeyRef = useRef('');
@@ -2357,6 +2373,8 @@ export default function ProgrammeDetailPage() {
   const [componentPickerOpen, setComponentPickerOpen] = useState(false);
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [cohortDrawerOpen, setCohortDrawerOpen] = useState(false);
+  const [assignmentTarget, setAssignmentTarget] = useState<LearnerAssignmentTarget | null>(null);
+  const [assignmentNotice, setAssignmentNotice] = useState('');
   // Set only when the cohort drawer is editing an existing record rather than
   // creating one; the drawer reads it as its `cohort` prop.
   const [editingCohort, setEditingCohort] = useState<CurriculumCohort | null>(null);
@@ -3137,8 +3155,10 @@ export default function ProgrammeDetailPage() {
   );
   const publishedComponents = allComponents.filter(component => component.status === 'published').length;
   const contentReadiness = allComponents.length ? Math.round((publishedComponents / allComponents.length) * 100) : 0;
-  const totalOtjh = activeModules.reduce((total, mod) => total + mod.otjh, 0);
-  // Programme OTJH is the non-quiz component plan. Since completed hours below
+  const totalOtjh = roundedMinutesToHours(activeModules.reduce((total, mod) => (
+    total + hoursToRoundedMinutes(mod.otjh)
+  ), 0));
+  // Programme OTJH is the component plan. Since completed hours below
   // are aggregated across learners, multiply the per-learner plan by the number
   // of placed learners before calculating progress.
   const learnerOtjhCompleted = Math.max(0, Number(learnerOtjh?.completed || 0));
@@ -3414,6 +3434,7 @@ export default function ProgrammeDetailPage() {
     >
       <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         {error && <InlineError message={error} onRetry={() => void reload()} />}
+        {assignmentNotice && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] font-semibold text-emerald-800">{assignmentNotice}</p>}
 
         <WorkspaceHeader
           breadcrumbs={[
@@ -3581,8 +3602,8 @@ export default function ProgrammeDetailPage() {
                         : !learnerOtjhLearners
                           ? 'No learners are placed on this programme yet, so no hours have been completed.'
                           : otjhDenominator
-                            ? `${formatHours(learnerOtjhCompleted)}h of ${formatHours(otjhDenominator)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}, based on ${formatHours(totalOtjh)}h planned per learner from non-quiz components.`
-                            : `${formatHours(learnerOtjhCompleted)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}. No non-quiz components carry planned OTJH yet, so there is nothing to measure against.`}
+                            ? `${formatHours(learnerOtjhCompleted)}h of ${formatHours(otjhDenominator)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}, based on ${formatHours(totalOtjh)}h planned per learner from authored components.`
+                            : `${formatHours(learnerOtjhCompleted)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}. No authored components carry planned OTJH yet, so there is nothing to measure against.`}
                   />
                   <div className="grid grid-cols-2 gap-2 border-t border-background-200 pt-4 sm:grid-cols-4">
                     {[
@@ -3834,6 +3855,12 @@ export default function ProgrammeDetailPage() {
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
                         actions={[{
+                          icon: 'ri-user-add-line',
+                          label: 'Assign learners',
+                          title: `Assign learners to ${cohortItem.name} and all its modules`,
+                          disabled: cohortItem.archived,
+                          onClick: () => setAssignmentTarget({ scope: 'cohort', id: cohortItem.id, name: cohortItem.name }),
+                        }, {
                           icon: 'ri-team-line',
                           label: 'Groups',
                           title: `Open the groups in ${cohortItem.name}`,
@@ -4068,7 +4095,10 @@ export default function ProgrammeDetailPage() {
               gridClass={MODULE_GRID}
               rows={filteredModules}
               rowKey={mod => mod.id}
-              getRowHref={mod => moduleWorkspaceUrl(mod) || undefined}
+              // The row opens where the work is: authoring the module's weeks,
+              // components and material. Its read-only home (schedule, sessions,
+              // Teams series) stays one named action away.
+              getRowHref={mod => (mod.archived ? undefined : moduleBuilderUrl(mod, PROGRAMME))}
               loading={loading && !PROGRAMME.modules.length}
               refreshing={refreshing}
               empty={(
@@ -4078,18 +4108,19 @@ export default function ProgrammeDetailPage() {
                   message={PROGRAMME.modules.length
                     ? 'Clear a filter, or search for a different module.'
                     : 'Modules carry the weekly content, sessions and OTJH for this programme. Create and author the first one in Module Builder.'}
-                  action={PROGRAMME.modules.length ? undefined : { label: 'Open Module Builder', onClick: () => navigate(moduleBuilderProgrammeUrl) }}
+                  action={PROGRAMME.modules.length ? undefined : { label: 'Create module', onClick: () => navigate(`${moduleBuilderProgrammeUrl}&create=1`) }}
                 />
               )}
               renderRow={mod => {
                 const componentCount = mod.weeksData.reduce((total, wk) => total + (wk.components?.length || 0), 0);
                 const ksbCount = uniqueCleanValues([...mod.ksbTags, ...mod.ksbMapping.map(item => item.ksb)]).length;
                 const workspaceUrl = moduleWorkspaceUrl(mod);
+                const builderUrl = moduleBuilderUrl(mod, PROGRAMME);
                 const unlinked = unlinkedModules.some(item => item.id === mod.id);
                 return (
                   <>
                     <StackedCell
-                      href={mod.archived ? undefined : workspaceUrl || undefined}
+                      href={mod.archived ? undefined : builderUrl}
                       primary={(
                         <span className="flex items-center gap-2">
                           {mod.name}
@@ -4126,13 +4157,17 @@ export default function ProgrammeDetailPage() {
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
                         actions={[{
-                          icon: 'ri-tools-line',
-                          label: 'Builder',
-                          title: mod.archived
-                            ? 'Archived modules cannot be opened in Module Builder'
-                            : `Author ${mod.name}'s weeks and components in the Module Builder`,
+                          icon: 'ri-user-add-line',
+                          label: 'Assign learners',
+                          title: `Assign learners to ${mod.name} only`,
                           disabled: mod.archived,
-                          onClick: () => navigate(moduleBuilderUrl(mod, PROGRAMME)),
+                          onClick: () => setAssignmentTarget({ scope: 'module', id: moduleBuilderIdentifier(mod), name: mod.name }),
+                        }, {
+                          icon: 'ri-layout-grid-line',
+                          label: 'Workspace',
+                          title: `${mod.name}'s schedule, sessions and Teams series`,
+                          disabled: !workspaceUrl,
+                          onClick: () => navigate(workspaceUrl),
                         }]}
                       />
                       <RowActions
@@ -4171,21 +4206,32 @@ export default function ProgrammeDetailPage() {
             <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="inline-flex rounded-xl border border-background-200 bg-background-100 p-1">
                 {([
-                  { kind: 'live' as const, label: 'Live', icon: 'ri-broadcast-line', count: liveSessions.length },
-                  { kind: 'recorded' as const, label: 'Recorded', icon: 'ri-film-line', count: recordedSessions.length },
+                  // Icon names resolve through AppIcon's keyword table: anything it
+                  // cannot place falls back to a bare circle, and two bare circles
+                  // read as unticked radio buttons rather than as a chosen tab.
+                  { kind: 'live' as const, label: 'Live', icon: 'ri-live-line', count: liveSessions.length },
+                  { kind: 'recorded' as const, label: 'Recorded', icon: 'ri-play-circle-line', count: recordedSessions.length },
                 ]).map(option => (
                   <button
                     key={option.kind}
                     type="button"
                     onClick={() => setSessionKind(option.kind)}
                     aria-pressed={sessionKind === option.kind}
-                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold transition-smooth ${
-                      sessionKind === option.kind ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:text-foreground-900'
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold outline-offset-2 transition-smooth focus-visible:outline focus-visible:outline-2 focus-visible:outline-white ${
+                      sessionKind === option.kind
+                        // !text-white: the wrapper's global tab CSS (index.css)
+                        // sets color on every button inside it at higher
+                        // specificity than a plain Tailwind class, so the
+                        // selected pill needs !important to actually go white.
+                        ? 'bg-primary-600 !text-white shadow-sm'
+                        : 'text-foreground-500 hover:bg-background-200 hover:text-foreground-900'
                     }`}
                   >
                     <AppIcon className={`${option.icon} text-sm`}></AppIcon>
                     {option.label}
-                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${sessionKind === option.kind ? 'bg-white/20 text-white' : 'bg-foreground-100 text-foreground-500'}`}>
+                    {/* The chosen tab's count sits on purple, so it needs a solid
+                        white chip: white-on-translucent-white washes out at 10px. */}
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${sessionKind === option.kind ? 'bg-white text-primary-700' : 'bg-background-200 text-foreground-600'}`}>
                       {option.count}
                     </span>
                   </button>
@@ -4667,10 +4713,20 @@ export default function ProgrammeDetailPage() {
         )}
 
         {tab === 'reviews' && (
-          <ReviewsTab programmeId={PROGRAMME.id} programmeName={PROGRAMME.name} />
+          <ReviewsTab programmeId={PROGRAMME.id} programmeName={PROGRAMME.name} defaultStartDate={PROGRAMME.earliestCohortStartDate} />
         )}
       </div>
 
+      <LearnerAssignmentDrawer
+        target={assignmentTarget}
+        onClose={() => setAssignmentTarget(null)}
+        onAssigned={result => {
+          setAssignmentNotice(`${result.assignedCount} learner${result.assignedCount === 1 ? '' : 's'} assigned to ${assignmentTarget?.name || 'the selected record'}.`);
+          void reload({ silent: true });
+          learnerOtjhRequestKeyRef.current = '';
+          if (programmeLearnersOpen) void loadProgrammeLearnerRoster(programmeLearnerScope.scope, programmeLearnerScope.identifier);
+        }}
+      />
       <ProgrammeFormDrawer
         open={programmeDrawerOpen}
         programme={drawerProgramme}

@@ -14,6 +14,7 @@ type HubCard = {
   href: string;
   icon: string;
   meta?: string;
+  comingSoon?: boolean;
   tone?: 'primary' | 'sky' | 'emerald' | 'amber';
 };
 
@@ -43,22 +44,12 @@ export function CurriculumDeliveryHub() {
   return <CurriculumHub kind="delivery" />;
 }
 
-/**
- * Quality reads the curriculum records rather than a workflow of its own, so
- * every destination below answers a question the records can already answer.
- * The two that cannot be answered yet are listed by {@link QUALITY_NOT_BUILT}
- * and say what is missing, rather than being drawn as if they worked.
- */
+/** Quality availability is shown on individual feature cards. */
 export function CurriculumQualityHub() {
   return <CurriculumHub kind="quality" />;
 }
 
-/**
- * Quality destinations with no record store behind them. Each one names the
- * table it needs: a card that says "coming soon" tells a curriculum lead
- * nothing, while a card that says the findings have nowhere to be saved tells
- * them exactly why the page is not there.
- */
+/** Quality destinations with no record store behind them. */
 const QUALITY_NOT_BUILT: Array<{ title: string; description: string; missing: string; icon: string }> = [
   {
     title: 'Quality Assurance',
@@ -85,8 +76,8 @@ function NotBuiltPanel() {
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-background-50 text-foreground-400">
                 <AppIcon className={`${item.icon} text-lg`} />
               </span>
-              <span className="rounded-full bg-background-200 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-foreground-500">
-                Not built
+              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-amber-700">
+                Coming soon
               </span>
             </div>
             <h3 className="mt-3 font-heading text-[13px] font-bold text-foreground-700">{item.title}</h3>
@@ -256,16 +247,16 @@ function hubCards(kind: HubKind, counts: {
       { title: 'Groups', description: 'Assign coaches, delivery days and group schedules.', href: '/curriculum/groups', icon: 'ri-team-line', meta: `${counts.groups} groups`, tone: 'sky' },
       { title: 'Module Builder', description: 'Build reusable module content with weeks and components.', href: '/curriculum/module-builder', icon: 'ri-layout-4-line', meta: `${counts.modules} modules`, tone: 'primary' },
       { title: 'Teams Meetings', description: 'Review and restore the meetings attached to live sessions.', href: '/curriculum/teams-meetings', icon: 'ri-vidicon-line', tone: 'primary' },
-      { title: 'Holidays', description: 'Control the dates session plans should skip.', href: '/curriculum/holidays', icon: 'ri-calendar-close-line', tone: 'amber' },
+      { title: 'Bank Holidays', description: 'One non-delivery calendar: GOV.UK bank holidays stay synced here, and workshops or closures can be added with start and end dates.', href: '/curriculum/england-holidays', icon: 'ri-flag-line', tone: 'amber' },
       { title: 'Session Calendar', description: 'See every curriculum session in one chronological view.', href: '/curriculum/session-calendar', icon: 'ri-calendar-schedule-line', meta: `${counts.sessions} sessions`, tone: 'emerald' },
     ];
   }
   return [
-    { title: 'Published Content', description: 'What is live, what is ready to run, and what an active cohort is already delivering before it was published.', href: '/curriculum/published', icon: 'ri-book-open-line', meta: `${counts.draftModules} not published`, tone: 'emerald' },
-    { title: 'Curriculum Reports', description: 'Coverage, delivery and staffing read from live records, previewed on screen and exportable as CSV.', href: '/curriculum/reports', icon: 'ri-bar-chart-box-line', tone: 'sky' },
+    { title: 'Published Content', description: 'What is live, what is ready to run, and what an active cohort is already delivering before it was published.', href: '/curriculum/published', icon: 'ri-book-open-line', meta: `${counts.draftModules} not published`, tone: 'emerald', comingSoon: true },
+    { title: 'Curriculum Reports', description: 'Coverage, delivery and staffing read from live records, previewed on screen and exportable as CSV.', href: '/curriculum/reports', icon: 'ri-bar-chart-box-line', tone: 'sky', comingSoon: true },
     { title: 'Audit Trail', description: 'Every create, edit and archive across programmes, modules, weeks, components, cohorts and groups.', href: '/curriculum/audit-trail', icon: 'ri-history-line', tone: 'primary' },
-    { title: 'Version Control', description: 'Every version of a module, week or component: what it held, what changed between one version and the next, and who saved it.', href: '/curriculum/version-control', icon: 'ri-git-branch-line', tone: 'sky' },
-    { title: 'KSB Coverage', description: 'Trace missing mappings back to the modules and components that own them.', href: '/curriculum/ksb-mapping', icon: 'ri-node-tree', meta: `${counts.mappingGaps} module gaps`, tone: 'amber' },
+    { title: 'Version Control', description: 'Every version of a module, week or component: what it held, what changed between one version and the next, and who saved it.', href: '/curriculum/version-control', icon: 'ri-git-branch-line', tone: 'sky', comingSoon: true },
+    { title: 'KSB Coverage', description: 'Trace missing mappings back to the modules and components that own them.', href: '/curriculum/ksb-mapping', icon: 'ri-node-tree', meta: `${counts.mappingGaps} module gaps`, tone: 'amber', comingSoon: true },
   ];
 }
 
@@ -319,7 +310,14 @@ function DestinationCard({ card }: { card: HubCard }) {
         <span className={`flex h-11 w-11 items-center justify-center rounded-xl ${tones[card.tone || 'primary']}`}>
           <AppIcon className={`${card.icon} text-xl`} />
         </span>
-        {card.meta && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{card.meta}</span>}
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {card.meta && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{card.meta}</span>}
+          {card.comingSoon && (
+            <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-amber-700">
+              Coming soon
+            </span>
+          )}
+        </div>
       </div>
       <h3 className="mt-4 font-heading text-base font-bold text-foreground-950">{card.title}</h3>
       <p className="mt-1 flex-1 text-[12px] leading-5 text-foreground-500">{card.description}</p>

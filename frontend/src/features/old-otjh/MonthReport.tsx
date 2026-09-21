@@ -19,11 +19,13 @@ import design from './design.module.css';
 import journal from './journal.module.css';
 import { RecordBadge } from './RecordDesign';
 import { JournalDownloads } from './JournalDownloads';
+import { useRecordHref } from './recordNavigation';
 
 const btnPrimary = journal.primaryButton;
 const btnSecondary = journal.secondaryButton;
 
 export function MonthReport({ month, aptemId }: { month: string; aptemId?: number }) {
+  const recordHref = useRecordHref();
   const { auth } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -105,10 +107,10 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
         <div className={journal.learnerField} aria-labelledby="journal-learner-label"><AppIcon className="ri-user-line" /><span>{summary.data.learner?.name || '—'}</span></div></div>
       <div className={journal.filterField}><label htmlFor="journal-report-month" className={journal.label}>Report month</label>
         <div className={journal.monthControl}>
-          <select id="journal-report-month" className={journal.monthSelect} value={month} disabled={busy} onChange={event => navigate(`${base}/${event.target.value}`)}>
+          <select id="journal-report-month" className={journal.monthSelect} value={month} disabled={busy} onChange={event => navigate(recordHref(`${base}/${event.target.value}`))}>
             {months.map(item => <option key={item.month} value={item.month}>{monthLabel(item.month)} · {monthStatus(item)}</option>)}
           </select>
-          <Link to={aptemId === undefined ? base : `/old-otjh/coach/${aptemId}`} className={btnSecondary} title="View all months"><AppIcon className="ri-layout-grid-line" />All months</Link>
+          <Link to={recordHref(base)} className={btnSecondary} title="View all months"><AppIcon className="ri-layout-grid-line" />All months</Link>
         </div>
       </div>
     </nav>
@@ -125,7 +127,7 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
     <ActivityLog data={data} aptemId={aptemId} />
     <section className={`${journal.card} ${journal.signoff}`} aria-label="Monthly sign-off"><div className={journal.sectionHeading}><div><h2 className="font-heading">Report sign-off</h2>
       <p>Your learner and coach signatures for this month’s record.</p></div>
-      <div className="flex flex-wrap items-center justify-end gap-2">{!readOnly && <button className={btnPrimary} disabled={busy || !unsigned.length} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>}{student && data.student_signature && (nextMonth || summary.data.can_access_lms) && <button className={btnPrimary} disabled={busy} onClick={() => nextMonth ? navigate(`${base}/${nextMonth.month}`) : navigate('/workspace/learner')}>{nextMonth ? 'Next month' : 'Open LMS'}<AppIcon className="ri-arrow-right-line" /></button>}</div>
+      <div className="flex flex-wrap items-center justify-end gap-2">{!readOnly && <button className={btnPrimary} disabled={busy || !unsigned.length} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>}{student && data.student_signature && (nextMonth || summary.data.can_access_lms) && <button className={btnPrimary} disabled={busy} onClick={() => nextMonth ? navigate(`${base}/${nextMonth.month}`) : navigate('/learner/home')}>{nextMonth ? 'Next month' : 'Open LMS'}<AppIcon className="ri-arrow-right-line" /></button>}</div>
       </div>
       <div className={journal.signoffBody}><div className={styles.reportTableWrap}>
       <table className={styles.signTable} aria-label="Report sign-off"><thead><tr>{['Role', 'Signature', 'Print name', 'Date', 'Status'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>

@@ -17,6 +17,7 @@ import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { SelectMenu, type SelectOption } from '@/components/feature/SelectField';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { statusTone } from './model';
+import { recordCurriculumAction, recordCurriculumSearch } from '@/lib/curriculumActivity';
 import { AppIcon } from '@/components/feature/AppIcon';
 
 export interface EntityStat {
@@ -229,7 +230,10 @@ export function EntityFilterBar({
   const sortDirty = Boolean(sort) && sort!.value !== (sort!.defaultValue ?? '');
   const dirty = !disabled && (isDirty ?? (Boolean(search) || selects.some(select => select.value) || sortDirty));
   return (
-    <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-3.5">
+    // This toolbar reports its own searches, filters and sorts below, by name.
+    // The mark tells the LMS-wide capture listener to leave it alone, so one
+    // filter change is one row in the audit trail rather than two.
+    <div data-audit="manual" className="rounded-2xl border border-foreground-200/60 bg-background-50 p-3.5">
       <div className="flex flex-col gap-2.5 xl:flex-row xl:items-end xl:justify-between">
         <div className="grid flex-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
           <label className="block">
@@ -238,7 +242,14 @@ export function EntityFilterBar({
               <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-300"></AppIcon>
               <input
                 value={search}
-                onChange={event => onSearch(event.target.value)}
+                onChange={event => {
+                  onSearch(event.target.value);
+                  // What was searched for, recorded once the typing settles —
+                  // see curriculumActivity. Reported here rather than in each
+                  // page so the Audit Trail sees every entity list the same
+                  // way, and so no page can be left out by being forgotten.
+                  recordCurriculumSearch(event.target.value, placeholder || 'search');
+                }}
                 placeholder={placeholder}
                 disabled={disabled || searchDisabled}
                 className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400"
@@ -253,7 +264,10 @@ export function EntityFilterBar({
               <SelectMenu
                 size="sm"
                 value={select.value}
-                onChange={select.onChange}
+                onChange={value => {
+                  select.onChange(value);
+                  recordCurriculumAction('filter', { filter: select.label, value });
+                }}
                 options={select.options}
                 disabled={disabled || select.disabled}
                 disabledHint={disabled ? 'Filters become available when this list has records.' : select.disabledHint}
@@ -270,7 +284,10 @@ export function EntityFilterBar({
               <SelectMenu
                 size="sm"
                 value={sort.value}
-                onChange={sort.onChange}
+                onChange={value => {
+                  sort.onChange(value);
+                  recordCurriculumAction('sort', { sort: value });
+                }}
                 options={sort.options.map(option => ({ value: option.value, label: option.label }))}
                 disabled={disabled}
                 disabledHint={disabled ? 'Sorting becomes available when this list has records.' : undefined}
@@ -317,6 +334,7 @@ export function EntityTable<T>({
   rowKey,
   renderRow,
   getRowHref,
+  onRowIntent,
   loading,
   refreshing,
   highlightKey,
@@ -334,6 +352,13 @@ export function EntityTable<T>({
    * (StackedCell's `href`) should do the same, or the click fires both.
    */
   getRowHref?: (row: T) => string | undefined;
+  /**
+   * Called when a row is about to be opened -- pointer over it, or keyboard
+   * focus on it. For fetching what the next page will need before the click,
+   * so it is already in hand when the click happens. Must be cheap and
+   * idempotent: it fires again every time the pointer crosses the row.
+   */
+  onRowIntent?: (row: T) => void;
   loading?: boolean;
   /** A background reload is running behind the rows already on screen. */
   refreshing?: boolean;
@@ -407,6 +432,8 @@ export function EntityTable<T>({
                     }}
                     role={href ? 'button' : undefined}
                     tabIndex={href ? 0 : undefined}
+                    onPointerEnter={onRowIntent ? () => onRowIntent(row) : undefined}
+                    onFocus={onRowIntent ? () => onRowIntent(row) : undefined}
                     onClick={href ? () => navigate(href) : undefined}
                     onKeyDown={href ? event => {
                       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(href); }
@@ -703,6 +730,7 @@ export function SelectControl({
   options,
   disabled,
   placeholder,
+  ariaLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -714,6 +742,13 @@ export function SelectControl({
   options: SelectOption[];
   disabled?: boolean;
   placeholder?: string;
+  /**
+   * Only needed inside a `FormField as="group"`: a `<label>` names the control
+   * it wraps, but a `role="group"` does not name the controls inside it, so a
+   * select sharing its field with another control has no accessible name
+   * unless it is given one here.
+   */
+  ariaLabel?: string;
 }) {
   return (
     <SelectMenu
@@ -723,6 +758,7 @@ export function SelectControl({
       disabled={disabled}
       placeholder={placeholder || 'Select'}
       clearable={Boolean(placeholder)}
+      ariaLabel={ariaLabel}
     />
   );
 }
@@ -752,6 +788,8 @@ export function MultiSelectControl({
   options,
   emptyMessage = 'Nothing to choose from.',
   selectAllLabel,
+  searchable = false,
+  searchPlaceholder = 'Search options...',
 }: {
   value: string[];
   onChange: (value: string[]) => void;
@@ -760,10 +798,19 @@ export function MultiSelectControl({
   emptyMessage?: string;
   /** Adds a select-all / clear toggle above the list, named by this. */
   selectAllLabel?: string;
+  /** Adds an inline filter for long option lists without changing the selection. */
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }) {
+  const [search, setSearch] = useState('');
   const selected = new Set(value.map(String));
   const togglable = options.filter(option => !option.locked);
   const allSelected = togglable.length > 0 && togglable.every(option => selected.has(option.value));
+  const query = search.trim().toLocaleLowerCase();
+  const visibleOptions = query
+    ? options.filter(option => [option.label, option.description, option.badge].filter(Boolean)
+      .some(text => String(text).toLocaleLowerCase().includes(query)))
+    : options;
 
   const toggle = (option: MultiSelectOption) => {
     if (option.locked) return;
@@ -801,8 +848,22 @@ export function MultiSelectControl({
           </button>
         </div>
       )}
-      <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-2">
-        {options.map(option => {
+      {searchable && (
+        <label className="relative block">
+          <span className="sr-only">Search options</span>
+          <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
+          <input
+            type="search"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            placeholder={searchPlaceholder}
+            aria-label="Search options"
+            className="h-9 w-full rounded-lg border border-background-200 bg-background-50 pl-8 pr-3 text-[12px] text-foreground-800 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+          />
+        </label>
+      )}
+      <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-2">
+        {visibleOptions.length ? visibleOptions.map(option => {
           const active = selected.has(option.value);
           return (
             <button
@@ -836,7 +897,9 @@ export function MultiSelectControl({
               </span>
             </button>
           );
-        })}
+        }) : (
+          <p className="px-2 py-5 text-center text-[11px] text-foreground-500">No options match “{search.trim()}”.</p>
+        )}
       </div>
     </div>
   );
@@ -957,7 +1020,7 @@ export const WEEKEND_DAYS = ['Saturday', 'Sunday'];
 export const WEEKEND_HINT = 'Saturday and Sunday are weekend holidays in England — delivery on these days is unusual.';
 
 /** Delivery days as a comma-separated string, which is how the API stores them. */
-export function WeekdayControl({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+export function WeekdayControl({ value, onChange, maxSelections }: { value: string; onChange: (value: string) => void; maxSelections?: number }) {
   const selected = value.split(',').map(day => day.trim()).filter(Boolean);
   const toggle = (day: string) => {
     const next = selected.includes(day) ? selected.filter(item => item !== day) : [...selected, day];
@@ -975,8 +1038,10 @@ export function WeekdayControl({ value, onChange }: { value: string; onChange: (
               key={day}
               type="button"
               onClick={() => toggle(day)}
+              aria-pressed={active}
+              disabled={!active && maxSelections !== undefined && selected.length >= maxSelections}
               title={weekend ? WEEKEND_HINT : undefined}
-              className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth ${
+              className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-40 ${
                 active
                   ? 'border-primary-600 bg-primary-600 text-white'
                   : weekend
@@ -1082,6 +1147,7 @@ export function EntityDrawer({
   onClose,
   onSubmit,
   submitLabel,
+  submitDisabled = false,
   cancelLabel = 'Cancel',
   extraAction,
   backAction,
@@ -1100,6 +1166,7 @@ export function EntityDrawer({
   onClose: () => void;
   onSubmit: () => void | Promise<void>;
   submitLabel: string;
+  submitDisabled?: boolean;
   cancelLabel?: string;
   extraAction?: DrawerExtraAction;
   /** A step back in a chain, e.g. "Back to Cohort" — placed before `extraAction`. */
@@ -1265,7 +1332,7 @@ export function EntityDrawer({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || submitDisabled}
               className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving && <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>}

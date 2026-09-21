@@ -520,7 +520,12 @@ class TeamsAttendanceRosterTests(SimpleTestCase):
             'id': 'ATT-1',
             'email': 'present@example.com',
             'display_name': 'Present',
-            'intervals': [{}],
+            'total_attendance_seconds': 240,
+            # Presence now requires more than three verified minutes.
+            'intervals': [{
+                'joinDateTime': '2026-09-02T09:00:00Z',
+                'leaveDateTime': '2026-09-02T09:04:00Z',
+            }],
         }], include_absent=True)
 
         by_email = {row['email']: row for row in roster}
@@ -528,6 +533,19 @@ class TeamsAttendanceRosterTests(SimpleTestCase):
         self.assertFalse(by_email['absent@example.com']['attended'])
         self.assertFalse(by_email['organizer@example.com']['attended'])
         self.assertEqual(by_email['present@example.com']['join_count'], 1)
+
+    def test_roster_requires_more_than_three_verified_minutes(self):
+        series = {'attendees': ['learner@example.com']}
+        for seconds, attended in [(0, False), (180, False), (181, True)]:
+            with self.subTest(seconds=seconds):
+                roster = views.attendance_roster(series, [{
+                    'id': 'ATT-THRESHOLD',
+                    'email': 'learner@example.com',
+                    'total_attendance_seconds': seconds,
+                    'intervals': [],
+                }], include_absent=True)
+                row = next(item for item in roster if item['email'] == 'learner@example.com')
+                self.assertEqual(row['attended'], attended)
 
     def test_keeps_different_graph_reports_as_separate_attendance_runs(self):
         series = {
@@ -1542,9 +1560,11 @@ class CurriculumTeamsMeetingTests(TestCase):
             for week in weeks
         ]
         self.assertEqual([len(items) for items in live_sessions], [1, 1, 1, 1, 1, 1])
+        # A ticked holiday no longer displaces the session -- every week keeps
+        # its own Saturday, closed or not.
         self.assertEqual(
             [items[0]['settings']['sessionDate'] for items in live_sessions],
-            ['2026-12-12', '2027-01-02', '2027-01-09', '2027-01-16', '2027-01-23', '2027-01-30'],
+            ['2026-12-12', '2026-12-19', '2026-12-26', '2027-01-02', '2027-01-09', '2027-01-16'],
         )
         # Every one of them can be joined, and the created ones say when they
         # start and how long they run.
@@ -1588,10 +1608,11 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(plan['finalEndDate'], '2027-02-06')
 
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
-    def test_session_plan_moves_an_added_week_off_a_closed_holiday(self, _holidays):
-        # The whole point of asking the backend: the fourteenth Saturday of this
-        # module falls inside the Easter the cohort ticked, so the week added to
-        # reach it runs the Saturday after -- and says which day it was moved off.
+    def test_session_plan_keeps_an_added_week_on_its_own_saturday(self, _holidays):
+        # An added week runs on its own delivery day, ticked holiday or not: the
+        # fourteenth Saturday of this module is 13 March 2027, which is nowhere
+        # near the Easter the cohort ticked -- Christmas is what touches this
+        # run, on the second Saturday, which still delivers and simply names it.
         self._module_with_six_saturday_weeks()
 
         response = self.client.get(
@@ -1601,9 +1622,11 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         plan = response.json()
         self.assertEqual(len(plan['sessions']), 14)
-        self.assertEqual(plan['sessions'][-1]['date'], '2027-04-03')
-        self.assertEqual(plan['sessions'][-1]['skippedHolidays'], ['2027-03-27'])
-        self.assertEqual(plan['finalEndDate'], '2027-04-03')
+        self.assertEqual(plan['sessions'][-1]['date'], '2027-03-13')
+        self.assertEqual(plan['sessions'][-1]['skippedHolidays'], [])
+        self.assertEqual(plan['sessions'][1]['date'], '2026-12-19')
+        self.assertEqual(plan['sessions'][1]['skippedHolidays'], ['2026-12-19'])
+        self.assertEqual(plan['finalEndDate'], '2027-03-13')
 
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_falls_back_to_the_stored_session_count(self, _holidays):
@@ -2962,6 +2985,37 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
         self.assertTrue(all(item['startTime'] == '13:00' for item in module_sessions))
         self.assertTrue(all(item['endTime'] == '15:00' for item in module_sessions))
 
+    def test_editing_group_delivery_slot_persists_the_unbooked_live_session_date(self):
+        payload = self.tree_payload()
+        payload['cohorts'][0]['groups'][0]['modules'][0]['weekStructure'][0]['components'] = [{
+            'id': 'COMP-LIVE-1',
+            'type': 'live-session',
+            'title': 'Live Teams Session 1',
+            'settings': {
+                'sessionDate': '2026-09-02',
+                'sessionDay': 'Wednesday',
+                'sessionTime': '10:00',
+                'durationMinutes': 120,
+                'customSetting': 'preserve-me',
+            },
+        }]
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+
+        response = self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {
+            'weekDays': 'Friday',
+            'startTime': '13:00',
+            'endTime': '15:00',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+
+        component = self.row(views.AUTHORING_COMPONENTS_TABLE, 'id', 'COMP-LIVE-1')
+        settings = views.as_json_value(component['settings_json'], {})
+        self.assertEqual(settings['sessionDate'], '2026-09-04')
+        self.assertEqual(settings['sessionDay'], 'Friday')
+        # A component-specific clock is an authored override, not group data.
+        self.assertEqual(settings['sessionTime'], '10:00')
+        self.assertEqual(settings['customSetting'], 'preserve-me')
+
     def test_id_edits_preserve_parent_relationships(self):
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
         self.patch_json('/curriculum_api/curriculum/cohorts/COHORT-DATA-1/', {'name': 'Renamed Cohort'})
@@ -3342,6 +3396,49 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
              patch.object(views, 'build_ksb_data', return_value=([], [])):
             payload = views.build_curriculum_payload_from_rows(rows, compact=True)
         self.assertEqual(payload['sessions'], [])
+
+    def test_compact_module_list_is_whitelisted_not_subtracted(self):
+        """`/curriculum/modules/?compact=true` returns the whitelist, nothing else.
+
+        A field added to a module row later must not reach compact callers until
+        somebody puts it in COMPACT_MODULE_LIST_FIELDS deliberately -- that is the
+        whole point of projecting onto an allowlist rather than deleting keys.
+        """
+        module = {
+            'id': 'MOD-1', 'name': 'Module', 'programmeId': 'PROG-1', 'programme': 'Programme',
+            'weeks': 4, 'ksbCount': 2, 'notes': 'Notes', 'color': '#6941c6',
+            'weeklySchedule': [{'week': 1}], 'sessionHolidays': [], 'deliveryWeeks': 4,
+            # None of these may survive the projection.
+            'weekStructure': [{'id': 'WEEK-1', 'components': [{'id': 'COMP-1'}]}],
+            'sessionNames': ['Week 1', 'Week 2', 'Week 3'],
+            'deliveryMetadata': {'teamsMeetingUrl': 'https://teams.example.invalid/x'},
+            'author': '', 'assignments': 0, 'qualityScore': 72, 'sourceType': 'authoring',
+            'deliveryRowId': 17, 'legacyModuleId': 'old', 'invalidModuleCatalogueId': 'bad',
+            'somethingAddedNextYear': 'must not leak',
+        }
+
+        compact = views.compact_module_list_rows([module])[0]
+
+        self.assertEqual(
+            set(compact),
+            (set(module) & views.COMPACT_MODULE_LIST_FIELDS) | {'sessionNamesCount'},
+        )
+        # The fields the edit form reopens a module with survive: dropping these
+        # would not just blank a screen, the next save would write the blank back.
+        for field in ('weeklySchedule', 'sessionHolidays', 'deliveryWeeks', 'notes', 'color'):
+            self.assertEqual(compact[field], module[field])
+        # sessionNames goes, but its count stays -- four callers read `.length`.
+        self.assertNotIn('sessionNames', compact)
+        self.assertEqual(compact['sessionNamesCount'], 3)
+        # Teams meeting identity is not in a list response at all.
+        self.assertNotIn('deliveryMetadata', compact)
+        # The source row is untouched: it is shared with the non-compact response.
+        self.assertIn('weekStructure', module)
+
+    def test_compact_module_list_keeps_every_field_its_filters_read(self):
+        """The endpoint filters after projecting, so the filter keys must survive."""
+        for field in ('programmeId', 'cohortId', 'groupId', 'status'):
+            self.assertIn(field, views.COMPACT_MODULE_LIST_FIELDS)
 
     def test_pagination_is_opt_in_and_reports_total_count(self):
         request = RequestFactory().get('/curriculum/modules/', {'page': 2, 'page_size': 2})
@@ -4428,76 +4525,192 @@ class CohortPracticalEndDateRuleTests(SimpleTestCase):
 
 
 class CohortAppliedHolidaysTests(SimpleTestCase):
-    """Which holidays a cohort's dates and sessions are both measured against."""
+    """Which holidays a cohort's dates and sessions are both measured against.
+
+    A cohort's holidays are its dates: every England bank holiday inside the
+    period, and nothing else. There is nothing to tick, so these tests are what
+    stop a stored selection -- ids into the authored holiday table curriculum no
+    longer reads -- quietly acquiring an effect again.
+    """
 
     HOLIDAY_ROWS = [
-        {'id': 'HOL-1', 'label': 'In period', 'start_date': '2027-09-26', 'end_date': '2027-10-02'},
-        {'id': 'HOL-2', 'label': 'Out of period', 'start_date': '2028-05-01', 'end_date': '2028-05-07'},
-        {'id': 'HOL-3', 'label': 'Straddling', 'start_date': '2028-01-31', 'end_date': '2028-02-06'},
+        {'id': 'HOL-1', 'title': 'In period', 'holiday_date': '2027-09-26'},
+        {'id': 'HOL-2', 'title': 'Out of period', 'holiday_date': '2028-05-01'},
+        {'id': 'HOL-3', 'title': 'On the last day', 'holiday_date': '2028-01-31'},
+        {'id': 'HOL-4', 'title': 'The day after', 'holiday_date': '2028-02-01'},
     ]
 
-    def test_an_explicit_selection_is_honoured(self):
+    def test_every_holiday_in_the_period_applies(self):
         applied = views.cohort_applied_holidays(
-            ['HOL-1'], self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
+            None, self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
         )
-        self.assertEqual([item['id'] for item in applied], ['HOL-1'])
+        self.assertEqual([item['id'] for item in applied], ['HOL-1', 'HOL-3'])
 
-    def test_an_empty_selection_applies_no_holiday_at_all(self):
-        # A cohort's dates only move because someone picked the holiday that
-        # moves them, so an untouched cohort keeps the plain duration rule and
-        # its sessions skip nothing.
+    def test_a_stored_selection_cannot_narrow_the_period(self):
+        # The ids are numeric keys into the authored table nobody reads any
+        # more. A cohort carrying them still gets its whole period, not one
+        # holiday, and not none.
+        applied = views.cohort_applied_holidays(
+            ['1079', '1090'], self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
+        )
+        self.assertEqual([item['id'] for item in applied], ['HOL-1', 'HOL-3'])
+
+    def test_an_empty_selection_still_applies_the_period(self):
+        # The old rule was that nothing ticked meant nothing skipped, which is
+        # how a cohort came to run straight through Christmas Day. Its dates
+        # answer now, so an untouched cohort skips its bank holidays.
         applied = views.cohort_applied_holidays(
             [], self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
         )
-        self.assertEqual(applied, [])
+        self.assertEqual([item['id'] for item in applied], ['HOL-1', 'HOL-3'])
 
-    def test_an_untouched_cohort_keeps_the_duration_rule(self):
-        # The end date reads exactly as start plus duration, less a day.
-        self.assertEqual(
-            views.format_date(views.cohort_practical_end_date(
-                '2026-02-01', 24, [], self.HOLIDAY_ROWS,
-            )),
-            '2028-01-31',
-        )
-
-    def test_the_selection_is_read_without_moving_the_cohort_date(self):
-        # The selection is what module scheduling skips onto, so it has to be
-        # readable -- and it has to stay off the cohort's own dates however many
-        # holidays are ticked.
+    def test_the_period_is_inclusive_at_both_ends(self):
+        # HOL-3 lands on the last day and is in; HOL-4 is the next day and is out.
         applied = views.cohort_applied_holidays(
-            ['HOL-1', 'HOL-3'], self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
+            None, self.HOLIDAY_ROWS, '2027-09-26', '2028-01-31',
         )
         self.assertEqual([item['id'] for item in applied], ['HOL-1', 'HOL-3'])
+
+    def test_a_holiday_outside_the_period_is_dropped(self):
+        # It cannot take delivery days out of a period it does not touch.
+        applied = views.cohort_applied_holidays(
+            None, self.HOLIDAY_ROWS, '2026-02-01', '2027-01-31',
+        )
+        self.assertEqual(applied, [])
+
+    def test_the_holidays_come_back_in_date_order(self):
+        applied = views.cohort_applied_holidays(
+            None, list(reversed(self.HOLIDAY_ROWS)), '2026-02-01', '2028-05-31',
+        )
+        self.assertEqual(
+            [item['startDate'] for item in applied],
+            ['2027-09-26', '2028-01-31', '2028-02-01', '2028-05-01'],
+        )
+
+    def test_they_do_not_move_the_cohort_contract_date(self):
+        # The period decides which holidays apply; the holidays never decide the
+        # period. A cohort's dates are signed dates.
         self.assertEqual(
             views.format_date(views.cohort_practical_end_date(
-                '2026-02-01', 24, ['HOL-1', 'HOL-3'], self.HOLIDAY_ROWS,
+                '2026-02-01', 24, None, self.HOLIDAY_ROWS,
             )),
             '2028-01-31',
         )
 
-    def test_a_selected_holiday_outside_the_period_is_dropped(self):
-        # It cannot take delivery days out of a period it does not touch.
-        applied = views.cohort_applied_holidays(
-            ['HOL-2'], self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
+    def test_details_report_the_period_as_both_selected_and_in_range(self):
+        details = views.cohort_holiday_details(
+            self.HOLIDAY_ROWS, ['1079'], '2026-02-01', '2028-01-31',
         )
-        self.assertEqual(applied, [])
+        self.assertEqual(details['holidayIds'], ['HOL-1', 'HOL-3'])
+        self.assertEqual(details['selectedHolidays'], details['holidaysInRange'])
+        self.assertEqual(details['summary'], {'global': 4, 'inRange': 2, 'selected': 2})
+
+    def test_a_period_with_no_end_date_has_no_holidays(self):
+        # Better than every holiday ever published: a cohort half way through
+        # being typed has no period yet, so it has nothing to skip.
+        self.assertEqual(
+            views.cohort_applied_holidays(None, self.HOLIDAY_ROWS, '2026-02-01', ''),
+            [],
+        )
+
+
+class CohortHolidayExclusionTests(SimpleTestCase):
+    """A cohort can untick a holiday in its own period; scheduling honours it.
+
+    ``excluded_ids`` is a deny-list, not the selection itself: a stale or
+    unmatched id has nothing to remove, so it can never narrow the period the
+    way the old ``holiday_ids`` selection used to (see
+    ``CohortAppliedHolidaysTests``). Only an id that actually names a holiday
+    inside the period has any effect.
+    """
+
+    HOLIDAY_ROWS = [
+        {'id': 'HOL-1', 'title': 'In period', 'holiday_date': '2027-09-26'},
+        {'id': 'HOL-2', 'title': 'Out of period', 'holiday_date': '2028-05-01'},
+        {'id': 'HOL-3', 'title': 'On the last day', 'holiday_date': '2028-01-31'},
+    ]
+
+    def test_an_excluded_holiday_is_dropped_from_selected_but_not_in_range(self):
+        details = views.cohort_holiday_details(
+            self.HOLIDAY_ROWS, ['HOL-1'], '2026-02-01', '2028-01-31',
+        )
+        self.assertEqual(details['holidayIds'], ['HOL-3'])
+        self.assertEqual([item['id'] for item in details['selectedHolidays']], ['HOL-3'])
+        self.assertEqual([item['id'] for item in details['holidaysInRange']], ['HOL-1', 'HOL-3'])
+        self.assertEqual(details['excludedHolidayIds'], ['HOL-1'])
+        self.assertEqual(details['summary'], {'global': 3, 'inRange': 2, 'selected': 1})
+
+    def test_an_id_outside_the_period_excludes_nothing(self):
+        # A stale exclusion -- the holiday moved out of range, or the id never
+        # matched one to begin with -- simply has nothing to remove.
+        details = views.cohort_holiday_details(
+            self.HOLIDAY_ROWS, ['HOL-2', 'not-a-real-id'], '2026-02-01', '2028-01-31',
+        )
+        self.assertEqual(details['holidayIds'], ['HOL-1', 'HOL-3'])
+        self.assertEqual(details['excludedHolidayIds'], [])
+
+    def test_no_exclusions_means_every_holiday_in_the_period_applies(self):
+        # Both an empty list and no list at all mean nothing is excluded --
+        # there is no absent-vs-empty ambiguity for a deny-list.
+        with_none = views.cohort_holiday_details(self.HOLIDAY_ROWS, None, '2026-02-01', '2028-01-31')
+        with_empty = views.cohort_holiday_details(self.HOLIDAY_ROWS, [], '2026-02-01', '2028-01-31')
+        self.assertEqual(with_none['holidayIds'], ['HOL-1', 'HOL-3'])
+        self.assertEqual(with_empty['holidayIds'], ['HOL-1', 'HOL-3'])
+
+    def test_scheduling_skips_every_holiday_from_the_start_except_the_excluded_one(self):
+        # scheduling_holidays_from is open-ended past the cohort's own period
+        # (AuthoringModuleSessionHolidayTests covers why); excluding a holiday
+        # inside the period must not touch the ones after it.
+        rows = [
+            {'id': 'HOL-1', 'title': 'Excluded', 'holiday_date': '2027-09-26'},
+            {'id': 'HOL-2', 'title': 'After the period', 'holiday_date': '2028-05-01'},
+        ]
+        applied = views.scheduling_holidays_from(rows, '2027-01-01', ['HOL-1'])
+        self.assertEqual([item['id'] for item in applied], ['HOL-2'])
+
+    def test_cohort_selected_holidays_by_id_honours_the_cohorts_own_exclusions(self):
+        cohort = {
+            'id': 'COHORT-1', 'startDate': '2027-01-01',
+            'excludedHolidayIds': ['HOL-1'],
+        }
+        rows = [
+            {'id': 'HOL-1', 'title': 'Excluded', 'holiday_date': '2027-09-26'},
+            {'id': 'HOL-2', 'title': 'Still applies', 'holiday_date': '2028-05-01'},
+        ]
+        holidays = views.cohort_selected_holidays_by_id([cohort], rows)['COHORT-1']
+        self.assertEqual([item['id'] for item in holidays], ['HOL-2'])
 
 
 class AuthoringModuleSessionHolidayTests(SimpleTestCase):
-    """The session list a module publishes skips its cohort's ticked holidays.
+    """The session list a module publishes skips its cohort's bank holidays.
 
     These are the dates every downstream screen reads: the calendar, the module
     workspace's schedule, and the Teams Meetings page that sends them to the
     Microsoft calendar. They used to be generated from the delivery day alone,
-    so a module whose cohort had closed a fortnight still listed sessions inside
-    it -- and the Teams calendar was then built on those dates, while the module
-    form's own preview (which asks the backend with the holidays attached) showed
-    the shifted plan. One module, two answers.
+    so a module whose cohort ran through Boxing Day still listed a session on it
+    -- and the Teams calendar was then built on that date, while the module
+    form's own preview (which asks the backend with the holidays attached)
+    showed the shifted plan. One module, two answers.
+
+    A cohort's holidays are the England bank holidays inside its own dates, so
+    the map these tests build is keyed off the cohort's period, not off any
+    stored selection.
+
+    The dates themselves are now the module's own authored live sessions -- one
+    component per session, each carrying its date -- stubbed in ``setUp``. What
+    is under test here is what a ticked holiday does to them, which is: name
+    itself on the session whose day it falls on, and nothing else.
     """
 
+    #: Real England bank holidays around the 2026 Christmas period. 26 December
+    #: 2026 is a Saturday, so Boxing Day moves to Monday the 28th -- the only one
+    #: of these that lands on the module's delivery day.
     HOLIDAY_ROWS = [
-        {'id': 'HOL-XMAS', 'label': 'Christmas 27', 'start_date': '2026-12-19', 'end_date': '2026-12-27'},
-        {'id': 'HOL-OTHER', 'label': 'Not picked', 'start_date': '2027-01-09', 'end_date': '2027-01-09'},
+        {'id': 'england-and-wales:2026-12-25', 'title': 'Christmas Day', 'holiday_date': '2026-12-25'},
+        {'id': 'england-and-wales:2026-12-28', 'title': 'Boxing Day', 'holiday_date': '2026-12-28', 'notes': 'Substitute day'},
+        {'id': 'england-and-wales:2027-01-01', 'title': 'New Year’s Day', 'holiday_date': '2027-01-01'},
+        # A Monday, but well after the cohort period used below.
+        {'id': 'england-and-wales:2027-03-29', 'title': 'Easter Monday', 'holiday_date': '2027-03-29'},
     ]
 
     MODULE = {
@@ -4507,78 +4720,155 @@ class AuthoringModuleSessionHolidayTests(SimpleTestCase):
         'cohort_id': 'COHORT-1',
         'cohort_name': 'C1',
         'group_id': 'GROUP-1',
-        'group_name': 'G1-sat',
+        'group_name': 'G1-mon',
         'programme_name': 'MSN',
         'sessions_number': 6,
-        'start_date': '2026-12-12',
-        'session_week_day': 'Saturday',
+        'start_date': '2026-12-21',
+        'session_week_day': 'Monday',
         'session_start_time': '09:00',
         'session_end_time': '11:00',
     }
 
-    def holidays_by_cohort(self, holiday_ids):
+    #: The six Mondays this module delivers on, authored as six live sessions --
+    #: one per week, each carrying its own date. They are what the module
+    #: delivers now: `sessions_number` generates nothing, so a module with no
+    #: authored live sessions publishes no sessions at all and these tests would
+    #: have nothing to assert about. See tests_authored_live_sessions.py.
+    SESSION_DATES = ['2026-12-21', '2026-12-28', '2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25']
+
+    def setUp(self):
+        self._real_fetch_all = views.authoring_fetch_all
+        views.authoring_fetch_all = self._fetch_all
+        self.addCleanup(setattr, views, 'authoring_fetch_all', self._real_fetch_all)
+
+    def _fetch_all(self, table, where_sql='', params=None, order_sql='', **kwargs):
+        if table == views.AUTHORING_WEEKS_TABLE:
+            return [
+                {'id': f'WEEK-{index + 1}', 'module_catalogue_id': 'MOD-1',
+                 'display_order': index + 1, 'week_number': index + 1, 'title': f'W{index + 1}'}
+                for index in range(len(self.SESSION_DATES))
+            ]
+        if table == views.AUTHORING_COMPONENTS_TABLE:
+            return [
+                {'id': f'COMP-{index + 1}', 'week_id': f'WEEK-{index + 1}',
+                 'module_catalogue_id': 'MOD-1', 'type': 'live_session',
+                 'title': f'Live {index + 1}', 'display_order': 1,
+                 'settings_json': {'sessionDate': date, 'sessionTime': '09:00', 'durationMinutes': 120},
+                 'live_sessions_link': ''}
+                for index, date in enumerate(self.SESSION_DATES)
+            ]
+        return []
+
+    def holidays_by_cohort(self, start_date='2026-12-01', end_date='2027-02-28'):
         return views.cohort_selected_holidays_by_id(
-            [{'id': 'COHORT-1', 'holidayIds': holiday_ids}],
+            [{'id': 'COHORT-1', 'startDate': start_date, 'endDate': end_date}],
             self.HOLIDAY_ROWS,
         )
 
-    def test_sessions_step_over_the_holidays_the_cohort_selected(self):
+    def test_sessions_run_on_their_own_dates_holidays_or_not(self):
         sessions = views.build_sessions_from_authoring_modules(
-            [self.MODULE], self.holidays_by_cohort(['HOL-XMAS']),
+            [self.MODULE], self.holidays_by_cohort(),
         )
-        # 19 and 26 Dec fall inside the closure, so session 2 lands on 2 Jan and
-        # the plan keeps all six sessions by running a fortnight longer.
+        # A ticked holiday moves nothing: every session runs on its own weekly
+        # Monday, Boxing Day included. Christmas Day and New Year's Day are both
+        # Fridays and touch nothing here regardless, because nothing delivers on
+        # a Friday.
         self.assertEqual(
             [session['date'] for session in sessions],
-            ['2026-12-12', '2027-01-02', '2027-01-09', '2027-01-16', '2027-01-23', '2027-01-30'],
+            ['2026-12-21', '2026-12-28', '2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25'],
         )
 
-    def test_the_shifted_session_carries_the_dates_it_stepped_over(self):
+    def test_the_flagged_session_names_the_holiday_on_its_own_day(self):
         sessions = views.build_sessions_from_authoring_modules(
-            [self.MODULE], self.holidays_by_cohort(['HOL-XMAS']),
+            [self.MODULE], self.holidays_by_cohort(),
         )
-        # The reader has to be able to see *why* a date moved, which is what the
-        # Teams page and the module form both render from this field.
-        self.assertEqual(sessions[1]['skippedHolidays'], ['2026-12-19', '2026-12-26'])
+        # The reader has to be able to see the clash, which is what the Teams
+        # page and the module form both render from this field.
+        self.assertEqual(sessions[1]['date'], '2026-12-28')
+        self.assertEqual(sessions[1]['skippedHolidays'], ['2026-12-28'])
         self.assertEqual(
             [session['skippedHolidays'] for session in sessions if session is not sessions[1]],
             [[], [], [], [], []],
         )
 
-    def test_an_unticked_holiday_moves_nothing(self):
-        # The cohort holiday rule: only a ticked holiday skips a session, so a
-        # cohort nobody picked holidays for keeps the plain weekly pattern.
-        sessions = views.build_sessions_from_authoring_modules([self.MODULE], self.holidays_by_cohort([]))
+    def test_a_plan_that_runs_past_the_cohort_end_still_flags(self):
+        """The reason the scheduling set has no end bound.
+
+        Nothing a plan runs over moves it any more, so a plan long enough
+        finishes *after* the cohort's practical end date on its own steady
+        pattern. Resolving holidays only up to that date would leave a session
+        that overshoots unable to say it landed on one -- here Easter Monday, on
+        the module's own delivery day, well past the cohort end.
+        """
+        cohort = {'id': 'COHORT-1', 'startDate': '2026-10-05', 'endDate': '2027-03-25'}
+        holidays = views.cohort_selected_holidays_by_id([cohort], self.HOLIDAY_ROWS)['COHORT-1']
+        plan = views.build_module_session_plan('2026-10-05', 26, 'Monday', holidays)
+        dates = [session['date'] for session in plan['sessions']]
+
+        # 26 straight Mondays from 5 Oct 2026, Easter Monday included.
+        self.assertIn('2027-03-29', dates)
+        self.assertEqual(dates[-1], '2027-03-29')
+        self.assertIn(['2027-03-29'], [session['skippedHolidays'] for session in plan['sessions']])
+
+    def test_the_cohort_itself_still_lists_only_its_own_period(self):
+        # The other half of the same rule: what the drawer shows and the cohort
+        # row records is the narrower in-period set, not the scheduling one.
+        details = views.cohort_holiday_details(
+            self.HOLIDAY_ROWS, None, '2026-12-01', '2027-02-28',
+        )
+        self.assertEqual(
+            [holiday['startDate'] for holiday in details['holidaysInRange']],
+            ['2026-12-25', '2026-12-28', '2027-01-01'],
+        )
+        # Easter Monday is outside the period, so the cohort does not claim it,
+        # even though a module of that cohort would still step over it.
+        self.assertNotIn(
+            '2027-03-29',
+            [holiday['startDate'] for holiday in details['holidaysInRange']],
+        )
+
+    def test_holidays_before_the_cohort_starts_do_not_apply(self):
+        # Nothing delivers before the cohort starts, so the set begins there.
+        holidays = views.cohort_selected_holidays_by_id(
+            [{'id': 'COHORT-1', 'startDate': '2027-01-02'}], self.HOLIDAY_ROWS,
+        )['COHORT-1']
+        self.assertEqual(
+            [holiday['startDate'] for holiday in holidays],
+            ['2027-03-29'],
+        )
+
+    def test_the_planner_with_no_delivery_day_still_dates_a_plain_run_of_weeks(self):
+        # No weekday means no slot to skip onto, so the planner stays a plain
+        # count of weeks rather than losing its dates entirely.
+        #
+        # Asked of the planner rather than of the session list: the session list
+        # is the authored live sessions and generates nothing, so a delivery day
+        # it never reads cannot change it. The planner is still what dates a
+        # module's weeks in the builder, so the fallback is pinned there.
+        module = {**self.MODULE, 'session_week_day': ''}
+        plan = views.module_delivery_session_plan(
+            module, 6, views.parse_date('2026-12-21'), self.holidays_by_cohort()['COHORT-1'],
+        )
+        dates = [session['date'] for session in plan['sessions']]
+        self.assertEqual(len(dates), 6)
+        self.assertEqual(dates[0], '2026-12-21')
+        self.assertEqual(dates[1], '2026-12-28')
+
+    def test_a_cohort_with_no_start_date_still_flags_every_bank_holiday(self):
+        """An imported cohort missing its dates still gets every applicable holiday.
+
+        There is no period to resolve, so the whole calendar applies rather than
+        none of it. A session still runs on its own day, ticked holiday or not --
+        it is flagged, not moved, so the author can see the clash.
+        """
+        holidays = views.cohort_selected_holidays_by_id([{'id': 'COHORT-1'}], self.HOLIDAY_ROWS)
+        self.assertEqual(len(holidays['COHORT-1']), len(self.HOLIDAY_ROWS))
+        sessions = views.build_sessions_from_authoring_modules([self.MODULE], holidays)
         self.assertEqual(
             [session['date'] for session in sessions],
-            ['2026-12-12', '2026-12-19', '2026-12-26', '2027-01-02', '2027-01-09', '2027-01-16'],
+            ['2026-12-21', '2026-12-28', '2027-01-04', '2027-01-11', '2027-01-18', '2027-01-25'],
         )
-        self.assertEqual([session['skippedHolidays'] for session in sessions], [[]] * 6)
-
-    def test_only_the_selected_holiday_applies(self):
-        # HOL-OTHER covers 9 Jan and is deliberately left unticked.
-        sessions = views.build_sessions_from_authoring_modules(
-            [self.MODULE], self.holidays_by_cohort(['HOL-XMAS']),
-        )
-        self.assertIn('2027-01-09', [session['date'] for session in sessions])
-
-    def test_a_module_with_no_delivery_day_still_lists_its_weeks(self):
-        # No weekday means no slot to skip onto, so this stays a plain count of
-        # weeks rather than losing its dates entirely.
-        module = {**self.MODULE, 'session_week_day': ''}
-        sessions = views.build_sessions_from_authoring_modules([module], self.holidays_by_cohort(['HOL-XMAS']))
-        self.assertEqual(len(sessions), 6)
-        self.assertEqual(sessions[0]['date'], '2026-12-12')
-        self.assertEqual(sessions[1]['date'], '2026-12-19')
-
-    def test_the_cohort_map_ignores_holidays_nobody_stored(self):
-        self.assertEqual(
-            views.cohort_selected_holidays_by_id(
-                [{'id': 'COHORT-1', 'holidayIds': ['HOL-XMAS', 'HOL-GONE']}],
-                self.HOLIDAY_ROWS,
-            ),
-            {'COHORT-1': [views.serialize_holiday_row(self.HOLIDAY_ROWS[0])]},
-        )
+        self.assertEqual(sessions[1]['skippedHolidays'], ['2026-12-28'])
 
 
 class CohortContractDateHolidayTests(SimpleTestCase):
@@ -5381,3 +5671,13 @@ class ModuleTotalOtjhTests(CurriculumPersistenceHarness):
             views.AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', ['MOD-OTJH'],
         )
         self.assertEqual(sorted(float(row['expected_otjh']) for row in rows), [2, 3])
+
+    def test_total_adds_component_minutes_not_raw_decimal_dust(self):
+        total = self.save([
+            {'id': 'WEEK-1', 'title': 'Week 1', 'components': [
+                self.component('A', 0.33),
+                self.component('B', 0.33),
+                self.component('C', 0.33),
+            ]},
+        ])
+        self.assertEqual(total, 1)

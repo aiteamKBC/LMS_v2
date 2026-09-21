@@ -13,9 +13,11 @@ import {
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import type { LearnerDetail } from '@/api/learnerDetail';
+import { dateKey } from '@/pages/learner/training-plan-timeline/model';
 
 /** One week as the sidebar lists it. */
 export interface SidebarWeek {
+  key?: string;
   week: string;
   count: number;
   completed: number;
@@ -68,8 +70,45 @@ export function toggleExpandedWeek(current: string | null, week: string): string
 export interface ActivityPlacement {
   moduleTitle: string;
   weekTitle: string;
+  weekLabel: string;
   weekComponents: JourneyComponent[];
   weeks: SidebarWeek[];
+}
+
+/** Repeated week names need their plan position to distinguish occurrences. */
+export function weekDisplayLabel(weeks: { week: string }[], index: number): string {
+  const title = weeks[index].week;
+  return weeks.filter((week) => week.week === title).length > 1
+    ? `Week ${index + 1} · ${title}`
+    : title;
+}
+
+/** Name each four-week block from the module's training-plan start month. */
+export function weekMonthHeadings(weeks: { week: string }[], moduleStartDate?: string | null): (string | null)[] {
+  const start = dateKey(moduleStartDate);
+  let teachingWeeks = 0;
+  let previousMonth = 0;
+  return weeks.map(({ week }) => {
+    if (/^(?:introduction|induction|extra\b|additional\b|undated\b|module assessments?\b|assessments?\b)/i.test(week.trim())) {
+      previousMonth = 0;
+      return null;
+    }
+    teachingWeeks += 1;
+    const month = Math.ceil(teachingWeeks / 4);
+    let heading: string | null = null;
+    if (month !== previousMonth) {
+      if (start) {
+        // Anchor to day 1 so starts on the 29th–31st cannot skip February.
+        const date = new Date(`${start.slice(0, 7)}-01T12:00:00Z`);
+        date.setUTCMonth(date.getUTCMonth() + month - 1);
+        heading = date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+      } else {
+        heading = `Month ${month}`;
+      }
+    }
+    previousMonth = month;
+    return heading;
+  });
 }
 
 /**
@@ -101,12 +140,14 @@ export function placeActivity(
       return {
         moduleTitle: module.module,
         weekTitle: week.week,
+        weekLabel: weekDisplayLabel(module.weeks, module.weeks.indexOf(week)),
         weekComponents: week.components,
-        weeks: module.weeks.map((w) => ({
+        weeks: module.weeks.map((w, index) => ({
+          key: w.components[0]?.weekId || `week-${index}`,
           week: w.week,
           count: w.components.length,
           completed: w.components.filter((c) => isComponentComplete(c, completedIds)).length,
-          active: w.week === week.week,
+          active: w === week,
           components: w.components,
         })),
       };

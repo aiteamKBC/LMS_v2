@@ -42,10 +42,12 @@ function rowTone(event: CoachCalendarEvent): StatusTone {
 
 /** One fact chip in the row's meta strip — a date, a time, a platform, a cohort. */
 export function CalendarEventMeta({ icon, children }: { icon: string; children: ReactNode }) {
+  const tooltip = typeof children === 'string' ? children : undefined;
+
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] text-foreground-500">
-      <AppIcon className={cn(icon, 'text-[13px] text-primary-500')}></AppIcon>
-      {children}
+    <span className="ui-calendar-event-meta inline-flex min-w-0 items-center gap-1 whitespace-nowrap text-[12px] text-foreground-500">
+      <AppIcon className={cn(icon, 'shrink-0 text-[13px] text-primary-500')}></AppIcon>
+      <span className="min-w-0 truncate" title={tooltip}>{children}</span>
     </span>
   );
 }
@@ -58,6 +60,7 @@ export function CalendarEventRow({
   actions,
   subtitle,
   className,
+  layout = 'row',
   children,
 }: {
   event: CoachCalendarEvent;
@@ -69,16 +72,33 @@ export function CalendarEventRow({
   actions?: ReactNode;
   subtitle?: ReactNode;
   className?: string;
+  /** Card mode exposes stable layout hooks while leaving existing queue rows unchanged. */
+  layout?: 'row' | 'card';
   /** Expanded detail: schedule form, notes, signature panel. */
   children?: ReactNode;
 }) {
+  const disclosure = (
+    <span
+      className={cn(
+        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background-100 text-foreground-400 transition-transform',
+        isOpen && 'rotate-180 bg-primary-50 text-primary-600',
+      )}
+    >
+      <AppIcon className="ri-arrow-down-s-line"></AppIcon>
+    </span>
+  );
+
   return (
     <ActionRow
       tone={rowTone(event)}
       onClick={onToggle}
       className={cn(isOpen && 'z-20 border-primary-300 ring-1 ring-primary-100 xl:col-span-2', className)}
       leading={<LearnerAvatar name={event.learner} tone={avatarTone(event)} />}
-      title={event.learner || 'Unknown learner'}
+      title={(
+        <span className="block min-w-0 truncate" title={event.learner || 'Unknown learner'}>
+          {event.learner || 'Unknown learner'}
+        </span>
+      )}
       subtitle={subtitle}
       status={(
         <span className="flex flex-wrap items-center gap-1.5">
@@ -88,17 +108,17 @@ export function CalendarEventRow({
         </span>
       )}
       meta={meta}
-      actions={(
+      actions={layout === 'card' ? (
+        <div className="ui-calendar-event-actions flex min-w-0 w-full flex-wrap items-start justify-between gap-2">
+          <div className="ui-calendar-event-action-group flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            {actions}
+          </div>
+          {disclosure}
+        </div>
+      ) : (
         <div className="flex shrink-0 items-center gap-2">
           {actions}
-          <span
-            className={cn(
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background-100 text-foreground-400 transition-transform',
-              isOpen && 'rotate-180 bg-primary-50 text-primary-600',
-            )}
-          >
-            <AppIcon className="ri-arrow-down-s-line"></AppIcon>
-          </span>
+          {disclosure}
         </div>
       )}
     >

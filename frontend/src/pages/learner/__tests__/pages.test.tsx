@@ -24,11 +24,12 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ child
 
 const modules = import.meta.glob<{ default: ComponentType }>('/src/pages/learner/**/page.tsx');
 Object.assign(modules, import.meta.glob<{ default: ComponentType }>('/src/pages/workspace/learner/page.tsx'));
-const config = readFileSync(resolve('src/router/config.tsx'), 'utf8');
-const components = new Map([...config.matchAll(/const (\w+) = lazyRoute\(\(\) => import\("(\.\.\/pages\/(?:learner|workspace\/learner)\/[^"\n]+)"\)\)/g)]
+const config = ['src/router/config.tsx', 'src/router/studentWorkspaceRoutes.tsx']
+  .map(path => readFileSync(resolve(path), 'utf8')).join('\n');
+const components = new Map([...config.matchAll(/const (\w+) = lazyRoute\(\(\) => import\(["'](\.\.\/pages\/(?:learner|workspace\/learner)\/[^"'\n]+)["']\)\)/g)]
   .map(match => [match[1], match[2].replace('../pages/', '/src/pages/') + '.tsx']));
 const routes = new Map<string, string>();
-for (const match of config.matchAll(/path:\s*"([^"]+)"\s*,\s*element:\s*<(\w+)/g)) {
+for (const match of config.matchAll(/path:\s*["']([^"']+)["']\s*,\s*element:\s*<(\w+)/g)) {
   const file = components.get(match[2]);
   if (file && (!routes.has(file) || match[1].includes(':kind'))) routes.set(file, match[1]);
 }
@@ -42,7 +43,10 @@ function payload(url: string): unknown {
   if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
   if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
   if (url.includes('/profile-photo/')) return null;
-  if (url.includes('/overview-week/')) return { weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', planSubjects: [], modules: [], deadlines: [], undatedActivities: 0, expectedHours: null, missingExpectedHours: 0, otjh: { actual: 0, historical: 0, new: 0, undatedHistoricalRows: 0 } };
+  if (url.includes('/overview-week/')) return { weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', planSubjects: [], modules: [], deadlines: [], undatedActivities: 0, expectedHours: null, missingExpectedHours: 0, otjh: { actual: 0, historical: 0, new: 0, undatedHistoricalRows: 0 },
+    metrics: { migrated: false, programme: { completed: 0, total: 0, percent: null, status: 'empty' },
+      ksb: { completed: 0, total: 0, percent: null, status: 'empty', codes: [] },
+      otjh: { historical: 0, new: 0, actual: 0, planned: null } } };
   if (/\/learner-(detail|summary)\//.test(url)) return detail();
   if (url.includes('/subject-covers/')) return { covers: {}, current_subjects: [], builder_subjects: {}, modules: {} };
   if (url.includes('/training-plan-dashboard/')) return { months: {}, actual: [], actualAvailable: false, modules: [], moduleLinks: {}, sessions: [], reviews: [], coach: { name: '', bookingUrl: null }, contractStatus: 'not-available', generatedAt: '' };
@@ -54,10 +58,15 @@ function payload(url: string): unknown {
     mode: { available: false, mode: 'live', requestedMode: null, status: 'active', emailSent: false, managerAvailable: false, remindersEnabled: true, updatedAt: null },
   };
   if (url.includes('/attendance/')) return { attendance: null };
+  if (url.includes('/rewards-summary/')) return { points: { learnerId: '125', earned: 0, committed: 0, balance: 0 }, rewards: [] };
   if (url.includes('/metrics/')) return { migrated: false,
     programme: { completed: 0, total: 0, percent: null, status: 'empty' },
     ksb: { completed: 0, total: 0, percent: null, status: 'empty', codes: [] },
     otjh: { historical: 0, new: 0, actual: 0, planned: null } };
+  if (url.includes('/monthly-logs/')) return {
+    learner: { id: 125, aptem_id: null, name: 'Test learner', programme: 'Leadership', coach_name: '' },
+    months: [], total_months: 0, completed_months: 0, read_only: false, csrf_token: 'csrf',
+  };
   if (url.includes('/absence-reports/')) return { count: 0, results: [], missedSessions: [] };
   if (url.includes('/monthly-reports/')) return { reports: [], savedSignature: '', savedSignatureName: '' };
   if (url.includes('/all-students-schema/')) return { students: [] };
@@ -148,6 +157,44 @@ function NavigationDestination() {
 }
 
 describe('learner loading and recovery', () => {
+  it('uses the selected Training Plan dates in the learner programme header', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/learner-summary/')) return new Response(JSON.stringify({
+        ...detail(), programmeStartDate: '2026-02-01', programmeEndDate: null,
+        learningAccess: { blocked: false, startDate: '2026-02-01' },
+      }));
+      if (url.includes('/training-plan-dashboard/') && url.includes('section=contract')) {
+        return new Response(JSON.stringify({
+          months: {}, contractStatus: 'ready',
+          programmeStartDate: '2026-01-19', programmeEndDate: '2027-01-31',
+        }));
+      }
+      if (url.includes('/monthly-logs/')) return new Response(JSON.stringify({
+        learner: { id: 125, aptem_id: 7001, name: 'Test learner', programme: 'Leadership', coach_name: '' },
+        months: [
+          { month: '2026-01', source: 'legacy', training_plan_target: 3, actual_hours: 1.5, not_accepted_hours: 0 },
+          { month: '2026-09', source: 'lms', training_plan_target: 20, actual_hours: 2, not_accepted_hours: 0 },
+        ],
+        total_months: 2, completed_months: 0, read_only: false, csrf_token: 'csrf',
+      }));
+      return new Response(JSON.stringify(payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+
+    const hero = within(await screen.findByLabelText('Learner programme'));
+    expect(await hero.findByText('19 January 2026')).toBeVisible();
+    expect(hero.getByText('31 January 2027')).toBeVisible();
+    expect(hero.queryByText('1 February 2026')).not.toBeInTheDocument();
+    const chart = within(await screen.findByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(await chart.findByRole('button', {
+      name: 'January 2026: target 3 hours, submitted 0 hours, completed 1.5 hours',
+    })).toBeVisible();
+    expect(chart.getByRole('button', { name: /January 2027:/ })).toBeVisible();
+    expect(chart.queryByRole('button', { name: /December 2025:/ })).not.toBeInTheDocument();
+  });
+
   it('keeps the learning tab in the URL and follows browser Back and quiz deep links', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(payload(String(input))))));
     const Page = (await modules['/src/pages/learner/my-learning/page.tsx']()).default;
@@ -228,11 +275,107 @@ describe('learner loading and recovery', () => {
     expect(hero.getByText('Current module')).toBeVisible();
     fireEvent.click(hero.getByRole('button',{name:'Continue learning'}));
     expect(screen.getByTestId('navigation-destination')).toHaveTextContent(
-      `/learner/modules/commercial/125?subject=${imported?'legacy%3A77':'current%3Amarketing'}`);
+      `/learner/my-learning/commercial/125?subject=${imported?'legacy%3A77':'current%3Amarketing'}&week=current`);
     fireEvent.click(screen.getByRole('button',{name:'Return to dashboard'}));
     const returnedHero=within(await screen.findByLabelText('Learner programme'));
     fireEvent.click(returnedHero.getByRole('button',{name:"Learner's Map"}));
     expect(screen.getByTestId('navigation-destination')).toHaveTextContent('/learner/learning-plan/modules/commercial/125');
+  });
+
+  it.each([
+    { present: 8, sessions: 10, fail: false, caption: '80% attendance', rate: '80' },
+    { present: 1, sessions: 3, fail: false, caption: '67% attendance', rate: '67' },
+    { present: 0, sessions: 3, fail: false, caption: '0% attendance', rate: '0' },
+    { present: 0, sessions: 0, fail: false, caption: 'No attendance records yet', rate: null },
+    { present: null, sessions: null, fail: true, caption: 'Attendance unavailable', rate: null },
+  ])('shows attendance counts and rate without a fixed target ($caption)', async ({ present, sessions, fail, caption, rate }) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/attendance/')) return new Response(JSON.stringify(fail
+        ? { error: 'Attendance unavailable' }
+        : { attendance: sessions ? { present, sessions, attendanceRate: Number(rate) } : null }), { status: fail ? 503 : 200 });
+      return new Response(JSON.stringify(payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    const card = within(await screen.findByRole('link', { name: 'Open Attendance' }));
+    expect(await card.findByText(caption)).toBeVisible();
+    expect(card.getByText('Attended').nextElementSibling).toHaveTextContent(present == null ? '--' : String(present));
+    expect(card.getByText('Sessions to date').nextElementSibling).toHaveTextContent(sessions == null ? '--' : String(sessions));
+    expect(card.queryByText('Target')).not.toBeInTheDocument();
+    expect(card.queryByText('90%')).not.toBeInTheDocument();
+    if (rate == null) expect(card.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
+    else expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow', rate);
+  });
+
+  it('uses the same canonical metrics response as My Learning when the weekly overview disagrees', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/overview-week/')) return new Response(JSON.stringify({
+        ...(payload(url) as Record<string, unknown>),
+        metrics: {
+          migrated: false,
+          programme: { completed: 1, total: 1, percent: 100, status: 'available' },
+          ksb: { completed: 1, total: 1, percent: 100, status: 'available', codes: [] },
+          otjh: { historical: 10, new: 62.7, actual: 72.7, planned: 533.75 },
+        },
+      }));
+      if (url.includes('/metrics/')) return new Response(JSON.stringify({
+        migrated: false,
+        programme: { completed: 36, total: 307, percent: 11.73, status: 'available' },
+        ksb: { completed: 14, total: 32, percent: 43.75, status: 'available', codes: [] },
+        otjh: { historical: 10, new: 62.7, actual: 72.7, planned: 527.75 },
+      }));
+      return new Response(JSON.stringify(payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+
+    const programme = within(await screen.findByRole('link', { name: 'Open Programme Progress' }));
+    await waitFor(() => expect(programme.getByText('Current').nextElementSibling).toHaveTextContent('11.73%'));
+    expect(programme.getByText('36/307 activities complete')).toBeVisible();
+    expect(programme.getByText('307 activities')).toBeVisible();
+
+    const otjh = within(screen.getByRole('link', { name: 'Open OTJ Hours' }));
+    expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('72.70 h');
+    expect(otjh.getByText('Target (TP Planned)').nextElementSibling).toHaveTextContent('527.75 h');
+    expect(otjh.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '14');
+
+    const ksb = within(screen.getByRole('link', { name: 'Open KSB Progress' }));
+    expect(ksb.getByText('Current').nextElementSibling).toHaveTextContent('43.75%');
+    expect(ksb.getByText('14 of 32 points achieved')).toBeVisible();
+
+    const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    expect(requests.filter(url => url.includes('/overview-week/'))).toHaveLength(1);
+    expect(requests.some(url => url.includes('section=dashboard'))).toBe(false);
+    expect(requests.filter(url => url.includes('/metrics/'))).toHaveLength(1);
+  });
+
+  it('adds completed LMS monthly-log hours after August to the Audit actual', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/metrics/')) return new Response(JSON.stringify({
+        migrated: true,
+        programme: { completed: 36, total: 307, percent: 11.73, status: 'available' },
+        ksb: { completed: 14, total: 32, percent: 43.75, status: 'available', codes: [] },
+        otjh: { historical: 294.63, new: 0, actual: 294.63, planned: 353 },
+      }));
+      if (url.includes('/monthly-logs/')) return new Response(JSON.stringify({
+        learner: { id: 125, aptem_id: 7001, name: 'Test learner', programme: 'Leadership', coach_name: '' },
+        months: [
+          { month: '2026-08', source: 'legacy', training_plan_target: 30, actual_hours: 18, not_accepted_hours: 0 },
+          { month: '2026-09', source: 'lms', training_plan_target: 30, actual_hours: 2.5, not_accepted_hours: 4 },
+        ],
+        total_months: 2, completed_months: 1, read_only: false, csrf_token: 'csrf',
+      }));
+      return new Response(JSON.stringify(payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+
+    const otjh = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
+    await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('297.13 h'));
+    expect(otjh.getByText('Target (TP Planned)').nextElementSibling).toHaveTextContent('353.00 h');
   });
 
   it('shows unavailable header facts when the schedule fails instead of claiming the coach is unassigned', async () => {
@@ -267,7 +410,7 @@ describe('learner loading and recovery', () => {
     expect(vi.mocked(fetch).mock.calls.some(([,init])=>init?.method && init.method!=='GET')).toBe(false);
   });
 
-  it('shows an assigned programme and plan before cohort start while keeping study closed', async () => {
+  it('shows an assigned programme and plan before cohort start with study open', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       return new Response(JSON.stringify(url.includes('/learner-summary/')
@@ -281,10 +424,11 @@ describe('learner loading and recovery', () => {
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Ayman Learner' })).toBeVisible();
-    expect(screen.getByText('Learning starts on 1 October 2026')).toBeVisible();
+    expect(screen.getByText('Your programme starts on 1 October 2026')).toBeVisible();
     expect(screen.getByText('Marketing Executive Level 4', { exact: false })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Learning opens on your start date' })).toBeDisabled();
     expect(await screen.findByRole('region', { name: 'Monthly study plan' })).toBeVisible();
+    // The upcoming date is a notice, not a lock: the learner can study now.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Continue learning' })).toBeEnabled());
     expect(screen.queryByText('Your programme starts soon')).not.toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method && init.method !== 'GET')).toBe(false);
   });
@@ -327,7 +471,7 @@ describe('learner loading and recovery', () => {
     expect(screen.queryByText('Your start date has not been set yet')).not.toBeInTheDocument();
     await waitFor(() => {
       const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-      for (const endpoint of ['/metrics/', '/attendance/', '/overview-week/', '/training-plan-dashboard/']) {
+      for (const endpoint of ['/attendance/', '/overview-week/', '/training-plan-dashboard/']) {
         expect(requests.some(url => url.includes(endpoint))).toBe(true);
       }
     });
@@ -358,7 +502,9 @@ describe('learner loading and recovery', () => {
     expect(screen.queryByText('Your start date has not been set yet')).not.toBeInTheDocument();
   });
 
-  it('keeps the waiting page for a commercial learner without previous learning before programme start', async () => {
+  it('gives a commercial learner their dashboard even with no start date confirmed', async () => {
+    // An unconfirmed start date is still only a date: it no longer replaces the
+    // workspace with a waiting page, just a notice that the date is pending.
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       return new Response(JSON.stringify(url.includes('/learner-summary/')
@@ -368,7 +514,22 @@ describe('learner loading and recovery', () => {
     }));
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
-    expect(await screen.findByRole('heading', { name: 'Your start date has not been set yet' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Your start date has not been set yet' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the waiting page for a commercial learner whose learning plan is not assigned yet', async () => {
+    // Not a date: there is genuinely no plan behind the workspace to open.
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(JSON.stringify(url.includes('/learner-summary/')
+        ? { ...detail(), programmeStatus: 'Delivery', programmeStartDate: null,
+          accessGate: { blocked: true, reasons: ['plan'], startDate: '', outstandingDocuments: [] } }
+        : payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Your learning plan is being prepared' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Dashboard' })).not.toBeInTheDocument();
     const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(requests.filter(url => /\/metrics\/|\/attendance\/|\/overview-week\//.test(url))).toEqual([]);
@@ -411,6 +572,7 @@ describe('learner loading and recovery', () => {
     const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
     expect(requests.filter(url => /learner-detail|student-activity|subject-covers/.test(url))).toEqual([]);
     expect(requests.filter(url => url.includes('overview-week'))).toHaveLength(1);
+    expect(requests.some(url => url.includes('section=dashboard'))).toBe(false);
     expect(requests.filter(url => url.includes('section=overview'))).toHaveLength(1);
     expect(screen.queryByTestId('page-crash')).not.toBeInTheDocument();
   });

@@ -79,11 +79,42 @@ class MonthlyLogsTests(SimpleTestCase):
     def test_old_report_is_returned_with_existing_signatures_and_iframe_rows(self):
         historical = {'month': '2026-08', 'rows': [], 'student_signature': {'file_id': 'saved',
                        'signed_at': '2026-09-01', 'signer_name': 'Learner'}, 'coach_signature': None}
-        with patch.object(logs.old, 'month_detail', return_value=historical), patch.object(logs.old, 'start') as start:
+        with patch.object(logs.old, 'month_detail', return_value=historical), \
+             patch.object(logs, 'signed_training_plan_targets', return_value={'2026-08': 20}), \
+             patch.object(logs.old, 'start') as start:
             detail = logs.detail_data(self.learner, '2026-08')
         self.assertEqual(detail['student_signature']['url'], '/audit_api/old-otjh/signatures/saved/')
         self.assertEqual(detail['source'], 'legacy')
+        self.assertEqual(detail['training_plan_target'], 20)
+        self.assertEqual(detail['training_plan_target_source'], 'signed_training_plan')
         start.assert_not_called()
+
+    def test_historical_summary_uses_signed_training_plan_targets(self):
+        historical = {'months': [
+            {'month': '2026-01', 'training_plan_target': 1},
+            {'month': '2026-02', 'training_plan_target': 30},
+        ]}
+        with patch.object(logs.old, 'summary', return_value=historical), \
+             patch.object(logs, 'signed_training_plan_targets', return_value={'2026-01': 3}):
+            summary = logs.legacy_summary(self.learner)
+
+        self.assertEqual(summary['months'][0]['training_plan_target'], 3)
+        self.assertEqual(summary['months'][0]['training_plan_target_source'], 'signed_training_plan')
+        self.assertEqual(summary['months'][1]['training_plan_target'], 30)
+
+    def test_month_after_august_keeps_using_the_lms_source(self):
+        with patch.object(logs.old, 'month_detail') as audit_detail, \
+             patch.object(logs, 'signed_training_plan_targets') as contract_targets, \
+             patch.object(logs, 'signatures', return_value=[]), \
+             patch.object(sources, 'activity_rows', return_value=[self.row]), \
+             patch.object(logs, 'lock_state', return_value={'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}), \
+             patch.object(logs.old_repo, 'report_profile', return_value={}):
+            detail = logs.detail_data(self.learner, '2026-09')
+
+        self.assertEqual(detail['source'], 'lms')
+        self.assertEqual(detail['rows'], [self.row])
+        audit_detail.assert_not_called()
+        contract_targets.assert_not_called()
 
     def test_summary_includes_retained_and_current_months(self):
         retained = {'month': '2026-08', 'status': 'complete', 'student_signature': {'url': 'saved'}}
@@ -103,6 +134,21 @@ class MonthlyLogsTests(SimpleTestCase):
                 self.assertEqual(logs.current_months(self.learner), {})
             self.assertEqual(logs.current_months(self.learner), {'2026-09': [self.row, last_day]})
 
+    def test_open_month_is_available_as_a_live_unsigned_log(self):
+        learner = {**self.learner, 'aptem_id': None}
+        with patch.object(logs.timezone, 'localdate', return_value=date(2026, 9, 15)), \
+             patch.object(sources, 'activity_rows', return_value=[self.row]), \
+             patch.object(logs, 'legacy_summary', return_value={'months': []}), \
+             patch.object(logs, 'signatures', return_value=[]), \
+             patch.object(logs, 'lock_state', return_value={'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}), \
+             patch.object(sources, 'first_evidence_date', return_value=None):
+            summary = logs.summary_data(learner, include_open=True)
+            detail = logs.detail_data(learner, '2026-09', include_open=True)
+        self.assertEqual([month['month'] for month in summary['months']], ['2026-09'])
+        self.assertTrue(summary['months'][0]['is_open'])
+        self.assertTrue(detail['is_open'])
+        self.assertEqual(detail['rows'], [self.row])
+
     def test_open_month_cannot_be_requested_or_signed_directly(self):
         with patch.object(logs.timezone, 'localdate', return_value=date(2026, 9, 30)), \
              patch.object(sources, 'activity_rows') as activities, \
@@ -120,21 +166,52 @@ class MonthlyLogsTests(SimpleTestCase):
             activities.assert_not_called()
             query.assert_not_called()
 
-    def test_learner_preview_is_read_only_and_ignores_a_stale_coach_selection(self):
+    def test_admin_learner_workspace_allows_actions_and_ignores_a_stale_coach_selection(self):
         self.account.role = 'admin'
         with patch.object(logs.old, 'coach_actor', return_value={'role': 'admin', 'email': 'admin@example.test'}), \
              patch.object(logs.old, 'resolve_record', return_value=self.learner), \
              patch.object(sources, 'profile', return_value=None), \
              patch('coach_api.auth._requested_view_as_email', return_value='other@example.test') as view_as:
             learner, role = logs.scope(self.request(perspective='learner'), 7)
-            self.assertTrue(learner['_view_as'])
-            self.assertEqual(role, 'admin')
+            self.assertFalse(learner['_view_as'])
+            self.assertEqual(role, 'learner')
             view_as.assert_not_called()
             request = self.request('post')
             request.GET = {'perspective': 'learner'}
+            learner, role = logs.scope(request, 7)
+            self.assertFalse(learner['_view_as'])
+            self.assertEqual(role, 'learner')
+            self.assertIs(request.login_account, self.account)
+            self.assertEqual(request.login_account.role, 'admin')
+            self.assertTrue(request.admin_learner_action)
+            self.assertEqual(request.admin_learner_id, 7)
+
+    def test_admin_completion_uses_the_selected_record_and_real_actor(self):
+        self.account.role = 'admin'
+        request = self.request('post')
+        report = {'month': '2026-08', 'status': 'complete', 'rows': []}
+        with patch.object(logs, 'scope', return_value=(self.learner, 'learner')), \
+             patch.object(logs.old, 'complete', return_value=report) as complete:
+            response = unwrap(logs.complete)(request, 7, '2026-08')
+        self.assertEqual(response.status_code, 200)
+        complete.assert_called_once_with(self.learner, '2026-08', self.account, 'learner')
+
+    def test_coach_cannot_complete_a_month_as_the_learner(self):
+        with patch.object(logs, 'scope', return_value=(self.learner, 'coach')), \
+             patch.object(logs.old, 'complete') as complete:
             with self.assertRaises(ServiceError) as result:
-                logs.scope(request, 7)
+                unwrap(logs.complete)(self.request('post'), 7, '2026-08')
             self.assertEqual(result.exception.status, 403)
+            complete.assert_not_called()
+
+    def test_admin_completion_requires_csrf_before_writing(self):
+        self.account.role = 'admin'
+        request = self.request('post')
+        request.GET = {'perspective': 'learner'}
+        with patch('login.permissions.authenticate_request', return_value=self.account), \
+             patch.object(logs.old, 'complete') as complete:
+            self.assertEqual(logs.complete(request, 7, '2026-08').status_code, 403)
+            complete.assert_not_called()
 
     def test_coach_preview_cannot_read_an_unassigned_learner(self):
         self.account.role = 'staff'

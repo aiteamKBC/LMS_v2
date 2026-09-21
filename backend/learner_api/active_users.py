@@ -6,6 +6,7 @@ JSON tables are not read or written here.
 """
 
 import hashlib
+import copy
 import json
 import logging
 import re
@@ -607,7 +608,7 @@ def replace_training_plan(learner, plan):
             )
 
 
-def hydrate_training_plan(plan):
+def hydrate_training_plan(plan, *, strict=False):
     """Expand selected modules into their authored week/component tree.
 
     Enrolment's module picker stores a deliberately small selection payload.
@@ -639,7 +640,7 @@ def hydrate_training_plan(plan):
                        m.start_date, m.end_date, m.sessions_number,
                        m.session_week_day, m.cohort_id,
                        w.id, w.title, w.week_number,
-                       c.id, c.title, c.type, c.expected_otjh
+                       c.id, c.title, c.type, c.expected_otjh, to_jsonb(m)->'session_overrides'
                 FROM curriculum.modules m
                 LEFT JOIN curriculum.weeks w ON w.module_catalogue_id = m.module_catalogue_id
                 LEFT JOIN curriculum.components c ON c.week_id = w.id
@@ -651,6 +652,8 @@ def hydrate_training_plan(plan):
             )
             rows = cursor.fetchall()
     except DatabaseError:
+        if strict:
+            raise
         logger.exception("Could not expand training-plan modules from curriculum")
         return selected
 
@@ -659,7 +662,8 @@ def hydrate_training_plan(plan):
     ids_by_title = {}
     weeks_by_module = {}
     seen_weeks = set()
-    for module_id, module_title, module_start, module_end, sessions_number, session_week_day, cohort_id, week_id, week_title, week_number, component_id, component_title, component_type, component_expected_otjh in rows:
+    for row in rows:
+        module_id, module_title, module_start, module_end, sessions_number, session_week_day, cohort_id, week_id, week_title, week_number, component_id, component_title, component_type, component_expected_otjh = row[:14]
         module_id = _s(module_id)
         titles[module_id] = _s(module_title) or module_id
         ids_by_title[titles[module_id]] = module_id
@@ -669,6 +673,7 @@ def hydrate_training_plan(plan):
             "sessions_number": sessions_number,
             "session_week_day": session_week_day,
             "cohort_id": cohort_id,
+            "session_overrides": row[14] if len(row) > 14 else {},
         }
         if not week_id:
             continue
@@ -815,6 +820,50 @@ def components_target_to_date(profile, today=None):
     return target_by_elapsed_time(counts, getattr(profile, "start_date", None), today=today)
 
 
+def refresh_saved_session_dates(plan):
+    """Overlay reviewed session exceptions on an already expanded learner plan.
+
+    Read current curriculum dates without replacing the learner's chosen modules,
+    component history or persisted enrolment snapshot. Both learner types use it.
+    """
+    ids = [_s(item.get('moduleId') or item.get('moduleCatalogueId')) for item in plan if isinstance(item, dict)]
+    ids = [identifier for identifier in ids if identifier]
+    if not ids:
+        return plan
+    with connections['default'].cursor() as cursor:
+        cursor.execute('''SELECT to_jsonb(m) FROM curriculum.modules m
+            WHERE module_catalogue_id = ANY(%s) AND deleted_at IS NULL
+              AND COALESCE(to_jsonb(m)->'session_overrides', '{}'::jsonb) <> '{}'::jsonb''', [ids])
+        modules = {str(row[0]['module_catalogue_id']): row[0] for row in cursor.fetchall()}
+    if not modules:
+        return plan
+    from curriculum_api.views import apply_module_session_plan_to_weeks
+    result = copy.deepcopy(plan)
+    for item in result:
+        module = modules.get(_s(item.get('moduleId') or item.get('moduleCatalogueId')))
+        if not module or not isinstance(item.get('weeks'), list):
+            continue
+        weeks = [{**week, 'components': [{**component,
+                    'type': _s(component.get('type')).replace('_', '-'),
+                    'settings': dict(component.get('settings') or {})}
+                  for component in week.get('components') or []]} for week in item['weeks']]
+        apply_module_session_plan_to_weeks(module, {}, weeks)
+        for saved, dated in zip(item['weeks'], weeks):
+            changed = dated.get('sessionRescheduled') or any(
+                (component.get('settings') or {}).get('sessionRescheduled') for component in dated['components'])
+            if not changed:
+                continue
+            for key in ('sessionDate', 'sessionDay', 'sessionStartTime', 'sessionDurationMinutes'):
+                saved[key] = dated.get(key)
+            for original, current in zip(saved.get('components') or [], dated['components']):
+                settings = current.get('settings') or {}
+                if settings.get('sessionRescheduled'):
+                    for key in ('sessionDate', 'sessionTime', 'sessionDateTimeUtc', 'durationMinutes'):
+                        original[key] = settings.get(key)
+        item['endDate'] = _s(module.get('end_date')) or item.get('endDate')
+    return result
+
+
 def hydrate_source_training_plan(source):
     """Persist an expanded plan on the enrolment source when it changed.
 
@@ -831,7 +880,10 @@ def hydrate_source_training_plan(source):
         isinstance(module, dict) and isinstance(module.get("weeks"), list)
         for module in plan
     ):
-        return plan
+        current = refresh_saved_session_dates(plan)
+        if current is not plan:
+            setattr(source, training_plan_field(source), current)
+        return current
     hydrated = hydrate_training_plan(plan)
     if hydrated == plan:
         return hydrated
@@ -1856,10 +1908,13 @@ def mirror_placement_to_enrolment(profile):
 def sync_active_user(source):
     """Upsert one permanent learner and refresh authored plan/KSB child rows."""
     from .apprenticeship_agreement import _group_dates
+    from .learner_dates import learner_date_values
+    from .coach_assignment import source_coach
 
     status = _s(getattr(source, "programme_status", ""))
     start_date, end_date, _ = _group_dates(source)
     defaults = {
+        **learner_date_values(source),
         "full_name": _s(getattr(source, "username", ""))
         or _s(getattr(source, "email", ""))
         or f"Learner {source.id}",
@@ -1882,6 +1937,9 @@ def sync_active_user(source):
     }
     try:
         with transaction.atomic(using="enrolment"):
+            # Preserve legacy profile-only assignments, but copy an explicit
+            # assignment (including an unassignment) on activation and rebuild.
+            defaults.update(source_coach(source) or {})
             # Prefer the explicit link; fall back to email for profiles created
             # before enrolment_id existed (see identity.learner_profile_for_source).
             learner = learner_profile_for_source(source, source.id)

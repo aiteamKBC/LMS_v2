@@ -5,11 +5,13 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LearnerCalendarContent } from './page';
 import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { fetchReviewHistory } from '@/api/reviewHistory';
 
 vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: () => ({ kind: 'commercial', id: '125' }) }));
 vi.mock('@/pages/coach/shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => <div>Meeting recordings</div> }));
 vi.mock('@/api/learnerCalendar', () => ({
   fetchLearnerCalendarEvents: vi.fn(),
+  fetchLearnerEventReviewInstance: vi.fn(async () => ({ instance: null })),
   bookLearnerCalendarSession: vi.fn(),
   rescheduleLearnerCalendarSession: vi.fn(),
   fetchLearnerCoach: vi.fn(async () => ({ coachName: 'Assigned coach', coachEmail: 'coach@example.test' })),
@@ -18,6 +20,7 @@ vi.mock('@/api/learnerCalendar', () => ({
   fetchLearnerMeetingArtifacts: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn(),
   startCalendarOAuth: vi.fn(), connectCredentialCalendar: vi.fn(), disconnectPersonalCalendar: vi.fn(),
 }));
+vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn(async () => ({ reviews: [] })) }));
 
 const now = new Date();
 const isoDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -34,10 +37,22 @@ function setup(events: LearnerCalendarEvent[] = [event()], search = '') {
   return render(<StrictMode><MemoryRouter initialEntries={['/learner/calendar' + search]}><LearnerCalendarContent /></MemoryRouter></StrictMode>);
 }
 
-beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: null, category: 'reviews', reviews: [] });
+  localStorage.clear();
+});
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
+  it('shows a written, colour-coded status on month cards', async () => {
+    setup();
+    const statusBadges = await screen.findAllByLabelText('Scheduled status');
+    expect(statusBadges[0]).toBeVisible();
+    expect(statusBadges[0]).toHaveTextContent('Scheduled');
+    expect(statusBadges[0]).toHaveClass('bg-primary-100', 'text-primary-800');
+  });
+
   it.each(['book', 'reschedule'] as const)('uses the appointment date timezone offset when a future session is %s', async action => {
     // A browser in London is UTC+1 in September, but UTC in November.
     vi.spyOn(Date.prototype, 'getTimezoneOffset').mockImplementation(function (this: Date) {
@@ -176,6 +191,25 @@ describe('calendar event previews', () => {
     expect(await screen.findByRole('heading', { name: 'Schedule Monthly Coaching Meeting' })).toBeVisible();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('shows Curriculum reviews instead of imported upcoming schedules', async () => {
+    vi.mocked(fetchReviewHistory).mockResolvedValue({
+      learnerId: 125, category: 'reviews', reviews: [{
+        id: '72', aptemReviewId: '72', name: 'Old Aptem schedule',
+        type: 'Progress Review', status: 'not-scheduled', plannedDate: isoDate,
+        plannedTime: null, completedDate: null, reviewerName: '', extractionStatus: 'complete',
+        detailsAvailable: false, sections: [],
+      }],
+    });
+    setup([event({
+      source: 'progress-review', title: 'Configured progress conversation',
+      reviewTemplateId: 'REV-72', reviewTypeId: 'REVT-PROGRESS_REVIEW',
+      reviewTypeCode: 'progress_review', reviewTypeName: 'Progress Review',
+    })]);
+    expect((await screen.findAllByRole('button', { name: /Configured progress conversation/ }))[0]).toBeVisible();
+    expect(screen.queryByText('Old Aptem schedule')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Progress Review (1)')).toBeVisible();
   });
 
   it('previews the updated appointment after a successful reschedule', async () => {

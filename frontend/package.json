@@ -68,6 +68,7 @@
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:teams": "vitest run src/pages/curriculum/teams-meetings/__tests__/teamsMeetingsPage.test.tsx src/pages/curriculum/module-workspace/__tests__/scheduleTeamsCalendar.test.tsx src/pages/curriculum/module-builder/__tests__/calendarInstants.test.ts src/pages/curriculum/module-builder/__tests__/weekSessionDates.test.ts src/pages/curriculum/session-calendar/__tests__/calendarDates.test.ts src/pages/curriculum/shared/entities/__tests__/sessionShiftPreview.test.ts src/pages/coach/shared/calendarEvents.test.ts src/api/__tests__/learnerCalendarFreshness.test.ts src/lib/format.timezone.test.ts --maxWorkers=2",
     "test:learner": "vitest run src/pages/learner src/pages/workspace/learner src/hooks/__tests__ src/api/__tests__ src/api/reflectionSubmission.test.ts src/features/old-otjh src/components/feature src/router/__tests__ --maxWorkers=2",
     "test:watch": "vitest",
     "type-check": "tsc --noEmit --project tsconfig.app.json",

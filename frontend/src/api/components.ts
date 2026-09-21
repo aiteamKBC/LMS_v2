@@ -1,3 +1,4 @@
+import { learningFetch } from '@/lib/personalLearning';
 // ============================================================================
 // Generic component-completion API client.
 // Records that a learner finished a non-quiz, non-video component (podcast,
@@ -55,7 +56,7 @@ export interface ComponentProgressResponse {
 async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...init });
+    res = await learningFetch(url, { headers: { 'Content-Type': 'application/json' }, ...init });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }

@@ -36,6 +36,7 @@ import {
   Heart,
   HeartPulse,
   History,
+  Home as HomeIcon,
   KeyRound,
   LayoutDashboard,
   LifeBuoy,
@@ -139,7 +140,15 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   if (id === 'learner-onboarding') return Users;
   if (id === 'learner-compliance-documents') return ShieldCheck;
   if (/clipboard/.test(sourceIcon.toLowerCase())) return ClipboardList;
-  if (/dashboard|overview|\bhome\b/.test(key)) return LayoutDashboard;
+  // Home is a house; Dashboard is the grid. They shared one branch, so the two
+  // rows sat one above the other drawing the identical icon -- different
+  // destinations with the same picture, which defeats having an icon at all.
+  // Home is tested first: `key` concatenates id + label + sourceIcon, so
+  // 'learner-home ... ri-home-line' would otherwise never be reached.
+  if (/\bhome\b/.test(key)) return HomeIcon;
+  if (/dashboard|overview/.test(key)) return LayoutDashboard;
+  if (id === 'coach-marking-queue') return ClipboardList;
+  if (id === 'coach-catchup-queue') return RefreshCw;
   // Curriculum workspace groups get distinct icons so the sidebar is scannable.
   if (/programme\s*-?\s*design|programme-design/.test(key)) return Presentation;
   if (/curriculum\s*-?\s*builder|curriculum-builder/.test(key)) return Workflow;
@@ -773,22 +782,16 @@ function SecondaryNavCard({ item, active, onNavigate }: {
       to={item.href ?? '#'}
       aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
-      className={`group flex min-h-[68px] w-full min-w-0 items-center gap-2.5 rounded-2xl border px-2.5 py-3 text-left transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/80 motion-reduce:!transition-none ${active ? 'border-white/90 bg-white/95 text-brand shadow-sm' : 'border-white/10 bg-white/5 text-white/90 hover:border-white/25 hover:bg-white/10 hover:text-white'}`}
+      className={`group flex min-h-10 w-full min-w-0 items-center rounded-lg px-3 py-2 text-left text-[13px] leading-snug transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/80 motion-reduce:!transition-none ${active ? 'bg-brand-accent font-semibold text-white' : 'text-white/75 hover:bg-white/10 hover:text-white'}`}
     >
-      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${active ? 'bg-brand text-white' : 'bg-white/10 text-white/90 group-hover:bg-white/15 group-hover:text-white'}`}>
-        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block break-words text-[13px] font-semibold leading-[1.4]">{item.label}</span>
-        {hasStatus && (
-          <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
-            {item.statusDot && <StatusDot color={item.statusDot} />}
-            {item.badge ? <NavBadge count={item.badge} /> : null}
-          </span>
-        )}
-      </span>
-      <ChevronRight size={14} strokeWidth={1.8} className={`shrink-0 ${active ? 'text-brand' : 'text-white/40 group-hover:text-white/80'}`} aria-hidden="true" />
+      <span className="min-w-0 flex-1 break-words">{item.label}</span>
+      {hasStatus && (
+        <span className="ml-2 flex shrink-0 items-center gap-1.5">
+          {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
+          {item.statusDot && <StatusDot color={item.statusDot} />}
+          {item.badge ? <NavBadge count={item.badge} /> : null}
+        </span>
+      )}
     </Link>
   );
 }
@@ -814,15 +817,20 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
       className={presentation ? `relative flex items-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/80 ${presentation === 'rail' ? 'h-12 w-12 justify-center' : 'min-h-12 w-full gap-3 px-3 py-2 text-[13px] font-medium'} ${active ? 'bg-brand-accent text-white shadow-sm' : 'bg-white/10 text-white/75 hover:bg-white/20 hover:text-white'}` : `${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 ${compact ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'}`}
     >
       {active && <span className={presentation ? 'hidden' : 'contents'}><ActiveMarker /></span>}
-      <span className={presentation ? 'flex h-5 w-5 shrink-0 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
+      <span className={presentation ? 'relative flex h-5 w-5 shrink-0 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} className={presentation ? 'h-5 w-5' : undefined} />
+        {presentation === 'rail' && item.badge ? <RailDot className="bg-primary-500" /> : null}
+        {presentation === 'rail' && item.statusDot && !item.badge ? <RailDot className="bg-red-500" /> : null}
+        {presentation === 'rail' && (item.comingSoon || item.tag) && !item.badge && !item.statusDot ? <RailDot className="bg-amber-400" /> : null}
       </span>
       <span className={presentation === 'rail' ? 'sr-only' : 'min-w-0 flex-1 truncate'}>{item.label}</span>
-      <span className={presentation === 'rail' ? 'absolute -right-1 -top-1 flex items-center gap-1' : 'flex shrink-0 items-center gap-1.5'}>
-        {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
-        {item.statusDot && <StatusDot color={item.statusDot} />}
-        {item.badge ? <NavBadge count={item.badge} /> : null}
-      </span>
+      {presentation !== 'rail' && (
+        <span className="flex shrink-0 items-center gap-1.5">
+          {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
+          {item.statusDot && <StatusDot color={item.statusDot} />}
+          {item.badge ? <NavBadge count={item.badge} /> : null}
+        </span>
+      )}
     </Link>
   );
 }
@@ -845,7 +853,10 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
   return (
     <div>
       {presentation === 'tiles' ? (
-        <p className="mb-3 border-b border-white/10 px-1 pb-3 text-[14px] font-semibold leading-snug tracking-wide text-white">{item.label}</p>
+        <div className="mb-3 flex min-h-12 items-center gap-2.5 rounded-lg border border-white/90 bg-brand-accent px-3 py-2 text-[13px] font-semibold leading-snug text-white shadow-sm">
+          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />
+          <span className="min-w-0 flex-1">{item.label}</span>
+        </div>
       ) : (
       <button
         type="button"

@@ -18,7 +18,7 @@ vi.mock('@/features/old-otjh/hooks', () => ({
 
 function LoginDestination() {
   const location = useLocation();
-  return <h1>Login from {location.state?.from}</h1>;
+  return <><h1>Login destination</h1><output data-testid="login-state">{JSON.stringify(location.state)}</output></>;
 }
 
 function renderGate(path: string) {
@@ -64,6 +64,12 @@ describe('RequireAuth after integrating the record loading shell', () => {
     expect(screen.getByLabelText('Loading page')).not.toHaveAttribute('data-workspace-role');
   });
 
+  it('omits the temporary sidebar while the coach session is pending', () => {
+    const { container } = renderGate('/workspace/coach');
+    expect(screen.getByLabelText('Loading page')).toHaveAttribute('data-workspace-role', 'coach');
+    expect(container.querySelector('[style*="width"]')).toBeNull();
+  });
+
   it('keeps session failures retryable without redirecting to login', () => {
     session.isInitialized = true;
     session.initializationError = 'We could not check your session.';
@@ -74,11 +80,12 @@ describe('RequireAuth after integrating the record loading shell', () => {
     expect(session.retryInitialization).toHaveBeenCalledOnce();
   });
 
-  it('requires a real account and preserves the full return path after initialization', () => {
+  it('requires a real account without retaining the old page as a login destination', () => {
     session.isInitialized = true;
     session.auth.isAuthenticated = true;
     renderGate('/learner/my-learning?module=7');
-    expect(screen.getByRole('heading')).toHaveTextContent('Login from /learner/my-learning?module=7');
+    expect(screen.getByRole('heading')).toHaveTextContent('Login destination');
+    expect(screen.getByTestId('login-state')).toHaveTextContent('null');
     expect(screen.queryByText('Protected content')).toBeNull();
   });
 });

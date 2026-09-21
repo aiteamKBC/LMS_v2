@@ -82,6 +82,8 @@ export interface CreateEnrolmentUserInput extends AptemUserFields {
   type?: string;
   status?: string;
   programmeStatus?: string;
+  learnerStartDate?: string | null;
+  learnerEndDate?: string | null;
   programme?: string;
   cohort?: string;
   group?: string;

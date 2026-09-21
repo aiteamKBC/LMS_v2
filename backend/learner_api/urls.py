@@ -1,31 +1,56 @@
+from .coach_availability import coach_available_slots
 from . import presentation_design
+from . import personal_learning
+from . import learner_import
 from . import monthly_reflection_ai
+from .assignment_ai_check import assignment_ai_check
 from . import ksb_generation
 from django.urls import path
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
 from .overview_week import overview_week
+from .rewards_summary import learner_rewards_summary
 from .profile_photo import learner_profile_photo
 from .attendance_lectures import attendance_lectures
+from .attendance_confirmation import confirm_attendance
+from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, review_attendance_mode
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
 from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
+from curriculum_api import session_results
+from .session_recovery import link_catchup
+
 urlpatterns = [
+    path('personal-learning/courses/', personal_learning.courses),
+    path('personal-learning/verify/<uuid:token>/', personal_learning.verify_certificate),
+    path('personal-learning/<str:identity>/request/', personal_learning.learner_request),
+    path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/join/', session_results.learner_join),
+    path('session-catchup/<str:kind>/<int:learner_id>/', link_catchup),
+    path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/', session_results.learner_results),
+    path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/artifacts/<str:artifact_id>/', session_results.learner_content),
+    path("calendar/<str:kind>/<int:pk>/coach-availability/", coach_available_slots, name="coach-available-slots"),
     path('monthly-logs/learners/', monthly_logs.learners, name='monthly-log-learners'),
     path('monthly-logs/<int:learner_id>/', monthly_logs.summary, name='monthly-log-summary'),
     path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),
     path('monthly-logs/<int:learner_id>/<str:month>/', monthly_logs.detail, name='monthly-log-detail'),
     path('monthly-logs/<int:learner_id>/<str:month>/sign/', monthly_logs.sign, name='monthly-log-sign'),
+    path('monthly-logs/<int:learner_id>/<str:month>/complete/', monthly_logs.complete, name='monthly-log-complete'),
+    path('monthly-logs/<int:learner_id>/<str:month>/unlock/', monthly_logs.unlock, name='monthly-log-unlock'),
     path('monthly-logs/<int:learner_id>/<str:month>/activities/<int:row_id>/', monthly_logs.content, name='monthly-log-content'),
     path('attendance/<str:kind>/<int:learner_id>/lectures/', attendance_lectures, name='attendance-lectures'),
+    path('attendance/<str:kind>/<int:learner_id>/attend/', confirm_attendance, name='confirm-attendance'),
+    path('meeting-attendance/<str:kind>/<int:learner_id>/', meeting_attendance, name='meeting-attendance'),
+    path('meeting-attendance/<str:kind>/<int:learner_id>/attend/', confirm_meeting_attendance, name='confirm-meeting-attendance'),
     path('attendance/<str:kind>/<int:learner_id>/mode/', attendance_mode, name='attendance-mode'),
     path('attendance-mode/review/', review_attendance_mode, name='attendance-mode-review'),
     path('profile-photo/<str:kind>/<int:pk>/', learner_profile_photo, name='learner-profile-photo'),
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
+    path("enrolment-users/import-template/", learner_import.import_template, name="enrolment-users-import-template"),
+    path("enrolment-users/import/", learner_import.import_students, name="enrolment-users-import"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
     path("enrolment-users/<int:pk>/", views.enrolment_user_detail, name="enrolment-user-detail"),
     path("enrolment-users/<int:pk>/fields/", views.enrolment_user_fields, name="enrolment-user-fields"),
@@ -105,11 +130,17 @@ urlpatterns = [
         employer_portal.employer_portal_learner_plan,
         name="employer-portal-learner-plan",
     ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/events/<path:event_key>/review/",
+        employer_portal.employer_review_instance,
+        name="employer-review-instance",
+    ),
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),
     path("metrics/<str:kind>/<int:pk>/", learner_metrics, name="learner-metrics"),
     path("overview-week/<str:kind>/<int:pk>/", overview_week, name="learner-overview-week"),
+    path("rewards-summary/<str:kind>/<int:pk>/", learner_rewards_summary, name="learner-rewards-summary"),
     path("student-activity/<str:kind>/<int:pk>/", student_activity.student_activity, name="student-activity"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/", student_activity.start_subject_attempt, name="subject-attempt-start"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/<uuid:attempt_id>/", student_activity.submit_subject_attempt, name="subject-attempt-submit"),
@@ -118,6 +149,8 @@ urlpatterns = [
     path("training-plan/<str:kind>/<int:pk>/", training_plan_view.training_plan, name="training-plan"),
     path("training-plan-dashboard/<str:kind>/<int:pk>/", training_plan_dashboard.training_plan_dashboard, name="training-plan-dashboard"),
     path("certificates/verify/<uuid:token>/", certificates.verify_certificate, name="learner-certificate-verify"),
+    path("certificates/<str:kind>/<int:pk>/modules/<str:module_ref>/", certificates.learner_module_certificate_status, name="learner-module-certificate-status"),
+    path("certificates/<str:kind>/<int:pk>/modules/<str:module_ref>/issue/", certificates.issue_learner_module_certificate, name="learner-module-certificate-issue"),
     path("certificates/<str:kind>/<int:pk>/template/", certificates.learner_certificate_template, name="learner-certificate-template"),
     path("certificates/<str:kind>/<int:pk>/", certificates.learner_certificate_status, name="learner-certificate-status"),
     path("certificates/<str:kind>/<int:pk>/issue/", certificates.issue_learner_certificate, name="learner-certificate-issue"),
@@ -163,6 +196,7 @@ urlpatterns = [
     ),
     path("monthly-reports/<str:kind>/<int:pk>/", monthly_reports.monthly_reports, name="learner-monthly-reports"),
     path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
+    path("reflection/assignment/ai-check/", assignment_ai_check, name="monthly-assignment-ai-check"),
     path("reflection/assignment/legacy-document/<int:evidence_id>/", legacy_assignments.open_legacy_assignment_document, name="legacy-assignment-document"),
     path("reflection/assignment/presentation-design/", presentation_design.upload_design, name="presentation-design"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
@@ -176,6 +210,9 @@ urlpatterns = [
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/artifacts/", calendar.learner_calendar_event_artifacts, name="learner-calendar-event-artifacts"),
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content/", calendar.learner_calendar_event_artifact_content, name="learner-calendar-event-artifact-content"),
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/sign/", calendar.learner_progress_review_sign, name="learner-progress-review-sign"),
+    # Read-only: the Curriculum Review form behind a scheduled occurrence.
+    path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/review/", calendar.learner_calendar_event_review, name="learner-calendar-event-review"),
+    path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/review/pdf/", calendar.learner_calendar_event_review_pdf, name="learner-calendar-event-review-pdf"),
     # Declared before the <path:event_key> route below, which would otherwise
     # never be reached for the bare list URL.
     path("reviews/<str:kind>/<int:pk>/", review_form.enrolment_review_documents, name="enrolment-review-documents"),

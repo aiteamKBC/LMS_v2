@@ -11,17 +11,27 @@ import { exportMonthlyPresentation, type MonthlyAssignment, type AssignmentQuali
 import { proofreadLearningReflection, transcribeVoiceReflection } from '@/api/reflectionVoice';
 import type { LearningReflectionSubmissionInput } from '@/api/reflectionSubmission';
 import type { AssignmentAnswers } from './AssignmentSubmissionWizard';
-import { CheckCircle2, Circle, Loader2, Info, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, Info, AlertCircle, ArrowRight } from 'lucide-react';
 import { startLiveDictation } from '@/utils/liveDictation';
 import { Modal } from '@/pages/users/components/Modal';
+import { AssignmentTimeEntries } from './AssignmentTimeEntries';
+import { LocalAiTextCheck, LocalAiWritingHint } from './LocalAiTextCheck';
+import { McmPresentationUpload } from './McmPresentationUpload';
+import { learningFetch, parsePersonalLearning } from '@/lib/personalLearning';
+
+// Keys are supplied by the monthly assignment quality-check endpoint.
+const QUALITY_CHECK_STEPS: Record<string, number> = {
+  answer: 0, learning: 0, evidence: 1, ksbs: 2, planned: 2, declarations: 2,
+  hours: 2, reflection: 3, benefit: 4, impact: 4, action: 5, meeting: 6, presentation: 6,
+};
 
 const inputClass = 'mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
 const buttonClass = 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-blue-50 disabled:opacity-40';
 
 /** AI never silently replaces a learner's answer: suggestions require acceptance. */
-export function MonthlyAnswerField({ label, value, onChange, disabled, title, rows = 5, minimumWords = 0, onePointPerLine = false, generation }: {
+export function MonthlyAnswerField({ label, value, onChange, disabled, title, rows = 5, minimumWords = 0, onePointPerLine = false, generation, qualityTarget }: {
   label: string; value: string; onChange: (value: string) => void; disabled: boolean; title: string; rows?: number;
-  minimumWords?: number; onePointPerLine?: boolean;
+  minimumWords?: number; onePointPerLine?: boolean; qualityTarget?: string;
   generation?: { enabled: boolean; busy: boolean; onGenerate: () => void };
 }) {
   const [busy, setBusy] = useState(false);
@@ -97,7 +107,8 @@ export function MonthlyAnswerField({ label, value, onChange, disabled, title, ro
     } catch (e) { setError(e instanceof Error ? e.message : 'Microphone access failed.'); }
     finally { if (active.current) setBusy(false); }
   };
-  return <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+  return <div data-quality-target={qualityTarget} tabIndex={qualityTarget ? -1 : undefined} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+    <LocalAiWritingHint />
     <label className="block text-sm font-semibold leading-6 text-slate-900">{label}
       <textarea className={inputClass} rows={rows} value={value} disabled={disabled || busy || recording} onChange={e => { setSuggestion(''); onChange(e.target.value); }} />
     </label>
@@ -113,12 +124,13 @@ export function MonthlyAnswerField({ label, value, onChange, disabled, title, ro
       {suggestionTooShort && <p role="alert" className="mt-2 text-xs text-red-700">This suggestion is below the {minimumWords}-word minimum. Add more detail from your own experience to your answer, then try again.</p>}
       <div className="mt-2 flex gap-2"><button type="button" disabled={disabled || busy || recording || suggestionTooShort} className={buttonClass} onClick={() => { onChange(suggestion); setSuggestion(''); }}>Use suggestion</button><button type="button" className={buttonClass} onClick={() => setSuggestion('')}>Keep my answer</button></div>
     </div>}
+    <LocalAiTextCheck text={value} disabled={disabled || busy || recording} />
     {voiceNotice && <p role="status" className="mt-2 text-xs text-slate-600">{voiceNotice}</p>}
     {error && <p role="alert" className="mt-2 text-xs text-red-700">{error}</p>}
   </div>;
 }
 
-export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, historical = false, question = '', activityId = '' }: {
+export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, historical = false, question = '', activityId = '', onNavigateToCheck }: {
   step: number; data: MonthlyAssignment; onChange: Dispatch<SetStateAction<MonthlyAssignment>>;
   answers: AssignmentAnswers; onAnswer: (key: keyof AssignmentAnswers, value: string) => void;
   kind: LearnerKind; learnerId: string; title: string; plannedOtjh: number | null;
@@ -126,9 +138,12 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   disabled: boolean; payload: () => LearningReflectionSubmissionInput;
   checks: AssignmentQualityCheck[]; checking: boolean; onCheck: () => Promise<boolean>; onSave: () => Promise<boolean>;
   historical?: boolean; question?: string; activityId?: string;
+  onNavigateToCheck?: (step: number, target: string) => void;
 }) {
+  const personal = parsePersonalLearning(learnerId);
+  const personalStudy = personal?.mode === 'study';
   useEffect(() => {
-    if (step !== 7 || disabled || historical) return;
+    if (step !== 7 || disabled || historical || data.uploadedPresentation) return;
     if (fillEmptyPresentationSlides(data, answers.whatYouLearned, answers.businessImpact) === data) return;
     onChange(current => fillEmptyPresentationSlides(current, answers.whatYouLearned, answers.businessImpact));
   }, [step, disabled, historical, data, answers.whatYouLearned, answers.businessImpact, onChange]);
@@ -172,8 +187,8 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     finally { setKsbLoading(false); }
   };
   const patch = (value: Partial<MonthlyAssignment>) => onChange(current => ({ ...current, ...value }));
-  const field = (key: keyof MonthlyAssignment, label: string, minimumWords = 0) => <MonthlyAnswerField label={label} title={title} value={String(data[key] || '')} onChange={value => patch({ [key]: value })} disabled={disabled || busy} minimumWords={minimumWords} />;
-  const check = (key: keyof MonthlyAssignment, label: string) => <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl bg-slate-50 px-4 py-3"><input type="checkbox" checked={data[key] === true} disabled={disabled || busy} onChange={e => patch({ [key]: e.target.checked })} className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" /><span className="min-w-0 text-sm font-medium leading-6 tracking-normal text-slate-800">{label}</span></label>;
+  const field = (key: keyof MonthlyAssignment, label: string, minimumWords = 0, qualityTarget?: string) => <MonthlyAnswerField qualityTarget={qualityTarget} label={label} title={title} value={String(data[key] || '')} onChange={value => patch({ [key]: value })} disabled={disabled || busy} minimumWords={minimumWords} />;
+  const check = (key: keyof MonthlyAssignment, label: string, qualityTarget?: string) => <label data-quality-target={qualityTarget} tabIndex={qualityTarget ? -1 : undefined} className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl bg-slate-50 px-4 py-3"><input type="checkbox" checked={data[key] === true} disabled={disabled || busy} onChange={e => patch({ [key]: e.target.checked })} className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" /><span className="min-w-0 text-sm font-medium leading-6 tracking-normal text-slate-800">{label}</span></label>;
   const monthEnd = /^\d{4}-\d{2}$/.test(data.month) ? new Date(Number(data.month.slice(0, 4)), Number(data.month.slice(5)), 0).getDate() : 0;
   const minBooking = `${data.month}-${String(monthEnd - 9).padStart(2, '0')}`;
   const nextMonth = new Date(Number(data.month.slice(0, 4)), Number(data.month.slice(5)), 5);
@@ -213,7 +228,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     try {
       const uploaded = await uploadEvidence(kind, learnerId, file, `presentation-reference-${activityId}`);
       if (uploaded.status !== 'approved') throw new Error('This file has not passed the upload checks. Choose another reference.');
-      const response = await fetch(`/learner_api/reflection/assignment/presentation-design/?learnerId=${encodeURIComponent(learnerId)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ learnerKind: kind, evidenceId: uploaded.id }) });
+      const response = await learningFetch(`/learner_api/reflection/assignment/presentation-design/?learnerId=${encodeURIComponent(learnerId)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ learnerKind: kind, evidenceId: uploaded.id }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not read this design reference.');
       if (presentationContextRef.current !== presentationContext) return;
@@ -244,7 +259,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     finally { setBusy(false); }
   };
   return <div className="space-y-5">
-    {step === 0 && <section className="space-y-4 border-t border-slate-200 pt-6">
+    {step === 0 && <section data-quality-target="learning" tabIndex={-1} className="space-y-4 border-t border-slate-200 pt-6">
       <div><h3 className="text-lg font-semibold text-slate-900">Your learning statements</h3><p className="mt-1 text-sm leading-6 text-slate-600">Review each statement and make it your own. Each field needs at least 20 words.</p></div>
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
       <MonthlyAnswerField title={title} label="I learned… (at least 20 words)" value={answers.whatYouLearned} disabled={disabled} onChange={value => onAnswer('whatYouLearned', value)} minimumWords={20} />
@@ -252,17 +267,17 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       {field('gainedSkills', 'I gained skills in… (at least 20 words)', 20)}
     </div></section>}
     {step === 1 && <>
-      <h3 className="text-lg font-semibold">Evidence & cross-referencing</h3>
-      <p className="text-sm text-slate-600">Put each answer point on a separate line. Attach evidence. You can optionally link it to the numbered answer points below. Files remain securely stored in Azure.</p>
+      <h3 data-quality-target="evidence" tabIndex={-1} className="text-lg font-semibold">Evidence & cross-referencing</h3>
+      <p className="text-sm text-slate-600">Uploading files, reusing evidence and adding links are optional. You can continue and submit without evidence. If you attach any, linking it to numbered answer points is also optional.</p>
       <ol className="list-inside list-decimal rounded-xl bg-blue-50 p-4 text-sm">{answers.assignmentAnswer.split('\n').filter(line => line.trim()).map((line, i) => <li className="mb-2" key={i}>{line}</li>)}</ol>
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
-        <div><h4 className="text-base font-semibold text-slate-900">Upload or reuse a file</h4><p className="mt-1 text-sm text-slate-600">Upload supporting work, or choose a file already in your evidence library.</p></div>
+        <div><h4 className="text-base font-semibold text-slate-900">Upload or reuse a file (optional)</h4><p className="mt-1 text-sm text-slate-600">Upload supporting work, or choose a file already in your evidence library.</p></div>
         <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">{evidenceUploader}</div>
       <div className="flex flex-wrap gap-2">{evidenceFiles.filter(f => f.status === 'approved' && !data.evidence.some(e => e.id === f.id)).map(file => <button key={file.id} type="button" disabled={disabled} className={buttonClass} onClick={() => addFile(file)}>Attach {file.filename}</button>)}<button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => void openLibrary()}>Pull from evidence library</button></div>
       {showLibrary && <div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><h5 className="font-semibold">Evidence library</h5><button type="button" className={buttonClass} onClick={() => setShowLibrary(false)}>Close library</button></div>{library.length === 0 && <p className="mt-3 text-sm text-slate-600">No uploaded evidence available yet.</p>}<div className="mt-3 max-h-72 space-y-2 overflow-y-auto">{library.map(file => <div key={file.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3 text-sm"><span className="min-w-0 break-words">{file.filename}</span><button type="button" className={buttonClass + ' shrink-0'} disabled={disabled || data.evidence.some(e => e.id === file.id)} onClick={() => addFile(file)}>{data.evidence.some(e => e.id === file.id) ? 'Attached' : 'Attach'}</button></div>)}</div></div>}
       </section>
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
-        <div><h4 className="text-base font-semibold text-slate-900">Add a link</h4><p className="mt-1 text-sm text-slate-600">Link to online work, a video or a document that supports your answer.</p></div>
+        <div><h4 className="text-base font-semibold text-slate-900">Add a link (optional)</h4><p className="mt-1 text-sm text-slate-600">Link to online work, a video or a document that supports your answer.</p></div>
       <fieldset disabled={disabled || busy} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1.5fr_auto] lg:items-end">
         <label className="min-w-0 text-sm font-medium text-slate-700">Link title<input aria-label="Evidence link name" placeholder="e.g. Project demonstration" value={linkName} onChange={e => setLinkName(e.target.value)} className={inputClass} /></label>
         <label className="min-w-0 text-sm font-medium text-slate-700">Web address<input type="url" aria-label="Evidence URL" placeholder="https://example.com" value={linkUrl} onChange={e => setLinkUrl(e.target.value)} className={inputClass} /></label>
@@ -273,7 +288,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       </section>
       <section className="space-y-4 border-t border-slate-200 pt-6">
         <div><h4 className="text-base font-semibold text-slate-900">Attached evidence ({data.evidence.length})</h4><p className="mt-1 text-sm text-slate-600">These items are included in your submission. Linking them to answer points is optional.</p></div>
-        {data.evidence.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">No evidence attached yet. Upload a file, choose from your library or add a link above.</p>}
+        {data.evidence.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">No evidence attached. This is optional; you can continue without adding files or links.</p>}
         {data.evidence.map(entry => <article key={entry.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 p-4 sm:px-5">
             <div className="min-w-0 flex-1"><span className="text-xs font-semibold uppercase tracking-wide text-primary-700">{entry.url ? 'Link' : 'File'}</span><h5 className="mt-1 break-words text-sm font-semibold text-slate-900">{entry.name}</h5>{entry.url && /^https?:\/\//i.test(entry.url) && <a href={entry.url} target="_blank" rel="noopener noreferrer" className="mt-1 block break-all text-sm text-primary-700 underline">Open link (new tab)</a>}</div>
@@ -287,19 +302,19 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       </section>
     </>}
     {step === 2 && <section className="mx-auto w-full max-w-6xl space-y-6">
-      <header><h3 className="text-xl font-semibold text-slate-900">KSBs & hours claimed</h3><p className="mt-2 text-sm leading-6 text-slate-600">Record your learning time, review each KSB explanation and select the evidence that supports it.</p></header>
-      <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time">
+      <header><h3 className="text-xl font-semibold text-slate-900">KSBs & hours claimed</h3><p className="mt-2 text-sm leading-6 text-slate-600">Record your learning time and review each KSB explanation. Selecting supporting evidence is optional.</p></header>
+      <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time" data-quality-target="hours" tabIndex={-1}>
         <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-slate-900">Your learning time</h4><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm">Planned: {plannedOtjh == null ? 'Not set' : `${plannedOtjh} hours`}</span></div>
-        <fieldset disabled={disabled}>{timeControl}</fieldset>
-        <p className="text-sm text-slate-600">Enter your actual time. There is no six-hour cap; your planned hours stay the same.</p>
+        {disabled && !data.timeEntries?.length ? <fieldset disabled>{timeControl}</fieldset> :
+          <AssignmentTimeEntries kind={kind} learnerId={learnerId} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
         {check('paidHours', 'This learning was completed during paid working hours.')}
       </section>
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:p-5">
         <h4 className="font-semibold text-blue-950">Review your KSB explanations</h4>
-        <p className="mt-2 text-sm leading-6 text-blue-900">Assigned KSBs are drafted from your answer and readable evidence. Review the drafts and complete any blank fields. Write your own explanation for KSBs you add yourself. Existing explanations are preserved.</p>
+        <p className="mt-2 text-sm leading-6 text-blue-900">Assigned KSBs are drafted from your answer. Evidence is optional; readable attachments are considered when available. Review the drafts and complete any blank fields. Write your own explanation for KSBs you add yourself. Existing explanations are preserved.</p>
         {ksbGenerationStatus && <p role="status" className="mt-3 border-t border-blue-200 pt-3 text-sm leading-6 text-blue-900">{ksbGenerationStatus}</p>}
       </section>
-      <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-lg font-semibold text-slate-900">Your KSB claims</h4><span className="text-sm text-slate-600">{data.claims.length} claims</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><h4 data-quality-target="ksbs" tabIndex={-1} className="text-lg font-semibold text-slate-900">Your KSB claims</h4><span className="text-sm text-slate-600">{data.claims.length} claims</span></div>
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
       {data.claims.map((claim, index) => {
         const mapping = mappings.find(m => m.code === claim.code);
@@ -314,16 +329,18 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
           </header>
           <div className="space-y-5 p-4 sm:p-5">
             <div>
+              <LocalAiWritingHint />
               <label className="block text-sm font-semibold text-slate-900">How did you apply this KSB?
                 <textarea rows={5} className={`${inputClass} min-h-36 resize-y font-normal leading-6`} value={claim.explanation} disabled={disabled} placeholder="Describe what you did, how you applied this KSB and what you learned." onChange={e => patch({ claims: data.claims.map((c, i) => i === index ? { ...c, explanation: e.target.value } : c) })} />
               </label>
+              <LocalAiTextCheck text={claim.explanation} disabled={disabled} />
               <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs"><span className="text-slate-500">At least 20 words</span><span className={words >= 20 ? 'font-medium text-emerald-700' : 'font-medium text-amber-800'}>{words} words{words < 20 ? ' ? Needs more detail' : ''}</span></div>
             </div>
             <fieldset className="min-w-0 border-t border-slate-100 pt-4">
-              <legend className="pr-2 text-sm font-semibold text-slate-900">Supporting evidence</legend>
-              <p className="mb-3 text-xs leading-5 text-slate-500">Select the files or links that support this explanation.</p>
+              <legend className="pr-2 text-sm font-semibold text-slate-900">Supporting evidence (optional)</legend>
+              <p className="mb-3 text-xs leading-5 text-slate-500">You may select files or links that support this explanation, or leave this blank.</p>
               <div className="space-y-2">{data.evidence.map(e => <label className={`flex min-h-14 cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm ${claim.evidenceIds.includes(e.id) ? 'border-blue-200 bg-blue-50 text-blue-950' : 'border-slate-200 text-slate-700'}`} key={e.id}><input className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" type="checkbox" disabled={disabled} checked={claim.evidenceIds.includes(e.id)} onChange={event => patch({ claims: data.claims.map((c, i) => i === index ? { ...c, evidenceIds: event.target.checked ? [...c.evidenceIds, e.id] : c.evidenceIds.filter(id => id !== e.id) } : c) })} /><span className="min-w-0 break-words text-sm font-medium leading-6 tracking-normal">{e.name}</span></label>)}</div>
-              {!data.evidence.length && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Add evidence in Step 2, then select it here.</p>}
+              {!data.evidence.length && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">No evidence attached. You can complete this KSB explanation without files or links.</p>}
             </fieldset>
           </div>
         </article>;
@@ -352,11 +369,11 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       </div>}
       <section className="space-y-3 rounded-2xl border border-slate-200 p-4 sm:p-6">
       <h4 className="font-semibold text-slate-900">Confirm your learning</h4>
-      <p className="text-sm text-slate-600">Review these declarations before continuing.</p>
-      {check('plannedReviewed', 'I have reviewed the planned hours and KSBs against my actual learning.')}
-      {check('newKnowledge', 'This activity developed new knowledge.')}
+      <p className="text-sm text-slate-600">All four declarations are required before you can submit your assignment. You can save a draft and return to them later.</p>
+      {check('plannedReviewed', 'I have reviewed the planned hours and KSBs against my actual learning.', 'planned')}
+      {check('newKnowledge', 'This activity developed new knowledge.', 'declarations')}
       {check('newSkills', 'This activity developed new skills or behaviours.')}
-      {check('sharingConsent', 'My employer accepts sharing this evidence, and it contains no confidential information.')}
+      {check('sharingConsent', 'If I include evidence, my employer accepts sharing it and it contains no confidential information.')}
       </section>
     </section>}
     {step === 3 && <>
@@ -395,7 +412,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
         <p className="mt-1">These two reflections are drafted automatically from your assignment answer and this month's recorded activities. Review them before submitting. Your existing text is preserved.</p>
         {monthlyReflectionStatus && <p role="status" className="mt-3 border-t border-blue-200 pt-3">{monthlyReflectionStatus}</p>}
       </section>
-      {field('lmsReflection', 'Reflect on your LMS activities and assignment (at least 20 words)')}
+      {field('lmsReflection', 'Reflect on your LMS activities and assignment (at least 20 words)', 0, 'reflection')}
       {field('extraActivities', 'Additional activities outside the LMS (optional)')}
       {field('integratedReflection', 'How does the learning fit together? (at least 20 words)')}
     </>}
@@ -408,7 +425,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
           <div className="min-w-0"><p className="font-semibold">{impactGeneration.phase === 'loading' ? 'Generating your impact drafts...' : impactGeneration.phase === 'success' ? 'Your drafts are ready' : impactGeneration.phase === 'error' ? 'Generation could not finish' : 'More details needed'}</p><p className="mt-1">{impactGeneration.status}</p></div>
         </div>}
       </section>
-      {field('careerImpact', 'Impact on your career (at least 20 words)')}{field('jobImpact', 'Impact on your job performance (at least 20 words)')}{field('employerImpact', 'Impact on employer performance (at least 20 words)')}{check('employerBenefit', 'I can explain how my employer has benefited from this learning.')}<MonthlyAnswerField title={title} label="Measurable business outcomes (at least 20 words)" value={answers.businessImpact} onChange={value => onAnswer('businessImpact', value)} disabled={disabled} minimumWords={20} /></>}
+      {field('careerImpact', 'Impact on your career (at least 20 words)', 0, 'impact')}{field('jobImpact', 'Impact on your job performance (at least 20 words)')}{field('employerImpact', 'Impact on employer performance (at least 20 words)')}{check('employerBenefit', 'I can explain how my employer has benefited from this learning.', 'benefit')}<MonthlyAnswerField title={title} label="Measurable business outcomes (at least 20 words)" value={answers.businessImpact} onChange={value => onAnswer('businessImpact', value)} disabled={disabled} minimumWords={20} /></>}
     {step === 5 && <>
       <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
         <h3 className="font-semibold">Your action plan & EPA drafts</h3>
@@ -418,14 +435,21 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
           <div className="min-w-0"><p className="font-semibold">{actionGeneration.phase === 'loading' ? 'Generating your action plan & EPA drafts...' : actionGeneration.phase === 'success' ? 'Your drafts are ready' : actionGeneration.phase === 'error' ? 'Generation could not finish' : 'More details needed'}</p><p className="mt-1">{actionGeneration.status}</p></div>
         </div>}
       </section>
-      {field('actionPlan', 'Your action plan for next month (at least 20 words)')}{field('epaPreparedness', 'How has this prepared you for EPA? (at least 20 words)')}</>}
-    {step === 6 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">All checks must be green before you can submit your assignment. Complete the coaching meeting booking and presentation in Step 8 (Coaching & presentation), then run the checks again.</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => <div key={c.key} className={`rounded-xl border p-3 text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{c.passed ? <CheckCircle2 aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" /> : <Circle aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" />}{c.label}</div>)}</>}
-    {step === 7 && <>
-      <h3 className="text-lg font-semibold">Coaching & presentation</h3>
-      <p className="text-sm text-slate-600">Book coaching between {minBooking} and {maxBooking}. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
+      {field('actionPlan', 'Your action plan for next month (at least 20 words)', 0, 'action')}{field('epaPreparedness', 'How has this prepared you for EPA? (at least 20 words)')}</>}
+    {step === 7 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">All checks must be green before you can submit your assignment. Complete the coaching meeting booking and presentation in Step 7 (Coaching & presentation), then run the checks again.</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => {
+      const targetStep = QUALITY_CHECK_STEPS[c.key];
+      const content = <>{c.passed ? <CheckCircle2 aria-hidden="true" className="h-4 w-4 shrink-0" /> : <Circle aria-hidden="true" className="h-4 w-4 shrink-0" />}<span className="flex-1">{c.label}</span></>;
+      const classes = `flex w-full items-center gap-2 rounded-xl border p-3 text-left text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`;
+      return targetStep !== undefined && onNavigateToCheck
+        ? <button key={c.key} type="button" className={`${classes} cursor-pointer transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600`} onClick={() => onNavigateToCheck(targetStep, c.key)}>{content}<span className="sr-only"> - Go to Step {targetStep + 1}</span><ArrowRight aria-hidden="true" className="h-4 w-4 shrink-0" /></button>
+        : <div key={c.key} className={classes}>{content}</div>;
+    })}</>}
+    {step === 6 && <>
+      <h3 data-quality-target="meeting" tabIndex={-1} className="text-lg font-semibold">Coaching & presentation</h3>
+      <p className="text-sm text-slate-600">Book coaching in the submission-month window ({minBooking} to {maxBooking}) or the next-month window shown below. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
       <AssignmentCoachingBooking kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
-      <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
-        <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate slides from your answers, edit and review them, then export your PowerPoint.</p></div></div>
+      <section data-quality-target="presentation" tabIndex={-1} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
+        <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate, review and export your slides, or upload your own MCM PowerPoint below.</p></div></div>
       <section className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
         <div>
           <p className="text-sm font-semibold">PowerPoint design reference (optional)</p>
@@ -457,15 +481,13 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       {data.slides.map((slide, i) => <fieldset id={`assignment-slide-${i}`} disabled={disabled || busy} key={i} className={`rounded-xl border p-4 sm:p-5 ${slideIssue(slide) ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-slate-50'}`}><legend className="px-2 text-sm">Slide {i + 1}</legend>{slideIssue(slide) && <p className="mb-3 text-sm font-medium text-amber-900">{slideIssue(slide)}</p>}<label className="block text-xs">Title<input className={inputClass} value={slide.title} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, title: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label><label className="block text-xs">Content<textarea className={inputClass} rows={5} value={slide.body} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, body: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label><button type="button" className={buttonClass} onClick={() => { if (window.confirm(`Remove slide ${i + 1}${slide.title.trim() ? `: "${slide.title.trim()}"` : ''}? Its content will be deleted from this presentation.`)) patch({ slides: data.slides.filter((_, index) => index !== i), presentationReviewed: false, presentationToken: '' }); }}>Remove slide</button></fieldset>)}
       </div>
       <div className="space-y-4 border-t border-slate-200 pt-5">
+      <McmPresentationUpload kind={kind} learnerId={learnerId} activityId={activityId} month={data.month} disabled={disabled || historical || busy} uploaded={data.uploadedPresentation} onUploaded={file => patch({ uploadedPresentation: file, presentationReviewed: false, presentationToken: '' })} />
       {check('presentationReviewed', 'I have reviewed the slides and they accurately represent my own work.')}
       <button type="button" className={buttonClass} disabled={busy || !data.slides.length} onClick={() => void exportDeck()}>{busy ? 'Please wait…' : 'Export PowerPoint (.pptx)'}</button>
       {data.presentationToken && <p className="text-sm text-emerald-700">PowerPoint export complete. Editing your submission content or slides requires another reviewed export.</p>}
       </div>
       </section>
-      <section className="flex flex-col gap-4 rounded-2xl border border-primary-100 bg-primary-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-        <div><h4 className="text-base font-semibold text-slate-900">Ready to submit?</h4><p className="mt-1 text-sm text-slate-600">Recheck after completing your meeting booking and presentation. All 13 checks must be green before you can submit.</p></div>
-      <button type="button" className={buttonClass + ' shrink-0'} disabled={checking || disabled} onClick={() => void onCheck()}>Recheck submission requirements</button>
-      </section>
+
     </>}
     {notice && <p role="status" className="rounded-xl bg-blue-50 p-3 text-sm text-blue-900">{notice}</p>}
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}

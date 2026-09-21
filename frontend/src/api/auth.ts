@@ -18,6 +18,20 @@
 export type Role = 'admin' | 'staff' | 'employer' | 'learner';
 export type SubjectType = 'learner' | 'employer' | 'staff';
 
+/**
+ * One workspace an account may open, as the server describes it.
+ *
+ * `access` is an ACCESS_OPTIONS id (`coach`, `tutor`, …) or the literal
+ * `learner` for a staff member's own enrolment record. `home` is the route it
+ * opens — already carrying the query string the learner entry needs — so the
+ * chooser never has to build a destination itself.
+ */
+export interface AccessWorkspace {
+  access: string;
+  home: string;
+  navRole?: string | null;
+}
+
 export interface AuthUser {
   id: number;
   email: string;
@@ -40,6 +54,27 @@ export interface AuthUser {
   accessHome?: string | null;
   /** `roleNavMap` key for `access`, chosen server-side (ACCESS_NAV_ROLES). */
   accessNavRole?: string | null;
+  /** Every grant this account holds, in canonical order. Includes `access`. */
+  accesses?: string[];
+  /**
+   * Each grant with where it leads — what the workspace chooser offers.
+   *
+   * Built server-side so the set of workspaces and their landing routes are
+   * decided in one place (identity.account_payload). A staff member who is also
+   * studying gets a `learner` entry here too, pointing at their own record.
+   *
+   * One entry means there is nothing to choose: sign-in goes straight there.
+   */
+  accessWorkspaces?: AccessWorkspace[];
+  /** This person's own enrolment record, when they have one.
+   *
+   * Set for a staff member or administrator who is ALSO studying a programme.
+   * They keep the single account they already have — a second one on the same
+   * address would make sign-in ambiguous — so this is what tells the workspace
+   * switcher to offer them the learner side as well. */
+  learnerRecordId?: number | null;
+  /** `commercial` or `apprenticeship`, for addressing that record. */
+  learnerRecordKind?: string | null;
   /** Learners only. */
   learnerType?: string | null;
   programme?: string | null;
@@ -47,6 +82,32 @@ export interface AuthUser {
   hasLegacyRecord?: boolean;
   /** Employers only — the organisations they belong to. */
   organisationIds?: number[];
+}
+
+/**
+ * Is this signed-in account genuinely studying `(kind, id)` themselves, rather
+ * than a staff member reviewing somebody else's record?
+ *
+ * A staff member or administrator who is ALSO a learner (see
+ * `login/learner_enrolment.py`) reaches their own record from the workspace
+ * switcher, at their own `learnerRecordId`/`learnerRecordKind` — and there they
+ * need the ordinary learner experience: the fresh/onboarding gates, the
+ * blocked-until-start-date screen, progress that actually saves. The SAME
+ * account browsing a different learner's page from the enrolment workspace
+ * must keep the reviewing behaviour (full menu, no redirects, read-only)
+ * exactly as before.
+ *
+ * Comparing only `account.role` could not tell those two apart — an admin was
+ * always "reviewing", even on the one record that is actually theirs.
+ */
+export function isOwnLearnerRecord(
+  account: Pick<AuthUser, 'learnerRecordId' | 'learnerRecordKind'> | null | undefined,
+  kind: string | null | undefined,
+  id: string | null | undefined,
+): boolean {
+  if (!account?.learnerRecordId || !kind || !id) return false;
+  const recordKind = account.learnerRecordKind || 'commercial';
+  return recordKind === kind && String(account.learnerRecordId) === String(id);
 }
 
 /** An API failure that carries the backend's machine-readable code. */
@@ -66,7 +127,7 @@ export class AuthError extends Error {
 }
 
 const BASE = '/login_api';
-const SESSION_TIMEOUT_MS = 15_000;
+const SESSION_TIMEOUT_MS = 45_000;
 
 // Concurrent GETs of the same path share one request. React StrictMode runs
 // every effect twice in development, so the session lookup on mount left two
@@ -179,15 +240,14 @@ export async function apiLogout(): Promise<void> {
  * full page navigation, not a fetch: the whole point is to hand the browser to
  * Microsoft and let it come back with a `Set-Cookie`.
  *
- * `next` is a path to return to after signing in; the server ignores anything
- * that is not a same-site path.
+ * Successful sign-in opens the account home; no previous-page destination is
+ * sent to the provider flow.
  *
  * Throws `AuthError` with code `sso_unconfigured` (503) when the deployment has
  * no Microsoft app registration wired up.
  */
-export async function apiMicrosoftStart(next?: string): Promise<string> {
-  const query = next ? `?next=${encodeURIComponent(next)}` : '';
-  const data = await request<{ authorizationUrl: string }>(`/microsoft/start/${query}`);
+export async function apiMicrosoftStart(): Promise<string> {
+  const data = await request<{ authorizationUrl: string }>('/microsoft/start/');
   return data.authorizationUrl;
 }
 

@@ -46,6 +46,21 @@ function access(learnerId?: string | number | null) {
 }
 
 describe('useLearnerWorkspaceAccess', () => {
+  it('permits only the owning administrator in each personal course mode', () => {
+    for (const mode of ['study', 'preview', 'all']) {
+      const id = `pl.1.${mode}.MOD-A`;
+      signedIn(ADMIN);
+      expect(access(id).canProgress).toBe(true);
+      signedIn({ ...ADMIN, id: 3 });
+      expect(access(id).canProgress).toBe(false);
+      signedIn({ ...ADMIN, role: 'staff' });
+      expect(access(id).canProgress).toBe(false);
+      signedIn(LEARNER_56);
+      expect(access(id).canProgress).toBe(false);
+      signedIn(ADMIN, false);
+      expect(access(id).canProgress).toBe(false);
+    }
+  });
   it('lets the learner work through their own plan', () => {
     signedIn(LEARNER_56);
     expect(access('56')).toEqual({ canProgress: true, showReadOnlyNotice: false });
@@ -56,9 +71,24 @@ describe('useLearnerWorkspaceAccess', () => {
     expect(access(56).canProgress).toBe(true);
   });
 
-  it('makes the workspace read-only for an admin viewing a learner', () => {
+  it('lets an admin edit and complete work for the selected learner', () => {
     signedIn(ADMIN);
+    expect(access('56')).toEqual({ canProgress: true, showReadOnlyNotice: false });
+    expect(access('19').canProgress).toBe(true);
+  });
+
+  it('keeps an ordinary staff preview read-only', () => {
+    signedIn({ ...ADMIN, role: 'staff' });
     expect(access('56')).toEqual({ canProgress: false, showReadOnlyNotice: true });
+  });
+
+  it('does not enable admin actions until both session and learner are resolved', () => {
+    signedIn(ADMIN, false);
+    expect(access('56').canProgress).toBe(false);
+    signedIn(ADMIN);
+    for (const id of [undefined, null, '', 'not-a-learner', '0', '-1']) {
+      expect(access(id).canProgress).toBe(false);
+    }
   });
 
   it('makes it read-only for a learner who opened somebody else', () => {

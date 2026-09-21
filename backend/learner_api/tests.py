@@ -1,6 +1,6 @@
 import json
 from contextlib import nullcontext
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
@@ -409,7 +409,8 @@ class LearnerProfileResolutionTests(SimpleTestCase):
     def setUp(self):
         patcher = patch('learner_api.identity.EnrolmentUser.all_learners.filter')
         self.source_filter = patcher.start()
-        self.source_filter.return_value.exclude.return_value.exists.return_value = False
+        self.twins = self.source_filter.return_value.exclude.return_value.values_list.return_value
+        self.twins.__getitem__.return_value = []
         self.addCleanup(patcher.stop)
 
     @staticmethod
@@ -515,9 +516,27 @@ class LearnerProfileResolutionTests(SimpleTestCase):
     def test_duplicate_source_email_does_not_claim_unlinked_work(self, profile_filter):
         profile = SimpleNamespace(id=2, enrolment_id=None, save=Mock())
         profile_filter.side_effect = self._returns(None, profile)[0]
-        self.source_filter.return_value.exclude.return_value.exists.return_value = True
+        self.twins.__getitem__.return_value = [501]
         self.assertIsNone(learner_profile_for_source(SimpleNamespace(email='shared@example.com'), 500))
         profile.save.assert_not_called()
+
+    @patch('learner_api.identity.LearnerProfile.objects.filter')
+    def test_a_learner_enrolled_twice_is_named_in_the_log_with_both_ids(self, profile_filter):
+        """The refusal above is invisible to callers: they see only a missing
+        profile and report it as a missing coach or an inactive learner. Both
+        ids have to reach the log, or the real fault — one person enrolled
+        twice — has to be found by hand."""
+        profile_filter.side_effect = self._returns(None, SimpleNamespace(id=2, enrolment_id=None, save=Mock()))[0]
+        self.twins.__getitem__.return_value = [501, 502]
+
+        with self.assertLogs('learner_api.identity', level='WARNING') as logged:
+            learner_profile_for_source(SimpleNamespace(email='shared@example.com'), 500)
+
+        message = logged.output[0]
+        self.assertIn('shared@example.com', message)
+        for pk in ('500', '501', '502'):
+            self.assertIn(pk, message)
+        self.assertIn('merge_duplicate_enrolments', message)
 
 
 class AttendanceSummaryTests(SimpleTestCase):
@@ -553,6 +572,28 @@ class AttendanceSummaryTests(SimpleTestCase):
 
     def test_returns_none_without_session_rows(self):
         self.assertIsNone(_summarize_attendance([]))
+
+    @override_settings(TIME_ZONE='Europe/London')
+    def test_only_counts_sessions_up_to_now_in_the_business_timezone(self):
+        common = {
+            'learner_id': 2, 'learner_name': 'Test Learner',
+            'learner_email': 'learner@example.com', 'minutes_late': 0,
+            'catchup_completed': False, 'updated_at': None,
+        }
+        now = datetime(2026, 9, 13, 12, tzinfo=timezone.utc)  # 13:00 UK
+        rows = [
+            {**common, 'session_date': date(2026, 9, 12), 'attendance_status': 'present'},
+            {**common, 'session_date': date(2026, 9, 13), 'session_start_time': time(12, 30), 'attendance_status': 'late'},
+            {**common, 'session_date': date(2026, 9, 13), 'session_start_time': time(13), 'attendance_status': 'absent'},
+            {**common, 'session_date': date(2026, 9, 13), 'session_start_time': time(14), 'attendance_status': 'absent'},
+            {**common, 'session_date': date(2026, 9, 14), 'attendance_status': 'present', 'source': 'microsoft-teams'},
+        ]
+        summary = _summarize_attendance(rows, now=now)
+        self.assertEqual((summary['present'], summary['sessions'], summary['attendanceRate']), (2, 3, 67))
+        self.assertEqual(len(summary['sessionHistory']), 3)
+        self.assertEqual(summary['lastSessionDate'], '2026-09-13')
+        self.assertEqual(summary['source'], 'kbc-attendance')
+        self.assertIsNone(_summarize_attendance(rows[3:], now=now))
 
     def test_late_status_counts_as_attended(self):
         rows = [
@@ -707,9 +748,11 @@ class TeamsAttendanceEligibilityTests(SimpleTestCase):
 
 
 class LearnerAttendanceEndpointTests(SimpleTestCase):
+    @patch('learner_api.attendance_confirmation.read_confirmations', return_value={})
+    @patch('learner_api.attendance_lectures.read_native_occurrences', return_value=[])
     @patch('learner_api.attendance.fetch_verified_teams_attendance_rows', return_value=[])
     @patch('learner_api.attendance.fetch_kbc_attendance_rows', return_value=[])
-    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams):
+    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams, scheduled, confirmations):
         source = SimpleNamespace(
             id=19,
             username='Test Learner',
@@ -738,6 +781,51 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
             learner_name='Test Learner',
             learner_email='learner@example.com',
         )
+
+    @patch('learner_api.attendance.fetch_verified_teams_attendance_rows')
+    @patch('learner_api.attendance.fetch_kbc_attendance_rows', return_value=[])
+    def test_kbc_source_uses_only_aptem_register(self, fetch_rows, fetch_teams):
+        source = SimpleNamespace(
+            id=19,
+            username='Test Learner',
+            email='learner@example.com',
+            aptem_id='92',
+        )
+        source_model = MagicMock()
+        source_model.DoesNotExist = type('SourceDoesNotExist', (Exception,), {})
+        source_model.all_learners.only.return_value.get.return_value = source
+
+        with patch.dict(attendance_module.SOURCE_MODELS, {'apprenticeship': source_model}, clear=True):
+            response = learner_attendance.__wrapped__(
+                RequestFactory().get('/learner_api/attendance/apprenticeship/19/?source=kbc'),
+                'apprenticeship',
+                19,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        fetch_rows.assert_called_once_with(
+            aptem_id='92', learner_id=19,
+            learner_name='Test Learner', learner_email='learner@example.com',
+        )
+        fetch_teams.assert_not_called()
+
+    @patch('learner_api.attendance.fetch_kbc_attendance_rows')
+    def test_kbc_source_skips_learners_without_an_aptem_id(self, fetch_rows):
+        source = SimpleNamespace(id=19, username='Test Learner', email='learner@example.com', aptem_id=None)
+        source_model = MagicMock()
+        source_model.DoesNotExist = type('SourceDoesNotExist', (Exception,), {})
+        source_model.all_learners.only.return_value.get.return_value = source
+
+        with patch.dict(attendance_module.SOURCE_MODELS, {'apprenticeship': source_model}, clear=True):
+            response = learner_attendance.__wrapped__(
+                RequestFactory().get('/learner_api/attendance/apprenticeship/19/?source=kbc'),
+                'apprenticeship',
+                19,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertJSONEqual(response.content, {'attendance': None})
+        fetch_rows.assert_not_called()
 
 
 class TeamsAttendanceSyncTests(SimpleTestCase):

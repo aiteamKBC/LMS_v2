@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
 import {
@@ -83,6 +83,7 @@ function artifactKey(artifact: CoachMeetingArtifact) {
 function durationLabel(seconds?: number) {
   const totalSeconds = Math.max(0, Math.round(Number(seconds || 0)));
   if (!totalSeconds) return '0 min';
+  if (totalSeconds < 60) return '<1 min';
   const minutes = Math.round(totalSeconds / 60);
   if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);
@@ -589,21 +590,25 @@ function TranscriptPreview({ preview }: { preview: TranscriptPreviewState }) {
 export function CoachMeetingArtifactsPanel({
   event,
   className,
+  onEventStatusChange,
   fetchArtifacts = fetchCoachMeetingArtifacts,
   contentUrl = coachMeetingArtifactContentUrl,
   showAttendance = true,
   visibleArtifactTypes = ['transcript', 'recording'],
   canEditSummary = showAttendance,
   saveSummary = updateCoachMeetingSummary,
+  refreshOnLoad = false,
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
+  onEventStatusChange?: (status: string) => void;
   fetchArtifacts?: typeof fetchCoachMeetingArtifacts;
   contentUrl?: typeof coachMeetingArtifactContentUrl;
   showAttendance?: boolean;
   visibleArtifactTypes?: string[];
   canEditSummary?: boolean;
   saveSummary?: typeof updateCoachMeetingSummary;
+  refreshOnLoad?: boolean;
 }) {
   const eventKey = event.eventKey || '';
   const hasTeamsLink = Boolean(event.meetingLink || event.graphWebLink);
@@ -612,16 +617,11 @@ export function CoachMeetingArtifactsPanel({
   const [preview, setPreview] = useState<PreviewSelection | null>(null);
   const [transcriptPreview, setTranscriptPreview] = useState<TranscriptPreviewState>({ status: 'idle' });
 
-  useEffect(() => {
-    setPreview(null);
-    if (!eventKey || !hasTeamsLink || event.source === 'live-session') {
-      setState({ status: 'idle' });
-      return;
-    }
-    const controller = new AbortController();
+  const loadArtifacts = useCallback((signal?: AbortSignal, refresh = false) => {
     setState({ status: 'loading' });
-    fetchArtifacts(eventKey, controller.signal)
+    return fetchArtifacts(eventKey, signal, { refresh })
       .then(result => {
+        if (result.event?.status) onEventStatusChange?.(result.event.status);
         setState({
           status: 'ready',
           artifacts: result.artifacts || [],
@@ -637,8 +637,18 @@ export function CoachMeetingArtifactsPanel({
           message: error instanceof Error ? error.message : 'Unable to load Teams artifacts.',
         });
       });
+  }, [eventKey, fetchArtifacts, onEventStatusChange]);
+
+  useEffect(() => {
+    setPreview(null);
+    if (!eventKey || !hasTeamsLink || event.source === 'live-session') {
+      setState({ status: 'idle' });
+      return;
+    }
+    const controller = new AbortController();
+    loadArtifacts(controller.signal, refreshOnLoad);
     return () => controller.abort();
-  }, [event.source, eventKey, fetchArtifacts, hasTeamsLink]);
+  }, [event.source, eventKey, hasTeamsLink, loadArtifacts, refreshOnLoad]);
 
   useEffect(() => {
     if (!preview || preview.type !== 'transcript') {
@@ -682,6 +692,7 @@ export function CoachMeetingArtifactsPanel({
   const meetingSummary = state.status === 'ready' ? state.meetingSummary : null;
   const visibleArtifacts = artifacts.filter(artifact => visibleArtifactTypes.includes(artifact.artifact_type));
   const hasArtifacts = visibleArtifacts.length > 0;
+  const isLoading = state.status === 'loading';
 
   return (
     <div className={cn('rounded-lg border border-background-200 bg-white p-3', className)}>
@@ -695,12 +706,18 @@ export function CoachMeetingArtifactsPanel({
             {sourceLabel(event.source)} artifacts from Microsoft Teams.
           </p>
         </div>
-        {state.status === 'loading' ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-50 px-2.5 py-1 text-[12px] font-semibold text-primary-700">
-            <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-            Checking
-          </span>
-        ) : null}
+        <button
+          type="button"
+          onClick={() => {
+            setPreview(null);
+            void loadArtifacts(undefined, true);
+          }}
+          disabled={isLoading}
+          className="inline-flex items-center gap-1.5 rounded-md border border-primary-200 bg-primary-50 px-3 py-1.5 text-[12px] font-semibold text-primary-700 transition hover:border-primary-300 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <AppIcon className={isLoading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon>
+          {isLoading ? 'Loading' : 'Check Teams'}
+        </button>
       </div>
 
       {state.status === 'error' ? (

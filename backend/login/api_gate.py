@@ -206,6 +206,8 @@ def rule_for(path):
     # Exact path only: the learner's attendance APIs still require a session.
     if path == '/learner_api/attendance-mode/review/':
         return None
+    if path.startswith(('/learner_api/certificates/verify/', '/learner_api/personal-learning/verify/')):
+        return None
     from old_otjh.gate import is_transition_path
     if is_transition_path(path):
         return '/audit_api/', LEARNER_AND_STAFF

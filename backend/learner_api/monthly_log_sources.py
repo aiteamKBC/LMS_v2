@@ -161,18 +161,40 @@ def _documents(learner, rows):
 
 
 def _meetings(learner):
+    from .attendance_confirmation import read_confirmations
     # A past booking is not proof of attendance. Only saved completions count.
-    records = query('''SELECT event_key,event_type,scheduled_date,scheduled_time,
+    records = query('''SELECT event_key,event_type,scheduled_date,scheduled_time,idempotency_key,
         duration_minutes,notes FROM "Coach".coach_calendar_event
         WHERE lower(btrim(learner_email))=%s AND status='completed'
           AND scheduled_date IS NOT NULL ORDER BY scheduled_date,event_key''', [learner['email'].strip().lower()])
-    return [row(f"meeting:{r['event_key']}", r['scheduled_date'],
+    confirmations = read_confirmations(learner['id'])
+    confirmed_reviews = {detail['meetingId'].split(':', 1)[1]: detail['sourceRef']
+        for saved in confirmations.values() if (detail := decoded(saved['details'], {})).get('category') == 'Meeting'
+        and str(detail.get('meetingId') or '').startswith('imported-review:') and detail.get('sourceRef')}
+    # Imported review bookings can acquire another calendar key when moved to
+    # another month. Their durable review id still represents one meeting.
+    for record in records:
+        parts = str(record.get('idempotency_key') or '').split(':')
+        if len(parts) == 6 and parts[0] == 'learner-book' and parts[3] == str(learner['id']) and parts[5] in confirmed_reviews:
+            record['attendance_ref'] = confirmed_reviews[parts[5]]
+    by_source = {r.get('attendance_ref') or f"meeting:{r['event_key']}": row(r.get('attendance_ref') or f"meeting:{r['event_key']}", r['scheduled_date'],
                 'Progress Review' if r['event_type'] == 'progress-review' else 'Coaching Session',
                 'Review' if r['event_type'] == 'progress-review' else 'Coaching',
-                hours=number(r['duration_minutes']) / 60, note=r['notes']) for r in records]
+                hours=number(r['duration_minutes']) / 60, note=r['notes']) for r in records}
+    for saved in confirmations.values():
+        detail = decoded(saved['details'], {})
+        if detail.get('category') != 'Meeting' or not detail.get('sourceRef'):
+            continue
+        ref = detail['sourceRef']
+        by_source[ref] = row(ref, detail.get('startsAt') or detail['date'], detail['title'],
+            'Review' if detail.get('componentType') == 'progress-review' else 'Coaching',
+            hours=number(saved['seconds']) / 3600, planned=number(saved['seconds']) / 3600,
+            note='Full meeting hours credited after selecting Attend on the meeting date.')
+    return list(by_source.values())
 
 
 def _attendance(learner):
+    from .attendance_confirmation import read_confirmations
     records = query('''SELECT o.id,o.scheduled_start,s.module_title AS title,
           max(a.total_attendance_seconds) AS seconds
         FROM curriculum.live_session_attendance a
@@ -180,7 +202,20 @@ def _attendance(learner):
         JOIN curriculum.live_sessions s ON s.id=o.live_session_id
         WHERE lower(btrim(a.email))=%s AND a.total_attendance_seconds>0
         GROUP BY o.id,o.scheduled_start,s.module_title ORDER BY o.scheduled_start,o.id''', [learner['email'].strip().lower()])
-    return [row(f"attendance:{r['id']}", r['scheduled_start'], r['title'], 'Attendance', hours=number(r['seconds']) / 3600) for r in records]
+    by_source = {f"attendance:{r['id']}": row(f"attendance:{r['id']}", r['scheduled_start'], r['title'],
+                 'Attendance', hours=number(r['seconds']) / 3600) for r in records}
+    for saved in read_confirmations(learner['id']).values():
+        detail = decoded(saved['details'], {})
+        ref = detail.get('sourceRef')
+        if not ref or detail.get('category') == 'Meeting':
+            continue
+        # The same lecture keeps its exact source reference if a Teams report
+        # arrives later. Replace its hours, never add a second attendance row.
+        by_source[ref] = row(ref, detail.get('startsAt') or detail['date'], detail['title'], 'Attendance',
+            hours=number(saved['seconds']) / 3600, planned=number(saved['seconds']) / 3600,
+            group=detail.get('module'), ksbs=detail.get('ksbs'),
+            note='Full lecture hours credited after selecting Attend on the lecture date.')
+    return list(by_source.values())
 
 
 def activity_rows(learner):

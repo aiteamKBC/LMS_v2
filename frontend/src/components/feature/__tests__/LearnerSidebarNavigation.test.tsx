@@ -6,9 +6,24 @@ import { roleNavMap } from '@/mocks/navigation';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { fetchLearnerSummary } from '@/api/learnerDetail';
 
-const viewer = vi.hoisted(() => ({ role: 'admin', denied: new Set<string>() }));
+const viewer = vi.hoisted(() => ({
+  role: 'admin',
+  denied: new Set<string>(),
+  // Set only for the "reviewing my own record" cases below: a staff member or
+  // administrator who is ALSO a learner (login/learner_enrolment.py).
+  learnerRecordId: null as number | null,
+  learnerRecordKind: null as string | null,
+}));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
-  auth: { account: { role: viewer.role }, user: { fullName: 'Reviewer' }, roles: [] },
+  auth: {
+    account: {
+      role: viewer.role,
+      learnerRecordId: viewer.learnerRecordId,
+      learnerRecordKind: viewer.learnerRecordKind,
+    },
+    user: { fullName: 'Reviewer' },
+    roles: [],
+  },
   isAdmin: viewer.role === 'admin',
   canSeeNavItem: (id: string) => !viewer.denied.has(id),
 }) }));
@@ -36,6 +51,8 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   viewer.denied.clear();
+  viewer.learnerRecordId = null;
+  viewer.learnerRecordKind = null;
 });
 
 it.each([
@@ -72,10 +89,48 @@ it.each([
     expect(sidebar().getByRole('link', { name: 'Compliance documents' })).toBeVisible();
   }
 
-  for (const [label, path] of [['My Learning', '/learner/my-learning'], ['Dashboard', '/workspace/learner'], ['Monthly Logs', '/learner/monthly-logs']]) {
+  for (const [label, path] of [['My Learning', '/learner/my-learning'], ['Dashboard', '/workspace/learner/dashboard'], ['Monthly Logs', '/learner/monthly-logs']]) {
     await act(async () => { fireEvent.click(sidebar().getByRole('link', { name: new RegExp(`^${label}`) })); });
     expect(screen.getByTestId('path')).toHaveTextContent(path);
     expect(destinations()).toEqual(initialDestinations);
     expect(sidebar().getByRole('link', { name: new RegExp(`^${label}`) })).toHaveAttribute('aria-current', 'page');
   }
+});
+
+it('gives an admin the REAL (reduced) menu on their OWN learner record, not the reviewing one', async () => {
+  // A staff member or administrator who is also a learner reaches their own
+  // record the same way a learner does — via their account's own
+  // learnerRecordId/Kind matching the page they are on. That must get the
+  // ordinary reduced menu (evidence hidden until Delivery, etc.), or an admin
+  // studying their own programme could reach pages with no training plan
+  // behind them yet.
+  viewer.role = 'admin';
+  viewer.learnerRecordId = 512;
+  viewer.learnerRecordKind = 'commercial';
+  rememberLearner('commercial', '512');
+  vi.mocked(fetchLearnerSummary).mockResolvedValue({
+    learnerType: 'commercial', programmeStatus: 'Onboarding', studentActivityAvailable: false,
+  } as Awaited<ReturnType<typeof fetchLearnerSummary>>);
+  render(<MemoryRouter initialEntries={['/learner/calendar']}><LearnerPage /></MemoryRouter>);
+  await act(async () => {});
+
+  // The reduced menu for a not-yet-started learner: My Learning is gone, not
+  // merely denied by canSeeNavItem.
+  expect(sidebar().queryByRole('link', { name: /^My Learning/ })).toBeNull();
+});
+
+it('still gives the full reviewing menu when the SAME admin opens a DIFFERENT learner', async () => {
+  // The account has a learner record of its own, but this page is not it — the
+  // enrolment workspace opened someone else's record for review.
+  viewer.role = 'admin';
+  viewer.learnerRecordId = 512;
+  viewer.learnerRecordKind = 'commercial';
+  rememberLearner('commercial', String(++learnerId));
+  vi.mocked(fetchLearnerSummary).mockResolvedValue({
+    learnerType: 'commercial', programmeStatus: 'Onboarding', studentActivityAvailable: false,
+  } as Awaited<ReturnType<typeof fetchLearnerSummary>>);
+  render(<MemoryRouter initialEntries={['/learner/calendar']}><LearnerPage /></MemoryRouter>);
+  await act(async () => {});
+
+  expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
 });

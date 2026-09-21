@@ -3,8 +3,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { invalidateLearnerReads } from '@/api/learnerRead';
-import type { OverviewWeek } from '@/api/learnerOverview';
+import { overviewSchedule, overviewWeek, type OverviewWeek } from '@/api/learnerOverview';
 import type { PlanSession, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { OverviewLearningPanels } from '../OverviewLearningPanels';
 
 const fixture = (): OverviewWeek => ({ weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', undatedActivities: 0, expectedHours: 7.5, missingExpectedHours: 0,
@@ -13,19 +14,35 @@ const fixture = (): OverviewWeek => ({ weekStart: '2026-09-07', weekEnd: '2026-0
   deadlines: [], otjh: { actual: 2.5, historical: 1.5, new: 1, undatedHistoricalRows: 0 } });
 const schedule: Pick<TrainingPlanDashboard, 'moduleLinks' | 'sessions' | 'reviews'> = { moduleLinks: {}, sessions: [], reviews: [{ id: 'coach', eventKey: 'mcr:1', title: 'Monthly Coaching', sequence: 1, source: 'mcr', date: '2026-09-25', targetDate: '2026-09-25', scheduledDate: null, scheduledTime: null, durationMinutes: 60, status: 'not-scheduled', coachName: 'Assigned Coach', invited: false }] };
 function setup({ week = fixture(), failed = '', calendar = schedule } = {}) {
-  const fetch = vi.fn(async (input: RequestInfo | URL) => {
+  const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
     const url = String(input);
     if (failed && url.includes(failed)) return new Response(JSON.stringify({ error: 'Offline' }), { status: 503 });
     return new Response(JSON.stringify(url.includes('overview-week') ? week : calendar));
   });
   vi.stubGlobal('fetch', fetch);
-  render(<MemoryRouter><OverviewLearningPanels kind="commercial" learnerId="125" /></MemoryRouter>);
+  function Subject() {
+    const weekRead = useLiveLearnerRead('commercial', '125', true, overviewWeek.read, overviewWeek.peek);
+    const scheduleRead = useLiveLearnerRead('commercial', '125', true, overviewSchedule.read, overviewSchedule.peek);
+    return <OverviewLearningPanels kind="commercial" learnerId="125" week={weekRead} schedule={scheduleRead} />;
+  }
+  render(<MemoryRouter><Subject /></MemoryRouter>);
   return fetch;
 }
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-12T10:00:00Z')); clearAllCachedResources(); });
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('overview learning panels', () => {
+  it('shows honest module-level KSBs when this week has no direct mappings', async () => {
+    const week = fixture();
+    week.modules[0] = { ...week.modules[0], ksbCodes: [], ksbMappingMissing: false };
+    week.planSubjects = [{ id: 'current:M1', title: 'Managing Change', source: 'current', completed: 2, total: 4,
+      dates: ['2026-09-09'], moduleIds: ['M1'], sessionTitles: [], ksbCodes: ['B2', 'K1', 'S3'] }];
+    setup({ week });
+    expect(await screen.findByText('B2, K1, S3')).toBeVisible();
+    expect(screen.getByText("Module-level mapping · this week's activities have no direct KSB mapping")).toBeVisible();
+    expect(screen.queryByText('Not mapped yet')).not.toBeInTheDocument();
+  });
+
   it('connects weekly progress, KSBs, hours and the correct module destination', async () => {
     setup();
     const select = await screen.findByRole('combobox', { name: 'Module' });
@@ -38,56 +55,16 @@ describe('overview learning panels', () => {
     expect(screen.getByText('Some activity mappings are missing')).toBeVisible();
     expect(screen.getByRole('link', { name: 'Open learning activities' })).toHaveAttribute('href', '/learner/modules/commercial/125?subject=legacy%3A2');
   });
-  it('labels target dates as to book and opens the actual calendar event', async () => {
+  it('leaves coaching to the combined monthly card', async () => {
     setup();
-    const upcoming = within(screen.getByRole('region', { name: 'Upcoming' }));
-    expect(await upcoming.findByText('To book')).toBeVisible();
-    expect(upcoming.getByRole('link', { name: /Monthly Coaching/ })).toHaveAttribute('href', '/learner/calendar?kind=commercial&learner=125&event=mcr%3A1');
+    await screen.findByRole('progressbar');
+    expect(screen.queryByRole('region', { name: 'Upcoming' })).not.toBeInTheDocument();
   });
   it('retains weekly learning when the independent calendar fails', async () => {
     setup({ failed: 'training-plan-dashboard' });
-    expect(await screen.findByText('Your calendar could not refresh.')).toBeVisible();
+    expect(await screen.findByText('Your live sessions could not refresh.')).toBeVisible();
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
     expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
-  });
-  it('polls coaching bookings, rescheduled dates, owners and cancellations without a reload', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const calendar = { ...schedule, reviews: schedule.reviews.map(review => ({ ...review })) };
-    const fetch = setup({ calendar });
-    const upcoming = within(screen.getByRole('region', { name: 'Upcoming' }));
-    const event = () => upcoming.getByRole('link', { name: /Monthly Coaching/ });
-    await upcoming.findByText('To book');
-    expect(event()).toHaveTextContent('25 Sept 2026');
-    expect(event()).not.toHaveTextContent('14:00');
-
-    // Another browser books the generated target; the stored date takes over.
-    Object.assign(calendar.reviews[0], { status: 'scheduled', scheduledDate: '2026-09-28', scheduledTime: '14:00' });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(event()).toHaveTextContent('Booking pending');
-    expect(event()).toHaveTextContent('28 Sept 2026');
-    expect(event()).toHaveTextContent('14:00');
-    expect(upcoming.queryByText('25 Sept 2026')).not.toBeInTheDocument();
-
-    // A confirmed reschedule replaces the previous booking, preserving its link.
-    Object.assign(calendar.reviews[0], { scheduledDate: '2026-09-20', scheduledTime: '10:30', invited: true, coachName: 'New Coach' });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(event()).toHaveTextContent('Booked');
-    expect(event()).toHaveTextContent('20 Sept 2026');
-    expect(event()).toHaveTextContent('10:30');
-    expect(event()).toHaveTextContent('With New Coach');
-    expect(event()).toHaveAttribute('href', '/learner/calendar?kind=commercial&learner=125&event=mcr%3A1');
-    expect(upcoming.getAllByRole('link', { name: /Monthly Coaching/ })).toHaveLength(1);
-
-    Object.assign(calendar.reviews[0], { status: 'cancelled', scheduledDate: null, scheduledTime: null, invited: false });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(upcoming.queryByRole('link', { name: /Monthly Coaching/ })).not.toBeInTheDocument();
-    expect(upcoming.getByText('No upcoming dates yet')).toBeVisible();
-
-    // A completed event must not return as an unbooked target either.
-    Object.assign(calendar.reviews[0], { status: 'completed', scheduledDate: '2026-09-20', invited: true });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(upcoming.queryByRole('link', { name: /Monthly Coaching/ })).not.toBeInTheDocument();
-    expect(fetch.mock.calls.filter(([url]) => String(url).includes('training-plan-dashboard'))).toHaveLength(5);
   });
   it('never invents activities or weekly targets when sources are empty', async () => {
     setup({ week: { ...fixture(), modules: [], expectedHours: null } });
@@ -104,71 +81,78 @@ describe('overview learning panels', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '75');
     expect(screen.queryByText('Loading this week\'s activities…')).not.toBeInTheDocument();
   });
-  it('defaults to the newest module rather than the first weekly or alphabetical module', async () => {
-    setup({ week: { ...fixture(), latestModuleId: 'legacy:2' } });
-    expect(await screen.findByRole('combobox', { name: 'Module' })).toHaveValue('legacy:2');
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
-  });
-  it('switches to a newly assigned module even after the learner selected an older one', async () => {
-    const week: OverviewWeek = { ...fixture(), latestModuleId: 'legacy:2' };
+  it('excludes assigned placeholders without current-week activities', async () => {
+    const week = fixture();
+    week.modules.unshift({ id: 'current:FUTURE', title: 'Future module', moduleIds: ['FUTURE'], weekLabels: [], completed: 0, total: 0, percent: null, ksbCodes: [], ksbMappingMissing: false });
     setup({ week });
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Module' }), { target: { value: 'current:M1' } });
-    week.modules.push({ id: 'current:NEW', title: 'Newest assigned module', moduleIds: ['NEW'], weekLabels: [], completed: 0, total: 0, percent: null, ksbCodes: [], ksbMappingMissing: false });
-    week.latestModuleId = 'current:NEW';
-    await act(async () => { invalidateLearnerReads(); });
-    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('current:NEW');
-    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open learning activities' })).toHaveAttribute('href', '/learner/modules/commercial/125?subject=current%3ANEW');
+    expect(await screen.findByRole('combobox', { name: 'Module' })).toHaveValue('current:M1');
+    expect(screen.queryByRole('option', { name: 'Future module' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('option')).toHaveLength(2);
   });
-  it('shows newly scheduled sessions from the latest module without requiring weekly activities', async () => {
-    const week: OverviewWeek = { ...fixture(), latestModuleId: 'current:NEW', modules: [{ id: 'current:NEW', title: 'Newest assigned module', moduleIds: ['NEW'], weekLabels: [], completed: 0, total: 0, percent: null, ksbCodes: [], ksbMappingMissing: false }] };
-    const session = (id: string, moduleId: string, title: string) => ({ id, moduleId, title, start: '2026-09-13T13:00:00Z', end: null, minutes: 60, status: 'scheduled', joinUrl: null, attended: null });
-    const calendar = { ...schedule, sessions: [session('old', 'M1', 'Old module live session')] };
-    setup({ week, calendar });
-    expect(await screen.findByText('Not scheduled')).toBeVisible();
-    expect(screen.queryByRole('link', { name: /Old module live session/ })).not.toBeInTheDocument();
-    calendar.sessions.push(session('new', 'NEW', 'Newest module live session'));
-    await act(async () => { invalidateLearnerReads(); });
-    expect(within(screen.getByRole('region', { name: 'This week' })).getByText('13 Sept 2026 · 14:00')).toBeVisible();
-    expect(screen.getByRole('link', { name: /Newest module live session/ })).toBeVisible();
-    expect(screen.queryByRole('link', { name: /Old module live session/ })).not.toBeInTheDocument();
+  it('keeps an empty week empty when the response contains a future placeholder', async () => {
+    setup({ week: { ...fixture(), modules: [{ id: 'current:FUTURE', title: 'Future module', weekLabels: [], completed: 0, total: 0, percent: null, ksbCodes: [], ksbMappingMissing: false }] } });
+    expect(await screen.findByText('No activities scheduled this week')).toBeVisible();
+    expect(screen.queryByText('Future module')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open learning activities' })).toHaveAttribute('href', '/learner/modules/commercial/125');
   });
-  it('automatically picks up a new assigned module and its later content through polling alone', async () => {
-    // A staff member works in another browser: no local save/invalidation event
-    // reaches this learner's tab. The normal 30-second refresh must be enough.
-    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const week: OverviewWeek = { ...fixture(), latestModuleId: 'current:M1' };
-    const calendar = { ...schedule, sessions: [{ id: 'old-session', moduleId: 'M1', title: 'Old module session',
-      start: '2026-09-13T13:00:00Z', end: null, minutes: 60, status: 'scheduled', joinUrl: null, attended: null }] as PlanSession[] };
+  it('preserves the selected weekly module when another module is scheduled this week', async () => {
+    const week = fixture();
+    setup({ week });
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Module' }), { target: { value: 'legacy:2' } });
+    week.modules.unshift({ ...week.modules[0], id: 'current:NEW', title: 'Another weekly module', moduleIds: ['NEW'] });
+    await act(async () => { invalidateLearnerReads(); });
+    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('legacy:2');
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+  });
+  it('falls back to a remaining weekly module when the selected one is rescheduled', async () => {
+    const week = fixture();
+    setup({ week });
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Module' }), { target: { value: 'legacy:2' } });
+    week.modules = [week.modules[0]];
+    await act(async () => { invalidateLearnerReads(); });
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByText('Project planning')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open learning activities' })).toHaveAttribute('href', '/learner/modules/commercial/125?subject=current%3AM1');
+  });
+  it('advances the week after saved data invalidates the reads and resets the selection', async () => {
+    vi.setSystemTime(new Date('2026-09-13T22:59:45Z'));
+    const week = fixture();
+    const fetch = setup({ week });
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Module' }), { target: { value: 'legacy:2' } });
+    expect(screen.getByText('0 of 2 activities complete')).toBeVisible();
+    Object.assign(week, { weekStart: '2026-09-14', weekEnd: '2026-09-20', modules: [
+      { ...week.modules[0], id: 'current:NEXT', title: 'Next week module', weekLabels: ['Week 8'], completed: 0, percent: 0 },
+      { ...week.modules[1], weekLabels: ['Week 8'], total: 3 },
+    ] });
+    await act(async () => { invalidateLearnerReads(); });
+    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('current:NEXT');
+    expect(screen.getByText(/14 Sept 2026.*20 Sept 2026/)).toBeVisible();
+    expect(screen.queryByRole('option', { name: 'Managing Change' })).not.toBeInTheDocument();
+    expect(screen.queryByText('0 of 2 activities complete')).not.toBeInTheDocument();
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes('overview-week'))).toHaveLength(2);
+  });
+  it('refreshes saved weekly content and scopes live sessions to the selected weekly module', async () => {
+    const week = fixture();
+    const calendar = { ...schedule, moduleLinks: { 'legacy:2': { id: 'M2', title: 'Project planning' } }, sessions: [
+      { id: 'first-session', moduleId: 'M1', title: 'First module session', start: '2026-09-13T13:00:00Z', end: null, minutes: 60, status: 'scheduled', joinUrl: null, attended: null },
+      { id: 'selected-session', moduleId: 'M2', title: 'Selected module session', start: '2026-09-13T14:00:00Z', end: null, minutes: 60, status: 'scheduled', joinUrl: null, attended: null },
+    ] as PlanSession[] };
     const fetch = setup({ week, calendar });
-    await screen.findByRole('combobox', { name: 'Module' });
-    await screen.findByText('To book');
-
-    // The module is created and assigned before its activities or meeting exist.
-    week.latestModuleId = 'current:NEW';
-    week.modules.push({ id: 'current:NEW', title: 'Newly created module', moduleIds: ['NEW'], weekLabels: [],
-      completed: 0, total: 0, percent: null, ksbCodes: [], ksbMappingMissing: false });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('current:NEW');
-    expect(screen.getByRole('link', { name: 'Open learning activities' })).toHaveAttribute('href', '/learner/modules/commercial/125?subject=current%3ANEW');
-    expect(screen.getByText('Not scheduled')).toBeVisible();
-    expect(screen.queryByRole('link', { name: /Old module session/ })).not.toBeInTheDocument();
-
-    // Staff then publish dated activities, expected hours, KSBs and a session.
-    Object.assign(week.modules[2], { weekLabels: ['New module week 1'], completed: 1, total: 2, percent: 50, ksbCodes: ['K99', 'S99'] });
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Module' }), { target: { value: 'legacy:2' } });
+    expect(screen.getByText('Live session').parentElement).toHaveTextContent(/13 Sept 2026.*15:00/);
+    Object.assign(week.modules[1], { completed: 1, percent: 50, ksbCodes: ['K99', 'S99'], ksbMappingMissing: false });
     week.expectedHours = 5;
     week.otjh.actual = 2;
-    calendar.sessions.push({ ...calendar.sessions[0], id: 'new-session', moduleId: 'NEW', title: 'New module session' });
-    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    calendar.sessions[1].start = '2026-09-13T15:00:00Z';
+    await act(async () => { invalidateLearnerReads(); });
     const panel = within(screen.getByRole('region', { name: 'This week' }));
-    expect(panel.getByText('New module week 1')).toBeVisible();
+    expect(panel.getByRole('combobox')).toHaveValue('legacy:2');
     expect(panel.getByText('K99, S99')).toBeVisible();
     expect(panel.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
     expect(panel.getByText('OTJH this week').parentElement).toHaveTextContent('2h / 5h');
-    expect(panel.getByText('13 Sept 2026 · 14:00')).toBeVisible();
-    expect(screen.getByRole('link', { name: /New module session/ })).toBeVisible();
-    expect(screen.queryByRole('link', { name: /Old module session/ })).not.toBeInTheDocument();
-    expect(fetch.mock.calls.filter(([url]) => String(url).includes('overview-week'))).toHaveLength(3);
-    expect(fetch.mock.calls.filter(([url]) => String(url).includes('training-plan-dashboard'))).toHaveLength(3);
+    expect(panel.getByText(/13 Sept 2026.*16:00/)).toBeVisible();
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes('overview-week'))).toHaveLength(2);
   });
 });

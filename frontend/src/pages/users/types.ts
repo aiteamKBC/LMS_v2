@@ -27,7 +27,8 @@ export interface UserListRow {
    *  before the uuid backfill. */
   uuid: string | null;
   name: string;
-  type: UserType;
+  /** Display labels include staff positions and combined roles in the directory. */
+  type: string;
   email: string;
   group: string;
   subscriptionStatus: string; // "FullUser"
@@ -273,6 +274,8 @@ export interface EnrolmentBoard {
     name: string;
     cohort: string;
     status: ProgrammeStatus;
+    learnerStartDate?: string;
+    learnerEndDate?: string;
     startDate: string;
     endDate: string;
     enrolledAt: string;

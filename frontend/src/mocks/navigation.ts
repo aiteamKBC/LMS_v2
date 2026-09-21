@@ -14,24 +14,12 @@ export const learnerDashboardLinks: (SidebarNavItem & { href: string; descriptio
 // LEARNER WORKSPACE — Core learning and progress navigation
 // ============================================================================
 export const learnerNavItems: SidebarNavItem[] = [
-  // Dashboard — the learner workspace's default page (not grouped).
-  { id: 'learner-overview', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/learner', matchPaths: learnerDashboardLinks.map(item => item.href) },
-  // The learner's own enrolment wizard — relevant while onboarding, and stays
-  // available afterwards as a record of what they submitted.
-  { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
+  { id: 'learner-home', label: 'Home', icon: 'ri-home-line', href: '/workspace/learner' },
+  { id: 'learner-overview', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/learner/dashboard', matchPaths: learnerDashboardLinks.map(item => item.href) },
 
-  // Statutory paperwork the learner signs (Apprenticeship Agreement today, the
-  // rest of DOC_TYPES as their generators land).
-  { id: 'learner-compliance-documents', label: 'Compliance documents', icon: 'ri-shield-check-line', href: '/learner/compliance-documents' },
-
-  // Calendar
-  { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
-
-  // Evidence — the learner's own submissions and where each one is in review.
-  { id: 'learner-evidence', label: 'Evidence', icon: 'ri-folder-upload-line', href: '/learner/evidence' },
-
-  // Attendance — single item; reporting an absence is an action inside the page.
-  { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
+  // My Learning — training plan, learning journey and quizzes merged into
+  // Overview/Modules/Quizzes tabs on one page.
+  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
 
   // Published forms explicitly assigned to the signed-in learner.
   { id: 'learner-feedback', label: 'Feedback', icon: 'ri-survey-line', href: '/learner/feedback' },
@@ -43,21 +31,35 @@ export const learnerNavItems: SidebarNavItem[] = [
     icon: 'ri-loop-left-line',
     href: '',
     children: [
+      { id: 'learner-monthly-submission', label: 'Monthly Submission', icon: 'ri-file-upload-line', href: '/learner/monthly-submission' },
       { id: 'learner-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/learner/monthly-logs', matchPaths: ['/learner/monthly-cycle'] },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
-      { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-progress-reviews', label: 'Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
+
+  // Attendance — single item; reporting an absence is an action inside the page.
+  { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
+
+  // Evidence — the learner's own submissions and where each one is in review.
+  { id: 'learner-evidence', label: 'Evidence', icon: 'ri-folder-upload-line', href: '/learner/evidence' },
+
+  // Calendar
+  { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
+
+  // The learner's own enrolment wizard — relevant while onboarding, and stays
+  // available afterwards as a record of what they submitted.
+  { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
+
+  // Statutory paperwork the learner signs (Apprenticeship Agreement today, the
+  // rest of DOC_TYPES as their generators land).
+  { id: 'learner-compliance-documents', label: 'Compliance documents', icon: 'ri-shield-check-line', href: '/learner/compliance-documents' },
 
   // Community tools now live on the dashboard. Readiness and Help still use
   // demonstration records, so they are not advertised in learner navigation.
 
   // The learner's database-backed coach conversation.
   { id: 'learner-messages', label: 'Messages', icon: 'ri-message-3-line', href: '/learner/messages' },
-
-  // My Learning — training plan, learning journey and quizzes merged into
-  // Overview/Modules/Quizzes tabs on one page.
-  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
 ];
 
 // ============================================================================
@@ -65,54 +67,36 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
-  { id: 'coach-previous-records', label: 'Previous learning records', icon: 'ri-history-line', href: '/old-otjh/coach' },
   {
-    id: 'coach-group-learners',
-    label: 'My Learners',
-    icon: 'ri-group-line',
-    href: '/coach/caseload',
-  },
-  {
-    id: 'coach-group-attendance',
-    label: 'Attendance',
-    icon: 'ri-calendar-2-line',
-    href: '',
+    id: 'coach-meetings',
+    label: 'Meetings',
+    icon: 'ri-calendar-event-line',
+    href: '/coach/monthly-coaching',
     children: [
-      { id: 'coach-attendance', label: 'Attendance & Catch-up', icon: 'ri-calendar-check-line', href: '/coach/attendance' },
-      { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports' },
-    ],
-  },
-  {
-    id: 'coach-group-marking',
-    label: 'Marking & Evidence',
-    icon: 'ri-edit-line',
-    href: '',
-    children: [
-      { id: 'coach-marking-queue', label: 'Marking Queue', icon: 'ri-edit-line', href: '/coach/marking-queue' },
-    ],
-  },
-  {
-    id: 'coach-group-coaching',
-    label: 'Coaching & Reviews',
-    icon: 'ri-calendar-schedule-line',
-    href: '',
-    children: [
-      { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
-      { id: 'coach-meetings', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
+      { id: 'coach-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/monthly-coaching' },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
-      { id: 'coach-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/coach/monthly-logs', matchPaths: ['/coach/monthly-cycle'] },
+      { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-refresh-line', href: '/coach/catchup-queue' },
+      { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
     ],
   },
   {
-    id: 'coach-group-intelligence',
-    label: 'Progress Intelligence',
-    icon: 'ri-bar-chart-2-line',
-    href: '',
-    children: [
-      { id: 'coach-ksb-impact', label: 'KSB Impact', icon: 'ri-bar-chart-2-line', href: '/coach/ksb-impact' },
-      { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
-      { id: 'coach-monthly-reports', label: 'Monthly Reports', icon: 'ri-file-list-3-line', href: '/coach/monthly-reports' },
-    ],
+    id: 'coach-attendance',
+    label: 'Attendance',
+    icon: 'ri-calendar-check-line',
+    href: '/coach/attendance',
+  },
+  {
+    id: 'coach-marking-queue',
+    label: 'Marking',
+    icon: 'ri-edit-line',
+    href: '/coach/marking-queue',
+  },
+  {
+    id: 'coach-monthly-logs',
+    label: 'Monthly Logs',
+    icon: 'ri-file-list-3-line',
+    href: '/coach/monthly-logs',
+    matchPaths: ['/coach/monthly-cycle'],
   },
 ];
 
@@ -233,7 +217,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/modules',
       '/curriculum/teams-meetings',
       '/curriculum/session-calendar',
-      '/curriculum/holidays',
+      '/curriculum/england-holidays',
     ],
   },
   {
@@ -256,11 +240,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     label: 'Quality',
     icon: 'ri-shield-check-line',
     href: '/curriculum/quality',
-    // Published Content, Reports and the Audit Trail are live; Quality
-    // Assurance and Version Control have no record store yet, and the hub says
-    // which is which. The tag flags that the destination is usable but part
-    // built, where `comingSoon` would wrongly read as "do not bother opening".
-    tag: 'Under review',
     matchPaths: [
       '/curriculum/published',
       '/curriculum/reports',
@@ -596,6 +575,9 @@ export const adminNavItems: SidebarNavItem[] = [
       { id: 'admin-roles', label: 'Roles', icon: 'ri-shield-check-line', href: '/admin/roles' },
       { id: 'admin-permissions', label: 'Permissions', icon: 'ri-key-2-line', href: '/admin/permissions' },
       { id: 'admin-access-logs', label: 'Access Logs', icon: 'ri-door-lock-line', href: '/admin/access-logs' },
+      // The system-wide Audit Trail. Access Logs above answers "who signed in";
+      // this answers "who was here, what did they open, and what did they change".
+      { id: 'admin-audit-trail', label: 'Audit Trail', icon: 'ri-history-line', href: '/admin/audit-trail', matchPaths: ['/admin/audit-trail/people'] },
     ],
   },
 

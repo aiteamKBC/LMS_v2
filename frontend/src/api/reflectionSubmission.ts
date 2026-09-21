@@ -1,3 +1,5 @@
+import { learningFetch } from '@/lib/personalLearning';
+import type { SubmissionAttempt } from './assignmentAttempts';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { MonthlyAssignment } from './monthlyAssignment';
 
@@ -52,6 +54,7 @@ export interface HistoricalAssignmentContent {
 }
 
 export interface StoredLearningReflectionSubmission extends LearningReflectionSubmissionInput {
+  submissionAttempts?: SubmissionAttempt[];
   /** Server-owned provenance; learners cannot request the import exemption. */
   submissionOrigin?: 'learner' | 'imported_legacy' | 'classified_legacy';
   legacyAssignment?: {
@@ -111,10 +114,10 @@ export async function loadLearningReflectionSubmission(input: {
 
 export async function saveLearningReflectionSubmission(
   input: LearningReflectionSubmissionInput,
-): Promise<{ id: string; status: string }> {
+): Promise<{ id: string; status: string; submissionAttempts?: SubmissionAttempt[] }> {
   let response: Response;
   try {
-    response = await fetch('/learner_api/reflection/submissions/', {
+    response = await learningFetch('/learner_api/reflection/submissions/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
@@ -124,7 +127,7 @@ export async function saveLearningReflectionSubmission(
   }
 
   const text = await response.text();
-  let data: { id?: string; status?: string; error?: string };
+  let data: { id?: string; status?: string; error?: string; submissionAttempts?: SubmissionAttempt[] };
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
@@ -134,5 +137,5 @@ export async function saveLearningReflectionSubmission(
     throw new Error(data.error || `Could not save the reflection (${response.status}).`);
   }
   invalidateLearnerReads();
-  return { id: data.id || '', status: data.status || '' };
+  return { id: data.id || '', status: data.status || '', submissionAttempts: data.submissionAttempts };
 }

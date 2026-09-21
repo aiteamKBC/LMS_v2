@@ -99,7 +99,10 @@ export function syncLearnerStatus(
   const cacheKey = `${kind}:${id}`;
   let changed = statusCache.get(cacheKey) !== status;
   if (summary) {
-    const ready = canViewAssignedProgramme(kind, summary.accessGate) && summary.learningAccess?.blocked === false;
+    // Not gated on learningAccess.blocked: that flag is only "the cohort start
+    // date has not arrived", and a learner waiting for their start date still
+    // gets their full sidebar.
+    const ready = canViewAssignedProgramme(kind, summary.accessGate);
     changed ||= cachedReady(cacheKey) !== ready || cachedHistory(cacheKey) !== !!summary.studentActivityAvailable;
     readyCache.set(cacheKey, ready);
     try {

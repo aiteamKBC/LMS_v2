@@ -1,53 +1,71 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, CalendarDays, Clock3, GraduationCap, Layers3, Target, Users, Video } from 'lucide-react';
-import type { TimelineModule } from './model';
-import { nextSession } from './model';
-import { dateLabel, hours, Meter, moduleStatus, sessionTime, State } from './presentation';
+import type { ReactNode } from 'react';
+import { ArrowRight, CalendarDays, Clock3, GraduationCap, Layers3, Target, Users, type LucideIcon } from 'lucide-react';
+import { percent, type TimelineModule } from './model';
+import { CurriculumTimeline } from './CurriculumTimeline';
+import { dateLabel, hours, Meter, moduleStatus, State } from './presentation';
 import styles from './trainingPlan.module.css';
 import layout from './TrainingPlanDetails.module.css';
 
-type Props = { module?: TimelineModule; hasModules: boolean; coachName: string; href: string; canOpenActivities: boolean; now: number };
+type Props = { module?: TimelineModule; hasModules: boolean; coachName: string; href: string; canOpenActivities: boolean };
 const activityLabels: Record<string, string> = {
   reading: 'Readings', video: 'Videos', podcast: 'Podcasts', audio: 'Audio activities', powerpoint: 'Presentations',
   quiz: 'Quizzes', reading_quiz: 'Readings & quizzes', assignment: 'Assignments', checkpoint: 'Checkpoints',
   reflection: 'Reflections', live_session: 'Live sessions', activity: 'Other activities',
 };
 
-export function ModuleOverview({ module, hasModules, coachName, href, canOpenActivities, now }: Props) {
+export function ModuleOverview({ module, hasModules, coachName, href, canOpenActivities }: Props) {
   const detail = module?.detail;
-  const upcoming = module ? nextSession(module.sessions, now) : null;
-  const plannedSessions = detail?.sessions_number ?? module?.activityCounts.live_session;
-  const nextSessionPlaceholder = module?.sessions.length ? 'No upcoming sessions' : plannedSessions === 0 ? 'No sessions planned' : 'Not booked yet';
   const timetable = [detail?.session_week_day, detail?.session_start_time
     ? `${detail.session_start_time}${detail.session_end_time ? `–${detail.session_end_time}` : ''}` : ''].filter(Boolean).join(' · ');
   const outcomes = detail?.learning_outcomes || [];
   const codes = module?.ksbCodes || [];
+  const deliveryEnd = (detail?.effectiveEndDate || '').slice(0, 10);
+  const studyHoursProgress = detail?.total_otjh != null && module?.actual != null
+    ? percent(module.actual, detail.total_otjh) : null;
   return <section className={`${styles.panel} ${layout.overview}`} aria-label="Module overview">
     <div className={styles.panelHeading}>
       <div><p className={styles.eyebrow}>In focus</p><h2>Module overview</h2></div>
       {canOpenActivities && module && <Link className={styles.primary} to={href}>Go to module<ArrowRight size={15} /></Link>}
     </div>
     {module ? <>
-      <h3 className={styles.overviewTitle}>{module.title}</h3>
-      <State value={moduleStatus(module)} />
+      <div className={layout.moduleIdentity}><h3 className={styles.overviewTitle}>{module.title}</h3><State value={moduleStatus(module)} /></div>
       {(detail?.programme_name || detail?.cohort_name || detail?.group_name) && <div className={layout.moduleContext}>
         {detail.programme_name && <p>{detail.programme_name}</p>}
         <div>{detail.cohort_name && <span>Cohort: {detail.cohort_name}</span>}{detail.group_name && <span>Group: {detail.group_name}</span>}</div>
       </div>}
       {detail?.description && <p className={layout.moduleDescription}>{detail.description}</p>}
-      <dl className={`${styles.overviewStats} ${layout.moduleStats}`}>
-        <div><CalendarDays size={18} /><dt>Start date</dt><dd>{module.start ? dateLabel(module.start) : 'To be confirmed'}</dd></div>
-        <div><CalendarDays size={18} /><dt>Planned end</dt><dd>{module.end ? dateLabel(module.end) : 'To be confirmed'}</dd></div>
-        <div><Layers3 size={18} /><dt>Teaching weeks</dt><dd>{detail?.weeks_number ?? (module.weeks || 'To be confirmed')}</dd></div>
-        <div><Target size={18} /><dt>Planned OTJH</dt><dd>{detail?.total_otjh == null ? 'Not provided' : `${hours(detail.total_otjh)} hours`}<small>Module training plan</small></dd></div>
-        <div><Video size={18} /><dt>{plannedSessions == null ? 'Live sessions' : 'Planned live sessions'}</dt>
-          <dd>{plannedSessions ?? module.sessions.length}<small>{module.sessions.length} booked · {module.sessions.filter(session => session.attended === true).length} attended</small></dd></div>
-        <div><Clock3 size={18} /><dt>Weekly timetable</dt><dd>{timetable || 'To be confirmed'}{detail?.session_start_time && <small>UK time</small>}</dd></div>
-        <div><Users size={18} /><dt>Coach</dt><dd>{detail?.coach_name || coachName || 'To be assigned'}</dd></div>
-        <div><GraduationCap size={18} /><dt>Tutor</dt><dd>{detail?.tutor_name || 'To be assigned'}</dd></div>
-        <div><Clock3 size={18} /><dt>Hours recorded</dt><dd>{module.actual == null ? 'Unavailable' : `${hours(module.actual)} hours`}<small>Accepted study hours</small></dd></div>
-        <div><Video size={18} /><dt>Next session</dt><dd>{upcoming ? sessionTime(upcoming.start) : nextSessionPlaceholder}{upcoming && <small>UK time</small>}</dd></div>
-      </dl>
+      <div className={layout.overviewGroups}>
+        <div className={`${layout.overviewGroup} ${layout.scheduleGroup}`}><h3>Schedule</h3><dl className={`${layout.factGrid} ${layout.scheduleFacts}`}>
+          <OverviewFact icon={CalendarDays} label="Start date">{module.start ? dateLabel(module.start) : 'To be confirmed'}</OverviewFact>
+          <OverviewFact icon={CalendarDays} label="Planned end">{module.end ? dateLabel(module.end) : 'To be confirmed'}</OverviewFact>
+          {/* Only when a holiday has actually moved the run. The scheduler
+              states this date -- it is the last DELIVERED session -- so the
+              learner reads the same delivery end the Module Builder does,
+              rather than a stored date that stopped describing the run when
+              the closure was ticked. Hidden when the two agree: repeating the
+              same date under two labels reads as two different facts. */}
+          {deliveryEnd && deliveryEnd !== module.end && (
+            <OverviewFact icon={CalendarDays} label="Delivery ends">{dateLabel(deliveryEnd)}
+              <small>Moved by a holiday closure</small></OverviewFact>
+          )}
+          <OverviewFact icon={Layers3} label="Teaching weeks">{detail?.weeks_number ?? (module.weeks || 'To be confirmed')}</OverviewFact>
+          <OverviewFact icon={Clock3} label="Weekly timetable">{timetable || 'To be confirmed'}{detail?.session_start_time && <small>UK time</small>}</OverviewFact>
+        </dl></div>
+        <div className={layout.overviewGroup}><h3>Staff</h3><dl className={layout.factGrid}>
+          <OverviewFact icon={Users} label="Coach">{detail?.coach_name || coachName || 'To be assigned'}</OverviewFact>
+          <OverviewFact icon={GraduationCap} label="Tutor">{detail?.tutor_name || 'To be assigned'}</OverviewFact>
+        </dl></div>
+        <div className={layout.overviewGroup}><h3>Study hours</h3><dl className={layout.factGrid}>
+          <OverviewFact icon={Target} label="Planned OTJH">{detail?.total_otjh == null ? 'Not provided' : `${hours(detail.total_otjh)} hours`}</OverviewFact>
+          <OverviewFact icon={Clock3} label="Hours recorded">{module.actual == null ? 'Unavailable' : `${hours(module.actual)} hours`}</OverviewFact>
+        </dl><div className={layout.studyHoursProgress}><Meter value={studyHoursProgress} label="Study hours progress" /><span>{studyHoursProgress == null ? '—' : `${studyHoursProgress}%`}</span></div></div>
+      </div>
+      {/* The curriculum as the Module Builder holds it: the taught weeks on the
+          dates they are delivered, and the delivery days a cohort holiday
+          closed still present as Reading Weeks. Without these the learner sees
+          an unexplained gap where a bank holiday was. */}
+      <CurriculumTimeline slots={detail?.curriculumSlots} sessions={module.sessions} />
       {Object.keys(module.activityCounts).length > 0 && <div className={layout.moduleSection}>
         <h3>Learning activities <span>{module.activityCount}</span></h3>
         <ul className={layout.activityBreakdown}>{Object.entries(module.activityCounts).map(([type, count]) =>
@@ -72,4 +90,8 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
       </div>
     </> : <p className={styles.empty}>{hasModules ? 'Choose a module above to see its details.' : 'Your modules will appear when they are assigned.'}</p>}
   </section>;
+}
+
+function OverviewFact({ icon: Icon, label, children }: { icon: LucideIcon; label: string; children: ReactNode }) {
+  return <div><Icon size={16} aria-hidden="true" /><dt>{label}</dt><dd>{children}</dd></div>;
 }

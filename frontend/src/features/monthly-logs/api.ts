@@ -2,8 +2,8 @@ import { readLearnerJson, invalidateLearnerReads } from '@/api/learnerRead';
 import { coachViewAs } from '@/lib/coachViewAs';
 import type { ActivityContent, JournalSummary, MonthDetail, MonthState, SignatureCaptureMethod } from '@/features/old-otjh/api';
 
-export type LogMonth = MonthState & { source: 'legacy' | 'lms' };
-export type LogDetail = MonthDetail & { source: 'legacy' | 'lms' };
+export type LogMonth = MonthState & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null };
+export type LogDetail = MonthDetail & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null };
 export type LogSummary = Omit<JournalSummary, 'months'> & {
   months: LogMonth[]; total_months: number; completed_months: number; read_only: boolean; csrf_token: string;
 };
@@ -13,6 +13,8 @@ export type LogPerspective = 'learner' | 'coach';
 function url(path: string, perspective: LogPerspective) {
   const params = new URLSearchParams();
   params.set('perspective', perspective);
+  const workflow = new URLSearchParams(window.location.search).get('workflow');
+  if (workflow) params.set('workflow', workflow);
   const selected = perspective === 'coach' ? coachViewAs() : null;
   if (selected) params.set('viewAsCoach', selected.email);
   return `/learner_api/monthly-logs/${path}${params.size ? `?${params}` : ''}`;
@@ -28,6 +30,16 @@ export async function getLogContent(id: string, month: string, rowId: number, pe
 }
 export const getLogLearners = () => read<{ learners: LogLearner[] }>('learners/');
 
+export async function completeLogMonth(id: string, month: string, csrfToken: string, perspective: LogPerspective = 'learner') {
+  const response = await fetch(url(`${id}/${month}/complete/`, perspective), {
+    method: 'POST', credentials: 'include', headers: { 'X-CSRFToken': csrfToken },
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) throw new Error(data?.error || 'Could not complete this month. Please try again.');
+  invalidateLearnerReads();
+  return data as LogDetail;
+}
+
 export async function signLogMonth(id: string, month: string, digest: string, blob: Blob, capture: SignatureCaptureMethod, csrfToken: string, perspective: LogPerspective = 'coach') {
   const form = new FormData();
   form.set('signature', blob, 'signature.png');
@@ -38,6 +50,16 @@ export async function signLogMonth(id: string, month: string, digest: string, bl
     headers: { 'X-CSRFToken': csrfToken }, body: form });
   const data = await response.json().catch(() => null);
   if (!response.ok || !data) throw new Error(data?.error || 'Could not save your signature. Please try again.');
+  invalidateLearnerReads();
+  return data as LogDetail;
+}
+
+export async function unlockLogMonth(id: string, month: string, csrfToken: string, perspective: LogPerspective = 'learner') {
+  const response = await fetch(url(`${id}/${month}/unlock/`, perspective), {
+    method: 'POST', credentials: 'include', headers: { 'X-CSRFToken': csrfToken },
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) throw new Error(data?.error || 'Could not unlock this monthly log.');
   invalidateLearnerReads();
   return data as LogDetail;
 }

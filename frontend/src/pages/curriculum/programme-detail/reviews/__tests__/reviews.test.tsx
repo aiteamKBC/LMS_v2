@@ -1,7 +1,12 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CurriculumProgramme, ReviewDetail, ReviewSummary } from '@/lib/curriculumApi';
+import type { CurriculumProgramme, ReviewDetail, ReviewSummary, ReviewType } from '@/lib/curriculumApi';
+
+const reviewTypes: ReviewType[] = [
+  { id: 'REVT-MCM', name: 'Monthly Coaching Meeting', code: 'mcm', isSystem: true, isActive: true },
+  { id: 'REVT-PROGRESS_REVIEW', name: 'Progress Review', code: 'progress_review', isSystem: true, isActive: true },
+];
 
 const summary: ReviewSummary = {
   id: 'REV-20260910120000000001',
@@ -10,6 +15,10 @@ const summary: ReviewSummary = {
   enabled: true,
   recurrence: { interval: 12, unit: 'weeks' },
   scheduleAnchorDate: '2026-09-10',
+  occurrenceCount: null,
+  reviewTypeId: 'REVT-PROGRESS_REVIEW',
+  reviewTypeCode: 'progress_review',
+  reviewTypeName: 'Progress Review',
   applicableStatuses: ['Active'],
   fieldCount: 1,
   createdAt: '2026-09-10T00:00:00Z',
@@ -21,6 +30,8 @@ const detail: ReviewDetail = {
   signatures: { advisor: true, employer: false, participant: true, referrer: false },
   visibleTo: { advisor: true, employer: true, participant: true, referrer: false },
   recordTimeSpent: true,
+  expectedOtjh: 0,
+  countsTowardsOtjh: false,
   allowEditingPriorDays: 7,
   notifications: { employer: false, participant: true },
   incompleteMarker: 'Overdue',
@@ -65,12 +76,15 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
 
 const api = vi.hoisted(() => ({
   fetchProgrammeReviews: vi.fn(),
+  fetchReviewTypes: vi.fn(),
+  createReviewType: vi.fn(),
   fetchReviewDetail: vi.fn(),
   createReviewTemplate: vi.fn(),
   updateReviewTemplate: vi.fn(),
   archiveReviewTemplate: vi.fn(),
   cloneReviewTemplates: vi.fn(),
   fetchCurriculumProgrammes: vi.fn(),
+  fetchCurriculumProgrammeDetail: vi.fn(),
   fetchReviewSchedule: vi.fn(),
   resolveReviewClash: vi.fn(),
 }));
@@ -80,6 +94,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...api,
 }));
 
+import { CurriculumApiError } from '@/lib/curriculumApi';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { ReviewsTab } from '../ReviewsTab';
 import { ReviewFormModal } from '../ReviewForm';
@@ -88,7 +103,12 @@ import { CloneReviewsModal } from '../CloneReviewsModal';
 beforeEach(() => {
   vi.clearAllMocks();
   api.fetchProgrammeReviews.mockResolvedValue([]);
+  api.fetchReviewTypes.mockResolvedValue(reviewTypes);
   api.fetchCurriculumProgrammes.mockResolvedValue(programmes);
+  api.fetchCurriculumProgrammeDetail.mockResolvedValue({ flat: {
+    cohorts: [{ id: 'C-1', name: 'September cohort' }],
+    groups: [{ id: 'G-1', name: 'Group A', cohort: 'September cohort' }],
+  } });
   api.fetchReviewSchedule.mockResolvedValue({
     programmeId: 'PROG-DATA', windowStart: '2026-09-01', windowEnd: '2027-08-31', monthsPreviewed: 12, months: [],
   });
@@ -98,7 +118,51 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * A brand-new review starts locked to the General step; Form Builder only
+ * unlocks after General/Schedule/Eligibility/Participants & Permissions each
+ * validate. Their non-General defaults are already valid, so satisfying
+ * General (name + review type) and stepping through with Next reaches it.
+ */
+async function fillGeneralAndReachFormBuilder(reviewTypeName = 'Progress Review') {
+  await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+  await userEvent.type(screen.getByLabelText(/Review name/), 'Progress Review');
+  await userEvent.click(screen.getByRole('combobox', { name: /Review type/ }));
+  await userEvent.click(await screen.findByRole('option', { name: reviewTypeName }));
+  for (let step = 0; step < 4; step += 1) {
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+  }
+}
+
 describe('ReviewsTab', () => {
+  it('saves group applicability by stable ID', async () => {
+    api.fetchReviewDetail.mockResolvedValue(detail);
+    api.updateReviewTemplate.mockResolvedValue(detail);
+    render(<ReviewFormModal programmeId="PROG-DATA" review={summary} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await screen.findByDisplayValue('Progress Review');
+    await userEvent.click(screen.getByRole('tab', { name: 'Eligibility' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Applies to' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Selected groups' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'September cohort / Group A' }));
+    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(api.updateReviewTemplate).toHaveBeenCalledWith(summary.id, expect.objectContaining({
+      applicability: { scope: 'group', ids: ['G-1'] },
+    }));
+  });
+
+  it('blocks a restricted review with no selected placement', async () => {
+    api.fetchReviewDetail.mockResolvedValue(detail);
+    render(<ReviewFormModal programmeId="PROG-DATA" review={summary} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await screen.findByDisplayValue('Progress Review');
+    await userEvent.click(screen.getByRole('tab', { name: 'Eligibility' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Applies to' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Selected cohorts' }));
+    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    expect(api.updateReviewTemplate).not.toHaveBeenCalled();
+  });
+
   it('loads and shows the programme empty state when there are no reviews', async () => {
     render(<ReviewsTab programmeId="PROG-DATA" programmeName="Data Analyst" />);
     expect(await screen.findByText('No reviews have been configured yet')).toBeInTheDocument();
@@ -151,18 +215,30 @@ describe('ReviewsTab', () => {
 });
 
 describe('ReviewFormModal', () => {
-  it('rejects saving with a blank review name', async () => {
+  it('rejects advancing past General with a blank review name', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
 
-    await userEvent.click(screen.getByRole('button', { name: /Create review/ }));
+    // A review type alone is not enough -- name is validated together with it
+    // on General, and the "Create review" button does not exist until the
+    // Form Builder step, so a blank name is caught by the Next gate instead.
+    await userEvent.click(screen.getByRole('combobox', { name: /Review type/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Progress Review' }));
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
 
     expect(await screen.findByText('Review name is required.')).toBeInTheDocument();
     expect(api.createReviewTemplate).not.toHaveBeenCalled();
+    // Still on General -- Schedule never unlocked.
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('lets the recurrence interval be entered and the repeat unit be selected', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: 'Schedule' }));
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+    await userEvent.type(screen.getByLabelText(/Review name/), 'Progress Review');
+    await userEvent.click(screen.getByRole('combobox', { name: /Review type/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Progress Review' }));
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
 
     const intervalInput = screen.getByLabelText(/Repeat interval/);
     await userEvent.clear(intervalInput);
@@ -176,9 +252,7 @@ describe('ReviewFormModal', () => {
 
   it('adds a section, adds a field inside it, and blocks save on an empty field title', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-
-    await userEvent.type(screen.getByLabelText(/Review name/), 'Progress Review');
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.type(screen.getByLabelText(/Section title/), 'Meeting & Close');
     await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
@@ -187,15 +261,21 @@ describe('ReviewFormModal', () => {
     const requiredCheckboxes = screen.getAllByRole('checkbox', { name: 'Required' });
     await userEvent.click(requiredCheckboxes[requiredCheckboxes.length - 1]);
 
-    await userEvent.click(screen.getByRole('button', { name: /Create review/ }));
-
-    expect(await screen.findByText("Title can't be empty.")).toBeInTheDocument();
+    // The field's title is still blank -- the save button disables itself
+    // rather than being clickable and then rejected (see the same pattern on
+    // "blocks a restricted review with no selected placement" above).
+    const createButton = screen.getByRole('button', { name: /Create review/ });
+    expect(createButton).toBeDisabled();
+    await userEvent.click(createButton);
     expect(api.createReviewTemplate).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByPlaceholderText('Question title'), 'Confirmed next session booked');
+    expect(screen.getByRole('button', { name: /Create review/ })).toBeEnabled();
   });
 
   it('removes a field and reorders remaining fields within a section with move up/down', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.type(screen.getByLabelText(/Section title/), 'Meeting & Close');
 
@@ -218,7 +298,7 @@ describe('ReviewFormModal', () => {
 
   it('selecting Boolean with case block reveals IF YES / IF NO branches, each accepting its own field', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.type(screen.getByLabelText(/Section title/), 'Meeting & Close');
     await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
@@ -236,7 +316,7 @@ describe('ReviewFormModal', () => {
 
   it('a plain Boolean field never shows conditional branches', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
 
@@ -249,7 +329,7 @@ describe('ReviewFormModal', () => {
 
   it('selecting List item reveals the option editor', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
 
@@ -260,9 +340,34 @@ describe('ReviewFormModal', () => {
     expect(screen.getByLabelText('New list option')).toBeInTheDocument();
   });
 
+  it('a list item can be marked as the RAG status question, and only a list item offers it', async () => {
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await fillGeneralAndReachFormBuilder();
+    await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
+
+    const ragLabel = /This is the RAG status question/;
+    expect(screen.queryByLabelText(ragLabel)).not.toBeInTheDocument();
+
+    const typeCombobox = screen.getByRole('combobox', { name: /Field type/ });
+    await userEvent.click(typeCombobox);
+    await userEvent.click(await screen.findByRole('option', { name: 'List item' }));
+
+    const ragCheckbox = screen.getByLabelText(ragLabel);
+    expect(ragCheckbox).not.toBeChecked();
+    await userEvent.click(ragCheckbox);
+    expect(screen.getByLabelText(ragLabel)).toBeChecked();
+
+    // Changing the field type clears the marker along with the rest of the
+    // field's configuration, so a non-list question can never carry it.
+    await userEvent.click(screen.getByRole('combobox', { name: /Field type/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Text' }));
+    expect(screen.queryByLabelText(ragLabel)).not.toBeInTheDocument();
+  });
+
   it('deleting a section with fields asks for confirmation', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
     await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
 
@@ -290,11 +395,77 @@ describe('ReviewFormModal', () => {
     api.createReviewTemplate.mockRejectedValue(new Error('Curriculum API returned 400 for /curriculum/programmes/PROG-DATA/reviews/'));
     const { showCurriculumAlert } = await import('@/components/feature/CurriculumSweetAlert');
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
-
-    await userEvent.type(screen.getByLabelText(/Review name/), 'Progress Review');
+    await fillGeneralAndReachFormBuilder();
     await userEvent.click(screen.getByRole('button', { name: /Create review/ }));
 
     expect(await vi.waitUntil(() => (showCurriculumAlert as ReturnType<typeof vi.fn>).mock.calls.length > 0)).toBeTruthy();
+  });
+});
+
+describe('ReviewFormModal review type', () => {
+  it('loads the active review types into the General tab dropdown', async () => {
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+    await userEvent.click(await screen.findByRole('combobox', { name: /Review type/ }));
+
+    expect(await screen.findByRole('option', { name: 'Monthly Coaching Meeting' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Progress Review' })).toBeInTheDocument();
+  });
+
+  it('blocks moving past General until a review type is chosen', async () => {
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+
+    await userEvent.type(screen.getByLabelText(/Review name/), 'Monthly Learner Catch-up');
+    await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+    expect(await screen.findByText('Review type is required.')).toBeInTheDocument();
+    // Still on General -- the Schedule step never unlocked.
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('adds a new type from the name alone and selects it automatically', async () => {
+    api.createReviewType.mockResolvedValue({
+      id: 'REVT-20260913120000000001', name: 'Career Review', code: 'career_review', isSystem: false, isActive: true,
+    });
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole('button', { name: /Add new type/ }));
+    const dialog = await screen.findByRole('dialog', { name: /Add Review Type/ });
+    await userEvent.type(within(dialog).getByLabelText(/Type name/), 'Career Review');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add' }));
+
+    // The name is the only thing sent: id/code/is_system/is_active are the
+    // backend's to generate.
+    await vi.waitFor(() => expect(api.createReviewType).toHaveBeenCalledWith('Career Review'));
+    expect(await screen.findByRole('combobox', { name: /Review type/ })).toHaveTextContent('Career Review');
+  });
+
+  it('shows the duplicate-name error against the Add Review Type field', async () => {
+    api.createReviewType.mockRejectedValue(
+      new CurriculumApiError('Please fix the highlighted fields.', 400, '/curriculum/review-types/', { fields: { name: 'A review type with this name already exists.' } }),
+    );
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole('button', { name: /Add new type/ }));
+    const dialog = await screen.findByRole('dialog', { name: /Add Review Type/ });
+    await userEvent.type(within(dialog).getByLabelText(/Type name/), 'Progress Review');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText('A review type with this name already exists.')).toBeInTheDocument();
+  });
+
+  it('edit preselects the review stored type, and a renamed review keeps it', async () => {
+    api.fetchReviewDetail.mockResolvedValue({ ...detail, name: 'Monthly Learner Catch-up', reviewTypeId: 'REVT-MCM', reviewTypeCode: 'mcm', reviewTypeName: 'Monthly Coaching Meeting' });
+    render(<ReviewFormModal programmeId="PROG-DATA" review={{ ...summary, name: 'Monthly Learner Catch-up' }} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    // Name and type are independent: the review is called something else
+    // entirely and is still typed as a Monthly Coaching Meeting.
+    expect(await screen.findByDisplayValue('Monthly Learner Catch-up')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /Review type/ })).toHaveTextContent('Monthly Coaching Meeting');
   });
 });
 

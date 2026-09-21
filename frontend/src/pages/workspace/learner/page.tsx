@@ -1,16 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { BookOpen, CalendarCheck, Clock3, BarChart3, type LucideIcon } from 'lucide-react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
-import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { useAuth } from '@/hooks/useAuth';
-import { overviewSchedule } from '@/api/learnerOverview';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { formatHoursMinutes } from '@/utils/learnerJourney';
 import { type LearnerKind } from '@/api/learnerDetail';
+import { isOwnLearnerRecord } from '@/api/auth';
 import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { useLearnerAttendance } from '@/hooks/useLearnerAttendance';
@@ -19,17 +16,16 @@ import { PageSkeleton } from '@/components/feature/Skeletons';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
-import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate';
-import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
-import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
+import { displayValue, EMPTY_VALUE } from '@/lib/format';
 import overviewStyles from './Overview.module.css';
-import { OverviewLearningPanels } from './OverviewLearningPanels';
 import { DashboardTrainingPlan } from './DashboardTrainingPlan';
 import { DashboardActivities } from './DashboardActivities';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
+import { combinedActualOtjh, useDashboardPlan } from './useDashboardPlan';
+import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
 
 function formatProgrammeStartDate(value?: string | null): string {
   if (!value) return '';
@@ -39,21 +35,33 @@ function formatProgrammeStartDate(value?: string | null): string {
     : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
 }
 
-const learnerNav = roleNavMap.learner;
-
 export default function LearnerOverview() {
-  const p = LEARNER_PROFILE;
   const navigate = useNavigate();
 
   /* ── Real-learner mode: /workspace/learner/:kind/:id ── */
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
+  const workspaceHome = urlKind && urlId ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
+  const learnerNav = useMemo(() => ({ ...roleNavMap.learner, items: roleNavMap.learner.items.map(item => item.id === 'learner-home'
+    ? { ...item, href: workspaceHome } : item.id === 'learner-overview'
+      ? { ...item, href: `${workspaceHome}/dashboard` } : item) }), [workspaceHome]);
   const { isRealMode, real, loading, loadError, refresh } = useLearnerSummaryParam(kind, id);
   const { auth, canSeeNavItem } = useAuth();
-  const reviewingLearner = auth.account?.role === 'admin' || auth.account?.role === 'staff';
+  // "Reviewing" means somebody else's record, opened by staff from the
+  // enrolment workspace: full menu, no progression gates, nothing saved.
+  // A staff member or administrator who is ALSO a learner reaches their OWN
+  // record the same way any learner would — the switcher sends them to their
+  // own learnerRecordId/Kind — and there they need the real learner experience,
+  // not the reviewing one, or they could never actually study.
+  const isStaffOrAdmin = auth.account?.role === 'admin' || auth.account?.role === 'staff';
+  const reviewingLearner = isStaffOrAdmin && !isOwnLearnerRecord(auth.account, kind, id);
   const knownLearner = real;
   const hasAssignedProgramme = canViewAssignedProgramme(kind, real?.accessGate);
-  const learningBlocked = !reviewingLearner && (real?.learningAccess?.blocked
+  // A start date still in the future no longer holds anything shut: the learner
+  // gets their normal working account and can open every assigned activity. The
+  // upcoming date is still worth saying out loud, so it is shown as a notice
+  // rather than used to disable anything.
+  const startDatePending = !reviewingLearner && (real?.learningAccess?.blocked
     ?? real?.accessGate?.reasons.includes('start-date-future') ?? false);
   // An assigned plan can be previewed before teaching starts.
   const isCommercialPreStart = isRealMode && kind === 'commercial'
@@ -62,7 +70,12 @@ export default function LearnerOverview() {
     && !real.studentActivityAvailable && !hasAssignedProgramme;
   const skipPreStartData = isRealMode && (!real || isCommercialPreStart);
   const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
-  const scheduleRead = useLiveLearnerRead(learnerKind, id, isRealMode && !skipPreStartData, overviewSchedule.read, overviewSchedule.peek);
+  const dashboardPlan = useDashboardPlan(learnerKind, id, isRealMode && !skipPreStartData);
+  // My Learning and Dashboard must quote the same programme snapshot. Keeping
+  // this on the shared metrics resource prevents the weekly overview response
+  // from becoming a second, independently cached source for OTJH totals.
+  const metrics = useLearnerMetrics(learnerKind, id, isRealMode && !skipPreStartData);
+  const scheduleRead = dashboardPlan.schedule;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -90,88 +103,100 @@ export default function LearnerOverview() {
     syncLearnerStatus(kind, id, real?.programmeStatus, real || undefined);
   }, [isRealMode, loading, kind, id, real]);
 
-  const heroName = isRealMode ? ((knownLearner?.name.split(' ')[0]) || knownLearner?.name || 'Learner') : p.firstName;
-  const heroFullName = isRealMode ? (knownLearner?.name || 'Learner') : p.fullName;
-  const heroProgramme = isRealMode ? (knownLearner?.programme || '') : p.programme;
-  const heroEmployer = isRealMode ? (knownLearner?.employer || '') : p.employer;
-  const heroCohort = isRealMode ? (knownLearner?.cohort || '') : p.cohort;
-  const subtitleParts = isRealMode
-    ? [
-        heroProgramme ? `Programme: ${heroProgramme}` : '',
-        heroEmployer ? `Employer: ${heroEmployer}` : '',
-        heroCohort ? `Cohort: ${heroCohort}` : '',
-      ].filter(Boolean)
-    : [`${p.programme} ${p.programmeLevel}`, p.employer, `Cohort ${p.cohort}`];
+  const heroName = (knownLearner?.name.split(' ')[0]) || knownLearner?.name || 'Learner';
+  const heroFullName = knownLearner?.name || 'Learner';
+  const heroProgramme = knownLearner?.programme || '';
+  const heroEmployer = knownLearner?.employer || '';
+  const heroCohort = knownLearner?.cohort || '';
+  const subtitleParts = [
+    heroProgramme ? `Programme: ${heroProgramme}` : '',
+    heroEmployer ? `Employer: ${heroEmployer}` : '',
+    heroCohort ? `Cohort: ${heroCohort}` : '',
+  ].filter(Boolean);
 
   const weeklyPlanHref = kind && id ? `/learner/learning-plan/modules/${kind}/${id}` : '/learner/learning-plan/modules';
   const programmeProgressHref = kind && id ? `/learner/my-learning/${kind}/${id}` : '/learner/my-learning';
   const otjhProgressHref = kind && id ? `/learner/otjh/${kind}/${id}` : '/learner/otjh';
   const ksbProgressHref = kind && id ? `/learner/ksbs/${kind}/${id}` : '/learner/ksbs';
-  const displayLearnerName = isRealMode ? heroFullName : p.fullName;
-  const displayCohort = isRealMode ? (heroCohort || EMPTY_VALUE) : p.cohort;
-  const headerDescription = isRealMode
-    ? ([heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined)
-    : `${p.programme} ${p.programmeLevel} · ${p.employer}`;
-  const startDateDisplay = isRealMode
-    ? (formatProgrammeStartDate(real?.learningAccess?.startDate ?? real?.programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE))
-    : p.startDate;
-  const plannedEndDisplay = isRealMode
-    ? (formatProgrammeStartDate(real?.programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE))
-    : p.plannedEndDate;
+  const displayLearnerName = heroFullName;
+  const displayCohort = heroCohort || EMPTY_VALUE;
+  const headerDescription = [heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined;
+  const programmeStartDate = dashboardPlan.data?.programmeStartDate
+    ?? real?.learningAccess?.startDate ?? real?.programmeStartDate;
+  const programmeEndDate = dashboardPlan.data?.programmeEndDate ?? real?.programmeEndDate;
+  const startDateDisplay = formatProgrammeStartDate(programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const plannedEndDisplay = formatProgrammeStartDate(programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
     new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }));
   const planPlaceholder = scheduleRead.loading ? 'Loading...' : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;
-  const coachDisplayName = isRealMode
-    ? scheduleRead.data?.coach.name || (scheduleRead.data ? 'Not yet assigned' : planPlaceholder) : p.coach.name;
-  const currentModuleLabel = isRealMode
-    ? plan.modules.map(module => module.title).join(' · ') || planPlaceholder : p.currentModule;
+  const coachDisplayName = scheduleRead.data?.coach.name || (scheduleRead.data ? 'Not yet assigned' : planPlaceholder);
+  const currentModuleLabel = plan.modules.map(module => module.title).join(' · ') || planPlaceholder;
   const continueLearningHref = learnerModuleHref(kind, id, plan.modules[0]?.id, scheduleRead.data?.moduleLinks);
-  const metrics = useLearnerMetrics(learnerKind, id, isRealMode && !skipPreStartData);
 
   const programme = metrics.data?.programme;
-  const programmeProgressPercent = isRealMode ? programme?.percent ?? null : p.overallProgress;
+  const programmeProgressPercent = programme?.percent ?? null;
   const programmeProgressValue = programmeProgressPercent == null ? EMPTY_VALUE : `${programmeProgressPercent}%`;
-  const programmeProgressCaption = isRealMode
-    ? programme?.total != null ? `${programme.completed}/${programme.total} activities complete`
-      : metrics.loading ? 'Loading progress...' : 'Progress unavailable'
-    : p.currentModule;
-  const programmeTargetDetail = isRealMode && programme?.total != null && programme.total > 0
+  const programmeProgressCaption = programme?.total != null ? `${programme.completed}/${programme.total} activities complete`
+    : metrics.loading ? 'Loading progress...' : 'Progress unavailable';
+  const programmeTargetDetail = programme?.total != null && programme.total > 0
     ? `${programme.total.toLocaleString('en-GB')} activities` : 'All assigned activities';
 
-  const attendancePercent = isRealMode ? (attendance ? attendance.attendanceRate : null) : p.attendanceRate;
-  const attendanceValue = attendancePercent == null ? EMPTY_VALUE : `${attendancePercent}%`;
-  const attendanceCaption = isRealMode
-    ? (attendance ? `${attendance.present}/${attendance.sessions} sessions` : attendanceLoading ? 'Loading…' : 'No attendance record yet')
-    : `${p.sessionsAttended}/${p.sessionsAttended + p.sessionsMissed} sessions`;
-  const attendanceTone: StatusTone = attendancePercent == null
-    ? 'neutral'
-    : attendancePercent >= ATTENDANCE_EXPECTED_RATE ? 'positive' : attendancePercent >= ATTENDANCE_MINIMUM_RATE ? 'caution' : 'critical';
+  const attendanceReady = !!attendance || (!attendanceLoading && !attendanceRead.error);
+  const attendanceSessions = attendance?.sessions ?? (attendanceReady ? 0 : null);
+  const attendancePresent = attendance?.present ?? (attendanceReady ? 0 : null);
+  const attendancePercent = attendance?.attendanceRate ?? null;
+  const attendanceValue = attendancePresent?.toLocaleString('en-GB') ?? EMPTY_VALUE;
+  const attendanceTotalValue = attendanceSessions?.toLocaleString('en-GB') ?? EMPTY_VALUE;
+  const attendanceCaption = attendancePercent != null ? `${attendancePercent}% attendance`
+    : attendanceLoading ? 'Loading attendance…'
+      : attendanceRead.error ? 'Attendance unavailable' : 'No attendance records yet';
+  const attendanceTone: StatusTone = attendancePercent == null ? 'neutral' : 'brand';
 
-  const otjPlannedHours = isRealMode ? metrics.data?.otjh.planned : p.otjhTarget;
-  const otjActualHours = isRealMode ? metrics.data?.otjh.actual : p.otjhCompleted;
+  const otjPlannedHours = metrics.data?.otjh.planned;
+  const otjActualHours = combinedActualOtjh(
+    metrics.data?.otjh,
+    dashboardPlan.data?.monthlyLogOtjh,
+    dashboardPlan.data?.auditOtjhCutoffMonth,
+  );
   const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
     ? Math.round((otjActualHours / otjPlannedHours) * 100)
     : null;
   const otjPlannedValue = otjPlannedHours != null ? `${otjPlannedHours.toFixed(2)} h`
     : metrics.loading ? 'Loading…' : 'Unavailable';
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h` : EMPTY_VALUE;
-  const otjCaption = isRealMode
-    ? metrics.loading ? 'Loading recorded time...' : metrics.data?.otjh.actual == null ? 'Recorded time unavailable'
-      : otjPlannedHours == null ? 'Training plan target hours are not available yet.' : 'Across your programme'
-    : `${formatHoursMinutes(p.otjhCompleted)} / ${formatHoursMinutes(p.otjhTarget)} planned`;
+  const otjCaption = metrics.loading ? 'Loading recorded time...' : otjActualHours == null ? 'Recorded time unavailable'
+    : otjPlannedHours == null ? 'Training plan target hours are not available yet.' : 'Across your programme';
   const otjTone: StatusTone = 'brand';
   const ksb = metrics.data?.ksb;
-  const ksbPercent = isRealMode ? ksb?.percent ?? null : p.ksbProgress;
+  const ksbPercent = ksb?.percent ?? null;
   const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;
-  const ksbCaption = isRealMode
-    ? ksb?.total != null ? `${ksb.completed} of ${ksb.total} points achieved`
-      : metrics.loading ? 'Loading KSB progress...' : 'KSB details unavailable'
-    : `${p.ksbValidated} of ${p.ksbTotal} validated`;
-  const ksbTargetDetail = isRealMode
-    ? ksb?.total != null && ksb.total > 0 ? `${ksb.total.toLocaleString('en-GB')} KSB points` : 'KSB point total unavailable'
-    : `${p.ksbTotal} KSB points`;
+  const ksbCaption = ksb?.total != null ? `${ksb.completed} of ${ksb.total} points achieved`
+    : metrics.loading ? 'Loading KSB progress...' : 'KSB details unavailable';
+  const ksbTargetDetail = ksb?.total != null && ksb.total > 0 ? `${ksb.total.toLocaleString('en-GB')} KSB points` : 'KSB point total unavailable';
   const ksbTone: StatusTone = ksbPercent == null ? 'neutral'
     : ksbPercent >= 50 ? 'positive' : ksbPercent >= 30 ? 'caution' : 'critical';
+
+  if (!isRealMode || !learnerKind || !id) {
+    return (
+      <WorkspaceShell
+        role="learner"
+        roleLabel={learnerNav.label}
+        navItems={learnerNav.items}
+        workspaceLabel={learnerNav.workspaceLabel}
+        pageTitle="Dashboard"
+        pageSubtitle="Select a learner to open their dashboard"
+        userName={auth.account?.displayName || auth.account?.email || 'Staff'}
+        userRole={auth.account?.role === 'admin' ? 'Administrator' : 'Staff'}
+      >
+        <PageContainer className={overviewStyles.overview}>
+          <div role="status" className="rounded-2xl border border-foreground-200 bg-background-50 p-8 text-center">
+            <h2 className="text-lg font-semibold text-foreground-900">No learner selected</h2>
+            <p className="mt-2 text-sm text-foreground-500">Open a learner from the enrolment workspace to review their dashboard.</p>
+          </div>
+        </PageContainer>
+      </WorkspaceShell>
+    );
+  }
 
   if (isRealMode && (loading || redirectingToOnboarding)) {
     // Only the small identity read gates the page; cards load independently.
@@ -275,18 +300,18 @@ export default function LearnerOverview() {
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
       pageTitle="Dashboard"
-      pageSubtitle={isRealMode ? subtitleParts.join(' · ') : `${p.programme} ${p.programmeLevel} · ${p.employer} · Cohort ${p.cohort}`}
-      userName={isRealMode ? heroFullName : p.fullName}
-      userRole={isRealMode ? (heroProgramme ? `${heroProgramme} Learner` : 'Learner') : `${p.programme} Apprentice`}
+      pageSubtitle={subtitleParts.join(' · ')}
+      userName={heroFullName}
+      userRole={heroProgramme ? `${heroProgramme} Learner` : 'Learner'}
     >
       <PageContainer className={overviewStyles.overview}>
         {loadError && <LearnerLoadError error={loadError} onRetry={refresh} />}
-        {learningBlocked && (
+        {startDatePending && (
           <div role="status" className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-sm text-foreground-700">
             <p className="font-semibold">{real?.learningAccess?.startDate || real?.accessGate?.startDate
-              ? `Learning starts on ${formatProgrammeStartDate(real?.learningAccess?.startDate || real?.accessGate?.startDate)}`
+              ? `Your programme starts on ${formatProgrammeStartDate(real?.learningAccess?.startDate || real?.accessGate?.startDate)}`
               : 'Your cohort start date is awaiting confirmation'}</p>
-            <p>You can view your programme and training plan now. All assigned modules open when your cohort starts.</p>
+            <p>You can get started straight away — your programme, training plan and assigned modules are all open now.</p>
           </div>
         )}
         {reviewingLearner && real?.accessGate?.reasons.includes('invitation') && (
@@ -307,14 +332,10 @@ export default function LearnerOverview() {
             <div aria-hidden="true" className={overviewStyles.heroArtwork} />
             <div className={overviewStyles.heroTop}>
               <div className={overviewStyles.identity}>
-                {isRealMode && learnerKind && id ? <LearnerProfilePhoto
+                <LearnerProfilePhoto
                   kind={learnerKind} learnerId={id} name={displayLearnerName}
                   className={overviewStyles.avatar}
-                /> : <LearnerAvatar
-                  name={displayLearnerName}
-                  size="lg"
-                  className={`${overviewStyles.avatar} bg-white/15 text-white ring-white/30`}
-                />}
+                />
                 <div className="min-w-0">
                   <p className={overviewStyles.eyebrow}>Learner</p>
                   <h1 className={`${overviewStyles.name} font-heading`}>{displayLearnerName}</h1>
@@ -324,21 +345,13 @@ export default function LearnerOverview() {
               <div className={overviewStyles.heroActions}>
                 <button
                   type="button"
-                  onClick={() => navigate('/learner/messages')}
-                  className={overviewStyles.heroAction}
-                >
-                  <AppIcon className="ri-chat-3-line" />
-                  Message coach
-                </button>
-                <button
-                  type="button"
                   onClick={() => navigate(continueLearningHref)}
-                  disabled={learningBlocked || scheduleRead.loading}
+                  disabled={scheduleRead.loading}
                   aria-busy={scheduleRead.loading}
                   className={`${overviewStyles.heroAction} ${overviewStyles.primaryAction}`}
                 >
                   <AppIcon className="ri-play-line" />
-                  {learningBlocked ? 'Learning opens on your start date' : 'Continue learning'}
+                  Continue learning
                 </button>
                 <button
                   type="button"
@@ -352,10 +365,10 @@ export default function LearnerOverview() {
             </div>
             <dl className={overviewStyles.facts}>
               <ProfileFact icon="ri-group-line" label="Cohort" value={displayCohort} />
-              <ProfileFact icon="ri-book-2-line" label={isRealMode ? plan.label : "Module"} value={currentModuleLabel} />
+              <ProfileFact icon="ri-book-2-line" label={plan.label} value={currentModuleLabel} />
               <ProfileFact icon="ri-user-line" label="Coach" value={coachDisplayName} />
               <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDateDisplay} />
-              <ProfileFact label="Status" value={displayValue(isRealMode ? knownLearner?.programmeStatus : p.status)} status />
+              <ProfileFact label="Status" value={displayValue(knownLearner?.programmeStatus)} status />
               <ProfileFact icon="ri-calendar-event-line" label="Planned end" value={plannedEndDisplay} />
             </dl>
             </header>
@@ -374,7 +387,7 @@ export default function LearnerOverview() {
         <div>
             <div className={overviewStyles.metrics}>
               <ProgressStat href={programmeProgressHref} icon={BookOpen} label="Programme Progress" value={programmeProgressValue} targetValue="100%" targetDetail={programmeTargetDetail} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
-              <ProgressStat href="/learner/attendance" icon={CalendarCheck} label="Attendance" value={attendanceValue} targetValue={`${isRealMode ? ATTENDANCE_EXPECTED_RATE : p.attendanceTarget}%`} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
+              <ProgressStat href="/learner/attendance" icon={CalendarCheck} label="Attendance" value={attendanceValue} valueLabel="Attended" targetValue={attendanceTotalValue} targetLabel="Sessions to date" percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
               <ProgressStat
                 href={otjhProgressHref}
                 icon={Clock3}
@@ -391,9 +404,11 @@ export default function LearnerOverview() {
             </div>
         </div>
 
-        {isRealMode && real && learnerKind && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
-        {isRealMode && learnerKind && id && !learningBlocked && <OverviewLearningPanels key={`${learnerKind}:${id}`} kind={learnerKind} learnerId={id} />}
-        {isRealMode && learnerKind && id && <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} canOpenActivities={!learningBlocked} />}
+        {real && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
+        <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} plan={dashboardPlan} canOpenActivities
+          programmeStartDate={programmeStartDate}
+          programmeEndDate={programmeEndDate}
+          canOpenRewards={!reviewingLearner} />
       </PageContainer>
     </WorkspaceShell>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from '@/hooks/useToast';
 import {
   fetchLearningPlan,
@@ -86,6 +86,11 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   const [cohortOptions, setCohortOptions] = useState<string[]>([]);
   const [groupOptions, setGroupOptions] = useState<string[]>([]);
   const [placing, setPlacing] = useState(false);
+  // Read by the background refresh below. Refs rather than state so the
+  // listener is bound once instead of re-subscribing on every edit.
+  const savingRef = useRef(false);
+  const dirtyRef = useRef(false);
+  const placingRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,6 +120,56 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
       cancelled = true;
     };
   }, [learnerId]);
+
+  // Groups and modules are edited on other screens, often in another tab while
+  // this one sits open. Coming back to the window re-reads the plan, so the
+  // modal shows the curriculum as it is now rather than as it was on open.
+  //
+  // Edits in progress are not thrown away: the refresh is skipped while a save
+  // is in flight, and it keeps the staff member's own additions and removals,
+  // re-applying them over the modules the server now reports.
+  useEffect(() => {
+    if (readOnly) return;
+    let cancelled = false;
+    let running = false;
+
+    const refresh = async () => {
+      // Not while a write is in flight: both replace `data` themselves, and a
+      // refresh landing mid-write would reset the form under the staff member.
+      if (running || savingRef.current || placingRef.current) return;
+      if (document.visibilityState === 'hidden') return;
+      running = true;
+      try {
+        const res = await fetchLearningPlan(learnerId);
+        if (cancelled) return;
+        setData(res);
+        setPlan((current) => {
+          // Nothing touched yet, so the server's plan is simply the truth.
+          if (!dirtyRef.current) return res.plan;
+          // Otherwise keep this session's edits: the rows still chosen, with
+          // their values refreshed, plus anything new the curriculum has
+          // gained. A row the staff member removed stays removed.
+          const byId = new Map(res.plan.map((m) => [m.moduleId, m]));
+          const kept = current.map((m) => byId.get(m.moduleId) ?? m);
+          const known = new Set(current.map((m) => m.moduleId));
+          return [...kept, ...res.plan.filter((m) => !known.has(m.moduleId))];
+        });
+      } catch {
+        // A failed background refresh leaves what is on screen alone: the plan
+        // is still editable and saving reports its own errors.
+      } finally {
+        running = false;
+      }
+    };
+
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [learnerId, readOnly]);
 
   // The learner is not placed yet, so the plan below has nothing to draw on.
   const needsPlacement = Boolean(data) && !isPlaced(data!.learner);
@@ -179,10 +234,43 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
       : scoped;
   }, [data, chosen, search, pickerProgramme]);
 
-  const totalHours = useMemo(
+  const moduleHours = useMemo(
     () => plan.reduce((sum, m) => sum + Number(m.hours || 0), 0),
     [plan],
   );
+
+  // Recurring Reviews the learner attends. Server-generated from the Review
+  // Engine, so they do not change as modules are added or removed here — they
+  // are listed for the commitment they represent, not edited.
+  const meetings = data?.meetings ?? [];
+
+  // Why the Meetings table is empty, in the words of whoever has to fix it.
+  // Shown in place of rows rather than hiding the table: a table that explains
+  // itself is actionable, a missing one reads as a bug.
+  const meetingsEmptyMessage = (() => {
+    switch (data?.meetingsReason) {
+      case 'no-otjh-reviews':
+        return 'No review on this programme counts towards OTJH yet. Set “Expected OTJH” and tick “counts towards OTJH” on a review to see it here.';
+      case 'not-eligible':
+        return 'This programme has reviews worth OTJH, but none applies to this learner’s current programme status.';
+      case 'no-dates':
+        return 'This learner needs a start and end date before their reviews can be scheduled.';
+      case 'no-programme':
+        return 'This learner’s programme is not configured in Curriculum, so it has no reviews.';
+      case 'unavailable':
+        return 'Could not load reviews from Curriculum. The modules above are unaffected.';
+      default:
+        return 'No reviews scheduled for this learner.';
+    }
+  })();
+  const meetingHours = useMemo(
+    () => meetings.reduce((sum, m) => sum + Number(m.hours || 0), 0),
+    [meetings],
+  );
+
+  // The whole off-the-job commitment: taught modules plus the reviews that
+  // count towards OTJH. The footer figure staff read is this one.
+  const totalHours = moduleHours + meetingHours;
 
   const dirty = useMemo(() => {
     if (!data) return false;
@@ -196,18 +284,32 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   // and the button would stay dead until you removed a module and added it back.
   // An empty preset is the one thing still not worth saving — there is nothing
   // to agree to, and removing modules makes the plan dirty in its own right.
+  // A module the group gained since the plan was agreed is shown on the plan but
+  // not stored on the learner yet, so saving is what adopts it. `dirty` cannot
+  // see that either — the server already merged it into `data.plan`, so the two
+  // match — hence the same allowance the unsaved preset gets.
   const canSave = useMemo(() => {
     if (!data) return false;
-    return dirty || (!data.saved && plan.length > 0);
-  }, [data, dirty, plan.length]);
+    // `fromAptem` rows are in the same position as `inherited` ones: the
+    // server merged them into the shown plan, so `dirty` is blind to them,
+    // and saving is what actually records them on the learner.
+    return dirty || (!data.saved && plan.length > 0) || plan.some((m) => m.inherited || m.fromAptem);
+  }, [data, dirty, plan]);
 
-  const remove = (moduleId: string) => setPlan((rows) => rows.filter((m) => m.moduleId !== moduleId));
+  // Each of these is the staff member editing the plan by hand, which is what
+  // the background refresh must not overwrite.
+  const remove = (moduleId: string) => {
+    dirtyRef.current = true;
+    setPlan((rows) => rows.filter((m) => m.moduleId !== moduleId));
+  };
   const add = (module: LearningPlanModule) => {
+    dirtyRef.current = true;
     setPlan((rows) => [...rows, module]);
     setSearch('');
   };
 
   const resetToGroup = () => {
+    dirtyRef.current = true;
     if (data) setPlan(data.preset);
   };
 
@@ -217,6 +319,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
    */
   const savePlacement = async () => {
     setPlacing(true);
+    placingRef.current = true;
     setError('');
     try {
       await updateEnrolmentUser(learnerId, {
@@ -237,6 +340,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
       toast.error('Could not place learner', message);
     } finally {
       setPlacing(false);
+      placingRef.current = false;
     }
   };
 
@@ -260,11 +364,15 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
     }
 
     setSaving(true);
+    savingRef.current = true;
     setError('');
     try {
       const res = await saveLearningPlan(learnerId, plan.map((m) => m.moduleId));
       setData(res);
       setPlan(res.plan);
+      // Saved: the plan on screen and the stored one agree again, so a later
+      // refresh is free to take the server's version wholesale.
+      dirtyRef.current = false;
       toast.success(
         'Learning plan saved',
         `${res.totals.moduleCount} module${res.totals.moduleCount === 1 ? '' : 's'} · ${formatHours(res.totals.totalHours)}`,
@@ -277,6 +385,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
       toast.error('Save failed', message);
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   };
 
@@ -299,7 +408,8 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
               'A programme, cohort and group decide which modules this plan can hold.'
             ) : (
               <>
-                {plan.length} module{plan.length === 1 ? '' : 's'} ·{' '}
+                {plan.length} module{plan.length === 1 ? '' : 's'}
+                {meetings.length > 0 && ` · ${meetings.length} meeting${meetings.length === 1 ? '' : 's'}`} ·{' '}
                 <strong className="text-foreground-800">{formatHours(totalHours)}</strong> total
               </>
             )}
@@ -526,6 +636,26 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                           Not in catalogue
                         </span>
                       )}
+                      {/* Arrived from the group after this plan was agreed. The
+                          learner is taught it either way; saving records it. */}
+                      {/* Taught through the Aptem import but never recorded on
+                          the plan. Saving is what writes it to the learner. */}
+                      {m.fromAptem && (
+                        <span
+                          className="ml-2 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700"
+                          title="This learner is enrolled in this subject through their Aptem import. Save to record it on the plan."
+                        >
+                          From Aptem
+                        </span>
+                      )}
+                      {m.inherited && (
+                        <span
+                          className="ml-2 rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700"
+                          title={`Added to ${learner?.group || 'this group'} since this plan was agreed. Save to record it on the plan.`}
+                        >
+                          New from group
+                        </span>
+                      )}
                       {/* A module borrowed from another programme maps to
                           different KSBs and funding, so the plan says which. */}
                       {learner && m.programmeId && m.programmeId !== learner.programmeId && (
@@ -565,16 +695,103 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
               <tfoot>
                 <tr className="border-t-2 border-foreground-300/50 bg-background-100/40">
                   <td className="py-2 px-3 font-semibold text-foreground-700" colSpan={4}>
-                    Total
+                    {/* Module hours alone once meetings are listed too, so the
+                        column still adds up to the number beneath it. */}
+                    {meetings.length > 0 ? 'Modules total' : 'Total'}
                   </td>
                   <td className="py-2 px-3 text-right font-bold text-foreground-900">
-                    {formatHours(totalHours)}
+                    {formatHours(moduleHours)}
                   </td>
                   {!readOnly && <td />}
                 </tr>
               </tfoot>
             </table>
           </div>
+
+          {/* Recurring Reviews that count as off-the-job training. A separate
+              table because these are not chosen here: Curriculum's Review
+              templates and the learner's own start date generate them, so
+              there is nothing to add or remove — only hours to account for. */}
+          {/* Always rendered, even with no rows: see meetingsEmptyMessage. */}
+          <div>
+              <div className="flex items-baseline justify-between gap-3 mb-2">
+                <h3 className="text-[13px] font-semibold text-foreground-800">Meetings</h3>
+                <span className="text-[11px] text-foreground-500">
+                  Scheduled from this learner&apos;s start date — not editable here
+                </span>
+              </div>
+              <div className="rounded-xl border border-foreground-200/60 overflow-hidden">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="bg-background-100/60 text-left">
+                      <th className="py-2 px-3 font-semibold text-foreground-600">Meeting</th>
+                      <th className="py-2 px-3 font-semibold text-foreground-600">Frequency</th>
+                      <th className="py-2 px-3 font-semibold text-foreground-600">Start</th>
+                      <th className="py-2 px-3 font-semibold text-foreground-600">End</th>
+                      <th className="py-2 px-3 font-semibold text-foreground-600 text-right">Hours</th>
+                      {!readOnly && <th className="py-2 px-3 w-10" />}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {meetings.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={readOnly ? 5 : 6}
+                          className="py-6 px-3 text-center text-foreground-400"
+                        >
+                          {meetingsEmptyMessage}
+                        </td>
+                      </tr>
+                    )}
+                    {meetings.map((m) => (
+                      <tr key={m.reviewTemplateId} className="border-t border-foreground-200/50">
+                        <td className="py-2 px-3 text-foreground-900">
+                          {m.name}
+                          {/* Where the hours come from, so a total that looks
+                              large can be checked against its own arithmetic. */}
+                          <span className="ml-2 text-[11px] text-foreground-500">
+                            {formatHours(m.hoursEach)} × {m.occurrences}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-foreground-500">{m.recurrenceLabel || '—'}</td>
+                        <td className="py-2 px-3 whitespace-nowrap text-foreground-500">
+                          {formatPlanDate(m.startDate)}
+                        </td>
+                        <td className="py-2 px-3 whitespace-nowrap text-foreground-500">
+                          {formatPlanDate(m.endDate)}
+                        </td>
+                        <td className="py-2 px-3 text-right font-medium text-foreground-700">
+                          {formatHours(m.hours)}
+                        </td>
+                        {!readOnly && <td className="py-2 px-3" />}
+                      </tr>
+                    ))}
+                  </tbody>
+                  {meetings.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-foreground-300/50 bg-background-100/40">
+                        <td className="py-2 px-3 font-semibold text-foreground-700" colSpan={4}>
+                          Meetings total
+                        </td>
+                        <td className="py-2 px-3 text-right font-bold text-foreground-900">
+                          {formatHours(meetingHours)}
+                        </td>
+                        {!readOnly && <td />}
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+              {/* The two tables above are halves of one commitment. Only worth
+                  printing once meetings actually add something: with none, it
+                  would just restate the modules total directly beneath it. */}
+              {meetings.length > 0 && (
+                <div className="mt-2 flex items-baseline justify-end gap-2 text-[13px]">
+                  <span className="font-semibold text-foreground-700">Plan total</span>
+                  <strong className="text-foreground-900">{formatHours(totalHours)}</strong>
+                </div>
+              )}
+            </div>
 
           {/* Add a module from anywhere in the catalogue. Absent when viewing:
               nothing here is meaningful without a save. */}

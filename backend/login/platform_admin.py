@@ -70,6 +70,22 @@ MAX_PAGE_SIZE = 200
 DEFAULT_PAGE_SIZE = 50
 
 
+def _sanitized_layout_config(value):
+    """Guard against a client accidentally spreading a JSON string into an
+    object (`{...jsonText}`), which turns each character into its own
+    "0", "1", "2"... key. A real layout config never has more than a
+    handful of fields, so a dict that's mostly numeric-string keys is that
+    corruption, not intentional data — drop it rather than storing and
+    compounding a multi-megabyte blob on every future save.
+    """
+    if not isinstance(value, dict):
+        return {}
+    numeric_keys = sum(1 for key in value if isinstance(key, str) and key.isdigit())
+    if numeric_keys > 20 and numeric_keys >= len(value) - 5:
+        return {}
+    return value
+
+
 @csrf_exempt
 @require_role(ROLE_ADMIN)
 def certificate_template(request):
@@ -94,13 +110,25 @@ def certificate_template(request):
             return _error("Title, body text and a progress value from 0 to 100 are required.", 400)
         publish = bool(payload.get("publish"))
         actor = request.login_account.email
-        layout = payload.get("layoutConfig") if isinstance(payload.get("layoutConfig"), dict) else {}
+        layout = _sanitized_layout_config(payload.get("layoutConfig"))
         try:
             with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
                 cursor.execute('SELECT COALESCE(MAX(version),0)+1 FROM "Learner".certificate_templates WHERE certificate_type=%s', ["progress-achievement"])
                 version = cursor.fetchone()[0]
+                superseded_count = 0
                 if publish:
                     cursor.execute('UPDATE "Learner".certificate_templates SET status=%s, updated_at=now() WHERE certificate_type=%s AND status=%s', ["archived", "progress-achievement", "published"])
+                    cursor.execute('''UPDATE "Learner".learner_certificates lc
+                        SET status=%s,
+                            revoked_by=%s,
+                            revoked_at=now(),
+                            revoke_reason=%s
+                        FROM "Learner".certificate_templates ct
+                        WHERE lc.template_id=ct.id
+                          AND ct.certificate_type=%s
+                          AND lc.status=%s''',
+                        ["superseded", actor, f"Superseded by certificate template version {version}", "progress-achievement", "issued"])
+                    superseded_count = cursor.rowcount
                 cursor.execute('''INSERT INTO "Learner".certificate_templates
                     (name,certificate_type,version,status,title,body_text,minimum_progress,require_final_test,layout_config,created_by,published_by,published_at)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,CASE WHEN %s THEN now() END)
@@ -109,7 +137,7 @@ def certificate_template(request):
                      "published" if publish else "draft", title, body, threshold, bool(payload.get("requireFinalTest")),
                      json.dumps(layout), actor, actor if publish else "", publish])
                 template_id, published_at = cursor.fetchone()
-                cursor.execute('INSERT INTO "Learner".certificate_audit_logs (actor_email,action,template_id,details) VALUES (%s,%s,%s,%s::jsonb)', [actor, "published" if publish else "draft-saved", template_id, json.dumps({"version": version})])
+                cursor.execute('INSERT INTO "Learner".certificate_audit_logs (actor_email,action,template_id,details) VALUES (%s,%s,%s,%s::jsonb)', [actor, "published" if publish else "draft-saved", template_id, json.dumps({"version": version, "supersededCertificates": superseded_count})])
                 return JsonResponse({"template": {
                     "id": template_id,
                     "name": str(payload.get("name") or "Progress certificate")[:160],
@@ -128,14 +156,24 @@ def certificate_template(request):
         with connections["enrolment"].cursor() as cursor:
             cursor.execute('''SELECT id,name,version,status,title,body_text,minimum_progress,require_final_test,layout_config,published_at
                 FROM "Learner".certificate_templates
-                ORDER BY CASE status WHEN 'draft' THEN 0 WHEN 'published' THEN 1 ELSE 2 END, version DESC
+                ORDER BY CASE status WHEN 'published' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END, version DESC
                 LIMIT 1''')
             row = cursor.fetchone()
+            cursor.execute('''SELECT id,name,version,status,title,body_text,minimum_progress,require_final_test,layout_config,published_at
+                FROM "Learner".certificate_templates
+                WHERE certificate_type=%s
+                ORDER BY version DESC
+                LIMIT 100''', ["progress-achievement"])
+            rows = cursor.fetchall()
     except DatabaseError:
         return _error("Certificate tables are not installed. Run learner_api/sql/certificate_management.sql in Neon.", 503)
+    templates = [
+        {"id": item[0], "name": item[1], "version": item[2], "status": item[3], "title": item[4], "bodyText": item[5], "minimumProgress": float(item[6]), "requireFinalTest": item[7], "layoutConfig": _json_dict(item[8]), "publishedAt": item[9].isoformat() if item[9] else None}
+        for item in rows
+    ]
     if not row:
-        return JsonResponse({"template": None})
-    return JsonResponse({"template": {"id": row[0], "name": row[1], "version": row[2], "status": row[3], "title": row[4], "bodyText": row[5], "minimumProgress": float(row[6]), "requireFinalTest": row[7], "layoutConfig": _json_dict(row[8]), "publishedAt": row[9].isoformat() if row[9] else None}})
+        return JsonResponse({"template": None, "templates": templates})
+    return JsonResponse({"template": {"id": row[0], "name": row[1], "version": row[2], "status": row[3], "title": row[4], "bodyText": row[5], "minimumProgress": float(row[6]), "requireFinalTest": row[7], "layoutConfig": _json_dict(row[8]), "publishedAt": row[9].isoformat() if row[9] else None}, "templates": templates})
 
 
 def _error(message, status, code=None):
@@ -643,10 +681,11 @@ def account_action(request, pk):
         "unlock",
         "resend-invitation",
         "send-password-reset",
+        "add-learner-record",
     }:
         return _error(
             "action must be one of: suspend, restore, unlock, resend-invitation, "
-            "send-password-reset.",
+            "send-password-reset, add-learner-record.",
             400,
         )
 
@@ -706,6 +745,53 @@ def account_action(request, pk):
             "sentTo": account.email,
             "account": _account_json(account, timezone.now(), _row_extras([account])),
         })
+    if action == "add-learner-record":
+        # Also a learner. Creates the enrolment record and nothing else: the
+        # account they already have is reused, so there is one password and one
+        # identity, and the Learner workspace appears beside their existing one.
+        #
+        # A SECOND login account on the same address would look tidier and would
+        # break sign-in: identity.account_for_email returns None once an address
+        # has two active accounts, and password login, SSO and password reset
+        # all depend on it. See login.learner_enrolment.
+        from .learner_enrolment import EnrolmentError, add_learner_record
+
+        try:
+            learner = add_learner_record(
+                account,
+                programme=payload.get("programme") or "",
+                cohort=payload.get("cohort") or "",
+                group=payload.get("group") or "",
+                learner_type=payload.get("learnerType") or "",
+                created_by=actor.email if actor else "admin",
+            )
+        except EnrolmentError as exc:
+            return _error(str(exc), 400, code="cannot_add_learner")
+        except DatabaseError as exc:
+            return _error(f"Database error: {exc}", 502)
+
+        # The same trail the other administrative actions leave: this one
+        # creates a person's enrolment record, so who did it is worth keeping.
+        try:
+            with transaction.atomic(using="enrolment"):
+                LoginAudit.objects.create(
+                    event="admin_add_learner_record",
+                    email=account.email,
+                    account_id=account.id,
+                    succeeded=True,
+                    reason=f"enrolment id {learner.pk}"
+                           + (f" by {actor.email}" if actor else " by admin"),
+                    ip_address=client_ip(request),
+                    user_agent=user_agent(request),
+                )
+        except DatabaseError:
+            pass
+
+        return JsonResponse({
+            "account": _account_json(account, timezone.now(), _row_extras([account])),
+            "learnerRecordId": learner.pk,
+        })
+
     if action == "send-password-reset":
         # The counterpart to resend-invitation, and the two are mutually
         # exclusive: an invitation sets the first password, a reset replaces one

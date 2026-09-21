@@ -16,6 +16,8 @@ import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { SendInvitationButton } from './components/SendInvitationButton';
 import { CreateUserModal } from './components/CreateUserModal';
+import { DownloadLearnerTemplateButton } from './components/DownloadLearnerTemplateButton';
+import { ImportLearnersModal } from './components/ImportLearnersModal';
 import { CreateStaffModal } from './components/CreateStaffModal';
 import { CreateEmployerModal } from './components/CreateEmployerModal';
 import { CreateOrganisationModal } from './components/CreateOrganisationModal';
@@ -79,6 +81,91 @@ function isLearnerRow(row: Pick<UserListRow, 'source'>): boolean {
  * the closest real equivalent — a learner's group is their cohort, an employer's
  * is the company they belong to.
  */
+/**
+ * One row per person, not one row per record.
+ *
+ * A staff member or administrator who also studies a programme has BOTH a
+ * `Staff_users` row and a `Created_users` row on the same address (see
+ * login/learner_enrolment.py). Concatenating the three sources listed them
+ * twice — the same human appearing as two users, each with half the truth.
+ *
+ * The learner record wins the row, because it is the one that carries the
+ * programme, the learning plan and the enrolment actions the directory exists
+ * to offer. The staff fields are merged in underneath, so nothing is lost and
+ * the row still opens the person's staff record where that is what was clicked.
+ *
+ * Matched on the normalised email. That is what makes the two records the same
+ * person in every other part of the platform — `existing_learner_record` looks
+ * a learner up by address for exactly this reason — and a row with no address
+ * cannot be matched to anything, so it is always kept as its own row.
+ */
+/** The Type column for a person holding two records, e.g. "Admin · User".
+ *
+ * Distinct labels only, in the order the records were loaded, so somebody who
+ * is both staff and a learner reads as both rather than as whichever record
+ * happened to win the merge. */
+function combinedType(a: DirectoryRow, b: DirectoryRow): string {
+  const labels: string[] = [];
+  for (const value of [a.type, b.type]) {
+    const label = (value || '').trim();
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  return labels.join(' · ');
+}
+
+/** `over` wins, except where it has nothing to say.
+ *
+ * Merging two records of the same person must not let one record's empty
+ * fields erase the other's real ones: a learner record has no position or
+ * access, and a staff row has no programme or learning plan. Each fills the
+ * other's gaps. */
+function fillBlanks(over: DirectoryRow, under: DirectoryRow): DirectoryRow {
+  const out: DirectoryRow = { ...under };
+  for (const [key, value] of Object.entries(over)) {
+    const empty = value === undefined || value === null || value === '';
+    const existing = Reflect.get(out, key);
+    if (!empty || !(key in out) || existing === undefined || existing === null || existing === '') {
+      Reflect.set(out, key, value);
+    }
+  }
+  return out;
+}
+
+export function mergeDirectoryRows(rows: DirectoryRow[]): DirectoryRow[] {
+  const byEmail = new Map<string, number>();
+  const merged: DirectoryRow[] = [];
+
+  for (const row of rows) {
+    const key = (row.email || '').trim().toLowerCase();
+    if (!key) {
+      merged.push(row);
+      continue;
+    }
+    const seen = byEmail.get(key);
+    if (seen === undefined) {
+      byEmail.set(key, merged.length);
+      merged.push(row);
+      continue;
+    }
+    const existing = merged[seen];
+    // Whichever of the two is the learner keeps the row's identity; the other
+    // contributes only the fields the learner record does not have.
+    const learner = isLearnerRow(row) ? row : isLearnerRow(existing) ? existing : null;
+    const other = learner === row ? existing : row;
+    // The learner record wins, but only where it actually says something. A
+    // plain spread let its empty strings overwrite real values from the staff
+    // row -- a learner record carries no position, so merging one in blanked
+    // the Type column for somebody who is an Admin.
+    const combined = learner ? fillBlanks(learner, other) : fillBlanks(row, existing);
+    // Both roles in the Type column. This person really is an Admin AND a
+    // learner, and showing one of them made the merged row look like the other
+    // record had simply been lost.
+    merged[seen] = { ...combined, type: combinedType(existing, row) };
+  }
+
+  return merged;
+}
+
 function employerToRow(e: EmployerRow): DirectoryRow {
   return {
     id: e.id,
@@ -210,14 +297,25 @@ function distinct(from: DirectoryRow[], pick: (r: DirectoryRow) => string | unde
   return Array.from(new Set(from.map(pick).filter(Boolean) as string[])).sort();
 }
 
-function matches(row: DirectoryRow, f: UsersFilter): boolean {
+/** The role(s) a row's Type column names, split back out of a merged row's
+ *  "Admin · User" for filtering and options -- an ordinary row has exactly
+ *  one. */
+function rowTypes(row: Pick<DirectoryRow, 'type'>): string[] {
+  return (row.type || '').split(' · ').map((s) => s.trim()).filter(Boolean);
+}
+
+export function matches(row: DirectoryRow, f: UsersFilter): boolean {
   if (f.userName && !row.name.toLowerCase().includes(f.userName.toLowerCase())) return false;
   if (f.email && !row.email.toLowerCase().includes(f.email.toLowerCase())) return false;
   // Folded like programme/cohort below: group names can now come from the
   // curriculum lookup rather than only from the rows themselves.
   if (f.groups && f.groups.length > 0 && !f.groups.some((g) => !differs(row.group, g))) return false;
   if (f.statuses && f.statuses.length > 0 && !f.statuses.includes(row.subscriptionStatus)) return false;
-  if (f.type && f.type !== 'all' && row.type !== f.type) return false;
+  // A merged row's type is the two roles joined ("Admin · User"), so an exact
+  // match would make it invisible under either filter option. Split and check
+  // membership instead, which also matches an ordinary single-role row exactly
+  // as before.
+  if (f.type && f.type !== 'all' && !rowTypes(row).includes(f.type)) return false;
   // Programme and cohort are picked from the curriculum lists, but the values on
   // the row were written as free text at create time, so both sides are folded
   // before comparing — casing drift on an older row shouldn't empty the results.
@@ -233,9 +331,12 @@ export default function UsersListPage() {
   const navigate = useNavigate();
   const [draft, setDraft] = useState<UsersFilter>(EMPTY_FILTER);
   const [applied, setApplied] = useState<UsersFilter>(EMPTY_FILTER);
+  const [quickSearch, setQuickSearch] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [createAdminOpen, setCreateAdminOpen] = useState(false);
   const [createTutorOpen, setCreateTutorOpen] = useState(false);
   const [createEmployerOpen, setCreateEmployerOpen] = useState(false);
@@ -288,12 +389,14 @@ export default function UsersListPage() {
       listEmployers().then((r) => r.results).catch(() => [] as EmployerRow[]),
     ])
       .then(([learners, staff, employers]) => {
-        setRows([
+        // Merged, not concatenated: somebody who is both staff and a learner
+        // has a record in two of these lists and would otherwise appear twice.
+        setRows(mergeDirectoryRows([
           ...learners,
           // Staff rows already arrive in UserListRow shape from to_staff_row.
           ...staff.map((r) => ({ ...r, source: 'staff' as const })),
           ...employers.map(employerToRow),
-        ]);
+        ]));
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -394,18 +497,24 @@ export default function UsersListPage() {
   // their type, so the filter list is derived from the loaded rows rather than
   // the fixed TYPE_OPTIONS — otherwise staff would be unfilterable.
   const typeOptions = useMemo(
-    () => Array.from(new Set([...TYPE_OPTIONS, ...rows.map((r) => r.type).filter(Boolean)])).sort(),
+    // Each role offered separately, not the combined "Admin · User" string —
+    // that string is not a role anyone would filter by, and only one of the
+    // people it could match would ever need it.
+    () => Array.from(new Set([...TYPE_OPTIONS, ...rows.flatMap(rowTypes)])).sort(),
     [rows],
   );
 
+  const searchTerm = quickSearch.trim().toLowerCase();
   const filtered = useMemo(() => rows.filter((r) => {
+    if (searchTerm && ![r.name, r.email, r.group, r.programme]
+      .some((value) => (value ?? '').toLowerCase().includes(searchTerm))) return false;
     if (!matches(r, applied)) return false;
     if (summaryFilter === 'learners') return isLearnerRow(r);
     if (summaryFilter === 'admins') return r.source === 'staff';
     if (summaryFilter === 'employers') return r.source === 'employer';
     if (summaryFilter === 'active') return r.programmeStatus === 'Active';
     return true;
-  }), [rows, applied, summaryFilter]);
+  }), [rows, applied, summaryFilter, searchTerm]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const showingStart = filtered.length ? (page - 1) * PAGE_SIZE + 1 : 0;
@@ -431,7 +540,8 @@ export default function UsersListPage() {
       ...patch,
     }));
   const search = () => { setApplied(draft); setPage(1); };
-  const reset = () => { setDraft(EMPTY_FILTER); setApplied(EMPTY_FILTER); setSummaryFilter('all'); setPage(1); };
+  const updateQuickSearch = (value: string) => { setQuickSearch(value); setPage(1); };
+  const reset = () => { setDraft(EMPTY_FILTER); setApplied(EMPTY_FILTER); setQuickSearch(''); setSummaryFilter('all'); setPage(1); };
   const selectSummary = (next: SummaryFilter) => { setSummaryFilter(next); setPage(1); };
   // Commercial and apprenticeship ids come from different tables and overlap,
   // so every row action carries the row's source.
@@ -478,6 +588,13 @@ export default function UsersListPage() {
     load();
   };
 
+  const applyLearnerImport = (imported: UserListRow[]) => {
+    // Keep the saved rows in local state while refreshing server-derived fields.
+    setRows(previous => mergeDirectoryRows([...imported, ...previous]));
+    setPage(1);
+    load();
+  };
+
   // Employers have no profile page either, so the row's Edit action is their
   // only edit surface — same arrangement as staff.
   const applyEmployerUpdate = (updated: EmployerRow) => {
@@ -495,6 +612,11 @@ export default function UsersListPage() {
           icon="ri-group-line"
           eyebrow={isAdmin ? 'Administration' : 'Enrolment'}
           actions={
+            <div className="flex flex-wrap items-start gap-2">
+              <DownloadLearnerTemplateButton />
+              <button type="button" className={btnSecondary} onClick={() => setImportModalOpen(true)}>
+                <AppIcon className="ri-upload-2-line" />Upload learners
+              </button>
             <div ref={createRef} className="relative">
               <button
                 type="button"
@@ -518,6 +640,7 @@ export default function UsersListPage() {
                 </div>,
                 document.body,
               )}
+            </div>
             </div>
           }
         />
@@ -544,7 +667,7 @@ export default function UsersListPage() {
           </div>
           <div className="border-t border-foreground-100 p-4 md:p-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <TextFilter label="Search" placeholder="Search by name or email..." value={draft.userName ?? ''} onChange={(v) => set({ userName: v })} />
+            <TextFilter label="Name" placeholder="Search by name..." value={draft.userName ?? ''} onChange={(v) => set({ userName: v })} />
             {/* Programme -> cohort -> group, same gate as the Cohort filter: a
                 group only means something inside a programme. */}
             <MultiSelect
@@ -594,8 +717,32 @@ export default function UsersListPage() {
             <div className="flex items-center gap-3">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><AppIcon className="ri-group-line" /></span>
               <div className="flex items-center gap-2">
-                <h2 className="text-[15px] font-semibold text-foreground-900">Users ({rows.length})</h2>
+                <h2 className="text-[15px] font-semibold text-foreground-900">Users ({filtered.length})</h2>
               </div>
+            </div>
+            <div role="search" aria-label="User directory" className="relative order-last w-full sm:order-none sm:ml-auto sm:w-80">
+              <label htmlFor="users-search" className="sr-only">Search users</label>
+              <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" />
+              <input
+                ref={searchInputRef}
+                id="users-search"
+                type="search"
+                value={quickSearch}
+                onChange={(event) => updateQuickSearch(event.target.value)}
+                placeholder="Search name, email, group or programme..."
+                aria-controls="users-directory-table"
+                className={`${inputClass} pl-9 pr-9 [&::-webkit-search-cancel-button]:appearance-none`}
+              />
+              {quickSearch && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => { updateQuickSearch(''); searchInputRef.current?.focus(); }}
+                  className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-foreground-400 hover:bg-background-100 hover:text-primary-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-400"
+                >
+                  <AppIcon className="ri-close-line" />
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><AppIcon className="ri-layout-column-line" />Columns</button>
@@ -603,7 +750,7 @@ export default function UsersListPage() {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
+            <table id="users-directory-table" className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-foreground-200/70 bg-background-100/50">
                   {['User', 'Type', 'Email', 'Group', 'Programme', 'Subscription status', 'Learning plan', 'Programme status', 'Actions'].map((h) => (
@@ -791,6 +938,7 @@ export default function UsersListPage() {
       </div>
 
       {createModalOpen && <CreateUserModal onClose={() => setCreateModalOpen(false)} onCreated={load} />}
+      {importModalOpen && <ImportLearnersModal onClose={() => setImportModalOpen(false)} onImported={applyLearnerImport} />}
       {createAdminOpen && <CreateStaffModal variant="admin" onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
       {createTutorOpen && <CreateStaffModal variant="tutor" onClose={() => setCreateTutorOpen(false)} onCreated={load} />}
       {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}

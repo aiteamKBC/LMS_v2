@@ -5,6 +5,8 @@ import { fetchLearnerDetail, fetchLearnerSummary, peekLearnerDetail, invalidateL
 import { fetchStudentActivity } from '../studentActivity';
 import { fetchTrainingPlanDashboard } from '../trainingPlanDashboard';
 import { overviewSchedule } from '../learnerOverview';
+import { updateLearnerCoach } from '../coach';
+import { updateEnrolmentUser } from '../enrolmentUsers';
 import { getSummary, RecordError } from '@/features/old-otjh/api';
 
 const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
@@ -18,6 +20,20 @@ beforeEach(() => { clearAllCachedResources(); vi.stubGlobal('fetch', vi.fn()); }
 afterEach(() => { clearAllCachedResources(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('learner data transport', () => {
+  it.each(['case owner', 'coach'])('refreshes the dashboard coach after saving the %s', async field => {
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ sessions: [], reviews: [], coach: { name: 'Rewan Yasser' } }));
+    expect((await overviewSchedule.read('commercial', '501')).coach.name).toBe('Rewan Yasser');
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ coachName: 'Test curriculum', coachEmail: 'curriculum@example.com' }));
+    if (field === 'case owner') {
+      await updateEnrolmentUser('501', { caseOwner: 'Test curriculum' });
+    } else {
+      await updateLearnerCoach('501', { coachName: 'Test curriculum', coachEmail: 'curriculum@example.com' });
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ sessions: [], reviews: [], coach: { name: 'Test curriculum' } }));
+    expect((await overviewSchedule.read('commercial', '501')).coach.name).toBe('Test curriculum');
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
   it.each(['student-activity', 'metrics'])('allows slow verified %s reads but still bounds a stuck source', async resource => {
     vi.useFakeTimers();
     const network = pending<Response>();

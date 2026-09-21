@@ -8,6 +8,8 @@ import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
+import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
+import { buildSourceFilters, countBySource, filterBySource, learnerEventSource, learnerSourceMeta, type LearnerSourceFilter } from './reviewTypeFilters';
 import { moveCalendarDate } from './navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -24,6 +26,11 @@ import {
 } from '@/api/learnerCalendar';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
+import { meetingBookingWarning } from '../reviews/meetingBooking';
+import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
+import { importedReviewsToEvents, mergeCompletedReviewHistory } from '../reviews/useReviewSessions';
+import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
+import { firstAvailableBookingDate } from '../reviews/bookingDates';
 
 /** The header's secondary-actions menu — everything that isn't booking a
  * coach session (the primary action) moves in here so the toolbar stays a
@@ -124,8 +131,8 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
-const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review']);
-const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review']);
+const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'first-session', 'mcr', 'progress-review', 'review', 'gateway', 'other']);
+const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review', 'review']);
 
 const CALENDAR_PROVIDERS: Array<{ provider: PersonalCalendarProvider; title: string; subtitle: string; icon: string }> = [
   { provider: 'google', title: 'Continue with Google', subtitle: 'OAuth access to free/busy availability', icon: 'ri-google-fill' },
@@ -147,15 +154,6 @@ function parseEventDate(ev: CalendarEvent): { day: number; month: number; year: 
   return { day, month, year: null };
 }
 
-function eventMonthLabel(isoDate?: string | null): string {
-  if (!isoDate) return '';
-  const [year, month, day] = isoDate.split('-').map(Number);
-  if (!year || !month || !day) return '';
-  const date = new Date(year, month - 1, day);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
-}
-
 /** Map a Coach.coach_calendar_event row (backend JSON) to the page's display shape. */
 function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   if (ev.status === 'cancelled') return null;
@@ -174,19 +172,15 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     time = `${ev.scheduledTime}–${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
   }
   const isLiveSession = ev.source === 'live-session';
-  const eventSourceType = BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
+  const eventSourceType = ev.reviewTypeName || (BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
     ? sessionTypeLabel(ev.source as BookableSessionType)
-    : ev.type === 'review' ? 'Progress Review' : ev.type === 'welfare' ? 'Student Support' : 'Coaching';
+    : ev.type === 'review' ? 'Review' : ev.type === 'welfare' ? 'Student Support' : 'Coaching');
   const confirmed = (
     ev.status === 'scheduled' || ev.status === 'in-progress' || ev.status === 'completed'
   ) && (isLiveSession || ev.invited !== false);
   return {
     id: ev.id,
-    title: ev.source === 'mcr' && ev.sequence
-      ? `Monthly Coaching Meeting — ${eventMonthLabel(iso)} #${ev.sequence}`
-      : ev.source === 'progress-review' && ev.sequence
-        ? `Progress Review — ${eventMonthLabel(iso)} #${ev.sequence}`
-        : !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
+    title: !isLiveSession && ev.sequence ? `${ev.title} #${ev.sequence}` : ev.title,
     date: `${d} ${MONTH_NAMES[m - 1].substring(0, 3)}`,
     dayName,
     time,
@@ -205,12 +199,21 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     meetingLink: ev.meetingLink || undefined,
     eventKey: ev.eventKey || ev.id,
     source: ev.source,
+    reviewTemplateId: ev.reviewTemplateId,
+    reviewTypeId: ev.reviewTypeId,
+    reviewTypeCode: ev.reviewTypeCode,
+    reviewTypeName: ev.reviewTypeName,
+    reviewTypeIsSystem: ev.reviewTypeIsSystem,
+    importedReview: ev.importedReview,
     durationMinutes: ev.durationMinutes || 60,
     bookingStatus: ev.status,
     bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
     timeToBeConfirmed: !ev.scheduledTime,
+    syncWarning: meetingBookingWarning(ev),
+    bookingReviewId: ev.reviewId,
+    assignmentMonth: ev.assignmentMonth,
   };
 }
 
@@ -404,31 +407,17 @@ function restoreNotifications() {
 }
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
-type LearnerSourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up' | 'student-support' | 'personal' | 'busy';
 type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'completed';
 
-const LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support', 'personal', 'busy'];
-const VISIBLE_LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support'];
 const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'completed'];
 
-const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: string; dot: string }> = {
-  all: { label: 'All Sources', short: 'All', dot: 'bg-foreground-400' },
-  'live-session': { label: 'Live Sessions', short: 'Live Session', dot: 'bg-violet-500' },
-  mcr: { label: 'Monthly Coaching Meeting', short: 'Monthly Coaching Meeting', dot: 'bg-orange-500' },
-  'progress-review': { label: 'Progress Review', short: 'Progress Review', dot: 'bg-teal-500' },
-  'catch-up': { label: 'Catch-up', short: 'Catch-up', dot: 'bg-rose-500' },
-  'student-support': { label: 'Student Support', short: 'Support', dot: 'bg-blue-500' },
-  personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
-  busy: { label: 'Busy Time', short: 'Busy', dot: 'bg-slate-500' },
-};
-
-const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string }> = {
-  all: { label: 'All', dot: 'bg-foreground-400' },
-  'needs-schedule': { label: 'Needs Booking', dot: 'bg-rose-500' },
-  scheduled: { label: 'Scheduled', dot: 'bg-primary-500' },
-  pending: { label: 'Pending', dot: 'bg-amber-500' },
-  'in-progress': { label: 'In Progress', dot: 'bg-secondary-500' },
-  completed: { label: 'Completed', dot: 'bg-emerald-500' },
+const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string; badge: string }> = {
+  all: { label: 'All', dot: 'bg-foreground-400', badge: 'bg-background-200 text-foreground-700 ring-background-300' },
+  'needs-schedule': { label: 'Not Scheduled', dot: 'bg-rose-500', badge: 'bg-rose-100 text-rose-800 ring-rose-200' },
+  scheduled: { label: 'Scheduled', dot: 'bg-primary-500', badge: 'bg-primary-100 text-primary-800 ring-primary-200' },
+  pending: { label: 'Pending', dot: 'bg-amber-500', badge: 'bg-amber-100 text-amber-800 ring-amber-200' },
+  'in-progress': { label: 'In Progress', dot: 'bg-secondary-500', badge: 'bg-secondary-100 text-secondary-800 ring-secondary-200' },
+  completed: { label: 'Completed', dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-800 ring-emerald-200' },
 };
 
 function todayISO(): string {
@@ -476,20 +465,15 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
       return 'Student Support';
     case 'catch-up':
       return 'Catch-up';
+    case 'first-session':
+      return 'First Session';
+    case 'other':
+      return 'Other';
+    case 'gateway':
+      return 'Gateway';
     default:
       return 'Coach Session';
   }
-}
-
-function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
-  if (event.type === 'Busy') return 'busy';
-  if (event.club === 'Personal' || event.type === 'Personal') return 'personal';
-  if (event.source === 'live-session') return 'live-session';
-  if (event.source === 'mcr') return 'mcr';
-  if (event.source === 'progress-review') return 'progress-review';
-  if (event.source === 'catch-up') return 'catch-up';
-  if (event.source === 'student-support') return 'student-support';
-  return 'personal';
 }
 
 function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
@@ -552,6 +536,16 @@ function LearnerCalendarBody() {
   const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
   const [selectedDay, setSelectedDay] = useState(() => new Date().getDate());
+  useEffect(() => {
+    const date = new URLSearchParams(location.search).get('date');
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const [year, month, day] = date.split('-').map(Number);
+    const parsed = new Date(year, month - 1, day, 12);
+    if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return;
+    setViewYear(year);
+    setViewMonth(month - 1);
+    setSelectedDay(day);
+  }, [location.search]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterSource, setFilterSource] = useState<LearnerSourceFilter>('all');
   const [filterStatus, setFilterStatus] = useState<LearnerStatusFilter>('all');
@@ -559,11 +553,17 @@ function LearnerCalendarBody() {
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [calendarRevision, setCalendarRevision] = useState(0);
+  const importedBooking = useImportedMeetingBooking(myLearner, location.search);
+  const [schedulingError, setSchedulingError] = useState('');
   const calendarWriteVersionRef = useRef(0);
   const refreshCalendar = useCallback(() => setCalendarRevision(value => value + 1), []);
   useLiveRefresh(refreshCalendar);
   const [addToCalendarToast, setAddToCalendarToast] = useState<string | null>(null);
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
+  const selectedReview = useLearnerReviewInstance(myLearner.kind, myLearner.id,
+    showEventDetails?.reviewTemplateId && showEventDetails.source !== 'live-session'
+      ? showEventDetails.eventKey || showEventDetails.id
+      : '');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDayDrawer, setShowDayDrawer] = useState(false);
   const [customTitle, setCustomTitle] = useState('');
@@ -589,6 +589,7 @@ function LearnerCalendarBody() {
   const [bookTime, setBookTime] = useState('10:00');
   const [bookDuration, setBookDuration] = useState('60');
   const [bookNotes, setBookNotes] = useState('');
+  const [otherSessionType, setOtherSessionType] = useState('');
   const [bookSubmitting, setBookSubmitting] = useState(false);
   const [bookError, setBookError] = useState<string | null>(null);
   const [bookingCalendar, setBookingCalendar] = useState<BookingCalendarRules | null>(null);
@@ -629,8 +630,13 @@ function LearnerCalendarBody() {
   const focusedEventKey = useMemo(() => new URLSearchParams(location.search).get('event') || '', [location.search]);
 
   useEffect(() => {
-    if (new URLSearchParams(location.search).get('book') === 'student-support') {
+    const params = new URLSearchParams(location.search);
+    if (params.get('book') === 'student-support') {
+      setRescheduleEvent(null);
+      setBookingSourceEvent(null);
       setBookType('student-support');
+      setBookNotes((params.get('notes') || '').slice(0, 500));
+      setBookError(null);
       setShowBookModal(true);
     }
   }, [location.search]);
@@ -644,8 +650,9 @@ function LearnerCalendarBody() {
     setViewYear(focusDate.year ?? viewYear);
     setViewMonth(focusDate.month);
     setSelectedDay(focusDate.day);
-    setShowEventDetails(focusEvent);
-  }, [displayedEvents, focusedEventKey, viewYear]);
+    const params = new URLSearchParams(location.search);
+    if (!['schedule', 'reschedule'].includes(params.get('action') || '') && !params.get('reviewId')) setShowEventDetails(focusEvent);
+  }, [displayedEvents, focusedEventKey, viewYear, location.search]);
   const visibleRangeEvents = useMemo(() => (
     displayedEvents.filter((event) => {
       const eventDate = parseEventDate(event);
@@ -681,19 +688,12 @@ function LearnerCalendarBody() {
       sessionTypeLabel(event.bookingSessionType),
     ].some((value) => value.toLowerCase().includes(term)));
   }, [searchTerm, visibleRangeEvents]);
-  const sourceFilterCounts = useMemo(() => {
-    const counts = Object.fromEntries(LEARNER_SOURCE_FILTERS.map((source) => [source, 0])) as Record<LearnerSourceFilter, number>;
-    searchedVisibleRangeEvents.forEach((event) => {
-      counts.all += 1;
-      counts[learnerEventSource(event)] += 1;
-    });
-    return counts;
-  }, [searchedVisibleRangeEvents]);
-  const sourceFilteredVisibleRangeEvents = useMemo(() => (
-    filterSource === 'all'
-      ? searchedVisibleRangeEvents
-      : searchedVisibleRangeEvents.filter((event) => learnerEventSource(event) === filterSource)
-  ), [filterSource, searchedVisibleRangeEvents]);
+  const sourceFilters = useMemo(() => buildSourceFilters(displayedEvents), [displayedEvents]);
+  const sourceFilterCounts = useMemo(() => countBySource(searchedVisibleRangeEvents, sourceFilters), [searchedVisibleRangeEvents, sourceFilters]);
+  const sourceFilteredVisibleRangeEvents = useMemo(() => filterBySource(searchedVisibleRangeEvents, filterSource), [filterSource, searchedVisibleRangeEvents]);
+  useEffect(() => {
+    if (!sourceFilters.some(option => option.key === filterSource)) setFilterSource('all');
+  }, [sourceFilters, filterSource]);
   const statusFilterCounts = useMemo(() => {
     const counts = Object.fromEntries(LEARNER_STATUS_FILTERS.map((status) => [status, 0])) as Record<LearnerStatusFilter, number>;
     sourceFilteredVisibleRangeEvents.forEach((event) => {
@@ -809,31 +809,16 @@ function LearnerCalendarBody() {
     setRescheduleEvent(null);
     setBookingSourceEvent(sourceEvent || null);
     setBookType(sourceEvent?.bookingSessionType || 'catch-up');
-    setBookDate(date || bookingToday);
+    setBookDate(firstAvailableBookingDate(date || bookingToday, bookingCalendar));
+    setBookTime('09:00');
+    setBookDuration(String(sourceEvent?.durationMinutes || 60));
+    setBookNotes('');
+    setOtherSessionType('');
     setBookError(null);
     setShowDayDrawer(false);
     setShowEventDetails(null);
     setShowBookModal(true);
-  }, [bookingToday]);
-  const handledScheduleRef = useRef('');
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const eventKey = params.get('event');
-    if (params.get('action') !== 'schedule' || !eventKey) {
-      handledScheduleRef.current = '';
-      return;
-    }
-    if (handledScheduleRef.current === eventKey) return;
-    const event = myEvents.find(item => item.eventKey === eventKey || item.id === eventKey);
-    if (!event || !event.bookingSessionType) return;
-    handledScheduleRef.current = eventKey;
-    if (event.bookingStatus === 'not-scheduled' && event.timeToBeConfirmed) {
-      openBookSession(event.isoDate && event.isoDate >= bookingToday ? event.isoDate : bookingToday, event);
-    } else {
-      // A booking may have changed since the dashboard was displayed.
-      setShowEventDetails(event);
-    }
-  }, [location.search, myEvents, bookingToday, openBookSession]);
+  }, [bookingToday, bookingCalendar]);
   const openRescheduleSession = useCallback((event: CalendarEvent) => {
     if (!event.bookingSessionType || !event.isoDate || event.timeToBeConfirmed) return;
     const range = getEventTimeRange(event.time);
@@ -847,11 +832,62 @@ function LearnerCalendarBody() {
     setBookTime(event.time.split('\u2013')[0].trim());
     setBookDuration(String(event.durationMinutes || calculatedDuration || 60));
     setBookNotes('');
+    setOtherSessionType('');
     setBookError(null);
     setShowDayDrawer(false);
     setShowEventDetails(null);
     setShowBookModal(true);
   }, []);
+  const handledScheduleRef = useRef('');
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const action = params.get('action');
+    const reviewId = params.get('reviewId');
+    if (!['schedule', 'reschedule'].includes(action || '') && !reviewId) {
+      handledScheduleRef.current = '';
+      setSchedulingError('');
+      return;
+    }
+    const requestKey = location.search;
+    if (handledScheduleRef.current === requestKey || calendarLoading || calendarError) return;
+    let event: CalendarEvent | undefined;
+    if (reviewId) {
+      if (!importedBooking.target) return;
+      const { review, eventKey, source } = importedBooking.target;
+      if (eventKey) {
+        event = myEvents.find(item => item.eventKey === eventKey);
+        if (!event) {
+          setSchedulingError('The saved appointment could not be loaded. Refresh the calendar and try again.');
+          return;
+        }
+      } else if (['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status)) {
+        setSchedulingError('This review is no longer available for scheduling.');
+        return;
+      } else {
+        event = mapCoachEvent({ ...importedReviewsToEvents([review], source)[0], status: 'not-scheduled', scheduledDate: null, scheduledTime: null }) || undefined;
+      }
+      if (event) event = { ...event, title: review.name || event.title, bookingReviewId: review.id, assignmentMonth: review.plannedDate?.slice(0, 7) };
+    } else {
+      const eventKey = params.get('event');
+      // Older source/date links are accepted only when they identify one slot.
+      const matches = myEvents.filter(item => eventKey ? item.eventKey === eventKey || item.id === eventKey
+        : item.source === params.get('source') && item.isoDate === params.get('date') && item.timeToBeConfirmed);
+      if (matches.length === 1) event = matches[0];
+    }
+    if (!event || !event.bookingSessionType) {
+      setSchedulingError('This meeting is no longer available. Return to your meetings and refresh the list.');
+      return;
+    }
+    handledScheduleRef.current = requestKey;
+    setSchedulingError('');
+    if (action === 'reschedule' && event.bookingStatus === 'scheduled' && !event.timeToBeConfirmed) {
+      openRescheduleSession(event);
+    } else if (['schedule', 'reschedule'].includes(action || '') && event.bookingStatus === 'not-scheduled') {
+      openBookSession(event.isoDate, event);
+    } else {
+      setShowEventDetails(event);
+    }
+  }, [location.search, myEvents, calendarLoading, calendarError, importedBooking.target, openBookSession, openRescheduleSession]);
   const confirmedCount = myEvents.filter((ev) => ev.status === 'confirmed').length;
   const pendingCount = myEvents.filter((ev) => ev.status === 'pending').length;
   const totalPoints = myEvents.filter((ev) => ev.status === 'confirmed').reduce((s, ev) => s + ev.points, 0);
@@ -867,7 +903,9 @@ function LearnerCalendarBody() {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get('calendar_connected');
     const oauthError = params.get('calendar_error');
-    if (connected) {
+    if (params.get('connect') === 'calendar') {
+      setShowCalendarConnect(true);
+    } else if (connected) {
       setAddToCalendarToast(`${connected === 'google' ? 'Google' : 'Microsoft'} Calendar connected successfully.`);
       setShowCalendarConnect(true);
       window.history.replaceState({}, '', window.location.pathname);
@@ -908,22 +946,34 @@ function LearnerCalendarBody() {
     return () => { cancelled = true; };
   }, [showBookModal, calendarConnections.length, bookDate, myLearner.kind, myLearner.id]);
 
-  // Load the learner's coaching sessions from Coach.coach_calendar_event.
   useEffect(() => {
     let cancelled = false;
     const writeVersion = calendarWriteVersionRef.current;
     fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
-      .then((res) => {
+      .then(async (res) => {
         if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
-        const coachEvents = res.events
-          .map(mapCoachEvent)
-          .filter((ev): ev is CalendarEvent => ev !== null);
+        const mapEvents = (rows: LearnerCalendarEvent[]) => rows.map(mapCoachEvent).filter((event): event is CalendarEvent => event !== null);
+        setMyEvents(prev => [...mapEvents(res.events), ...prev.filter(event => event.id.startsWith('custom-'))]);
+        setCalendarLoading(false);
+        const histories = await Promise.allSettled([
+          fetchReviewHistory(myLearner.kind, myLearner.id, 'monthly-coaching'),
+          fetchReviewHistory(myLearner.kind, myLearner.id, 'reviews'),
+        ]);
+        if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
+        const monthly = histories[0].status === 'fulfilled' ? histories[0].value.reviews : [];
+        const progress = histories[1].status === 'fulfilled' ? histories[1].value.reviews : [];
+        const events = mapEvents(mergeCompletedReviewHistory(res.events, [
+          ...importedReviewsToEvents(monthly, 'mcr'),
+          ...importedReviewsToEvents(progress, 'progress-review'),
+        ]));
         setBookingCalendar(res.bookingCalendar || null);
         // Keep locally-created personal events; replace the DB-backed ones.
-        setMyEvents((prev) => [...coachEvents, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
-        setCalendarError(null);
+        setMyEvents((prev) => [...events, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
+        setCalendarError(histories.some(result => result.status === 'rejected') ? 'Could not load archived reviews. Please try again.' : null);
       })
-      .catch((err: Error) => { if (!cancelled && writeVersion === calendarWriteVersionRef.current) setCalendarError(err.message); })
+      .catch((err: Error) => {
+        if (!cancelled && writeVersion === calendarWriteVersionRef.current) setCalendarError(err.message);
+      })
       .finally(() => { if (!cancelled) setCalendarLoading(false); });
     // The assigned coach (Active_users mirror) — powers the "Book a session" panel.
     fetchLearnerCoach(myLearner.id)
@@ -965,17 +1015,19 @@ function LearnerCalendarBody() {
   }, [bookDate, bookTime, bookDuration, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id]);
 
   const sameWeekSession = useMemo(() => {
+    if (rescheduleEvent?.reviewTemplateId || bookingSourceEvent?.reviewTemplateId) return null;
     const requestedWeek = calendarWeekKey(bookDate);
     if (!requestedWeek) return null;
     return myEvents.find((event) => (
       event.id !== rescheduleEvent?.id
       && event.id !== bookingSourceEvent?.id
+      && !event.timeToBeConfirmed
       && (event.bookingStatus === 'scheduled' || event.bookingStatus === 'not-scheduled')
       && event.bookingSessionType === bookType
       && Boolean(event.isoDate)
       && calendarWeekKey(event.isoDate!) === requestedWeek
     )) || null;
-  }, [bookDate, bookType, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id]);
+  }, [bookDate, bookType, bookingSourceEvent?.id, bookingSourceEvent?.reviewTemplateId, myEvents, rescheduleEvent?.id, rescheduleEvent?.reviewTemplateId]);
 
   const canRescheduleTimeConflict = Boolean(
     !rescheduleEvent
@@ -1038,41 +1090,70 @@ function LearnerCalendarBody() {
       setBookError('This time overlaps an event in your connected personal calendar. Please choose another time.');
       return;
     }
+    if (!rescheduleEvent && !bookingSourceEvent && bookType === 'other' && !otherSessionType.trim()) {
+      setBookError('Please enter the type of session you need.');
+      return;
+    }
     setBookSubmitting(true);
     setBookError(null);
     try {
-      const res = rescheduleEvent
+      const sourceEvent = rescheduleEvent || bookingSourceEvent;
+      const importedReview = sourceEvent?.importedReview;
+      const importedReviewId = importedReview?.id || sourceEvent?.bookingReviewId;
+      const importedReviewDate = sourceEvent?.isoDate || importedReview?.plannedDate || importedReview?.completedDate || bookDate;
+      const importedReviewBooking = Boolean(importedReviewId);
+      const requestNotes = [
+        bookType === 'other' ? `Requested session type: ${otherSessionType.trim()}` : '',
+        bookNotes.trim(),
+      ].filter(Boolean).join('\n');
+      const res = rescheduleEvent && !importedReviewBooking
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
             eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
+            reviewId: rescheduleEvent.bookingReviewId,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
             timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           })
         : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
+            assignmentMonth: importedReviewBooking ? importedReviewDate.slice(0, 7) : undefined,
+            reviewId: importedReviewId,
             sessionType: bookType,
-            eventKey: bookingSourceEvent?.eventKey,
+            // An imported Aptem key identifies the history row, not the
+            // CoachCalendarEvent row created by the booking.
+            eventKey: importedReviewBooking ? undefined : bookingSourceEvent?.eventKey,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
-            notes: bookNotes.trim() || undefined,
+            notes: requestNotes || undefined,
             timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           });
       // A read started before this save must not restore the old appointment.
       calendarWriteVersionRef.current += 1;
       const mapped = mapCoachEvent(res.event);
       if (mapped) {
-        setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id), mapped]);
-        const date = parseEventDate(mapped);
+        const updatedImportedReview = importedReview
+          ? { ...importedReview, status: 'scheduled', plannedDate: bookDate, plannedTime: bookTime }
+          : undefined;
+        const updatedEvent = updatedImportedReview
+          ? { ...mapped, id: sourceEvent?.id || mapped.id, importedReview: updatedImportedReview }
+          : {
+              ...mapped,
+              bookingReviewId: sourceEvent?.bookingReviewId,
+              assignmentMonth: sourceEvent?.assignmentMonth,
+            };
+        setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id && ev.id !== sourceEvent?.id), updatedEvent]);
+        const date = parseEventDate(updatedEvent);
         if (date) {
           setViewYear(date.year ?? viewYear);
           setViewMonth(date.month);
           setSelectedDay(date.day);
         }
-        setShowEventDetails(mapped);
+        setShowEventDetails(updatedEvent);
       }
       setShowBookModal(false);
       setBookNotes('');
+      setOtherSessionType('');
       setRescheduleEvent(null);
       setBookingSourceEvent(null);
       setAddToCalendarToast(res.warning
@@ -1252,10 +1333,10 @@ function LearnerCalendarBody() {
 
       {showBookModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowBookModal(false)}>
-          <div className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="calendar-booking-title" className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className={`${rescheduleEvent || bookingSourceEvent ? 'ri-calendar-schedule-line' : 'ri-user-star-line'} text-primary-500`}></AppIcon>{rescheduleEvent ? 'Reschedule Session' : bookingSourceEvent ? `Schedule ${sessionTypeLabel(bookingSourceEvent.bookingSessionType)}` : 'Book a Coach Session'}</h3>
-              <button onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
+              <h3 id="calendar-booking-title" className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className={`${rescheduleEvent || bookingSourceEvent ? 'ri-calendar-schedule-line' : 'ri-user-star-line'} text-primary-500`}></AppIcon>{rescheduleEvent ? 'Reschedule Session' : bookingSourceEvent ? `Schedule ${sessionTypeLabel(bookingSourceEvent.bookingSessionType)}` : 'Book a Coach Session'}</h3>
+              <button aria-label="Close booking dialog" onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
             </div>
             <p className="text-sm text-foreground-500 mb-5">
               {rescheduleEvent
@@ -1280,22 +1361,29 @@ function LearnerCalendarBody() {
                   {([
                     { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
                     { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
-                  ]).map((t) => (
+                    { value: 'first-session' as BookableSessionType, label: 'First Session', icon: 'ri-hand-heart-line', desc: 'Your first session with your coach' },
+                    { value: 'progress-review' as BookableSessionType, label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
+                    { value: 'mcr' as BookableSessionType, label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
+                    { value: 'gateway' as BookableSessionType, label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
+                    { value: 'other' as BookableSessionType, label: 'Other', icon: 'ri-more-line', desc: 'Request another session type' },
+                  ]).map((t, index, list) => (
                     <button key={t.value} type="button" onClick={() => {
                       setBookType(t.value);
                       setBookError(null);
                     }}
-                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
+                      /* A lone trailing tile leaves a visible gap, so let it span the row. */
+                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${index === list.length - 1 && list.length % 2 === 1 ? 'col-span-2' : ''} ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
                       <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${bookType === t.value ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={t.icon}></AppIcon></span>
                       <p className="text-sm font-semibold text-foreground-900">{t.label}</p>
                       <p className="text-xs text-foreground-400 mt-0.5">{t.desc}</p>
                     </button>
                   ))}
                 </div>
+                {bookType === 'other' && <div className="mt-3"><label htmlFor="other-session-type" className="text-xs font-semibold text-foreground-500">Other <span className="text-red-400">*</span></label><input id="other-session-type" type="text" value={otherSessionType} onChange={(e) => { setOtherSessionType(e.target.value); setBookError(null); }} maxLength={100} placeholder="Write the session type you need" className="mt-1.5 w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>}
               </div>}
               <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input type="date" value={bookDate} min={bookingToday} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
-                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
+                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input aria-label="Date" type="date" value={bookDate} min={bookingToday} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
+                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input aria-label="Time" type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
               </div>
               {bookDateRestriction && (
                 <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
@@ -1364,7 +1452,7 @@ function LearnerCalendarBody() {
               )}
               <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Duration</label>
-                <select value={bookDuration} onChange={(e) => setBookDuration(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
+                <select aria-label="Duration" value={bookDuration} disabled={Boolean(bookingSourceEvent?.bookingReviewId && bookType === 'mcr')} onChange={(e) => setBookDuration(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
                   {![30, 45, 60].includes(Number(bookDuration)) && <option value={bookDuration}>{bookDuration} minutes</option>}
                   <option value="30">30 minutes</option>
                   <option value="45">45 minutes</option>
@@ -1386,7 +1474,7 @@ function LearnerCalendarBody() {
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent ? 'Booking...' : 'Sending...'}</> : <><AppIcon className="ri-calendar-check-line mr-1"></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent ? 'Book Session' : 'Send Request'}</>}
+                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent ? 'Booking...' : 'Sending...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent ? 'Book Session' : 'Send Request'}</>}
               </button>
             </div>
           </div>
@@ -1426,8 +1514,11 @@ function LearnerCalendarBody() {
           title={showEventDetails.title}
           onClose={() => setShowEventDetails(null)}
           badges={<>
-            <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{LEARNER_SOURCE_META[learnerEventSource(showEventDetails)].label}</span>
-            <span className="rounded-full bg-background-200 px-2.5 py-1 text-foreground-700">{LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}</span>
+            <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{learnerSourceMeta(showEventDetails).label}</span>
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ring-1 ring-inset ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].badge}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].dot}`}></span>
+              {LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}
+            </span>
           </>}
           actions={<>
 
@@ -1466,6 +1557,8 @@ function LearnerCalendarBody() {
             <div><dt className="mb-1 flex items-center gap-2 text-xs text-foreground-500"><AppIcon className="ri-map-pin-line" />Location</dt><dd className="font-semibold">{showEventDetails.location}</dd><dd className="mt-1 text-xs text-foreground-500">{showEventDetails.format}</dd></div>
           </dl>
           {showEventDetails.description && <div className="mb-5 border-t border-foreground-100 pt-4"><h3 className="mb-2 text-xs font-semibold text-foreground-500">About this event</h3><p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground-700">{showEventDetails.description}</p></div>}
+            {showEventDetails.syncWarning && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">{showEventDetails.syncWarning}</p>}
+            {selectedReview.loading ? <RowsSkeleton rows={3} /> : selectedReview.error ? <p role="alert" className="mb-4 text-sm text-red-600">{selectedReview.error}</p> : selectedReview.definition ? <LearnerReviewInstanceForm definition={selectedReview.definition} /> : null}
             {shouldShowMeetingArtifacts(showEventDetails) ? (
               <CoachMeetingArtifactsPanel event={{ id: showEventDetails.id, eventKey: showEventDetails.eventKey, source: showEventDetails.source, meetingLink: showEventDetails.meetingLink }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="mb-5 border-primary-100 bg-primary-50/30" />
             ) : null}
@@ -1475,7 +1568,7 @@ function LearnerCalendarBody() {
                 <p className="text-xs font-semibold">This is your official {sessionTypeLabel(showEventDetails.bookingSessionType)} session. Choose a date and time here, and the Microsoft Teams meeting link will be created when it is confirmed.</p>
               </div>
             )}
-            {!showEventDetails.timeToBeConfirmed && !showEventDetails.meetingLink && showEventDetails.club !== 'Personal' && (
+            {!showEventDetails.timeToBeConfirmed && !showEventDetails.meetingLink && !showEventDetails.syncWarning && showEventDetails.club !== 'Personal' && (
               <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
                 <AppIcon className="ri-error-warning-line mt-0.5 shrink-0" />
                 <p className="text-xs font-semibold">{showEventDetails.bookingStatus === 'not-scheduled' ? 'Your preferred time has been sent to your coach. A Teams link will be created after coach approval.' : 'The meeting time is scheduled, but the Teams link is not available yet. Please contact your coach.'}</p>
@@ -1529,15 +1622,6 @@ function LearnerCalendarBody() {
                   <p className={`text-sm ${selectedDateRestriction ? 'max-w-xs font-semibold text-amber-800' : 'text-foreground-500'}`}>
                     {selectedDateRestriction || 'No events scheduled'}
                   </p>
-                  {!selectedDateRestriction && (
-                    <button
-                      type="button"
-                      onClick={() => openBookSession(selectedIso)}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-primary-500 px-4 py-2 text-xs font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"
-                    >
-                      <AppIcon className="ri-user-star-line text-sm"></AppIcon>Book Session
-                    </button>
-                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1585,6 +1669,7 @@ function LearnerCalendarBody() {
 
       <PageContainer className="learner-calendar-page">
 
+        {(schedulingError || importedBooking.error) && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{schedulingError || importedBooking.error}</p>}
         {calendarError && (
           <div className="rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 flex items-center gap-3 shadow-sm">
             <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>
@@ -1669,19 +1754,20 @@ function LearnerCalendarBody() {
                 </button>
               )}
             </div>
-            <div className="grid gap-3 xl:grid-cols-2">
-              <div className="rounded-xl bg-background-50/70 p-2">
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+              <div className="min-w-0 rounded-xl bg-background-50/70 p-2">
                 <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Source</p>
-                <div className="flex flex-wrap gap-2">
-                  {VISIBLE_LEARNER_SOURCE_FILTERS.map((source) => {
-                    const meta = LEARNER_SOURCE_META[source];
+                <div className="flex max-h-24 flex-wrap content-start gap-2 overflow-y-auto pr-1">
+                  {sourceFilters.map((option) => {
+                    const source = option.key;
+                    const meta = { label: option.longLabel, short: option.label, dot: option.dot };
                     const isActive = filterSource === source;
                     return (
                       <button
                         key={source}
                         type="button"
                         onClick={() => setFilterSource(source)}
-                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
+                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
                         title={`${meta.label} (${sourceFilterCounts[source]})`}
                       >
                         <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : meta.dot}`}></span>
@@ -1692,7 +1778,7 @@ function LearnerCalendarBody() {
                   })}
                 </div>
               </div>
-              <div className="rounded-xl bg-background-50/70 p-2">
+              <div className="min-w-0 rounded-xl bg-background-50/70 p-2">
                 <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Status</p>
                 <div className="flex flex-wrap gap-2">
                   {LEARNER_STATUS_FILTERS.map((status) => {
@@ -1791,8 +1877,8 @@ function LearnerCalendarBody() {
                                 </div>
                               );
                             }
-                            const eventSource = learnerEventSource(ev);
-                            const sourceMeta = LEARNER_SOURCE_META[eventSource];
+                            const sourceMeta = learnerSourceMeta(ev);
+                            const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                             return (
                               <button
                                 type="button"
@@ -1800,15 +1886,23 @@ function LearnerCalendarBody() {
                                 key={ev.id}
                                 onClick={(event) => { event.stopPropagation(); setShowEventDetails(ev); }}
                                 className={`w-full rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
-                                title={`${LEARNER_SOURCE_META[eventSource].label} · ${ev.title}`}
+                                title={`${learnerSourceMeta(ev).label} · ${ev.title}`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
                                   <span className={`h-2 w-2 shrink-0 rounded-full ${sourceMeta.dot}`}></span>
                                   <span className="shrink-0 text-[11px] font-bold leading-tight tabular-nums">{ev.timeToBeConfirmed ? 'TBC' : ev.time.split('–')[0]}</span>
                                   <span className="truncate text-[11px] font-bold leading-tight">{ev.title}</span>
-                                  <span className={`ml-auto h-2 w-2 shrink-0 rounded-full border border-white/80 ${LEARNER_STATUS_META[learnerEventStatus(ev)].dot}`} title={LEARNER_STATUS_META[learnerEventStatus(ev)].label}></span>
                                 </div>
-                                {(ev.host || ev.club) && <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</p>}
+                                <div className="mt-1 flex min-w-0 items-center justify-between gap-1.5">
+                                  {(ev.host || ev.club) && <span className="min-w-0 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</span>}
+                                  <span
+                                    aria-label={`${statusMeta.label} status`}
+                                    className={`ml-auto inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold leading-none ring-1 ring-inset sm:text-[9px] ${statusMeta.badge}`}
+                                  >
+                                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusMeta.dot}`}></span>
+                                    {statusMeta.label}
+                                  </span>
+                                </div>
                               </button>
                             );
                           })}
@@ -1842,8 +1936,8 @@ function LearnerCalendarBody() {
                 {selectedDaySorted.length > 0 ? (
                   <div className="space-y-2">
                     {selectedDaySorted.map((ev) => {
-                      const eventSource = learnerEventSource(ev);
-                      const sourceMeta = LEARNER_SOURCE_META[eventSource];
+                      const eventSource = ev.source;
+                      const sourceMeta = learnerSourceMeta(ev);
                       const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                       return (
                         <button
@@ -1853,7 +1947,7 @@ function LearnerCalendarBody() {
                           className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:shadow-sm cursor-pointer ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
                         >
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/75 shadow-sm">
-                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : eventSource === 'mcr' ? 'ri-calendar-check-line' : eventSource === 'progress-review' ? 'ri-line-chart-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
+                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : ev.reviewTemplateId ? 'ri-file-list-3-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'other' ? 'ri-more-line' : ev.type === 'Busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="mb-1 flex min-w-0 items-center gap-1.5">
@@ -1864,7 +1958,10 @@ function LearnerCalendarBody() {
                               {ev.timeToBeConfirmed ? 'Time to be confirmed' : ev.time} · {ev.club}
                             </p>
                           </div>
-                          <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-foreground-700">{statusMeta.label}</span>
+                          <span aria-label={`${statusMeta.label} status`} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset ${statusMeta.badge}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${statusMeta.dot}`}></span>
+                            {statusMeta.label}
+                          </span>
                         </button>
                       );
                     })}
@@ -2006,7 +2103,7 @@ function LearnerCalendarBody() {
               <SectionHeader title="Next 7 days" icon="ri-calendar-todo-line" />
               <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {upcomingEvents.slice(0, 8).map((ev) => {
-                  const sourceMeta = LEARNER_SOURCE_META[learnerEventSource(ev)];
+                  const sourceMeta = learnerSourceMeta(ev);
                   const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                   return (
                   <button type="button" aria-haspopup="dialog" key={ev.id} className="w-full text-left flex items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-2.5 transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer group" onClick={() => setShowEventDetails(ev)}>

@@ -1,16 +1,17 @@
 """Learner-facing absence report API backed by Coach.coach_absence_report."""
 import hashlib
 import logging
-from datetime import date, time
+from datetime import date, datetime, time
 from uuid import uuid4
 
 from django.conf import settings
 from django.db import DatabaseError, IntegrityError, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
 
-from coach_api.models import CoachAbsenceReport
-from login.permissions import learner_self_only
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+from login.permissions import learner_self_or_admin
 
 from .attendance_lectures import lecture_register, session_key, report_id
 from .evidence_storage import (
@@ -59,15 +60,24 @@ def _source_learner(kind, learner_id):
     return model.all_learners.filter(pk=learner_id).first()
 
 
-def _attendance_rows_for_learner(learner, learner_id):
+def _attendance_rows_for_learner(learner, learner_id, *, meetings=False, kind=None):
+    if meetings:
+        from .meeting_attendance import absence_rows
+        return absence_rows(learner, kind or getattr(learner, 'learner_type', None) or 'apprenticeship')
     return lecture_register(learner)
 
 
-def _fetch_missed_sessions(learner, learner_id):
+def _can_report_absence(row):
+    status = str(row.get('attendance_status') or '').strip().lower()
+    return status in {'absent', 'upcoming', 'in_progress'} or (
+        status == 'pending' and row.get('session_date') == timezone.localdate())
+
+
+def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
     """Both registers, including real upcoming occurrences, scoped to this learner."""
     rows = [
-        row for row in _attendance_rows_for_learner(learner, learner_id)
-        if str(row.get("attendance_status") or "").strip().lower() in {"absent", "upcoming"}
+        row for row in (_attendance_rows_for_learner(learner, learner_id, meetings=True, kind=kind) if meetings else _attendance_rows_for_learner(learner, learner_id))
+        if _can_report_absence(row)
     ]
 
     return [
@@ -103,13 +113,14 @@ def _resolve_absent_attendance(
     session_title,
     session_date,
     session_time,
+    kind=None,
 ):
     del session_time  # Source identity/date/title, not a client-supplied time, authorises the report.
     expected_id = str(session_id or "").strip()
     expected_title = str(session_title or "").strip().casefold()
     matches = [
-        row for row in _attendance_rows_for_learner(learner, learner_id)
-        if str(row.get("attendance_status") or "").strip().lower() in {"absent", "upcoming"}
+        row for row in (_attendance_rows_for_learner(learner, learner_id, meetings=True, kind=kind) if expected_id.startswith('meeting:') else _attendance_rows_for_learner(learner, learner_id))
+        if _can_report_absence(row)
         and row.get("session_date") == session_date
         and str(row.get("session_title") or "").strip().casefold() == expected_title
         and (not expected_id or session_key(row) == expected_id)
@@ -142,6 +153,8 @@ def _serialize(report):
         "evidenceUrl": evidence_url,
         "evidenceText": report.evidence_text,
         "coachNote": report.coach_note,
+        "recoveryMethod": report.recovery_method,
+        "catchupEventKey": report.catchup_event_key,
         "attendanceRate": report.attendance_rate,
         "previousAbsences": report.previous_absences,
         "createdAt": report.created_at.isoformat(),
@@ -149,11 +162,35 @@ def _serialize(report):
     }
 
 
+class RecoveryPlanError(ValueError):
+    pass
+
+
+def _catchup_booking(learner, mirror, event_key, session_date, *, lock=False):
+    """Recheck the saved appointment; matching IDs never override another email."""
+    query = CoachCalendarEvent.objects
+    if lock:
+        query = query.select_for_update()
+    booking = query.filter(event_key=event_key).first()
+    emails = {str(getattr(person, 'email', '') or '').strip().casefold()
+              for person in (learner, mirror)} - {''}
+    ids = {str(getattr(person, 'id', '')) for person in (learner, mirror) if person is not None}
+    email = str(getattr(booking, 'learner_email', '') or '').strip().casefold()
+    belongs = booking is not None and (email in emails if email else str(booking.learner_id) in ids)
+    if not belongs or booking.event_type != 'catch-up':
+        raise RecoveryPlanError('Choose one of your own catch-up bookings.')
+    if (booking.status not in {'not-scheduled', 'scheduled', 'in-progress'}
+            or not booking.scheduled_date or not booking.scheduled_time):
+        raise RecoveryPlanError('This catch-up booking is no longer available. Book or select another session.')
+    start = datetime.combine(booking.scheduled_date, booking.scheduled_time)
+    if booking.scheduled_date < session_date or start <= timezone.localtime().replace(tzinfo=None):
+        raise RecoveryPlanError('Choose a future catch-up session on or after the lecture date.')
+    return booking
+
+
 @csrf_exempt
-# Learners report their own absences here; staff/coaches file absences through
-# coach_api's own endpoint, so this is learner-self-only (staff write -> 403).
-# GET reads stay open (A5, later group).
-@learner_self_only(kwarg="learner_id")
+# Learners and admins use the learner workspace; coaches use coach_api.
+@learner_self_or_admin(kwarg="learner_id")
 def learner_absence_reports(request, kind, learner_id):
     try:
         learner = _source_learner(kind, learner_id)
@@ -169,7 +206,7 @@ def learner_absence_reports(request, kind, learner_id):
         try:
             reports = CoachAbsenceReport.objects.filter(learner_id=learner_id).order_by("-created_at")
             results = [_serialize(report) for report in reports]
-            missed_sessions = _fetch_missed_sessions(learner, learner_id)
+            missed_sessions = _fetch_missed_sessions(learner, learner_id, meetings=True, kind=kind) if request.GET.get('scope') == 'meetings' else _fetch_missed_sessions(learner, learner_id)
         except Exception:
             logger.exception(
                 "Could not load absence sessions for %s learner %s",
@@ -193,12 +230,23 @@ def learner_absence_reports(request, kind, learner_id):
     reason_category = request.POST.get("reasonCategory", "").strip().lower()
     other_reason = request.POST.get("otherReason", "").strip()
     evidence_text = request.POST.get("explanation", "").strip()
+    recovery_method = request.POST.get("recoveryMethod", "").strip()
+    catchup_event_key = request.POST.get("catchupEventKey", "").strip()
     upload = request.FILES.get("evidence")
 
     if not session_title or not session_date_text:
         return _error("Session title and date are required.")
     if reason_category not in ALLOWED_REASONS:
         return _error("Choose a valid absence reason.")
+    meeting_absence = session_id.startswith('meeting:')
+    if meeting_absence and (recovery_method or catchup_event_key):
+        return _error('Report the meeting absence, then reschedule the meeting with your coach.')
+    if not meeting_absence and recovery_method not in {'recorded', 'catch-up'}:
+        return _error('Choose whether to watch the recording or book a catch-up session.')
+    if recovery_method == 'catch-up' and (not catchup_event_key or len(catchup_event_key) > 255):
+        return _error('Book or select a catch-up session before submitting your absence report.')
+    if recovery_method == 'recorded' and catchup_event_key:
+        return _error('A recording recovery plan cannot include a catch-up booking.')
     if reason_category == "other" and not other_reason:
         return _error("Please specify the other reason.")
     if len(evidence_text) > 600 or len(other_reason) > 120 or len(session_title) > 255:
@@ -218,6 +266,7 @@ def learner_absence_reports(request, kind, learner_id):
             session_title,
             parsed_date,
             parsed_time,
+            kind=kind,
         )
     except Exception:
         logger.exception(
@@ -227,7 +276,7 @@ def learner_absence_reports(request, kind, learner_id):
         )
         return _error("Could not validate the attendance session.", 502)
     if attendance_id is None:
-        return _error("Choose a valid absent or upcoming session.")
+        return _error("Choose a valid absent, upcoming or in-progress session.")
     if CoachAbsenceReport.objects.filter(attendance_id=attendance_id).exists():
         return _error("An absence report already exists for this session.", 409)
 
@@ -247,6 +296,13 @@ def learner_absence_reports(request, kind, learner_id):
         attendance_rate = None
 
     active = learner_profile_for_source(learner, learner_id, active_only=True)
+    if recovery_method == 'catch-up':
+        try:
+            _catchup_booking(learner, active, catchup_event_key, parsed_date)
+        except RecoveryPlanError as exc:
+            return _error(str(exc))
+        except DatabaseError:
+            return _error('Could not verify the catch-up booking. Please retry.', 502)
     owner_name = str(getattr(active, "coach_name", "") or "").strip() or DEFAULT_COACH_NAME
     owner_email = str(getattr(active, "coach_email", "") or "").strip() or DEFAULT_COACH_EMAIL
     reason = other_reason if reason_category == "other" else REASON_LABELS[reason_category]
@@ -278,6 +334,8 @@ def learner_absence_reports(request, kind, learner_id):
 
     try:
         with transaction.atomic():
+            if recovery_method == 'catch-up':
+                _catchup_booking(learner, active, catchup_event_key, parsed_date, lock=True)
             previous_absences = CoachAbsenceReport.objects.filter(learner_id=learner_id).count()
             report = CoachAbsenceReport.objects.create(
                 attendance_id=attendance_id,
@@ -295,12 +353,21 @@ def learner_absence_reports(request, kind, learner_id):
                 status=CoachAbsenceReport.STATUS_PENDING,
                 evidence_provided=bool(upload or evidence_text),
                 coach_note="",
+                recovery_method=recovery_method,
+                catchup_event_key=catchup_event_key or None,
                 attendance_rate=attendance_rate,
                 evidence_image_url=evidence_url,
                 evidence_kind="both" if upload and evidence_text else "file" if upload else "text" if evidence_text else "none",
                 evidence_text=evidence_text,
                 previous_absences=previous_absences,
             )
+    except RecoveryPlanError as exc:
+        if blob_name:
+            try:
+                delete_blob(quarantine_container, blob_name)
+            except Exception:
+                pass
+        return _error(str(exc), 409)
     except IntegrityError:
         # Another submission may have saved the same lecture after validation.
         # The unique attendance_id still guarantees a single report.

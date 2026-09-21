@@ -100,12 +100,33 @@ const definitions: ComponentAuthoringDefinition[] = [
       ...advancedDefaults('live-session'),
       sessionPurpose: '',
       sessionDate: '',
+      // The weekday `sessionDate` falls on, stamped alongside it by the session
+      // planner on both sides. Declared because it is written: a key the code
+      // stores but the schema does not list is rejected as unsupported the next
+      // time the module is saved, which is a save the author cannot get past.
+      sessionDay: '',
       sessionTime: '',
       sessionDateTimeUtc: '',
       durationMinutes: 60,
+      // `selectedGroupKeys`/`selectedGroupNames` are deliberately NOT declared
+      // here although the backend schema has them: group assignment strips them
+      // with `delete`, and a duplicated component has to come back with them
+      // absent rather than as an empty default that reads as a real placement.
       liveSessionUrl: '',
       teamsEventId: '',
       teamsLiveSessionId: '',
+      // Written when a calendar is created or a plan is stamped. Same reason as
+      // `sessionDay`: these are the keys `applyModuleTeamsSeries`, the session
+      // planner and the schedule editor actually store on a live session.
+      teamsStartDateTimeUtc: '',
+      teamsMeetingUrl: '',
+      teamsOnlineMeetingId: '',
+      teamsCalendarSeries: '',
+      // Empty, not `0`, like every other Teams key here. These hold numbers once
+      // a calendar exists, but "no meeting" is the empty default a duplicated
+      // component is stripped back to, and `0` would read as a real occurrence.
+      teamsDurationMinutes: '',
+      teamsSessionNumber: '',
       teamsMeetingOptionsUrl: '',
       teamsOrganizerEmail: '',
       teamsAttendees: [],
@@ -120,7 +141,9 @@ const definitions: ComponentAuthoringDefinition[] = [
       teamsMeetingType: 'live-session',
       teamsRequestResponses: true,
       teamsAllowTimeProposals: true,
-      teamsHideAttendees: false,
+      // Default to not disclosing every invitee's address to every other
+      // invitee; a cohort mixes learners with staff from unrelated employers.
+      teamsHideAttendees: true,
       preparationInstructions: '',
       reflectionQuestions: '',
       attendanceRequired: true,
@@ -414,11 +437,20 @@ const WEEK_BUILDER_SHARED_KEYS = [
   'uploadSource',
 ] as const;
 
+// These are persisted per occurrence by the Teams attachment path. Keeping
+// them only in legacySettings disconnects previews and subsequent saves.
+const LIVE_SESSION_TRACKING_SETTING_KEYS = [
+  'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
+  'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
+  'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
+] as const;
+
 export function allowedSettingKeysForType(type: ModuleComponentType) {
   const definition = getComponentDefinition(type);
   return new Set([
     ...Object.keys(definition.defaultSettings),
     ...WEEK_BUILDER_SHARED_KEYS,
+    ...(type === 'live-session' ? LIVE_SESSION_TRACKING_SETTING_KEYS : []),
     'legacySettings',
     'legacySourceType',
     'legacyUnsupportedSource',

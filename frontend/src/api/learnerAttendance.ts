@@ -33,13 +33,14 @@ export interface LearnerAttendance {
   sessionHistory: AttendanceSessionRow[];
 }
 
-const attendanceUrl = (kind: LearnerKind, learnerId: string) => `/learner_api/attendance/${kind}/${learnerId}/`;
+const attendanceUrl = (kind: LearnerKind, learnerId: string, source?: 'kbc') =>
+  `/learner_api/attendance/${kind}/${learnerId}/${source ? `?source=${source}` : ''}`;
 
 export function peekLearnerAttendance(kind: LearnerKind, learnerId: string): LearnerAttendance | null | undefined {
   return peekLearnerJson<{ attendance: LearnerAttendance | null }>(attendanceUrl(kind, learnerId))?.attendance;
 }
 
-export async function fetchLearnerAttendance(kind: LearnerKind, learnerId: string, signal?: AbortSignal, fresh = false): Promise<LearnerAttendance | null> {
-  const data = await readLearnerJson<{ attendance: LearnerAttendance | null }>(attendanceUrl(kind, learnerId), { ttlMs: 30_000, signal, revalidate: fresh });
+export async function fetchLearnerAttendance(kind: LearnerKind, learnerId: string, signal?: AbortSignal, fresh = false, source?: 'kbc'): Promise<LearnerAttendance | null> {
+  const data = await readLearnerJson<{ attendance: LearnerAttendance | null }>(attendanceUrl(kind, learnerId, source), { ttlMs: 30_000, signal, revalidate: fresh });
   return data.attendance ?? null;
 }

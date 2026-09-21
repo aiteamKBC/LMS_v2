@@ -4,7 +4,7 @@ import json
 from django.db import connection
 from django.test import TestCase
 
-from . import review_schedule, reviews, views
+from . import review_schedule, review_types, reviews, views
 
 
 class ReviewScheduleTestCase(TestCase):
@@ -13,6 +13,7 @@ class ReviewScheduleTestCase(TestCase):
         views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
         reviews.provision_review_template_tables()
+        review_types.provision_review_types_table()
         review_schedule.provision_review_schedule_tables()
         self._clear()
 
@@ -46,10 +47,13 @@ class ReviewScheduleTestCase(TestCase):
             reviews.REVIEW_FIELDS_TABLE,
             reviews.REVIEW_SECTIONS_TABLE,
             reviews.REVIEW_TEMPLATES_TABLE,
+            review_types.REVIEW_TYPES_TABLE,
             'programmes',
         ):
             with connection.cursor() as cursor:
                 cursor.execute(f'delete from {views.authoring_table_name(table)}')
+        # review_types is a seeded lookup table, not per-test data.
+        review_types.seed_system_review_types()
 
     def _programme(self, programme_id='PROG-DATA', name='Data Technician'):
         views.insert_row('programmes', {
@@ -70,6 +74,9 @@ class ReviewScheduleTestCase(TestCase):
         payload = {
             'name': name,
             'enabled': enabled,
+            # Every Review carries a type. It classifies only -- the schedule
+            # under test here is the template's own, whatever the type.
+            'reviewTypeId': review_types.get_review_type_by_code(review_types.REVIEW_TYPE_CODE_MCM)['id'],
             'recurrence': {'interval': interval, 'unit': unit},
             'scheduleAnchorDate': anchor,
             'applicableStatuses': [],

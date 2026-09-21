@@ -9,24 +9,16 @@ export interface HolidayShiftSessionLike {
 }
 
 /**
- * The plan a holiday rewrote, hop by hop.
+ * The plan's own dates, with each session's holiday clashes named against them.
  *
- * The backend walks the group's delivery day forward, and a session that steps
- * over a closed date before landing carries every date it skipped, in order, in
- * its own `skippedHolidays` — the first of those is exactly where it was due
- * before any holiday touched it. That is the only fact this reads: a session's
- * shift is entirely its own `skippedHolidays`, never anything read off the rest
- * of the series.
+ * A ticked holiday moves nothing and decides nothing: the session keeps its own
+ * delivery day and the plan only NAMES the holidays that fall on it, in
+ * `clashes`. That is the whole of it -- a warning, no shift, no replacement, no
+ * effect on the run or on the module's end date.
  *
- * A closure still moves more than the one session it lands on — the next
- * session naturally starts one slot later too — but a session carried along
- * that way clashed with nothing itself (`skippedHolidays` is empty), so it is
- * not reported as moved. Reporting it against a slot borrowed from a neighbour
- * is exactly the bug this replaced: a date pooled from every session in the
- * series and re-handed out by array position drifts by one slot after the
- * first real closure, so a later, genuinely unaffected session could inherit
- * an earlier one's clash and a genuinely blocked session could be shown against
- * the date before its own.
+ * `moved`, `gapLabel`, `headline` and `detail` are the parked clash fields.
+ * They are kept on the shape because every caller still renders it, and they
+ * are now always inert (`false` / empty). See the parked block below.
  */
 export interface SessionShift {
   sessionNumber: number;
@@ -42,6 +34,109 @@ export interface SessionShift {
   detail: string;
 }
 
+/** A holiday as the curriculum stores it, in the shape every plan serves. */
+export interface ReadingWeekHoliday {
+  id?: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  type?: string;
+  notes?: string;
+  /** Which calendar the holiday came from: the mirrored GOV.UK feed, or one
+   *  somebody entered on the Holidays page. */
+  source?: string;
+}
+
+/** A closed delivery slot: a curriculum position with no live session in it. */
+export interface HolidayReadingWeekSlot {
+  slotNumber: number;
+  date: string;
+  day?: string;
+  holidays: ReadingWeekHoliday[];
+}
+
+/**
+ * The holiday notice a week's own delivery day puts on that week.
+ *
+ * It states a fact and stops there. The week is a completely ordinary week --
+ * same date, same place in the run, same components, same live session -- and
+ * what to do about the holiday is the author's call: rename the week a reading
+ * week, drop its live session, move a component, or leave it. Nothing here and
+ * nothing behind it changes the plan, so no date moves and the module still
+ * ends where its delivery pattern says it ends.
+ *
+ * It names the holiday's own label, dates, type and any note the GOV.UK feed
+ * carried, all read off the holiday record the scheduler already matched, so
+ * the author can judge the clash without opening the holidays page.
+ *
+ * A strip inside the week card rather than a card of its own: there is no
+ * second week to draw, and drawing one made a single ticked holiday read as an
+ * extra week in the course with a number that collided with a real one.
+ */
+export function WeekHolidayNotice({
+  slot,
+  weekDate,
+  compact = false,
+}: {
+  slot: HolidayReadingWeekSlot;
+  /**
+   * The date the week's own header already prints, directly above this notice.
+   *
+   * When the closed day IS that date, naming it here said the same day twice on
+   * two adjacent lines. It is still named when the two differ, which is the case
+   * that needs it: a week delivering twice can have its second day closed while
+   * the header shows its first.
+   */
+  weekDate?: string;
+  /** Tighter type and spacing, for the narrow Course structure rail. */
+  compact?: boolean;
+}) {
+  const holidays = (slot.holidays || []).filter(holiday => cleanText(holiday.label) || cleanText(holiday.startDate));
+  const slotDate = cleanText(slot.date);
+  const shownAbove = Boolean(slotDate) && slotDate.slice(0, 10) === cleanText(weekDate).slice(0, 10);
+  return (
+    <div
+      data-testid="week-holiday-notice"
+      className={`relative border-t border-amber-200 bg-amber-50/70 ${compact ? 'px-2.5 py-1.5' : 'px-3 py-2'}`}
+    >
+      <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-amber-400"></span>
+      <p className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-semibold text-amber-900 ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+        <AppIcon className="ri-calendar-close-line shrink-0 text-sm text-amber-600"></AppIcon>
+        <span>Heads up: this week falls on a holiday</span>
+        {!shownAbove && slotDate && (
+          <span className="font-medium text-foreground-500">
+            {formatDateLabel(slotDate)} {weekdayLabel(slotDate)}
+          </span>
+        )}
+      </p>
+      {holidays.map((holiday, index) => (
+        <p
+          key={`${holiday.id || holiday.label}-${holiday.startDate}-${index}`}
+          className={`mt-0.5 leading-snug text-amber-900 ${compact ? 'text-[10px]' : 'text-[11px]'}`}
+        >
+          <span className="font-bold">{cleanText(holiday.label) || 'Holiday'}</span>
+          {' '}
+          {/* Where the day came from decides who can change it: a GOV.UK row is
+              mirrored reference data, a manual one was entered on the Holidays
+              page. Same wording as that page's Source filter. */}
+          <span className={`rounded-full border px-1.5 py-px align-middle font-bold ${
+            holiday.source === 'gov.uk'
+              ? 'border-sky-200 bg-sky-50 text-sky-700'
+              : 'border-amber-300 bg-amber-100 text-amber-800'
+          } ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+            {holiday.source === 'gov.uk' ? 'GOV.UK' : 'Manual'}
+          </span>
+          {' · '}
+          {formatDateLabel(holiday.startDate)}
+          {cleanText(holiday.endDate) && holiday.endDate !== holiday.startDate && ` – ${formatDateLabel(holiday.endDate)}`}
+          {cleanText(holiday.type) && ` · ${cleanText(holiday.type)}`}
+          {cleanText(holiday.notes) && ` · ${cleanText(holiday.notes)}`}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export interface HolidayShiftPlan {
   shifts: SessionShift[];
   closures: Array<{ date: string; label: string }>;
@@ -51,65 +146,95 @@ export interface HolidayShiftPlan {
   shiftedEndDate: string;
 }
 
-/** How much later a session runs, in the delivery pattern's own units. */
-function gapBetween(fromIso: string, toIso: string): string {
-  const from = Date.parse(`${fromIso}T00:00:00Z`);
-  const to = Date.parse(`${toIso}T00:00:00Z`);
-  if (Number.isNaN(from) || Number.isNaN(to) || to <= from) return '';
-  const days = Math.round((to - from) / 86400000);
-  if (days % 7 === 0) {
-    const weeks = days / 7;
-    return `${weeks} week${weeks === 1 ? '' : 's'} later`;
-  }
-  return `${days} day${days === 1 ? '' : 's'} later`;
-}
-
-/** `2026-09-10` shifted by whole weeks, forward or back. */
-function shiftByWeeks(iso: string, weeks: number): string {
-  const parsed = Date.parse(`${iso}T00:00:00Z`);
-  if (Number.isNaN(parsed) || !weeks) return iso;
-  return new Date(parsed + weeks * 7 * 86400000).toISOString().slice(0, 10);
-}
+// ---------------------------------------------------------------------------
+// Holiday clash handling -- PARKED ON PURPOSE, kept below as comments.
+//
+// A ticked holiday landing on a session used to push that session to the next
+// delivery day and drag every session behind it along with it. That rule is
+// off. A holiday is a WARNING now and nothing else: the session keeps its own
+// date, the week keeps its place in the run, the module keeps its end date, and
+// whether the session runs, becomes a reading week or is dropped is the
+// author's call, made on the week itself.
+//
+// The arithmetic is commented out rather than deleted, because the shape it
+// filled in (`moved`, `gapLabel`, `headline`, `detail`, `movedCount`,
+// `movedRangeLabel`) is still on the payload every caller renders, and the rule
+// may be asked for again. Nothing reads it while it is parked.
+//
+// How much later a session runs, in the delivery pattern's own units:
+//   function gapBetween(fromIso: string, toIso: string): string {
+//     const from = Date.parse(`${fromIso}T00:00:00Z`);
+//     const to = Date.parse(`${toIso}T00:00:00Z`);
+//     if (Number.isNaN(from) || Number.isNaN(to) || to <= from) return '';
+//     const days = Math.round((to - from) / 86400000);
+//     if (days % 7 === 0) {
+//       const weeks = days / 7;
+//       return `${weeks} week${weeks === 1 ? '' : 's'} later`;
+//     }
+//     return `${days} day${days === 1 ? '' : 's'} later`;
+//   }
+//
+// `2026-09-10` shifted by whole weeks, forward or back:
+//   function shiftByWeeks(iso: string, weeks: number): string {
+//     const parsed = Date.parse(`${iso}T00:00:00Z`);
+//     if (Number.isNaN(parsed) || !weeks) return iso;
+//     return new Date(parsed + weeks * 7 * 86400000).toISOString().slice(0, 10);
+//   }
+//
+// Inside the per-session walk below, where a clash used to become a move:
+//   const originalDate = clashes.length ? clashes[0].date : actualDate;
+//   const moved = Boolean(originalDate) && originalDate !== actualDate;
+//   const clashNames = Array.from(new Set(clashes.map(c => c.holiday).filter(Boolean)));
+//   gapLabel: moved ? gapBetween(originalDate, actualDate) : '',
+//   headline: !moved ? '' : clashNames.length ? `Clashes with ${clashNames.join(', ')}` : 'Clashes with a holiday',
+//   detail: !moved ? '' : [
+//     `Was due ${formatDateLabel(originalDate)}`,
+//     ...clashes.map(c => `${formatDateLabel(c.date)} closed${c.holiday ? `: ${c.holiday}` : ''}`),
+//     `Runs ${formatDateLabel(actualDate)}`,
+//   ].join(' · '),
+//
+// And the run-level summary of those moves:
+//   const movedNumbers = shifts.filter(shift => shift.moved).map(shift => shift.sessionNumber);
+//   const contiguous = movedNumbers.length > 1
+//     && movedNumbers[movedNumbers.length - 1] - movedNumbers[0] === movedNumbers.length - 1;
+//   movedCount: movedNumbers.length,
+//   movedRangeLabel: !movedNumbers.length ? ''
+//     : movedNumbers.length === 1 ? `Session ${movedNumbers[0]}`
+//     : contiguous ? `Sessions ${movedNumbers[0]}-${movedNumbers[movedNumbers.length - 1]}`
+//     : `Sessions ${movedNumbers.join(', ')}`,
+//   originalEndDate: cleanText(plannedOriginalEndDate)
+//     || (shiftedEndDate ? shiftByWeeks(shiftedEndDate, -closedDates.length) : ''),
+// ---------------------------------------------------------------------------
 
 export function buildHolidayShiftPlan<S extends HolidayShiftSessionLike>(
   sessions: S[],
   holidayLabelFor?: (date: string) => string,
+  plannedOriginalEndDate?: string,
 ): HolidayShiftPlan {
   const shifts: SessionShift[] = sessions.map((session, index) => {
     const actualDate = cleanText(session.date);
-    // The walk hits its own closed dates in order before landing on
-    // actualDate, so the first one is where this session was due.
+    // The one fact still read off a holiday: which closed days land on THIS
+    // session's own date, named so a screen can warn about them. It stops here
+    // -- naming a clash is not acting on one.
     const clashes = (session.skippedHolidays || [])
       .map(date => cleanText(date))
       .filter(Boolean)
       .map(date => ({ date, holiday: cleanText(holidayLabelFor?.(date)) }));
-    const moved = clashes.length > 0;
-    const originalDate = moved ? clashes[0].date : actualDate;
-    const clashNames = Array.from(new Set(clashes.map(clash => clash.holiday).filter(Boolean)));
     return {
       sessionNumber: index + 1,
-      originalDate,
+      // A session is never displaced, so where it was due and where it runs are
+      // the same day, and every clash field stays inert.
+      originalDate: actualDate,
       actualDate,
-      moved,
-      gapLabel: moved ? gapBetween(originalDate, actualDate) : '',
+      moved: false,
+      gapLabel: '',
       clashes,
       causeNames: [],
-      headline: !moved
-        ? ''
-        : clashNames.length ? `Clashes with ${clashNames.join(', ')}` : 'Clashes with a holiday',
-      detail: !moved
-        ? ''
-        : [
-          `Was due ${formatDateLabel(originalDate)}`,
-          ...clashes.map(clash => `${formatDateLabel(clash.date)} closed${clash.holiday ? `: ${clash.holiday}` : ''}`),
-          `Runs ${formatDateLabel(actualDate)}`,
-        ].join(' · '),
+      headline: '',
+      detail: '',
     };
   });
 
-  const movedNumbers = shifts.filter(shift => shift.moved).map(shift => shift.sessionNumber);
-  const contiguous = movedNumbers.length > 1
-    && movedNumbers[movedNumbers.length - 1] - movedNumbers[0] === movedNumbers.length - 1;
   const closedDates = Array.from(new Set(
     sessions.flatMap(session => (session.skippedHolidays || []).map(date => cleanText(date))).filter(Boolean),
   )).sort();
@@ -117,19 +242,12 @@ export function buildHolidayShiftPlan<S extends HolidayShiftSessionLike>(
   return {
     shifts,
     closures: closedDates.map(date => ({ date, label: cleanText(holidayLabelFor?.(date)) })),
-    movedCount: movedNumbers.length,
-    movedRangeLabel: !movedNumbers.length
-      ? ''
-      : movedNumbers.length === 1
-        ? `Session ${movedNumbers[0]}`
-        : contiguous
-          ? `Sessions ${movedNumbers[0]}–${movedNumbers[movedNumbers.length - 1]}`
-          : `Sessions ${movedNumbers.join(', ')}`,
-    // Every closed date delays the series by exactly one week (a closure only
-    // ever blocks a candidate on the module's own delivery weekday), so
-    // stepping the actual end date back by the closure count recovers where
-    // it would have landed with none of them.
-    originalEndDate: shiftedEndDate ? shiftByWeeks(shiftedEndDate, -closedDates.length) : '',
+    // Nothing moves, so nothing is counted as moved.
+    movedCount: 0,
+    movedRangeLabel: '',
+    // The same day either way: the run a holiday never touched ends where this
+    // one ends. Stated rather than dropped, because callers render the pair.
+    originalEndDate: cleanText(plannedOriginalEndDate) || shiftedEndDate,
     shiftedEndDate,
   };
 }
@@ -152,29 +270,28 @@ export function weekdayLabel(value: string): string {
   return `(${parsed.toLocaleDateString('en-GB', { weekday: 'long' })})`;
 }
 
-/** Which holiday(s) to blame for a moved session, in the same words as its badge. */
+/** Which holiday(s) land on a session, in the words its warning uses. */
 export function holidayCausePhrase(shift: SessionShift): string {
   if (shift.clashes.length) {
     const names = Array.from(new Set(shift.clashes.map(clash => clash.holiday).filter(Boolean)));
-    return names.length ? names.join(', ') : 'a holiday closure';
+    return names.length ? names.join(', ') : 'a holiday';
   }
-  return shift.causeNames.length ? shift.causeNames.join(', ') : 'an earlier clash';
+  return shift.causeNames.length ? shift.causeNames.join(', ') : 'a holiday';
 }
 
 /**
- * The compact session timeline: sessions grouped by the month they land in,
- * with the session a holiday blocked shown as its own red row next to the
- * green row for where it actually runs — "shifted to replacement" paired with
- * "replacement delivered". Only a session that itself clashed with a closed
- * date (`shift.clashes.length`) gets that treatment; a session merely carried
- * along by an earlier clash renders as a normal delivered row on its actual
- * date, so the timeline reads as what genuinely moved, not everything the
- * move touched.
+ * The compact session timeline: sessions grouped by the month they land in.
+ *
+ * Every session is an ordinary row on its own date. A holiday falling on one
+ * adds a WARNING under that row and changes nothing else -- no red "blocked"
+ * card, no green "replacement", no second date, nothing skipped. What to do
+ * about the clash is the author's call, made on the week itself.
  */
 export function CompactSchedulePreview({
   occurrences,
   formatLabel = (plannedUtc, date) => formatDateLabel(plannedUtc || date),
   showDuration = true,
+  showSessionNumbers = true,
 }: {
   occurrences: Array<{
     session?: HolidayShiftSessionLike;
@@ -201,38 +318,46 @@ export function CompactSchedulePreview({
    * down twenty rows, "120 min" stops being read as information.
    */
   showDuration?: boolean;
+  /** Keep the number as a fallback when a caller supplies no session title. */
+  showSessionNumbers?: boolean;
 }) {
-  type Entry =
-    | { kind: 'session'; number: number; name: string; date: string; plannedUtc: string; durationMinutes: number; extra?: ReactNode; actions?: ReactNode }
-    | { kind: 'blocked'; number: number; name: string; date: string; durationMinutes: number; causePhrase: string; replacementDate: string }
-    | { kind: 'replacement'; number: number; name: string; date: string; plannedUtc: string; durationMinutes: number; extra?: ReactNode; actions?: ReactNode };
+  // One kind of row. The parked clash rule used to emit two more -- a red
+  // `blocked` card on the closed date and a green `replacement` card on the day
+  // the session was pushed to:
+  //   | { kind: 'blocked'; number; name; date; durationMinutes; causePhrase; replacementDate }
+  //   | { kind: 'replacement'; number; name; date; plannedUtc; durationMinutes; extra?; actions? }
+  type Entry = {
+    kind: 'session';
+    number: number;
+    name: string;
+    date: string;
+    plannedUtc: string;
+    durationMinutes: number;
+    /** The holidays on this session's own date, named. A warning, nothing more. */
+    holidayNote: string;
+    extra?: ReactNode;
+    actions?: ReactNode;
+  };
 
   const entries: Entry[] = [];
   occurrences.forEach((item, index) => {
     const number = item.shift?.sessionNumber || index + 1;
-    // A blocked date and its replacement are one session that moved, so both
-    // rows carry the same name.
     const name = cleanText(item.name);
+    // Named off the session's own clashes, which is all a holiday produces now.
+    const holidayNote = item.shift?.clashes.length ? holidayCausePhrase(item.shift) : '';
     if (!item.session) {
       if (item.plannedUtc) {
-        entries.push({ kind: 'session', number, name, date: cleanText(item.plannedUtc).slice(0, 10), plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, extra: item.extra, actions: item.actions });
+        entries.push({ kind: 'session', number, name, date: cleanText(item.plannedUtc).slice(0, 10), plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, holidayNote, extra: item.extra, actions: item.actions });
       }
       return;
     }
-    if (item.shift?.clashes.length) {
-      entries.push({
-        kind: 'blocked',
-        number,
-        name,
-        date: item.shift.originalDate,
-        durationMinutes: item.durationMinutes,
-        causePhrase: holidayCausePhrase(item.shift),
-        replacementDate: item.shift.actualDate,
-      });
-      entries.push({ kind: 'replacement', number, name, date: item.shift.actualDate, plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, extra: item.extra, actions: item.actions });
-    } else {
-      entries.push({ kind: 'session', number, name, date: cleanText(item.session.date), plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, extra: item.extra, actions: item.actions });
-    }
+    // Parked: a moved session split into a blocked row plus a replacement row.
+    //   if (item.shift?.moved) {
+    //     entries.push({ kind: 'blocked', number, name, date: item.shift.originalDate, durationMinutes: item.durationMinutes, causePhrase: holidayCausePhrase(item.shift), replacementDate: item.shift.actualDate });
+    //     entries.push({ kind: 'replacement', number, name, date: item.shift.actualDate, plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, extra: item.extra, actions: item.actions });
+    //     return;
+    //   }
+    entries.push({ kind: 'session', number, name, date: cleanText(item.session.date), plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, holidayNote, extra: item.extra, actions: item.actions });
   });
 
   const monthGroups: Array<{ key: string; label: string; entries: Entry[] }> = [];
@@ -249,8 +374,12 @@ export function CompactSchedulePreview({
   return (
     <div className="divide-y divide-background-200">
       {monthGroups.map(group => {
-        const delivered = group.entries.filter(entry => entry.kind !== 'blocked').length;
-        const skipped = group.entries.filter(entry => entry.kind === 'blocked').length;
+        const delivered = group.entries.length;
+        // Every session in the month is delivered -- a holiday skips nothing.
+        // Parked with the clash rule:
+        //   const delivered = group.entries.filter(entry => entry.kind !== 'blocked').length;
+        //   const skipped = group.entries.filter(entry => entry.kind === 'blocked').length;
+        //   {skipped > 0 && <p className="...text-red-600">{skipped} skipped</p>}
         return (
           <div key={group.key || 'unscheduled'} className="flex flex-col gap-3 px-3 py-4 sm:flex-row">
             <div className="w-full shrink-0 sm:w-32">
@@ -258,71 +387,59 @@ export function CompactSchedulePreview({
               <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">
                 {delivered} delivered
               </p>
-              {skipped > 0 && <p className="text-[11px] font-semibold text-red-600">{skipped} skipped</p>}
             </div>
             <div className="min-w-0 flex-1 space-y-2">
               {group.entries.map((entry, index) => {
-                if (entry.kind === 'blocked') {
-                  return (
-                    <div key={`blocked-${index}`} className="overflow-hidden rounded-lg border border-red-200 bg-red-50">
-                      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-                        <span className="flex flex-wrap items-center gap-2 text-[12px]">
-                          <AppIcon className="ri-close-circle-fill shrink-0 text-sm text-red-600"></AppIcon>
-                          <span className="font-bold text-red-700">{formatDateLabel(entry.date)}</span>
-                          <span className="text-[11px] font-bold text-red-400">Session {entry.number}</span>
-                          {entry.name && <span className="font-semibold text-red-700">{entry.name}</span>}
-                        </span>
-                        <span className="rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-semibold text-red-700">
-                          Shifted to replacement
-                        </span>
-                      </div>
-                      <div className="border-t border-red-100 bg-red-50/70 px-3 py-1.5 text-[11px] font-medium text-red-700">
-                        Blocked by {entry.causePhrase}; replacement scheduled on {formatDateLabel(entry.replacementDate)}.
-                      </div>
-                    </div>
-                  );
-                }
-                const isReplacement = entry.kind === 'replacement';
+                // Parked: the red "Shifted to replacement" card emitted for a
+                // `blocked` entry, and the green "Replacement delivered"
+                // styling on the row that followed it.
+                //   if (entry.kind === 'blocked') { ...red card, "Blocked by X;
+                //     replacement scheduled on Y."... }
+                //   const isReplacement = entry.kind === 'replacement';
                 return (
                   <div
                     key={`${entry.kind}-${index}`}
                     className={`overflow-hidden rounded-lg border text-[12px] ${
-                      isReplacement ? 'border-emerald-200 bg-emerald-50' : 'border-background-200 bg-background-0'
+                      entry.holidayNote ? 'border-amber-200 bg-amber-50/40' : 'border-background-200 bg-background-0'
                     }`}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                       <span className="flex flex-wrap items-center gap-2">
-                        <span className={`font-bold ${isReplacement ? 'text-emerald-700' : 'text-foreground-900'}`}>
+                        <span className="font-bold text-foreground-900">
                           {formatLabel(entry.plannedUtc, entry.date)}
                         </span>
                         {/* The weekday is the part of a date a reader acts on:
                             a session is moved by changing a delivery day. */}
                         <span className="text-foreground-400">{weekdayLabel(entry.date)}</span>
-                        {/* Numbered because the holiday note above talks in
-                            session numbers -- "sessions 8-10 run later" is only
-                            actionable if session 8 can be found in the list. */}
-                        <span className="text-[11px] font-bold text-foreground-400">Session {entry.number}</span>
+                        {/* Numbered so a note talking in session numbers stays
+                            actionable: session 8 can be found in the list. */}
+                        {(showSessionNumbers || !entry.name) && (
+                          <span className="text-[11px] font-bold text-foreground-400">Session {entry.number}</span>
+                        )}
                         {/* What is taught on the date, next to when it runs. */}
                         {entry.name && (
-                          <span className={`font-semibold ${isReplacement ? 'text-emerald-700' : 'text-foreground-700'}`}>
+                          <span className="font-semibold text-foreground-700">
                             {entry.name}
                           </span>
                         )}
                         {showDuration && <span className="text-foreground-400">{entry.durationMinutes} min</span>}
                       </span>
-                      {(isReplacement || entry.actions) && (
+                      {entry.actions && (
                         <span className="flex flex-wrap items-center gap-2">
-                          {isReplacement && (
-                            <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
-                              Replacement delivered
-                            </span>
-                          )}
                           {entry.actions}
                         </span>
                       )}
                     </div>
+                    {/* The whole of what a holiday does to a session: says so.
+                        The date, the session and everything below it stand. */}
+                    {entry.holidayNote && (
+                      <div className="flex items-center gap-1.5 border-t border-amber-200 bg-amber-50/70 px-3 py-1.5 text-[11px] font-semibold text-amber-900">
+                        <AppIcon className="ri-error-warning-line shrink-0 text-sm text-amber-600"></AppIcon>
+                        <span>Heads up: this session falls on a holiday ({entry.holidayNote}). It runs as planned.</span>
+                      </div>
+                    )}
                     {entry.extra && (
-                      <div className={`border-t px-3 py-1.5 text-[11px] font-medium ${isReplacement ? 'border-emerald-100 bg-emerald-50/70 text-emerald-800' : 'border-background-200 bg-background-50 text-foreground-600'}`}>
+                      <div className="border-t border-background-200 bg-background-50 px-3 py-1.5 text-[11px] font-medium text-foreground-600">
                         {entry.extra}
                       </div>
                     )}

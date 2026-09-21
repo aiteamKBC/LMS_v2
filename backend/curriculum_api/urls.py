@@ -1,13 +1,33 @@
 from django.urls import path
 
-from . import programme_audit, quality, review_schedule, reviews, views
+from system_audit import activity as system_activity
+
+from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from .teams_schedule_delivery import schedule_email
+from .teams_calendar_state import sync_calendar_state
+from .teams_directory import search_teams_directory
+from .teams_calendar_actions import calendar_action
+from . import session_results
 
 
 urlpatterns = [
+    path('curriculum/modules/<str:module_id>/session-results/', session_results.module_results),
+    path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
+    path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/', session_results.admin_content),
+    path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/visibility/', session_results.recording_visibility),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance.csv', session_results.export_attendance),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance.pdf', session_results.export_attendance, {'file_format': 'pdf'}),
+    path('curriculum/teams-directory/', search_teams_directory, name='curriculum-teams-directory'),
+    path('curriculum/cohorts/<str:identifier>/learner-assignments/', learner_assignments.cohort_learner_assignments, name='curriculum-cohort-learner-assignments'),
+    path('curriculum/modules/<str:identifier>/learner-assignments/', learner_assignments.module_learner_assignments, name='curriculum-module-learner-assignments'),
     path('curriculum/programmes/<str:programme_id>/reviews/', reviews.curriculum_programme_review_collection, name='curriculum-programme-reviews'),
     path('curriculum/programmes/<str:programme_id>/reviews/clone/', reviews.curriculum_review_clone, name='curriculum-programme-reviews-clone'),
     path('curriculum/programmes/<str:programme_id>/reviews/schedule/', review_schedule.curriculum_programme_review_schedule, name='curriculum-programme-reviews-schedule'),
     path('curriculum/programmes/<str:programme_id>/reviews/clashes/resolve/', review_schedule.curriculum_programme_review_clash_resolve, name='curriculum-programme-reviews-clash-resolve'),
+    # Before the '<str:review_id>' route below, or 'types' is read as a review id.
+    path('curriculum/review-types/', review_types.curriculum_review_type_collection, name='curriculum-review-types'),
+    path('curriculum/review-types/<str:review_type_id>/', review_types.curriculum_review_type_detail, name='curriculum-review-type-detail'),
     path('curriculum/reviews/<str:review_id>/', reviews.curriculum_review_detail, name='curriculum-review-detail'),
     path('curriculum/overview/', views.curriculum_overview, name='curriculum-overview'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),
@@ -38,15 +58,39 @@ urlpatterns = [
     path('curriculum/programmes/<str:identifier>/restore/', views.curriculum_programme_restore, name='curriculum-programme-restore'),
     path('curriculum/programmes/<str:identifier>/', views.curriculum_programme_detail, name='curriculum-programme-detail'),
     path('curriculum/quality/audit-trail/', quality.curriculum_quality_audit_trail, name='curriculum-quality-audit-trail'),
+    # Who used the LMS, as opposed to what they changed. The record endpoint is
+    # written to by the browser on navigation; the two reads answer the Audit
+    # Trail's People view, for one workspace or for all of them.
+    #
+    # Served under two sets of names. The `curriculum/activity/...` paths are
+    # the ones already in production and keep working unchanged. The
+    # `activity/...` paths are the system-wide names the admin Audit Trail
+    # calls. They are the same views: the scope is a query parameter
+    # (`?workspace=`), never a second implementation.
+    #
+    # Both stay below the `curriculum_api/` prefix on purpose -- production
+    # LiteSpeed forwards the established `*_api` prefixes to Django and an
+    # unknown one falls through to the SPA, so a new prefix would be a
+    # deployment change rather than a code change.
+    path('curriculum/activity/record/', activity.curriculum_activity_record, name='curriculum-activity-record'),
+    path('curriculum/activity/people/', activity.curriculum_activity_people, name='curriculum-activity-people'),
+    path('curriculum/activity/people/<str:email>/', activity.curriculum_activity_person, name='curriculum-activity-person'),
+    path('activity/record/', system_activity.activity_record, name='system-activity-record'),
+    path('activity/people/', system_activity.activity_people, name='system-activity-people'),
+    path('activity/people/<str:email>/', system_activity.activity_person, name='system-activity-person'),
     path('curriculum/quality/versions/', quality.curriculum_quality_versions, name='curriculum-quality-versions'),
     path('curriculum/quality/versions/<str:entity_type>/<path:entity_id>/', quality.curriculum_quality_record_history, name='curriculum-quality-record-history'),
     path('curriculum/standards/', views.curriculum_standards, name='curriculum-standards'),
     path('curriculum/standards/<str:identifier>/', views.curriculum_standard_detail, name='curriculum-standard-detail'),
     path('curriculum/modules/', views.curriculum_module_collection, name='curriculum-modules'),
     path('curriculum/modules/resolve-structures/', views.curriculum_module_structure_resolve, name='curriculum-module-structure-resolve'),
+    # Before the '<str:identifier>' route below, or 'archived' is read as a module id.
+    path('curriculum/modules/archived/', views.curriculum_archived_modules, name='curriculum-modules-archived'),
+    path('curriculum/modules/<str:identifier>/restore/', views.curriculum_module_restore, name='curriculum-module-restore'),
     path('curriculum/modules/<str:module_catalogue_id>/structure/', views.curriculum_module_structure, name='curriculum-module-structure'),
     path('curriculum/modules/<str:module_catalogue_id>/settings/', views.curriculum_module_settings, name='curriculum-module-settings'),
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
+    path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', views.curriculum_module_teams_meeting_restore, name='curriculum-module-teams-meeting-restore'),
     path('curriculum/modules/<str:module_catalogue_id>/meeting-invitees/', views.curriculum_module_meeting_invitees, name='curriculum-module-meeting-invitees'),
     path('curriculum/modules/<str:module_catalogue_id>/ksb-coverage/', views.curriculum_module_ksb_coverage, name='curriculum-module-ksb-coverage'),
@@ -73,6 +117,9 @@ urlpatterns = [
     path('curriculum/teams-meetings/summary/', views.curriculum_teams_meeting_summary, name='curriculum-teams-meeting-summary'),
     path('curriculum/live-sessions/occurrences/', views.curriculum_live_session_occurrences, name='curriculum-live-session-occurrences'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule/', views.curriculum_teams_meeting_schedule, name='curriculum-teams-meeting-schedule'),
+    path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
+    path('curriculum/teams-meetings/<str:live_session_id>/calendar-state/', sync_calendar_state, name='curriculum-teams-calendar-state'),
+    path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<int:session_number>/schedule/', views.curriculum_teams_meeting_occurrence_schedule, name='curriculum-teams-meeting-occurrence-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<str:occurrence_id>/join/', views.curriculum_teams_meeting_join, name='curriculum-teams-meeting-join'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/', views.curriculum_teams_meeting_artifacts, name='curriculum-teams-meeting-artifacts'),
@@ -118,6 +165,16 @@ urlpatterns = [
     path('curriculum/staffing/<str:identifier>/', views.curriculum_staffing_detail, name='curriculum-staffing-detail'),
     path('curriculum/holidays/', views.curriculum_holiday_collection, name='curriculum-holidays'),
     path('curriculum/holidays/<str:identifier>/', views.curriculum_holiday_detail, name='curriculum-holiday-detail'),
+    # The GOV.UK half of the calendar on its own, in the feed's own shape
+    # (title, notes, bunting) rather than the label/start/end one the rest of
+    # the curriculum reads holidays through. Read-only: these are not authored
+    # here, they are mirrored, and the two routes below are how the mirror is
+    # kept current and how it reports what GOV.UK changed.
+    path('curriculum/england-holidays/', views.curriculum_england_holidays, name='curriculum-england-holidays'),
+    # Declared before nothing in particular -- there is no <identifier> route on
+    # england-holidays -- but kept adjacent so the three read as one feature.
+    path('curriculum/england-holidays/syncs/', views.curriculum_england_holiday_syncs, name='curriculum-england-holiday-syncs'),
+    path('curriculum/england-holidays/refresh/', views.curriculum_england_holidays_refresh, name='curriculum-england-holidays-refresh'),
     # The tutor workspace's own read: assigned modules + the next live session.
     # Declared before the <identifier> route below, which would otherwise
     # capture 'tutor-workspace' as a tutor id.

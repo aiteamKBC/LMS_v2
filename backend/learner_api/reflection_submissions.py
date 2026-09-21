@@ -9,7 +9,8 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import learner_self_only, learner_self_or_staff
+from login.permissions import learner_self_or_admin, learner_self_or_staff
+from .assignment_attempts import HISTORY_KEY, preserve_attempts, submission_attempts
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +160,7 @@ def create_reflection_submission(request):
     return _submit_reflection(request)
 
 
-@learner_self_only(body_field="learnerId")
+@learner_self_or_admin(body_field="learnerId")
 def _submit_reflection(request):
     if request.method != "POST":
         return _error("Method not allowed.", 405)
@@ -237,7 +238,7 @@ def _submit_reflection(request):
             with connections["enrolment"].cursor() as cur:
                 cur.execute(
                     """
-                    select status, full_submission
+                    select status, full_submission, coach_feedback, reviewed_by, reviewed_at, submitted_at
                     from "Learner"."learning_reflection_submissions"
                     where learner_kind = %s
                       and learner_id = %s
@@ -274,6 +275,16 @@ def _submit_reflection(request):
                     return _error(
                         "This assignment has already been submitted for tutor review.",
                         409,
+                    )
+
+                if is_assignment_form:
+                    preserve_attempts(
+                        full_submission, stored,
+                        status=existing[0] if existing else None,
+                        feedback=existing[2] if existing else None,
+                        reviewer=existing[3] if existing else None,
+                        reviewed_at=existing[4] if existing else None,
+                        submitted_at=existing[5] if existing else None,
                     )
 
                 if is_assignment_form and submission_mode == "submit":
@@ -348,6 +359,9 @@ def _submit_reflection(request):
                     group_ref = excluded.group_ref,
                     module_ref = excluded.module_ref,
                     week_ref = excluded.week_ref,
+                    coach_feedback = CASE WHEN excluded.activity_type = 'assignment' THEN NULL ELSE learning_reflection_submissions.coach_feedback END,
+                    reviewed_by = CASE WHEN excluded.activity_type = 'assignment' THEN NULL ELSE learning_reflection_submissions.reviewed_by END,
+                    reviewed_at = CASE WHEN excluded.activity_type = 'assignment' THEN NULL ELSE learning_reflection_submissions.reviewed_at END,
                     submitted_at = now()
                 returning id
                 """,
@@ -401,6 +415,7 @@ def _submit_reflection(request):
         {
             "id": str(stored_id),
             "status": submission_status,
+            "submissionAttempts": submission_attempts(full_submission, submission_status) if is_assignment_form else [],
         },
         status=201,
     )
@@ -482,7 +497,8 @@ def get_reflection_submission(request):
     return JsonResponse(
         {
             "submission": {
-                **full_submission,
+                **{key: value for key, value in full_submission.items() if key != HISTORY_KEY},
+                "submissionAttempts": submission_attempts(full_submission, row[1], row[6], row[3], row[4], row[5]) if activity_type == "assignment" else [],
                 "id": str(row[0]),
                 "status": row[1],
                 "coachFeedback": row[3],

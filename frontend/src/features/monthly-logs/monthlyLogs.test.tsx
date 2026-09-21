@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import MonthlyLogsPage from './page';
-import { getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, type LogDetail, type LogSummary } from './api';
+import { completeLogMonth, getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, type LogDetail, type LogSummary } from './api';
 import { learnerNavItems, coachNavItems } from '@/mocks/navigation';
 import { rememberLearner } from '@/hooks/useMyLearner';
 
@@ -15,7 +15,7 @@ vi.mock('@/features/old-otjh/JournalDownloads', () => ({ JournalDownloads: () =>
 vi.mock('@/features/old-otjh/SignatureCapture', () => ({ SignatureCapture: ({ dialogRole, onDraftStart, onSave }: {
   dialogRole: string; onDraftStart: () => void; onSave: (blob: Blob, capture: 'draw') => void;
 }) => <button onClick={() => { onDraftStart(); onSave(new Blob(['signature']), 'draw'); }}>Sign as {dialogRole}</button> }));
-vi.mock('./api', () => ({ getLogContent: vi.fn(), getLogLearners: vi.fn(), getLogMonth: vi.fn(), getLogSummary: vi.fn(), signLogMonth: vi.fn() }));
+vi.mock('./api', () => ({ completeLogMonth: vi.fn(), getLogContent: vi.fn(), getLogLearners: vi.fn(), getLogMonth: vi.fn(), getLogSummary: vi.fn(), signLogMonth: vi.fn() }));
 
 const current: LogDetail = { source: 'lms', month: '2026-09', status: 'awaiting_signature', row_count: 1,
   planned_hours: 2, actual_hours: 1, not_accepted_hours: 0, pending_revisions: 0, can_complete: false,
@@ -69,6 +69,24 @@ describe('monthly logs', () => {
     expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'learner');
     expect(screen.getAllByRole('link', { name: /Review month/ }).map(link => link.getAttribute('href')))
       .toEqual(['/learner/monthly-logs/2026-08', '/learner/monthly-logs/2026-09']);
+  });
+
+  it('shows the current month as an in-progress live log, not as an unsigned closed month', async () => {
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [{ ...current, is_open: true }], total_months: 1, completed_months: 0 });
+    page();
+    expect(await screen.findByText('September 2026')).toBeInTheDocument();
+    expect(screen.getAllByText('Month in progress').length).toBeGreaterThan(0);
+    expect(screen.getByText('View current log')).toBeVisible();
+    expect(screen.getByText('Current month in progress')).toBeVisible();
+  });
+
+  it('allows reviewing current-month activities but keeps signing unavailable', async () => {
+    vi.mocked(getLogMonth).mockResolvedValue({ ...current, is_open: true });
+    page('/learner/monthly-logs/2026-09');
+    expect(await screen.findByText('Completed reading')).toBeInTheDocument();
+    expect(screen.getAllByText('Available after month-end')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /Sign as/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Signing opens after the month ends/)).toBeVisible();
   });
 
   it('filters the year and unsigned learner months while keeping historical reports reachable', async () => {
@@ -205,6 +223,25 @@ describe('monthly logs', () => {
     expect(screen.getByRole('link', { name: /All months/ })).toHaveAttribute('href', '/coach/monthly-logs/7');
   });
 
+  it('lets an admin sign for the selected learner using their own signature', async () => {
+    Object.assign(account, { role: 'admin', subjectId: 999, access: 'super-admin' });
+    vi.mocked(signLogMonth).mockResolvedValue({ ...current, student_signature: retained.student_signature, status: 'complete' });
+    page('/learner/monthly-logs/commercial/7/2026-09');
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign as learner' }));
+    expect(screen.queryByRole('button', { name: 'Sign as coach' })).not.toBeInTheDocument();
+    await waitFor(() => expect(signLogMonth).toHaveBeenCalledWith('7', '2026-09', 'reviewed-digest', expect.any(Blob), 'draw', 'csrf', 'learner'));
+  });
+
+  it('completes the selected learner month from admin view, not the admin account', async () => {
+    Object.assign(account, { role: 'admin', subjectId: 999, access: 'super-admin' });
+    vi.mocked(getLogMonth).mockResolvedValue({ ...retained, status: 'awaiting_signature', can_complete: true });
+    vi.mocked(completeLogMonth).mockResolvedValue(retained);
+    page('/learner/monthly-logs/commercial/7/2026-08');
+    fireEvent.click(await screen.findByRole('button', { name: 'Complete month' }));
+    await waitFor(() => expect(completeLogMonth).toHaveBeenCalledWith('7', '2026-08', 'csrf', 'learner'));
+    expect(await screen.findByText('This month has been reviewed, signed and completed.')).toBeInTheDocument();
+  });
+
   it('shows the assigned coach learner list', async () => {
     Object.assign(account, { role: 'staff', access: 'coach' });
     vi.mocked(getLogLearners).mockResolvedValue({ learners: [{ id: 7, name: 'Example learner', programme: 'Programme' }] });
@@ -226,4 +263,23 @@ describe('monthly logs', () => {
     page();
     expect(await screen.findByText('No monthly logs yet')).toBeInTheDocument();
   });
+});
+
+
+it('keeps monthly activities accessible when the signed target is unavailable', async () => {
+  const target_warning = 'The signed Training Plan is unavailable. Activities remain available.';
+  const missing = { ...retained, training_plan_target: null, target_warning };
+  vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [missing] });
+  page();
+  expect(await screen.findByText(target_warning)).toBeVisible();
+  expect(screen.getByText('Unavailable')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Review month: August 2026' })).toBeVisible();
+});
+
+it('shows the unavailable-target warning and actual activity in the report', async () => {
+  const target_warning = 'The signed Training Plan could not be read.';
+  vi.mocked(getLogMonth).mockResolvedValue({ ...retained, training_plan_target: null, target_warning });
+  page('/learner/monthly-logs/2026-08');
+  expect(await screen.findByText(/Target hours: Unavailable/)).toBeVisible();
+  expect(screen.getByRole('button', { name: /Completed reading/ })).toBeVisible();
 });

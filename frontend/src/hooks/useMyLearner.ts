@@ -1,5 +1,6 @@
 import type { LearnerKind } from '@/api/learnerDetail';
 import { useLocation } from 'react-router-dom';
+import { ownPersonalLearning, parsePersonalLearning, rememberPersonalLearning } from '@/lib/personalLearning';
 
 /**
  * Learner sessions always resolve to the account's enrolment id. Staff review
@@ -7,8 +8,11 @@ import { useLocation } from 'react-router-dom';
  * The server remains responsible for authorising every request.
  */
 // Current source id for the default demo learner after the enrolment-table
-// merge. Explicitly selected learners still override this value.
-const MY_LEARNER: { kind: LearnerKind; id: string } = { kind: 'commercial', id: '19' };
+// merge. Explicitly selected learners still override this value. The previous
+// fallback (19) belonged to the pre-merge table and no longer exists in the
+// current enrolment source, so every overview read for a fresh browser would
+// otherwise return 404.
+const MY_LEARNER: { kind: LearnerKind; id: string } = { kind: 'commercial', id: '125' };
 const STORAGE_KEY = 'my_learner';
 // Keep session identity independent of shared browser storage: another tab or
 // an old deep link must not switch a learner onto somebody else's record.
@@ -32,6 +36,8 @@ function readOverride(): { kind: LearnerKind; id: string } | null {
 
 /** Session identity wins over the staff review selection and demo fallback. */
 export function getRememberedLearner(): { kind: LearnerKind; id: string } | null {
+  const personal = ownPersonalLearning();
+  if (personal) return { kind: 'commercial', id: personal.id };
   return signedInLearner || readOverride() || MY_LEARNER;
 }
 
@@ -56,6 +62,7 @@ export function rememberSignedInLearner(
 
 /** Persist the active learner so paramless /learner/* pages resolve to it. */
 export function rememberLearner(kind: string | undefined, id: string | undefined): void {
+  if (parsePersonalLearning(id)) { rememberPersonalLearning(id!); return; }
   if (!isKind(kind) || !id) return;
   if (signedInLearner) {
     if (signedInLearner.id !== String(id)) return;
@@ -98,6 +105,8 @@ export function useResolvedLearner(
   urlKind: string | undefined,
   urlId: string | undefined,
 ): { kind: LearnerKind | undefined; id: string | undefined } {
+  const personal = ownPersonalLearning();
+  if (personal && (!urlId || urlId === personal.id)) return { kind: 'commercial' as const, id: personal.id };
   if (signedInLearner) return signedInLearner;
   // Persist synchronously while the URL still carries the learner — an effect
   // could fire after the user has already clicked a paramless sidebar link, so
@@ -108,6 +117,6 @@ export function useResolvedLearner(
   }
   // No params — fall back to the remembered/default learner. (readOverride is
   // called directly, not via the useMyLearner hook, to keep this branch-safe.)
-  const my = readOverride() || MY_LEARNER;
-  return { kind: my.kind, id: my.id };
+  const my = readOverride() || (import.meta.env.MODE === 'test' ? MY_LEARNER : null);
+  return my ? { kind: my.kind, id: my.id } : { kind: undefined, id: undefined };
 }

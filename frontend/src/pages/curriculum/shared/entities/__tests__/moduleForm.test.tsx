@@ -83,7 +83,7 @@ const cohorts = [
     endDate: '2027-08-31',
     practicalEndDate: '2027-08-31',
     status: 'active',
-    holidayIds: ['1'],
+    holidayIds: ['1', '2'],
   },
 ] as unknown as CurriculumCohort[];
 
@@ -101,7 +101,8 @@ const groups = [
 ] as unknown as CurriculumGroup[];
 
 const holidays = [
-  { id: '1', label: 'Christmas closure', startDate: '2026-12-24', endDate: '2027-01-02', type: 'Christmas' },
+  { id: '1', label: 'Christmas Day', startDate: '2026-12-25', endDate: '2026-12-25', type: 'Bank holiday' },
+  { id: '2', label: "New Year's Day", startDate: '2027-01-01', endDate: '2027-01-01', type: 'Bank holiday' },
 ] as CurriculumHoliday[];
 
 const createGroupModuleMock = vi.mocked(createGroupModule);
@@ -150,6 +151,20 @@ describe('ModuleFormDrawer', () => {
     createNewModuleMock.mockClear();
   });
 
+  it('reopens imported session rows as eight teaching weeks and keeps the module closure in its preview', async () => {
+    const closure = { id: 'saudi', label: 'Saudi National Day', startDate: '2026-09-23', endDate: '2026-09-23' };
+    renderDrawer({ module: {
+      id: 'MOD-IMPORTED', name: 'PCP', programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1',
+      weeks: 17, deliveryWeeks: 8, sessionsNumber: 16, startDate: '2026-09-16', endDate: '2026-11-18',
+      weeklySchedule: [{ day: 'Monday', startTime: '11:00', endTime: '14:00' }, { day: 'Wednesday', startTime: '11:30', endTime: '14:30' }],
+      weekDays: 'Monday, Wednesday', sessionHolidays: [closure],
+    } });
+    expect(screen.getByRole('spinbutton', { name: /weeks/i })).toHaveValue(8);
+    await waitFor(() => expect(previewModuleSessionPlanMock).toHaveBeenCalledWith(expect.objectContaining({
+      numberOfSessions: 16, holidays: expect.arrayContaining([closure]),
+    })));
+  });
+
   it('only offers active non-archived programmes in the module placement select', async () => {
     renderDrawer();
 
@@ -195,6 +210,7 @@ describe('ModuleFormDrawer', () => {
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
     await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
     await userEvent.click(screen.getByRole('button', { name: /Group B/ }));
+    await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledTimes(2));
@@ -212,6 +228,29 @@ describe('ModuleFormDrawer', () => {
     }));
   });
 
+  it('filters a long group list without changing the selected groups', async () => {
+    const manyGroups = [
+      ...groups,
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: `GROUP-${index + 2}`,
+        name: `Other delivery group ${index + 2}`,
+        cohortId: 'COHORT-1',
+        programmeId: 'PROG-DATA',
+        weekDays: 'Wednesday',
+        startTime: '10:00',
+        endTime: '12:00',
+      })),
+    ] as unknown as CurriculumGroup[];
+    renderDrawer({ groups: manyGroups, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1' } });
+
+    const search = screen.getByRole('searchbox', { name: 'Search options' });
+    await userEvent.type(search, 'Other delivery group 4');
+
+    expect(screen.getByRole('button', { name: /Other delivery group 4/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Other delivery group 2/ })).not.toBeInTheDocument();
+    expect(screen.getByText('0 of 9 selected')).toBeInTheDocument();
+  });
+
   it('creates a module in a locked group through the group endpoint', async () => {
     const { onSaved } = renderDrawer({
       lockGroup: true,
@@ -219,6 +258,7 @@ describe('ModuleFormDrawer', () => {
     });
 
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     expect(createNewModuleMock).not.toHaveBeenCalled();
@@ -235,7 +275,7 @@ describe('ModuleFormDrawer', () => {
       endTime: '12:00',
     });
     // The caller gets the canonical id so it can open the module straight away.
-    expect(onSaved).toHaveBeenCalledWith({ catalogueId: 'MOD-NEW', name: 'Data Modelling', created: true });
+    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ catalogueId: 'MOD-NEW', name: 'Data Modelling', created: true }));
   });
 
   it('reports saving for the full create and caller refresh lifecycle', async () => {
@@ -255,6 +295,7 @@ describe('ModuleFormDrawer', () => {
     });
 
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     await waitFor(() => expect(onSavingChange).toHaveBeenLastCalledWith(true));
@@ -283,6 +324,7 @@ describe('ModuleFormDrawer', () => {
     await userEvent.clear(endDate);
     await userEvent.type(endDate, '14/10/2026');
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Manual End');
+    await choose('Tutor', 'Tutor One');
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     expect(createGroupModuleMock).toHaveBeenCalledWith('GROUP-1', expect.objectContaining({
@@ -291,29 +333,12 @@ describe('ModuleFormDrawer', () => {
     }));
   });
 
-  it('opens a session date preview and marks holiday shifts', async () => {
-    previewModuleSessionPlanMock.mockResolvedValueOnce({
-      sessions: [
-        { sessionNumber: 1, date: '2026-12-23', day: 'Wednesday', skippedHolidays: [] },
-        { sessionNumber: 2, date: '2027-01-06', day: 'Wednesday', skippedHolidays: ['2026-12-30'] },
-      ],
-      skippedHolidays: ['2026-12-30'],
-      finalEndDate: '2027-01-06',
-      warnings: [],
-    });
-
+  it('has no session date preview button any more -- the Session dates panel was removed', async () => {
     renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
 
-    const previewButton = await screen.findByRole('button', { name: /view sessions/i });
-    await waitFor(() => expect(previewButton).toBeEnabled());
-    await userEvent.click(previewButton);
-
-    expect(screen.getByRole('dialog', { name: /module/i })).toBeInTheDocument();
-    expect(screen.getByText('30 Dec 2026')).toBeInTheDocument();
-    expect(screen.getByText('06 Jan 2027')).toBeInTheDocument();
-    expect(screen.getByText(/Blocked by Christmas closure/)).toBeInTheDocument();
-    expect(screen.getByText('Shifted to replacement')).toBeInTheDocument();
-    expect(screen.getByText('Replacement delivered')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('07/10/2026'));
+    expect(screen.queryByRole('button', { name: /view sessions/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Session dates')).not.toBeInTheDocument();
   });
 
   it('hides the placement and delivery fields once Assign later is chosen', async () => {
@@ -335,8 +360,7 @@ describe('ModuleFormDrawer', () => {
     expect(screen.queryByRole('combobox', { name: /^Tutor/ })).not.toBeInTheDocument();
     // The module's own shape stays: its name, how many weeks it runs and the
     // window it is planned for are true of the module with or without a
-    // placement. The Session dates panel stays to say why it is empty, but its
-    // View sessions button does not: there is no plan to open without a group.
+    // placement. There is no "View sessions" button here at all any more.
     expect(screen.getByPlaceholderText('e.g. Data Modelling')).toBeInTheDocument();
     expect(screen.getByRole('spinbutton')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: /^Start date/ })).toBeInTheDocument();
@@ -472,7 +496,7 @@ describe('ModuleFormDrawer', () => {
     expect(createNewModuleMock).not.toHaveBeenCalled();
   });
 
-  it('refuses a start date outside the cohort before it calls anything', async () => {
+  it('refuses a start date before the soft-start month before it calls anything', async () => {
     // The date field blocks an out-of-range date the user *types*; a stored one
     // arrives already set, so the form has to refuse it on the way out.
     renderDrawer({
@@ -483,7 +507,7 @@ describe('ModuleFormDrawer', () => {
         cohortId: 'COHORT-1',
         groupId: 'GROUP-1',
         sessionsNumber: 2,
-        startDate: '2026-08-03',
+        startDate: '2026-07-31',
         endDate: '2026-08-10',
         status: 'draft',
       },
@@ -492,7 +516,7 @@ describe('ModuleFormDrawer', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
 
     // Shown on the date field and again in the drawer's error line.
-    expect(await screen.findAllByText(/cannot start before the cohort start date/)).not.toHaveLength(0);
+    expect(await screen.findAllByText(/more than one month before the cohort start date/)).not.toHaveLength(0);
     expect(updateCurriculumModuleMock).not.toHaveBeenCalled();
   });
 
@@ -585,7 +609,7 @@ describe('ModuleFormDrawer', () => {
       groupId: 'GROUP-1',
       cohortId: 'COHORT-1',
     });
-    expect(onSaved).toHaveBeenCalledWith({ catalogueId: 'MOD-1', name: 'Data Foundations II', created: false });
+    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ catalogueId: 'MOD-1', name: 'Data Foundations II', created: false }));
   });
 
   it('restores placement fields from a saved delivery when editing from the catalogue', async () => {
@@ -633,6 +657,34 @@ describe('ModuleFormDrawer', () => {
     }));
   });
 
+  it('shows the validation remedy when group module creation fails', async () => {
+    const message = 'Apply curriculum migration 0063 before saving per-day times.';
+    createGroupModuleMock.mockRejectedValueOnce(new CurriculumApiError(
+      'Curriculum API returned 400 for /curriculum/groups/GROUP-1/modules/',
+      400,
+      '/curriculum/groups/GROUP-1/modules/',
+      {
+        error: 'Module authoring payload is invalid.',
+        validationErrors: [{ path: 'weeklySchedule', message }],
+        fields: ['weeklySchedule'],
+      },
+    ));
+    const { onSaved, onClose } = renderDrawer({
+      lockGroup: true,
+      defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' },
+    });
+
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await choose('Tutor', 'Tutor One');
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+
+    expect(await screen.findByText(`Module authoring payload is invalid. - ${message}`)).toBeInTheDocument();
+    expect(screen.queryByText(/Curriculum API returned/)).not.toBeInTheDocument();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText('e.g. Data Modelling')).toHaveValue('Data Modelling');
+  });
+
   it('shows a tutor double-booking refusal verbatim', async () => {
     // A real CurriculumApiError: `tutorConflictMessage` only unwraps that shape,
     // which is what keeps a generic 409 from being shown as a booking clash.
@@ -648,7 +700,7 @@ describe('ModuleFormDrawer', () => {
     updateCurriculumModuleMock.mockRejectedValueOnce(conflict);
 
     renderDrawer({
-      module: { id: 'MOD-1', name: 'Data Foundations', groupId: 'GROUP-1', tutor: 'Tutor One' },
+      module: { id: 'MOD-1', name: 'Data Foundations', groupId: 'GROUP-1', tutor: 'Tutor One', startDate: '2026-09-02' },
     });
 
     const name = screen.getByPlaceholderText('e.g. Data Modelling');
@@ -720,9 +772,9 @@ describe('ModuleFormDrawer tutor availability', () => {
       startTime: '10:00',
       endTime: '12:00',
       cohortId: 'COHORT-1',
-      // The ticked selection, not every holiday on file: it is what shifts a
-      // session onto the day the clash is really about.
-      holidays: [expect.objectContaining({ label: 'Christmas closure' })],
+      // The cohort holidays are what shift a session onto the day the clash is
+      // really about.
+      holidays: expect.arrayContaining([expect.objectContaining({ label: 'Christmas Day' })]),
     });
   });
 

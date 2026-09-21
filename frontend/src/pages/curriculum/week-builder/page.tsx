@@ -11,6 +11,7 @@ import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+import { formatHoursMinutes, hoursMinutesToHours, splitHoursMinutes } from '@/lib/format';
 // Deck preview below: the same one the learner's page uses, so an author sees
 // what the learner will (see UploadedDeckPreview).
 import { resolveDocEmbed } from '@/lib/docEmbed';
@@ -53,11 +54,13 @@ import { MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceTyp
 import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
-import { loadModuleStructure, saveModuleStructure, utcIsoToCalendarParts } from '@/pages/curriculum/module-builder/moduleAuthoringData';
-import { TeamsMeetingModal, type TeamsMeetingModuleContext } from '@/pages/curriculum/module-builder/TeamsMeetingModal';
+import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
+import { loadModuleStructure, saveModuleStructure, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
+import { LiveSessionArtifactsPanel } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
 import { formatDateLabel } from '@/pages/curriculum/shared/entities/model';
+import { showFullTextWhenTruncated } from '@/pages/curriculum/shared/entities/truncationTitle';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
@@ -66,7 +69,7 @@ const QuizEditorPanel = lazy(() => import('@/pages/curriculum/quiz-xml/edit/Quiz
 const GuidedQuizUpload = lazy(() => import('./GuidedQuizUpload').then(m => ({ default: m.GuidedQuizUpload })));
 
 export type { WeekScope };
-export interface GroupOption { key: string; name: string; cohort?: string }
+export interface GroupOption { key: string; name: string; cohort?: string; cohortId?: string; programmeId?: string; programme?: string; moduleCount?: number }
 export type WeekComponentUploader = (componentId: string, file: File, componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment') => Promise<WeekComponentUploadResult>;
 
 const curriculumNav = roleNavMap.curriculum;
@@ -478,15 +481,30 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
     let active = true;
     const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
     loadCurriculumScope()
-      .then(({ groups, modules }) => {
+      .then(({ groups, modules, programmes }) => {
         if (!active) return;
         const weekModule = modules.find(module => (module.moduleCatalogueId || module.id) === initial.moduleCatalogueId);
         const resolvedModuleName = weekModule?.name || '';
         setModuleName(resolvedModuleName);
 
+        // The "Assigned groups" picker only ever offers live programmes — an
+        // archived programme has nothing left to deliver into, so its cohorts
+        // and groups would just be dead ends in the dropdown.
+        const archivedProgrammeKeys = new Set<string>();
+        programmes.forEach(programme => {
+          if (programme.isArchived || programme.status === 'archived') {
+            [programme.id, programme.sourceId, programme.name].forEach(key => {
+              if (key) archivedProgrammeKeys.add(norm(key));
+            });
+          }
+        });
+        const liveGroups = groups.filter(group => (
+          ![group.programmeId, group.programme].some(key => key && archivedProgrammeKeys.has(norm(key)))
+        ));
+
         let scoped = initial.courseType === 'paid'
-          ? groups.filter(group => group.programmeId === initial.programmeId || group.programme === initial.programmeName)
-          : groups;
+          ? liveGroups.filter(group => group.programmeId === initial.programmeId || group.programme === initial.programmeName)
+          : liveGroups;
         // Narrow to the week's module when we can resolve it — but only if that
         // actually leaves some groups, so a naming mismatch never empties the
         // picker (fall back to the programme-scoped set).
@@ -494,7 +512,44 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
           const byModule = scoped.filter(group => (group.modules || []).some(mod => norm(mod) === norm(resolvedModuleName)));
           if (byModule.length) scoped = byModule;
         }
-        setGroupOptions((scoped.length ? scoped : groups).map(group => ({ key: group.id, name: group.name, cohort: group.cohort })));
+        // Every group stays reachable here, not just the ones scoped above:
+        // "Assigned groups" is also where a live-session component gets a
+        // copy placed into a *different* programme/cohort's group (sharing
+        // the same Teams link across a duplicated module), so the picker
+        // must never hide groups outside this week's own programme/module —
+        // it only lists the scoped-in ones first, for convenience.
+        const preferred = scoped.length ? scoped : liveGroups;
+        const preferredIds = new Set(preferred.map(group => group.id));
+        const ordered = [...preferred, ...liveGroups.filter(group => !preferredIds.has(group.id))];
+        // A group's own `programme` name is blank on plenty of records — the
+        // raw programmeId is meaningless to a tutor, so resolve the readable
+        // name from the programme list instead (matching id/sourceId/name,
+        // same keys `moduleBelongsToVisibleProgramme` uses).
+        const programmeNameByKey = new Map<string, string>();
+        programmes.forEach(programme => {
+          [programme.id, programme.sourceId, programme.name].forEach(key => {
+            if (key && !programmeNameByKey.has(norm(key))) programmeNameByKey.set(norm(key), programme.name);
+          });
+        });
+        const resolveProgrammeName = (group: typeof groups[number]) => (
+          group.programme || programmeNameByKey.get(norm(group.programmeId)) || group.programmeId || ''
+        );
+        // `group.modules` is a compact, occasionally stale name list. Count
+        // the same concrete module rows the placement modal will display so
+        // the group card never says "No modules" when the next click finds some.
+        setGroupOptions(ordered.map(group => ({
+          key: group.id,
+          name: group.name,
+          cohort: group.cohort,
+          cohortId: group.cohortId,
+          programmeId: group.programmeId,
+          programme: resolveProgrammeName(group),
+          moduleCount: moduleCountForGroup(modules, {
+            groupId: group.id,
+            groupName: group.name,
+            programmeId: group.programmeId,
+          }),
+        })));
       })
       .catch(() => { /* picker stays empty */ })
       .finally(() => { if (active) setScopeReady(true); });
@@ -829,8 +884,28 @@ interface RailNodeProps {
   component: ModuleComponent;
   index: number;
   selected: boolean;
+  focused?: boolean;
   issues: number;
   weekSessionDate?: string;
+  /**
+   * The delivery days of this week a ticked holiday falls on, as `YYYY-MM-DD`.
+   *
+   * A warning and nothing else: a live session dated to one of these still runs
+   * on that date, still belongs to this week and is still scheduled, created
+   * and pushed to Teams exactly as it was. Nothing here reads it as a clash to
+   * resolve -- whether the session runs is the author's call, made on the week.
+   */
+  holidayDates?: string[];
+  /**
+   * Set only for a live session Microsoft has a confirmed meeting for, on a date
+   * its week no longer runs on.
+   *
+   * Every other live session follows its week automatically -- the planner
+   * re-dates it. This one is held on the booked date because real attendees were
+   * invited to it, so it moves from the Teams Meetings page, which asks
+   * Microsoft. Stated here and nowhere corrected.
+   */
+  dateDrift?: LiveSessionDateDrift;
   onSelect?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
@@ -848,40 +923,88 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, issues, weekSessionDate, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, index, selected, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
-  // A blank component-level date reads as "not yet scheduled", but the week
-  // already knows when it runs -- show that instead of leaving the row silent.
-  const scheduledDate = component.type === 'live-session'
-    ? String(component.settings.sessionDate || weekSessionDate || '')
-    : '';
+  const isLiveSession = component.type === 'live-session';
+  // The date this live session itself holds. It used to fall back to the week's
+  // date, which read as a scheduled session -- but a live session with no date
+  // of its own is not placed on the calendar and is not sent to Teams, so a
+  // borrowed date said the opposite of what was true. The week's date is still
+  // shown below, labelled as the week's.
+  const scheduledDate = isLiveSession ? String(component.settings.sessionDate || '') : '';
+  const weekDate = isLiveSession && !scheduledDate ? String(weekSessionDate || '') : '';
+  // The week already says a holiday falls on it. This says WHICH live session
+  // it lands on, which is the part an author acts on in a week running more
+  // than one. Stated only -- the row is otherwise completely ordinary.
+  const onHoliday = Boolean(
+    isLiveSession
+    && scheduledDate
+    && (holidayDates || []).includes(scheduledDate.slice(0, 10)),
+  );
   return (
-    <div id={`node-${component.id}`} className="group/node flex gap-3">
+    <div id={`node-${component.id}`} data-focused={focused || undefined} className="group/node flex gap-3">
       <SpineGutter>
         <span className={`grid place-items-center w-7 h-7 rounded-full text-white text-[11px] font-bold shadow-sm ${tone.marker} ${selected ? 'ring-4 ' + tone.grip : ''}`}>{index + 1}</span>
       </SpineGutter>
       <div
         onClick={onSelect}
-        className={`flex-1 my-1 flex items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
+        className={`min-w-0 flex-1 my-1 flex items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
       >
         <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
         <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
         <span className="flex-1 min-w-0">
-          <span className="flex items-center gap-2">
-            <span className="text-[13px] font-bold text-foreground-900 truncate">{component.title || weekTypeLabel(component.type)}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            <span onMouseEnter={showFullTextWhenTruncated} className="min-w-0 flex-1 text-[13px] font-bold text-foreground-900 truncate">{component.title || weekTypeLabel(component.type)}</span>
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
             <span className={`font-semibold ${tone.text}`}>{weekTypeLabel(component.type)}</span>
-            <span className="tabular-nums">{component.expectedOtjh}h</span>
+            <span className="tabular-nums">{formatHoursMinutes(component.expectedOtjh)}</span>
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
             {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
+            {/* The session and its week disagree about when this runs, and the
+                session's date is the one that wins everywhere downstream. Said
+                on the row that owns the date, with the correction offered --
+                pressing it only edits the module, exactly like typing the date
+                in the session's own settings would. */}
+            {dateDrift && (
+              <span
+                title={`Teams has this meeting on ${formatDateLabel(dateDrift.storedDate)}, but this week now runs on ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. Every other live session follows its week automatically; this one is held here because real attendees were invited to the booked date. Move it from the Teams Meetings page, which asks Microsoft and mails the change.`}
+                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+              >
+                <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
+                Teams holds this date · week runs {formatDateLabel(dateDrift.weekDates[0])}
+              </span>
+            )}
+            {/* Says what is missing rather than filling it in: this session is
+                not on the calendar and not in the Teams series until it has a
+                date of its own. The week's date is offered as context, marked
+                as the week's so it cannot be read as this session's. */}
+            {isLiveSession && !scheduledDate && (
+              <span
+                title="This live session has no date, so it is not on the calendar and is not sent to Teams. Give it one in its settings."
+                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+              >
+                <AppIcon className="ri-calendar-close-line text-[10px]"></AppIcon>
+                No date
+              </span>
+            )}
+            {weekDate && <span className="tabular-nums text-foreground-300">week: {formatDateLabel(weekDate)}</span>}
+            {onHoliday && (
+              <span
+                title="This live session falls on a holiday. It is unchanged: same date, same week, still scheduled."
+                className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
+              >
+                <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
+                Holiday
+              </span>
+            )}
           </span>
         </span>
         {(onDuplicate || onDelete) && (
-          <span className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/node:opacity-100 sm:group-focus-within/node:opacity-100">
+          <span className="flex shrink-0 items-center gap-0.5">
             <button type="button" aria-label={`Duplicate ${component.title || weekTypeLabel(component.type)}`} title="Duplicate component" onClick={e => { e.stopPropagation(); onDuplicate?.(); }} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-primary-600"><AppIcon className="ri-file-copy-line text-[13px]"></AppIcon></button>
             <button type="button" aria-label={`Delete ${component.title || weekTypeLabel(component.type)}`} title="Delete component" onClick={e => { e.stopPropagation(); onDelete?.(); }} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-red-100 hover:text-red-600"><AppIcon className="ri-delete-bin-line text-[13px]"></AppIcon></button>
           </span>
@@ -1016,6 +1139,7 @@ export interface WeekComponentRailProps {
   weekId: string;
   components: ModuleComponent[];
   selectedId: string | null;
+  focusedId?: string;
   onSelectId: (id: string | null) => void;
   onChange: (next: ModuleComponent[]) => void;
   pointsByType: Partial<Record<ModuleComponentType, number>>;
@@ -1028,15 +1152,24 @@ export interface WeekComponentRailProps {
   // The week's own calendar date, for a live-session row that has not been
   // given its own date yet. Unset for a template, which has no calendar date.
   weekSessionDate?: string;
+  // The delivery days of this week a ticked holiday falls on. Passed only by a
+  // caller that has read the module's session plan; see RailNodeProps for what
+  // it does (warn) and does not do (anything else).
+  holidayDates?: string[];
+  // Live sessions in this week whose own date no longer matches the week's,
+  // keyed by component id. Passed only by a caller holding the module's session
+  // plan -- there is nothing to compare a date against without one.
+  dateDriftByComponentId?: Map<string, LiveSessionDateDrift>;
   // Opens the caller's reuse picker. Optional because the rail is shared: the
   // module builder owns the picker and the copy, and a surface without one (a
   // week template, say) simply does not pass it and shows no Reuse action.
   onReuseComponents?: () => void;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, onReuseComponents }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [componentSearch, setComponentSearch] = useState('');
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -1076,6 +1209,11 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
     onChange(reorderComponents(components, String(active.id), String(over.id)));
   };
   const activeComponent = components.find(c => c.id === activeDragId) || null;
+  const searchTerm = componentSearch.trim().toLocaleLowerCase();
+  const visibleComponents = searchTerm
+    ? components.filter(component => [component.title, component.description, component.type, weekTypeLabel(component.type)]
+      .some(value => value.toLocaleLowerCase().includes(searchTerm)))
+    : components;
 
   const nested = variant === 'nested';
 
@@ -1088,15 +1226,29 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
         </div>
       )}
       {components.length > 0 && (
-        <div className={`flex flex-wrap items-center gap-2 ${nested ? 'justify-end' : 'mt-3 justify-between border-y border-background-200 py-2'}`}>
-          {!nested && <p className="text-[10px] font-medium text-foreground-400">Select a component to edit it, or add another.</p>}
-          <div className="flex items-center gap-2">
-            {onReuseComponents && <ReuseComponentsButton onClick={onReuseComponents} />}
-            <button type="button" onClick={() => setPickerIndex(components.length)} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600">
-              <AppIcon className="ri-add-line"></AppIcon>
-              Add component
-            </button>
+        <div className={nested ? 'space-y-2' : 'mt-3 space-y-2 border-y border-background-200 py-2'}>
+          <div className={`flex flex-wrap items-center gap-2 ${nested ? 'justify-end' : 'justify-between'}`}>
+            {!nested && <p className="text-[10px] font-medium text-foreground-400">Select a component to edit it, or add another.</p>}
+            <div className="flex items-center gap-2">
+              {onReuseComponents && <ReuseComponentsButton onClick={onReuseComponents} />}
+              <button type="button" onClick={() => setPickerIndex(components.length)} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600">
+                <AppIcon className="ri-add-line"></AppIcon>
+                Add component
+              </button>
+            </div>
           </div>
+          <label className="relative block">
+            <span className="sr-only">Search components in this week</span>
+            <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
+            <input
+              type="search"
+              value={componentSearch}
+              onChange={event => setComponentSearch(event.target.value)}
+              placeholder="Search this week's components"
+              aria-label="Search components in this week"
+              className="h-8 w-full rounded-lg border border-background-200 bg-background-50 pl-8 pr-3 text-[11px] font-medium text-foreground-800 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+            />
+          </label>
         </div>
       )}
 
@@ -1115,28 +1267,35 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
         </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveDragId(null)} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
-          <SortableContext items={components.map(c => c.id)} strategy={verticalListSortingStrategy}>
+          <SortableContext items={visibleComponents.map(c => c.id)} strategy={verticalListSortingStrategy}>
             <div className="mt-2 max-h-[calc(100vh-15rem)] overflow-y-auto overflow-x-hidden px-1.5 py-1.5">
-              <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first />
-              {components.map((component, index) => (
+              {visibleComponents.length === 0 && searchTerm ? (
+                <p className="rounded-xl border border-dashed border-background-300 px-3 py-6 text-center text-[11px] font-medium text-foreground-500">No components match “{componentSearch.trim()}”.</p>
+              ) : <>
+              {!searchTerm && <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first />}
+              {visibleComponents.map((component, index) => (
                 <Fragment key={component.id}>
                   <SortableRailNode
                     component={component}
                     index={index}
                     selected={component.id === selectedId}
+                    focused={component.id === focusedId}
                     onSelect={() => onSelectId(component.id)}
                     onDuplicate={() => duplicateComponent(component)}
                     onDelete={() => removeComponent(component.id)}
                     issues={validateWeekComponent(component).length}
                     weekSessionDate={weekSessionDate}
+                    holidayDates={holidayDates}
+                    dateDrift={dateDriftByComponentId?.get(component.id)}
                   />
-                  <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === components.length - 1} />
+                  {!searchTerm && <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === visibleComponents.length - 1} />}
                 </Fragment>
               ))}
+              </>}
             </div>
           </SortableContext>
           <DragOverlay>
-            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} /> : null}
+            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} holidayDates={holidayDates} dateDrift={dateDriftByComponentId?.get(activeComponent.id)} /> : null}
           </DragOverlay>
         </DndContext>
       )}
@@ -1383,31 +1542,30 @@ export interface ComponentBodyProps {
   // Injected file uploader so the same bodies work in both the week builder
   // (posts to week-components/) and the module builder (module-scoped upload).
   uploadResource?: WeekComponentUploader;
-  restoreTeamsMeeting?: () => Promise<void>;
-  restoringTeamsMeeting?: boolean;
-  // The module a live-session component belongs to. Only the Module Builder
-  // supplies it; when present, the live-session editor offers a "Create Teams
-  // meeting" button that generates the meeting and fills the join link + dates.
-  // The Week Builder edits reusable templates that have no module, so it omits
-  // this and the button stays hidden.
-  liveSessionModule?: TeamsMeetingModuleContext;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting = false, liveSessionModule }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; restoreTeamsMeeting?: () => Promise<void>; restoringTeamsMeeting?: boolean; liveSessionModule?: TeamsMeetingModuleContext }) {
+export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader }) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus({ preventScroll: true });
+    editor.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  }, [component.id]);
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
   const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource };
 
   return (
-    <div className="rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
+    <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
       <div className={`flex items-center gap-3 px-5 py-4 border-b ${tone.border} ${tone.soft}`}>
         <button onClick={onBack} title="Back to week overview" className="grid place-items-center w-8 h-8 shrink-0 rounded-lg text-foreground-500 hover:bg-background-50 hover:text-foreground-900 transition-smooth"><AppIcon className="ri-arrow-left-line"></AppIcon></button>
         <span className={`grid place-items-center w-11 h-11 rounded-xl text-white ${tone.marker}`}><AppIcon className={`${definition.icon} text-xl`}></AppIcon></span>
         <div className="flex-1 min-w-0">
           <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${tone.text}`}>{definition.group}</p>
-          <p className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{component.title || weekTypeLabel(component.type)}</p>
+          <p onMouseEnter={showFullTextWhenTruncated} className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{component.title || weekTypeLabel(component.type)}</p>
         </div>
         <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${issues.length ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
           <AppIcon className={issues.length ? 'ri-error-warning-fill' : 'ri-checkbox-circle-fill'}></AppIcon>{issues.length ? `${issues.length} to fix` : 'Valid'}
@@ -1448,7 +1606,7 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
       <Section title="Basics">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(2,minmax(0,1fr))]">
           <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for ${weekTypeLabel(component.type)} (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1479,9 +1637,8 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
 
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
-  const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
   // An explicit edit always wins; otherwise default to the date/time the week is
   // actually scheduled on (the group-creation clock), so the fields read
   // correctly before anyone types into them rather than sitting blank until
@@ -1489,6 +1646,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const sessionTime = s('sessionTime') || String(weekSessionTime || '').slice(0, 5) || '';
   const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
+  const teamsLiveSessionId = s('teamsLiveSessionId');
 
   return (
     <>
@@ -1497,53 +1655,41 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
         <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this session is about…" className={`${inputClass} resize-none`} /></Field>
 
         {hasMeeting ? (
-          // Meeting created: the join link is read-only (copy/open only) and the
-          // date/time move this one session in Teams behind a red warning.
+          // Meeting created: the join link is read-only (copy/open only).
           <LiveSessionScheduleEditor
             component={component}
-            onSettingChange={setSetting}
-            fallbackDate={weekSessionDate}
-            fallbackTime={weekSessionTime}
           />
         ) : (
-          <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="mt-4">
             <Field label="Microsoft Teams link"><input value={s('liveSessionUrl')} onChange={e => setSetting('liveSessionUrl', e.target.value)} placeholder="https://teams.microsoft.com/…" className={inputClass} /></Field>
-            <Field label="Session date"><input type="date" value={sessionDate} onChange={e => setSetting('sessionDate', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
-            <Field label="Start time"><input type="time" value={sessionTime} onChange={e => setSetting('sessionTime', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
-          </div>
-        )}
-        {(liveSessionModule || restoreTeamsMeeting) && (
-          <div className="mt-3 flex flex-wrap justify-end gap-2">
-            {liveSessionModule && !hasMeeting && (
-              <button
-                type="button"
-                onClick={() => setTeamsMeetingOpen(true)}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
-              >
-                <AppIcon className="ri-calendar-event-line"></AppIcon>
-                Create Teams meeting
-              </button>
-            )}
-            {restoreTeamsMeeting && (
-              <button
-                type="button"
-                onClick={() => { void restoreTeamsMeeting(); }}
-                disabled={restoringTeamsMeeting}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-70"
-              >
-                <i className={restoringTeamsMeeting ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></i>
-                {restoringTeamsMeeting ? 'Restoring Teams data...' : 'Restore saved Teams data'}
-              </button>
-            )}
           </div>
         )}
 
         <Field label="Session outline" className="mt-4"><textarea value={s('sessionPurpose')} onChange={e => setSetting('sessionPurpose', e.target.value)} rows={3} placeholder="A short summary of what this session covers…" className={`${inputClass} resize-none`} /></Field>
       </Section>
 
+      {/* Read this component's saved results through the same archive-backed
+          panel used by the module workspace and learner preview. */}
+      {teamsLiveSessionId && (
+        <Section title="Recording & attendance">
+          <LiveSessionArtifactsPanel
+            session={{
+              liveSessionId: teamsLiveSessionId,
+              title: component.title,
+              dateIso: s('sessionDateTimeUtc') || s('teamsStartDateTimeUtc') || sessionDate,
+              date: sessionDate,
+              actualStart: '',
+              artifactsSyncedAt: '',
+            }}
+            sessionNumber={Number(s('teamsSessionNumber')) || undefined}
+            occurrenceId={s('teamsOccurrenceId') || undefined}
+          />
+        </Section>
+      )}
+
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the "Attendance" points rule for live sessions (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1565,62 +1711,6 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
           <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
-
-      {teamsMeetingOpen && liveSessionModule && (
-        <TeamsMeetingModal
-          component={component}
-          module={liveSessionModule}
-          onClose={() => setTeamsMeetingOpen(false)}
-          onCreated={(result, input) => {
-            const meeting = result.meeting;
-            const componentDate = String(component.settings.sessionDate || '');
-            const scheduled = input.scheduledOccurrences?.find(occurrence => (
-              utcIsoToCalendarParts(occurrence.startDateTimeUtc).date === componentDate
-            ));
-            const scheduledParts = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc) : { date: '', time: '' };
-            const hasExplicitSchedule = Boolean(
-              component.settings.sessionDate
-              || component.settings.sessionDateTimeUtc
-              || (component.settings.teamsLiveSessionId && Number(component.settings.teamsSessionNumber || 0) > 0),
-            );
-            // One merged write so the whole meeting lands atomically (and the
-            // Module Builder's onChange can mirror the join link across the
-            // week's other live sessions). Match this component's own occurrence;
-            // the series start belongs only to session one.
-            onChange({
-              settings: {
-                ...component.settings,
-                liveSessionUrl: meeting.joinUrl || meeting.webLink,
-                teamsEventId: meeting.eventId,
-                teamsLiveSessionId: meeting.liveSessionId,
-                teamsMeetingOptionsUrl: meeting.meetingOptionsUrl,
-                teamsOrganizerEmail: meeting.organizerEmail,
-                teamsAttendees: meeting.attendees,
-                teamsPresenters: meeting.presenters,
-                teamsCoOrganizers: meeting.coOrganizers || [],
-                ...(scheduled ? { teamsSessionNumber: scheduled.sessionNumber } : {}),
-                ...(scheduled && !hasExplicitSchedule ? {
-                  sessionDateTimeUtc: scheduled.startDateTimeUtc,
-                  teamsStartDateTimeUtc: scheduled.startDateTimeUtc,
-                  sessionDate: scheduledParts.date,
-                  sessionTime: scheduledParts.time,
-                } : {}),
-                durationMinutes: meeting.durationMinutes,
-                teamsProvider: meeting.provider,
-                teamsRepeat: meeting.repeat,
-                teamsRepeatOccurrences: meeting.repeatOccurrences,
-                teamsLobbyBypass: input.lobbyBypass,
-                teamsRecording: input.recording,
-                teamsSpokenLanguage: input.spokenLanguage,
-                teamsMeetingType: input.meetingType,
-                teamsRequestResponses: input.requestResponses,
-                teamsAllowTimeProposals: input.allowNewTimeProposals,
-                teamsHideAttendees: input.hideAttendees,
-              },
-            });
-          }}
-        />
-      )}
 
     </>
   );
@@ -1666,7 +1756,7 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for videos (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1783,7 +1873,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for reading materials (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1993,7 +2083,7 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>2 hours is the starting estimate for a PowerPoint component. It is not calculated from the uploaded file or slide count; adjust it to the learner's expected off-the-job learning time.</p>
@@ -2255,7 +2345,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for a passed quiz (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2324,10 +2414,8 @@ function LinkedQuizPreviewModal({ preview, onClose }: { preview: LinkedQuizPrevi
   );
 }
 
-// Assignment editor. Authors supply the question; the learner answers it in
-// the three-step assignment form and may attach their own Azure evidence.
-// The old downloadable-template source is intentionally no longer authored.
-function AssignmentBody({ component, onChange, setSetting, rulePoints }: ComponentBodyProps) {
+// Authors can write the question and attach a document for learner preview.
+function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
 
   return (
@@ -2338,13 +2426,36 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints }: Compone
 
         <div className="mt-4">
           <RichTextDraft label="Assignment question" value={s('assignmentContent')} onChange={value => setSetting('assignmentContent', value)} rows={14} />
-          <p className="mt-2 text-[11px] text-foreground-400">The learner answers this question in the assignment form. Supporting PDF, image, Word, PowerPoint or video files are uploaded by the learner as optional evidence.</p>
+          <p className="mt-2 text-[11px] text-foreground-400">The learner answers this question in the assignment form. You can also attach the question as a file below.</p>
+        </div>
+        <div className="mt-4">
+          <h4 className="mb-2 text-[12px] font-semibold">Assignment question file (optional)</h4>
+          <WeekComponentFileUpload
+            componentId={component.id}
+            componentType="assignment"
+            onUpload={uploadResource}
+            accept={READING_UPLOAD_ACCEPT}
+            uploadedName={s('uploadedFileName') || s('assignmentFileName')}
+            uploadedUrl={s('uploadedFileUrl') || s('assignmentFileUrl')}
+            uploadedSize={Number(component.settings.uploadedFileSize) || 0}
+            uploadedContentType={s('uploadedFileContentType')}
+            onUploaded={file => onChange({ settings: { ...component.settings,
+              uploadedFileName: file.fileName, uploadedFileUrl: file.url,
+              uploadedFileSize: file.size, uploadedFileContentType: file.contentType,
+              assignmentFileName: file.fileName, assignmentFileUrl: file.url,
+            } })}
+            onRemove={() => onChange({ settings: { ...component.settings,
+              uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0,
+              uploadedFileContentType: '', assignmentFileName: '', assignmentFileUrl: '',
+            } })}
+          />
+          <p className="mt-2 text-[11px] text-foreground-400">Upload a PDF, Word document or text file. Learners can preview the question on the assignment page without downloading it. PDF is recommended for preserving the layout.</p>
         </div>
       </Section>
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for assignments (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2655,26 +2766,27 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lockedOption?.key]);
 
-  // Placed copies this component has produced elsewhere, one entry per group
-  // (parallel arrays — ComponentSettingValue has no object type). At most one
-  // placement per group key: an already-assigned group's row only ever
-  // toggles off, it never re-opens the placement panel.
+  // Placed copies this component has produced elsewhere, one entry per copy
+  // (parallel arrays — ComponentSettingValue has no object type). A single
+  // group can now hold several entries — one per week it was placed into —
+  // since the placement panel places into any number of weeks at once.
   const placedGroupKeys = (component.settings.placedCopyGroupKeys as string[] | undefined) ?? [];
   const placedModuleCatalogueIds = (component.settings.placedCopyModuleCatalogueIds as string[] | undefined) ?? [];
   const placedWeekIds = (component.settings.placedCopyWeekIds as string[] | undefined) ?? [];
   const placedComponentIds = (component.settings.placedCopyComponentIds as string[] | undefined) ?? [];
 
-  const recordPlacement = (key: string, result: PlacementResult) => {
+  const recordPlacement = (key: string, results: PlacementResult[]) => {
     setBrowsingKey(null);
+    if (!results.length) return;
     onChange({
       settings: {
         ...component.settings,
         selectedGroupKeys: [...selectedKeys, key],
         selectedGroupNames: groupOptions.filter(option => [...selectedKeys, key].includes(option.key)).map(option => option.name),
-        placedCopyGroupKeys: [...placedGroupKeys, key],
-        placedCopyModuleCatalogueIds: [...placedModuleCatalogueIds, result.moduleCatalogueId],
-        placedCopyWeekIds: [...placedWeekIds, result.weekId],
-        placedCopyComponentIds: [...placedComponentIds, result.componentId],
+        placedCopyGroupKeys: [...placedGroupKeys, ...results.map(() => key)],
+        placedCopyModuleCatalogueIds: [...placedModuleCatalogueIds, ...results.map(result => result.moduleCatalogueId)],
+        placedCopyWeekIds: [...placedWeekIds, ...results.map(result => result.weekId)],
+        placedCopyComponentIds: [...placedComponentIds, ...results.map(result => result.componentId)],
       },
     });
   };
@@ -2685,39 +2797,52 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
       setGroups([...selectedKeys, key]);
       return;
     }
-    const placementIndex = placedGroupKeys.indexOf(key);
-    if (placementIndex === -1) {
+    const placementIndices = placedGroupKeys.reduce<number[]>((indices, groupKey, index) => (groupKey === key ? [...indices, index] : indices), []);
+    if (placementIndices.length === 0) {
       setGroups(selectedKeys.filter(existing => existing !== key));
       return;
     }
     const groupLabel = groupOptions.find(option => option.key === key)?.name || 'this group';
+    const multiple = placementIndices.length > 1;
     await showCurriculumConfirm({
       title: 'Remove this group?',
-      text: `This part was copied into ${groupLabel}'s week. Removing the group also deletes that copy from their module.`,
+      text: `This part was copied into ${placementIndices.length} of ${groupLabel}'s week${multiple ? 's' : ''}. Removing the group also deletes ${multiple ? 'those copies' : 'that copy'} from their module.`,
       icon: 'warning',
-      confirmButtonText: 'Remove and delete the copy',
+      confirmButtonText: `Remove and delete the cop${multiple ? 'ies' : 'y'}`,
       cancelButtonText: 'Keep it',
       onConfirm: async () => {
-        const moduleCatalogueId = placedModuleCatalogueIds[placementIndex];
-        const weekId = placedWeekIds[placementIndex];
-        const componentId = placedComponentIds[placementIndex];
-        const structure = await loadModuleStructure(moduleCatalogueId);
-        if (structure) {
-          const nextWeekStructure = structure.weekStructure.map(week => (
-            week.id === weekId ? { ...week, components: week.components.filter(item => item.id !== componentId) } : week
-          ));
+        const targets = placementIndices.map(index => ({
+          moduleCatalogueId: placedModuleCatalogueIds[index],
+          weekId: placedWeekIds[index],
+          componentId: placedComponentIds[index],
+        }));
+        // Every placement for one group comes from the same browse session,
+        // so this is almost always one module — grouped defensively in case
+        // it ever isn't, so each module structure is only saved once.
+        const moduleIds = Array.from(new Set(targets.map(target => target.moduleCatalogueId)));
+        for (const moduleCatalogueId of moduleIds) {
+          // Fresh, not cached: the save below replaces the whole structure, so a
+          // stale read would revert everything else edited since.
+          const structure = await loadModuleStructure(moduleCatalogueId, { skipCache: true });
+          if (!structure) continue;
+          const removeComponentIds = new Set(targets.filter(target => target.moduleCatalogueId === moduleCatalogueId).map(target => target.componentId));
+          const nextWeekStructure = structure.weekStructure.map(week => ({
+            ...week,
+            components: week.components.filter(item => !removeComponentIds.has(item.id)),
+          }));
           await saveModuleStructure(moduleCatalogueId, { ...structure, weekStructure: nextWeekStructure });
         }
         const nextSelectedKeys = selectedKeys.filter(existing => existing !== key);
+        const removeIndices = new Set(placementIndices);
         onChange({
           settings: {
             ...component.settings,
             selectedGroupKeys: nextSelectedKeys,
             selectedGroupNames: groupOptions.filter(option => nextSelectedKeys.includes(option.key)).map(option => option.name),
-            placedCopyGroupKeys: placedGroupKeys.filter((_, index) => index !== placementIndex),
-            placedCopyModuleCatalogueIds: placedModuleCatalogueIds.filter((_, index) => index !== placementIndex),
-            placedCopyWeekIds: placedWeekIds.filter((_, index) => index !== placementIndex),
-            placedCopyComponentIds: placedComponentIds.filter((_, index) => index !== placementIndex),
+            placedCopyGroupKeys: placedGroupKeys.filter((_, index) => !removeIndices.has(index)),
+            placedCopyModuleCatalogueIds: placedModuleCatalogueIds.filter((_, index) => !removeIndices.has(index)),
+            placedCopyWeekIds: placedWeekIds.filter((_, index) => !removeIndices.has(index)),
+            placedCopyComponentIds: placedComponentIds.filter((_, index) => !removeIndices.has(index)),
           },
         });
       },
@@ -2740,8 +2865,9 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
         <GroupPlacementPanel
           key={browsingOption.key}
           component={component}
+          groupId={browsingOption.key}
           groupName={browsingOption.name}
-          programmeId={programmeId}
+          programmeId={browsingOption.programmeId || programmeId}
           onClose={() => setBrowsingKey(null)}
           onPlaced={result => recordPlacement(browsingOption.key, result)}
         />
@@ -2760,22 +2886,116 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
   onBrowse: (key: string) => void;
 }) {
   const selectedSet = new Set(selectedKeys);
+  // Groups now span every programme/cohort (not just this module's own), so
+  // this narrows the picker in two steps — programme, then that programme's
+  // cohorts — before the groups themselves are listed. The module's own
+  // (locked) group always stays visible regardless of what's picked here.
+  const programmeChoices = useMemo(() => {
+    const byId = new Map<string, string>();
+    options.forEach(option => {
+      const id = option.programmeId || option.programme;
+      if (id && !byId.has(id)) byId.set(id, option.programme || option.programmeId || '');
+    });
+    return Array.from(byId, ([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [options]);
+  const [programmeFilter, setProgrammeFilter] = useState('');
+  const [cohortFilter, setCohortFilter] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
+  const cohortChoices = useMemo(() => {
+    const scoped = programmeFilter
+      ? options.filter(option => (option.programmeId || option.programme) === programmeFilter)
+      : options;
+    const byId = new Map<string, string>();
+    scoped.forEach(option => {
+      const id = option.cohortId || option.cohort;
+      if (id && !byId.has(id)) byId.set(id, option.cohort || option.cohortId || '');
+    });
+    return Array.from(byId, ([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [options, programmeFilter]);
+  const groupChoices = useMemo(() => {
+    if (!programmeFilter || !cohortFilter) return [];
+    return options
+      .filter(option => (option.programmeId || option.programme) === programmeFilter && (option.cohortId || option.cohort) === cohortFilter)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [cohortFilter, options, programmeFilter]);
+  const filteredOptions = options.filter(option => {
+    if (!programmeFilter || !cohortFilter) return false;
+    if ((option.programmeId || option.programme) !== programmeFilter) return false;
+    if ((option.cohortId || option.cohort) !== cohortFilter) return false;
+    if (groupFilter && option.key !== groupFilter) return false;
+    return true;
+  });
+  const filtering = Boolean(programmeFilter || cohortFilter || groupFilter);
+  const clearBrowsing = () => {
+    if (browsingKey) onBrowse(browsingKey);
+  };
   return (
     <div className="rounded-xl border border-background-200 bg-background-100/30 p-3">
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] font-semibold text-foreground-500 tabular-nums">{selectedKeys.length} of {options.length} selected</span>
-        {options.length > 0 && (
+        {options.length > 0 && programmeFilter && cohortFilter && (
           <div className="flex items-center gap-1">
-            <button onClick={() => onChange(options.map(option => option.key))} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-primary-600 hover:bg-primary-50 transition-smooth">Select all</button>
+            <button onClick={() => onChange(Array.from(new Set([...selectedKeys, ...filteredOptions.map(option => option.key)])))} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-primary-600 hover:bg-primary-50 transition-smooth">
+              {filtering ? 'Select shown' : 'Select all'}
+            </button>
             <button onClick={() => onChange(lockedKey ? [lockedKey] : [])} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-foreground-400 hover:bg-background-100 transition-smooth">Clear</button>
           </div>
         )}
       </div>
+      {programmeChoices.length > 0 && (
+        <div className="mb-2 grid grid-cols-1 gap-2 md:grid-cols-3">
+          <select
+            aria-label="Assigned groups programme"
+            value={programmeFilter}
+            onChange={event => {
+              setProgrammeFilter(event.target.value);
+              setCohortFilter('');
+              setGroupFilter('');
+              clearBrowsing();
+            }}
+            className="w-full rounded-lg border border-background-200 bg-background-50 px-2 py-1.5 text-[11px] outline-none transition-shadow focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+          >
+            <option value="">Select a programme</option>
+            {programmeChoices.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
+          </select>
+          <select
+            aria-label="Assigned groups cohort"
+            value={cohortFilter}
+            onChange={event => {
+              setCohortFilter(event.target.value);
+              setGroupFilter('');
+              clearBrowsing();
+            }}
+            disabled={!programmeFilter || cohortChoices.length === 0}
+            className="w-full rounded-lg border border-background-200 bg-background-50 px-2 py-1.5 text-[11px] outline-none transition-shadow focus:border-primary-300 focus:ring-2 focus:ring-primary-100 disabled:opacity-50"
+          >
+            <option value="">{programmeFilter ? 'Select a cohort' : 'Choose programme first'}</option>
+            {cohortChoices.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
+          </select>
+          <select
+            aria-label="Assigned groups group"
+            value={groupFilter}
+            onChange={event => {
+              setGroupFilter(event.target.value);
+              clearBrowsing();
+            }}
+            disabled={!cohortFilter}
+            className="w-full rounded-lg border border-background-200 bg-background-50 px-2 py-1.5 text-[11px] outline-none transition-shadow focus:border-primary-300 focus:ring-2 focus:ring-primary-100 disabled:opacity-50"
+          >
+            <option value="">{cohortFilter ? 'All groups in cohort' : 'Choose cohort first'}</option>
+            {groupChoices.map(option => <option key={option.key} value={option.key}>{option.name}</option>)}
+          </select>
+        </div>
+      )}
       {options.length === 0 ? (
         <p className="text-[11px] text-foreground-400">No delivery groups are linked to this programme yet.</p>
+      ) : !programmeFilter || !cohortFilter ? (
+        <p className="rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">Choose a programme, then a cohort, to view delivery groups.</p>
+      ) : filteredOptions.length === 0 ? (
+        <p className="text-[11px] text-foreground-400">No groups match this programme/cohort.</p>
       ) : (
         <div className="grid gap-2 sm:grid-cols-2">
-          {options.map(option => {
+          {filteredOptions.map(option => {
             const on = selectedSet.has(option.key);
             const browsing = browsingKey === option.key;
             const locked = option.key === lockedKey;
@@ -2802,7 +3022,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
                 tabIndex={0}
                 onClick={() => (on ? onToggle(option.key) : onBrowse(option.key))}
                 onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); on ? onToggle(option.key) : onBrowse(option.key); } }}
-                title={on ? 'Click to unassign' : "Not yet assigned — click to place this part in this group's week"}
+                title={on ? 'Click to unassign' : `${option.moduleCount ? 'Contains modules' : 'No modules'} — click to place this part in this group's week`}
                 className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${browsing ? 'border-primary-400 bg-primary-50 ring-2 ring-primary-200' : on ? 'border-primary-300 bg-primary-50' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
               >
                 <input
@@ -2814,8 +3034,12 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12px] font-bold text-foreground-800">{option.name}</span>
-                  {option.cohort && <span className="block truncate text-[10px] text-foreground-400">{option.cohort}</span>}
-                  {!on && <span className="mt-0.5 block truncate text-[10px] font-semibold text-primary-500">{browsing ? 'Browsing…' : "Not assigned — click to place a copy here"}</span>}
+                  {(option.cohort || option.programme) && (
+                    <span className="block truncate text-[10px] text-foreground-400">
+                      {[option.cohort, option.programme].filter(Boolean).join(' · ')}
+                    </span>
+                  )}
+                  {!on && <span className="mt-0.5 block truncate text-[10px] font-semibold text-primary-500">{browsing ? 'Browsing…' : `${option.moduleCount ? 'Contains modules' : 'No modules'} — click to place a copy here`}</span>}
                 </span>
               </div>
             );
@@ -2827,6 +3051,59 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
 }
 
 const inputClass = 'w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-[12px] focus:border-primary-300 focus:ring-2 focus:ring-primary-100 outline-none transition-shadow';
+
+/** Expected OTJH, entered as separate hours/minutes fields but stored as the same decimal-hours number the rest of the app reads. */
+function OtjhHoursMinutesInput({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  const { hours, minutes } = splitHoursMinutes(value);
+  const [hoursDraft, setHoursDraft] = useState(String(hours));
+  const [minutesDraft, setMinutesDraft] = useState(String(minutes));
+  const [focused, setFocused] = useState<'hours' | 'minutes' | null>(null);
+
+  useEffect(() => {
+    if (focused !== 'hours') setHoursDraft(String(hours));
+    if (focused !== 'minutes') setMinutesDraft(String(minutes));
+  }, [focused, hours, minutes]);
+
+  const commit = (nextHours: string, nextMinutes: string) => {
+    const parsedHours = Number(nextHours);
+    const parsedMinutes = Number(nextMinutes);
+    const safeHours = nextHours.trim() === '' || !Number.isFinite(parsedHours) || parsedHours < 0 ? 0 : parsedHours;
+    const safeMinutes = nextMinutes.trim() === '' || !Number.isFinite(parsedMinutes) || parsedMinutes < 0 ? 0 : parsedMinutes;
+    onChange(hoursMinutesToHours(safeHours, safeMinutes));
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex flex-1 items-center gap-1">
+        <input
+          type="number"
+          min={0}
+          step={1}
+          value={focused === 'hours' ? hoursDraft : String(hours)}
+          onFocus={() => { setFocused('hours'); setHoursDraft(String(hours)); }}
+          onBlur={() => { setFocused(null); commit(hoursDraft, minutesDraft); }}
+          onChange={e => { setHoursDraft(e.target.value); commit(e.target.value, minutesDraft); }}
+          className={`${inputClass} tabular-nums`}
+        />
+        <span className="text-[11px] font-semibold text-foreground-400">h</span>
+      </div>
+      <div className="flex flex-1 items-center gap-1">
+        <input
+          type="number"
+          min={0}
+          max={59}
+          step={1}
+          value={focused === 'minutes' ? minutesDraft : String(minutes)}
+          onFocus={() => { setFocused('minutes'); setMinutesDraft(String(minutes)); }}
+          onBlur={() => { setFocused(null); commit(hoursDraft, minutesDraft); }}
+          onChange={e => { setMinutesDraft(e.target.value); commit(hoursDraft, e.target.value); }}
+          className={`${inputClass} tabular-nums`}
+        />
+        <span className="text-[11px] font-semibold text-foreground-400">m</span>
+      </div>
+    </div>
+  );
+}
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
@@ -2929,13 +3206,9 @@ function Field({ label, children, className = '' }: { label: string; children: R
 }
 
 function DurationFields({ value, onChange, label = 'Expected OTJH' }: { value: number; onChange: (value: number) => void; label?: string }) {
-  const totalMinutes = Math.max(0, Math.round((Number(value) || 0) * 60));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
+  const { hours, minutes } = splitHoursMinutes(value);
   const update = (nextHours: number, nextMinutes: number) => {
-    const safeHours = Number.isFinite(nextHours) ? Math.max(0, Math.floor(nextHours)) : 0;
-    const safeMinutes = Number.isFinite(nextMinutes) ? Math.min(59, Math.max(0, Math.floor(nextMinutes))) : 0;
-    onChange((safeHours * 60 + safeMinutes) / 60);
+    onChange(hoursMinutesToHours(nextHours, nextMinutes));
   };
   return (
     <div>

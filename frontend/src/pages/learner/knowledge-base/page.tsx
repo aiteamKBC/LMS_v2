@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
@@ -15,7 +15,8 @@ const p = LEARNER_PROFILE;
 
 export default function LearnerKnowledgeBase() {
   const nav = useNavigate();
-  const [search, setSearch] = useState('');
+  const [params] = useSearchParams();
+  const [search, setSearch] = useState(() => params.get('q') || '');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<typeof LEARNER_KB_ARTICLES[0] | null>(null);
   const [showGlossary, setShowGlossary] = useState(false);

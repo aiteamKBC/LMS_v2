@@ -42,7 +42,68 @@ class MonthlyAssignmentTests(SimpleTestCase):
         self.assertTrue(all(checks.values()))
 
     def test_empty_draft_is_safe_to_check_but_not_ready(self):
-        self.assertFalse(any(self.checks({}, meeting_booked=False).values()))
+        checks = self.checks({}, meeting_booked=False)
+        self.assertTrue(checks.pop("evidence"))
+        self.assertFalse(any(checks.values()))
+
+    def test_topic_time_must_match_total_and_stay_in_submission_month(self):
+        payload = self.payload()
+        payload['actualTimeHours'] = '3.75'
+        rows = [dict(topic='Research', hours='1.5', date='2026-09-01'),
+                dict(topic='Writing', hours='2.25', date='2026-09-30')]
+        payload['monthlyAssignment']['timeEntries'] = rows
+        self.assertTrue(self.checks(payload)['hours'])
+        for invalid in [dict(date='2026-10-01'), dict(date='2026-09-31'), dict(date='2026-09-05'), dict(date='2026-09-06'),
+                        dict(topic=' '), dict(hours='-1'), dict(hours='NaN')]:
+            with self.subTest(invalid=invalid):
+                changed = deepcopy(payload)
+                changed['monthlyAssignment']['timeEntries'][0].update(invalid)
+                self.assertFalse(self.checks(changed)['hours'])
+        payload['actualTimeHours'] = '4'
+        self.assertFalse(self.checks(payload)['hours'])
+        payload['monthlyAssignment']['timeEntries'] = []
+        self.assertFalse(self.checks(payload)['hours'])
+
+    def test_topic_time_rejects_bank_holidays_but_allows_past_working_days(self):
+        payload = self.payload()
+        payload['monthlyAssignment']['month'] = '2026-12'
+        payload['monthlyAssignment']['timeEntries'] = [dict(topic='Research', hours='8', date='2026-12-25')]
+        self.assertFalse(self.checks(payload)['hours'])
+        payload['monthlyAssignment']['timeEntries'][0]['date'] = '2026-12-28'
+        self.assertFalse(self.checks(payload)['hours'])
+        payload['monthlyAssignment']['month'] = '2025-12'
+        payload['monthlyAssignment']['timeEntries'][0]['date'] = '2025-12-24'
+        self.assertTrue(self.checks(payload)['hours'])
+
+    def test_eight_hour_limit_is_per_topic_not_per_assignment(self):
+        payload = self.payload()
+        payload['monthlyAssignment']['timeEntries'] = [dict(topic='Research', hours='8', date='2026-09-01'), dict(topic='Writing', hours='8', date='2026-09-02')]
+        payload['actualTimeHours'] = '16'
+        self.assertTrue(self.checks(payload)['hours'])
+        payload['monthlyAssignment']['timeEntries'][0]['hours'] = '8.01'
+        payload['actualTimeHours'] = '16.01'
+        self.assertFalse(self.checks(payload)['hours'])
+
+    def test_submission_without_evidence_passes_all_checks(self):
+        payload = self.payload()
+        monthly = payload['monthlyAssignment']
+        monthly['evidence'] = []
+        monthly['claims'][0]['evidenceIds'] = []
+        monthly['presentationToken'] = signing.dumps(presentation_fingerprint(payload), salt='monthly-assignment-pptx')
+        self.assertTrue(all(self.checks(payload).values()))
+
+    def test_ksb_evidence_selection_is_optional_even_with_attachments(self):
+        payload = self.payload()
+        payload['monthlyAssignment']['claims'][0]['evidenceIds'] = []
+        self.assertTrue(self.checks(payload)['ksbs'])
+
+    def test_optional_evidence_does_not_accept_invalid_items_or_dangling_references(self):
+        payload = self.payload()
+        payload['monthlyAssignment']['evidence'].append({'id': 'link:bad', 'url': 'javascript:alert(1)'})
+        self.assertFalse(self.checks(payload)['evidence'])
+        payload = self.payload()
+        payload['monthlyAssignment']['claims'][0]['evidenceIds'].append('missing-file')
+        self.assertFalse(self.checks(payload)['ksbs'])
 
     def test_import_flag_from_a_client_does_not_bypass_checks(self):
         for payload in [{"submissionOrigin": "imported_legacy"}, {"monthlyAssignment": {"version": 1, "imported": True}}]:
@@ -228,3 +289,16 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
         with self.assertRaisesRegex(ValueError, "Progress failed"):
             complete_saved_assignment("commercial", "1", "C1", {}, MagicMock(side_effect=ValueError("Progress failed")))
         self.assertEqual(cursor.execute.call_count, 1)
+
+
+class ExtendedCoachingWindowTests(SimpleTestCase):
+    def test_next_month_window_and_year_rollover(self):
+        from datetime import date
+        from .monthly_assignment import coaching_booking_windows
+        self.assertEqual(coaching_booking_windows('2026-09'), [
+            (date(2026, 9, 21), date(2026, 10, 5)),
+            (date(2026, 10, 22), date(2026, 11, 5)),
+        ])
+        self.assertEqual(coaching_booking_windows('2026-12')[1],
+                         (date(2027, 1, 22), date(2027, 2, 5)))
+        self.assertEqual(coaching_booking_windows('invalid'), [])

@@ -93,6 +93,10 @@ def provision_review_schedule_tables():
                 review_id varchar(128) not null,
                 programme_id varchar(255) not null,
                 occurrence_date date not null,
+                -- NULL keeps the programme-wide skip; a set value scopes the
+                -- override to one learner (see review_instances.py). Mirrors
+                -- sql/2026-09-13_curriculum_review_instances.sql.
+                learner_id integer,
                 action varchar(16) not null default 'skip',
                 reason varchar(1000) not null default '',
                 deleted_at timestamp,
@@ -165,8 +169,16 @@ def recurrence_label(interval, unit):
     return f'Every {interval} {noun}{"" if interval == 1 else "s"}'
 
 
-def generate_occurrences(anchor, interval, unit, window_start, window_end, *, max_count=500):
-    """RAW occurrence dates for one recurrence rule, bounded to a window.
+def generate_occurrence_steps(anchor, interval, unit, window_start, window_end, *, max_count=500, occurrence_limit=None):
+    """(occurrence_number, date) pairs for one recurrence rule, bounded to a window.
+
+    ``occurrence_number`` is 1-based, counted from ``anchor`` itself as
+    occurrence #1 -- the same numbering ``occurrence_limit`` counts against.
+    ``generate_occurrences`` is a thin wrapper around this that keeps its
+    original dates-only return shape; anything that also needs the occurrence
+    number (e.g. a learner-specific Review instance's identity) calls this
+    directly rather than re-deriving it, so there is exactly one place the
+    recurrence math lives.
 
     Never an infinite sequence: capped both by the window and by max_count.
     Jumps close to window_start first rather than iterating from the anchor
@@ -180,30 +192,51 @@ def generate_occurrences(anchor, interval, unit, window_start, window_end, *, ma
         step_days = interval * (7 if unit == 'weeks' else 1)
         delta = (window_start - anchor).days
         start_step = max(0, delta // step_days - 1)
-        occurrences = []
+        steps = []
         step = start_step
-        while len(occurrences) < max_count:
+        while len(steps) < max_count:
+            if occurrence_limit is not None and step >= occurrence_limit:
+                break
             occ = anchor + timedelta(days=step_days * step)
             if occ > window_end:
                 break
             if occ >= window_start:
-                occurrences.append(occ)
+                steps.append((step + 1, occ))
             step += 1
-        return occurrences
+        return steps
 
     # months: calendar arithmetic, not "interval * 30 days".
     months_between = (window_start.year - anchor.year) * 12 + (window_start.month - anchor.month)
     start_step = max(0, months_between // interval - 1)
-    occurrences = []
+    steps = []
     step = start_step
-    while len(occurrences) < max_count:
+    while len(steps) < max_count:
+        if occurrence_limit is not None and step >= occurrence_limit:
+            break
         occ = add_calendar_months(anchor, interval * step)
         if occ > window_end:
             break
         if occ >= window_start:
-            occurrences.append(occ)
+            steps.append((step + 1, occ))
         step += 1
-    return occurrences
+    return steps
+
+
+def generate_occurrences(anchor, interval, unit, window_start, window_end, *, max_count=500, occurrence_limit=None):
+    """RAW occurrence dates for one recurrence rule, bounded to a window.
+
+    ``occurrence_limit``, when given, is the total number of occurrences the
+    template ever produces (counted from ``anchor`` as occurrence #1) -- the
+    Nth-and-later occurrence is never projected, even if the window would
+    otherwise include it. See ``generate_occurrence_steps`` for the
+    occurrence-numbered variant.
+    """
+    return [
+        occ for _, occ in generate_occurrence_steps(
+            anchor, interval, unit, window_start, window_end,
+            max_count=max_count, occurrence_limit=occurrence_limit,
+        )
+    ]
 
 
 def clash_signature(pairs):
@@ -233,7 +266,8 @@ def _raw_occurrences_for_programme(programme_id, window_start, window_end):
         anchor = curriculum_views.parse_date(row.get('schedule_anchor_date')) or curriculum_views.parse_date(row.get('created_at'))
         interval = curriculum_views.parse_int(row.get('recurrence_interval'), 1)
         unit = row.get('recurrence_unit') or 'weeks'
-        for occ in generate_occurrences(anchor, interval, unit, window_start, window_end):
+        occurrence_limit = row.get('occurrence_count')
+        for occ in generate_occurrences(anchor, interval, unit, window_start, window_end, occurrence_limit=occurrence_limit):
             items.append({
                 'reviewId': row.get('id'),
                 'reviewName': row.get('name') or '',

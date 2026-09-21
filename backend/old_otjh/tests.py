@@ -50,6 +50,7 @@ class TransitionTests(SimpleTestCase):
             'content_review': lambda *_: {'ready': True, 'issues': []},
             'activity_row': lambda learner, month, ident: {'id': 3, 'activity_id': 9} if ident == 3 else None,
             'activity_parts': lambda *_: [{'id': 9, 'title': 'Activity', 'url': 'https://example.org/reading', 'html': None, 'quiz': None}],
+            'programme_dates': lambda *_: {'start_date': None, 'planned_end_date': None},
             'report_profile': lambda *_: {'start_date': None, 'planned_end_date': None, 'first_evidence_date': None},
             'atomic': nullcontext,
             'save_signature': self.save_sign,
@@ -127,6 +128,65 @@ class TransitionTests(SimpleTestCase):
     def test_blank_aptem_id_follows_new_lms(self):
         self.record['aptem_id'] = ' '
         self.assertTrue(service.summary(self.learner())['can_access_lms'])
+
+    def test_workspace_link_uses_the_learners_own_months_only(self):
+        response = views.workspace_link(self.request(path='/audit_api/old-otjh/workspace-link/'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {'href': '/old-otjh/months'})
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        for query in ('learner_id=999', 'aptem_id=999', 'email=other@example.org', 'actor=admin'):
+            with self.subTest(query=query):
+                response = views.workspace_link(self.request(path=f'/audit_api/old-otjh/workspace-link/?{query}'))
+                self.assertIn(response.status_code, (403, 404))
+                self.assertNotIn('href', json.loads(response.content))
+
+    def test_new_learner_has_no_previous_record_link_or_cohort_entry(self):
+        for value in (None, '', '  '):
+            with self.subTest(aptem_id=value):
+                self.record['aptem_id'] = value
+                response = views.workspace_link(self.request(path='/audit_api/old-otjh/workspace-link/'))
+                self.assertEqual(json.loads(response.content), {'href': None})
+                response = views.cohort(self.request(path='/audit_api/last-audit/cohort/'))
+                self.assertEqual(json.loads(response.content)['learners'], [])
+        self.mocks['historical_learner'].assert_not_called()
+
+    def test_staff_workspace_link_resolves_only_the_selected_record(self):
+        for access in ('coach', 'super-admin'):
+            with self.subTest(access=access):
+                self.mocks['staff'].side_effect = lambda _: {'access': access, 'email': 'coach@example.org'}
+                response = views.workspace_link(self.request(
+                    path='/audit_api/old-otjh/workspace-link/?learner_id=7', user=account('staff')))
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(json.loads(response.content), {'href': '/old-otjh/coach/42/months?workspace=learner'})
+                self.record['aptem_id'] = None
+                response = views.workspace_link(self.request(
+                    path='/audit_api/old-otjh/workspace-link/?learner_id=7', user=account('staff')))
+                self.assertEqual(json.loads(response.content), {'href': None})
+                self.record['aptem_id'] = '42'
+
+    def test_workspace_link_does_not_expand_coach_permissions(self):
+        self.history[0]['coach_email'] = 'someone-else@example.org'
+        response = views.workspace_link(self.request(
+            path='/audit_api/old-otjh/workspace-link/?learner_id=7', user=account('staff')))
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn('href', json.loads(response.content))
+        for selection in ('', '?learner_id=999', '?learner_id=-1', '?learner_id=invalid'):
+            response = views.workspace_link(self.request(
+                path=f'/audit_api/old-otjh/workspace-link/{selection}', user=account('staff')))
+            self.assertIn(response.status_code, (404, 409))
+            self.assertNotIn('href', json.loads(response.content))
+
+    def test_old_and_new_learners_cannot_read_staff_directories(self):
+        with patch.object(repo, 'coach_learners') as directory:
+            for value in ('42', None):
+                self.record['aptem_id'] = value
+                for view, path in ((views.coach_learners, '/audit_api/old-otjh/coach/learners/'),
+                                   (views.monitor_dashboard, '/audit_api/old-otjh/monitor/')):
+                    with self.subTest(aptem_id=value, path=path):
+                        response = view(self.request(path=path))
+                        self.assertEqual(response.status_code, 403)
+                        self.assertNotIn('learners', json.loads(response.content))
+            directory.assert_not_called()
 
     def test_invalid_aptem_id_is_not_new_learner(self):
         self.record['aptem_id'] = 'broken-link'
@@ -356,6 +416,31 @@ class TransitionTests(SimpleTestCase):
         self.assertEqual(result['months'][0]['planned_hours'], 2)
         self.assertEqual(result['months'][1]['training_plan_target'], 0)
 
+    def test_read_only_summary_runs_from_aptem_start_month_through_august(self):
+        self.history[0]['planned_hours_monthly'] = {
+            '2026-01': 3,
+            '2026-02': 30,
+            '2026-08': 20,
+        }
+        self.sources[:] = [
+            {'month': '2025-12', 'row_count': 1, 'planned_hours': 2, 'actual_hours': 2,
+             'not_accepted_hours': 0},
+            {'month': '2026-01', 'row_count': 4, 'planned_hours': 3, 'actual_hours': 1.53,
+             'not_accepted_hours': 0},
+        ]
+        self.mocks['programme_dates'].side_effect = lambda *_: {
+            'start_date': '2026-01-19', 'planned_end_date': '2027-01-31',
+        }
+
+        result = service.summary({**self.learner(), '_read_only': True})
+
+        self.assertEqual(result['months'][0]['month'], '2026-01')
+        self.assertEqual(result['months'][-1]['month'], '2026-08')
+        self.assertEqual(len(result['months']), 8)
+        self.assertEqual(result['months'][0]['training_plan_target'], 3)
+        self.assertEqual(result['months'][0]['actual_hours'], 1.53)
+        self.assertEqual(result['months'][1]['actual_hours'], 0)
+
     def test_embedded_activity_is_read_from_the_authorized_month_and_row(self):
         response = views.rows(self.request(path='/audit_api/last-audit/manual/rows?month=2026-07&activity_id=3'))
         self.assertEqual(response.status_code, 200)
@@ -555,6 +640,16 @@ class TransitionTests(SimpleTestCase):
         self.assertEqual(self.events, events)
         self.save_file.assert_called_once()
 
+    def test_admin_can_sign_a_learner_month_without_replacing_the_profile_signature(self):
+        admin = account('admin')
+        admin.display_name = 'Administrator'
+        result = service.sign(self.learner(), '2026-07', admin, 'learner', b'admin-png', service.digest(self.rows), {})
+        self.assertEqual(result['status'], 'complete')
+        self.assertEqual(result['student_signature']['signer_name'], 'Administrator')
+        self.mocks['save_learner_signature'].assert_not_called()
+        self.assertEqual([e[2] for e in self.events], ['signed', 'completed'])
+        self.assertTrue(all(e[3] is admin for e in self.events))
+
     def test_bulk_retry_preserves_images_finalizations_and_enrolment_capture(self):
         selected = self.bulk_months()
         service.sign_months(self.learner(), selected, self.user, 'learner', b'first', {})
@@ -684,6 +779,19 @@ class TransitionTests(SimpleTestCase):
 
 
 class EnrolmentSignatureTests(SimpleTestCase):
+    def test_audit_source_reads_use_the_audit_connection_scope(self):
+        seen_aliases = []
+
+        def read(_sql, _params=()):
+            seen_aliases.append(repo._query_alias.get())
+            return []
+
+        with patch.object(repo, 'resolve', return_value='audit'), patch.object(repo, 'query', side_effect=read):
+            repo.source_query('SELECT 1')
+
+        self.assertEqual(seen_aliases, ['audit'])
+        self.assertIsNone(repo._query_alias.get())
+
     def test_one_capture_can_serve_multiple_months_for_the_same_learner(self):
         rows = [{'learner_id': 7, 'signer_role': 'learner', 'report_month': month, 'file_id': 'a' * 32}
                 for month in ['2026-07', '2026-08']]

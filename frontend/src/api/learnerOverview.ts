@@ -1,22 +1,45 @@
 import type { LearnerKind } from './learnerDetail';
 import type { TrainingPlanDashboard } from './trainingPlanDashboard';
+import type { LearnerMetrics } from './learnerMetrics';
 import { peekLearnerJson, readLearnerJson } from './learnerRead';
+
+export type PlanActivitySummary = {
+  id: string; componentId?: string | null; title: string; type: string; date: string;
+  weekTitle?: string | null; expectedHours: number | null; completed: boolean; ksbCodes: string[];
+};
 
 export type PlanSubjectSummary = {
   id: string; title: string; source: 'legacy' | 'current'; completed: number; total: number;
   dates: string[]; moduleIds: string[]; sessionTitles: { date: string; title: string }[];
   activityCounts?: Record<string, number>; ksbCodes?: string[]; ksbMappingMissing?: boolean;
+  ksbCodesByMonth?: Record<string, string[]>;
+  ksbProgress?: { completed: number; total: number } | null;
+  directHours?: number | null;
+  monthlyActivities?: PlanActivitySummary[];
 };
 
 export type OverviewWeek = {
+  metrics?: LearnerMetrics;
   planSubjects?: PlanSubjectSummary[];
-  weekStart: string; weekEnd: string; timezone: string; latestModuleId?: string | null;
+  /** Monthly OTJH; assignment submissions use marking status, other activity types keep their existing semantics. */
+  monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; missingPlannedActivities: number }>;
+  weekStart: string; weekEnd: string; timezone: string;
   modules: { id: string; title: string; weekLabels: string[]; moduleIds?: string[]; completed: number; total: number;
     percent: number | null; ksbCodes: string[]; ksbMappingMissing: boolean }[];
   deadlines: { id: string; title: string; type: 'assignment' | 'checkpoint'; date: string; subjectId: string }[];
   undatedActivities: number; expectedHours: number | null; missingExpectedHours: number;
   otjh: { actual: number | null; historical: number | null; new: number; undatedHistoricalRows: number };
 };
+
+export type HomeProgressCount = { completed: number; total: number };
+export type HomeProgress = {
+  period: { start: string | null; end: string; timezone: string };
+  otjh: { actual: number | null; submitted: number | null; planned: number | null; percent: number | null; missingPlannedActivities: number };
+  activities: HomeProgressCount | null; assignments: HomeProgressCount | null;
+  lectures: HomeProgressCount | null; modules: HomeProgressCount;
+  undatedActivities: number;
+};
+export type OverviewHome = OverviewWeek & { homeProgress: HomeProgress };
 
 function resource<T>(path: (kind: LearnerKind, id: string) => string, valid: (value: T) => boolean) {
   return {
@@ -33,7 +56,18 @@ function resource<T>(path: (kind: LearnerKind, id: string) => string, valid: (va
 }
 const weekPath = (kind: LearnerKind, id: string) => `/learner_api/overview-week/${kind}/${encodeURIComponent(id)}/`;
 export const overviewWeek = resource<OverviewWeek>(weekPath, value => !!value.weekStart && Array.isArray(value.modules) && Array.isArray(value.deadlines) && !!value.otjh);
+export const overviewDashboard = resource<OverviewWeek>((kind, id) => `${weekPath(kind, id)}?section=dashboard`,
+  value => !!value.weekStart && Array.isArray(value.modules) && Array.isArray(value.deadlines) && !!value.otjh && !!value.metrics);
+export const overviewHome = resource<OverviewHome>((kind, id) => `${weekPath(kind, id)}?section=home`,
+  value => !!value.weekStart && Array.isArray(value.modules) && Array.isArray(value.deadlines)
+    && !!value.homeProgress?.otjh && !!value.homeProgress.period && !!value.homeProgress.modules);
 export const overviewSchedule = resource<TrainingPlanDashboard>(
   (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=overview`,
   value => Array.isArray(value.sessions) && Array.isArray(value.reviews),
+);
+
+export type LearningSchedule = Pick<TrainingPlanDashboard, 'modules' | 'moduleLinks' | 'generatedAt'>;
+export const learningSchedule = resource<LearningSchedule>(
+  (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=learning`,
+  value => Array.isArray(value.modules) && !!value.moduleLinks,
 );

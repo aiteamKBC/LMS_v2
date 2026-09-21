@@ -8,6 +8,7 @@ import { kbcTenant, demoProviderTenant, type Tenant } from '@/mocks/tenant';
 import { clearChatSession } from '@/api/chat';
 import { apiLogin, apiLogout, apiMe, type AuthUser, type Role } from '@/api/auth';
 import { rememberSignedInLearner } from '@/hooks/useMyLearner';
+import { syncPersonalLearningAccount } from '@/lib/personalLearning';
 import { clearCoachViewAs, syncCoachViewAsAccount } from '@/lib/coachViewAs';
 import { clearTutorViewAs, syncTutorViewAsAccount } from '@/lib/tutorViewAs';
 import { installSessionExpiryHandler, resetSessionExpiryNotice } from '@/lib/sessionExpiry';
@@ -107,6 +108,7 @@ function stateFromAccount(account: AuthUser): AuthState {
   // last in localStorage, or the hardcoded demo learner on a fresh browser.
   // Single funnel: every sign-in, session restore and refresh lands here.
   rememberSignedInLearner(account.subjectType, account.subjectId, account.learnerType);
+  syncPersonalLearningAccount(account);
 
   // Same reasoning for the coach workspace: an admin's "view as coach" choice
   // is stored per browser, so it has to be dropped here when the account that
@@ -147,6 +149,7 @@ const SIGNED_OUT: AuthState = {
 };
 
 function signedOutState(): AuthState {
+  syncPersonalLearningAccount(null);
   rememberSignedInLearner(undefined, undefined);
   return SIGNED_OUT;
 }
@@ -200,7 +203,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // signing someone out must not depend on a toast being available.
   const toast = useToastOptional();
 
-  const [auth, setAuth] = useState<AuthState>(signedOutState);
+  const [auth, setAuth] = useState<AuthState>(SIGNED_OUT);
   // Starts false: the session lives in an HttpOnly cookie, which JS cannot
   // read, so the only way to know whether we are signed in is to ask the
   // server. Routes must wait for this rather than briefly rendering as
@@ -298,10 +301,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        // `navigate` rather than a reload: it keeps the SPA mounted, and the
-        // `from` state is what returns the person to the page they were on once
-        // they sign in again.
-        const from = `${window.location.pathname}${window.location.search}`;
+        // Re-authentication starts at the account home after the login form.
         localStorage.removeItem(AUTH_STORAGE_KEY);
         clearCoachViewAs();
         clearTutorViewAs();
@@ -310,9 +310,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAuth(signedOutState());
         toast?.warning(
           'Your session has ended',
-          'Please sign in again to continue where you left off.',
+          'Please sign in again to continue.',
         );
-        navigate('/login', { state: { from }, replace: true });
+        navigate('/login', { replace: true });
       })();
     });
 
@@ -359,6 +359,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const previewAs = useCallback((email: string) => {
     const foundUser = kbcUsers.find(u => u.email === email);
     if (!foundUser) return;
+    syncPersonalLearningAccount(null);
     rememberSignedInLearner(undefined, undefined);
 
     const userRoles = foundUser.roles

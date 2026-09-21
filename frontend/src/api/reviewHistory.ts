@@ -1,7 +1,7 @@
 import { readLearnerJson } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 
-export type ReviewHistoryCategory = 'monthly-coaching' | 'progress-review';
+export type ReviewHistoryCategory = 'monthly-coaching' | 'progress-review' | 'reviews';
 
 export interface ImportedReviewLink {
   text?: string;
@@ -25,7 +25,7 @@ export interface ImportedReviewTable {
 }
 
 export interface ImportedReviewSection {
-  id: number;
+  id: number | string;
   name: string;
   order: number | null;
   fields: ImportedReviewField[];
@@ -39,6 +39,8 @@ export interface ImportedReview {
   name: string;
   type: string;
   reviewerName: string;
+  learnerName?: string;
+  managerName?: string;
   plannedDate: string | null;
   plannedTime: string | null;
   completedDate: string | null;

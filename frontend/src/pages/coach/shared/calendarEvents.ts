@@ -82,6 +82,29 @@ export interface CoachCalendarEvent {
   reviewCompletedAt?: string | null;
   managerSignedAt?: string | null;
   managerSignedBy?: string;
+  /** The Curriculum review_templates.id this occurrence was generated from. */
+  reviewTemplateId?: string | null;
+  reviewTypeId?: string | null;
+  reviewTypeCode?: string | null;
+  reviewTypeName?: string | null;
+  reviewTypeIsSystem?: boolean;
+  /** Set once this occurrence has been scheduled at least once -- its
+   *  presence is what routes "open review" to the dynamic Curriculum-driven
+   *  form (see reviewInstances.ts) instead of any hard-coded one. */
+  reviewInstanceId?: string | null;
+  occurrenceNumber?: number | null;
+}
+
+export interface CoachReviewGenerationIssue {
+  learnerId: string;
+  code:
+    | 'missing_curriculum_programme'
+    | 'no_enabled_review_templates'
+    | 'missing_learner_enrolment'
+    | 'missing_learner_start_date'
+    | 'invalid_learner_start_date'
+    | 'review_schedule_unavailable'
+    | string;
 }
 
 interface CoachTimetableResponse {
@@ -90,6 +113,7 @@ interface CoachTimetableResponse {
     email?: string;
   };
   events?: CoachCalendarEvent[];
+  reviewGenerationIssues?: CoachReviewGenerationIssue[];
 }
 
 export interface ScheduleFormState {
@@ -325,9 +349,11 @@ export async function fetchCoachCalendarEventsForCoach(
 export async function fetchCoachMeetingArtifacts(
   eventKey: string,
   signal?: AbortSignal,
+  options: { refresh?: boolean } = {},
 ): Promise<CoachMeetingArtifactsResponse> {
+  const query = options.refresh ? '?refresh=1' : '';
   const response = await coachFetch(
-    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts`,
+    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts${query}`,
     { signal },
   );
   return readJsonResponse<CoachMeetingArtifactsResponse>(response);
@@ -423,7 +449,7 @@ export function currentWeekRange(referenceDate = new Date()) {
   start.setDate(today.getDate() + mondayOffset);
 
   const end = new Date(start);
-  end.setDate(start.getDate() + 6);
+  end.setDate(start.getDate() + 4);
   return { start, end };
 }
 
@@ -450,6 +476,18 @@ export function formatTimeLabel(event: CoachCalendarEvent) {
     return `${event.scheduledTime.slice(0, 5)} - ${event.durationMinutes || 60} min`;
   }
   return event.timeLabel && event.timeLabel !== 'Time TBC' ? event.timeLabel : 'Time TBC';
+}
+
+/** Display a booked session as a start/end range instead of a duration label. */
+export function formatTimeRangeLabel(event: CoachCalendarEvent) {
+  if (!event.scheduledTime) return event.timeLabel && event.timeLabel !== 'Time TBC' ? event.timeLabel : 'Time TBC';
+  const startText = event.scheduledTime.slice(0, 5);
+  const match = /^(\d{1,2}):(\d{2})$/.exec(startText);
+  if (!match) return startText;
+  const start = new Date(2000, 0, 1, Number(match[1]), Number(match[2]));
+  start.setMinutes(start.getMinutes() + (event.durationMinutes || 60));
+  const endText = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+  return `${startText} - ${endText}`;
 }
 
 export function scheduleDefaults(event: CoachCalendarEvent): ScheduleFormState {
@@ -508,6 +546,7 @@ export function statusPillClass(status: CoachCalendarStatus) {
   if (status === 'in-progress') return 'bg-primary-100 text-primary-700';
   if (status === 'awaiting-signature') return 'bg-violet-100 text-violet-700';
   if (status === 'cancelled') return 'bg-red-100 text-red-700';
+  if (status === 'not-scheduled') return 'bg-red-100 text-red-700';
   return 'bg-rose-100 text-rose-700';
 }
 
@@ -547,7 +586,7 @@ export function isUrgentEvent(event: CoachCalendarEvent) {
 }
 
 export function isCompletedEvent(event: CoachCalendarEvent) {
-  return event.status === 'completed' || event.status === 'confirmed';
+  return event.status === 'completed';
 }
 
 export function canJoinMeeting(event: CoachCalendarEvent, referenceDate = new Date()) {
@@ -558,7 +597,17 @@ export function canJoinMeeting(event: CoachCalendarEvent, referenceDate = new Da
 }
 
 export function isUpcomingEvent(event: CoachCalendarEvent) {
-  return !['completed', 'confirmed', 'cancelled'].includes(event.status);
+  return !['completed', 'cancelled'].includes(event.status);
+}
+
+export function isEventInMonth(event: CoachCalendarEvent, referenceDate = new Date()) {
+  const displayDate = parseLocalDate(eventDisplayDate(event));
+  if (!displayDate) return false;
+
+  return (
+    displayDate.getFullYear() === referenceDate.getFullYear()
+    && displayDate.getMonth() === referenceDate.getMonth()
+  );
 }
 
 export function isAtRiskEvent(event: CoachCalendarEvent, referenceDate = new Date()) {
@@ -591,13 +640,7 @@ export function isEventThisWeek(event: CoachCalendarEvent, referenceDate = new D
 }
 
 export function isEventThisMonth(event: CoachCalendarEvent, referenceDate = new Date()) {
-  const displayDate = parseLocalDate(eventDisplayDate(event));
-  if (!displayDate || isCompletedEvent(event)) return false;
-
-  return (
-    displayDate.getFullYear() === referenceDate.getFullYear()
-    && displayDate.getMonth() === referenceDate.getMonth()
-  );
+  return !isCompletedEvent(event) && isEventInMonth(event, referenceDate);
 }
 
 export function isAtRiskProgressReview(event: CoachCalendarEvent, referenceDate = new Date()) {
@@ -606,6 +649,20 @@ export function isAtRiskProgressReview(event: CoachCalendarEvent, referenceDate 
 
 export function meetingUrl(event: CoachCalendarEvent) {
   return event.meetingLink || event.graphWebLink || '';
+}
+
+export function openPendingMeetingWindow() {
+  const meetingWindow = window.open('about:blank', '_blank');
+  if (meetingWindow) meetingWindow.opener = null;
+  return meetingWindow;
+}
+
+export function navigateMeetingWindow(meetingWindow: Window | null, url: string) {
+  if (meetingWindow && !meetingWindow.closed) {
+    meetingWindow.location.href = url;
+    return;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 export function eventPeriodLabel(event: CoachCalendarEvent) {

@@ -7,11 +7,13 @@ import { SignatureCapture } from './SignatureCapture';
 import { saveMonthSignatures, type SignatureCaptureMethod, type SignedMonths, type Summary } from './api';
 import { monthLabel } from './report';
 import styles from './design.module.css';
+import { useRecordHref } from './recordNavigation';
 
 export function BulkSignDialog({ summary, aptemId, onClose, onSaved }: {
   summary: Summary; aptemId?: number; onClose: () => void; onSaved: (result: SignedMonths) => void;
 }) {
   const { auth } = useAuth();
+  const recordHref = useRecordHref();
   const student = auth.account?.role === 'learner';
   // No per-month requests: capture opens using the month list already on screen.
   const [months] = useState(() => summary.months.filter(month => month.is_required !== false).map(month => month.month));
@@ -25,7 +27,7 @@ export function BulkSignDialog({ summary, aptemId, onClose, onSaved }: {
       <details>
         <summary className="cursor-pointer font-semibold">View included months ({months.length})</summary>
         <ul className={`${styles.bulkMonthList} mt-3`}>{months.map(month => <li key={month}>
-          <Link to={`${base}/${month}`} aria-disabled={mutation.isPending} onClick={event => { if (mutation.isPending) event.preventDefault(); }}>{monthLabel(month)}</Link>
+          <Link to={recordHref(`${base}/${month}`)} aria-disabled={mutation.isPending} onClick={event => { if (mutation.isPending) event.preventDefault(); }}>{monthLabel(month)}</Link>
         </li>)}</ul>
       </details>
       <p className={styles.metricNote}>{student

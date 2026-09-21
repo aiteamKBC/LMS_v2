@@ -1,3 +1,4 @@
+import { learningFetch } from '@/lib/personalLearning';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 
@@ -82,7 +83,7 @@ export async function uploadEvidence(
   let res: Response;
   try {
     // NOTE: do not set Content-Type — the browser sets the multipart boundary.
-    res = await fetch(`${BASE}/${kind}/${id}/upload/`, { method: 'POST', body: form });
+    res = await learningFetch(`${BASE}/${kind}/${id}/upload/`, { method: 'POST', body: form });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
@@ -118,7 +119,7 @@ export async function getEvidenceDownloadUrl(kind: LearnerKind, id: string, file
 export async function deleteEvidence(kind: LearnerKind, id: string, fileId: string): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${BASE}/${kind}/${id}/${fileId}/`, { method: 'DELETE' });
+    res = await learningFetch(`${BASE}/${kind}/${id}/${fileId}/`, { method: 'DELETE' });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }

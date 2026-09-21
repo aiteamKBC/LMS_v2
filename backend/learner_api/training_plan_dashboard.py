@@ -1,4 +1,5 @@
 """Learner-scoped, read-only sources for the Training Plan dashboard."""
+from collections import defaultdict
 from datetime import datetime, timezone
 import logging
 import math
@@ -12,7 +13,9 @@ from login.permissions import learner_self_or_staff
 from old_otjh.coach_booking import booking_url
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile
-from .student_activity import CURRENT_SUBJECTS_SQL, _builder_subject_metadata
+from .learning_plan import _effective_plan_ids
+from .coach_assignment import current_coach, source_coach
+from .student_activity import _builder_subject_metadata
 from .subject_content import as_list, clean_text, safe_url
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
 
@@ -40,6 +43,11 @@ def instant(value):
     return value.isoformat()
 
 
+def date_only(value):
+    """Serialize contract programme dates without applying a machine timezone."""
+    return str(value)[:10] if value else None
+
+
 def plan_session(row):
     start = row['scheduled_start'] or row['start_datetime']
     end = row['scheduled_end']
@@ -60,6 +68,81 @@ def plan_module(row):
             'learning_outcomes': []}
 
 
+def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=None):
+    """Give every learner module the curriculum slot spine the Builder shows.
+
+    This is a READ of the curriculum scheduler, not a second one. The holidays
+    come from ``cohort_selected_holidays_by_cohort`` -- the same resolution the
+    Module Builder, the Teams series and the tutor conflict check use, with the
+    cohort's own ``excluded_holiday_ids`` deny-list already applied upstream --
+    and the spine comes from ``module_session_plan_for_count``, which is the
+    single door onto ``build_module_session_plan``. Nothing about holidays or
+    Reading Weeks is decided here, so the learner cannot be shown a timeline the
+    curriculum does not itself hold.
+
+    ``slots`` is what makes a holiday visible to a learner at all: a closed
+    delivery slot delivers no session, so a learner reading only session dates
+    sees an unexplained gap. Reading Weeks must come from this spine and never
+    be inferred from gaps between session dates -- a gap is also what a term
+    break, an unauthored week or a module that simply does not deliver that week
+    looks like.
+
+    Holidays are resolved once for every cohort on the page rather than per
+    module, because every module of a cohort shares that cohort's holidays.
+
+    ``weeks_by_number`` maps ``(module_id, week_number)`` to that authored
+    week's ``id``/``title``/``learningOutcomes`` (see ``curriculum.weeks``).
+    A taught slot's ``sessionNumber`` is the same content-week numbering, so a
+    live-session slot picks up its week's own title and outcomes here rather
+    than the module-wide aggregate. Omitted entirely when the caller has none
+    -- the spine then matches the scheduler's own output exactly, which the
+    Reading Week regression tests rely on.
+    """
+    from curriculum_api.views import (
+        cohort_selected_holidays_by_cohort, module_session_plan_for_count,
+        module_stored_session_count,
+    )
+
+    weeks_by_number = weeks_by_number or {}
+    try:
+        holidays = cohort_selected_holidays_by_cohort(
+            [row.get('cohort_id') for row in module_rows]
+        )
+    except Exception:
+        log.warning('Could not resolve cohort holidays for the training plan.', exc_info=True)
+        holidays = {}
+
+    for row in module_rows:
+        module = by_id.get(row['id'])
+        if module is None:
+            continue
+        week_count = week_counts.get(row['id'], 0)
+        try:
+            plan = module_session_plan_for_count(
+                row,
+                module_stored_session_count(row, week_count),
+                holidays=holidays.get(str(row.get('cohort_id') or ''), []),
+            )
+        except Exception:
+            log.warning('Could not plan curriculum slots for module %s.', row['id'], exc_info=True)
+            plan = {}
+        module['curriculumSlots'] = plan.get('slots') or []
+        for slot in module['curriculumSlots']:
+            if slot.get('type') != 'live-session' or not slot.get('sessionNumber'):
+                continue
+            week = weeks_by_number.get((row['id'], slot['sessionNumber']))
+            if week:
+                slot['weekId'] = week['id']
+                slot['weekTitle'] = week['title']
+                slot['learningOutcomes'] = week['learningOutcomes']
+        # The effective delivery end is the scheduler's own -- the last
+        # DELIVERED session, holiday shifts included. Deliberately separate from
+        # the stored `end_date` the module row carries, which a human may have
+        # typed and which no longer describes the run once a closure moves it.
+        module['effectiveEndDate'] = plan.get('finalEndDate') or ''
+        module['originalEndDate'] = plan.get('originalEndDate') or ''
+
+
 def assigned_group_coach(source, modules):
     """A different cohort's assigned module must not supply this learner's coach."""
     placement = [clean_text(getattr(source, key, '')).casefold() for key in ('programme', 'cohort', 'group')]
@@ -75,7 +158,8 @@ def find_contract(cursor, aptem_id):
     cursor.execute('''SELECT c.id,c.azure_path,c.training_plan_planned_hours,
         c.document_name AS original_name,
         coalesce(nullif(a.display_name,''),c.document_name) AS document_name,
-        c.date,c.fetched_at,c.fully_signed_date,c.raw AS extraction_metadata
+        c.date,c.fetched_at,c.fully_signed_date,c.raw AS extraction_metadata,
+        c.program_start_date,c.planned_end_date
         FROM fetching_evidence.aptem_cv_contracts_probe c
         LEFT JOIN "Audit".contract_document_archive a ON a.contract_id=c.id
         WHERE c.learner_id=%s
@@ -100,7 +184,9 @@ def contract_plan(source, contract):
         except Exception:
             log.warning('Training-plan contract could not be read for enrolment %s', source.pk)
             status = 'unavailable'
-    return {'months': months, 'contractStatus': status}
+    return {'months': months, 'contractStatus': status,
+            'programmeStartDate': date_only(contract.get('program_start_date')) if contract else None,
+            'programmeEndDate': date_only(contract.get('planned_end_date')) if contract else None}
 
 
 def read_dashboard(source, section=None):
@@ -112,9 +198,9 @@ def read_dashboard(source, section=None):
     actual, modules, sessions = [], [], []
     historical = None
     contract = None
-    profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first() if section != 'contract' else None
+    profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first() if section not in ('contract', 'learning') else None
     with connections['enrolment'].cursor() as cur:
-        if aptem_id:
+        if aptem_id and section != 'learning':
             cur.execute('''SELECT l.learner_email,l.coach_name,l.coach_email
                 FROM "Last_audit".learners l
                 WHERE l.aptem_id=%s''', [aptem_id])
@@ -122,19 +208,18 @@ def read_dashboard(source, section=None):
             if len(candidates) > 1 or (candidates and (not email or email != str(candidates[0]['learner_email'] or '').strip().casefold())):
                 raise LookupError('The training plan is not linked to this learner.')
             historical = candidates[0] if candidates else None
-            if section != 'overview':
+            if section not in ('overview', 'learning'):
                 contract = find_contract(cur, aptem_id)
         if section == 'contract':
             return contract_plan(source, contract)
-        if aptem_id:
+        if aptem_id and section != 'learning':
             cur.execute('''SELECT month,group_id,sum(actual_hours) AS hours,count(*) AS activity_count
                 FROM structured_manual_activities.manual_learner_activities
                 WHERE aptem_id=%s AND accepted IS TRUE AND deleted_at IS NULL
                 GROUP BY month,group_id ORDER BY month,group_id''', [aptem_id])
             actual = [{'month': row['month'], 'groupId': str(row['group_id']) if row['group_id'] is not None else None,
                        'hours': number(row['hours']) or 0, 'count': row['activity_count']} for row in rows(cur)]
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.pk])
-        refs = [f'current:{row[0]}' for row in cur.fetchall()]
+        refs = [f'current:{module_id}' for module_id in _effective_plan_ids(source, {})]
         if aptem_id and historical:
             cur.execute('''SELECT gl.group_id FROM "Last_audit".group_learners gl
                 JOIN "Last_audit".learners l ON l.learner_id=gl.learner_id WHERE l.aptem_id=%s''', [aptem_id])
@@ -142,51 +227,74 @@ def read_dashboard(source, section=None):
         _, links = _builder_subject_metadata(cur, refs)
         ids = sorted({item['id'] for item in links.values()})
         if ids:
+            # cohort_id is read so the curriculum scheduler can resolve this
+            # module's cohort holidays -- including the ones a delivery team
+            # unticked. It is not published to the learner.
             cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.description,m.start_date,m.end_date,m.tutor_name,
                 coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name,
                 m.programme_name,m.cohort_name,m.group_name,m.total_otjh,m.weeks_number,m.sessions_number,
+                m.cohort_id,
                 coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
                 coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
                 coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time
                 FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
                 WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [ids])
-            modules = [plan_module(row) for row in rows(cur)]
+            module_rows = rows(cur)
+            modules = [plan_module(row) for row in module_rows]
             by_id = {module['id']: module for module in modules}
-            cur.execute('''SELECT module_catalogue_id,learning_outcomes FROM curriculum.weeks
-                WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)
+            week_counts = defaultdict(int)
+            weeks_by_number = {}
+            cur.execute('''SELECT id,module_catalogue_id,week_number,title,learning_outcomes FROM curriculum.weeks
+                WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')
                 ORDER BY display_order,week_number,id''', [ids])
             for row in rows(cur):
+                week_counts[row['module_catalogue_id']] += 1
+                outcomes = [text for text in (clean_text(o) if isinstance(o, str) else '' for o in as_list(row['learning_outcomes'])) if text]
                 module = by_id.get(row['module_catalogue_id'])
                 if module is not None:
-                    for outcome in as_list(row['learning_outcomes']):
-                        text = clean_text(outcome) if isinstance(outcome, str) else ''
-                        if text and text not in module['learning_outcomes']:
+                    for text in outcomes:
+                        if text not in module['learning_outcomes']:
                             module['learning_outcomes'].append(text)
-            cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
-                s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.repeat_pattern,s.status AS series_status,
-                o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url,o.status,
-                CASE WHEN o.attendance_report_id IS NULL OR o.attendance_report_id='' THEN NULL
-                     ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
-                         WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
-                FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
-                WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
-                  AND (o.id IS NULL OR lower(o.status) NOT IN ('cancelled','deleted','failed','superseded'))
-                ORDER BY coalesce(o.scheduled_start,s.start_datetime)''', [email, ids])
-            for row in rows(cur):
-                # Recurring dates come from actual occurrences; never manufacture them.
-                if not row['occurrence_id'] and row['repeat_pattern'] not in ('none', '', None):
-                    continue
-                start = row['scheduled_start'] or row['start_datetime']
-                if not start:
-                    continue
-                sessions.append(plan_session(row))
+                # The first authored week at a given number wins, matching the
+                # display order the module-level aggregate above already reads in.
+                key = (row['module_catalogue_id'], row['week_number'])
+                if key not in weeks_by_number:
+                    weeks_by_number[key] = {'id': row['id'], 'title': clean_text(row['title']), 'learningOutcomes': outcomes}
+            attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number)
+            if section != 'learning':
+                cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
+                    s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.repeat_pattern,s.status AS series_status,
+                    o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url,o.status,
+                    CASE WHEN o.attendance_report_id IS NULL OR o.attendance_report_id='' THEN NULL
+                         ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
+                             WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
+                    FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
+                    WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
+                      AND (o.id IS NULL OR lower(o.status) NOT IN ('cancelled','deleted','failed','superseded'))
+                    ORDER BY coalesce(o.scheduled_start,s.start_datetime)''', [email, ids])
+                for row in rows(cur):
+                    # Recurring dates come from actual occurrences; never manufacture them.
+                    if not row['occurrence_id'] and row['repeat_pattern'] not in ('none', '', None):
+                        continue
+                    start = row['scheduled_start'] or row['start_datetime']
+                    if not start:
+                        continue
+                    sessions.append(plan_session(row))
+    if section == 'learning':
+        return {
+            'modules': modules,
+            'moduleLinks': links,
+            'generatedAt': datetime.now(timezone.utc).isoformat(),
+        }
     # The overview must never wait for an Azure PDF download. Older clients
     # still receive the complete response when no section was requested.
-    contract_data = ({'months': {}, 'contractStatus': 'loading'} if section == 'overview'
+    contract_data = ({'months': {}, 'contractStatus': 'loading',
+                      'programmeStartDate': None, 'programmeEndDate': None} if section == 'overview'
                      else contract_plan(source, contract))
-    coach_name = ((getattr(profile, 'coach_name', '') if profile else '')
-                  or (historical or {}).get('coach_name') or assigned_group_coach(source, modules))
-    coach_email = (getattr(profile, 'coach_email', '') if profile else '') or (historical or {}).get('coach_email') or ''
+    contact = current_coach(source, profile, historical)
+    coach_name, coach_email = contact['coach_name'], contact['coach_email']
+    if not coach_name and not coach_email and source_coach(source) is None:
+        coach_name = assigned_group_coach(source, modules)
     from .calendar import coaching_events_for_learner
     # Use the same active programme cycle as the calendar booking destination.
     active_profile = profile if profile and profile.lifecycle_status == 'active' else None
@@ -211,7 +319,10 @@ def training_plan_dashboard(request, kind, pk):
     try:
         source = model.all_learners.get(pk=pk)
         section = request.GET.get('section')
-        if section not in (None, 'overview', 'contract'):
+        # ``learning`` is the detailed weekly dashboard projection.  Keep it
+        # on the same read path as overview so clients can request the weekly
+        # modules/sessions without being rejected by the section guard.
+        if section not in (None, 'overview', 'learning', 'contract'):
             return JsonResponse({'error': 'Invalid training plan section.'}, status=400)
         payload = read_dashboard(source, section=section)
     except model.DoesNotExist:

@@ -37,6 +37,27 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   fetchCurriculumModuleKsbCoverage: (...args: unknown[]) => fetchCurriculumModuleKsbCoverage(...(args as [])),
   previewModuleSessionPlan: vi.fn(async () => ({ sessions: [], finalEndDate: '', warnings: [] })),
+  fetchCurriculumHolidays: vi.fn(async () => [
+    { id: 'england-and-wales:2026-12-25', label: 'Christmas Day', startDate: '2026-12-25', endDate: '2026-12-25', type: 'Bank holiday', color: '#91d64c', source: 'gov.uk' },
+  ]),
+  // The Holidays page reads the same table in its own raw shape. Inlined
+  // because vi.mock is hoisted above every const in this file.
+  fetchEnglandHolidays: vi.fn(async () => [
+    { id: 'england-and-wales:2026-12-25', division: 'england-and-wales', title: 'Christmas Day', date: '2026-12-25', notes: '', bunting: true, fetchedAt: '2026-09-13T10:00:00' },
+  ]),
+  // The page reads the record of GOV.UK checks beside the dates themselves.
+  // Nothing has changed here, which is the ordinary case.
+  fetchEnglandHolidaySyncs: vi.fn(async () => ({
+    status: {
+      autoSync: true,
+      intervalHours: 24,
+      lastCheckedAt: '2026-09-13T10:00:00',
+      lastSuccessAt: '2026-09-13T10:00:00',
+      nextCheckDueAt: '2026-09-14T10:00:00',
+      source: 'https://www.gov.uk/bank-holidays.json',
+    },
+    results: [],
+  })),
 }));
 
 // The module workspace pulls its authored structure and Teams artifacts from the
@@ -106,9 +127,12 @@ const modules = [
   },
 ] as unknown as CurriculumModule[];
 
+// England's bank holidays in the shape `/curriculum/holidays/` serves them:
+// one day each, so start and end are the same date.
 const holidays = [
-  { id: '1', label: 'Christmas closure', startDate: '2026-12-24', endDate: '2027-01-02', type: 'Christmas' },
+  { id: 'england-and-wales:2026-12-25', label: 'Christmas Day', startDate: '2026-12-25', endDate: '2026-12-25', type: 'Bank holiday', color: '#91d64c' },
 ] as CurriculumHoliday[];
+
 
 vi.mock('@/hooks/useCurriculumEntities', () => ({
   useCurriculumEntities: () => ({
@@ -155,10 +179,12 @@ describe('entity pages render', () => {
     expect(within(table).getByText('Sept 2026')).toBeInTheDocument();
   });
 
-  it('Holidays lists a holiday and the cohorts that selected it', async () => {
-    await renderAt(() => import('../../../holidays/page'), '/curriculum/holidays', '/curriculum/holidays');
-    expect(await screen.findByText('Christmas closure')).toBeInTheDocument();
-    expect(screen.getByText('Sept 2026')).toBeInTheDocument();
+  it('Bank Holidays lists the holidays the calendar is built on', async () => {
+    await renderAt(() => import('../../../england-holidays/page'), '/curriculum/england-holidays', '/curriculum/england-holidays');
+    // Twice over: the table row, and the "next holiday" stat above it.
+    expect(await screen.findAllByText('Christmas Day')).not.toHaveLength(0);
+    expect(screen.getByText('GOV.UK')).toBeInTheDocument();
+    expect(screen.getByText(/Showing 1 of 1 holidays/)).toBeInTheDocument();
   });
 
   it('Cohort workspace shows the cohort and its context', async () => {
