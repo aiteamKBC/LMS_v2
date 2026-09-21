@@ -412,6 +412,9 @@ describe('Dashboard training plan controls', () => {
     expect(chart.getByRole('button', { name: 'August 2026: target 44 hours, submitted 2 hours, completed 15 hours' })).toBeVisible();
     expect(chart.getByRole('button', { name: 'September 2026: target 18 hours, submitted 4 hours, completed 12 hours' })).toBeVisible();
     expect(chart.getByText(/35h completed.*7h submitted/)).toBeVisible();
+    const focus = within(screen.getByRole('region', { name: 'Monthly study plan' }));
+    expect(within(focus.getByRole('region', { name: 'Progress this month' }))
+      .getByText('Achieved hours').nextElementSibling).toHaveTextContent('12 hrs');
   });
 
   it('starts at the programme start month and excludes earlier monthly logs', () => {
