@@ -13,6 +13,8 @@ import {
   type EvidenceTrainingPlanDetails,
 } from '@/api/evidence';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
+import { AssignmentAttemptHistory } from '@/components/feature/AssignmentAttemptHistory';
+import type { SubmissionAttempt } from '@/api/assignmentAttempts';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { checkMonthlyAssignment, emptyMonthlyAssignment, MONTHLY_STEPS, type MonthlyAssignment, type AssignmentQualityCheck } from '@/api/monthlyAssignment';
 import { AssignmentAiCheckContext } from './AssignmentAiCheckContext';
@@ -142,6 +144,7 @@ export function AssignmentSubmissionWizard({
   const [savedTimeSeconds, setSavedTimeSeconds] = useState<number | null>(null);
   const [recoveredDraft, setRecoveredDraft] = useState(false);
   const [status, setStatus] = useState('');
+  const [submissionAttempts, setSubmissionAttempts] = useState<SubmissionAttempt[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
@@ -280,6 +283,7 @@ export function AssignmentSubmissionWizard({
           businessImpact: submission.businessImpact || submission.benefitExplanation || '',
         });
         setStatus(submission.status || '');
+        setSubmissionAttempts(submission.submissionAttempts || []);
         setImported(['imported_legacy', 'classified_legacy'].includes(submission.submissionOrigin || ''));
         if (submission.monthlyAssignment) {
           const restored = { ...emptyMonthlyAssignment(ksbMappingsRef.current.map(m => m.code), defaultMonth), ...submission.monthlyAssignment, timeEntries: submission.monthlyAssignment.timeEntries };
@@ -320,6 +324,7 @@ export function AssignmentSubmissionWizard({
       const result = await request;
       if (version !== saveVersionRef.current || !mountedRef.current) return true;
       setStatus(result.status || 'draft');
+      if (result.submissionAttempts) setSubmissionAttempts(result.submissionAttempts);
       setDraftSaved(true);
       setRecoveredDraft(false);
       try {
@@ -427,6 +432,12 @@ export function AssignmentSubmissionWizard({
       setSavedTimeSeconds(claimedSeconds);
       await onSubmitProgress(answers);
       setStatus('submitted_for_tutor_review');
+      try {
+        const saved = await loadLearningReflectionSubmission({ learnerKind: kind, learnerId, activityType: 'assignment', activityId: componentId });
+        if (mountedRef.current && saved?.submissionAttempts) setSubmissionAttempts(saved.submissionAttempts);
+      } catch {
+        setSaveError('Your assignment was submitted. Reload to refresh the submission history.');
+      }
       try { sessionStorage.removeItem(recoveryKey); } catch { /* Optional recovery copy. */ }
       setPreviewOpen(true);
     } catch (error) {
@@ -466,6 +477,7 @@ export function AssignmentSubmissionWizard({
 
   return (
     <AssignmentAiCheckContext.Provider value={{ learnerId, learnerKind: kind, enabled: !readOnly }}>
+      <AssignmentAttemptHistory attempts={submissionAttempts} />
       <section ref={wizardRef} className="overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm">
         <div className="border-b border-slate-200 bg-sky-50/50 px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">

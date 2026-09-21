@@ -30,6 +30,26 @@ beforeEach(() => {
 });
 
 describe('Adding multiple weeks from a template', () => {
+  it('filters templates by week number, title, or component count', async () => {
+    vi.mocked(fetchWeekTemplates).mockResolvedValue([
+      { ...template(), id: 'TEMPLATE-12', title: 'MSP Week 12: Designing outcomes', componentCount: 11 },
+      { ...template(), id: 'TEMPLATE-8', title: 'MSP Week 08: Knowledge', componentCount: 8 },
+    ]);
+    render(<WeekTemplateImportModal scope={{ programmeId: '', programmeName: '' }} onClose={vi.fn()} onImport={vi.fn()}/>);
+
+    const search = await screen.findByRole('searchbox', { name: 'Search week templates' });
+    fireEvent.change(search, { target: { value: 'week 12' } });
+    expect(screen.getByRole('button', { name: /MSP Week 12/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /MSP Week 08/ })).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: '8' } });
+    expect(screen.getByRole('button', { name: /MSP Week 08/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /MSP Week 12/ })).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: 'not found' } });
+    expect(screen.getByText('No week templates match that search.')).toBeInTheDocument();
+  });
+
   it('uses the quantity selected with the stepper when importing', async () => {
     const onImport = vi.fn();
     render(<WeekTemplateImportModal scope={{ programmeId: 'PROG-1', programmeName: 'Programme' }} onClose={vi.fn()} onImport={onImport}/>);

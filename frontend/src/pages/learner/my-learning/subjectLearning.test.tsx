@@ -26,6 +26,51 @@ const material = { title: 'First reading', reading_html: '', media: [{ kind: 'em
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('shared subject and week selection', () => {
+  it('shows the tutor, module dates and session count from the training plan in list view', () => {
+    const schedule = {
+      modules: [module('M1', '2026-09-01', '2026-12-18', { title: 'Leadership programme module', tutor_name: 'Tutor 2', sessions_number: 8 })],
+      moduleLinks: { 'legacy:1': { id: 'M1', title: 'Leadership' } },
+    } as unknown as TrainingPlanDashboard;
+    render(<MemoryRouter><StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} schedule={schedule} /></MemoryRouter>);
+
+    const layoutGroup = screen.getByRole('group', { name: 'Subject layout' });
+    expect(within(layoutGroup).getAllByRole('button').map(button => button.textContent)).toEqual(['List', 'Grid']);
+    expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+    const details = screen.getByText('Tutor 2').closest('dl')!;
+    expect(within(details).getByText('Tutor')).toBeVisible();
+    expect(within(details).getByText('Tutor 2')).toBeVisible();
+    expect(within(details).queryByText('Module')).not.toBeInTheDocument();
+    expect(within(details).getByText('1 Sept 2026')).toBeVisible();
+    expect(within(details).getByText('18 Dec 2026')).toBeVisible();
+    expect(within(details).getByText('8 sessions')).toBeVisible();
+  });
+
+  it('orders list and grid cards by module start date with undated modules last', () => {
+    const laterActivity = { ...data.activities[0], activity_id: 'la:1:1', group_id: 1, group_name: 'Later module' };
+    const earlierActivity = { ...data.activities[0], activity_id: 'la:2:1', group_id: 2, group_name: 'Earlier module' };
+    const undatedActivity = { ...data.activities[0], activity_id: 'la:3:1', group_id: 3, group_name: 'Undated module' };
+    const schedule = {
+      modules: [
+        module('M1', '2026-10-01', '2026-10-31'),
+        module('M2', '2026-09-01', '2026-09-30'),
+        module('M3', null, null),
+      ],
+      moduleLinks: {
+        'legacy:1': { id: 'M1', title: 'Later module' },
+        'legacy:2': { id: 'M2', title: 'Earlier module' },
+        'legacy:3': { id: 'M3', title: 'Undated module' },
+      },
+    } as unknown as TrainingPlanDashboard;
+    render(<MemoryRouter><StudentActivityPanel data={{ ...data, activities: [laterActivity, undatedActivity, earlierActivity] }} loading={false} error={null} onRetry={vi.fn()} schedule={schedule} /></MemoryRouter>);
+
+    const cardTitles = () => screen.getAllByRole('heading', { level: 3 }).map(heading => heading.textContent);
+    expect(screen.getByRole('combobox', { name: 'Sort by' })).toHaveValue('start');
+    expect(cardTitles()).toEqual(['Earlier module', 'Later module', 'Undated module']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+    expect(cardTitles()).toEqual(['Earlier module', 'Later module', 'Undated module']);
+  });
+
   it('recommends current, then next dated, then any incomplete subject', () => {
     const current: Subject = { id: 'current:M1', title: 'Current', source: 'current', activities: [entry('current', '2026-09-10', true)] };
     const next: Subject = { id: 'current:M2', title: 'Next', source: 'current', activities: [entry('next', '2026-10-10')] };
@@ -389,6 +434,9 @@ describe('map and My Learning navigation', () => {
     expect(screen.queryByRole('button', { name: /Open subject/ })).not.toBeInTheDocument();
     expect(within(screen.getByText('Total activities').parentElement!).getByText('2')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+    expect(screen.getByRole('button', { name: 'Grid' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
     expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: /Open subject/ })).toBeVisible();

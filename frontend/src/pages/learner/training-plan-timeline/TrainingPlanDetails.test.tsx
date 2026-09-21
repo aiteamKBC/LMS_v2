@@ -66,10 +66,10 @@ function Destination() {
   return <output data-testid="destination">{route.pathname}{route.search}{route.hash}</output>;
 }
 
-function renderBoard(data = fixture(), planSubjects: (Subject | PlanSubjectSummary)[] = subjects, onRefresh = vi.fn(), programmeStartDate?: string, programmeEndDate?: string) {
+function renderBoard(data = fixture(), planSubjects: (Subject | PlanSubjectSummary)[] = subjects, onRefresh = vi.fn(), programmeStartDate?: string, programmeEndDate?: string, activityOverviewOnly = false) {
   return render(<MemoryRouter initialEntries={['/plan']}><Routes>
     <Route path="/plan" element={<TrainingPlanDetails data={data} subjects={planSubjects} kind="commercial" learnerId="125"
-      onRefresh={onRefresh} onRetryContract={onRefresh} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} />} />
+      onRefresh={onRefresh} onRetryContract={onRefresh} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} activityOverviewOnly={activityOverviewOnly} />} />
     <Route path="*" element={<Destination />} />
   </Routes></MemoryRouter>);
 }
@@ -88,6 +88,65 @@ afterEach(() => {
 });
 
 describe('Dashboard training plan controls', () => {
+  it('shows the monthly activity and three progress charts without the timeline in activity overview mode', () => {
+    renderBoard(fixture(), summarySubjects, vi.fn(), undefined, undefined, true);
+
+    expect(screen.getByRole('region', { name: 'Monthly study plan' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Module progress' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Off-the-job hours by month' })).toBeVisible();
+    expect(screen.queryByText('Your training plan')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Module timeline' })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Monthly study plan' }).parentElement).toHaveAttribute('data-layout', 'split');
+  });
+
+  it('keeps the weekly learning plan visible in activity overview mode', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly
+      weeklyFocus={<section aria-label="Weekly learning plan">Weekly learning plan</section>} /></MemoryRouter>);
+
+    const monthlyPlan = screen.getByRole('region', { name: 'Monthly study plan' });
+    const leftColumn = monthlyPlan.parentElement?.firstElementChild as HTMLElement;
+    expect(within(leftColumn).getByRole('region', { name: 'Weekly learning plan' })).toBeVisible();
+    expect(within(leftColumn).getByRole('region', { name: 'Module progress' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Learner progress charts' })).not.toBeInTheDocument();
+  });
+
+  it('renders only the shared module timeline when embedded in the coach learning plan', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} timelineOnly /></MemoryRouter>);
+
+    expect(screen.getByRole('region', { name: 'Module timeline' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Monthly study plan' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Whole programme progress' })).not.toBeInTheDocument();
+  });
+
+  it('combines all learner modules in the coach whole-programme chart', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly programmeSnapshot={{
+        overall: 28, otjhActual: 22.5, otjhTarget: 80.4, ksb: 6, attendancePresent: 0, attendanceTotal: 4,
+      }} /></MemoryRouter>);
+    const chart = within(screen.getByRole('region', { name: 'Whole programme progress' }));
+    expect(chart.getByText('0 / 4 sessions attended')).toBeVisible();
+    expect(chart.getByText('3 / 7 completed across all modules')).toBeVisible();
+    expect(chart.getByText('22.5 / 80.4 hours')).toBeVisible();
+    expect(chart.getByText('1 / 4 completed across the programme')).toBeVisible();
+    expect(chart.getByText('Overall', { selector: 'dt' }).parentElement).toHaveTextContent('28%');
+    expect(screen.queryByRole('region', { name: 'Module progress' })).not.toBeInTheDocument();
+  });
+
+  it('renders programme modules as selectable cards with a visible progress track', () => {
+    renderBoard(fixture(), summarySubjects, vi.fn(), undefined, undefined, true);
+    const programme = within(screen.getByRole('region', { name: 'Programme module progress' }));
+    const marketing = programme.getByRole('button', { name: 'Marketing: 39.29% overall progress' });
+    const directSpans = marketing.querySelectorAll(':scope > span');
+    expect(directSpans).toHaveLength(3);
+    expect(directSpans[0]).toHaveTextContent('Marketing39.29%');
+    expect(directSpans[1].firstElementChild).toHaveStyle({ width: '39.29%' });
+    expect(directSpans[2]).toHaveTextContent('3 of 5 measures available');
+    expect(marketing).toHaveAttribute('aria-pressed', 'true');
+  });
+
   it('renders the reference monthly layout with dynamic progress, reviews, assignments and lectures', () => {
     renderBoard(fixture(), summarySubjects);
     const panel = within(screen.getByRole('region', { name: 'Monthly study plan' }));
@@ -203,6 +262,11 @@ describe('Dashboard training plan controls', () => {
       coach_name: 'Module coach', learning_outcomes: ['Plan a campaign', 'Measure campaign results'] };
     renderBoard(data, summarySubjects);
     const panel = within(screen.getByRole('region', { name: 'Module overview' }));
+    expect(panel.getByRole('heading', { name: 'Staff' })).toBeVisible();
+    expect(panel.queryByRole('heading', { name: 'People' })).not.toBeInTheDocument();
+    expect(panel.getByRole('progressbar', { name: 'Study hours progress' })).toHaveAttribute('aria-valuenow', '5');
+    expect(panel.queryByText('Module training plan')).not.toBeInTheDocument();
+    expect(panel.queryByText('Accepted study hours')).not.toBeInTheDocument();
     for (const value of ['140 hours', 'Cohort: October 2026', 'Group: G1', 'Marketing Level 4', 'Module coach', 'Assigned tutor']) {
       expect(panel.getByText(value)).toBeVisible();
     }
@@ -301,6 +365,75 @@ describe('Dashboard training plan controls', () => {
     expect(chart.queryByText('N/A')).not.toBeInTheDocument();
   });
 
+  it('uses the combined OTJH target from every module that defines one', () => {
+    const data = fixture();
+    data.requiredOtjh = 999;
+    data.modules = [
+      { ...data.modules[0], total_otjh: 30 },
+      { ...data.modules[1], total_otjh: 50 },
+      { id: 'NO-OTJH', title: 'No OTJH', description: '', start_date: null, end_date: null, tutor_name: '', coach_name: '', total_otjh: null },
+    ];
+    data.monthlyOtjh = {
+      '2026-09': { planned: 30, submitted: 4, actual: 20, missingPlannedActivities: 0 },
+      '2026-10': { planned: 50, submitted: 6, actual: 20, missingPlannedActivities: 0 },
+    };
+    data.actual = [];
+
+    renderBoard(data, summarySubjects);
+
+    expect(within(screen.getByRole('region', { name: 'Off-the-job hours by month' }))
+      .getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '50');
+  });
+
+  it('uses Audit OTJH through August 2026 and LMS calculations from September', () => {
+    const data = fixture();
+    data.months = {
+      '2026-07': { label: '', topics: [], planned: 70, source: 'contract' },
+      '2026-08': { label: '', topics: [], planned: 80, source: 'contract' },
+      '2026-09': { label: '', topics: [], planned: 18, source: 'contract' },
+    };
+    data.auditOtjhCutoffMonth = '2026-08';
+    data.monthlyLogOtjh = {
+      '2026-07': { target: 10, submitted: 1, completed: 8 },
+      '2026-08': { target: 44, submitted: 2, completed: 15 },
+      '2026-09': { target: 18, submitted: 4, completed: 12 },
+    };
+    data.monthlyOtjh = {
+      '2026-08': { planned: 80, submitted: 30, actual: 40, missingPlannedActivities: 0 },
+      '2026-09': { planned: 18, submitted: 3, actual: 7, missingPlannedActivities: 0 },
+    };
+    data.actual = [
+      { month: '2026-08', groupId: null, hours: 99, count: 1 },
+      { month: '2026-09', groupId: null, hours: 4, count: 1 },
+    ];
+    renderBoard(data, summarySubjects, vi.fn(), '2026-07-01', '2026-09-30');
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.getByRole('button', { name: 'July 2026: target 10 hours, submitted 1 hours, completed 8 hours' })).toBeVisible();
+    expect(chart.getByRole('button', { name: 'August 2026: target 44 hours, submitted 2 hours, completed 15 hours' })).toBeVisible();
+    expect(chart.getByRole('button', { name: 'September 2026: target 18 hours, submitted 4 hours, completed 12 hours' })).toBeVisible();
+    expect(chart.getByText(/35h completed.*7h submitted/)).toBeVisible();
+  });
+
+  it('starts at the programme start month and excludes earlier monthly logs', () => {
+    const data = fixture();
+    data.months = {
+      '2026-02': { label: '', topics: [], planned: 20, source: 'contract' },
+      '2026-03': { label: '', topics: [], planned: 20, source: 'contract' },
+    };
+    data.auditOtjhCutoffMonth = '2026-08';
+    data.monthlyLogOtjh = {
+      '2026-01': { target: 12, submitted: 1, completed: 9 },
+    };
+    data.monthlyOtjh = {};
+    data.actual = [];
+    renderBoard(data, summarySubjects, vi.fn(), '2026-02-01', '2026-03-31');
+
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.queryByRole('button', { name: /January 2026:/ })).not.toBeInTheDocument();
+    expect(chart.getByRole('button', { name: /February 2026:/ })).toBeVisible();
+    expect(chart.getByRole('button', { name: /March 2026:/ })).toBeVisible();
+  });
+
   it('includes every month through the programme end date', () => {
     const data = fixture();
     data.monthlyOtjh = {
@@ -310,6 +443,9 @@ describe('Dashboard training plan controls', () => {
     data.actual = [];
     renderBoard(data, summarySubjects, vi.fn(), '2026-08-01', '2027-04-30');
     const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    const horizontalScroll = chart.getByRole('region', { name: /scroll horizontally to view more months/i });
+    expect(horizontalScroll).toHaveAttribute('tabindex', '0');
+    expect(horizontalScroll.firstElementChild).toHaveStyle({ minWidth: '38.25rem' });
     const months = chart.getAllByRole('button');
     expect(months).toHaveLength(9);
     expect(months[0]).toHaveAccessibleName(/August 2026:/);

@@ -124,13 +124,17 @@ it('retains enrolment navigation for a non-admin opening the shared directory', 
 
 it('keeps an administrator in the selected coach workspace', () => {
   viewer.isAdmin = true;
-  const { sidebar } = showWorkspace('coach', '/workspace/coach');
+  const { sidebar, rail } = showWorkspace('coach', '/workspace/coach');
   expect(sidebar.closest('.workspace-shell')).toHaveAttribute('data-workspace-role', 'coach');
+  expect(within(rail).getAllByRole('link').slice(0, 3).map(link => link.textContent)).toEqual(['Dashboard', 'Attendance', 'Marking']);
+  expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
+  expect(within(rail).getByRole('link', { name: 'Marking' })).toHaveAttribute('href', '/coach/marking-queue');
+  expect(within(rail).getByRole('link', { name: 'Absence Reports' })).toHaveAttribute('href', '/coach/absence-reports');
+  expect(within(rail).getByRole('link', { name: 'Marking' }).querySelector('svg')).not.toBeNull();
 });
 
 it.each([
   ['admin', '/workspace/admin'],
-  ['coach', '/workspace/coach'],
   ['apprentice', '/users'],
   ['engagement', '/workspace/engagement'],
   ['tutor', '/workspace/tutor'],
@@ -155,6 +159,27 @@ it.each([
 describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
   it('reserves the chosen navigation width and supports manual collapse', () => {
     const { sidebar, shell, panel } = showWorkspace(role);
+    if (role === 'coach') {
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
+      expect(panel).toBeNull();
+      expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+      fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse coach sidebar' }));
+      expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('76px');
+      expect(localStorage.getItem('kbc_coach_sidebar_collapsed')).toBe('true');
+      const group = roleNavMap.coach.items.find(item => item.children?.length)!;
+      const toggle = within(sidebar).getByRole('button', { name: group.label });
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      fireEvent.click(toggle);
+      expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      expect(within(sidebar).getByRole('link', { name: group.children![0].label })).toBeVisible();
+      fireEvent.click(toggle);
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
+      return;
+    }
     expect(sidebar.style.width).toBe('88px');
     expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('112px');
     if (role === 'learner') expect(panel).toBeNull();
@@ -181,6 +206,13 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
     const item = config.items.find(item => item.children?.length) || config.items[0];
     const destination = item.children?.[0] || item;
     const { sidebar, rail, panel } = showWorkspace(role, destination.href);
+    if (role === 'coach') {
+      const link = within(rail).getByRole('link', { name: destination.label });
+      expect(link).toHaveAttribute('aria-current', 'page');
+      fireEvent.click(link);
+      expect(screen.getByTestId('route')).toHaveTextContent(destination.href!);
+      return;
+    }
     fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
     const link = within(role === 'learner' ? rail : panel).getAllByRole('link').find(link => link.getAttribute('href') === destination.href)!;
     expect(link).toHaveAttribute('aria-current', 'page');
@@ -198,18 +230,21 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
     expect(drawer).not.toHaveAttribute('inert');
     fireEvent.click(within(drawer).getAllByRole('link')[0]);
     expect(drawer).toHaveAttribute('inert');
-    expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('112px');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe(role === 'coach' ? '240px' : '112px');
   });
 });
 
 it('filters restricted groups and children in non-admin workspaces', () => {
-  const groups = roleNavMap.coach.items.filter(item => (item.children?.length ?? 0) > 1);
+  const groups: SidebarNavItem[] = [
+    { id: 'restricted-group', label: 'Restricted group', icon: 'ri-lock-line', children: [{ id: 'restricted-page', label: 'Restricted page', icon: 'ri-lock-line', href: '/restricted' }] },
+    { id: 'visible-group', label: 'Visible group', icon: 'ri-folder-line', children: [{ id: 'restricted-child', label: 'Restricted child', icon: 'ri-file-line', href: '/restricted-child' }] },
+  ];
   denied.add(groups[0].id);
   denied.add(groups[1].children![0].id);
-  const { rail, panel } = showWorkspace('coach');
+  const { rail } = showWorkspace('coach', undefined, groups);
   expect(within(rail).queryByRole('button', { name: groups[0].label })).toBeNull();
-  fireEvent.click(within(rail).getByRole('button', { name: groups[1].label }));
-  expect(within(panel).getAllByRole('link').some(link => link.getAttribute('href') === groups[1].children![0].href)).toBe(false);
+  expect(within(rail).queryByRole('button', { name: groups[1].label })).toBeNull();
+  expect(within(rail).queryAllByRole('link').some(link => link.getAttribute('href') === groups[1].children![0].href)).toBe(false);
 });
 
 it.each([false, true])('navigates directly to a standalone page without opening a subsidebar (already open: %s)', open => {
@@ -228,6 +263,44 @@ it.each([false, true])('navigates directly to a standalone page without opening 
   expect(panel).toHaveAttribute('inert');
   expect(sidebar.style.width).toBe('88px');
   expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('112px');
+});
+
+it('keeps every permitted coach destination in the labelled sidebar for an administrator', () => {
+  viewer.isAdmin = true;
+  const { sidebar, rail, shell } = showWorkspace('coach', '/workspace/coach');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
+  for (const item of roleNavMap.coach.items) {
+    if (item.children?.length) {
+      const toggle = within(rail).getByRole('button', { name: item.label });
+      fireEvent.click(toggle);
+      for (const child of item.children) expect(within(rail).getByRole('link', { name: child.label })).toHaveAttribute('href', child.href);
+    } else expect(within(rail).getByRole('link', { name: item.label })).toHaveAttribute('href', item.href);
+  }
+  fireEvent.mouseLeave(sidebar);
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
+});
+
+it.each(['/workspace/coach', '/coach/monthly-coaching'])('opens the restored MCM list while retaining Meetings from %s', initialPath => {
+  const { rail } = showWorkspace('coach', initialPath);
+  const group = within(rail).getByRole('button', { name: 'Meetings' });
+  expect(group).toHaveAttribute('aria-expanded', String(initialPath === '/coach/monthly-coaching'));
+  if (initialPath !== '/coach/monthly-coaching') fireEvent.click(group);
+  const mcm = within(rail).getByRole('link', { name: 'Monthly Coaching Meeting' });
+  expect(mcm.querySelector('svg')).not.toBeNull();
+  expect(mcm).toHaveAttribute('href', '/coach/monthly-coaching');
+  fireEvent.click(mcm);
+  expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
+  expect(mcm).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
+});
+
+it('honours the MCM navigation restriction without hiding Meetings', () => {
+  denied.add('coach-monthly-coaching');
+  const { rail } = showWorkspace('coach', '/coach/monthly-coaching');
+  fireEvent.click(within(rail).getByRole('button', { name: 'Meetings' }));
+  expect(within(rail).queryByRole('link', { name: 'Monthly Coaching Meeting' })).toBeNull();
+  expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
 });
 
 it('shows Quality without an availability tag in either sidebar mode', () => {

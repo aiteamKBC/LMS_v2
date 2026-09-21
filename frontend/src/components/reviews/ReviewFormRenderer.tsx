@@ -29,6 +29,8 @@ interface ReviewFormRendererProps {
   readOnly?: boolean;
   openSectionId: string;
   onOpenSectionChange: (sectionId: string) => void;
+  variant?: 'accordion' | 'steps';
+  stepOffset?: number;
 }
 
 function fieldAnswered(field: ReviewFieldDefinition, answers: Record<string, unknown>) {
@@ -44,12 +46,143 @@ function sectionRequiredFields(section: ReviewSectionDefinition) {
 }
 
 export function ReviewFormRenderer({
-  sections, answers, onAnswerChange, errors, readOnly, openSectionId, onOpenSectionChange,
+  sections,
+  answers,
+  onAnswerChange,
+  errors,
+  readOnly,
+  openSectionId,
+  onOpenSectionChange,
+  variant = 'accordion',
+  stepOffset = 0,
 }: ReviewFormRendererProps) {
   const enabledSections = sections
     .filter((section) => section.enabled)
     .slice()
     .sort((a, b) => a.displayOrder - b.displayOrder);
+
+  if (variant === 'steps') {
+    const activeIndex = Math.max(0, enabledSections.findIndex(section => section.id === openSectionId));
+    const activeSection = enabledSections[activeIndex];
+    const totalSteps = enabledSections.length + stepOffset;
+
+    if (!activeSection) return null;
+
+    return (
+      <div className="grid items-start gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
+        <nav aria-label="Review steps" className="rounded-2xl border border-background-200 bg-white p-3 lg:sticky lg:top-4">
+          <ol className="space-y-1.5">
+            {Array.from({ length: stepOffset }, (_, index) => (
+              <li key={`completed-step-${index + 1}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-foreground-500">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                  <AppIcon className="ri-check-line"></AppIcon>
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[11px] font-bold uppercase tracking-[0.1em]">Step {index + 1}</span>
+                  <span className="block truncate text-xs font-semibold">{index === 0 ? 'Review selected' : 'Details confirmed'}</span>
+                </span>
+              </li>
+            ))}
+            {enabledSections.map((section, sectionIndex) => {
+              const selected = section.id === activeSection.id;
+              const complete = computeMissingRequiredFields([section], answers).size === 0;
+              const stepNumber = sectionIndex + stepOffset + 1;
+              return (
+                <li key={section.id}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenSectionChange(section.id)}
+                    aria-current={selected ? 'step' : undefined}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition',
+                      selected ? 'bg-primary-50 text-primary-900 ring-1 ring-primary-200' : 'text-foreground-600 hover:bg-background-100',
+                    )}
+                  >
+                    <span className={cn(
+                      'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-xs font-bold',
+                      selected
+                        ? 'border-primary-600 bg-primary-600 text-white'
+                        : complete
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : 'border-background-300 bg-white text-foreground-500',
+                    )}>
+                      {complete && !selected ? <AppIcon className="ri-check-line"></AppIcon> : stepNumber}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] font-bold uppercase tracking-[0.1em]">Step {stepNumber}</span>
+                      <span className="mt-0.5 block text-xs font-semibold leading-4">{section.title}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
+
+        <section className="overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm" aria-labelledby={`review-step-${activeSection.id}`}>
+          <header className="border-b border-primary-100 bg-primary-50/70 px-5 py-4 sm:px-6">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-sm font-bold text-white">
+                {activeIndex + stepOffset + 1}
+              </span>
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary-600">
+                  Step {activeIndex + stepOffset + 1} of {totalSteps}
+                </p>
+                <h2 id={`review-step-${activeSection.id}`} className="mt-1 text-base font-bold text-foreground-950">
+                  {activeSection.title}
+                </h2>
+                {activeSection.estimatedMinutes ? <p className="mt-1 text-xs text-foreground-500">About {activeSection.estimatedMinutes} minutes</p> : null}
+              </div>
+            </div>
+          </header>
+
+          <div className="space-y-3 p-4 sm:p-6">
+            {activeSection.fields
+              .slice()
+              .sort((a, b) => a.displayOrder - b.displayOrder)
+              .map((field, fieldIndex) => (
+                <ReviewFieldControl
+                  key={field.id}
+                  field={field}
+                  index={fieldIndex}
+                  answers={answers}
+                  onAnswerChange={onAnswerChange}
+                  errors={errors}
+                  readOnly={readOnly}
+                />
+              ))}
+          </div>
+
+          {enabledSections.length > 1 ? (
+            <footer className="flex items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-4 py-3 sm:px-6">
+              <button
+                type="button"
+                onClick={() => onOpenSectionChange(enabledSections[activeIndex - 1].id)}
+                disabled={activeIndex === 0}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-foreground-600 transition hover:bg-background-100 disabled:invisible"
+              >
+                <AppIcon className="ri-arrow-left-line"></AppIcon>Previous
+              </button>
+              {activeIndex < enabledSections.length - 1 ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenSectionChange(enabledSections[activeIndex + 1].id)}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-xs font-bold text-white transition hover:bg-primary-700"
+                >
+                  Next step<AppIcon className="ri-arrow-right-line"></AppIcon>
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                  <AppIcon className="ri-checkbox-circle-line"></AppIcon>Final form step
+                </span>
+              )}
+            </footer>
+          ) : null}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <>

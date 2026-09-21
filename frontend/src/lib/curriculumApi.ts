@@ -293,8 +293,10 @@ export interface CurriculumModule {
   lessons: number;
   quizzes: number;
   /**
-   * Always 0 out of every module builder -- nothing counts assignments on a
-   * module row yet. Omitted from a `?compact=true` list for that reason.
+   * Learners currently assigned this module -- computed in bulk once per
+   * overview build (see `attach_module_assignment_counts` server-side), not
+   * per row, so listing many modules costs one pass over learners, not one
+   * query per module.
    */
   assignments?: number;
   status: 'published' | 'draft' | 'review' | string;
@@ -1705,6 +1707,14 @@ export interface CurriculumAuditTrail {
   /** The source and actor-type values the server recognises, for the filters. */
   sources: CurriculumAuditSource[];
   actorTypes: CurriculumAuditActorType[];
+  /**
+   * The record types this workspace actually audits, named by the server.
+   * Named there rather than listed here because the answer differs per
+   * workspace and grows as each one is wired up — a list held in the browser
+   * was the curriculum's ten types, so the system-wide trail offered a filter
+   * that could not name a learner, a coaching meeting or an employer.
+   */
+  entityTypes?: { value: string; label: string }[];
   actors: CurriculumAuditActor[];
   events: CurriculumAuditEvent[];
 }
@@ -1742,16 +1752,46 @@ export interface CurriculumActivityPerson {
   signIns: number;
   lastPageKey: string;
   lastPageLabel: string;
+  /** The workspace of the last page they opened. */
+  lastWorkspace: string;
+  /**
+   * Which workspaces they were in over the window, most recent first.
+   * Empty when page opens are not being recorded: it is a fact about visits,
+   * so with no visits recorded there is nothing to say rather than nowhere
+   * to have been.
+   */
+  workspaces: { workspace: string; label: string; hits: number; lastAt: string }[];
 }
 
 export interface CurriculumActivityPeople {
   generatedAt: string;
   windowDays: number;
   since: string;
+  /** The workspace this response was scoped to; empty means all of them. */
+  workspace: string;
+  /** Every workspace the server recognises, for the filter. */
+  workspaces: { value: string; label: string }[];
+  /**
+   * True once each row carries its own workspace column. False means the
+   * workspace is derived from the stored path on read -- the same answer,
+   * reached without an index.
+   */
+  workspaceRecorded: boolean;
+  /**
+   * The workspaces whose saves the Changes feed can actually name. The
+   * reading half covers every workspace; the writing half covers the ones
+   * wired into a revision log, and the page says which rather than letting an
+   * empty feed read as "nobody changed anything".
+   */
+  changeWorkspaces: string[];
   visitsRecorded: boolean;
   changesRecorded: boolean;
   signInsRecorded: boolean;
   truncated: boolean;
+  /** How many rows this response carries; `totals.people` counts everyone who matched. */
+  shown: number;
+  /** The server-side cap that `truncated` reports against. */
+  limit: number;
   totals: {
     people: number;
     visits: number;
@@ -3473,6 +3513,14 @@ export function fetchCurriculumAuditTrail(
     /** Narrow to one branch of the curriculum, as it was at the time. */
     scope?: 'programme' | 'cohort' | 'group' | 'module';
     scopeId?: string;
+    /**
+     * Which workspace's saves to read; '' or omitted reads every one.
+     *
+     * One revision log now holds the whole LMS, so the scoped door has to
+     * ask for its own workspace -- otherwise /curriculum/audit-trail would
+     * start showing learner and coaching saves the day those were wired in.
+     */
+    workspace?: string;
     signal?: AbortSignal;
     skipCache?: boolean;
     revalidate?: boolean;
@@ -3487,6 +3535,7 @@ export function fetchCurriculumAuditTrail(
   if (options.actor) query.set('actor', options.actor);
   if (options.source && options.source !== 'all') query.set('source', options.source);
   if (options.actorType && options.actorType !== 'all') query.set('actorType', options.actorType);
+  if (options.workspace) query.set('workspace', options.workspace);
   if (options.scope && options.scopeId) {
     query.set('scope', options.scope);
     query.set('scopeId', options.scopeId);
@@ -3507,14 +3556,15 @@ export function fetchCurriculumAuditTrail(
  * network revalidation when the user presses Refresh without discarding the
  * response for the next visit.
  */
-export function fetchCurriculumActivityPeople(
-  options: { days?: number; search?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
+export function fetchActivityPeople(
+  options: { days?: number; search?: string; workspace?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
 ): Promise<CurriculumActivityPeople> {
   const query = new URLSearchParams();
   if (options.days) query.set('days', String(options.days));
   if (options.search) query.set('search', options.search);
+  if (options.workspace) query.set('workspace', options.workspace);
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumActivityPeople>(`/curriculum/activity/people/${suffix}`, {
+  return fetchJson<CurriculumActivityPeople>(`/activity/people/${suffix}`, {
     signal: options.signal,
     skipCache: options.skipCache,
     revalidate: options.revalidate,
@@ -3523,15 +3573,16 @@ export function fetchCurriculumActivityPeople(
 }
 
 /** One person: their visits, the pages in each, and what they did there. */
-export function fetchCurriculumPersonActivity(
+export function fetchPersonActivity(
   email: string,
-  options: { days?: number; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
+  options: { days?: number; workspace?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
 ): Promise<CurriculumPersonActivity> {
   const query = new URLSearchParams();
   if (options.days) query.set('days', String(options.days));
+  if (options.workspace) query.set('workspace', options.workspace);
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumPersonActivity>(
-    `/curriculum/activity/people/${encodeURIComponent(email)}/${suffix}`,
+    `/activity/people/${encodeURIComponent(email)}/${suffix}`,
     {
       signal: options.signal,
       skipCache: options.skipCache,

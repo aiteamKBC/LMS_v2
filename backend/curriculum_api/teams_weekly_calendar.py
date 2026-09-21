@@ -96,6 +96,14 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         groups = calendar_groups(combined, graph_settings)
         if not groups:
             return v.json_error('No weekday sessions were supplied.')
+        requested_targets = [item for _day, items in groups for item in items]
+        if not combined.get('peopleOnly'):
+            non_delivery_reason = v.teams_non_delivery_reason(
+                requested_targets,
+                v.graph_timezone_iana(graph_settings),
+            )
+            if non_delivery_reason:
+                return v.json_error(non_delivery_reason, status=400, code='non_delivery_date')
         prepared = []
         zone = ZoneInfo(v.graph_timezone_iana(graph_settings))
         for day, items in groups:

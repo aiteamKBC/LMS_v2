@@ -27,22 +27,31 @@ export function LearningHero({ map = false }: { map?: boolean }) {
   </header>;
 }
 
-export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, kind, learnerId, total, done, percent, deadlines = [] }: {
+export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [] }: {
   summary: UnifiedLearningSummary; search: string; onSearch: (value: string) => void; current?: Subject;
-  renderCard: (subject: Subject) => ReactNode; onContinue: (subject: Subject) => void; kind?: string; learnerId?: string;
+  renderCard: (subject: Subject) => ReactNode; onContinue: (subject: Subject) => void;
+  moduleStartDate: (subject: Subject) => string | null | undefined; kind?: string; learnerId?: string;
   total: number | string; done: number | string; percent: number | null;
   deadlines?: OverviewWeek['deadlines'];
 }) {
   const [filter, setFilter] = useState('all');
-  const [sort, setSort] = useState('current');
-  const [layout, setLayout] = useState('grid');
+  const [sort, setSort] = useState('start');
+  const [layout, setLayout] = useState('list');
   const term = search.trim().toLocaleLowerCase();
   const visible = summary.subjects.filter(subject => {
     const progress = subjectPercent(subject);
     return (!term || subject.title.toLocaleLowerCase().includes(term) || subject.activities.some(a => a.title.toLocaleLowerCase().includes(term)))
       && (filter === 'all' || (filter === 'complete' ? progress === 100 : filter === 'new' ? progress === 0 : progress > 0 && progress < 100));
-  }).sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : sort === 'progress' ? subjectPercent(b) - subjectPercent(a) || a.title.localeCompare(b.title)
-    : Number(b.id === current?.id) - Number(a.id === current?.id) || a.title.localeCompare(b.title));
+  }).sort((a, b) => {
+    if (sort === 'name') return a.title.localeCompare(b.title);
+    if (sort === 'progress') return subjectPercent(b) - subjectPercent(a) || a.title.localeCompare(b.title);
+    const aStart = moduleStartDate(a)?.trim();
+    const bStart = moduleStartDate(b)?.trim();
+    if (aStart && bStart) return aStart.localeCompare(bStart) || a.title.localeCompare(b.title);
+    if (aStart) return -1;
+    if (bStart) return 1;
+    return a.title.localeCompare(b.title);
+  });
   const upcoming = deadlines.filter(d => d.date >= learningToday()).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
   const hasRemainingActivity = (subject: Subject) => subject.activities.some(activity => !activity.completed);
   const continueSubject = current && hasRemainingActivity(current)
@@ -61,9 +70,9 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
     <div className={styles.catalogueMain}>
       <div className={styles.toolbar}>
         <label className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" placeholder="Search subjects or activities…" value={search} onChange={e => onSearch(e.target.value)} /></label>
-        <label className={styles.selectLabel}>Sort by<select value={sort} onChange={e => setSort(e.target.value)}><option value="current">Planned module first</option><option value="name">Subject name</option><option value="progress">Highest progress</option></select></label>
+        <label className={styles.selectLabel}>Sort by<select value={sort} onChange={e => setSort(e.target.value)}><option value="start">Module start date</option><option value="name">Subject name</option><option value="progress">Highest progress</option></select></label>
         <label className={styles.selectLabel}>Filter by progress<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All subjects</option><option value="started">In progress</option><option value="new">Not started</option><option value="complete">Completed</option></select></label>
-        <div className={styles.viewToggle} role="group" aria-label="Subject layout"><button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')}><LayoutGrid size={16} />Grid</button><button type="button" aria-pressed={layout === 'list'} onClick={() => setLayout('list')}><List size={16} />List</button></div>
+        <div className={styles.viewToggle} role="group" aria-label="Subject layout"><button type="button" aria-pressed={layout === 'list'} onClick={() => setLayout('list')}><List size={16} />List</button><button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')}><LayoutGrid size={16} />Grid</button></div>
       </div>
       <div className={styles.subjectHeading}><h2>Your subjects</h2><span>{summary.subjectCount} subjects · {total} activities{visible.length !== summary.subjectCount ? ` · ${visible.length} shown` : ''}</span></div>
       {visible.length ? <div className={layout === 'grid' ? styles.grid : styles.list}>{visible.map(renderCard)}</div>

@@ -63,6 +63,10 @@ function payload(url: string): unknown {
     programme: { completed: 0, total: 0, percent: null, status: 'empty' },
     ksb: { completed: 0, total: 0, percent: null, status: 'empty', codes: [] },
     otjh: { historical: 0, new: 0, actual: 0, planned: null } };
+  if (url.includes('/monthly-logs/')) return {
+    learner: { id: 125, aptem_id: null, name: 'Test learner', programme: 'Leadership', coach_name: '' },
+    months: [], total_months: 0, completed_months: 0, read_only: false, csrf_token: 'csrf',
+  };
   if (url.includes('/absence-reports/')) return { count: 0, results: [], missedSessions: [] };
   if (url.includes('/monthly-reports/')) return { reports: [], savedSignature: '', savedSignatureName: '' };
   if (url.includes('/all-students-schema/')) return { students: [] };
@@ -153,6 +157,44 @@ function NavigationDestination() {
 }
 
 describe('learner loading and recovery', () => {
+  it('uses the selected Training Plan dates in the learner programme header', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/learner-summary/')) return new Response(JSON.stringify({
+        ...detail(), programmeStartDate: '2026-02-01', programmeEndDate: null,
+        learningAccess: { blocked: false, startDate: '2026-02-01' },
+      }));
+      if (url.includes('/training-plan-dashboard/') && url.includes('section=contract')) {
+        return new Response(JSON.stringify({
+          months: {}, contractStatus: 'ready',
+          programmeStartDate: '2026-01-19', programmeEndDate: '2027-01-31',
+        }));
+      }
+      if (url.includes('/monthly-logs/')) return new Response(JSON.stringify({
+        learner: { id: 125, aptem_id: 7001, name: 'Test learner', programme: 'Leadership', coach_name: '' },
+        months: [
+          { month: '2026-01', source: 'legacy', training_plan_target: 3, actual_hours: 1.5, not_accepted_hours: 0 },
+          { month: '2026-09', source: 'lms', training_plan_target: 20, actual_hours: 2, not_accepted_hours: 0 },
+        ],
+        total_months: 2, completed_months: 0, read_only: false, csrf_token: 'csrf',
+      }));
+      return new Response(JSON.stringify(payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+
+    const hero = within(await screen.findByLabelText('Learner programme'));
+    expect(await hero.findByText('19 January 2026')).toBeVisible();
+    expect(hero.getByText('31 January 2027')).toBeVisible();
+    expect(hero.queryByText('1 February 2026')).not.toBeInTheDocument();
+    const chart = within(await screen.findByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(await chart.findByRole('button', {
+      name: 'January 2026: target 3 hours, submitted 0 hours, completed 1.5 hours',
+    })).toBeVisible();
+    expect(chart.getByRole('button', { name: /January 2027:/ })).toBeVisible();
+    expect(chart.queryByRole('button', { name: /December 2025:/ })).not.toBeInTheDocument();
+  });
+
   it('keeps the learning tab in the URL and follows browser Back and quiz deep links', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(payload(String(input))))));
     const Page = (await modules['/src/pages/learner/my-learning/page.tsx']()).default;
@@ -307,6 +349,33 @@ describe('learner loading and recovery', () => {
     expect(requests.filter(url => url.includes('/overview-week/'))).toHaveLength(1);
     expect(requests.some(url => url.includes('section=dashboard'))).toBe(false);
     expect(requests.filter(url => url.includes('/metrics/'))).toHaveLength(1);
+  });
+
+  it('adds completed LMS monthly-log hours after August to the Audit actual', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/metrics/')) return new Response(JSON.stringify({
+        migrated: true,
+        programme: { completed: 36, total: 307, percent: 11.73, status: 'available' },
+        ksb: { completed: 14, total: 32, percent: 43.75, status: 'available', codes: [] },
+        otjh: { historical: 294.63, new: 0, actual: 294.63, planned: 353 },
+      }));
+      if (url.includes('/monthly-logs/')) return new Response(JSON.stringify({
+        learner: { id: 125, aptem_id: 7001, name: 'Test learner', programme: 'Leadership', coach_name: '' },
+        months: [
+          { month: '2026-08', source: 'legacy', training_plan_target: 30, actual_hours: 18, not_accepted_hours: 0 },
+          { month: '2026-09', source: 'lms', training_plan_target: 30, actual_hours: 2.5, not_accepted_hours: 4 },
+        ],
+        total_months: 2, completed_months: 1, read_only: false, csrf_token: 'csrf',
+      }));
+      return new Response(JSON.stringify(payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+
+    const otjh = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
+    await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('297.13 h'));
+    expect(otjh.getByText('Target (TP Planned)').nextElementSibling).toHaveTextContent('353.00 h');
   });
 
   it('shows unavailable header facts when the schedule fails instead of claiming the coach is unassigned', async () => {

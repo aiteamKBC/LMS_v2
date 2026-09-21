@@ -54,6 +54,7 @@ import { MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceTyp
 import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
+import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
 import { loadModuleStructure, saveModuleStructure, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
 import { LiveSessionArtifactsPanel } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
@@ -68,7 +69,7 @@ const QuizEditorPanel = lazy(() => import('@/pages/curriculum/quiz-xml/edit/Quiz
 const GuidedQuizUpload = lazy(() => import('./GuidedQuizUpload').then(m => ({ default: m.GuidedQuizUpload })));
 
 export type { WeekScope };
-export interface GroupOption { key: string; name: string; cohort?: string; cohortId?: string; programmeId?: string; programme?: string }
+export interface GroupOption { key: string; name: string; cohort?: string; cohortId?: string; programmeId?: string; programme?: string; moduleCount?: number }
 export type WeekComponentUploader = (componentId: string, file: File, componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment') => Promise<WeekComponentUploadResult>;
 
 const curriculumNav = roleNavMap.curriculum;
@@ -486,9 +487,24 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
         const resolvedModuleName = weekModule?.name || '';
         setModuleName(resolvedModuleName);
 
+        // The "Assigned groups" picker only ever offers live programmes — an
+        // archived programme has nothing left to deliver into, so its cohorts
+        // and groups would just be dead ends in the dropdown.
+        const archivedProgrammeKeys = new Set<string>();
+        programmes.forEach(programme => {
+          if (programme.isArchived || programme.status === 'archived') {
+            [programme.id, programme.sourceId, programme.name].forEach(key => {
+              if (key) archivedProgrammeKeys.add(norm(key));
+            });
+          }
+        });
+        const liveGroups = groups.filter(group => (
+          ![group.programmeId, group.programme].some(key => key && archivedProgrammeKeys.has(norm(key)))
+        ));
+
         let scoped = initial.courseType === 'paid'
-          ? groups.filter(group => group.programmeId === initial.programmeId || group.programme === initial.programmeName)
-          : groups;
+          ? liveGroups.filter(group => group.programmeId === initial.programmeId || group.programme === initial.programmeName)
+          : liveGroups;
         // Narrow to the week's module when we can resolve it — but only if that
         // actually leaves some groups, so a naming mismatch never empties the
         // picker (fall back to the programme-scoped set).
@@ -502,9 +518,9 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
         // the same Teams link across a duplicated module), so the picker
         // must never hide groups outside this week's own programme/module —
         // it only lists the scoped-in ones first, for convenience.
-        const preferred = scoped.length ? scoped : groups;
+        const preferred = scoped.length ? scoped : liveGroups;
         const preferredIds = new Set(preferred.map(group => group.id));
-        const ordered = [...preferred, ...groups.filter(group => !preferredIds.has(group.id))];
+        const ordered = [...preferred, ...liveGroups.filter(group => !preferredIds.has(group.id))];
         // A group's own `programme` name is blank on plenty of records — the
         // raw programmeId is meaningless to a tutor, so resolve the readable
         // name from the programme list instead (matching id/sourceId/name,
@@ -518,7 +534,22 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
         const resolveProgrammeName = (group: typeof groups[number]) => (
           group.programme || programmeNameByKey.get(norm(group.programmeId)) || group.programmeId || ''
         );
-        setGroupOptions(ordered.map(group => ({ key: group.id, name: group.name, cohort: group.cohort, cohortId: group.cohortId, programmeId: group.programmeId, programme: resolveProgrammeName(group) })));
+        // `group.modules` is a compact, occasionally stale name list. Count
+        // the same concrete module rows the placement modal will display so
+        // the group card never says "No modules" when the next click finds some.
+        setGroupOptions(ordered.map(group => ({
+          key: group.id,
+          name: group.name,
+          cohort: group.cohort,
+          cohortId: group.cohortId,
+          programmeId: group.programmeId,
+          programme: resolveProgrammeName(group),
+          moduleCount: moduleCountForGroup(modules, {
+            groupId: group.id,
+            groupName: group.name,
+            programmeId: group.programmeId,
+          }),
+        })));
       })
       .catch(() => { /* picker stays empty */ })
       .finally(() => { if (active) setScopeReady(true); });
@@ -2834,6 +2865,7 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
         <GroupPlacementPanel
           key={browsingOption.key}
           component={component}
+          groupId={browsingOption.key}
           groupName={browsingOption.name}
           programmeId={browsingOption.programmeId || programmeId}
           onClose={() => setBrowsingKey(null)}
@@ -2990,7 +3022,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
                 tabIndex={0}
                 onClick={() => (on ? onToggle(option.key) : onBrowse(option.key))}
                 onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); on ? onToggle(option.key) : onBrowse(option.key); } }}
-                title={on ? 'Click to unassign' : "Not yet assigned — click to place this part in this group's week"}
+                title={on ? 'Click to unassign' : `${option.moduleCount ? 'Contains modules' : 'No modules'} — click to place this part in this group's week`}
                 className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${browsing ? 'border-primary-400 bg-primary-50 ring-2 ring-primary-200' : on ? 'border-primary-300 bg-primary-50' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
               >
                 <input
@@ -3007,7 +3039,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
                       {[option.cohort, option.programme].filter(Boolean).join(' · ')}
                     </span>
                   )}
-                  {!on && <span className="mt-0.5 block truncate text-[10px] font-semibold text-primary-500">{browsing ? 'Browsing…' : "Not assigned — click to place a copy here"}</span>}
+                  {!on && <span className="mt-0.5 block truncate text-[10px] font-semibold text-primary-500">{browsing ? 'Browsing…' : `${option.moduleCount ? 'Contains modules' : 'No modules'} — click to place a copy here`}</span>}
                 </span>
               </div>
             );

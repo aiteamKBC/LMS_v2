@@ -1,152 +1,82 @@
 import { useState } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { CompactMetric, MetricRow } from '@/components/ui/MetricCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { toneStyle, type StatusTone } from '@/lib/statusTone';
-import type { JourneyComponent, JourneyModule, JourneyWeek } from '@/utils/learnerJourney';
+import { completedComponentIds, isComponentComplete, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
 import {
   flattenJourney,
   formatAttemptGrade,
-  formatDisplayDate,
-  formatQuizAttemptScore,
   formatHours,
   formatPercent,
-  quizGradeValue,
-  resolveQuizAttemptModule,
-  resolveQuizAttemptTitle,
   type CaseFileTabProps,
 } from '../data';
+import styles from '../learnerCaseFile.module.css';
 
-export default function OverviewTab({ data }: CaseFileTabProps) {
+export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { onOpenNotes?: () => void }) {
   const flatComponents = flattenJourney(data);
   const totalWeeks = data.journey.reduce((count, module) => count + module.weeks.length, 0);
-  const completedComponentIds = new Set([
-    ...(data.detail?.videoProgress || []).map((item) => item.componentId),
-    ...(data.detail?.componentProgress || []).map((item) => item.componentId),
-  ].filter((value): value is string => Boolean(value)));
-  const latestAttempts = [...(data.detail?.quizAttempts || [])]
-    .sort((left, right) => new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime())
-    .slice(0, 6);
+  const completedIds = completedComponentIds(data.detail);
 
   return (
     <div className="space-y-5">
-      <MetricRow>
-        <CompactMetric label="Overall Progress" value={formatPercent(data.overallProgress)} tone="brand" />
-        <CompactMetric label="Attendance" value={formatPercent(data.attendanceRate)} tone="caution" />
-        <CompactMetric label="OTJH Logged" value={formatHours(data.otjhCompleted)} tone="info" />
-        <CompactMetric label="Programme Total" value={formatHours(data.totalExpectedOtjh || null)} tone="positive" />
-        <CompactMetric label="Mapped KSBs" value={data.detail?.ksbs.length || 0} tone="upcoming" />
-        <CompactMetric label="Evidence Count" value={data.evidenceCount ?? '--'} tone="brand" />
-      </MetricRow>
+      <div className={styles.learningMetrics}>
+        <LearningMetric label="Overall Progress" value={formatPercent(data.overallProgress)} />
+        <LearningMetric label="Attendance" value={formatPercent(data.attendanceRate)} tone="warning" />
+        <LearningMetric label="Actual" value={formatHours(data.otjhCompleted)} />
+        <LearningMetric label="Planned" value={formatHours(data.totalExpectedOtjh || null)} tone="positive" />
+        <LearningMetric label="Mapped KSBs" value={String(data.detail?.ksbs.length || 0)} />
+      </div>
 
-      <section className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden">
-        <div className="p-5 md:p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <AppIcon className="ri-user-line text-primary-500"></AppIcon> About
-            </h2>
+      <div className={styles.learningGrid}>
+        <section className={styles.panel}>
+          <div className={styles.panelHeader}>
+            <div className={styles.panelHeading}>
+              <span className={styles.panelIcon}><AppIcon className="ri-book-open-line" /></span>
+              <div>
+                <h2 className={styles.panelTitle}>Programme Journey</h2>
+                <p className={styles.panelSubtitle}>Read-only module, week, and component view for coach context.</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <SummaryPill label="Modules" value={String(data.journey.length)} />
+              <SummaryPill label="Weeks" value={String(totalWeeks)} />
+              <SummaryPill label="Components" value={String(flatComponents.length)} />
+            </div>
           </div>
-          <p className="text-[13px] text-foreground-600 leading-relaxed">
-            {data.displayName} is currently tracked under <strong>{data.programme}</strong>
-            {data.cohort ? <> in cohort <strong>{data.cohort}</strong></> : null}.
-            {data.group ? <> Group assignment is <strong>{data.group}</strong>.</> : null}
-            {' '}The coach snapshot shows <strong>{formatPercent(data.overallProgress)}</strong> overall progress,
-            {' '}<strong>{formatPercent(data.attendanceRate)}</strong> attendance,
-            {' '}and <strong>{formatHours(data.otjhCompleted)}</strong> logged against a current target of <strong>{formatHours(data.otjhTarget)}</strong>
-            {' '}within an overall OTJH plan of <strong>{formatHours(data.totalExpectedOtjh || null)}</strong>.
-            {' '}This learner currently has <strong>{flatComponents.length}</strong> structured component(s),
-            {' '}<strong>{totalWeeks}</strong> learning week(s),
-            {' '}and <strong>{data.detail?.quizAttempts.length || 0}</strong> recorded quiz attempt(s).
-          </p>
-        </div>
-      </section>
 
-      <section className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
-        <div className="flex flex-col gap-3 border-b border-background-200 bg-background-100/45 p-5 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-sm font-heading font-bold text-foreground-950 flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
-                <AppIcon className="ri-route-line text-sm"></AppIcon>
-              </span>
-              Programme Journey
-            </h2>
-            <p className="mt-1 text-[12px] text-foreground-500">
-              Read-only module, week, and component view for coach context.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <SummaryPill label="Modules" value={String(data.journey.length)} />
-            <SummaryPill label="Weeks" value={String(totalWeeks)} />
-            <SummaryPill label="Components" value={String(flatComponents.length)} />
-          </div>
-        </div>
-
-        {totalWeeks === 0 ? (
-          <div className="p-6">
-            <EmptyState
-              variant="empty"
-              size="sm"
-              title="No structured plan"
-              description="No structured plan has been saved for this learner yet."
-            />
-          </div>
-        ) : (
-          <div className="max-h-[680px] overflow-y-auto bg-background-100/35 p-4 md:p-5">
-            <CoachPlanView modules={data.journey} completedComponentIds={completedComponentIds} />
-          </div>
-        )}
-      </section>
-
-      <section className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden">
-        <div className="p-5 md:p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <AppIcon className="ri-question-answer-line text-secondary-500"></AppIcon> Recent Assessments
-            </h2>
-            <span className="text-[12px] text-foreground-400">{data.detail?.quizAttempts.length || 0} total attempt(s)</span>
-          </div>
-          {latestAttempts.length === 0 ? (
-            <EmptyState
-              variant="empty"
-              size="sm"
-              title="No quiz attempts"
-              description="No quiz attempts have been recorded for this learner yet."
-            />
+          {totalWeeks === 0 ? (
+            <div className={styles.panelBody}>
+              <EmptyState
+                variant="empty"
+                size="sm"
+                title="No structured plan"
+                description="No structured plan has been saved for this learner yet."
+              />
+            </div>
           ) : (
-            <div className="space-y-3">
-              {latestAttempts.map((attempt, index) => {
-                const tone: StatusTone = attempt.passed ? 'positive' : 'caution';
-                const style = toneStyle(tone);
-                return (
-                  <div
-                    key={`${attempt.quizId}-${attempt.attempt ?? 0}-${attempt.submittedAt}-${index}`}
-                    className="flex items-center gap-4 p-3 rounded-xl bg-background-100/60 border border-foreground-200/60"
-                  >
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${style.bg} ${style.text}`}>
-                      <AppIcon className="ri-questionnaire-line text-base"></AppIcon>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-semibold text-foreground-900">{resolveQuizAttemptTitle(data.detail, attempt)}</p>
-                      <p className="text-[12px] text-foreground-400">
-                        {resolveQuizAttemptModule(data.detail, attempt) || 'Quiz'} - Submitted {formatDisplayDate(attempt.submittedAt)}
-                      </p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <StatusBadge tone={tone} label={attempt.passed ? 'Passed' : 'Submitted'} />
-                      <p className="text-[12px] font-semibold text-foreground-900 mt-1">
-                        {[formatAttemptGrade(attempt), formatQuizAttemptScore(attempt)].filter(Boolean).join(' - ') || '--'}
-                      </p>
-                      <p className="text-[12px] text-foreground-400">
-                        {attempt.ksbs?.length ? `${attempt.ksbs.length} KSB link(s)` : `${quizGradeValue(attempt)}%`}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="max-h-[680px] overflow-y-auto bg-background-100/35 p-4 md:p-5">
+              <CoachPlanView modules={data.journey} completedComponentIds={completedIds} />
             </div>
           )}
-        </div>
-      </section>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function LearningMetric({
+  label,
+  value,
+  tone = 'brand',
+}: {
+  label: string;
+  value: string;
+  tone?: 'brand' | 'positive' | 'warning';
+}) {
+  return (
+    <div className={styles.learningMetric} data-tone={tone}>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -186,7 +116,9 @@ function CoachModuleSection({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const weekCount = module.weeks.length;
-  const componentCount = module.weeks.reduce((count, week) => count + week.components.length, 0);
+  const moduleComponents = module.weeks.flatMap((week) => week.components);
+  const componentCount = moduleComponents.length;
+  const completedCount = moduleComponents.filter((component) => isComponentComplete(component, completedComponentIds)).length;
   const moduleOtjh = module.weeks.reduce((total, week) => total + (week.otjh || 0), 0);
 
   return (
@@ -210,6 +142,7 @@ function CoachModuleSection({
         </span>
         <span className="hidden shrink-0 items-center gap-2 sm:flex">
           {moduleOtjh > 0 && <SummaryPill label="OTJH" value={formatHours(moduleOtjh)} compact />}
+          <SummaryPill label="Completed" value={`${completedCount} / ${componentCount}`} compact />
           <SummaryPill label="Items" value={String(componentCount)} compact />
         </span>
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
@@ -253,6 +186,7 @@ function CoachWeekCard({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const componentCount = week.components.length;
+  const completedCount = week.components.filter((component) => isComponentComplete(component, completedComponentIds)).length;
 
   return (
     <div className="relative pl-6 md:pl-7">
@@ -269,7 +203,7 @@ function CoachWeekCard({
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-heading font-bold text-foreground-800">{week.week}</span>
             <span className="mt-0.5 block text-[12px] text-foreground-400">
-              {componentCount} {componentCount === 1 ? 'component' : 'components'}
+              {completedCount} / {componentCount} completed
             </span>
           </span>
           <span className="flex shrink-0 items-center gap-3">

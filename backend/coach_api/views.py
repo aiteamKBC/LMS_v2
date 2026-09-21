@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
 from time import perf_counter, sleep as _sleep
+from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -23,6 +24,7 @@ from psycopg.rows import dict_row
 from django.conf import settings
 from django.core.cache import cache
 from django.db import DatabaseError, IntegrityError, close_old_connections, connections, router, transaction
+from django.db.utils import ConnectionDoesNotExist
 from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
@@ -58,23 +60,29 @@ from learner_api.models import (
     Employer,
     EnrolmentUser,
     LearnerAbsence,
+    LearnerProgressEntry,
     LearnerProfile,
     StaffUser,
     learner_activity_events_relation_exists,
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
-from learner_api.active_users import components_target_to_date, current_curriculum_ksb_items_for_learner, current_week_label, dedupe_otjh_progress_records, hydrate_training_plan, refresh_learner_ksb_snapshot
+from learner_api.active_users import components_target_to_date, completed_hours_value_from_progress, current_curriculum_ksb_items_for_learner, current_week_label, dedupe_otjh_progress_records, hydrate_training_plan, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
-from learner_api.learner_detail import refresh_learner_otjh_snapshot
+from learner_api.learner_detail import otjh_status_from_variance, refresh_learner_otjh_snapshot
+from learner_api.dashboard_metrics import read_metrics
 from learner_api.ksb_codes import extract_ksb_codes, normalize_ksb_parent_code
 from learner_api.progress_rules import progress_record_counts_as_achieved
 from audit_api.last_audit_ledger_views import _connection as audit_connection
 from learner_api.student_activity_access import student_activity_available
 from learner_api.student_activity_data import read_audit_hour_totals_bulk, read_evidenced_ksb_counts_bulk
-from learner_api.attendance import fetch_kbc_attendance_rates
+from learner_api.attendance import (
+    _summarize_attendance,
+    combined_attendance_rows,
+    fetch_kbc_attendance_rates,
+)
 from learner_api.review_history import REVIEW_TYPES, _serialize_review
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
@@ -96,6 +104,7 @@ from curriculum_api.views import (
     delivery_days_per_week,
     get_program_config_rows,
     get_training_rows,
+    england_non_delivery_reason,
     group_authoring_detail_rows,
     is_operational_training_row,
     LIVE_SESSION_OCCURRENCES_TABLE,
@@ -278,6 +287,9 @@ MONTHLY_COACHING_AGREEMENT_RESPONSE_IDS = {
 }
 DEFAULT_ATTENDANCE_DATABASE = "AiTeamKBC"
 DEFAULT_MARKING_OWNER_ID = 6452
+# Delivery learners have completed the delivery step and are waiting for the
+# invitation that moves them to the stored Active status. Coach-facing pages
+# should keep them in the same working caseload while that hand-off is pending.
 ATTENDANCE_INCLUDED_STATUSES = {"active", "break"}
 MARKING_OVERDUE_DAYS = 7
 
@@ -965,7 +977,10 @@ def normalize_program_status(raw_status: str | None) -> str:
         return "break"
     if normalized == "readytoenrol":
         return "ready-to-enrol"
-    if normalized == "active":
+    # Treat the pre-invitation Delivery state as active for coach-facing
+    # summaries and attendance metrics. The raw programme status is still
+    # serialized separately, so the UI can show that the invitation is pending.
+    if normalized in {"active", "delivery"}:
         return "active"
     return "unknown"
 
@@ -1011,8 +1026,6 @@ def determine_performance_status(row: dict, hours_progress: int, ksb_progress: i
     if row["coach_rag"] in {"Red", "Amber"}:
         return "at-risk"
     if row["otjh_status"] == "Need Attention" and (hours_progress < 45 or ksb_progress < 35):
-        return "at-risk"
-    if parse_variance(row["progress_variance"]) <= -10:
         return "at-risk"
     if hours_progress >= 80 and ksb_progress >= 75 and component_progress >= 20:
         return "high"
@@ -1503,8 +1516,6 @@ def determine_active_user_status(
         or (component_available and component_progress < 35)
     ):
         return "at-risk"
-    if progress_variance and parse_variance(progress_variance) <= -10:
-        return "at-risk"
     if (
         hours_available
         and ksb_available
@@ -1703,7 +1714,9 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
         .prefetch_related("plan_modules__weeks__components")
         .order_by("full_name", "id")
     )
-    return [row for row in queryset if clean_text(row.username)]
+    rows = [row for row in queryset if clean_text(row.username)]
+    attach_caseload_source_rows(rows)
+    return rows
 
 
 def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
@@ -2041,6 +2054,77 @@ def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newe
     return [entry for entry in list_or_empty(getattr(row, "activity_feed", [])) if isinstance(entry, dict)]
 
 
+def latest_learning_activity(progress_entries: list[dict], activity_entries: list[dict]) -> dict | None:
+    """Return the newest real learner action across progress and activity feeds."""
+    candidates = []
+    for entry in [*progress_entries, *activity_entries]:
+        if not isinstance(entry, dict):
+            continue
+        occurred_at = next(
+            (
+                parse_date_value(entry.get(field))
+                for field in ("submittedAt", "at", "completedAt", "startedAt", "date", "createdAt")
+                if entry.get(field)
+            ),
+            None,
+        )
+        if not occurred_at:
+            continue
+        if isinstance(occurred_at, date) and not isinstance(occurred_at, datetime):
+            sort_value = datetime.combine(occurred_at, time.min)
+        else:
+            sort_value = occurred_at.replace(tzinfo=None) if occurred_at.tzinfo else occurred_at
+        title = clean_text(
+            entry.get("componentTitle")
+            or entry.get("title")
+            or entry.get("quizTitle")
+            or entry.get("activityTitle")
+        ) or clean_text(entry.get("kind")) or "Learning activity"
+        candidates.append((sort_value, occurred_at, title))
+
+    if not candidates:
+        return None
+    _, occurred_at, title = max(candidates, key=lambda candidate: candidate[0])
+    return {
+        "date": occurred_at.isoformat(),
+        "display": format_date_value(occurred_at),
+        "label": title,
+    }
+
+
+def caseload_latest_learning_activities(rows) -> dict[int, dict]:
+    """Bulk-load latest LMS activity so dashboard rows do not issue N requests."""
+    learner_ids = [int(row.id) for row in rows or [] if getattr(row, "id", None) is not None]
+    if not learner_ids:
+        return {}
+    activities: dict[int, dict] = {}
+    entries = (
+        LearnerProgressEntry.objects
+        .filter(learner_id__in=learner_ids)
+        .only(
+            "learner_id", "kind", "component_title", "module_title", "week_title",
+            "submitted_at", "started_at",
+        )
+        .order_by("learner_id", "-submitted_at", "-started_at", "-id")
+    )
+    for entry in entries:
+        learner_id = int(entry.learner_id)
+        candidate = latest_learning_activity([progress_entry_history_record(entry)], [])
+        current = activities.get(learner_id)
+        if candidate and (not current or candidate["date"] > current["date"]):
+            activities[learner_id] = candidate
+    return activities
+
+
+def apply_latest_learning_activity(payload: dict, activity: dict | None) -> dict:
+    if not activity:
+        return payload
+    payload["lastActivityDate"] = activity["date"]
+    payload["lastActivity"] = activity["display"]
+    payload["lastActivityLabel"] = activity["label"]
+    return payload
+
+
 def fetch_caseload_aptem_ids(learners) -> dict[int, int]:
     """LearnerProfile id -> Aptem id, loading only the columns that needs.
 
@@ -2121,7 +2205,7 @@ def caseload_evidenced_ksb_counts(rows) -> dict[int, int]:
     try:
         with audit_connection().cursor() as cursor:
             counts = read_evidenced_ksb_counts_bulk(cursor, aptem_by_profile.values())
-    except DatabaseError as exc:
+    except (ConnectionDoesNotExist, DatabaseError) as exc:
         # A display upgrade, not a dependency: the caseload still renders.
         logger.warning("Could not read audit KSB counts for caseload: %s", exc)
         return {}
@@ -2154,7 +2238,7 @@ def caseload_audit_hour_totals(rows) -> dict[int, dict]:
     try:
         with audit_connection().cursor() as cursor:
             totals = read_audit_hour_totals_bulk(cursor, aptem_by_profile.values())
-    except DatabaseError as exc:
+    except (ConnectionDoesNotExist, DatabaseError) as exc:
         # The caseload must still render on its stored figures if the audit
         # mirror is unreachable -- this is a display upgrade, not a dependency.
         logger.warning("Could not read audit OTJ totals for caseload: %s", exc)
@@ -2164,6 +2248,189 @@ def caseload_audit_hour_totals(rows) -> dict[int, dict]:
         for profile_id, aptem_id in aptem_by_profile.items()
         if aptem_id in totals
     }
+
+
+def caseload_canonical_metrics(rows) -> dict[int, dict]:
+    """Read the same live programme/KSB/OTJH facts as the learner dashboard.
+
+    Coach list endpoints keep this server-side so clients do not issue one
+    request per learner. Individual failures retain that learner's existing
+    snapshot without making the rest of the caseload unavailable.
+    """
+    work = []
+    for row in rows or []:
+        source = getattr(row, "_caseload_source", None)
+        if source is None:
+            continue
+        kind = "commercial" if clean_text(getattr(row, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
+        work.append((int(row.id), source, kind))
+    if not work:
+        return {}
+
+    def load(item):
+        profile_id, source, kind = item
+        try:
+            return profile_id, read_metrics(source, kind)
+        except (DatabaseError, ValueError) as exc:
+            logger.warning("Could not read canonical coach metrics for learner %s: %s", profile_id, exc)
+            return profile_id, None
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=min(4, len(work)), thread_name_prefix="coach-metrics") as executor:
+        results = executor.map(load, work)
+        return {profile_id: metrics for profile_id, metrics in results if metrics is not None}
+
+
+def caseload_canonical_attendance(rows) -> dict[int, dict]:
+    """Return the exact combined attendance summaries used by learner pages."""
+    work = [
+        (int(row.id), getattr(row, "_caseload_source", None))
+        for row in rows or []
+        if getattr(row, "_caseload_source", None) is not None
+    ]
+    if not work:
+        return {}
+
+    def load(item):
+        profile_id, source = item
+        try:
+            return profile_id, _summarize_attendance(combined_attendance_rows(source))
+        except Exception as exc:
+            logger.warning("Could not read canonical coach attendance for learner %s: %s", profile_id, exc)
+            return profile_id, None
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=min(4, len(work)), thread_name_prefix="coach-attendance") as executor:
+        results = executor.map(load, work)
+        return {profile_id: summary for profile_id, summary in results if summary is not None}
+
+
+def caseload_kbc_attendance_rates(rows) -> tuple[dict[int, int], dict[int, dict]]:
+    """Return KBC attendance metrics keyed by LearnerProfile id.
+
+    The coach caseload table must use the KBC register for learners that have
+    an Aptem identity. Keep the profile-to-Aptem mapping alongside the metrics
+    so a learner with no KBC rows is not silently filled from Teams data.
+    """
+    aptem_by_profile = caseload_aptem_ids(rows)
+    if not aptem_by_profile:
+        return {}, {}
+    try:
+        rates = fetch_kbc_attendance_rates(aptem_by_profile.values())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read KBC attendance rates for coach caseload: %s", exc)
+        rates = {}
+
+    # Some KBC register imports carry a valid email but an empty or legacy ID.
+    # Use the same KBC table's email index as a fallback, never the Teams
+    # attendance projection.
+    email_metrics: dict[str, dict] = {}
+    email_keys = [normalize_email(getattr(row, "email", None)) for row in rows or []]
+    email_keys = [email for email in email_keys if email]
+    if email_keys:
+        try:
+            email_metrics = fetch_attendance_data(email_keys).get("metrics", {})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read KBC attendance rates by email: %s", exc)
+
+    rows_by_profile = {int(row.id): row for row in rows or []}
+    return aptem_by_profile, {
+        profile_id: rates.get(str(aptem_id))
+        or email_metrics.get(normalize_email(getattr(rows_by_profile[profile_id], "email", None)))
+        for profile_id, aptem_id in aptem_by_profile.items()
+        if rates.get(str(aptem_id))
+        or email_metrics.get(normalize_email(getattr(rows_by_profile[profile_id], "email", None)))
+    }
+
+
+def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict:
+    """Overlay live learner-dashboard facts while preserving coach OTJH pacing."""
+    if not metrics:
+        return payload
+    programme = metrics.get("programme") or {}
+    ksb = metrics.get("ksb") or {}
+    otjh = metrics.get("otjh") or {}
+
+    old_plan = to_number(payload.get("otjhPlanned"))
+    old_target = to_number(payload.get("otjhTarget"))
+    canonical_plan = otjh.get("planned")
+    if canonical_plan is not None:
+        ratio = old_target / old_plan if old_plan > 0 else 0
+        if old_target > 1 and 0 < ratio <= 1:
+            payload["otjhTarget"] = max(round(to_number(canonical_plan) * ratio, 2), 1)
+        payload["otjhPlanned"] = to_number(canonical_plan)
+    if otjh.get("actual") is not None:
+        payload["otjhCompleted"] = to_number(otjh["actual"])
+
+    payload["programmeCompleted"] = programme.get("completed")
+    payload["programmeTarget"] = programme.get("total")
+    payload["programmeProgress"] = programme.get("percent")
+    payload["programmeProgressAvailable"] = programme.get("status") == "ready"
+    payload["componentsCompleted"] = programme.get("completed")
+    payload["componentsPlanned"] = programme.get("total")
+    # The canonical metrics reader can report ``unavailable`` when one of the
+    # activity KSB mappings is incomplete. Keep the caseload snapshot in that
+    # case instead of replacing known values with ``None`` and rendering ``--``
+    # for every learner.
+    if ksb.get("status") == "ready":
+        payload["ksbCompleted"] = ksb.get("completed")
+        payload["ksbTarget"] = ksb.get("total")
+        payload["ksbProgress"] = ksb.get("percent") or 0
+        payload["ksbProgressAvailable"] = True
+        payload["ksbStatus"] = derive_ksb_status(ksb.get("completed"), ksb.get("total"))
+
+    target = to_number(payload.get("otjhTarget"))
+    actual = to_number(payload.get("otjhCompleted"))
+    hours_available = target > 0
+    hours_progress = percentage(actual, target) if hours_available else 0
+    payload["overallProgress"] = hours_progress
+    payload["overallProgressAvailable"] = hours_available
+    progress_variance = clean_text(payload.get("progressVariance"))
+    payload["otjhStatus"] = otjh_status_from_variance(
+        actual - target if target > 0 else None
+    )
+    component_available = programme.get("status") == "ready"
+    component_progress = int(round(to_number(programme.get("percent")))) if component_available else 0
+    ksb_available = payload["ksbProgressAvailable"]
+    ksb_progress = int(round(to_number(payload["ksbProgress"]))) if ksb_available else 0
+    payload["status"] = determine_active_user_status(
+        program_status=payload.get("rawProgramStatus") or payload.get("enrollmentStatus") or "",
+        otjh_status=payload.get("otjhStatus") or "", progress_variance=progress_variance,
+        hours_progress=hours_progress, hours_available=hours_available,
+        ksb_progress=ksb_progress, ksb_available=ksb_available,
+        component_progress=component_progress, component_available=component_available,
+    )
+    payload["riskFlags"] = build_active_user_risk_flags(
+        otjh_status=payload.get("otjhStatus") or "", ksb_status=payload["ksbStatus"], progress_variance=progress_variance,
+        hours_progress=hours_progress, hours_available=hours_available,
+        ksb_progress=ksb_progress, ksb_available=ksb_available,
+        component_progress=component_progress, component_available=component_available,
+    )
+    payload["metricsSource"] = "learner-dashboard"
+    return payload
+
+
+def apply_aptem_variance_status(payload: dict, aptem_id) -> dict:
+    """Set Aptem OTJH variance and RAG status from actual minus target."""
+    if aptem_id in (None, ""):
+        return payload
+    actual = to_number(payload.get("otjhCompleted"))
+    target = to_number(payload.get("otjhTarget"))
+    if target <= 0:
+        return payload
+
+    variance = round(actual - target, 2)
+    payload["otjhVariance"] = variance
+    shortfall = -variance
+    if shortfall >= 40:
+        payload["otjhStatus"] = "At Risk"
+    elif shortfall >= 20:
+        payload["otjhStatus"] = "Need Attention"
+    else:
+        payload["otjhStatus"] = "On Track"
+    return payload
 
 
 def apply_evidenced_ksb_count(payload: dict, evidenced: int | None) -> dict:
@@ -2246,6 +2513,7 @@ def serialize_caseload_learner(
 
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = learner_activity_feed_entries(row)
+    latest_activity = latest_learning_activity(progress_entries, activity_entries)
     otjh_completed_entries = build_otjh_completed_entries(progress_entries, activity_entries, row.training_plan)
     planned_components = int(live_snapshot.get("componentsPlanned") or count_planned_components(row.training_plan))
     completed_components = count_completed_components(progress_entries)
@@ -2326,7 +2594,7 @@ def serialize_caseload_learner(
     current_week = current_week_label(row)
     components_target = components_target_to_date(row)
 
-    return {
+    return apply_latest_learning_activity({
         "id": str(row.id),
         "name": clean_text(row.username) or "Unknown learner",
         "initials": build_initials(row.username),
@@ -2395,7 +2663,7 @@ def serialize_caseload_learner(
         "coachEmail": clean_text(row.coach_email) or None,
         "rawProgramStatus": program_status or "--",
         "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
-    }
+    }, latest_activity)
 
 
 def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) -> dict:
@@ -2841,6 +3109,169 @@ def monthly_target_start_date(row: LearnerProfile | SimpleNamespace) -> date | N
     if isinstance(start_date, datetime):
         return start_date.date()
     return start_date
+
+
+def recent_month_end_dates(today: date, count: int = 6) -> list[date]:
+    """Month-end cut-offs ending with ``today`` for the open month."""
+    first_of_this_month = today.replace(day=1)
+    cutoffs: list[date] = []
+    for months_back in range(count - 1, -1, -1):
+        absolute_month = first_of_this_month.year * 12 + first_of_this_month.month - 1 - months_back
+        year, zero_based_month = divmod(absolute_month, 12)
+        month = zero_based_month + 1
+        cutoffs.append(
+            today
+            if months_back == 0
+            else date(year, month, monthrange(year, month)[1])
+        )
+    return cutoffs
+
+
+def progress_entry_history_record(entry: LearnerProgressEntry) -> dict:
+    submitted_at = (
+        timezone.localtime(entry.submitted_at)
+        if entry.submitted_at and timezone.is_aware(entry.submitted_at)
+        else entry.submitted_at
+    )
+    started_at = (
+        timezone.localtime(entry.started_at)
+        if entry.started_at and timezone.is_aware(entry.started_at)
+        else entry.started_at
+    )
+    return {
+        "kind": entry.kind,
+        "componentId": entry.component_ref,
+        "quizId": entry.quiz_ref,
+        "attempt": entry.attempt,
+        "moduleTitle": entry.module_title,
+        "weekTitle": entry.week_title,
+        "componentTitle": entry.component_title,
+        "expectedOtjh": entry.expected_otjh,
+        "reportedTime": entry.reported_time,
+        "submittedAt": submitted_at.isoformat() if submitted_at else "",
+        "startedAt": started_at.isoformat() if started_at else "",
+        "claimedSeconds": entry.claimed_seconds,
+        "verifiedSeconds": entry.verified_seconds,
+        "timeTrackingSource": entry.time_tracking_source,
+    }
+
+
+def historical_progress_date(record: dict) -> date | None:
+    value = record.get("submittedAt") or record.get("startedAt")
+    parsed = parse_date_value(value)
+    return parsed.date() if isinstance(parsed, datetime) else parsed
+
+
+def build_monthly_risk_history(
+    rows: list[LearnerProfile | SimpleNamespace],
+    progress_by_learner: dict[int, list[dict]],
+    expected_by_id: dict[str, float],
+    *,
+    today: date,
+) -> list[dict]:
+    """Count active caseload learners whose OTJH variance was at risk.
+
+    Closed months are reconstructed from timestamped OTJH activity and the
+    cumulative target in the learner's current training plan. The open month
+    deliberately uses the persisted current status, so its bar always agrees
+    with the dashboard's current OTJH counter.
+    """
+    active_rows = [
+        row for row in rows
+        if normalize_program_status(get_lms_row_program_status(row)) == "active"
+    ]
+    learner_context = {
+        int(row.id): (monthly_target_start_date(row), monthly_target_training_plan(row))
+        for row in active_rows
+    }
+    points = []
+    cutoffs = recent_month_end_dates(today)
+    for cutoff in cutoffs:
+        is_current_month = cutoff.year == today.year and cutoff.month == today.month
+        at_risk = 0
+        for row in active_rows:
+            if is_current_month:
+                normalized_status = re.sub(
+                    r"[\s_-]+", "", clean_text(getattr(row, "otjh_status", None)).casefold()
+                )
+                at_risk += normalized_status == "atrisk"
+                continue
+
+            learner_start, training_plan = learner_context[int(row.id)]
+            if learner_start is None or learner_start > cutoff:
+                continue
+            target_hours = curriculum_monthly_target_hours(
+                training_plan,
+                learner_start,
+                learner_start,
+                cutoff,
+                expected_by_id,
+            )
+            if target_hours <= 0:
+                continue
+            historical_progress = [
+                record
+                for record in progress_by_learner.get(int(row.id), [])
+                if (historical_progress_date(record) or date.max) <= cutoff
+            ]
+            completed_hours = completed_hours_value_from_progress(historical_progress)
+            shortfall = target_hours - completed_hours
+            if shortfall >= 40:
+                at_risk += 1
+
+        points.append({
+            "month": cutoff.strftime("%Y-%m"),
+            "label": cutoff.strftime("%b"),
+            "count": at_risk,
+        })
+    return points
+
+
+def dashboard_monthly_risk_history(
+    rows: list[LearnerProfile | SimpleNamespace],
+    *,
+    today: date,
+) -> list[dict] | None:
+    """Load the inputs for the six-month chart without writing snapshots."""
+    active_rows = [
+        row for row in rows
+        if normalize_program_status(get_lms_row_program_status(row)) == "active"
+    ]
+    if not active_rows:
+        return build_monthly_risk_history([], {}, {}, today=today)
+
+    try:
+        plans = [monthly_target_training_plan(row) for row in active_rows]
+        component_ids = [
+            component_id
+            for plan in plans
+            for week in curriculum_monthly_target_hours_weeks(plan)
+            for component_id in week
+        ]
+        expected_by_id = curriculum_expected_otjh_by_component_id(component_ids)
+        progress_by_learner: dict[int, list[dict]] = defaultdict(list)
+        progress_entries = (
+            LearnerProgressEntry.objects
+            .filter(learner_id__in=[int(row.id) for row in active_rows])
+            .only(
+                "learner_id", "kind", "component_ref", "quiz_ref", "attempt",
+                "module_title", "week_title", "component_title", "expected_otjh",
+                "reported_time", "submitted_at", "started_at", "claimed_seconds",
+                "verified_seconds", "time_tracking_source",
+            )
+            .order_by("learner_id", "entry_order", "id")
+        )
+        for entry in progress_entries:
+            progress_by_learner[int(entry.learner_id)].append(progress_entry_history_record(entry))
+        return build_monthly_risk_history(
+            active_rows,
+            progress_by_learner,
+            expected_by_id,
+            today=today,
+        )
+    except DatabaseError:
+        logger.exception("coach_dashboard_monthly_risk_history_failed")
+        return None
 
 
 def training_plan_component_lookup(training_plan) -> dict[str, dict[str, str]]:
@@ -8516,6 +8947,9 @@ def reserve_coach_calendar_booking(
 
     owner_email = normalize_email(owner_email)
     session_type = clean_text(session_type).lower()
+    non_delivery_reason = england_non_delivery_reason(scheduled_date)
+    if non_delivery_reason:
+        raise LearnerCalendarConflict(non_delivery_reason)
     if initial_status not in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_NOT_SCHEDULED}:
         raise ValueError("Unsupported initial booking status.")
 
@@ -8710,6 +9144,10 @@ def persist_calendar_sync_reservation(
         "review_template_id",
         "occurrence_number",
     )
+    if candidate.scheduled_date:
+        non_delivery_reason = england_non_delivery_reason(candidate.scheduled_date)
+        if non_delivery_reason:
+            raise LearnerCalendarConflict(non_delivery_reason, candidate)
     with transaction.atomic():
         lock_learner_calendar(candidate.learner_id)
         record = CoachCalendarEvent.objects.select_for_update().get(pk=candidate.pk)
@@ -9614,43 +10052,23 @@ def dashboard_attendance_rows(
     *,
     aptem_by_profile: dict[int, int] | None = None,
 ) -> list[dict]:
-    """Real attendance rates for the dashboard's caseload modal.
-
-    The dashboard used to send `attendance: {learners: []}` because its compact
-    cards do not show attendance -- but the caseload modal on the same page
-    does, so every learner there read "--".
-
-    This reads the KBC register keyed by Aptem id, which is the same source
-    the learner's own workspace quotes. The coach attendance page's verified
-    Teams projection is a different dataset that is empty for many learners,
-    so using it here would have shown a coach "--" next to a learner page
-    reading 95%. One batched query for the whole caseload, unlike the
-    per-learner KSB recomputation that keeps the rest of this payload lean.
-
-    The shape is only what `mergeAttendanceRates` on the client reads: the
-    identity to match on plus the rate and whether one was actually recorded.
-    """
+    """Dashboard attendance: KBC by Aptem ID, existing register for other learners."""
     if not learners:
         return []
-    # Shared resolver: reads `_caseload_source` where the caller attached it,
-    # and falls back to the lean id-only query where it did not.
-    aptem_by_profile = {
-        profile_id: str(aptem_id)
-        for profile_id, aptem_id in (
-            aptem_by_profile if aptem_by_profile is not None else caseload_aptem_ids(rows)
-        ).items()
-    }
+    aptem_by_profile = aptem_by_profile if aptem_by_profile is not None else caseload_aptem_ids(rows)
+    other_rows = [row for row in rows if int(row.id) not in aptem_by_profile]
+    summaries = caseload_canonical_attendance(other_rows)
     try:
-        rates = fetch_kbc_attendance_rates(aptem_by_profile.values())
-    except Exception as exc:
-        # Attendance is an enrichment here, not the reason the dashboard loads.
-        logger.warning("Could not load dashboard attendance metrics: %s", exc)
-        return []
+        kbc_rates = fetch_kbc_attendance_rates(aptem_by_profile.values())
+    except Exception:
+        logger.warning("Could not load KBC attendance for the coach dashboard", exc_info=True)
+        kbc_rates = {}
 
     payload = []
     for learner in learners:
         learner_id = to_int(learner.get("id"))
-        metrics = rates.get(aptem_by_profile.get(learner_id, "")) if learner_id else None
+        aptem_id = aptem_by_profile.get(learner_id)
+        metrics = kbc_rates.get(str(aptem_id)) if aptem_id is not None else summaries.get(learner_id)
         # A row with no register behind it carries nothing the client can
         # use -- `mergeAttendanceRates` would read it as "no attendance"
         # either way -- so it is left out rather than padding the payload.
@@ -9658,15 +10076,18 @@ def dashboard_attendance_rows(
             continue
         # .get, not indexing: this enriches whatever the serializer produced,
         # and must never be the reason the whole dashboard 503s.
+        last_session_date = metrics.get("lastSessionDate")
         payload.append({
             "id": learner.get("id"),
             "learner": learner.get("name"),
             "email": learner.get("email"),
-            "attendance": metrics["rate"],
+            "attendance": metrics.get("rate", metrics.get("attendanceRate")),
             "hasAttendance": True,
             "sessions": metrics["sessions"],
             "present": metrics["present"],
             "absent": metrics["absent"],
+            "lastSession": format_date_value(last_session_date),
+            "lastSessionDate": last_session_date.isoformat() if hasattr(last_session_date, "isoformat") else last_session_date,
         })
     return payload
 
@@ -9749,6 +10170,53 @@ def dashboard_review_history(
     }
 
 
+def _latest_completed_review_date(reviews: list[dict]) -> str | None:
+    """The latest completed imported review date, never a future planned date."""
+    dates = [
+        clean_text(review.get("completedDate"))
+        for review in reviews
+        if clean_text(review.get("status")).casefold() == "completed"
+        and clean_text(review.get("completedDate"))
+    ]
+    return max(dates) if dates else None
+
+
+@coach_access_required
+@require_GET
+def coach_imported_review_history(request):
+    """Imported Aptem reviews and their sections for this coach's caseload."""
+    owner_email = authenticated_coach_email(request)
+    try:
+        rows = fetch_caseload_dashboard_profiles(owner_email)
+        history = dashboard_review_history(rows)
+    except Exception:
+        logger.exception("coach_imported_review_history_failed coach_account_id=%s", owner_email)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load imported review history.",
+            status=503,
+        )
+
+    learners = []
+    for row in rows:
+        learner_history = history.get(int(row.id))
+        if not learner_history:
+            continue
+        learners.append({
+            **learner_history,
+            "name": clean_text(getattr(row, "username", None)) or "Unknown learner",
+            "email": clean_text(getattr(row, "email", None)) or None,
+            "learnerType": (
+                "commercial"
+                if clean_text(getattr(row, "learner_type", None)).casefold() == "commercial"
+                else "apprenticeship"
+            ),
+            "enrolmentId": str(row.enrolment_id) if getattr(row, "enrolment_id", None) else None,
+        })
+    return JsonResponse({"learners": learners})
+
+
 def serialize_attendance_learner(
     learner: dict,
     attendance_metrics: dict | None,
@@ -9812,6 +10280,19 @@ def normalize_attendance_detail_status(value) -> str:
     return text or "--"
 
 
+def serialize_attendance_register_row(row: dict) -> dict:
+    return {
+        "learnerId": clean_text(row.get("learner_id")),
+        "learnerName": clean_text(row.get("learner_name")) or "Learner",
+        "learnerEmail": clean_text(row.get("learner_email")),
+        "sessionId": clean_text(row.get("session_id")) or "--",
+        "sessionTitle": clean_text(row.get("session_title")) or "Live session",
+        "sessionDate": format_iso_date_value(row.get("session_date")),
+        "sessionDateLabel": format_date_value(row.get("session_date")),
+        "status": normalize_attendance_detail_status(row.get("attendance_status")),
+    }
+
+
 def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
     rows = fetch_verified_teams_attendance_rows(
         [to_int(learner.get("id"))],
@@ -9840,6 +10321,36 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
     ]
 
 
+def canonical_attendance_detail_rows(source) -> tuple[dict | None, list[dict]]:
+    """Return detail rows from the exact register used by the learner page."""
+    from learner_api.attendance_lectures import lecture_register
+
+    summary = _summarize_attendance(lecture_register(source))
+    if not summary:
+        return None, []
+
+    sessions = [
+        {
+            "learnerId": clean_text(summary.get("learnerId")),
+            "learnerName": clean_text(summary.get("learnerName")) or "Learner",
+            "learnerEmail": clean_text(summary.get("learnerEmail")),
+            "sessionId": clean_text(item.get("id")) or "--",
+            "sessionTitle": clean_text(item.get("title")) or "--",
+            "sessionType": clean_text(item.get("sessionType")) or "--",
+            "sessionDate": clean_text(item.get("date")),
+            "sessionDateLabel": format_date_value(item.get("date")),
+            "startTime": clean_text(item.get("startTime")) or "--",
+            "endTime": clean_text(item.get("endTime")) or "--",
+            "status": "absent" if item.get("status") == "missed" else "present",
+            "reason": "--",
+            "catchupCompleted": False,
+            "attendedSeconds": None,
+        }
+        for item in summary.get("sessionHistory", [])
+    ]
+    return summary, sessions
+
+
 @coach_access_required
 @require_GET
 def coach_attendance_details(request):
@@ -9852,13 +10363,17 @@ def coach_attendance_details(request):
         attach_caseload_source_rows(caseload_rows)
         detail_audit_totals = caseload_audit_hour_totals(caseload_rows)
         detail_ksb_counts = caseload_evidenced_ksb_counts(caseload_rows)
+        detail_canonical_metrics = caseload_canonical_metrics(caseload_rows)
         learners = [
-            apply_evidenced_ksb_count(
-                apply_audit_hour_totals(
-                    serialize_attendance_source_learner(row),
-                    detail_audit_totals.get(int(row.id)),
+            apply_canonical_learner_metrics(
+                apply_evidenced_ksb_count(
+                    apply_audit_hour_totals(
+                        serialize_attendance_source_learner(row),
+                        detail_audit_totals.get(int(row.id)),
+                    ),
+                    detail_ksb_counts.get(int(row.id)),
                 ),
-                detail_ksb_counts.get(int(row.id)),
+                detail_canonical_metrics.get(int(row.id)),
             )
             for row in caseload_rows
         ]
@@ -9873,7 +10388,11 @@ def coach_attendance_details(request):
         if not learner:
             return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
 
-        sessions = fetch_attendance_detail_rows(learner)
+        profile_row = next(row for row in caseload_rows if str(row.id) == str(learner["id"]))
+        source = getattr(profile_row, "_caseload_source", None)
+        if source is None:
+            return JsonResponse({"detail": "Learner attendance source is unavailable."}, status=404)
+        summary, sessions = canonical_attendance_detail_rows(source)
     except Exception:
         logger.exception("coach_attendance_details_failed coach_account_id=%s learner_id=%s", owner_email, learner_id)
         return coach_error(
@@ -9883,8 +10402,8 @@ def coach_attendance_details(request):
             status=503,
         )
 
-    present = sum(1 for item in sessions if item["status"] == "present")
-    absent = sum(1 for item in sessions if item["status"] == "absent")
+    present = summary["present"] if summary else 0
+    absent = summary["absent"] if summary else 0
     return JsonResponse(
         {
             "learner": {
@@ -9895,10 +10414,10 @@ def coach_attendance_details(request):
                 "group": learner.get("group"),
             },
             "summary": {
-                "total": len(sessions),
+                "total": summary["sessions"] if summary else 0,
                 "present": present,
                 "absent": absent,
-                "unknown": len(sessions) - present - absent,
+                "unknown": 0,
             },
             "sessions": sessions,
         }
@@ -10061,15 +10580,22 @@ def coach_dashboard(request):
         try:
             rows = fetch_caseload_dashboard_profiles(owner_email)
             learners = [serialize_caseload_dashboard_learner(row) for row in rows]
+            latest_activities = caseload_latest_learning_activities(rows)
             audit_totals = caseload_audit_hour_totals(rows)
             ksb_counts = caseload_evidenced_ksb_counts(rows)
+            canonical_metrics = caseload_canonical_metrics(rows)
+            aptem_by_profile = caseload_aptem_ids(rows)
             for row, learner in zip(rows, learners):
+                apply_latest_learning_activity(learner, latest_activities.get(int(row.id)))
                 apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
                 apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
+                apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
+                apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
+            monthly_risk = dashboard_monthly_risk_history(rows, today=timezone.localdate())
             # The profile rows carry the `_caseload_source` bridge to Aptem,
             # which the attendance lookup below needs and the serialized
             # payload does not expose.
-            return rows, learners
+            return rows, learners, monthly_risk
         finally:
             close_old_connections()
 
@@ -10116,23 +10642,49 @@ def coach_dashboard(request):
             learners_future = executor.submit(load_dashboard_learners)
             timetable_future = executor.submit(load_dashboard_timetable)
             groups_future = executor.submit(load_assigned_groups)
-            dashboard_rows, learners = learners_future.result()
+            dashboard_rows, learners, monthly_risk = learners_future.result()
             timetable_payload = timetable_future.result()
             assigned_groups = groups_future.result()
         # Depends on the learner list, so it follows the pool rather than
         # joining it. Resolve the Aptem bridge once and share it between the
-        # KBC attendance and imported review-history enrichments.
+        # KBC attendance and imported review-history enrichments. Those two
+        # enrichments are independent read-only queries; run them together so
+        # a slow attendance source does not add its latency to review history.
         try:
             aptem_by_profile = caseload_aptem_ids(dashboard_rows)
-            attendance_rows = dashboard_attendance_rows(
-                dashboard_rows,
-                learners,
-                aptem_by_profile=aptem_by_profile,
-            )
-            review_history = dashboard_review_history(
-                dashboard_rows,
-                aptem_by_profile=aptem_by_profile,
-            )
+            def run_enrichment(fn, *args, **kwargs):
+                try:
+                    return fn(*args, **kwargs)
+                finally:
+                    close_old_connections()
+
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="coach-dashboard-enrichment") as executor:
+                attendance_future = executor.submit(
+                    run_enrichment,
+                    dashboard_attendance_rows,
+                    dashboard_rows,
+                    learners,
+                    aptem_by_profile=aptem_by_profile,
+                )
+                review_history_future = executor.submit(
+                    run_enrichment,
+                    dashboard_review_history,
+                    dashboard_rows,
+                    aptem_by_profile=aptem_by_profile,
+                )
+                try:
+                    attendance_rows = attendance_future.result()
+                except Exception:
+                    # Attendance is an optional dashboard enrichment. A
+                    # malformed source row or an unavailable side database
+                    # must not turn an otherwise valid caseload into a 503.
+                    logger.warning("Could not load dashboard attendance", exc_info=True)
+                    attendance_rows = []
+                try:
+                    review_history = review_history_future.result()
+                except Exception:
+                    logger.warning("Could not load dashboard review history", exc_info=True)
+                    review_history = {}
         finally:
             close_old_connections()
         owner_name = coach_staff_display_name(owner_email) or next(
@@ -10155,6 +10707,7 @@ def coach_dashboard(request):
                 "email": owner_email,
             },
             "learners": learners,
+            "monthlyRisk": monthly_risk,
             "assignedGroups": assigned_groups,
             # Attendance is one batched query and the caseload modal on this
             # page renders it, so it ships here. Evidence stays empty: its
@@ -10309,9 +10862,21 @@ def coach_caseload(request):
         # own workspace, rather than the training-plan reflection totals.
         audit_totals = caseload_audit_hour_totals(rows)
         ksb_counts = caseload_evidenced_ksb_counts(rows)
+        canonical_metrics = caseload_canonical_metrics(rows)
+        aptem_by_profile = caseload_aptem_ids(rows)
+        review_history = dashboard_review_history(rows)
         for row, learner in zip(rows, learners):
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
+            apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
+            apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
+            imported = review_history.get(int(row.id), {})
+            last_mcm = _latest_completed_review_date(imported.get("mcm", []))
+            last_pr = _latest_completed_review_date(imported.get("reviews", []))
+            if last_mcm:
+                learner["lastReview"] = last_mcm
+            if last_pr:
+                learner["lastProgressReview"] = last_pr
     except Exception:
         logger.exception("coach_caseload_load_failed coach_account_id=%s", owner_email)
         return coach_error(
@@ -10390,15 +10955,19 @@ def coach_attendance(request):
         attach_caseload_source_rows(caseload_rows)
         attendance_audit_totals = caseload_audit_hour_totals(caseload_rows)
         attendance_ksb_counts = caseload_evidenced_ksb_counts(caseload_rows)
+        attendance_canonical_metrics = caseload_canonical_metrics(caseload_rows)
         caseload_learners = [
             learner
             for learner in [
-                apply_evidenced_ksb_count(
-                    apply_audit_hour_totals(
-                        serialize_attendance_source_learner(row),
-                        attendance_audit_totals.get(int(row.id)),
+                apply_canonical_learner_metrics(
+                    apply_evidenced_ksb_count(
+                        apply_audit_hour_totals(
+                            serialize_attendance_source_learner(row),
+                            attendance_audit_totals.get(int(row.id)),
+                        ),
+                        attendance_ksb_counts.get(int(row.id)),
                     ),
-                    attendance_ksb_counts.get(int(row.id)),
+                    attendance_canonical_metrics.get(int(row.id)),
                 )
                 for row in caseload_rows
             ]
@@ -10414,6 +10983,10 @@ def coach_attendance(request):
         attendance_data = fetch_attendance_detail_summary_data(
             learner_ids, email_keys, include_reported_participants=True,
         )
+        attendance_records = [
+            serialize_attendance_register_row(row)
+            for row in attendance_data["rows"]
+        ]
         active_attendance_data = filter_attendance_detail_summary_data(
             attendance_data,
             active_learner_ids,
@@ -10432,6 +11005,9 @@ def coach_attendance(request):
         ]
         fallback_attendance_data = fetch_learner_absence_data(missing_fallback_emails)
         fallback_metrics_by_email = fallback_attendance_data["metrics"]
+        aptem_by_profile, kbc_attendance_by_profile = caseload_kbc_attendance_rates(caseload_rows)
+        non_aptem_rows = [row for row in caseload_rows if int(row.id) not in aptem_by_profile]
+        canonical_attendance_by_profile = caseload_canonical_attendance(non_aptem_rows)
         catchup_records = list(
             CoachCalendarEvent.objects.filter(
                 owner_email__iexact=owner_email,
@@ -10440,18 +11016,32 @@ def coach_attendance(request):
         )
         catchups_by_learner_id: dict[int, int] = {}
         for record in catchup_records:
+            if record.status != CoachCalendarEvent.STATUS_COMPLETED:
+                continue
             catchups_by_learner_id[record.learner_id] = catchups_by_learner_id.get(record.learner_id, 0) + 1
 
-        attendance_learners = [
-            serialize_attendance_learner(
-                learner,
-                metrics_by_id.get(int(learner["id"]))
-                or metrics_by_email.get(normalize_email(learner.get("email")))
-                or fallback_metrics_by_email.get(normalize_email(learner.get("email"))),
-                catchups_by_learner_id.get(int(learner["id"]), 0),
+        attendance_learners = []
+        for learner in caseload_learners:
+            profile_id = int(learner["id"])
+            if profile_id in aptem_by_profile:
+                # Aptem-linked coach rows are sourced exclusively from the
+                # KBC register. A missing KBC row stays unavailable instead of
+                # being replaced by a Teams or legacy attendance record.
+                metrics = kbc_attendance_by_profile.get(profile_id)
+            else:
+                metrics = (
+                    canonical_attendance_by_profile.get(profile_id)
+                    or metrics_by_id.get(profile_id)
+                    or metrics_by_email.get(normalize_email(learner.get("email")))
+                    or fallback_metrics_by_email.get(normalize_email(learner.get("email")))
+                )
+            attendance_learners.append(
+                serialize_attendance_learner(
+                    learner,
+                    metrics,
+                    catchups_by_learner_id.get(profile_id, 0),
+                )
             )
-            for learner in caseload_learners
-        ]
     except Exception:
         logger.exception("coach_attendance_load_failed coach_account_id=%s", owner_email)
         return coach_error(
@@ -10526,6 +11116,7 @@ def coach_attendance(request):
             "owner": {"name": owner_name, "email": owner_email},
             "summary": summary,
             "learners": attendance_learners,
+            "attendanceRecords": attendance_records,
             "trends": active_trends,
         }
     )
@@ -10841,11 +11432,12 @@ MARKING_QUEUE_COLUMNS = """
     benefit_explanation, actual_time_hours,
     completed_during_paid_hours, date_completed, otjh_confirmed,
     signed_declaration, quality_score, coach_feedback, reviewed_by,
-    reviewed_at, submitted_at
+    reviewed_at, submitted_at, full_submission
 """
 
 
 def serialize_marking_submission(row, *, now=None):
+    from learner_api.assignment_attempts import submission_attempts
     now = now or timezone.now()
     submitted_at = row["submitted_at"]
     elapsed_days = max((now - submitted_at).days, 0) if submitted_at else 0
@@ -10891,6 +11483,7 @@ def serialize_marking_submission(row, *, now=None):
         "submittedDisplay": submitted_at.strftime("%d/%m/%Y %H:%M") if submitted_at else "--",
         "elapsedDays": elapsed_days,
         "isOverdue": status == "pending" and elapsed_days >= MARKING_OVERDUE_DAYS,
+        "submissionAttempts": submission_attempts(row.get("full_submission"), row["status"], submitted_at, row["coach_feedback"], row["reviewed_by"], row["reviewed_at"]) if row["activity_type"] == "assignment" else [],
     }
 
 

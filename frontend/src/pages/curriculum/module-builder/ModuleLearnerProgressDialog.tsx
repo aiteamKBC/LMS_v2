@@ -50,14 +50,23 @@ function ksbFor(learners: CurriculumLearnerKsbConsumption[], learner: Curriculum
   return learners.find(row => learnerKey(row.learnerId) === learnerKey(learner.id));
 }
 
-export function ModuleLearnerProgressDialog({ moduleName, impact, onClose, onAssignMore }: {
+export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearners, onClose, onAssignMore }: {
   moduleName: string;
   impact: CurriculumScopeLearnerKsbImpactResponse;
+  /**
+   * Module membership comes from the assignment directory. The impact read is
+   * intentionally only a progress enrichment, since it can omit a learner who
+   * has no placement/progress record to aggregate yet.
+   */
+  assignedLearners?: CurriculumProgrammeAssignedLearner[];
   onClose: () => void;
   onAssignMore: () => void;
 }) {
   const dialog = useRef<HTMLDivElement>(null);
-  const learners = useMemo(() => impact.assignedLearners || [], [impact.assignedLearners]);
+  const learners = useMemo(
+    () => assignedLearners ?? impact.assignedLearners ?? [],
+    [assignedLearners, impact.assignedLearners],
+  );
   const otjhRows = impact.otjhAchievement?.learners || [];
   const ksbRows = impact.learnerKsbConsumption || [];
 

@@ -99,6 +99,8 @@ export interface ModuleComponent {
 
 export interface ModuleWeek {
   id: string;
+  /** The week this independent copy was placed from, when it has one. */
+  copiedFromId?: string;
   moduleId: string;
   weekNumber: number;
   title: string;
@@ -922,6 +924,8 @@ export interface ModuleCatalogueItem {
   lessonCount: number;
   quizCount: number;
   qualityScore: number;
+  /** Learners currently assigned this module, from the bulk overview count. */
+  assignedLearnerCount?: number;
   moduleKsbMappings: KsbMapping[];
   completionCriteria: CompletionCriteria;
   advancedDetails: AdvancedModuleDetails;
@@ -1177,7 +1181,30 @@ export async function createNewModule(input: { programme: string; title: string;
   }
 }
 
-export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
+export interface DuplicateModuleStructureOptions {
+  /**
+   * Cloning a cohort or group keeps the source's dates and delivery day on the
+   * copy — there is no "own start date" to redate against, since the new
+   * group/cohort is meant to run in parallel with the one it was cloned from.
+   * The module-builder's own "Duplicate module" button leaves this false: a
+   * standalone copy has nothing scheduling it yet, so it is dated from its own
+   * module's start date instead (see the note this used to always carry).
+   */
+  keepDates?: boolean;
+  /** Append " copy" to the title. Off when the group/cohort it lands in already carries that suffix. */
+  renameCopy?: boolean;
+  /** Attach the copy to a different group/cohort than the source (a cohort/group clone target) instead of the source's own. */
+  cohortId?: string;
+  cohortName?: string;
+  groupId?: string;
+  groupName?: string;
+}
+
+export async function duplicateModuleStructure(
+  source: ModuleCatalogueItem,
+  options: DuplicateModuleStructureOptions = {},
+) {
+  const { keepDates = false, renameCopy = true } = options;
   const copyId = `copy-${Date.now().toString(36)}`;
   const cloneMappings = (mappings: KsbMapping[] = [], scope: string) => mappings.map((mapping, index) => ({
     ...mapping,
@@ -1187,15 +1214,52 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
     ...source,
     id: copyId,
     catalogueId: makeAuthoringId('MOD'),
-    title: `${source.title} copy`,
+    title: renameCopy ? `${source.title} copy` : source.title,
     status: 'draft',
     sourceModule: undefined,
-    // The structure response also repeats the current calendar in module-level
-    // delivery metadata.  Cleaning only the component settings is insufficient:
-    // the backend accepts deliveryMetadata.teamsLiveSessionId for legacy
-    // partial saves and would otherwise re-parent the source calendar to this
-    // newly-created module during the copy's first full save.
-    deliveryMetadata: independentCopyDeliveryMetadata(source.deliveryMetadata),
+    // The copy is an authored module in its own right, never a second claim on
+    // whatever the original was made from. `source_id` is how a training-plan
+    // row finds its module (`matching_authoring_module_for_training_row`), so a
+    // copy carrying the original's made two modules answer to one row and which
+    // one answered was whichever the candidate scan reached first. `sourceId` is
+    // re-pointed at the copy's OWN catalogue id below, once the row exists --
+    // which is how an authored module names itself.
+    sourceType: 'module_authoring',
+    // The fingerprint of the STORED structure this object was read from -- the
+    // original's. The copy has not been stored yet, and carrying a revision that
+    // belongs to another module's row is only ever wrong.
+    structureRevision: undefined,
+    // Read back off the original's own weeks by the structure endpoint, so it
+    // arrives holding the original's `teamsLiveSessionId` even though every
+    // component here is about to be stripped of it. The backend does not treat
+    // this as description: `link_live_session_series_to_module` takes every
+    // live-session id the payload mentions -- components AND this object -- and
+    // points those `curriculum.live_sessions` rows at the module being saved. So
+    // saving the copy MOVED the original's real meeting onto the copy: the
+    // original kept the ids in its components but no longer owned the row, and
+    // everything that reads the table by module (the Teams Meetings page,
+    // attendance, recordings, the sync) followed the meeting to the copy.
+    // Stripped the same way the components are, and for the same reason.
+    deliveryMetadata: source.deliveryMetadata
+      ? independentCopySettings(structuredClone(source.deliveryMetadata), { keepDates })
+      : source.deliveryMetadata,
+    // The run the source is on is the source's, not the copy's. `createNewModule`
+    // below already withholds these, but the structure save right after it sends
+    // the whole module -- so leaving them here put the original's start date back
+    // on the copy's row, and every date the copy has is generated from that row:
+    // `module_session_plan_for_count` walks forward from `start_date`, so the
+    // copy's weeks and live sessions were re-dated onto the original's days the
+    // moment they were planned. Assigning the copy to another group did not save
+    // it either -- that group supplies its own delivery days, not a start date,
+    // so the sessions simply landed on the old run's dates spelled in new days.
+    // Undated is the honest state: the module drawer asks for a start date before
+    // it will save, and the plan fills the weeks from the answer.
+    startDate: keepDates ? source.startDate : '',
+    endDate: keepDates ? source.endDate : '',
+    cohortId: options.cohortId ?? source.cohortId,
+    cohort: options.cohortName ?? source.cohort,
+    groupId: options.groupId ?? source.groupId,
+    group: options.groupName ?? source.group,
     moduleKsbMappings: cloneMappings(source.moduleKsbMappings, 'module'),
     completionCriteria: { ...source.completionCriteria },
     advancedDetails: { ...source.advancedDetails },
@@ -1207,11 +1271,13 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
         ...week,
         id: weekId,
         moduleId: copyId,
-        // The copy is dated by its own module's start date, not the source's.
-        // `applyModuleWeekSessionPlan` fills these from the plan; carrying them
-        // over left the new module's rail showing the dates the original runs on.
-        sessionDate: '',
-        sessionDay: '',
+        // The copy is dated by its own module's start date, not the source's,
+        // unless `keepDates` says this copy IS meant to run on the source's own
+        // dates (a cohort/group clone). `applyModuleWeekSessionPlan` fills these
+        // from the plan when left blank; carrying them over otherwise left the
+        // new module's rail showing the dates the original runs on.
+        sessionDate: keepDates ? week.sessionDate : '',
+        sessionDay: keepDates ? week.sessionDay : '',
         learningOutcomes: [...(week.learningOutcomes || [])],
         ksbMappings: cloneMappings(week.ksbMappings, `week-${weekIndex + 1}`),
         components: week.components.map((component, componentIndex) => ({
@@ -1219,7 +1285,13 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
           id: makeId(`component-copy-${weekIndex + 1}-${componentIndex + 1}`),
           weekId,
           ksbMappings: cloneMappings(component.ksbMappings, `component-${weekIndex + 1}-${componentIndex + 1}`),
-          settings: independentCopySettings(component.settings || {}),
+          // Cloned before it is stripped, like `duplicateWeekInModule` does:
+          // `independentCopySettings` spreads one level, so the copy would go on
+          // sharing the source's ARRAYS -- its attendees, presenters and KSB
+          // lists. The source here is the object `loadModuleStructure` cached,
+          // so an edit through the copy would reach both the original on screen
+          // and everything else reading that cache entry.
+          settings: independentCopySettings(structuredClone(component.settings || {}), { keepDates }),
         })),
       };
     }),
@@ -1232,8 +1304,22 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
       description: duplicate.description,
       weeks: Math.max(1, duplicate.weekStructure.length),
       status: 'draft',
+      cohortId: duplicate.cohortId,
+      cohortName: duplicate.cohort,
+      groupId: duplicate.groupId,
+      groupName: duplicate.group,
+      startDate: keepDates ? duplicate.startDate : undefined,
+      endDate: keepDates ? duplicate.endDate : undefined,
     });
-    const payload = recalculateModule({ ...duplicate, catalogueId: created.catalogueId, id: created.id || duplicate.id });
+    const payload = recalculateModule({
+      ...duplicate,
+      catalogueId: created.catalogueId,
+      id: created.id || duplicate.id,
+      // An authored module's `source_id` is its own catalogue id -- that is what
+      // the estate holds for the modules the builder made. The copy names
+      // itself here rather than the module it was copied from.
+      sourceId: created.catalogueId,
+    });
     const saved = await saveModuleStructure(payload.catalogueId, payload);
     return saved;
   } catch (err) {
@@ -1282,10 +1368,18 @@ function withoutGroupAssignmentSettings(settings: ComponentSettings): ComponentS
 // that shares a meeting across cohorts — that is "Assigned groups"
 // (`placedCopy*` above), which places a copy deliberately and is stripped here
 // for the same reason.
-const BOOKED_DELIVERY_SETTING_KEYS = [
+const SESSION_DATE_SETTING_KEYS = [
   'sessionDate',
   'sessionDay',
   'sessionDateTimeUtc',
+  // The instant Microsoft holds the booked occurrence at. It is the same date
+  // said a second way, and the week builder falls back to it when reading a
+  // session's calendar instant, so a copy that kept it still pointed at the
+  // original's day after `sessionDate` had been cleared.
+  'teamsStartDateTimeUtc',
+] as const;
+
+const TEAMS_MEETING_SETTING_KEYS = [
   'teamsLiveSessionId',
   'teamsSessionNumber',
   'teamsEventId',
@@ -1295,6 +1389,17 @@ const BOOKED_DELIVERY_SETTING_KEYS = [
   'teamsMeetingUrl',
   'liveSessionUrl',
   'teamsProvider',
+  // The rest of what the Teams attachment path stamps per occurrence
+  // (`LIVE_SESSION_TRACKING_SETTING_KEYS` in componentAuthoringModel.ts). Every
+  // one of them names the ORIGINAL's meeting: `teamsOccurrenceId` is its Graph
+  // instance, `teamsWebLink` opens its calendar entry, `teamsDurationMinutes`
+  // is the length Microsoft booked it for, and `sessionRescheduled` records
+  // that its occurrence was moved. `durationMinutes` -- what the author chose
+  // -- is a different key and survives the copy.
+  'teamsOccurrenceId',
+  'teamsWebLink',
+  'teamsDurationMinutes',
+  'sessionRescheduled',
 ] as const;
 
 function independentCopyDeliveryMetadata(
@@ -1312,12 +1417,21 @@ function independentCopyDeliveryMetadata(
  * What the author wrote survives — the session's purpose and preparation, its
  * clock and duration, the organizer mailbox and the meeting options — because
  * that is authoring, and a copy that dropped it would only have to be typed
- * again. What does not survive is the pair of things that tie a component to one
- * delivery: the date it runs on and the meeting it runs in.
+ * again. What does not survive is the meeting it runs in — the Microsoft ids
+ * are a row in `curriculum.live_sessions`; a copy that kept `teamsLiveSessionId`
+ * would not be a second meeting, it would be the SAME meeting claimed twice.
+ *
+ * The date it runs on drops too, by default — `keepDates: true` is for a
+ * cohort/group clone, whose copy is meant to run in parallel with the source
+ * on the same delivery day, not be redated from its own module's start date.
  */
-export function independentCopySettings(settings: ComponentSettings): ComponentSettings {
+export function independentCopySettings(
+  settings: ComponentSettings,
+  options: { keepDates?: boolean } = {},
+): ComponentSettings {
   const next = withoutGroupAssignmentSettings(settings);
-  BOOKED_DELIVERY_SETTING_KEYS.forEach(key => { delete next[key]; });
+  TEAMS_MEETING_SETTING_KEYS.forEach(key => { delete next[key]; });
+  if (!options.keepDates) SESSION_DATE_SETTING_KEYS.forEach(key => { delete next[key]; });
   return next;
 }
 
@@ -1408,6 +1522,45 @@ export function copyComponentToWeek(
 }
 
 /**
+ * An independent copy of a complete week for a different delivery module.
+ *
+ * The target module owns its own timetable, so the copy deliberately has no
+ * date and every live-session component has its Microsoft booking removed.
+ * The authoring settings, KSB mappings, outcomes and all non-booking component
+ * details remain intact.
+ */
+export function copyWeekToModule(
+  source: ModuleWeek,
+  targetModuleId: string,
+  targetWeekNumber: number,
+): ModuleWeek {
+  const copyId = makeAuthoringId('WEEK');
+  return {
+    ...source,
+    id: copyId,
+    copiedFromId: source.id,
+    moduleId: targetModuleId,
+    weekNumber: targetWeekNumber,
+    sessionDate: '',
+    sessionDay: '',
+    sessionStartTime: '',
+    sessionDurationMinutes: undefined,
+    summary: source.summary || '',
+    learningOutcomes: [...(source.learningOutcomes || [])],
+    ksbMappings: (source.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
+    components: (source.components || []).map(component => ({
+      ...component,
+      id: makeAuthoringId('COMP'),
+      copiedFromId: component.id,
+      moduleId: targetModuleId,
+      weekId: copyId,
+      ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
+      settings: independentCopySettings(structuredClone(component.settings || {})),
+    })),
+  };
+}
+
+/**
  * A week's twin, inserted directly beneath it in the same module.
  *
  * Everything the author wrote comes across in full — title, summary, learning
@@ -1447,6 +1600,7 @@ export function duplicateWeekInModule(module: ModuleCatalogueItem, weekId: strin
   const copy: ModuleWeek = {
     ...source,
     id: copyId,
+    copiedFromId: source.id,
     moduleId: source.moduleId || module.id,
     title: weekAuthoredTitle(source) ? `${String(source.title).trim()} copy` : source.title,
     sessionDate: '',
@@ -1775,6 +1929,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     lessonCount: module.lessons || sessionNameCount(module) || 0,
     quizCount: module.quizzes || 0,
     qualityScore: 0,
+    assignedLearnerCount: module.assignments ?? 0,
     moduleKsbMappings: (module.ksbCodes || []).map((code, index) => ({
       id: makeAuthoringId('KSBMAP'),
       ksbId: code,
@@ -2094,6 +2249,69 @@ export async function uploadComponentResource(input: { moduleCatalogueId: string
   form.set('moduleCatalogueId', input.moduleCatalogueId);
   form.set('componentType', input.componentType);
   return uploadComponentFile<ComponentUploadResult>(`${API_BASE_URL}/curriculum/components/${encodeURIComponent(input.componentId)}/upload/`, form);
+}
+
+/**
+ * The AI Material book a module carries: one uploaded file per module, stored
+ * in the curriculum Azure container and served back through the same
+ * `/curriculum_api/curriculum/uploads/...` route every component upload uses.
+ */
+export interface AiMaterialRecord {
+  fileName: string;
+  storedPath: string;
+  url: string;
+  size: number;
+  contentType: string;
+  uploadedAt: string;
+}
+
+export interface AiMaterialResult {
+  moduleCatalogueId: string;
+  hasMaterial: boolean;
+  material: AiMaterialRecord | null;
+  replaced?: boolean;
+  uploaded?: boolean;
+  removed?: boolean;
+}
+
+/** The book formats the upload accepts, kept in step with the backend's list. */
+export const AI_MATERIAL_ACCEPT = '.pdf,.epub,.doc,.docx,.txt,.rtf,.odt';
+
+const aiMaterialUrl = (moduleCatalogueId: string) =>
+  `${API_BASE_URL}/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/ai-material/`;
+
+export async function loadAiMaterial(moduleCatalogueId: string, signal?: AbortSignal) {
+  const response = await fetch(aiMaterialUrl(moduleCatalogueId), { signal });
+  if (!response.ok) {
+    let message = `Curriculum API returned ${response.status} for the AI material`;
+    try {
+      const payload = await response.json();
+      if (payload?.error) message = payload.error;
+    } catch {
+      // Keep the status message when a proxy returns a non-JSON body.
+    }
+    throw new Error(message);
+  }
+  return response.json() as Promise<AiMaterialResult>;
+}
+
+/**
+ * Upload the book, or replace the one already there -- the same call either way.
+ * The backend only deletes the file it replaced once the new one is stored and
+ * recorded, so a failed replace leaves the existing book readable.
+ */
+export async function uploadAiMaterial(moduleCatalogueId: string, file: File) {
+  assertComponentUploadAllowed(file);
+  const form = new FormData();
+  form.set('file', file);
+  form.set('moduleCatalogueId', moduleCatalogueId);
+  return uploadComponentFile<AiMaterialResult>(aiMaterialUrl(moduleCatalogueId), form);
+}
+
+export async function removeAiMaterial(moduleCatalogueId: string) {
+  const response = await fetch(aiMaterialUrl(moduleCatalogueId), { method: 'DELETE' });
+  if (!response.ok) throw new Error('The book could not be removed. Please retry.');
+  return response.json() as Promise<AiMaterialResult>;
 }
 
 export interface TeamsMeetingInput {

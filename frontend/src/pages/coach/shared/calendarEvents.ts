@@ -449,7 +449,7 @@ export function currentWeekRange(referenceDate = new Date()) {
   start.setDate(today.getDate() + mondayOffset);
 
   const end = new Date(start);
-  end.setDate(start.getDate() + 6);
+  end.setDate(start.getDate() + 4);
   return { start, end };
 }
 
@@ -476,6 +476,18 @@ export function formatTimeLabel(event: CoachCalendarEvent) {
     return `${event.scheduledTime.slice(0, 5)} - ${event.durationMinutes || 60} min`;
   }
   return event.timeLabel && event.timeLabel !== 'Time TBC' ? event.timeLabel : 'Time TBC';
+}
+
+/** Display a booked session as a start/end range instead of a duration label. */
+export function formatTimeRangeLabel(event: CoachCalendarEvent) {
+  if (!event.scheduledTime) return event.timeLabel && event.timeLabel !== 'Time TBC' ? event.timeLabel : 'Time TBC';
+  const startText = event.scheduledTime.slice(0, 5);
+  const match = /^(\d{1,2}):(\d{2})$/.exec(startText);
+  if (!match) return startText;
+  const start = new Date(2000, 0, 1, Number(match[1]), Number(match[2]));
+  start.setMinutes(start.getMinutes() + (event.durationMinutes || 60));
+  const endText = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+  return `${startText} - ${endText}`;
 }
 
 export function scheduleDefaults(event: CoachCalendarEvent): ScheduleFormState {
@@ -574,7 +586,7 @@ export function isUrgentEvent(event: CoachCalendarEvent) {
 }
 
 export function isCompletedEvent(event: CoachCalendarEvent) {
-  return event.status === 'completed' || event.status === 'confirmed';
+  return event.status === 'completed';
 }
 
 export function canJoinMeeting(event: CoachCalendarEvent, referenceDate = new Date()) {
@@ -585,7 +597,17 @@ export function canJoinMeeting(event: CoachCalendarEvent, referenceDate = new Da
 }
 
 export function isUpcomingEvent(event: CoachCalendarEvent) {
-  return !['completed', 'confirmed', 'cancelled'].includes(event.status);
+  return !['completed', 'cancelled'].includes(event.status);
+}
+
+export function isEventInMonth(event: CoachCalendarEvent, referenceDate = new Date()) {
+  const displayDate = parseLocalDate(eventDisplayDate(event));
+  if (!displayDate) return false;
+
+  return (
+    displayDate.getFullYear() === referenceDate.getFullYear()
+    && displayDate.getMonth() === referenceDate.getMonth()
+  );
 }
 
 export function isAtRiskEvent(event: CoachCalendarEvent, referenceDate = new Date()) {
@@ -618,13 +640,7 @@ export function isEventThisWeek(event: CoachCalendarEvent, referenceDate = new D
 }
 
 export function isEventThisMonth(event: CoachCalendarEvent, referenceDate = new Date()) {
-  const displayDate = parseLocalDate(eventDisplayDate(event));
-  if (!displayDate || isCompletedEvent(event)) return false;
-
-  return (
-    displayDate.getFullYear() === referenceDate.getFullYear()
-    && displayDate.getMonth() === referenceDate.getMonth()
-  );
+  return !isCompletedEvent(event) && isEventInMonth(event, referenceDate);
 }
 
 export function isAtRiskProgressReview(event: CoachCalendarEvent, referenceDate = new Date()) {
