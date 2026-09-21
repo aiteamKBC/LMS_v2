@@ -113,4 +113,12 @@ describe('Training Plan calculations', () => {
     const combined = { ...data, monthlyOtjh: { '2026-09': { planned: 12, actual: 2.5, missingPlannedActivities: 0 } } };
     expect(monthMetrics('2026-09', buildPlanModules([subject], combined), combined).actual).toBe(14);
   });
+  it('uses the monthly log completion for a post-Audit month without double-counting LMS rows', () => {
+    const logged = { ...data,
+      monthlyLogOtjh: { '2026-09': { target: 18, submitted: 4, completed: 12 } },
+      monthlyOtjh: { '2026-09': { planned: 18, submitted: 3, actual: 7, missingPlannedActivities: 0 } },
+    };
+    expect(monthMetrics('2026-09', buildPlanModules([subject], logged), logged))
+      .toMatchObject({ planned: 18, actual: 12, remaining: 6, progress: 66.67 });
+  });
 });

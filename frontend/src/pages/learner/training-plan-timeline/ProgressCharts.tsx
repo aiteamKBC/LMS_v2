@@ -2,6 +2,7 @@ import { useId, useState, type CSSProperties } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { percent, type TimelineModule } from './model';
 import { moduleProgress } from './progress';
+import { monthlyHours, type MonthlyHours } from './monthlyHours';
 import styles from './ProgressCharts.module.css';
 
 type Props = {
@@ -25,52 +26,6 @@ const colors = ['#6c50a5', '#315c85', '#398171', '#a97824', '#9b5981', '#5e6f91'
 const percentage = (value: number | null) => value == null ? 'N/A' : `${value}%`;
 const hourNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
 
-type MonthlyHours = {
-  key: string; label: string; target: number | null; submitted: number | null; completed: number | null;
-};
-
-function monthRange(keys: string[], programmeStartMonth = '', programmeEndMonth = '') {
-  const isMonthKey = (key: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(key);
-  const valid = [...new Set(keys.filter(isMonthKey))].sort();
-  const start = isMonthKey(programmeStartMonth) ? programmeStartMonth : valid[0] || '';
-  const end = isMonthKey(programmeEndMonth) ? programmeEndMonth : valid.at(-1) || '';
-  if (!start || !end || start > end) return [];
-  const result: string[] = [];
-  const cursor = new Date(`${start}-01T12:00:00Z`);
-  while (cursor.toISOString().slice(0, 7) <= end) {
-    result.push(cursor.toISOString().slice(0, 7));
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-  }
-  return result;
-}
-
-function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = '', programmeEndMonth = ''): MonthlyHours[] {
-  const keys = monthRange([
-    ...Object.keys(data.months),
-    ...Object.keys(data.monthlyOtjh || {}),
-    ...Object.keys(data.monthlyLogOtjh || {}),
-    ...data.actual.map(row => row.month),
-  ], programmeStartMonth, programmeEndMonth);
-  const recordedAvailable = data.actualAvailable !== false || Object.keys(data.monthlyOtjh || {}).length > 0;
-  return keys.map(key => {
-    const useAudit = !!data.auditOtjhCutoffMonth && key <= data.auditOtjhCutoffMonth;
-    const monthlyLog = data.monthlyLogOtjh?.[key];
-    const current = data.monthlyOtjh?.[key];
-    const historical = data.actual.filter(row => row.month === key).reduce((sum, row) => sum + row.hours, 0);
-    // Assignment marking is represented in submitted; other activity types
-    // retain their existing submitted semantics. Historical actuals belong
-    // only to completed, so never add them to the light-blue series.
-    const submitted = monthlyLog ? monthlyLog.submitted : useAudit ? null : recordedAvailable ? (current?.submitted ?? 0) : null;
-    const completed = monthlyLog ? monthlyLog.completed : useAudit ? null : recordedAvailable ? historical + (current?.actual ?? 0) : null;
-    return {
-      key,
-      label: new Date(`${key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
-      target: monthlyLog ? monthlyLog.target : useAudit ? null : data.months[key]?.planned ?? current?.planned ?? null,
-      submitted,
-      completed,
-    };
-  });
-}
 
 function ratio(value: number | null, target: number | null) {
   return value == null || target == null || target <= 0 ? null : Math.round(value / target * 100);
