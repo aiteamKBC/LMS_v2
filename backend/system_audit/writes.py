@@ -40,6 +40,7 @@ has committed.
 from __future__ import annotations
 
 import logging
+from urllib.parse import quote
 
 from django.db import DEFAULT_DB_ALIAS, models
 from django.db.models.signals import m2m_changed, post_delete, post_save
@@ -56,6 +57,14 @@ WORKSPACE_BY_ENTITY: dict[str, str] = {}
 #: ``curriculum_api.quality.ENTITY_LABELS``; this is for everything else.
 ENTITY_LABELS: dict[str, tuple[str, str]] = {}
 
+#: entity_type -> the path to ONE record, with ``{id}`` standing for its id.
+#: Where a record has a page of its own, a trail row should open that record and
+#: not the list it sits in -- an auditor reading "who changed this learner's end
+#: date" wants the learner, not the directory. Absent for the record types that
+#: genuinely have no page of their own: a staff account is edited in a dialog on
+#: the directory, so the directory is the honest destination.
+RECORD_HREFS: dict[str, str] = {}
+
 #: Curriculum registered its own tables before this module existed, and its
 #: entity types all belong to one workspace.
 for _config in versioning.VERSIONED_TABLES.values():
@@ -69,11 +78,19 @@ def register(
     entity_type,
     key,
     title='',
+    title_join=' ',
+    title_fallback='',
+    parent='',
+    status='',
+    context=(),
+    parents=(),
+    json_columns=(),
     columns=(),
     redact=(),
     using=DEFAULT_DB_ALIAS,
     label='',
     href='',
+    record_href='',
 ):
     """Declare a table as audited.
 
@@ -81,6 +98,26 @@ def register(
     column not named here cannot arrive by accident, however the write path
     changes later. ``redact`` narrows it further -- those columns record that
     they changed without recording what to.
+
+    The rest is what makes a recorded change *readable*, and is the difference
+    between a workspace being in the log and a workspace being in the Audit
+    Trail. Curriculum declares all of it in ``versioning``; everything else
+    declares it here, at the point of registration, so a newly-wired record type
+    arrives with a name and a place rather than as a primary key on a blank row.
+
+    * ``title`` / ``title_join`` / ``title_fallback`` -- the record's own name.
+      One column or several: a coaching meeting is named by whose it is and what
+      kind it is, and neither alone identifies it.
+    * ``parent`` -- the column the indexed ``parent_id`` is taken from.
+    * ``status`` -- the column whose value is the record's state, which the
+      trail shows beside it.
+    * ``context`` -- the columns that place the record, in reading order. They
+      become the line under the title: "Ahmed Ali › Level 3 Business ›
+      Sept 2026".
+    * ``parents`` -- the columns that name where the record *sits*. A save that
+      touches only these is reported as a move rather than as an edit.
+    * ``json_columns`` -- columns to parse before diffing, so a change inside
+      one reads as the field that moved rather than as "the whole blob changed".
     """
     # Checked before anything is registered. A registration that fails halfway
     # is worse than one that is refused: the entity type would already be
@@ -96,6 +133,22 @@ def register(
         )
     if not workspace:
         raise ValueError(f'{entity_type}: an audited record must belong to a workspace')
+    # Same reasoning as the redaction check, one step further out: a title,
+    # context or parent column that is not collected is a line of configuration
+    # that looks like it names the record and silently names nothing.
+    declared = set(columns)
+    named = {column for column in _as_columns(title) if column}
+    named |= {column for column in _as_columns(title_fallback) if column}
+    named |= set(context) | set(parents)
+    if parent:
+        named.add(parent)
+    if status:
+        named.add(status)
+    unknown = named - declared
+    if unknown:
+        raise ValueError(
+            f'{entity_type}: these columns are read but not collected: {sorted(unknown)}'
+        )
 
     versioning.VERSIONED_TABLES[table] = {
         'entity_type': entity_type,
@@ -107,12 +160,34 @@ def register(
     versioning.ENTITY_TYPES.add(entity_type)
     if redact:
         versioning.REDACTED_COLUMNS[entity_type] = frozenset(redact)
+    versioning.ENTITY_FACT_FIELDS[entity_type] = {
+        'title': tuple(_as_columns(title)),
+        'title_join': title_join,
+        'title_fallback': tuple(_as_columns(title_fallback)),
+        'parent': parent,
+        'status': status,
+    }
+    if context:
+        versioning.ENTITY_CONTEXT_FIELDS[entity_type] = tuple(context)
+    if parents:
+        versioning.PARENT_COLUMNS[entity_type] = tuple(parents)
+    if json_columns:
+        versioning.JSON_SNAPSHOT_COLUMNS.update(json_columns)
     WORKSPACE_BY_ENTITY[entity_type] = workspace
     if label or href:
         ENTITY_LABELS[entity_type] = (
             label or entity_type.replace('_', ' ').capitalize(),
             href,
         )
+    if record_href:
+        RECORD_HREFS[entity_type] = record_href
+
+
+def _as_columns(value):
+    """One column name or several, always as a tuple."""
+    if not value:
+        return ()
+    return (value,) if isinstance(value, str) else tuple(value)
 
 
 def workspace_for_entity(entity_type):
@@ -127,6 +202,23 @@ def entity_types_for_workspace(workspace):
     return sorted(
         entity for entity, owner in WORKSPACE_BY_ENTITY.items() if owner == workspace
     )
+
+
+def record_href(entity_type, entity_id, fallback=''):
+    """Where one recorded record lives, or the list it belongs to.
+
+    An id that cannot be put in a URL falls back to the list rather than
+    producing a broken link -- a trail row that 404s is worse than one that
+    opens the directory.
+    """
+    template = RECORD_HREFS.get(entity_type)
+    entity_id = str(entity_id or '').strip()
+    if not template or not entity_id:
+        return fallback
+    try:
+        return template.format(id=quote(entity_id, safe=''))
+    except Exception:
+        return fallback
 
 
 def change_workspaces():
@@ -180,12 +272,20 @@ def register_model(
     entity_type,
     key='pk',
     title='',
+    title_join=' ',
+    title_fallback='',
+    parent='',
+    status='',
+    context=(),
+    parents=(),
+    json_columns=(),
     columns=(),
     redact=(),
     table=None,
     using=None,
     label='',
     href='',
+    record_href='',
 ):
     """Audit every ORM save and delete of this model.
 
@@ -208,11 +308,19 @@ def register_model(
         entity_type=entity_type,
         key=key,
         title=title,
+        title_join=title_join,
+        title_fallback=title_fallback,
+        parent=parent,
+        status=status,
+        context=context,
+        parents=parents,
+        json_columns=json_columns,
         columns=fields,
         redact=redact,
         using=alias,
         label=label,
         href=href,
+        record_href=record_href,
     )
 
     uid = f'system_audit:{entity_type}'
