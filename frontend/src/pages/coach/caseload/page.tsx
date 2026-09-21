@@ -171,7 +171,19 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
       if (embedded) {
         setOwnerName(authenticatedCoachName);
-        setLearners((embeddedLearners || []).map(source => normalizeLearner(source, undefined)));
+        setLearners((embeddedLearners || []).map(source => normalizeLearner({
+          ...source,
+          // Dashboard uses compact names for these already-computed review dates.
+          lastProgressReview: (source as CaseloadApiLearner & { lastProgressReview?: string }).lastProgressReview || source.lastPr,
+          lastReview: (source as CaseloadApiLearner & { lastReview?: string }).lastReview || source.lastMcm,
+        }, source.attendanceRateAvailable ? {
+          id: source.id,
+          learner: source.name || '',
+          attendance: source.attendanceRate,
+          hasAttendance: source.attendanceRateAvailable,
+          lastSession: source.attendanceLastSession,
+          lastSessionDate: source.attendanceLastSessionDate,
+        } : null)));
         setLoading(false);
         return;
       }
