@@ -1297,6 +1297,16 @@ class CoachMeetingArtifactTests(SimpleTestCase):
         self.factory = RequestFactory()
 
     def test_transcript_vtt_is_normalised_to_readable_text(self):
+        """Cue identifiers out, speaker names in.
+
+        The expected value gained its ``Coach:`` prefix deliberately. The
+        extracted transcript exists to be summarised, and a recap built from
+        an unattributed wall of text cannot tell what the coach committed to
+        from what the learner did, so it credits actions to the wrong person.
+        The second line has no ``<v>`` tag and so stays unattributed. See
+        coach_api.tests_meeting_summary.MeetingTranscriptExtractionTests for
+        the full Teams export shape.
+        """
         self.assertEqual(
             coach_meeting_transcript_text(
                 """WEBVTT
@@ -1310,7 +1320,7 @@ class CoachMeetingArtifactTests(SimpleTestCase):
 Learner progress looks strong.
 """
             ),
-            "Welcome to the review.\nLearner progress looks strong.",
+            "Coach: Welcome to the review.\nLearner progress looks strong.",
         )
 
     def test_artifacts_endpoint_returns_transcript_and_recording(self):

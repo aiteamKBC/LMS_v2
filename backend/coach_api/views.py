@@ -6,6 +6,7 @@ import re
 import hashlib
 from html import escape
 from collections import defaultdict
+from dataclasses import dataclass
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
 from time import perf_counter, sleep as _sleep
@@ -2361,7 +2362,6 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
         return loaded
 
     results = load_metrics_inputs(work)
-    return {profile_id: metrics for profile_id, metrics in results if metrics is not None}
     result = {profile_id: metrics for profile_id, metrics in results if metrics is not None}
     _coach_perf("dashboard", "canonical_metrics", perf_started, learner_count=len(work))
     return result
@@ -5864,6 +5864,14 @@ COACH_MEETING_SUMMARIES_RELATION = '"Coach".coach_meeting_summaries'
 COACH_MEETING_ATTENDANCE_STATUSES = {"attended", "absent", "pending", "extra"}
 COACH_MEETING_SUMMARY_TYPES = {"mcr", "progress-review", GENERIC_REVIEW_EVENT_TYPE}
 COACH_MEETING_SUMMARY_MODEL = getattr(settings, "OPENAI_MEETING_SUMMARY_MODEL", "") or getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
+COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
+# How much transcript the recap prompt may carry. The previous 18,000 was
+# under an hour of speech, so a normal coaching meeting was summarised from
+# its opening alone -- the agreed actions and next steps, which are stated at
+# the end, never reached the model and nothing said so. This is still a
+# fraction of the configured models' context windows (gpt-4.1-mini, gpt-5-mini)
+# and the 5 MB upload ceiling above remains the hard input bound.
+COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS = 120_000
 
 
 def graph_datetime_iso(value) -> str:
@@ -6552,22 +6560,80 @@ def coach_meeting_snapshot_datetime(value):
     return parse_graph_datetime(value) if value else None
 
 
+# Teams writes each spoken line as ``<v Speaker Name>text</v>``. The optional
+# ``.class`` suffixes belong to the tag, not to the name.
+VTT_VOICE_SPAN_RE = re.compile(r"<v(?:\.[^\s>]+)*\s+([^>]*)>", re.IGNORECASE)
+
+
 def coach_meeting_transcript_text(vtt_content: str) -> str:
-    """Return a readable transcript body from Graph's WebVTT payload."""
+    """Return a readable, speaker-attributed transcript body from WebVTT.
+
+    A cue is ``[identifier] / timing / payload``, and only the payload is
+    speech. Tracking that structure matters for a real Teams export:
+
+    * Teams writes a GUID as the cue identifier. Treating it as speech (as
+      dropping only all-digit lines did) filled the prompt with identifiers
+      instead of conversation, which mattered because the prompt is capped.
+    * The header block after ``WEBVTT`` (``Kind:``, ``Language:``) is not
+      speech either, and sits outside every cue.
+
+    Speaker names are kept: a recap built from an unattributed wall of text
+    cannot tell what the coach committed to from what the learner did, so it
+    attributes actions to the wrong person.
+    """
     lines = []
+    in_payload = False
     for raw_line in clean_text(vtt_content).splitlines():
         line = raw_line.strip()
         if not line:
+            # A blank line closes the current cue; anything before the next
+            # timing line is an identifier or a block we do not read.
+            in_payload = False
             continue
         upper = line.upper()
         if upper.startswith("WEBVTT") or upper.startswith("NOTE"):
+            in_payload = False
             continue
-        if "-->" in line or line.isdigit():
+        if "-->" in line:
+            in_payload = True
             continue
-        line = re.sub(r"<[^>]+>", "", line).strip()
-        if line:
-            lines.append(line)
+        if not in_payload:
+            continue
+        voice = VTT_VOICE_SPAN_RE.search(line)
+        speaker = clean_text(voice.group(1)) if voice else ""
+        text = re.sub(r"<[^>]+>", "", line).strip()
+        if not text:
+            continue
+        lines.append(f"{speaker}: {text}" if speaker else text)
     return "\n".join(lines)
+
+
+def uploaded_coach_meeting_transcript_text(upload) -> str:
+    """Validate and extract a coach-supplied WebVTT summary source.
+
+    Uploaded fallback transcripts are processed in memory. They are never
+    stored as, or confused with, Microsoft Teams transcript artifacts.
+    """
+    filename = clean_text(getattr(upload, "name", ""))
+    if not filename.lower().endswith(".vtt"):
+        raise ValueError("Upload a WebVTT transcript with a .vtt file extension.")
+    if int(getattr(upload, "size", 0) or 0) > COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES:
+        raise ValueError("The transcript is too large. Upload a .vtt file no larger than 5 MB.")
+
+    content = upload.read(COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES + 1)
+    if not content or len(content) > COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES:
+        raise ValueError("The transcript is empty or larger than the 5 MB limit.")
+    try:
+        decoded = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("The .vtt transcript must use UTF-8 text encoding.") from exc
+    if not decoded.lstrip().upper().startswith("WEBVTT"):
+        raise ValueError("The uploaded file is not a valid WebVTT transcript.")
+
+    transcript_text = coach_meeting_transcript_text(decoded)
+    if not transcript_text:
+        raise ValueError("The uploaded .vtt file does not contain any transcript text.")
+    return transcript_text
 
 
 def fetch_coach_meeting_transcript_content(base: str, artifact_id: str) -> dict:
@@ -6989,7 +7055,36 @@ def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent) -> d
     return {"artifactId": clean_text(row[0]), "text": clean_text(row[1])}
 
 
-def openai_meeting_summary(record: CoachCalendarEvent, transcript_text: str) -> tuple[dict, str]:
+@dataclass(frozen=True)
+class MeetingSummaryContext:
+    """The only meeting facts the recap prompt reads.
+
+    ``CoachCalendarEvent`` already has this shape, which is why
+    ``openai_meeting_summary`` takes either. A Review whose meeting was held
+    outside Teams has no calendar row to read these from, but it still has a
+    learner, a coach and a Review template -- see
+    ``_review_instance_meeting_summary_context``.
+    """
+
+    event_type: str = ""
+    review_template_id: str | None = None
+    learner_name: str = ""
+    owner_name: str = ""
+
+
+def meeting_summary_transcript_excerpt(transcript_text: str) -> tuple[str, bool]:
+    """The transcript the prompt carries, and whether anything was dropped.
+
+    Returned rather than silently applied so callers can tell the coach that
+    the recap was built from part of the meeting only.
+    """
+    excerpt = transcript_text[:COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS]
+    return excerpt, len(transcript_text) > len(excerpt)
+
+
+def openai_meeting_summary(
+    record: CoachCalendarEvent | MeetingSummaryContext, transcript_text: str,
+) -> tuple[dict, str]:
     if not getattr(settings, "OPENAI_API_KEY", ""):
         raise RuntimeError("OPENAI_API_KEY is not configured.")
     try:
@@ -7013,29 +7108,71 @@ def openai_meeting_summary(record: CoachCalendarEvent, transcript_text: str) -> 
         "Overview: 1-2 short sentences. Key points: 3-5 bullets. "
         "Actions: only agreed actions, with owner and dueDate if stated. "
         "Next steps: 2-4 clear steps. Support: include only if support needs were discussed.\n\n"
-        f"Transcript:\n{transcript_text[:18000]}"
+        f"Transcript:\n{meeting_summary_transcript_excerpt(transcript_text)[0]}"
     )
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
-    response = client.chat.completions.create(
-        model=COACH_MEETING_SUMMARY_MODEL,
-        messages=[
+    completion_options = {
+        "model": COACH_MEETING_SUMMARY_MODEL,
+        "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        response_format={"type": "json_object"},
-        max_completion_tokens=1200,
+        "response_format": {"type": "json_object"},
+        # This limit includes invisible reasoning tokens. The previous 1,200
+        # token budget could therefore finish successfully with no visible
+        # JSON content when a GPT-5 reasoning model was configured.
+        "max_completion_tokens": 4000,
+    }
+    if COACH_MEETING_SUMMARY_MODEL.lower().startswith("gpt-5"):
+        completion_options["reasoning_effort"] = "low"
+
+    response = client.chat.completions.create(
+        **completion_options,
     )
-    content = clean_text(response.choices[0].message.content if response.choices else "")
+    choice = response.choices[0] if response.choices else None
+    content = clean_text(choice.message.content if choice else "")
     if not content:
-        raise RuntimeError("The AI service returned an empty meeting summary.")
+        usage = getattr(response, "usage", None)
+        details = getattr(usage, "completion_tokens_details", None)
+        raise RuntimeError(
+            "The AI service returned an empty meeting summary "
+            f"(finish_reason={clean_text(getattr(choice, 'finish_reason', '')) or 'unknown'}, "
+            f"completion_tokens={getattr(usage, 'completion_tokens', None)}, "
+            f"reasoning_tokens={getattr(details, 'reasoning_tokens', None)})."
+        )
     try:
         payload = json.loads(content)
     except json.JSONDecodeError as exc:
         raise RuntimeError("The AI service returned an invalid meeting summary.") from exc
-    return normalize_meeting_summary_payload(payload, source), COACH_MEETING_SUMMARY_MODEL
+    summary = normalize_meeting_summary_payload(payload, record.event_type)
+    if not clean_text(summary.get("overview")):
+        raise RuntimeError("The AI service returned a meeting summary without an overview.")
+    return summary, COACH_MEETING_SUMMARY_MODEL
 
 
-def ensure_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
+def should_reuse_coach_meeting_summary(
+    existing,
+    transcript_hash: str,
+    *,
+    retry_failed: bool = False,
+) -> bool:
+    """Keep valid/edited summaries, but allow an explicit retry of a failed row."""
+    if not existing:
+        return False
+    existing_hash = clean_text(existing[0])
+    existing_status = clean_text(existing[1])
+    if existing_status == "edited":
+        return True
+    if existing_hash != transcript_hash:
+        return False
+    return not (retry_failed and existing_status == "failed")
+
+
+def ensure_coach_meeting_summary(
+    record: CoachCalendarEvent,
+    *,
+    retry_failed: bool = False,
+) -> dict | None:
     if clean_text(record.event_type).lower() not in COACH_MEETING_SUMMARY_TYPES:
         return None
     database = router.db_for_write(CoachCalendarEvent) or "default"
@@ -7063,9 +7200,11 @@ def ensure_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
         logger.exception("Unable to inspect coach meeting summary for event_key=%s", record.event_key)
         return None
 
-    if existing and clean_text(existing[0]) == transcript_hash:
-        return stored_coach_meeting_summary(record)
-    if existing and clean_text(existing[1]) == "edited":
+    if should_reuse_coach_meeting_summary(
+        existing,
+        transcript_hash,
+        retry_failed=retry_failed,
+    ):
         return stored_coach_meeting_summary(record)
 
     now = timezone.now()
@@ -7619,7 +7758,7 @@ def coach_timetable_event_artifacts(request, event_key):
             attendance_reports=snapshot["attendanceReports"],
             attendance_tracker=snapshot["attendanceTracker"],
         )
-        meeting_summary = ensure_coach_meeting_summary(record)
+        meeting_summary = ensure_coach_meeting_summary(record, retry_failed=True)
     else:
         snapshot = stored_coach_meeting_snapshot(record)
         status_code = 200
@@ -12158,6 +12297,88 @@ def _authorized_review_instance(request, instance_id):
     return instance_row, None
 
 
+def _review_instance_calendar_record(instance_row):
+    """The exact calendar event linked in both directions to this instance."""
+    calendar_event_id = instance_row.get("calendar_event_id")
+    if not calendar_event_id:
+        return None
+    return CoachCalendarEvent.objects.filter(
+        pk=calendar_event_id,
+        review_instance_id=instance_row.get("id"),
+        owner_email__iexact=instance_row.get("coach_email") or "",
+    ).first()
+
+
+def _review_instance_meeting_summary_context(instance_row) -> MeetingSummaryContext:
+    """Recap prompt metadata for a Review with no linked Teams meeting.
+
+    The linked calendar row normally carries the learner and coach names. A
+    meeting held outside Teams has no such row, so the same three facts come
+    from the instance itself. Read-only, and it never stands in for the
+    calendar row anywhere else -- only the prompt's labels are involved.
+    """
+    learner = LearnerProfile.objects.filter(pk=instance_row.get("learner_id")).first()
+    coach_email = clean_text(instance_row.get("coach_email"))
+    return MeetingSummaryContext(
+        review_template_id=clean_text(instance_row.get("review_template_id")) or None,
+        learner_name=(
+            clean_text(getattr(learner, "full_name", ""))
+            or clean_text(getattr(learner, "username", ""))
+        ),
+        owner_name=fetch_owner_name(coach_email, fallback="") if coach_email else "",
+    )
+
+
+def _review_instance_meeting_summary_source(instance_row, definition=None):
+    """Stored-only coach suggestion for one explicitly mapped MCM field.
+
+    This helper never contacts Graph or OpenAI. The formal answer remains on
+    the field inside ``definition['sections']`` and always wins in the client.
+    """
+    definition = definition or curriculum_review_instances.review_instance_form_definition(instance_row)
+    if definition.get("template", {}).get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_MCM:
+        return None
+    field = curriculum_review_instances.meeting_summary_field(definition)
+    if not field:
+        return None
+    source = {
+        "fieldId": field.get("id"),
+        "status": "unavailable",
+        "summaryText": "",
+        "generatedAt": None,
+        "editedAt": None,
+        "message": "No stored AI Meeting Summary is available yet.",
+    }
+    record = _review_instance_calendar_record(instance_row)
+    if not record:
+        return source
+    stored = stored_coach_meeting_summary(record)
+    if not stored:
+        return source
+    status = clean_text(stored.get("status")) or "ready"
+    source.update({
+        "status": status,
+        "generatedAt": stored.get("generatedAt"),
+        "editedAt": stored.get("editedAt"),
+        "message": (
+            "Meeting Summary generation failed. The formal Review answer was not changed."
+            if status == "failed"
+            else ""
+        ),
+    })
+    if status in {"ready", "edited"}:
+        source["summaryText"] = meeting_summary_plain_text(stored.get("summary") or {})
+    return source
+
+
+def _coach_review_instance_definition(instance_row):
+    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    source = _review_instance_meeting_summary_source(instance_row, definition)
+    if source is not None:
+        definition["meetingSummarySource"] = source
+    return definition
+
+
 @coach_access_required
 def coach_review_instance_for_event(request):
     """Open the Curriculum Review form for a calendar event.
@@ -12289,7 +12510,7 @@ def coach_review_instance_detail(request, instance_id):
     # to flip status to in-progress here. The real trigger is a confirmed
     # Microsoft Teams attendance signal; see
     # apply_teams_attendance_status_transition.
-    return JsonResponse(curriculum_review_instances.review_instance_form_definition(instance_row))
+    return JsonResponse(_coach_review_instance_definition(instance_row))
 
 
 @coach_access_required
@@ -12308,10 +12529,136 @@ def coach_review_instance_answers(request, instance_id):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
     owner_email = authenticated_coach_email(request)
     try:
-        result = curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
+        curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
     except ValueError as exc:
         return JsonResponse({'detail': str(exc)}, status=409)
-    return JsonResponse(result)
+    return JsonResponse(_coach_review_instance_definition(
+        curriculum_review_instances.get_review_instance(instance_row["id"])
+    ))
+
+
+@coach_access_required
+def coach_review_instance_meeting_summary(request, instance_id):
+    """Explicitly acquire/generate the AI suggestion for one mapped MCM.
+
+    Passive Review reads use ``_review_instance_meeting_summary_source`` and
+    never reach Graph/OpenAI. This POST reuses the same snapshot persistence,
+    transcript extraction and repaired generation pipeline as Check Teams, or
+    accepts one explicit .vtt fallback upload without creating a Teams
+    artifact. It never writes the formal Review answer.
+
+    The two routes differ in what they require. Generating from Teams needs a
+    linked meeting, because the transcript is fetched from it. An uploaded
+    .vtt does not: the coach already has the transcript, and a meeting that
+    ran outside Teams is the reason the upload exists. Only the Teams route
+    stores its result; an uploaded recap is returned for the coach to review
+    and save as the Review answer, and is never recorded as a Teams artifact.
+    """
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    if definition.get("template", {}).get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_MCM:
+        return JsonResponse({"detail": "Meeting Summary generation is only available on an MCM Review."}, status=404)
+    field = curriculum_review_instances.meeting_summary_field(definition)
+    if not field:
+        return JsonResponse({
+            "detail": "This Review Instance has no explicitly mapped Meeting Summary field. Enter the summary manually.",
+        }, status=409)
+    if instance_row.get("status") in {
+        curriculum_review_instances.STATUS_AWAITING_SIGNATURE,
+        curriculum_review_instances.STATUS_COMPLETED,
+    }:
+        return JsonResponse({"detail": "This Review has already been submitted and its answers are read-only."}, status=409)
+
+    record = _review_instance_calendar_record(instance_row)
+
+    uploaded_transcript = request.FILES.get("transcript")
+    if uploaded_transcript is not None:
+        # The upload is the documented route for a meeting that did NOT happen
+        # in Teams, so it deliberately runs before the linked-meeting check
+        # below. Requiring that link made the fallback unreachable in exactly
+        # the case it exists for. Nothing here contacts Graph or writes a Teams
+        # artifact; a calendar row, when one exists, only labels the prompt.
+        context = record or _review_instance_meeting_summary_context(instance_row)
+        try:
+            transcript_text = uploaded_coach_meeting_transcript_text(uploaded_transcript)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
+        try:
+            summary, _model = openai_meeting_summary(context, transcript_text)
+        except Exception:  # noqa: BLE001 - never expose provider details
+            logger.exception(
+                "Unable to generate coach meeting summary from uploaded transcript for review instance %s",
+                instance_row.get("id"),
+            )
+            return JsonResponse({
+                "detail": "The Meeting Summary could not be generated from the uploaded transcript. Your current Review answer has not been changed.",
+            }, status=502)
+        # Empty unless something qualifies THIS result, matching what
+        # _review_instance_meeting_summary_source sends for a clean read. The
+        # client supplies its own wording for the ordinary case and shows a
+        # message here as a caveat, so a silent partial recap is the one thing
+        # that must not happen.
+        message = ""
+        if meeting_summary_transcript_excerpt(transcript_text)[1]:
+            message = (
+                "The uploaded transcript was longer than this summary can cover, so only its "
+                "earlier part was used. Check the rest of the meeting yourself and add anything "
+                "the summary is missing."
+            )
+        return JsonResponse({
+            "meetingSummarySource": {
+                "fieldId": field.get("id"),
+                "status": "ready",
+                "summaryText": meeting_summary_plain_text(summary),
+                "generatedAt": timezone.now().isoformat(),
+                "editedAt": None,
+                "message": message,
+            }
+        })
+
+    if not record:
+        return JsonResponse({
+            "detail": "This Review is not linked to a scheduled Teams meeting. Upload the meeting transcript as a .vtt file, or enter the summary manually.",
+        }, status=409)
+
+    # A valid stored artifact is idempotent. In particular, a coach-edited AI
+    # artifact must never be replaced simply because this button was pressed.
+    existing = stored_coach_meeting_summary(record)
+    if existing and clean_text(existing.get("status")) in {"ready", "edited"}:
+        return JsonResponse({"meetingSummarySource": _review_instance_meeting_summary_source(instance_row, definition)})
+
+    snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
+    if error_payload:
+        return JsonResponse(error_payload, status=status_code)
+    persist_coach_meeting_snapshots(
+        record,
+        artifacts=snapshot["artifacts"],
+        attendance_reports=snapshot["attendanceReports"],
+        attendance_tracker=snapshot["attendanceTracker"],
+    )
+    if not stored_coach_meeting_transcript_for_summary(record):
+        # This is the moment the .vtt upload exists for, so it says so: Teams
+        # holds no transcript for a meeting that was moved, not recorded, or
+        # still processing, and the coach usually has the file already.
+        return JsonResponse({
+            "detail": "The Teams transcript is not available yet. Upload the meeting transcript as a .vtt file, "
+                      "or enter the summary manually. Your current Review answer has not been changed.",
+        }, status=409)
+
+    generated = ensure_coach_meeting_summary(record, retry_failed=True)
+    if not generated:
+        return JsonResponse({
+            "detail": "The Meeting Summary could not be generated. Your current Review answer has not been changed.",
+        }, status=502)
+    if clean_text(generated.get("status")) == "failed":
+        return JsonResponse({
+            "detail": "Meeting Summary generation failed. Your current Review answer has not been changed.",
+        }, status=502)
+    return JsonResponse({"meetingSummarySource": _review_instance_meeting_summary_source(instance_row, definition)})
 
 
 @coach_access_required
@@ -12384,7 +12731,7 @@ def coach_review_instance_progress(request, instance_id):
         return JsonResponse({"detail": "Progress could not be calculated. Please try again."}, status=503)
 
     return JsonResponse(
-        curriculum_review_instances.review_instance_form_definition(
+        _coach_review_instance_definition(
             curriculum_review_instances.get_review_instance(instance_row["id"]),
         )
     )
@@ -12397,8 +12744,21 @@ def coach_review_instance_complete(request, instance_id):
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
+    payload = {}
+    if request.body:
+        try:
+            payload = parse_json_body(request)
+        except ValidationError as exc:
+            return validation_error_response(exc)
+    if not isinstance(payload, dict):
+        return JsonResponse({"detail": "Request body must be a JSON object."}, status=400)
+    answers = payload.get("answers")
+    if answers is not None and not isinstance(answers, dict):
+        return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
     owner_email = authenticated_coach_email(request)
-    ok, errors = curriculum_review_instances.complete_review_instance(instance_row, actor=owner_email)
+    ok, errors = curriculum_review_instances.complete_review_instance(
+        instance_row, actor=owner_email, answers=answers,
+    )
     if not ok:
         # errors is {'status': [...]} for an invalid lifecycle transition (not
         # yet in-progress, or already submitted/completed) or {'fields': [...]}
@@ -12408,7 +12768,7 @@ def coach_review_instance_complete(request, instance_id):
         return JsonResponse({"detail": detail, "errors": errors}, status=400)
     instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
     _sync_calendar_record_to_review_instance_status(instance_row)
-    return JsonResponse(curriculum_review_instances.review_instance_form_definition(instance_row))
+    return JsonResponse(_coach_review_instance_definition(instance_row))
 
 
 @coach_access_required
@@ -12467,7 +12827,68 @@ def coach_review_instance_mark_in_progress_manually(request, instance_id):
 
     updated_instance = curriculum_review_instances.get_review_instance(instance_row["id"])
     _sync_calendar_record_to_review_instance_status(updated_instance)
-    return JsonResponse(curriculum_review_instances.review_instance_form_definition(updated_instance))
+    return JsonResponse(_coach_review_instance_definition(updated_instance))
+
+
+@coach_access_required
+@attributed_write_view
+def coach_review_instance_reopen(request, instance_id):
+    """Reopen a completed/awaiting-signature review so the coach can correct it.
+
+    See curriculum_api.review_instances.reopen_review_instance_for_editing for
+    the lifecycle/data rules this enforces -- including that every signature
+    already collected is cleared, with the pre-reopen answers and signatures
+    frozen into curriculum.review_instance_reopens first. This view is only
+    authorization + request parsing + actor attribution.
+
+    Same authorization model as coach_review_instance_mark_in_progress_manually
+    above: coach_access_required refuses an unrelated coach or a super-admin
+    with no coach selected, _authorized_review_instance refuses a coach whose
+    own email does not own this instance, and @attributed_write_view is what
+    lets a super-admin in view-as mode write here at all while keeping the
+    write attributed to them rather than to the coach whose workspace is open.
+
+    Unlike that view this does NOT call
+    _sync_calendar_record_to_review_instance_status afterwards: the reopen
+    already moved the linked Calendar row inside its own transaction (see
+    _mirror_linked_calendar_after_reopen), and that helper only knows how to
+    project completed/awaiting-signature forwards, so calling it here would be
+    a second, competing writer.
+    """
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+    try:
+        payload = parse_json_body(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+
+    owner_email = authenticated_coach_email(request)
+    actor = owner_email
+    if is_coach_view_as(request):
+        admin = getattr(request, "coach_view_as_admin", None)
+        admin_identity = clean_text(getattr(admin, "username", "") or getattr(admin, "email", "")) or "Administrator"
+        actor = f"{admin_identity} (for {owner_email})"
+
+    reason_code = clean_text(payload.get("reasonCode"))
+    note = clean_text(payload.get("note"))
+
+    try:
+        ok, result = curriculum_review_instances.reopen_review_instance_for_editing(
+            instance_row, reason_code=reason_code, note=note, actor=actor,
+        )
+    except ValueError as exc:
+        # A Calendar row that no longer matches its instance -- reconciliation,
+        # not user input. Same handling as the signature endpoint.
+        return JsonResponse({"detail": str(exc)}, status=400)
+    if not ok:
+        detail = next(iter(result.values()))[0] if result else "This review cannot be reopened."
+        return JsonResponse({"detail": detail, "errors": result}, status=400)
+
+    updated_instance = curriculum_review_instances.get_review_instance(instance_row["id"])
+    return JsonResponse(_coach_review_instance_definition(updated_instance))
 
 
 @coach_access_required
@@ -12496,7 +12917,9 @@ def coach_review_instance_signature(request, instance_id):
     # No mirror call here: record_review_instance_signature owns the calendar
     # projection for every signature, in the same transaction as the status
     # change. One canonical transition, one mirror.
-    return JsonResponse(result)
+    return JsonResponse(_coach_review_instance_definition(
+        curriculum_review_instances.get_review_instance(instance_row["id"])
+    ))
 
 
 def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:
