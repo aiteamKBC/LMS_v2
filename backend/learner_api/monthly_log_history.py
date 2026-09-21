@@ -55,13 +55,22 @@ def summary(learner):
     months = reporting_months(profile.get('start_date'))
     record = old.summary({**learner, '_read_only': True})
     existing = {item['month']: item for item in record['months']}
-    targets = contract_targets(learner) if months else {}
+    target_warning = None
+    try:
+        targets = contract_targets(learner) if months else {}
+    except old.ServiceError as error:
+        if error.code != 'history_source_unavailable':
+            raise
+        targets = None
+        target_warning = (str(error) + ' Activities and actual hours remain available. '
+                          'Target hours and OTJH risk cannot be assessed until the signed plan is available.')
     # Empty months are display-only, never added to required signing months.
     record['months'] = [
         {**(existing[month] if month in existing else
             {**old._state(month, None, {}, None, 0), 'is_required': False,
              'can_complete': False, 'total_actual_hours': 0}),
-         'training_plan_target': targets.get(month, {}).get('planned', 0.0)}
+         'training_plan_target': targets.get(month, {}).get('planned', 0.0) if targets is not None else None,
+         'target_warning': target_warning}
         for month in months
     ]
     return record

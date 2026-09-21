@@ -27,7 +27,7 @@ class HistoricalLogsTests(unittest.TestCase):
             month_rows=Mock(return_value=[]))
         old = functions(root.parent / 'old_otjh/service.py', {})
         self.old = SimpleNamespace(normalize=lambda value: str(value or '').strip().lower(),
-            ServiceError=RuntimeError, _state=old._state, digest=Mock(return_value='digest'),
+            ServiceError=type('ServiceError', (RuntimeError,), {'__init__': lambda self, message, code='invalid_request', status=400: (RuntimeError.__init__(self, message), setattr(self, 'code', code), setattr(self, 'status', status))[-1]}), _state=old._state, digest=Mock(return_value='digest'),
             summary=Mock(return_value={'read_only': True, 'months': [
                 {'month': '2026-01', 'actual_hours': 3, 'not_accepted_hours': 2,
                  'training_plan_target': 999, 'student_signature': {'saved': True}}]}))
@@ -160,6 +160,21 @@ class HistoricalLogsTests(unittest.TestCase):
             for month in ('2026-08', '2026-11', 'invalid'):
                 with self.assertRaises(RuntimeError):
                     ns['require_document_month'](self.learner, month)
+
+    def test_unavailable_target_keeps_hours_signatures_and_months(self):
+        for message in ('Missing contract', 'Unreadable PDF', 'Unverified hours'):
+            self.ns['contract_targets'] = Mock(side_effect=self.old.ServiceError(message, 'history_source_unavailable', 503))
+            result = self.history.summary(self.learner)['months']
+            self.assertEqual(len(result), 8)
+            self.assertEqual(result[0]['actual_hours'], 3)
+            self.assertEqual(result[0]['student_signature'], {'saved': True})
+            self.assertTrue(all(row['training_plan_target'] is None for row in result))
+            self.assertIn(message, result[0]['target_warning'])
+
+    def test_unrelated_errors_are_not_hidden(self):
+        self.ns['contract_targets'] = Mock(side_effect=self.old.ServiceError('Denied', 'forbidden', 403))
+        with self.assertRaises(self.old.ServiceError):
+            self.history.summary(self.learner)
 
 
 if __name__ == '__main__':
