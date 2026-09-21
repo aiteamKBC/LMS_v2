@@ -24,8 +24,8 @@ import { useAuditRecordNames } from './auditNames';
 import { DEFAULT_WINDOW_DAYS, type AuditTrailScope } from './scope';
 
 /**
- * One person's time in Curriculum Studio: every visit, the pages opened in it,
- * and what happened on each page.
+ * One person's time in the workspace this door is scoped to: every visit, the
+ * pages opened in it, and what happened on each page.
  *
  * The nesting is the point. "What did this person do?" is not answerable by a
  * flat list of events — a search means something different depending on which
@@ -38,7 +38,7 @@ import { DEFAULT_WINDOW_DAYS, type AuditTrailScope } from './scope';
  * * Every saved change is shown in the activity log. Changes without a linked
  *   page remain clearly labelled rather than being attached to a guessed page.
  * * Account sign-ins are intentionally left out of this focused change log:
- *   the page answers what changed in curriculum records.
+ *   the page answers what this person changed, and signing in changes nothing.
  */
 
 const WINDOW_OPTIONS = [
@@ -540,7 +540,10 @@ function activityDescription(change: CurriculumAuditEvent): string {
   if (change.action === 'recorded') return 'The first activity for this record was captured in the audit history; it does not mean someone edited it just now.';
   if (change.action === 'created') return 'This record was created.';
   if (change.action === 'updated') return 'A saved change was made to this record.';
-  if (change.action === 'archived' || change.action === 'deleted') return 'This record was removed from active curriculum.';
+  // Not "removed from active curriculum": the same page now shows learner,
+  // staff, employer and coaching records, and none of those are curriculum.
+  if (change.action === 'archived') return 'This record was archived. It is withdrawn from use and still restorable.';
+  if (change.action === 'deleted') return 'This record was deleted.';
   return `${change.actionLabel || change.action} activity was recorded for this record.`;
 }
 

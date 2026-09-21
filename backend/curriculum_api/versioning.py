@@ -775,6 +775,24 @@ ENTITY_FACT_FIELDS = {
 }
 
 
+def snapshot_title(snapshot, columns, join=' '):
+    """The record's own name, from one snapshot column or several joined.
+
+    Several, because outside the curriculum a record's name is rarely in one
+    column: a coaching meeting is identified by whose it is *and* what kind it
+    is, and an employer contact by a first name *and* a surname. A column that
+    is empty is skipped rather than joined as a gap, so a contact with no
+    surname reads as their first name and not as a name with a dangling
+    separator.
+    """
+    if not columns:
+        return ''
+    if isinstance(columns, str):
+        columns = (columns,)
+    parts = [clean(snapshot.get(column)) for column in columns]
+    return join.join(part for part in parts if part)
+
+
 def entity_facts(entity_type, snapshot):
     """The columns the history table denormalises out of a snapshot."""
     fields = ENTITY_FACT_FIELDS.get(entity_type) or {}
@@ -784,7 +802,13 @@ def entity_facts(entity_type, snapshot):
     if not content_status and fields.get('status'):
         content_status = clean(snapshot.get(fields['status']))
     title_column = fields.get('title')
-    title = clean(snapshot.get(title_column)) if title_column else ''
+    title = snapshot_title(snapshot, title_column, fields.get('title_join') or ' ')
+    # A record whose usual name is blank still has to be findable in a list.
+    # `title_fallback` names the column to use instead -- an email where a
+    # username was never set -- rather than leaving the row to be listed under
+    # its own primary key, which tells a reader nothing.
+    if not title and fields.get('title_fallback'):
+        title = snapshot_title(snapshot, fields['title_fallback'])
     # A row with no title of its own is still worth naming in a list, and the
     # only honest name it has is the record it belongs to.
     if not title and entity_type in {'module_details', 'module_completion'}:
@@ -811,9 +835,30 @@ def entity_facts(entity_type, snapshot):
 # because that is a change to the entity's own `week_id` / `programme_id` column.
 CONTEXT_KEY = '_context'
 
+#: entity_type -> the snapshot columns that place a record, in reading order.
+#: Registered by ``system_audit.writes`` for everything outside the curriculum,
+#: whose ancestry is not a programme tree: a coaching meeting is placed by whose
+#: it is, a learner by their programme, cohort and group.
+#:
+#: The curriculum's own entities are deliberately absent. Theirs is resolved
+#: from the module table below, because a component's programme is not in the
+#: component's own row.
+ENTITY_CONTEXT_FIELDS = {}
+
 
 def context_for(entity_type, snapshot, ancestry):
     """The ancestry to store beside a snapshot, from an already-resolved map."""
+    registered = ENTITY_CONTEXT_FIELDS.get(entity_type)
+    if registered:
+        # Read off the row itself, and stored with it, for the same reason the
+        # curriculum's is: this is where the record sat WHEN the change
+        # happened. A learner moved to another cohort next month must not
+        # silently rewrite the line against today's edit.
+        return {
+            column: clean(snapshot.get(column))
+            for column in registered
+            if clean(snapshot.get(column))
+        }
     module_id = clean(snapshot.get('module_catalogue_id'))
     context = {}
     if entity_type == 'programme':

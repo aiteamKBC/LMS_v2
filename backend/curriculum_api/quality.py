@@ -137,6 +137,69 @@ FIELD_LABELS = {
     'deleted_by': 'Archived by handler',
     'Reflection_Question': 'Reflection question',
     'ksb_code': 'KSB code',
+    # Learner and staff records. The underscore fallback below already reads
+    # most of these correctly; named here are the ones where it does not, and
+    # the handful where the column name is not what the LMS calls the field.
+    'uuid': 'Internal reference',
+    'aptem_id': 'Aptem id',
+    'username': 'Name',
+    'access': 'Access level',
+    'access_extra': 'Extra access',
+    'organization': 'Organisation',
+    'programme_status': 'Programme status',
+    'learner_type': 'Learner type',
+    'case_owner': 'Case owner',
+    'learning_provider': 'Learning provider',
+    'rpl_hours': 'RPL hours',
+    'minimum_required_hours': 'Minimum required hours',
+    'national_insurance_number': 'National insurance number',
+    'invite_to_platform': 'Invited to the platform',
+    'allow_access_to_checkpoint': 'Checkpoint access',
+    'allow_access_to_console': 'Console access',
+    'allow_access_to_classic': 'Classic access',
+    'onboarding_completed': 'Onboarding completed',
+    'practical_period_end_date': 'Practical period end date',
+    'apprenticeship_end_date': 'Apprenticeship end date',
+    # Employers and organisations.
+    'edrs_ern_number': 'EDRS / ERN number',
+    'apprenticeship_agreement_id': 'Apprenticeship agreement',
+    'levy_payer': 'Levy payer',
+    'approx_no_of_employees': 'Approximate employees',
+    'health_and_safety': 'Health and safety',
+    'send_hours_verification_emails': 'Sends hours verification emails',
+    'post_code': 'Postcode',
+    'town_city': 'Town / city',
+    'city_town': 'Town / city',
+    # Coaching meetings and absence reports.
+    'event_key': 'Meeting reference',
+    'event_type': 'Meeting type',
+    'owner_email': 'Coach email',
+    'owner_name': 'Coach',
+    'learner_name': 'Learner',
+    'learner_email': 'Learner email',
+    'learner_id': 'Learner',
+    'occurrence_number': 'Occurrence',
+    'duration_minutes': 'Duration (minutes)',
+    'meeting_provider': 'Meeting provider',
+    'graph_event_id': 'Teams event id',
+    'graph_organizer_email': 'Teams organiser',
+    'review_template_id': 'Review template',
+    'review_instance_id': 'Review instance',
+    'review_completed_at': 'Review completed',
+    'review_responses': 'Review answers',
+    'manager_signed_at': 'Manager signed on',
+    'manager_signed_by': 'Manager signed by',
+    'sync_state': 'Teams sync state',
+    'attendance_id': 'Attendance record',
+    'reason_category': 'Reason category',
+    'evidence_provided': 'Evidence provided',
+    'evidence_kind': 'Evidence type',
+    'evidence_text': 'Evidence',
+    'coach_note': 'Coach note',
+    'previous_absences': 'Previous absences',
+    'attendance_rate': 'Attendance rate',
+    'recovery_method': 'Recovery method',
+    'catchup_event_key': 'Catch-up meeting',
 }
 
 # The sentence a row leads with. The event name is still carried on the event as
@@ -529,9 +592,34 @@ def revision_trail(request):
         'structuredMetadata': structured,
         'sources': sorted(versioning.SOURCES),
         'actorTypes': sorted(versioning.ACTOR_TYPES),
-        'actors': revision_actors(since),
+        # The record types this door can actually show, named by the server.
+        # The page used to hold its own list, which was the curriculum's ten
+        # types -- so the system-wide Audit Trail offered a Record type filter
+        # that could not name a learner, a coaching meeting or an employer, and
+        # read as though the curriculum were the only thing being audited.
+        'entityTypes': entity_type_options(workspace),
+        'actors': revision_actors(since, workspace),
         'events': events,
     })
+
+
+def entity_type_options(workspace):
+    """Every audited record type in this workspace, as ``{value, label}``.
+
+    Derived from what is registered, so a newly-wired record type is offered on
+    the day it starts being recorded rather than on the day somebody remembers
+    to edit a list in the browser.
+    """
+    from system_audit import writes as system_writes
+    options = []
+    for entity_type in system_writes.entity_types_for_workspace(workspace):
+        label = (
+            ENTITY_LABELS.get(entity_type)
+            or system_writes.ENTITY_LABELS.get(entity_type)
+            or (entity_type.replace('_', ' ').capitalize(),)
+        )[0]
+        options.append({'value': entity_type, 'label': label})
+    return sorted(options, key=lambda option: option['label'].lower())
 
 
 def _scope_clause(scope, scope_id):
@@ -554,15 +642,31 @@ def _scope_clause(scope, scope_id):
     return ('snapshot like %s', [f'%"{column}": "{scope_id}"%'])
 
 
-def revision_actors(since):
-    """Who has changed anything in this window, for the filter."""
+def revision_actors(since, workspace=''):
+    """Who has changed anything in this window, for the filter.
+
+    Scoped to one workspace, because the count travels: it is both the "Who"
+    filter's label and the Changes column on the People list. One revision log
+    now holds every workspace's saves, so an unscoped count against a scoped
+    door reported changes the door itself will not show -- a person with three
+    coaching saves and no curriculum ones appeared in Curriculum Studio's list
+    as having changed three things there.
+    """
     revisions_table = versioning.qualified(versioning.REVISIONS_TABLE)
+    where = ['created_at >= %s', 'coalesce(actor_email, %s) <> %s']
+    params = [since, '', '']
+    from system_audit import writes as system_writes
+    if workspace:
+        owned = system_writes.entity_types_for_workspace(workspace)
+        if owned:
+            where.append('entity_type in (' + ','.join(['%s'] * len(owned)) + ')')
+            params.extend(owned)
     try:
         rows = curriculum_views.fetch_all(
             'select actor_email, max(actor_name) as actor_name, count(*) as changes '
-            f'from {revisions_table} where created_at >= %s and coalesce(actor_email, %s) <> %s '
+            f'from {revisions_table} where {" and ".join(where)} '
             'group by actor_email order by count(*) desc limit 100',
-            [since, '', ''],
+            params,
         )
     except Exception:
         return []
@@ -588,6 +692,11 @@ def revision_event(row):
     )
     action = curriculum_views.clean_str(row.get('action')) or 'updated'
     entity_id = curriculum_views.clean_str(row.get('entity_id'))
+    # A record with a page of its own opens at that record. Curriculum's rows
+    # are refined further by the browser, which knows how to open a component
+    # at its week inside Module Builder; the rest are resolved here because the
+    # path is a plain function of the id.
+    href = system_writes.record_href(entity_type, entity_id, fallback=href)
     snapshot = versioning.as_dict(row.get('snapshot'))
     context = snapshot.get(versioning.CONTEXT_KEY) or {}
     if not isinstance(context, dict):
@@ -649,8 +758,17 @@ def revision_event(row):
 
 
 def context_line(entity_type, context):
-    """The entity's ancestry as one readable line, from the names it was saved with."""
-    order = ('programme_name', 'cohort_name', 'group_name', 'module_name')
+    """The entity's ancestry as one readable line, from the names it was saved with.
+
+    The curriculum's ancestry is a programme tree and reads in that order. The
+    rest of the LMS does not have one -- a coaching meeting is placed by whose
+    it is and when, a learner by their programme, cohort and group -- so those
+    record types declare their own order at registration and it is read back
+    here. Without this every non-curriculum row fell through to an empty line,
+    which the page then filled with the words "Curriculum record".
+    """
+    registered = versioning.ENTITY_CONTEXT_FIELDS.get(entity_type)
+    order = registered or ('programme_name', 'cohort_name', 'group_name', 'module_name')
     parts = [curriculum_views.clean_str(context.get(key)) for key in order]
     return ' › '.join(part for part in parts if part)
 
@@ -735,6 +853,14 @@ def derived_trail(request):
         'structuredMetadata': False,
         'sources': [],
         'actorTypes': [],
+        # The only record types this reading can show are the authoring tables
+        # it reads, which is fewer than the log knows about. Named from those
+        # rather than from the registry, so the filter cannot offer a type this
+        # response would answer with nothing.
+        'entityTypes': sorted(
+            ({'value': source['entity'], 'label': source['label']} for source in AUDIT_SOURCES),
+            key=lambda option: option['label'].lower(),
+        ),
         'actors': [],
         'events': events,
     })
