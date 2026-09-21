@@ -86,10 +86,15 @@ DB_STATEMENT_TIMEOUT_MS = int(os.environ.get('DB_STATEMENT_TIMEOUT_MS', '15000')
 # thread per request). A per-process pool is shared across threads instead.
 # Django requires CONN_MAX_AGE=0 when a pool is configured.
 DB_POOL = os.environ.get('DB_POOL', 'true').lower() != 'false'
+# A local runserver can start before Neon has finished opening a connection.
+# Pool checkout needs its own budget: connect_timeout applies per address.
+DB_POOL_TIMEOUT = int(os.environ.get(
+    'DB_POOL_TIMEOUT', '45' if 'runserver' in sys.argv else str(DB_CONNECT_TIMEOUT),
+))
 DB_POOL_OPTIONS = {
     'min_size': 1,
     'max_size': int(os.environ.get('DB_POOL_MAX_SIZE', '10')),
-    'timeout': DB_CONNECT_TIMEOUT,
+    'timeout': DB_POOL_TIMEOUT,
     # Neon closes idle server-side connections; retire pooled connections
     # before that happens so requests never receive a dead socket. Django 6
     # already installs psycopg_pool's check_connection on every pool it

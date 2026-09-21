@@ -7,13 +7,17 @@ export interface ProgressMetric {
   percent: number | null;
   status: 'ready' | 'empty' | 'unavailable';
   reason?: string;
+  mappedCompleted?: number;
+  mappedTotal?: number;
+  unmappedActivities?: number;
   codes?: { code: string; completed: number; total: number; percent: number | null }[];
 }
 export interface LearnerMetrics {
   migrated: boolean;
+  aptem_planned_total?: number | null;
   programme: ProgressMetric;
   ksb: ProgressMetric;
-  otjh: { historical: number | null; new: number; actual: number | null; planned: number | null };
+  otjh: { historical: number | null; new: number; actual: number | null; planned: number | null; completed_actual?: number | null };
 }
 const url = (kind: LearnerKind, id: string) => `/learner_api/metrics/${kind}/${id}/`;
 function valid(data: LearnerMetrics | undefined): data is LearnerMetrics {

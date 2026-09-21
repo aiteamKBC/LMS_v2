@@ -67,13 +67,14 @@ def _direct_progress_records(enrolment_id):
         .filter(component_link_source__in=('direct', 'quiz_ref'))
         .exclude(kind='activity_event')
         .values(
-            'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
+            'id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
             'module_title', 'week_title', 'reported_time', 'claimed_seconds',
             'verified_seconds', 'time_tracking_source', 'expected_otjh',
             'submitted_at', 'passed',
         )
     )
     records = [{
+        'sourceRef': f"progress:{row['id']}" if row.get('id') is not None else None,
         'kind': row['kind'],
         'componentId': row['component_ref'],
         'quizId': row['quiz_ref'],
