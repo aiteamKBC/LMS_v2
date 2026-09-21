@@ -48,6 +48,15 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertTrue(feedback._valid_answer(question, 'Good'))
         self.assertFalse(feedback._valid_answer(question, 'Injected option'))
 
+    def test_contact_and_photo_answer_types_are_validated(self):
+        name = SimpleNamespace(question_type='name', config={})
+        email = SimpleNamespace(question_type='email', config={})
+        photo = SimpleNamespace(question_type='photo_upload', config={})
+        self.assertTrue(feedback._valid_answer(name, {'firstName': 'Ava', 'lastName': 'Jones'}))
+        self.assertFalse(feedback._valid_answer(email, 'not-an-email'))
+        self.assertTrue(feedback._valid_answer(email, 'ava@example.com'))
+        self.assertTrue(feedback._valid_answer(photo, {'uploadId': '5e60c23d-36c7-4d3c-ada4-0fe47dc9bbee'}))
+
 
 def _account(*, role="learner", subject_type="learner", subject_id=61, display_name="Daniel Walsh", email="daniel@kbc.test"):
     """A stand-in LoginAccount — these helpers read only these five attributes."""

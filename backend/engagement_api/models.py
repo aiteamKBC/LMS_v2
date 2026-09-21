@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 
 
@@ -590,3 +592,20 @@ class FeedbackAnswer(models.Model):
     class Meta:
         managed = False
         db_table = 'Feedback"."feedback_answers'
+
+
+class FeedbackUpload(models.Model):
+    """Private image uploaded as the answer to a photo-upload question."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    response = models.ForeignKey(FeedbackResponse, on_delete=models.CASCADE, related_name='uploads', db_column='response_id')
+    question = models.ForeignKey(FeedbackQuestion, on_delete=models.PROTECT, related_name='uploads', db_column='question_id')
+    blob_name = models.TextField()
+    original_name = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100, default='image/jpeg')
+    size = models.IntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_uploads'

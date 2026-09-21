@@ -1,6 +1,8 @@
 export type FeedbackFormStatus = 'draft' | 'published' | 'closed';
-export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date';
-export type FeedbackAnswerValue = string | number | boolean | string[] | null;
+export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date' | 'name' | 'email' | 'photo_upload';
+export interface FeedbackNameAnswer { firstName: string; lastName: string }
+export interface FeedbackPhotoAnswer { uploadId: string; filename: string }
+export type FeedbackAnswerValue = string | number | boolean | string[] | FeedbackNameAnswer | FeedbackPhotoAnswer | null;
 
 export interface FeedbackQuestion {
   id?: number;
@@ -131,4 +133,17 @@ export const feedbackApi = {
   myForms: () => request<{ forms: LearnerFeedbackListItem[] }>('/my-forms/'),
   myForm: (id: number) => request<{ form: FeedbackForm }>(`/my-forms/${id}/`),
   saveResponse: (id: number, answers: Record<string, FeedbackAnswerValue>, submit = false) => request<{ response: { id: number; status: string; submittedAt: string | null; updatedAt: string } }>(`/my-forms/${id}/response/`, { method: 'POST', body: JSON.stringify({ answers, submit }) }),
+  uploadPhoto: async (formId: number, questionId: number, file: File): Promise<FeedbackPhotoAnswer> => {
+    const formData = new FormData();
+    formData.append('photo', file);
+    const response = await fetch(`${BASE}/my-forms/${formId}/questions/${questionId}/photo/`, {
+      method: 'POST', credentials: 'include', body: formData,
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': await csrfToken() },
+    });
+    const body = await response.json().catch(() => ({})) as { answer?: FeedbackPhotoAnswer; error?: string };
+    if (!response.ok || !body.answer) throw new Error(body.error || `Upload failed (${response.status})`);
+    return body.answer;
+  },
 };
+
+export const feedbackUploadUrl = (uploadId: string) => `${BASE}/uploads/${encodeURIComponent(uploadId)}/`;

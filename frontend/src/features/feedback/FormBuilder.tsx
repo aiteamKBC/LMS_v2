@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { feedbackApi, type FeedbackFormInput, type FeedbackQuestion, type FeedbackQuestionType, type FeedbackSection } from '@/api/feedback';
-import { FormRenderer } from './FormRenderer';
+import { FeedbackFormHeader, FormRenderer } from './FormRenderer';
 
 const QUESTION_TYPES: { value: FeedbackQuestionType; label: string }[] = [
   ['short_text', 'Short Text'], ['long_text', 'Long Text'], ['yes_no', 'Yes / No'],
   ['single_choice', 'Single Choice'], ['multiple_choice', 'Multiple Choice'], ['dropdown', 'Dropdown'],
   ['rating', 'Rating Scale'], ['likert', 'Likert Scale'], ['number', 'Number'], ['date', 'Date'],
+  ['name', 'Name'], ['email', 'Email'], ['photo_upload', 'Photo Upload'],
 ].map(([value, label]) => ({ value: value as FeedbackQuestionType, label }));
 const CHOICE_TYPES = new Set<FeedbackQuestionType>(['single_choice', 'multiple_choice', 'dropdown', 'likert']);
 const emptyQuestion = (): FeedbackQuestion => ({ type: 'long_text', text: '', required: false, helpText: '', config: {} });
@@ -55,7 +56,7 @@ export function FormBuilder() {
       <div className="flex gap-2"><button type="button" onClick={() => setPreview(!preview)} className="rounded-lg border border-primary-200 bg-primary-50 px-4 py-2 text-xs font-semibold text-primary-700">{preview ? 'Edit form' : 'Preview'}</button><button type="button" disabled={saving} onClick={() => void save()} className="rounded-lg bg-[#541EA0] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Save draft'}</button></div>
     </div>
     {locked && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Questions and sections are locked because a learner has started this form. Form details and dates can still be updated.</div>}
-    {preview ? <div className="mx-auto max-w-4xl rounded-2xl bg-background-100 p-5"><div className="mb-5"><h2 className="text-xl font-bold text-foreground-900">{model.title || 'Untitled feedback form'}</h2><p className="mt-1 text-sm text-foreground-500">{model.description}</p>{model.instructions && <p className="mt-3 rounded-lg bg-primary-50 p-3 text-xs text-primary-800">{model.instructions}</p>}</div><FormRenderer sections={model.sections} answers={{}} readOnly /></div> : <>
+    {preview ? <div className="mx-auto max-w-4xl rounded-2xl bg-background-100 p-5"><FeedbackFormHeader title={model.title || 'Untitled feedback form'} description={model.description} instructions={model.instructions} /><FormRenderer sections={model.sections} answers={{}} readOnly /></div> : <>
       <div className="grid gap-4 rounded-xl border border-foreground-200/60 bg-background-50 p-5 md:grid-cols-2">
         <label className="text-xs font-semibold text-foreground-700 md:col-span-2">Form Name<input className={`${field} mt-1`} value={model.title} onChange={e => setModel({ ...model, title: e.target.value })} /></label>
         <label className="text-xs font-semibold text-foreground-700">Description<textarea className={`${field} mt-1`} rows={3} value={model.description} onChange={e => setModel({ ...model, description: e.target.value })} /></label>

@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS "Feedback".feedback_form_sections (
 CREATE TABLE IF NOT EXISTS "Feedback".feedback_questions (
     id bigserial PRIMARY KEY,
     section_id bigint NOT NULL REFERENCES "Feedback".feedback_form_sections(id) ON DELETE CASCADE,
-    question_type varchar(30) NOT NULL CHECK (question_type IN ('short_text','long_text','yes_no','single_choice','multiple_choice','dropdown','rating','likert','number','date')),
+    question_type varchar(30) NOT NULL CHECK (question_type IN ('short_text','long_text','yes_no','single_choice','multiple_choice','dropdown','rating','likert','number','date','name','email','photo_upload')),
     question_text text NOT NULL,
     required boolean NOT NULL DEFAULT false,
     help_text text NOT NULL DEFAULT '',
@@ -76,7 +76,44 @@ CREATE TABLE IF NOT EXISTS "Feedback".feedback_answers (
     UNIQUE (response_id, question_id)
 );
 
+CREATE TABLE IF NOT EXISTS "Feedback".feedback_uploads (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    response_id bigint NOT NULL REFERENCES "Feedback".feedback_responses(id) ON DELETE CASCADE,
+    question_id bigint NOT NULL REFERENCES "Feedback".feedback_questions(id) ON DELETE RESTRICT,
+    blob_name text NOT NULL,
+    original_name varchar(255) NOT NULL,
+    content_type varchar(100) NOT NULL DEFAULT 'image/jpeg',
+    size integer NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (response_id, question_id)
+);
+
+-- Upgrade an already-created Feedback schema with the new field types. The
+-- original inline CHECK gets a PostgreSQL-generated name, so locate it by its
+-- definition instead of assuming that name. Safe to run repeatedly.
+DO $$
+DECLARE constraint_row record;
+BEGIN
+  FOR constraint_row IN
+    SELECT c.conname
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'Feedback'
+      AND t.relname = 'feedback_questions'
+      AND c.contype = 'c'
+      AND pg_get_constraintdef(c.oid) LIKE '%question_type%'
+  LOOP
+    EXECUTE format('ALTER TABLE "Feedback".feedback_questions DROP CONSTRAINT %I', constraint_row.conname);
+  END LOOP;
+
+  ALTER TABLE "Feedback".feedback_questions
+    ADD CONSTRAINT feedback_question_type_check
+    CHECK (question_type IN ('short_text','long_text','yes_no','single_choice','multiple_choice','dropdown','rating','likert','number','date','name','email','photo_upload'));
+END $$;
+
 CREATE INDEX IF NOT EXISTS feedback_sections_form_order ON "Feedback".feedback_form_sections (form_id, sort_order);
 CREATE INDEX IF NOT EXISTS feedback_questions_section_order ON "Feedback".feedback_questions (section_id, sort_order);
 CREATE INDEX IF NOT EXISTS feedback_responses_form_status ON "Feedback".feedback_responses (form_id, status);
 CREATE INDEX IF NOT EXISTS feedback_assignments_target ON "Feedback".feedback_assignments (target_type, target_id);
+CREATE INDEX IF NOT EXISTS feedback_uploads_response ON "Feedback".feedback_uploads (response_id);
