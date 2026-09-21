@@ -69,6 +69,18 @@ async function loadApi() {
   return import('@/lib/curriculumApi');
 }
 
+type CurriculumApi = Awaited<ReturnType<typeof loadApi>>;
+
+/**
+ * One ordinary poll tick, whatever the module's interval is set to.
+ *
+ * These used to advance a hardcoded 25s, which meant one tick only while the
+ * interval happened to be 25s. Shortening it turned each of those into six
+ * ticks and the call counts below started failing for a poll that was working
+ * exactly as intended.
+ */
+const oneTick = (api: CurriculumApi) => vi.advanceTimersByTimeAsync(api.EPOCH_POLL_INTERVAL_MS);
+
 describe('curriculum cache invalidation across tabs and machines', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -199,8 +211,8 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     const stop = api.subscribeCurriculumRemoteWrites(path => heard.push(path));
     await vi.advanceTimersByTimeAsync(0);
 
-    await vi.advanceTimersByTimeAsync(25_000);
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
+    await oneTick(api);
 
     expect(callsTo(EPOCH_URL)).toBe(3);
     expect(heard).toEqual([]);
@@ -217,7 +229,7 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     expect(callsTo(PROGRAMMES_URL)).toBe(1);
 
     serverEpoch = 2; // the user in Egypt saved
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
 
     // A counter cannot say which record moved, so the listener is told only
     // that something did, and the cache goes in full.
@@ -242,7 +254,7 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     // list this tab is holding.
     serverEpoch = 2;
     serverChanges = [{ path: '/curriculum/ksb-sets/', lo: 1, hi: 2 }];
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
 
     expect(heard).toEqual(['/curriculum/ksb-sets/']);
     // The point of the whole exercise: the programme list was not thrown away,
@@ -264,7 +276,7 @@ describe('curriculum cache invalidation across tabs and machines', () => {
       { path: '/curriculum/programmes/', lo: 2, hi: 3 },
       { path: '/curriculum/ksb-sets/', lo: 3, hi: 4 },
     ];
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
 
     expect(heard).toEqual(['/curriculum/ksb-sets/', '/curriculum/programmes/']);
     stop();
@@ -282,7 +294,7 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     // missing entry could have been anything, so nothing may be trusted.
     serverEpoch = 4;
     serverChanges = [{ path: '/curriculum/ksb-sets/', lo: 3, hi: 4 }];
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
 
     expect(heard).toEqual([api.UNKNOWN_WRITE_PATH]);
     await api.fetchCurriculumProgrammes();
@@ -298,7 +310,7 @@ describe('curriculum cache invalidation across tabs and machines', () => {
 
     serverEpoch = 2;
     serverChanges = [{ path: 42, lo: 'one', hi: null }, null, 'nonsense'];
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
 
     expect(heard).toEqual([api.UNKNOWN_WRITE_PATH]);
     stop();
@@ -312,14 +324,14 @@ describe('curriculum cache invalidation across tabs and machines', () => {
 
     serverEpoch = 6;
     serverChanges = [{ path: '/curriculum/ksb-sets/', lo: 1, hi: 6 }];
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
     heard.length = 0;
 
     // A restarted cache counts from zero again. Our entries were built against
     // a numbering that no longer exists, so none of them can be reasoned about.
     serverEpoch = 2;
     serverChanges = [{ path: '/curriculum/ksb-sets/', lo: 1, hi: 2 }];
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
 
     expect(heard).toEqual([api.UNKNOWN_WRITE_PATH]);
     stop();
@@ -335,7 +347,7 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     serverEpoch = 2; // our own write moved it
 
     await vi.advanceTimersByTimeAsync(1_500);  // the quiet resync lands
-    await vi.advanceTimersByTimeAsync(25_000); // the next ordinary tick
+    await oneTick(api); // the next ordinary tick
 
     expect(heard).toEqual([]);
     stop();
@@ -352,7 +364,7 @@ describe('curriculum cache invalidation across tabs and machines', () => {
 
     let release: (value: unknown) => void = () => {};
     epochResponder = () => new Promise(resolve => { release = resolve; });
-    await vi.advanceTimersByTimeAsync(25_000); // a tick, now hanging
+    await oneTick(api); // a tick, now hanging
 
     await api.fetchCurriculumJson('/curriculum/programmes/', { method: 'POST', body: '{}' });
     serverEpoch = 2;
@@ -362,7 +374,7 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     release(json({ epoch: 1 }));               // that read predates our write
     await vi.advanceTimersByTimeAsync(0);      // the deferred resync runs
 
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
 
     expect(heard).toEqual([]);
     stop();
@@ -377,12 +389,12 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     epochResponder = () => new Promise(() => {}); // never settles
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
     await vi.advanceTimersByTimeAsync(10_000);    // the read gives up
 
     epochResponder = null;
     serverEpoch = 4;
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
 
     expect(heard).toEqual([api.UNKNOWN_WRITE_PATH]);
     stop();
@@ -407,21 +419,21 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     // Four subscribers, one seeding read.
     expect(callsTo(EPOCH_URL)).toBe(1);
 
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
     expect(callsTo(EPOCH_URL)).toBe(2);
     stops.forEach(stop => stop());
   });
 
   it('gives up when the backend does not serve the counter yet', async () => {
-    // The frontend can ship ahead of the backend. Calling a 404 every 25s for
+    // The frontend can ship ahead of the backend. Calling a 404 every few seconds for
     // the life of the tab is not an acceptable way to find that out.
     epochResponder = () => json({ detail: 'Not Found' }, 404);
     const api = await loadApi();
     const stop = api.subscribeCurriculumRemoteWrites(() => {});
 
     await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(25_000);
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
+    await oneTick(api);
     expect(callsTo(EPOCH_URL)).toBe(3);
 
     await vi.advanceTimersByTimeAsync(100_000);
@@ -438,12 +450,12 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     epochResponder = () => { throw new TypeError('Failed to fetch'); };
-    for (let tick = 0; tick < 4; tick += 1) await vi.advanceTimersByTimeAsync(25_000);
+    for (let tick = 0; tick < 4; tick += 1) await oneTick(api);
     expect(heard).toEqual([]);
 
     epochResponder = null;
     serverEpoch = 9;
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
 
     expect(heard).toEqual([api.UNKNOWN_WRITE_PATH]);
     stop();
@@ -456,8 +468,8 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     const stop = api.subscribeCurriculumRemoteWrites(() => {});
 
     await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(25_000);
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
+    await oneTick(api);
     await vi.advanceTimersByTimeAsync(100_000);
 
     expect(callsTo(EPOCH_URL)).toBe(3);
@@ -495,7 +507,7 @@ describe('curriculum cache invalidation across tabs and machines', () => {
 
     // ...and from there the next real change is reported normally.
     serverEpoch = 6;
-    await vi.advanceTimersByTimeAsync(25_000);
+    await oneTick(api);
     expect(heard).toEqual([api.UNKNOWN_WRITE_PATH]);
 
     stop();

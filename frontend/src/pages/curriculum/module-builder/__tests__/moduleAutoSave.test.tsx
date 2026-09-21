@@ -86,6 +86,13 @@ const modules = [
   },
 ] as CurriculumModule[];
 
+// The workspace reads the signed-in account (it decides which learner preview
+// an admin is offered). Without this the page throws on its first line and
+// every case below fails before it has asserted anything about saving.
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
+}));
+
 vi.mock('@/hooks/useCurriculumModules', () => ({
   useCurriculumModules: () => ({ modules, loading: false, error: null, reload }),
 }));
@@ -374,9 +381,14 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
 
     await userEvent.type(title, ' mine');
 
-    await waitFor(() => expect(saveState()).toBe('Conflict - reload before saving again'), { timeout: 8000 });
+    // Reloading the page is no longer what the reader is asked for: the refusal
+    // carries the stored revision, so the workspace offers to load that version
+    // instead. What has not changed is that nothing of theirs is touched until
+    // they choose it.
+    await waitFor(() => expect(saveState()).toBe('Conflict - load the saved version to continue'), { timeout: 8000 });
     expect(title).toHaveValue('Week one mine');
     expect(await screen.findByText(/changed after you opened it/)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Load their version' })).toBeInTheDocument();
     // Disarmed: typing again must not fire the refused payload at the backend
     // once per burst for as long as the workspace stays open.
     await userEvent.type(title, '!');

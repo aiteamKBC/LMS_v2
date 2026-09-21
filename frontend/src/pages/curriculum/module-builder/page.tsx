@@ -7,6 +7,7 @@ import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
 import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { formatHoursMinutes } from '@/lib/format';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { fetchLearnerAssignments, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
@@ -219,12 +220,24 @@ const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: s
   // claim they were.
   'saving-more': { text: 'Saving... later edits still pending', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
   failed: { text: 'Save failed - your changes are still here', tone: 'text-rose-700', icon: 'ri-error-warning-line' },
-  conflict: { text: 'Conflict - reload before saving again', tone: 'text-rose-700', icon: 'ri-git-branch-line' },
+  conflict: { text: 'Conflict - load the saved version to continue', tone: 'text-rose-700', icon: 'ri-git-branch-line' },
   locked: { text: 'Read-only - archived programme', tone: 'text-amber-700', icon: 'ri-lock-line' },
 };
 
 /** A save the backend turned down. `conflict` is never worth retrying as-is. */
 type WorkspaceSaveFailure = { kind: 'error' | 'conflict'; message: string };
+
+/**
+ * The floor between two live reads of the open module's structure.
+ *
+ * The epoch poll reports that curriculum changed, never what changed, so every
+ * write in the estate arrives here as a reason to look. Looking costs a forced
+ * rebuild of the whole structure -- 175 KB and every week, component and
+ * mapping for a module the size of the one this was found on -- so a busy hour
+ * elsewhere in the LMS must not turn into one of those per write. Writes to
+ * this module survive the wait: the next tick still finds them.
+ */
+const LIVE_SYNC_MIN_INTERVAL_MS = 8_000;
 
 const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
@@ -285,6 +298,14 @@ type ModuleScopeLock = {
   ksbSourceId: string;
   ksbSourceLabel: string;
   locked: boolean;
+};
+
+type ModuleHierarchyLink = { label: string; href: string };
+type ModuleHierarchyInfo = {
+  programme?: ModuleHierarchyLink;
+  cohort?: ModuleHierarchyLink;
+  group?: ModuleHierarchyLink;
+  current: string;
 };
 
 type QuizPackageSummary = {
@@ -411,6 +432,12 @@ export default function ModuleBuilder() {
   const [programmeKsbLoading, setProgrammeKsbLoading] = useState(false);
   const [sessionKsbMappingOpen, setSessionKsbMappingOpen] = useState(false);
   const [learnerAssignmentTarget, setLearnerAssignmentTarget] = useState<LearnerAssignmentTarget | null>(null);
+  // The card's "Learners (N)" comes from the module list, and that read is the
+  // slow one -- it times out often enough that a save would otherwise leave the
+  // badge showing the number from before it. The save already knows the new
+  // figure, so it paints it here and the next successful list read takes over.
+  const [learnerCountOverrides, setLearnerCountOverrides] = useState<Record<string, number>>({});
+  const learnerAssignmentModuleIdRef = useRef('');
   const [learnerProgress, setLearnerProgress] = useState<{
     target: LearnerAssignmentTarget;
     impact: CurriculumScopeLearnerKsbImpactResponse;
@@ -424,6 +451,30 @@ export default function ModuleBuilder() {
   const [storageVersion, setStorageVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveFailure, setSaveFailure] = useState<WorkspaceSaveFailure | null>(null);
+  /**
+   * Somebody else's save landed on the module this workspace is holding, and
+   * the workspace has edits of its own so it cannot simply take it.
+   *
+   * Set only in that case. With nothing unsaved the new version is adopted
+   * silently -- there is no decision to put to the reader -- and this stays
+   * null. `revision` is what was seen, so the same write is not announced twice
+   * while the reader keeps working.
+   */
+  const [remoteUpdate, setRemoteUpdate] = useState<{ revision: string } | null>(null);
+  /**
+   * When the live sync last asked the server for this module's structure.
+   *
+   * Every curriculum write in the estate reaches this tab as "something
+   * changed" -- the epoch counter says that much and no more -- and a module
+   * this size is a 175 KB rebuild. Without a floor, a colleague saving a
+   * different programme repeatedly would have this workspace re-reading 222
+   * components each time for a module nobody touched.
+   */
+  const liveSyncReadAtRef = useRef(0);
+  /** The trailing half of that floor: a tick waiting for the cooldown to pass. */
+  const liveSyncPendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Read through a ref so the trailing tick runs today's callback, not the one that scheduled it. */
+  const liveSyncRef = useRef<() => void | Promise<void>>(() => undefined);
   // The state the in-flight save is carrying. Anything the reader types after
   // this is not in that request, which is what the footer has to be able to say.
   const [savingSnapshot, setSavingSnapshot] = useState('');
@@ -603,8 +654,18 @@ export default function ModuleBuilder() {
       .filter(module => (
         !hiddenModuleIds.has(module.catalogueId)
         && moduleBelongsToVisibleProgramme(module, curriculumProgrammes)
-      ));
-  }, [modules, storageVersion, hiddenModuleIds, curriculumProgrammes]);
+      ))
+      .map(module => (module.catalogueId in learnerCountOverrides
+        ? { ...module, assignedLearnerCount: learnerCountOverrides[module.catalogueId] }
+        : module));
+  }, [modules, storageVersion, hiddenModuleIds, curriculumProgrammes, learnerCountOverrides]);
+
+  // A successful list read is the authority again, so the save-time figure is
+  // dropped. A failed one never replaces `modules`, which is what keeps the
+  // painted count on screen instead of reverting to the stale one.
+  useEffect(() => {
+    setLearnerCountOverrides(previous => (Object.keys(previous).length ? {} : previous));
+  }, [modules]);
 
   const programmeOptions = useMemo(() => {
     const byName = new Map<string, string>();
@@ -1180,6 +1241,11 @@ export default function ModuleBuilder() {
       // the structure that was just read, so a save based on this copy is
       // accepted only while the module is still that copy.
       serverRevisionRef.current = next.structureRevision || '';
+      // This read IS the latest version, so any notice about one left over from
+      // the module before this has nothing left to announce. The live-sync
+      // cooldown is deliberately NOT armed here: the first write this workspace
+      // hears after opening is the one worth looking at immediately.
+      setRemoteUpdate(null);
       // Armed only for a module whose stored structure was actually read back.
       // Anything else is a fabricated shell -- see the guard above, which is the
       // same reason spelt out for the manual save.
@@ -1289,6 +1355,9 @@ export default function ModuleBuilder() {
       return null;
     }
     const target: LearnerAssignmentTarget = { scope: 'module', id: identifier, name: module.title };
+    // The drawer reports back a count, not a module, and the card is keyed by
+    // catalogueId rather than by the assignment identifier.
+    learnerAssignmentModuleIdRef.current = module.catalogueId;
     setActionMessage(null);
     setActionMessageRetry(null);
     try {
@@ -1689,6 +1758,11 @@ export default function ModuleBuilder() {
         autoSaveArmedRef.current = false;
         setSaveFailure({ kind: 'conflict', message: err.message });
         setActionMessage(err.message);
+        // The refusal names the revision that is stored now, so the way out is
+        // offered here rather than several seconds later when the live sync
+        // gets to it: the banner's "Load their version" is what re-arms this
+        // workspace, and it is the same choice either route arrives at.
+        if (err.currentRevision) setRemoteUpdate({ revision: err.currentRevision });
         return null;
       }
       // `curriculumErrorMessage` unwraps the handler's own sentence -- the
@@ -1933,6 +2007,10 @@ export default function ModuleBuilder() {
     serverRevisionRef.current = '';
     autoSaveArmedRef.current = false;
     autoSaveAttemptRef.current = '';
+    // Announced about the module being left. Carrying it into the next one
+    // would report somebody else's write on a module it never happened to.
+    setRemoteUpdate(null);
+    liveSyncReadAtRef.current = 0;
     setSaveFailure(null);
     setSavingSnapshot('');
     setWorkingModule(null);
@@ -2005,38 +2083,173 @@ export default function ModuleBuilder() {
     setSelection(nextSelection);
   }, [workingModule]);
 
-  // The placement drawer PATCHes the name, dates, tutor and group straight to
-  // the store while the builder is holding its own copy of the module. Without
-  // this the workspace keeps showing the old placement and the next builder
-  // save writes that stale copy back over what the drawer just stored. Weeks
-  // and components are the builder's own, so work in progress is kept.
-  const syncWorkingModuleFromStore = useCallback(async () => {
+  /**
+   * Replace what this workspace holds with the module as it is stored now.
+   *
+   * The whole structure, not a merge: the weeks and components are the ones the
+   * other writer saved, and the revision that arrives with them is what makes
+   * the next save from here legal again. Only ever called with nothing unsaved
+   * to lose, or after the reader has chosen to let their edits go.
+   *
+   * Throws rather than returning quietly when the read fails, so a caller
+   * showing a confirmation keeps it open and says so instead of reporting a
+   * version it never loaded.
+   */
+  const adoptStoredModule = useCallback(async () => {
     const current = workingModule;
     if (!current) return;
     const structureId = moduleStructureIdentifier(current);
     if (!structureId) return;
-    // Fresh, not the shared two-minute cache: this runs because the drawer has
-    // just written, and a cached answer would hand back the pre-write module --
-    // together with the pre-write revision, which would then refuse the
-    // workspace's own next save as stale.
-    const remote = await loadModuleStructure(structureId, { skipCache: true }).catch(() => null);
-    if (!remote) return;
-    const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
-    const merged = {
+    liveSyncReadAtRef.current = Date.now();
+    // Fresh for the same reason opening a module is: this copy is the one the
+    // next save writes back in full, and a cached answer would put pre-write
+    // weeks into a workspace that then stores them.
+    const remote = await loadModuleStructure(structureId, { skipCache: true });
+    if (!remote) throw new Error('The saved version of this module could not be read.');
+    const stored = recalculateModule(getDefaultStructure({
       ...current,
       ...remote,
       sessionsNumber: remote.sessionsNumber || current.sessionsNumber,
       weeks: remote.weeks || current.weeks,
       sourceModule: current.sourceModule || remote.sourceModule,
       deliveryUsages: (remote as ModuleBuilderListItem).deliveryUsages || (current as ModuleBuilderListItem).deliveryUsages,
-    } as ModuleBuilderListItem;
-    const stored = recalculateModule(getDefaultStructure(merged));
+    } as ModuleBuilderListItem));
     savedModuleSnapshotRef.current = moduleSnapshot(stored);
-    serverRevisionRef.current = remote.structureRevision || '';
-    const next = dirty ? recalculateModule({ ...stored, weekStructure: current.weekStructure }) : stored;
-    setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? next : latest));
-    if (selection) applySelectionSafely(selection, next);
+    serverRevisionRef.current = stored.structureRevision || remote.structureRevision || '';
+    // The stored structure has been read back, which is the one condition that
+    // makes saving unprompted safe -- the same condition openModule arms on.
+    // It is also how a workspace that was disarmed by a conflict is allowed to
+    // save again.
+    autoSaveArmedRef.current = true;
+    setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? stored : latest));
+    if (selection) applySelectionSafely(selection, stored);
+    setRemoteUpdate(null);
+    // Nothing of the reader's is waiting any more, so a refusal from before
+    // this read is answered rather than left sitting on screen.
+    setSaveFailure(null);
   }, [applySelectionSafely, selection, workingModule]);
+
+  /**
+   * Read the stored revision, and say so if it is not the one this workspace is
+   * based on. Nothing the reader is holding is touched.
+   *
+   * Deliberately NOT paired with taking the remote revision: a workspace with
+   * unsaved weeks that adopts the stored fingerprint is a false valid state.
+   * Its next save then carries local content under a revision it never read,
+   * the guard has nothing left to refuse, and the other writer's work is
+   * replaced with no error raised anywhere. The local revision stays the local
+   * revision until the reader chooses to load the stored version, and the
+   * remote one is held separately, as an announcement.
+   */
+  const noteRemoteRevision = useCallback(async (structureId: string) => {
+    liveSyncReadAtRef.current = Date.now();
+    const remote = await loadModuleStructure(structureId, { skipCache: true }).catch(() => null);
+    const revision = remote?.structureRevision || '';
+    // The write was somewhere else in the curriculum: this module is still the
+    // one this workspace read, so there is nothing to tell the reader about.
+    if (!revision || revision === serverRevisionRef.current) return;
+    setRemoteUpdate(existing => (existing && existing.revision === revision ? existing : { revision }));
+  }, []);
+
+  /**
+   * The placement drawer PATCHes the name, dates, tutor and group straight to
+   * the store while the builder is holding its own copy of the module, so the
+   * workspace has to be told what was just written or it keeps showing the old
+   * placement and writes it back on its next save.
+   *
+   * Which it does depends on the same question everything else here turns on.
+   * Nothing unsaved: take the stored module whole -- content and revision
+   * together, from one read. Unsaved edits: keep every one of them and say the
+   * module moved, because a merge that kept local weeks while adopting the
+   * stored revision would hand this workspace a licence to overwrite the very
+   * write it was told about.
+   */
+  const syncWorkingModuleFromStore = useCallback(async () => {
+    const current = workingModule;
+    if (!current) return;
+    const structureId = moduleStructureIdentifier(current);
+    if (!structureId) return;
+    const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
+    if (!dirty) {
+      // A failed read leaves the workspace as it was; the drawer has still
+      // saved, and the banner or the next write says so.
+      await adoptStoredModule().catch(() => undefined);
+      return;
+    }
+    await noteRemoteRevision(structureId);
+  }, [adoptStoredModule, noteRemoteRevision, workingModule]);
+
+  /**
+   * What this workspace does when a write lands somewhere else -- another tab,
+   * another person, another machine.
+   *
+   * Nothing unsaved: take it. The reader is looking at a record rather than
+   * editing one, and a screen that quietly disagrees with the database is the
+   * whole complaint this answers.
+   *
+   * Unsaved edits: say so and change nothing. Their weeks and components stay
+   * exactly where they are -- adopting over them is the overwrite the save
+   * guard exists to prevent, and doing it silently would be worse than the
+   * stale screen was. The banner offers the two honest ways out.
+   */
+  const liveSyncWorkingModule = useCallback(async () => {
+    const current = workingModule;
+    // Nothing open: the catalogue behind this is the live surface.
+    if (!current) {
+      reload();
+      return;
+    }
+    const structureId = moduleStructureIdentifier(current);
+    if (!structureId) return;
+    // A save in flight is already deciding what this module is. Reading now
+    // would race its reply, and whichever landed second would win.
+    if (savingRef.current) return;
+    const sinceLastRead = Date.now() - liveSyncReadAtRef.current;
+    if (sinceLastRead < LIVE_SYNC_MIN_INTERVAL_MS) {
+      // Held back, not dropped. A colleague's only save of the hour landing a
+      // second after this workspace last looked would otherwise go unmentioned
+      // until something else happened to write.
+      if (!liveSyncPendingRef.current) {
+        liveSyncPendingRef.current = setTimeout(() => {
+          liveSyncPendingRef.current = null;
+          void liveSyncRef.current();
+        }, LIVE_SYNC_MIN_INTERVAL_MS - sinceLastRead);
+      }
+      return;
+    }
+    const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
+    if (!dirty) {
+      // A failed read leaves the workspace exactly as it was. The next write in
+      // the estate, or the reader coming back to the tab, asks again.
+      await adoptStoredModule().catch(() => undefined);
+      reload();
+      return;
+    }
+    await noteRemoteRevision(structureId);
+  }, [adoptStoredModule, noteRemoteRevision, reload, workingModule]);
+
+  liveSyncRef.current = liveSyncWorkingModule;
+  useEffect(() => () => {
+    if (liveSyncPendingRef.current) clearTimeout(liveSyncPendingRef.current);
+  }, []);
+
+  // Both triggers: a write heard while the tab is open, and the reader coming
+  // back to it. Held off while a module is still opening, because the copy it
+  // is about to install is the fresh one anyway.
+  useLiveRefresh(liveSyncWorkingModule, { enabled: !openingModule });
+
+  const loadRemoteModuleVersion = useCallback(async () => {
+    await showCurriculumConfirm({
+      title: 'Load the saved version?',
+      text: 'The edits you have made here since your last save are replaced by the version that was just saved by someone else. This cannot be undone.',
+      icon: 'warning',
+      confirmButtonText: 'Yes, load it',
+      cancelButtonText: 'Keep my edits',
+      successTitle: 'Saved version loaded',
+      successText: 'You are now editing the version that was just saved.',
+      onConfirm: async () => { await adoptStoredModule(); },
+    });
+  }, [adoptStoredModule]);
 
   const requestDirtyNavigation = useCallback(async (onNavigate: (moduleAfterDiscard?: ModuleCatalogueItem | null) => void | Promise<void>) => {
     if (saving) return;
@@ -2288,6 +2501,7 @@ export default function ModuleBuilder() {
           <WorkspaceHeader
             module={workingModule}
             programmeOptions={programmeOptions.filter(option => option !== 'All')}
+            hierarchy={workingHierarchy}
             scopeLock={workingModuleScopeLock}
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
@@ -2326,6 +2540,35 @@ export default function ModuleBuilder() {
               error={actionMessage && !deletingModuleId ? actionMessage : null}
               module={workingModule}
             />
+          )}
+
+          {/* Only ever on screen with unsaved edits in the workspace: with
+              nothing to lose the new version is already installed and there is
+              nothing to ask. Neither button is destructive by accident --
+              loading confirms first, and keeping simply dismisses. */}
+          {remoteUpdate && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800">
+              <span className="flex items-center gap-2">
+                <AppIcon className="ri-refresh-line shrink-0 text-base"></AppIcon>
+                This module was saved somewhere else while you were editing. Your edits are still here - load their version to start from it, or keep editing.
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => { void loadRemoteModuleVersion(); }}
+                  className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-bold text-amber-800 hover:bg-amber-100"
+                >
+                  Load their version
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRemoteUpdate(null)}
+                  className="rounded-lg px-3 py-1.5 font-bold text-amber-700 hover:bg-amber-100"
+                >
+                  Keep editing
+                </button>
+              </span>
+            </div>
           )}
 
           {workingModuleProgrammeArchived && (
@@ -2925,8 +3168,10 @@ export default function ModuleBuilder() {
         <LearnerAssignmentDrawer
           target={learnerAssignmentTarget}
           onClose={() => setLearnerAssignmentTarget(null)}
-          onAssigned={() => {
+          onAssigned={result => {
+            const catalogueId = learnerAssignmentModuleIdRef.current;
             setLearnerAssignmentTarget(null);
+            if (catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [catalogueId]: result.learnerCount }));
             void reload({ silent: true });
           }}
         />
@@ -3009,9 +3254,10 @@ function SaveStatusPanel({ saving, elapsedSeconds, error, module }: {
   );
 }
 
-function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
+function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
+  hierarchy: ModuleHierarchyInfo | null;
   ksbProfileOptions: Array<{ id: string; label: string }>;
   ksbProfileValue: string;
   scopeLock: ModuleScopeLock | null;
@@ -3078,6 +3324,24 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
             </select>
             {programmeLocked && <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked to programme KSB source</span>}
           </label>
+          <div className="block min-w-0">
+            <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Cohort</span>
+            {hierarchy?.cohort ? (
+              <a href={hierarchy.cohort.href} className="flex h-8 w-full items-center truncate rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-semibold text-foreground-700 hover:text-primary-600" title={hierarchy.cohort.label}>{hierarchy.cohort.label}</a>
+            ) : (
+              <div className="flex h-8 w-full items-center rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-semibold text-foreground-500">Unassigned</div>
+            )}
+            <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked from module delivery scope</span>
+          </div>
+          <div className="block min-w-0">
+            <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Group</span>
+            {hierarchy?.group ? (
+              <a href={hierarchy.group.href} className="flex h-8 w-full items-center truncate rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-semibold text-foreground-700 hover:text-primary-600" title={hierarchy.group.label}>{hierarchy.group.label}</a>
+            ) : (
+              <div className="flex h-8 w-full items-center rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-semibold text-foreground-500">Unassigned</div>
+            )}
+            <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked from module delivery scope</span>
+          </div>
       </div>
     </div>
   );
