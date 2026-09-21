@@ -66,7 +66,17 @@ const WINDOW_OPTIONS = [
   { value: '365', label: 'Last 12 months' },
 ];
 
-const ENTITY_OPTIONS = [
+/**
+ * The record types offered by the Record type filter, until the server has
+ * answered.
+ *
+ * Only a first paint. The real list comes back on the trail as `entityTypes`,
+ * scoped to the workspace being read: this list held the curriculum's ten types
+ * and nothing else, so the system-wide door offered a filter that could not
+ * name a learner, a staff account, an employer or a coaching meeting — and the
+ * page read as though the curriculum were the only thing being audited.
+ */
+const FALLBACK_ENTITY_OPTIONS = [
   { value: 'programme', label: 'Programmes' },
   { value: 'cohort', label: 'Cohorts' },
   { value: 'group', label: 'Groups' },
@@ -285,13 +295,13 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : 'Unable to read the curriculum audit trail');
+        setError(err instanceof Error ? err.message : `Unable to read what changed in ${scope.subjectLabel}`);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [tab, windowDays, workspace, entity, action, actor, source, actorType, reloadToken]);
+  }, [tab, windowDays, workspace, entity, action, actor, source, actorType, reloadToken, scope.subjectLabel]);
 
   const events = useMemo(() => {
     const rows = trail?.events ?? [];
@@ -319,6 +329,31 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
     })),
     [trail?.actors],
   );
+
+  // What this workspace records, as the server names it.
+  const entityOptions = trail?.entityTypes?.length ? trail.entityTypes : FALLBACK_ENTITY_OPTIONS;
+
+  // A record type the new workspace does not have. Cleared rather than left
+  // applied: switching from Curriculum to Coaching with `component` selected
+  // would otherwise ask for a type that workspace cannot hold and read as
+  // "nothing was changed in Coaching".
+  useEffect(() => {
+    if (entity && !entityOptions.some(option => option.value === entity)) setEntity('');
+  }, [entity, entityOptions]);
+
+  // "learners, coaching meetings and 4 other kinds of record". Written out in
+  // full up to four, because a reader who can see the whole list does not need
+  // to be told how long it is.
+  const recordTypeSentence = useMemo(() => {
+    const labels = entityOptions.map(option => option.label.toLowerCase());
+    if (!labels.length) return 'these records';
+    if (labels.length <= 4) {
+      return labels.length === 1
+        ? labels[0]
+        : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+    }
+    return `${labels.slice(0, 3).join(', ')} and ${labels.length - 3} other kinds of record`;
+  }, [entityOptions]);
 
   const days = useMemo(() => groupByDay(events), [events]);
   const counts = trail?.actionCounts;
@@ -372,8 +407,11 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
                 ? `Who used ${scope.subjectLabel}. Page opens are not being recorded yet, so this is read from recorded changes and account sign-ins alone — it can say who saved something and when they signed in, never which pages they looked at.`
                 : `Who used ${scope.subjectLabel}: when they were here, which pages they opened, what they did on each, and what they changed. Open a person to see their visits in full.`
             : trail?.source === 'timestamps'
-              ? 'Read from the timestamps on the curriculum records themselves — every create, edit and archive inside the window, newest first. This reading cannot name who made a change.'
-              : 'Every recorded change to programmes, cohorts, groups, modules, weeks and components — who made it, when, and exactly which fields moved. Newest first.'
+              ? 'Read from the timestamps on the records themselves — every create, edit and archive inside the window, newest first. This reading cannot name who made a change.'
+              // The record types are named from what this workspace actually
+              // records, not listed here: the sentence used to name the
+              // curriculum's six and read as a lie on every other door.
+              : `Every recorded change to ${recordTypeSentence} — who made it, when, and exactly which fields moved. Newest first.`
           }
           stats={tab === 'people' ? [
             { icon: 'ri-group-line', label: 'People', value: people?.totals.people ?? 0, detail: `Used ${scope.subjectLabel} in this period` },
@@ -452,9 +490,10 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
             </span>
             <p className="min-w-0 text-[11px] leading-5 text-foreground-500">
               <span className="font-bold text-foreground-700">No author is recorded against these changes.</span>{' '}
-              The revision log is not switched on for this database, so the trail falls back to the curriculum tables'
-              own created, updated and deleted timestamps. Those record what changed and when, never who. An archive
-              shows the reason code the write handler used, which names the operation, not a person.
+              The revision log is not switched on for this database, so the trail falls back to the records' own
+              created, updated and deleted timestamps. Those record what changed and when, never who. An archive
+              shows the reason code the write handler used, which names the operation, not a person. This reading
+              covers the curriculum's authoring tables only — no other workspace has timestamps it can fall back to.
             </p>
           </div>
         )}
@@ -472,7 +511,7 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
           placeholder="Search by record name, parent or id..."
           selects={[
             { label: 'Period', value: windowDays, onChange: setWindowDays, options: WINDOW_OPTIONS },
-            { label: 'Record type', value: entity, onChange: setEntity, options: ENTITY_OPTIONS },
+            { label: 'Record type', value: entity, onChange: setEntity, options: entityOptions },
             { label: 'Change', value: action, onChange: setAction, options: ACTION_OPTIONS },
             ...(actorOptions.length
               ? [{ label: 'Who', value: actor, onChange: setActor, options: actorOptions }]
@@ -517,7 +556,7 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
               message={
                 search || entity || action
                   ? 'Nothing matches these filters. Widen the period or clear the filters above.'
-                  : 'Nothing in the curriculum was created, edited or archived over this period.'
+                  : `Nothing in ${scope.subjectLabel} was created, edited or archived over this period.`
               }
             />
           </div>
@@ -776,7 +815,11 @@ function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: Readon
             )}
           </div>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-foreground-400">
-            <span className="truncate">{event.context || 'Curriculum record'}</span>
+            {/* The record's own ancestry, or — where it has none recorded —
+                what kind of record it is. It used to fall back to the words
+                "Curriculum record", which was wrong on every learner, staff,
+                employer and coaching row in the feed. */}
+            <span className="truncate">{event.context || event.entityLabel || 'Record'}</span>
             {/* Auto-save is how the save arrived, not what happened. */}
             {event.source && (
               <>

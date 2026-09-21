@@ -1707,6 +1707,14 @@ export interface CurriculumAuditTrail {
   /** The source and actor-type values the server recognises, for the filters. */
   sources: CurriculumAuditSource[];
   actorTypes: CurriculumAuditActorType[];
+  /**
+   * The record types this workspace actually audits, named by the server.
+   * Named there rather than listed here because the answer differs per
+   * workspace and grows as each one is wired up — a list held in the browser
+   * was the curriculum's ten types, so the system-wide trail offered a filter
+   * that could not name a learner, a coaching meeting or an employer.
+   */
+  entityTypes?: { value: string; label: string }[];
   actors: CurriculumAuditActor[];
   events: CurriculumAuditEvent[];
 }

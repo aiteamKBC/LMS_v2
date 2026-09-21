@@ -47,8 +47,20 @@ def register_enrolment_records():
         entity_type='learner_record',
         label='Learner record',
         href='/users',
+        # The learner's own page, which is what an auditor reading "who changed
+        # their end date" is actually after.
+        record_href='/users/{id}',
         key='id',
         title='username',
+        # A record imported before anyone set a username still has to be
+        # findable by the person it is about.
+        title_fallback='email',
+        # Where they sit in delivery, which is the line the trail reads under
+        # the name -- and a save that touches only these is a move, not an edit.
+        context=('programme', 'cohort', 'group'),
+        parents=('programme', 'cohort', 'group'),
+        parent='programme',
+        status='status',
         using='enrolment',
         columns=(
             # identity
@@ -88,9 +100,20 @@ def register_enrolment_records():
         workspace='admin',
         entity_type='staff_record',
         label='Staff record',
+        # No `record_href`: a staff account has no page of its own -- it is
+        # edited in a dialog on the directory -- so the directory is the honest
+        # destination rather than a /users/<id> that would read a learner with a
+        # colliding id.
         href='/users',
         key='id',
         title='username',
+        title_fallback='email',
+        # Their role and their access level: the two facts that make a staff
+        # change worth reading at all.
+        context=('position', 'access', 'organization'),
+        parent='organization',
+        status='status',
+        json_columns=('access_extra',),
         using='enrolment',
         columns=(
             'id', 'uuid', 'username', 'email', 'title', 'preferred_name',
@@ -112,9 +135,15 @@ def register_enrolment_records():
         workspace='employer',
         entity_type='employer_contact',
         label='Employer contact',
-        href='/employers',
+        # `/employers` alone is not a route -- the employer directory is the
+        # Users list, and an employer's own side page is `/employers/<id>`.
+        href='/users',
+        record_href='/employers/{id}',
         key='id',
-        title='surname',
+        # Both halves of the name: neither identifies a contact on its own.
+        title=('first_name', 'surname'),
+        title_fallback='email',
+        context=('email', 'town_city', 'country'),
         using='enrolment',
         columns=(
             'id', 'uuid', 'first_name', 'surname', 'email',
@@ -131,9 +160,12 @@ def register_enrolment_records():
         workspace='employer',
         entity_type='organisation',
         label='Organisation',
-        href='/employers',
+        href='/users',
         key='id',
         title='name',
+        context=('parent_name', 'city_town', 'country'),
+        parent='parent_name',
+        status='status',
         using='enrolment',
         columns=(
             'id', 'status', 'name', 'owner', 'category', 'group_type', 'parent_name',
@@ -163,8 +195,17 @@ def register_coach_records():
         entity_type='coach_meeting',
         label='Coaching meeting',
         href='/coach/meetings',
+        record_href='/coach/meetings/{id}',
         key='event_key',
-        title='event_type',
+        # Whose meeting, and which kind. "progress-review" alone names a
+        # category, not the meeting somebody moved.
+        title=('learner_name', 'event_type'),
+        title_join=' — ',
+        title_fallback='event_type',
+        # Who runs it, when it is, and where it has got to.
+        context=('owner_name', 'scheduled_date', 'status'),
+        parent='learner_id',
+        status='status',
         columns=(
             'event_key', 'owner_email', 'owner_name',
             'learner_id', 'learner_name', 'learner_email',
@@ -190,9 +231,18 @@ def register_coach_records():
         workspace='coach',
         entity_type='absence_report',
         label='Absence report',
+        # No `record_href`: a report is read in place on the list, which has no
+        # per-report URL to link to.
         href='/coach/absence-reports',
         key='id',
-        title='session_title',
+        # Whose absence, from which session. The session title alone repeats
+        # across every learner who missed it.
+        title=('learner_name', 'session_title'),
+        title_join=' — ',
+        title_fallback='session_title',
+        context=('session_date', 'reason_category', 'status'),
+        parent='learner_id',
+        status='status',
         columns=(
             'id', 'attendance_id', 'owner_email', 'owner_name',
             'learner_id', 'learner_name', 'learner_email',

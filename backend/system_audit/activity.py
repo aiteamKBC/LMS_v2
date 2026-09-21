@@ -601,7 +601,10 @@ def activity_people(request):
 
     changes_recorded = versioning.history_available()
     if changes_recorded:
-        for row in quality.revision_actors(since):
+        # Scoped, so the Changes column counts what this door can show. Left
+        # unscoped it counted every workspace's saves against a person on
+        # Curriculum Studio's own list.
+        for row in quality.revision_actors(since, workspace):
             if not row['email']:
                 continue
             entry = person(row['email'], row['name'])
@@ -789,7 +792,7 @@ def activity_person(request, email):
         person['role'] = curriculum_views.clean_str(row.get('actor_role')) or person['role']
 
     changes_recorded = versioning.history_available()
-    changes = read_person_changes(email, since) if changes_recorded else []
+    changes = read_person_changes(email, since, workspace) if changes_recorded else []
     for change in changes:
         if change.get('actorName') and person['name'] == email:
             person['name'] = change['actorName']
@@ -812,7 +815,7 @@ def activity_person(request, email):
         'workspaces': pages.workspace_options(),
         'visitsRecorded': visits_recorded,
         'changesRecorded': changes_recorded,
-        'changeWorkspaces': ['curriculum'],
+        'changeWorkspaces': writes.change_workspaces(),
         'signInsRecorded': sign_ins_recorded,
         'person': person,
         'counts': {
@@ -829,13 +832,20 @@ def activity_person(request, email):
     })
 
 
-def read_person_changes(email, since):
-    """This person's recorded curriculum writes, newest first.
+def read_person_changes(email, since, workspace=''):
+    """This person's recorded writes in this workspace, newest first.
 
-    Curriculum only, for now, and named as such by ``changeWorkspaces`` on the
-    response. The other workspaces join this list as each is wired into the
-    shared revision log; until then an empty list here means "not recorded yet",
-    which the page says rather than implies.
+    Scoped the same way the Changes feed is, and for the same reason: one
+    revision log now holds curriculum, learner, staff, employer and coaching
+    saves, so a person's page opened from Curriculum Studio's own door would
+    otherwise list their coaching saves under a Curriculum heading. The
+    workspace narrows the record types rather than the page filtering
+    afterwards and reporting a count of what it hid.
+
+    Each change carries the workspace it actually belongs to, rather than every
+    row being stamped ``curriculum`` -- on the system-wide door they are not all
+    from one workspace, and saying they are is the kind of quiet untruth an
+    audit page cannot afford.
     """
     revisions = versioning.qualified(versioning.REVISIONS_TABLE)
     columns = (
@@ -845,12 +855,19 @@ def read_person_changes(email, since):
     )
     if versioning.metadata_columns_available():
         columns += ', actor_type, triggered_by_email, triggered_by_name, source, metadata'
+    where = ['lower(actor_email) = %s', 'created_at >= %s']
+    params = [email, since]
+    if workspace:
+        owned = writes.entity_types_for_workspace(workspace)
+        if owned:
+            where.append('entity_type in (' + ','.join(['%s'] * len(owned)) + ')')
+            params.extend(owned)
     try:
         rows = curriculum_views.fetch_all(
             f'select {columns} from {revisions} '
-            'where lower(actor_email) = %s and created_at >= %s '
+            f'where {" and ".join(where)} '
             f'order by created_at desc, id desc limit {MAX_PERSON_CHANGES}',
-            [email, since],
+            params,
         )
     except Exception:
         logger.warning("Could not read one person's recorded changes.", exc_info=True)
@@ -859,7 +876,7 @@ def read_person_changes(email, since):
     for row in rows:
         event = quality.revision_event(row)
         event['placed'] = False
-        event['workspace'] = 'curriculum'
+        event['workspace'] = writes.workspace_for_entity(event.get('entity', ''))
         changes.append(event)
     return changes
 
