@@ -24,29 +24,30 @@ def reporting_months(start):
 
 
 def contract_targets(learner):
-    candidates = repo.query('''SELECT c.id, c.azure_path, c.document_name AS original_name,
+    candidates = repo.source_query('''SELECT c.id, c.azure_path, c.document_name AS original_name,
         coalesce(nullif(a.display_name,''),c.document_name) AS document_name,
         c.date, c.fetched_at, c.training_plan_planned_hours, c.raw AS extraction_metadata
         FROM fetching_evidence.aptem_cv_contracts_probe c
         LEFT JOIN "Audit".contract_document_archive a ON a.contract_id=c.id
-        WHERE c.learner_id=%s AND c.fully_signed_date IS NOT NULL
+        WHERE c.learner_id=%s
           AND (lower(btrim(c.current_programme))=lower(btrim(%s))
                OR lower(btrim(c.program_name))=lower(btrim(%s)))
-          AND lower(coalesce(nullif(a.display_name,''),c.document_name)) ~ 'training[[:space:]_-]*plan'
+          AND (lower(c.document_name) ~ 'training[[:space:]_-]*plan'
+               OR lower(a.display_name) ~ 'training[[:space:]_-]*plan')
           AND a.archived_at IS NULL AND a.deleted_at IS NULL
-        ORDER BY c.fully_signed_date DESC, c.id DESC''',
+        ORDER BY coalesce(c.fully_signed_date,c.date) DESC NULLS LAST, c.id DESC''',
         [learner['aptem_id'], learner['programme'], learner['programme']])
     contract = selected_contract(candidates)
     if not contract or not contract.get('azure_path'):
-        raise old.ServiceError('The signed Training Plan is unavailable for this programme.', 'history_source_unavailable', 503)
+        raise old.ServiceError('The Training Plan is unavailable for this programme.', 'history_source_unavailable', 503)
     try:
         months = read_contract(contract['azure_path'], contract['training_plan_planned_hours'],
                                f"{contract['fetched_at']}:{int(time.time() // 1800)}",
                                contract_extract_metadata(contract.get('extraction_metadata')))
     except Exception as error:
-        raise old.ServiceError('The signed Training Plan could not be read.', 'history_source_unavailable', 503) from error
+        raise old.ServiceError('The Training Plan could not be read.', 'history_source_unavailable', 503) from error
     if not months:
-        raise old.ServiceError('The signed Training Plan hours need verification.', 'history_source_unavailable', 503)
+        raise old.ServiceError('The Training Plan hours need verification.', 'history_source_unavailable', 503)
     return months
 
 
@@ -63,7 +64,7 @@ def summary(learner):
             raise
         targets = None
         target_warning = (str(error) + ' Activities and actual hours remain available. '
-                          'Target hours and OTJH risk cannot be assessed until the signed plan is available.')
+                          'Target hours and OTJH risk cannot be assessed until the plan is available.')
     # Empty months are display-only, never added to required signing months.
     record['months'] = [
         {**(existing[month] if month in existing else
