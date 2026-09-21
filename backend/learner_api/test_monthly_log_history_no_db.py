@@ -22,7 +22,7 @@ class HistoricalLogsTests(unittest.TestCase):
         root = Path(__file__).parent
         self.learner = {'id': 7, 'aptem_id': 42, 'programme': 'Programme',
                         '_profile': {'coach_email': 'aryan.harikumar@kentbusinesscollege.com'}}
-        self.repo = SimpleNamespace(CUTOFF='2026-08', query=Mock(),
+        self.repo = SimpleNamespace(CUTOFF='2026-08', query=Mock(), source_query=Mock(),
             report_profile=Mock(return_value={'start_date': date(2026, 1, 15)}),
             month_rows=Mock(return_value=[]))
         old = functions(root.parent / 'old_otjh/service.py', {})
@@ -59,19 +59,21 @@ class HistoricalLogsTests(unittest.TestCase):
         self.assertTrue(self.history.enabled({**self.learner, '_profile': {'coach_email': 'other@example.test'}}))
         self.assertFalse(self.history.enabled({**self.learner, 'aptem_id': None}))
 
-    def test_contract_query_is_scoped_and_signed(self):
-        self.repo.query.return_value = [{'azure_path': 'synthetic.pdf', 'fetched_at': 'v1',
+    def test_contract_query_is_scoped_and_accepts_missing_signature_date(self):
+        self.repo.source_query.return_value = [{'azure_path': 'synthetic.pdf', 'fetched_at': 'v1',
                                         'training_plan_planned_hours': 999}]
         self.history.contract_targets(self.learner)
-        sql, args = self.repo.query.call_args.args
+        sql, args = self.repo.source_query.call_args.args
         self.assertEqual(args, [42, 'Programme', 'Programme'])
-        self.assertIn('fully_signed_date IS NOT NULL', sql)
+        self.assertNotIn('fully_signed_date IS NOT NULL', sql)
+        self.assertIn('coalesce(c.fully_signed_date,c.date) DESC NULLS LAST', sql)
+        self.assertIn('a.archived_at IS NULL', sql)
         self.assertIn('a.deleted_at IS NULL', sql)
         self.history.contract_targets({**self.learner, 'aptem_id': 84, 'programme': 'Other'})
-        self.assertEqual(self.repo.query.call_args.args[1], [84, 'Other', 'Other'])
+        self.assertEqual(self.repo.source_query.call_args.args[1], [84, 'Other', 'Other'])
 
     def test_missing_contract_does_not_use_stale_target(self):
-        self.repo.query.return_value = []
+        self.repo.source_query.return_value = []
         with self.assertRaises(RuntimeError):
             self.history.contract_targets(self.learner)
 
@@ -175,6 +177,17 @@ class HistoricalLogsTests(unittest.TestCase):
         self.ns['contract_targets'] = Mock(side_effect=self.old.ServiceError('Denied', 'forbidden', 403))
         with self.assertRaises(self.old.ServiceError):
             self.history.summary(self.learner)
+
+    def test_contract_uses_audit_database_and_pdf_monthly_hours(self):
+        self.repo.source_query.return_value = [{'azure_path': 'synthetic-plan.pdf',
+            'fetched_at': 'version-2', 'training_plan_planned_hours': 999}]
+        result = self.history.contract_targets(self.learner)
+        self.repo.query.assert_not_called()
+        self.ns['read_contract'].assert_called_once_with('synthetic-plan.pdf', 999, 'version-2:0', None)
+        self.assertEqual(result['2026-01']['planned'], 25)
+        sql = self.repo.source_query.call_args.args[0]
+        self.assertIn('lower(c.document_name)', sql)
+        self.assertIn('lower(a.display_name)', sql)
 
 
 if __name__ == '__main__':
