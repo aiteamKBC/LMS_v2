@@ -259,8 +259,13 @@ export async function completeReviewInstance(instanceId: string, answers?: Recor
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
 
-export async function generateReviewMeetingSummary(instanceId: string) {
-  const response = await coachFetch(`${instanceUrl(instanceId)}/meeting-summary`, { method: 'POST' });
+export async function generateReviewMeetingSummary(instanceId: string, transcript?: File) {
+  const body = transcript ? new FormData() : undefined;
+  if (body && transcript) body.append('transcript', transcript);
+  const response = await coachFetch(`${instanceUrl(instanceId)}/meeting-summary`, {
+    method: 'POST',
+    body,
+  });
   return readJsonResponse<{ meetingSummarySource: ReviewMeetingSummarySource }>(response);
 }
 

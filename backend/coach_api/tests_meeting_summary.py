@@ -5,6 +5,7 @@ from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from coach_api.models import CoachCalendarEvent
@@ -14,6 +15,7 @@ from coach_api.views import (
     ensure_coach_meeting_summary,
     openai_meeting_summary,
     should_reuse_coach_meeting_summary,
+    uploaded_coach_meeting_transcript_text,
 )
 
 
@@ -276,3 +278,59 @@ class ReviewMeetingSummaryEndpointTests(SimpleTestCase):
             response = unwrap(coach_review_instance_meeting_summary)(self.request, "REVI-1")
         self.assertEqual(response.status_code, 200)
         generate.assert_called_once_with(self.record, retry_failed=True)
+
+    def test_uploaded_vtt_generates_without_graph_or_artifact_storage(self):
+        request = RequestFactory().post(
+            "/coach/reviews/REVI-1/meeting-summary",
+            {"transcript": SimpleUploadedFile(
+                "meeting.vtt",
+                b"WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nUploaded discussion.",
+                content_type="text/vtt",
+            )},
+        )
+        request.coach_email = "coach@example.test"
+        summary = {
+            "title": "Monthly Coaching Meeting",
+            "overview": "The uploaded discussion was summarised.",
+            "keyPoints": [], "actions": [], "nextSteps": [], "support": [],
+        }
+        contexts = self.patches()
+        with contexts[0], contexts[1], contexts[2], contexts[3], patch(
+            "coach_api.views.openai_meeting_summary", return_value=(summary, "test-model"),
+        ) as generate, patch(
+            "coach_api.views.fetch_coach_meeting_graph_snapshot",
+        ) as graph, patch(
+            "coach_api.views.ensure_coach_meeting_summary",
+        ) as stored_generation:
+            response = unwrap(coach_review_instance_meeting_summary)(request, "REVI-1")
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["meetingSummarySource"]["status"], "ready")
+        self.assertIn("uploaded discussion was summarised", payload["meetingSummarySource"]["summaryText"])
+        generate.assert_called_once_with(self.record, "Uploaded discussion.")
+        graph.assert_not_called()
+        stored_generation.assert_not_called()
+
+    def test_uploaded_non_vtt_is_rejected_before_generation(self):
+        request = RequestFactory().post(
+            "/coach/reviews/REVI-1/meeting-summary",
+            {"transcript": SimpleUploadedFile("meeting.txt", b"Meeting notes")},
+        )
+        request.coach_email = "coach@example.test"
+        contexts = self.patches()
+        with contexts[0], contexts[1], contexts[2], contexts[3], patch(
+            "coach_api.views.openai_meeting_summary",
+        ) as generate:
+            response = unwrap(coach_review_instance_meeting_summary)(request, "REVI-1")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(".vtt", response.content.decode())
+        generate.assert_not_called()
+
+
+class UploadedMeetingTranscriptTests(SimpleTestCase):
+    def test_rejects_a_vtt_extension_without_a_webvtt_header(self):
+        upload = SimpleUploadedFile("meeting.vtt", b"Plain text pretending to be VTT")
+        with self.assertRaisesMessage(ValueError, "not a valid WebVTT"):
+            uploaded_coach_meeting_transcript_text(upload)

@@ -295,6 +295,28 @@ describe('MCM Meeting Summary integration', () => {
     expect(screen.getByDisplayValue('New generated wording.')).toBeVisible();
   });
 
+  it('uploads a .vtt fallback and loads its AI result without saving automatically', async () => {
+    const existing = mcmDefinition('in-progress');
+    existing.meetingSummarySource = { fieldId: 'summary-field', status: 'unavailable', summaryText: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    vi.mocked(generateReviewMeetingSummary).mockResolvedValue({
+      meetingSummarySource: { fieldId: 'summary-field', status: 'ready', summaryText: 'Summary from uploaded transcript.' },
+    });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+
+    const transcript = new File(
+      ['WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nUploaded meeting notes.'],
+      'meeting.vtt',
+      { type: 'text/vtt' },
+    );
+    fireEvent.change(screen.getByLabelText('Select .vtt transcript'), { target: { files: [transcript] } });
+
+    await waitFor(() => expect(generateReviewMeetingSummary).toHaveBeenCalledWith('instance-1', transcript));
+    expect(await screen.findByDisplayValue('Summary from uploaded transcript.')).toBeVisible();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+  });
+
   it('supports a manually entered summary when no AI artifact is available', async () => {
     const existing = mcmDefinition('in-progress');
     existing.meetingSummarySource = { fieldId: 'summary-field', status: 'unavailable', summaryText: '' };

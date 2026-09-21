@@ -5755,6 +5755,7 @@ COACH_MEETING_SUMMARIES_RELATION = '"Coach".coach_meeting_summaries'
 COACH_MEETING_ATTENDANCE_STATUSES = {"attended", "absent", "pending", "extra"}
 COACH_MEETING_SUMMARY_TYPES = {"mcr", "progress-review", GENERIC_REVIEW_EVENT_TYPE}
 COACH_MEETING_SUMMARY_MODEL = getattr(settings, "OPENAI_MEETING_SUMMARY_MODEL", "") or getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
+COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 
 
 def graph_datetime_iso(value) -> str:
@@ -6459,6 +6460,34 @@ def coach_meeting_transcript_text(vtt_content: str) -> str:
         if line:
             lines.append(line)
     return "\n".join(lines)
+
+
+def uploaded_coach_meeting_transcript_text(upload) -> str:
+    """Validate and extract a coach-supplied WebVTT summary source.
+
+    Uploaded fallback transcripts are processed in memory. They are never
+    stored as, or confused with, Microsoft Teams transcript artifacts.
+    """
+    filename = clean_text(getattr(upload, "name", ""))
+    if not filename.lower().endswith(".vtt"):
+        raise ValueError("Upload a WebVTT transcript with a .vtt file extension.")
+    if int(getattr(upload, "size", 0) or 0) > COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES:
+        raise ValueError("The transcript is too large. Upload a .vtt file no larger than 5 MB.")
+
+    content = upload.read(COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES + 1)
+    if not content or len(content) > COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES:
+        raise ValueError("The transcript is empty or larger than the 5 MB limit.")
+    try:
+        decoded = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("The .vtt transcript must use UTF-8 text encoding.") from exc
+    if not decoded.lstrip().upper().startswith("WEBVTT"):
+        raise ValueError("The uploaded file is not a valid WebVTT transcript.")
+
+    transcript_text = coach_meeting_transcript_text(decoded)
+    if not transcript_text:
+        raise ValueError("The uploaded .vtt file does not contain any transcript text.")
+    return transcript_text
 
 
 def fetch_coach_meeting_transcript_content(base: str, artifact_id: str) -> dict:
@@ -12270,8 +12299,9 @@ def coach_review_instance_meeting_summary(request, instance_id):
 
     Passive Review reads use ``_review_instance_meeting_summary_source`` and
     never reach Graph/OpenAI. This POST reuses the same snapshot persistence,
-    transcript extraction and repaired generation pipeline as Check Teams.
-    It never writes the formal Review answer.
+    transcript extraction and repaired generation pipeline as Check Teams, or
+    accepts one explicit .vtt fallback upload without creating a Teams
+    artifact. It never writes the formal Review answer.
     """
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
@@ -12281,7 +12311,8 @@ def coach_review_instance_meeting_summary(request, instance_id):
     definition = curriculum_review_instances.review_instance_form_definition(instance_row)
     if definition.get("template", {}).get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_MCM:
         return JsonResponse({"detail": "Meeting Summary generation is only available on an MCM Review."}, status=404)
-    if not curriculum_review_instances.meeting_summary_field(definition):
+    field = curriculum_review_instances.meeting_summary_field(definition)
+    if not field:
         return JsonResponse({
             "detail": "This Review Instance has no explicitly mapped Meeting Summary field. Enter the summary manually.",
         }, status=409)
@@ -12296,6 +12327,33 @@ def coach_review_instance_meeting_summary(request, instance_id):
         return JsonResponse({
             "detail": "This Review is not linked to a scheduled Teams meeting. Enter the summary manually.",
         }, status=409)
+
+    uploaded_transcript = request.FILES.get("transcript")
+    if uploaded_transcript is not None:
+        try:
+            transcript_text = uploaded_coach_meeting_transcript_text(uploaded_transcript)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
+        try:
+            summary, _model = openai_meeting_summary(record, transcript_text)
+        except Exception:  # noqa: BLE001 - never expose provider details
+            logger.exception(
+                "Unable to generate coach meeting summary from uploaded transcript for event_key=%s",
+                record.event_key,
+            )
+            return JsonResponse({
+                "detail": "The Meeting Summary could not be generated from the uploaded transcript. Your current Review answer has not been changed.",
+            }, status=502)
+        return JsonResponse({
+            "meetingSummarySource": {
+                "fieldId": field.get("id"),
+                "status": "ready",
+                "summaryText": meeting_summary_plain_text(summary),
+                "generatedAt": timezone.now().isoformat(),
+                "editedAt": None,
+                "message": "The uploaded transcript was summarised. Review the result and save the draft to keep it in this Review.",
+            }
+        })
 
     # A valid stored artifact is idempotent. In particular, a coach-edited AI
     # artifact must never be replaced simply because this button was pressed.
