@@ -68,6 +68,60 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+describe('coach review page presentation', () => {
+  it('shows completed setup steps and starts Curriculum sections at step 3 without modal chrome', async () => {
+    const pageDefinition = definition();
+    pageDefinition.template.reviewTypeCode = 'mcm';
+    pageDefinition.sections.push({
+      id: 'section-2',
+      title: 'Final reflection',
+      estimatedMinutes: 3,
+      displayOrder: 2,
+      enabled: true,
+      fields: [{ id: 'field-2', title: 'Reflection', fieldType: 'text_multiline', required: false, displayOrder: 1, configuration: {} }],
+    });
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(pageDefinition);
+    const onClose = vi.fn();
+    render(
+      <ReviewInstanceModal
+        presentation="page"
+        event={{ learner: 'Ayman Learner', programme: 'Marketing' }}
+        instanceId="instance-1"
+        onClose={onClose}
+      />,
+    );
+
+    expect(await screen.findByRole('navigation', { name: 'Review steps' })).toBeVisible();
+    expect(screen.getByText('Review selected')).toBeVisible();
+    expect(screen.getByText('Details confirmed')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Monthly Coaching Meeting #1' })).toBeVisible();
+    expect(screen.getByText('Step 3')).toBeVisible();
+    expect(screen.getByText('Step 3 of 4')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Next steps' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Final reflection' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
+    expect(screen.getByRole('heading', { name: 'Final reflection' })).toBeVisible();
+    expect(screen.getByText('Step 4 of 4')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Close form' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to reviews' }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('labels the shared page UI as Progress Review for PR instances', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(progressReviewDefinition());
+    render(
+      <ReviewInstanceModal
+        presentation="page"
+        event={{ learner: 'Ayman Learner', programme: 'Marketing' }}
+        instanceId="instance-1"
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Progress Review #1' })).toBeVisible();
+  });
+});
+
 describe('coach review signature workflow', () => {
   it('keeps the submitted review open and focuses the coach signature without requiring a second visit', async () => {
     const { onStatusChange, onClose } = mount();

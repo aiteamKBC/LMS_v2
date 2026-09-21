@@ -30,6 +30,15 @@ describe('student home header', () => {
     expect(header.getByRole('img', { name: 'Kent Business College logo' })).toBeVisible();
     expect(header.getByRole('button', { name: 'Ayman Ahmed, account menu' })).toHaveAttribute('aria-expanded', 'false');
     expect(header.getByRole('button', { name: 'Notifications' })).toBeVisible();
+    const careerPlanner = header.getByRole('link', { name: 'Career Planner' });
+    expect(careerPlanner).toHaveAttribute('href', 'https://kentbusinesscollege.com/learners/career-planner/');
+    expect(header.getByRole('button', { name: 'Notifications' }).nextElementSibling).toBe(careerPlanner);
+    const feedback = header.getByRole('button', { name: 'Feedback — coming soon' });
+    expect(feedback).toBeDisabled();
+    expect(within(feedback).getByText('Coming soon')).toBeVisible();
+    expect(careerPlanner.nextElementSibling).toBe(feedback);
+    fireEvent.click(feedback);
+    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner');
     expect(header.queryByRole('search')).not.toBeInTheDocument();
     expect(header.queryByRole('link', { name: 'Dashboard' })).not.toBeInTheDocument();
   });

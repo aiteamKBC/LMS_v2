@@ -1280,6 +1280,8 @@ export function ModuleFormDrawer({
               onChange={changeGroups}
               options={groupOptions}
               selectAllLabel="groups"
+              searchable
+              searchPlaceholder="Search groups by name, programme or cohort..."
               emptyMessage={
                 cohortId
                   ? 'No groups for this cohort.'

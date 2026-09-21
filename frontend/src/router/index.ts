@@ -5,7 +5,8 @@ import { RouteLoadingSkeleton } from "@/components/feature/RouteLoadingSkeleton"
 import { useAuth } from "@/hooks/useAuth";
 import routes from "./config";
 import { installLearnerRoutePreloading } from './preload';
-import { recordCurriculumPageView } from '@/lib/curriculumActivity';
+import { recordPageView } from '@/lib/activityTrail';
+import { installActivityCapture } from '@/lib/activityCapture';
 import { OldOtjhProvider } from '@/features/old-otjh/hooks';
 
 let navigateResolver: (navigate: ReturnType<typeof useNavigate>) => void;
@@ -41,15 +42,21 @@ export function AppRoutes() {
     navigateResolver(window.REACT_APP_NAVIGATE);
   }, [navigate]);
 
-  // Curriculum Studio records who opened which page, for the Audit Trail's
-  // People view. Mounted here rather than in WorkspaceShell because this is the
-  // one place every route passes through, so a curriculum page that renders its
-  // own chrome is not quietly missing from the trail. The recorder ignores any
-  // path outside /curriculum and swallows its own failures, so no other
-  // workspace is affected and no navigation can fail because of it.
+  // The LMS records who opened which page, for the Audit Trail's People view.
+  // Mounted here rather than in WorkspaceShell because this is the one place
+  // every route passes through, so a page that renders its own chrome is not
+  // quietly missing from the trail. The recorder skips the signed-out pages and
+  // the learner content runner, and swallows its own failures, so no navigation
+  // can fail because of it.
   useEffect(() => {
-    recordCurriculumPageView(pathname);
+    recordPageView(pathname);
   }, [pathname]);
+
+  // What was done on those pages -- searched, filtered, exported. One delegated
+  // listener for the whole LMS rather than a call in each workspace, so a page
+  // is covered by existing rather than by being remembered. Toolkits that
+  // report themselves are marked `data-audit="manual"` and skipped here.
+  useEffect(() => installActivityCapture(), []);
 
   // These provisioned learner accounts intentionally have a two-screen UI:
   // their material list and the content runner. Quiz and video URLs

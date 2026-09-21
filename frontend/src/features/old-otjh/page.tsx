@@ -64,14 +64,7 @@ function Shell({ children }: { children: ReactNode }) {
     showBackButton backFallbackHref={backFallback}
     pageTitle="Previous learning record" filterLearnerNavigation={false} navItems={monitor ? [
       { id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' },
-    ] : coachNavItems.map(item => item.id === 'coach-previous-records' ? {
-        ...item,
-        href: '',
-        children: [
-          { id: 'previous-records-list', label: 'Learning records', href: '/old-otjh/coach', icon: 'ri-history-line' },
-          ...(auth.account?.access === 'super-admin' ? [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }] : []),
-        ],
-      } : item)}><PageContainer className={`${styles.scope} ${styles.page} ${month ? journal.canvas : ''}`}>{children}</PageContainer></WorkspaceShell>;
+    ] : coachNavItems}><PageContainer className={`${styles.scope} ${styles.page} ${month ? journal.canvas : ''}`}>{children}</PageContainer></WorkspaceShell>;
 }
 
 function ErrorState({ error, retry }: { error: Error; retry: () => void }) {

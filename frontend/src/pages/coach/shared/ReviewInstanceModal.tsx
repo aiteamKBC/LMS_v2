@@ -166,6 +166,12 @@ function ExpandedMeetingSummaryEditor({
   );
 }
 
+function reviewTypeLabel(definition: ReviewInstanceFormDefinition) {
+  if (definition.template.reviewTypeCode === 'mcm') return 'Monthly Coaching Meeting';
+  if (definition.template.reviewTypeCode === 'progress_review') return 'Progress Review';
+  return definition.template.name;
+}
+
 /**
  * The generic "open a Curriculum-driven Review" screen -- what a coach sees
  * when they open ANY Review instance (Monthly Coaching Meeting, Progress
@@ -182,6 +188,7 @@ export function ReviewInstanceModal({
   instanceId,
   onClose,
   onStatusChanged,
+  presentation = 'modal',
 }: {
   /** Only what the header shows -- deliberately structural so the timetable,
    *  meetings and progress-review pages can each pass their own event type. */
@@ -198,6 +205,8 @@ export function ReviewInstanceModal({
    *  does not close this modal, such as a manual scheduled -> in-progress
    *  override. */
   onStatusChanged?: (status: string) => void;
+  /** Page mode reuses the same form lifecycle without modal chrome. */
+  presentation?: 'modal' | 'page';
 }) {
   const { auth } = useAuth();
   const [definition, setDefinition] = useState<ReviewInstanceFormDefinition | null>(null);
@@ -211,11 +220,13 @@ export function ReviewInstanceModal({
   const [showErrors, setShowErrors] = useState(false);
   const [calculating, setCalculating] = useState(false);
   const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [uploadingTranscript, setUploadingTranscript] = useState(false);
   const [summaryMessage, setSummaryMessage] = useState('');
   const [pendingSummaryReplacement, setPendingSummaryReplacement] = useState('');
   const [summaryDraftSaved, setSummaryDraftSaved] = useState(false);
   const [expandedSummaryFieldId, setExpandedSummaryFieldId] = useState<string | null>(null);
   const expandSummaryButtonRef = useRef<HTMLButtonElement>(null);
+  const transcriptUploadRef = useRef<HTMLInputElement>(null);
   const restoreExpandFocusRef = useRef(false);
 
   useEffect(() => {
@@ -382,12 +393,13 @@ export function ReviewInstanceModal({
     }
   };
 
-  const generateMeetingSummary = async () => {
-    if (!definition || generatingSummary || isSignatureStage) return;
-    setGeneratingSummary(true);
+  const generateMeetingSummary = async (transcript?: File) => {
+    if (!definition || generatingSummary || uploadingTranscript || isSignatureStage) return;
+    if (transcript) setUploadingTranscript(true);
+    else setGeneratingSummary(true);
     setError(null);
     try {
-      const { meetingSummarySource: source } = await generateReviewMeetingSummary(definition.instance.id);
+      const { meetingSummarySource: source } = await generateReviewMeetingSummary(definition.instance.id, transcript);
       setDefinition(current => current ? { ...current, meetingSummarySource: source } : current);
       const currentText = typeof answers[source.fieldId] === 'string' ? String(answers[source.fieldId]).trim() : '';
       if (!source.summaryText) {
@@ -409,7 +421,8 @@ export function ReviewInstanceModal({
       if (isAbortError(err)) return;
       setError(err instanceof Error ? err.message : 'The Meeting Summary could not be generated.');
     } finally {
-      setGeneratingSummary(false);
+      if (transcript) setUploadingTranscript(false);
+      else setGeneratingSummary(false);
     }
   };
 
@@ -429,7 +442,9 @@ export function ReviewInstanceModal({
     }
   };
 
-  const busy = saving || calculating || generatingSummary;
+  const busy = saving || calculating || generatingSummary || uploadingTranscript;
+  const pageMode = presentation === 'page';
+  const headingLabel = definition ? reviewTypeLabel(definition) : '';
 
   if (expandedSummaryFieldId && meetingSummaryField) {
     return (
@@ -446,20 +461,53 @@ export function ReviewInstanceModal({
     );
   }
 
-  return (
-    <ModalShell busy={busy} onClose={onClose}>
-      <ModalHeader
-        eyebrow="Complete review"
-        icon="ri-chat-check-line"
-        title={definition ? `${event.learner || 'Learner'} · ${definition.template.name} #${definition.instance.occurrenceNumber}` : 'Loading review...'}
-        subtitle="Complete the Curriculum-defined review before closing it."
-        busy={busy}
-        onClose={onClose}
-        progressPercent={requiredCount ? Math.round((answeredCount / requiredCount) * 100) : undefined}
-        progressLabel={requiredCount ? `${answeredCount}/${requiredCount} answered` : undefined}
-      />
+  const content = (
+    <>
+      {pageMode ? (
+        <header className="rounded-t-3xl border-b border-white/10 bg-gradient-to-br from-[#10021f] via-primary-950 to-[#35105e] px-5 py-6 text-white sm:px-8 sm:py-7">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="mb-5 inline-flex h-9 items-center gap-2 rounded-lg bg-white/10 px-3 text-xs font-semibold text-white transition hover:bg-white/20 disabled:opacity-50"
+          >
+            <AppIcon className="ri-arrow-left-line"></AppIcon>Back to reviews
+          </button>
+          <div className="flex items-start gap-4">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-lg text-secondary-200 shadow-inner shadow-white/5">
+              <AppIcon className="ri-chat-check-line"></AppIcon>
+            </span>
+            <div className="min-w-0">
+              <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-secondary-200">Complete review</p>
+              <h1 className="mt-1 max-w-4xl text-xl font-bold leading-tight text-white sm:text-2xl lg:text-[28px]">
+                {definition ? `${headingLabel} #${definition.instance.occurrenceNumber}` : 'Loading review...'}
+              </h1>
+              <p className="mt-1 text-[13px] text-white/60">Work through each Curriculum-defined step, then save or complete the review.</p>
+            </div>
+          </div>
+          {requiredCount ? (
+            <div className="mt-5 flex items-center gap-3">
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-secondary-300 transition-all" style={{ width: `${Math.round((answeredCount / requiredCount) * 100)}%` }} />
+              </div>
+              <span className="text-[12px] font-bold text-white/70">{answeredCount}/{requiredCount} answered</span>
+            </div>
+          ) : null}
+        </header>
+      ) : (
+        <ModalHeader
+          eyebrow="Complete review"
+          icon="ri-chat-check-line"
+          title={definition ? `${event.learner || 'Learner'} · ${definition.template.name} #${definition.instance.occurrenceNumber}` : 'Loading review...'}
+          subtitle="Complete the Curriculum-defined review before closing it."
+          busy={busy}
+          onClose={onClose}
+          progressPercent={requiredCount ? Math.round((answeredCount / requiredCount) * 100) : undefined}
+          progressLabel={requiredCount ? `${answeredCount}/${requiredCount} answered` : undefined}
+        />
+      )}
 
-      <div className="flex-1 space-y-3 overflow-y-auto bg-background-100 p-4 sm:p-6">
+      <div className={pageMode ? 'space-y-5 bg-[#f8f7fc] p-4 sm:p-6 lg:p-8' : 'flex-1 space-y-3 overflow-y-auto bg-background-100 p-4 sm:p-6'}>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-foreground-400">
             <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Loading review...
@@ -468,21 +516,21 @@ export function ReviewInstanceModal({
 
         {!loading && definition ? (
           <>
-            <div className="rounded-lg border border-primary-100 bg-primary-50 px-4 py-3 text-[13px] leading-5 text-primary-800">
-              <AppIcon className="ri-information-line mr-2"></AppIcon>
-              These answers are saved to this {definition.template.name} and follow the sections/questions configured in Curriculum.
+            <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/80 px-4 py-3 text-[13px] leading-5 text-primary-800 shadow-sm">
+              <AppIcon className="ri-information-line mt-0.5 shrink-0 text-primary-600"></AppIcon>
+              <span>These answers are saved to this {definition.template.name} and follow the sections/questions configured in Curriculum.</span>
             </div>
 
-            <div className="grid gap-3 rounded-2xl border border-background-200 bg-background-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 rounded-2xl border border-background-200 bg-white p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
               {[
                 ['Learner', event.learner || 'Unknown learner'],
                 ['Programme', event.programme || '--'],
                 ['Review', `${definition.template.name} #${definition.instance.occurrenceNumber}`],
                 ['Target date', formatDateLabel(definition.instance.targetDate)],
               ].map(([label, value]) => (
-                <div key={label} className="rounded-lg bg-background-100 px-3.5 py-3">
-                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
-                  <p className="mt-1 text-[13px] font-bold text-foreground-800">{value}</p>
+                <div key={label} className="rounded-xl bg-[#f7f5fc] px-4 py-3.5 ring-1 ring-inset ring-primary-100/70">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-foreground-400">{label}</p>
+                  <p className="mt-1.5 truncate text-[13px] font-bold text-foreground-900" title={value}>{value}</p>
                 </div>
               ))}
             </div>
@@ -530,18 +578,46 @@ export function ReviewInstanceModal({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <p className="text-[12px] font-bold text-primary-900">AI Meeting Summary</p>
-                        <p className="mt-0.5 text-[12px] leading-5 text-primary-700">Generate a draft from the linked Teams transcript, then review and edit it before saving. It is not saved automatically.</p>
+                        <p className="mt-0.5 text-[12px] leading-5 text-primary-700">Generate a draft from the linked Teams transcript, or upload a .vtt fallback, then review and edit it before saving. It is not saved automatically.</p>
                       </div>
                       {!formReadOnly ? (
-                        <button
-                          type="button"
-                          onClick={() => { void generateMeetingSummary(); }}
-                          disabled={busy}
-                          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60"
-                        >
-                          <AppIcon className={generatingSummary ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-2-line'}></AppIcon>
-                          {generatingSummary ? 'Generating...' : 'Generate from Teams'}
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            ref={transcriptUploadRef}
+                            type="file"
+                            accept=".vtt,text/vtt"
+                            aria-label="Select .vtt transcript"
+                            className="sr-only"
+                            onChange={(event) => {
+                              const file = event.currentTarget.files?.[0];
+                              event.currentTarget.value = '';
+                              if (!file) return;
+                              if (!file.name.toLowerCase().endsWith('.vtt')) {
+                                setError('Upload a WebVTT transcript with a .vtt file extension.');
+                                return;
+                              }
+                              void generateMeetingSummary(file);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => transcriptUploadRef.current?.click()}
+                            disabled={busy}
+                            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-300 bg-white px-3 text-[12px] font-bold text-primary-700 shadow-sm transition hover:bg-primary-100 disabled:opacity-60"
+                          >
+                            <AppIcon className={uploadingTranscript ? 'ri-loader-4-line animate-spin' : 'ri-upload-2-line'}></AppIcon>
+                            {uploadingTranscript ? 'Uploading...' : 'Upload .vtt'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { void generateMeetingSummary(); }}
+                            disabled={busy}
+                            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60"
+                          >
+                            <AppIcon className={generatingSummary ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-2-line'}></AppIcon>
+                            {generatingSummary ? 'Generating...' : 'Generate from Teams'}
+                          </button>
+                        </div>
                       ) : null}
                     </div>
                     {summaryMessage ? (
@@ -593,6 +669,8 @@ export function ReviewInstanceModal({
                   expandButtonRef={expandSummaryButtonRef}
                 />
               ) : undefined}
+              variant={pageMode ? 'steps' : 'accordion'}
+              stepOffset={pageMode ? 2 : 0}
             />
             {advisorSignaturePending ? (
               <section aria-label="Review signature step" tabIndex={-1} className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
@@ -671,8 +749,8 @@ export function ReviewInstanceModal({
         ) : null}
       </div>
 
-      <footer className="flex shrink-0 flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
-        <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">Cancel</button>
+      <footer className={pageMode ? 'sticky bottom-0 z-10 flex shrink-0 flex-col-reverse gap-3 rounded-b-3xl border-t border-background-200 bg-white/95 px-5 py-4 shadow-[0_-8px_24px_rgba(31,24,51,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-8' : 'flex shrink-0 flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7'}>
+        <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">{pageMode ? 'Back' : 'Cancel'}</button>
         {!isSignatureStage ? <div className="flex gap-2">
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>Save draft
@@ -683,6 +761,12 @@ export function ReviewInstanceModal({
           </button>
         </div> : null}
       </footer>
-    </ModalShell>
+    </>
   );
+
+  if (pageMode) {
+    return <div className="mx-auto w-full max-w-[1500px] overflow-hidden rounded-3xl border border-background-200 bg-white shadow-[0_18px_50px_rgba(44,24,78,0.08)]">{content}</div>;
+  }
+
+  return <ModalShell busy={busy} onClose={onClose}>{content}</ModalShell>;
 }

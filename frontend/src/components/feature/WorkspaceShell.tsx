@@ -1,7 +1,8 @@
-import { useState, type CSSProperties, type ReactNode, useEffect } from 'react';
+import { useState, useRef, useCallback, type CSSProperties, type ReactNode, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Sidebar, SidebarIcon, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP, type SidebarNavItem } from './Sidebar';
 import { CoachViewAsBar } from './CoachViewAsBar';
+import { CoachSidebar } from './CoachSidebar';
 import { Header } from './Header';
 import { AppIcon } from './AppIcon';
 import { GlobalSearch } from './GlobalSearch';
@@ -45,6 +46,9 @@ interface BreadcrumbItem {
 
 const ROUTE_HISTORY_KEY = 'lmsRouteHistory';
 const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
+const COACH_SIDEBAR_COLLAPSED_KEY = 'kbc_coach_sidebar_collapsed';
+const COACH_SIDEBAR_WIDTH = 240;
+const COACH_SIDEBAR_COLLAPSED_WIDTH = 76;
 
 /**
  * Whether the sidebar's secondary navigation is open.
@@ -55,6 +59,14 @@ const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
 function readPinnedPreference() {
   try {
     return localStorage.getItem(SIDEBAR_PINNED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function readCoachSidebarCollapsed() {
+  try {
+    return localStorage.getItem(COACH_SIDEBAR_COLLAPSED_KEY) === 'true';
   } catch {
     return false;
   }
@@ -206,12 +218,22 @@ export function WorkspaceShell({
   const [previousRoute, setPreviousRoute] = useState('');
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const closeMobileSidebar = useCallback(() => setMobileSidebarOpen(false), []);
+  const accountButtonRef = useRef<HTMLButtonElement>(null);
   const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
+  const [coachSidebarCollapsed, setCoachSidebarCollapsed] = useState(readCoachSidebarCollapsed);
 
   const handlePinChange = (pinned: boolean) => {
     setSidebarPinned(pinned);
     try {
       localStorage.setItem(SIDEBAR_PINNED_KEY, String(pinned));
+    } catch { /* Ignore unavailable browser storage. */ }
+  };
+
+  const handleCoachSidebarCollapsedChange = (collapsed: boolean) => {
+    setCoachSidebarCollapsed(collapsed);
+    try {
+      localStorage.setItem(COACH_SIDEBAR_COLLAPSED_KEY, String(collapsed));
     } catch { /* Ignore unavailable browser storage. */ }
   };
 
@@ -266,9 +288,14 @@ export function WorkspaceShell({
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
-      style={{ '--kbc-sidebar-width': `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
+      style={{ '--kbc-sidebar-width': role === 'coach'
+        ? `${coachSidebarCollapsed ? COACH_SIDEBAR_COLLAPSED_WIDTH : COACH_SIDEBAR_WIDTH}px`
+        : `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
     >
-      <Sidebar
+      {role === 'coach' ? <CoachSidebar navItems={navItems} userName={displayName} userRole={displayRole}
+        mobileOpen={mobileSidebarOpen} onCloseMobile={closeMobileSidebar}
+        collapsed={coachSidebarCollapsed} onCollapsedChange={handleCoachSidebarCollapsedChange}
+        onOpenAccount={() => { accountButtonRef.current?.focus(); accountButtonRef.current?.click(); }} /> : <Sidebar
         role={role}
         roleLabel={roleLabel}
         navItems={workspaceNavItems}
@@ -278,7 +305,7 @@ export function WorkspaceShell({
         onPinChange={handlePinChange}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
-      />
+      />}
       {/* Reserve the shared sidebar width and gutters for every workspace. */}
       <div
         className="workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out motion-reduce:transition-none"
@@ -287,6 +314,7 @@ export function WorkspaceShell({
         {personal && <PersonalLearningBanner context={personal} />}
         {!hidePageChrome && (
           <Header
+            accountButtonRef={accountButtonRef}
             pageTitle={pageTitle}
             pageIcon={headerNavItem ? <SidebarIcon id={headerNavItem.id} label={headerNavItem.label} sourceIcon={headerNavItem.icon} className="h-5 w-5" /> : undefined}
             pageSubtitle={pageSubtitle}

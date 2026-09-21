@@ -5,6 +5,83 @@ import { describe, expect, it, vi } from 'vitest';
 import { WeekComponentRail } from './page';
 
 describe('WeekComponentRail add flow', () => {
+  it('filters components in this week without changing their order', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const components = [
+      {
+        id: 'COMP-INTRO', weekId: 'WEEK-1', type: 'reading' as const, title: 'Introduction to commercial intelligence', description: '', expectedOtjh: 1, points: 5,
+        reflectionRequired: false, reflectionQuestion: '', workplaceEvidenceRequired: false, tutorValidationRequired: false, coachValidationRequired: false, ksbMappings: [], settings: {},
+      },
+      {
+        id: 'COMP-ASSESS', weekId: 'WEEK-1', type: 'quiz' as const, title: 'Knowledge check', description: '', expectedOtjh: 0.5, points: 10,
+        reflectionRequired: false, reflectionQuestion: '', workplaceEvidenceRequired: false, tutorValidationRequired: false, coachValidationRequired: false, ksbMappings: [], settings: {},
+      },
+    ];
+
+    render(
+      <WeekComponentRail weekId="WEEK-1" components={components} selectedId={null} onSelectId={vi.fn()} onChange={onChange} pointsByType={{}} variant="nested" />,
+    );
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search components in this week' }), 'knowledge');
+
+    expect(screen.getByText('Knowledge check')).toBeInTheDocument();
+    expect(screen.queryByText('Introduction to commercial intelligence')).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+
+    await user.clear(screen.getByRole('searchbox', { name: 'Search components in this week' }));
+    expect(screen.getByText('Introduction to commercial intelligence')).toBeInTheDocument();
+    expect(screen.getByText('Knowledge check')).toBeInTheDocument();
+  });
+
+  it('keeps copy and delete available when a component title uses the whole rail', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const component = {
+      id: 'COMP-LONG',
+      weekId: 'WEEK-1',
+      type: 'video' as const,
+      title: 'P1: An intentionally long component title that must be truncated without hiding its controls',
+      description: '',
+      expectedOtjh: 1,
+      points: 15,
+      reflectionRequired: false,
+      reflectionQuestion: '',
+      workplaceEvidenceRequired: false,
+      tutorValidationRequired: false,
+      coachValidationRequired: false,
+      ksbMappings: [],
+      settings: {},
+    };
+
+    const { container } = render(
+      <WeekComponentRail
+        weekId="WEEK-1"
+        components={[component]}
+        selectedId={null}
+        onSelectId={vi.fn()}
+        onChange={onChange}
+        pointsByType={{}}
+        variant="nested"
+      />,
+    );
+
+    const copy = screen.getByRole('button', { name: `Duplicate ${component.title}` });
+    const remove = screen.getByRole('button', { name: `Delete ${component.title}` });
+    expect(copy.parentElement).not.toHaveClass('sm:opacity-0');
+    expect(container.querySelector('.min-w-0.flex-1')).toBeInTheDocument();
+
+    await user.click(copy);
+    expect(onChange).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ id: 'COMP-LONG', title: component.title }),
+      expect.objectContaining({ title: component.title }),
+    ]));
+
+    onChange.mockClear();
+    await user.click(remove);
+    expect(onChange).toHaveBeenCalledWith([]);
+  });
+
   it('shows component hours from Expected OTJH as hours and minutes', () => {
     render(
       <WeekComponentRail

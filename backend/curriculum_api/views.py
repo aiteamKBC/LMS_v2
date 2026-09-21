@@ -1069,18 +1069,41 @@ COMPONENT_UPLOAD_EXTENSIONS = {
 }
 
 
+# The AI Material book a module carries. It is one file per module, uploaded
+# from the builder, and it is a *book*: the formats a reader can actually open.
+# EPUB is included because it is how most books arrive, even though the browser
+# cannot render it inline -- the dialog offers a download for those and an
+# in-page viewer only for what the uploads route can already display.
+AI_MATERIAL_UPLOAD_EXTENSIONS = {'.pdf', '.epub', '.doc', '.docx', '.txt', '.rtf', '.odt'}
+#: The component-id slot in the upload path. Not a component: the book belongs
+#: to the module, so every module has exactly one of these folders.
+AI_MATERIAL_UPLOAD_SLOT = 'ai-material'
+#: Where the book's metadata lives on ``curriculum.module_details``.
+AI_MATERIAL_COLUMN = 'ai_material'
+
+
 def safe_upload_segment(value, fallback):
     text = get_valid_filename(clean_str(value)).strip('._-')
     return text[:96] or fallback
 
 
-def component_upload_metadata(module_catalogue_id, component_id, component_type, uploaded_file):
+def component_upload_metadata(
+    module_catalogue_id, component_id, component_type, uploaded_file,
+    allowed_extensions=None,
+):
+    """Store one authoring upload and describe where it landed.
+
+    ``allowed_extensions`` overrides the per-component-type list for uploads that
+    are not a week component at all -- the module's AI material book is stored
+    through the same container, path shape and serving route, but its own file
+    types have nothing to do with a component type.
+    """
     module_catalogue_id = safe_upload_segment(module_catalogue_id, 'module')
     component_id = safe_upload_segment(component_id, 'component')
     component_type = frontend_component_type(component_type)
     original_name = get_valid_filename(uploaded_file.name or 'upload')
     suffix = Path(original_name).suffix.lower()
-    allowed = COMPONENT_UPLOAD_EXTENSIONS.get(component_type, set())
+    allowed = set(allowed_extensions) if allowed_extensions else COMPONENT_UPLOAD_EXTENSIONS.get(component_type, set())
     if suffix not in allowed:
         return None, f'{component_type} uploads must use one of: {", ".join(sorted(allowed))}.'
     if uploaded_file.size > COMPONENT_UPLOAD_MAX_BYTES:
@@ -2634,6 +2657,9 @@ def curriculum_teams_meeting(request):
     try:
         event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
         targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
+        non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings))
+        if non_delivery_reason:
+            return json_error(non_delivery_reason, status=400, code='non_delivery_date')
         payload = {**payload, 'hideAttendees': True, 'scheduledOccurrences': [
             {'sessionNumber': item['session_number'], 'startDateTimeUtc': item['start'].isoformat(),
              'durationMinutes': int((item['end'] - item['start']).total_seconds() / 60)} for item in targets
@@ -3145,6 +3171,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or series.get('repeat_occurrences') or 1)))
     try:
         targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
+        if not payload.get('peopleOnly'):
+            non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings))
+            if non_delivery_reason:
+                return json_error(non_delivery_reason, status=400, code='non_delivery_date')
         recurrence = local_calendar_recurrence(targets, repeat, graph_timezone_iana(graph_settings),
                                                graph_settings.get('timezone') or 'GMT Standard Time')
     except (ValueError, TypeError, KeyError) as exc:
@@ -3336,6 +3366,13 @@ def curriculum_teams_meeting_occurrence_schedule(request, live_session_id, sessi
         return json_error('A valid meeting start date and time is required.', status=400)
     if new_start.tzinfo is not None:
         new_start = new_start.astimezone(timezone.utc).replace(tzinfo=None)
+
+    non_delivery_reason = teams_non_delivery_reason(
+        [{'session_number': session_number, 'start': new_start.replace(tzinfo=timezone.utc)}],
+        graph_timezone_iana(teams_schedule_settings({}, series=series_rows[0])),
+    )
+    if non_delivery_reason:
+        return json_error(non_delivery_reason, status=400, code='non_delivery_date')
 
     series = series_rows[0]
     occurrence = occurrence_rows[0]
@@ -7345,6 +7382,53 @@ def get_holiday_rows_safe():
         return []
 
 
+NON_DELIVERY_WEEKEND_MESSAGE = 'Sessions and meetings can only be booked Monday to Friday.'
+
+
+def england_non_delivery_reason(value, holiday_rows=None):
+    """Return why a date cannot host a session or meeting in England."""
+    day = value.date() if isinstance(value, datetime) else parse_date(value)
+    if not day:
+        return ''
+    if day.weekday() >= 5:
+        return NON_DELIVERY_WEEKEND_MESSAGE
+    rows = get_holiday_rows_safe() if holiday_rows is None else (holiday_rows or [])
+    bank_holidays = [row for row in rows if holiday_row_source(row) == HOLIDAY_SOURCE_GOVUK]
+    match = next((row for row in bank_holidays if day in holiday_date_set([row])), None)
+    if not match:
+        return ''
+    label = clean_str(match.get('title') or match.get('label') or match.get('name'))
+    suffix = f' ({label})' if label else ''
+    return f'Sessions and meetings cannot be booked on an England and Wales bank holiday{suffix}.'
+
+
+def teams_non_delivery_reason(targets, time_zone='Europe/London', holiday_rows=None):
+    """Validate Teams target instants against the England business calendar."""
+    try:
+        zone = ZoneInfo(time_zone or 'Europe/London')
+    except (KeyError, ValueError):
+        zone = ZoneInfo('Europe/London')
+    holidays = get_holiday_rows_safe() if holiday_rows is None else (holiday_rows or [])
+    for target in targets or []:
+        instant = (
+            target.get('start') or target.get('startDateTimeUtc') or target.get('start_datetime')
+            if isinstance(target, dict) else target
+        )
+        if not isinstance(instant, datetime):
+            instant = parse_graph_datetime(instant)
+        if not instant:
+            continue
+        local = instant.replace(tzinfo=instant.tzinfo or timezone.utc).astimezone(zone)
+        reason = england_non_delivery_reason(local.date(), holidays)
+        if reason:
+            session_number = parse_int(
+                target.get('session_number') or target.get('sessionNumber'), 0,
+            ) if isinstance(target, dict) else 0
+            prefix = f'Session {session_number}: ' if session_number else ''
+            return f'{prefix}{reason}'
+    return ''
+
+
 def holiday_table_name():
     """The one table holidays come from: ``curriculum.england_holidays``.
 
@@ -7968,6 +8052,22 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
                 'isProgrammeDeleted': programme_deleted_row(row),
             })
     return modules
+
+
+def attach_module_assignment_counts(modules):
+    """Set each module row's real `assignments` count, in one bulk pass.
+
+    Every card shows this eagerly, so it has to be cheap for a whole list, not
+    one query per module -- see `learner_assignments.bulk_assigned_learner_counts`.
+    """
+    from .learner_assignments import bulk_assigned_learner_counts
+
+    def key_for(module):
+        return clean_str(module.get('moduleCatalogueId')) or clean_str(module.get('catalogueId')) or clean_str(module.get('id'))
+
+    counts = bulk_assigned_learner_counts({key_for(module) for module in modules})
+    for module in modules:
+        module['assignments'] = counts.get(key_for(module), 0)
 
 
 def _programme_ksb_stats(source_id, required_ksb_codes, only_stats_for_ids):
@@ -10290,6 +10390,7 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         ]
     if not compact:
         modules = enrich_modules_with_authoring(modules, include_programme_deleted=visibility == 'all')
+    attach_module_assignment_counts(modules)
     cohorts, groups = build_cohorts_and_groups(
         training_rows,
         rows['program_configs'],
@@ -11648,7 +11749,7 @@ COMPACT_MODULE_LIST_FIELDS = frozenset({
     'isProgrammeDeleted',
     # Counts the catalogue card and the OTJH input render.
     'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes',
-    'totalOtjh', 'declaredTotalOtjh',
+    'totalOtjh', 'declaredTotalOtjh', 'assignments',
     # Status badges and the delivery label.
     'status', 'authoringStatus', 'deliveryStatus',
     # Read into the module edit form and saved back out of it. Not display-only.
@@ -11673,7 +11774,6 @@ COMPACT_MODULE_LIST_DROPPED = {
     'deliveryMetadata': 'Not on the CurriculumModule TypeScript type at all, so nothing can read it off a response row. Every `deliveryMetadata` read in the frontend is of the object curriculumModuleToCatalogue() builds locally. Carries the Teams join URL, organiser and the attendee/presenter/co-organiser lists, so dropping it takes real attendee addresses out of a list response as well.',
     'qualityScore': 'Not on the CurriculumModule type; the catalogue item hardcodes 0.',
     'author': "Always '' out of build_modules() and authoring_summary_catalogue_item(). No reader.",
-    'assignments': 'Always 0. No reader on a module row.',
     'legacyModuleId': 'No reference anywhere in the frontend.',
     'invalidModuleCatalogueId': 'No reference anywhere in the frontend. Read server-side by enrich_modules_with_authoring(), which runs before this projection.',
     'deliveryRowId': 'No reference on a module row (the one `deliveryRowId` read in the frontend is on a session).',
@@ -12816,6 +12916,11 @@ def provision_module_authoring_tables():
         })
     ensure_columns(AUTHORING_COMPONENTS_TABLE, {
         'ksb_mappings': json_type,
+    })
+    # The module's AI Material book. One JSON blob per module, on the row that
+    # is already keyed by module_catalogue_id.
+    ensure_columns(AUTHORING_ADVANCED_TABLE, {
+        AI_MATERIAL_COLUMN: json_type,
     })
     _AUTHORING_TABLES_READY = True
 
@@ -16961,6 +17066,7 @@ def get_authoring_structure_payload(module_catalogue_id):
             'title': row.get('title') or '',
             'summary': row.get('summary') or '',
             'learningOutcomes': as_json_value(row.get('learning_outcomes'), []),
+            'copiedFromId': clean_str(row.get('copied_from_id')),
             'components': components_by_week.get(week_id, []),
             'ksbMappings': mappings_by_week.get(week_id, []),
         })
@@ -17193,6 +17299,7 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
                 'title': row.get('title') or '',
                 'summary': row.get('summary') or '',
                 'learningOutcomes': as_json_value(row.get('learning_outcomes'), []),
+                'copiedFromId': clean_str(row.get('copied_from_id')),
                 'components': components_by_week.get(week_id, []),
                 'ksbMappings': mappings_by_week.get(week_id, []),
             })
@@ -18519,6 +18626,7 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                 'title': week.get('title') or f'Week {week_index + 1}',
                 'summary': week.get('summary') or '',
                 'learning_outcomes': json_db_value(week.get('learningOutcomes') or []),
+                'copied_from_id': clean_str(week.get('copiedFromId') or week.get('copied_from_id')) or None,
                 'display_order': week_index,
                 # Attached to this module, so never a detached library item.
                 'library_state': '',
@@ -21409,6 +21517,142 @@ def curriculum_component_upload(request, component_id):
         'moduleCatalogueId': module_catalogue_id,
         'file': metadata,
     }, status=201)
+
+
+def ai_material_record(module_catalogue_id):
+    """The AI Material book stored against a module, or ``None``.
+
+    The metadata is a JSON blob on ``curriculum.module_details`` rather than its
+    own table: a module has at most one book, the row is already keyed by
+    ``module_catalogue_id``, and the module save writes that row with a partial
+    payload -- so a column it never names survives every save untouched.
+    """
+    rows = authoring_fetch_all(
+        AUTHORING_ADVANCED_TABLE, 'module_catalogue_id = %s', [module_catalogue_id],
+    )
+    if not rows:
+        return None
+    stored = parse_json_value(rows[0].get(AI_MATERIAL_COLUMN), None)
+    if not isinstance(stored, dict) or not clean_str(stored.get('storedPath')):
+        return None
+    return stored
+
+
+def ai_material_response(module_catalogue_id, record, **extra):
+    return JsonResponse({
+        'moduleCatalogueId': module_catalogue_id,
+        'hasMaterial': bool(record),
+        'material': record,
+        **extra,
+    })
+
+
+@csrf_exempt
+def curriculum_module_ai_material(request, module_catalogue_id):
+    """Read, upload/replace or remove a module's AI Material book.
+
+    The bytes go through ``upload_storage`` exactly like a component upload, so
+    they land in the curriculum container in Azure and are served back by the
+    existing ``/curriculum_api/curriculum/uploads/...`` route -- which already
+    streams byte ranges for the PDF viewer and frames Office files through the
+    Office Online viewer. Nothing here talks to Azure directly.
+
+    A replace deletes the blob it replaced only *after* the new one is stored and
+    recorded, so a failed upload leaves the previous book intact and readable.
+    """
+    module_catalogue_id = clean_str(module_catalogue_id)
+    if not module_catalogue_id:
+        return json_error('A module is required.', status=400)
+
+    # authoring_upsert drops any key that is not a column, so without this the
+    # book would upload, report success and be forgotten. Say so instead.
+    ensure_module_authoring_tables()
+    if not has_column(AUTHORING_ADVANCED_TABLE, AI_MATERIAL_COLUMN):
+        return json_error(
+            'AI Material storage is not set up on this database yet. '
+            'Add the ai_material column to curriculum.module_details and retry.',
+            status=503,
+        )
+
+    if request.method == 'GET':
+        return ai_material_response(module_catalogue_id, ai_material_record(module_catalogue_id))
+
+    if request.method == 'DELETE':
+        previous = ai_material_record(module_catalogue_id)
+        if not previous:
+            return ai_material_response(module_catalogue_id, None, removed=False)
+        authoring_upsert(AUTHORING_ADVANCED_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': module_catalogue_id,
+            AI_MATERIAL_COLUMN: json_db_value({}),
+        })
+        try:
+            upload_storage.delete(previous.get('storedPath'))
+        except Exception:
+            logger.warning(
+                'Removed the AI material record for %s but its blob could not be deleted.',
+                module_catalogue_id, exc_info=True,
+            )
+        invalidate_curriculum_cache()
+        return ai_material_response(module_catalogue_id, None, removed=True)
+
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    uploaded_file = request.FILES.get('file')
+    if not uploaded_file:
+        return json_error('No file was uploaded.', status=400)
+
+    previous = ai_material_record(module_catalogue_id)
+    try:
+        metadata, error = component_upload_metadata(
+            module_catalogue_id,
+            AI_MATERIAL_UPLOAD_SLOT,
+            'AI material',
+            uploaded_file,
+            allowed_extensions=AI_MATERIAL_UPLOAD_EXTENSIONS,
+        )
+    except Exception:
+        logger.exception('Unable to store the AI material book for module %s.', module_catalogue_id)
+        return json_error('The book could not be stored. Please retry the upload.', status=503)
+    if error:
+        return json_error(error, status=400)
+
+    record = {
+        'fileName': metadata['fileName'],
+        'storedPath': metadata['storedPath'],
+        'url': metadata['url'],
+        'size': metadata['size'],
+        'contentType': metadata['contentType'] or mimetypes.guess_type(metadata['fileName'])[0] or '',
+        'uploadedAt': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+    }
+    try:
+        authoring_upsert(AUTHORING_ADVANCED_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': module_catalogue_id,
+            AI_MATERIAL_COLUMN: json_db_value(record),
+        })
+    except Exception:
+        # The bytes are in the container but nothing points at them. Drop them
+        # rather than leave an orphan, and keep the book that is still recorded.
+        logger.exception('Unable to record the AI material book for module %s.', module_catalogue_id)
+        try:
+            upload_storage.delete(metadata['storedPath'])
+        except Exception:
+            logger.warning('Could not clean up the unrecorded AI material blob for %s.', module_catalogue_id)
+        return json_error('The book was uploaded but could not be saved to the module. Please retry.', status=503)
+
+    replaced = bool(previous and previous.get('storedPath') != record['storedPath'])
+    if replaced:
+        try:
+            upload_storage.delete(previous.get('storedPath'))
+        except Exception:
+            logger.warning(
+                'Stored a replacement AI material book for %s but the old blob remains.',
+                module_catalogue_id, exc_info=True,
+            )
+    invalidate_curriculum_cache()
+    return ai_material_response(
+        module_catalogue_id, record, replaced=replaced, uploaded=True,
+    )
 
 
 @csrf_exempt
@@ -27050,6 +27294,9 @@ def curriculum_session_detail(request, identifier):
             'tutor_name': canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else current.get('tutor_name'),
         }
         if payload.get('date'):
+            non_delivery_reason = england_non_delivery_reason(payload.get('date'))
+            if non_delivery_reason:
+                return json_error(non_delivery_reason, status=400, code='non_delivery_date', fields=['date'])
             if int(week_number) != 1:
                 return json_error('Only week 1 generated sessions can update start_date directly. Later session dates are calculated from the parent module start date.', status=409)
             updates['start_date'] = payload.get('date')
