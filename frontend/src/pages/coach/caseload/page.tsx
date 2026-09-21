@@ -129,7 +129,7 @@ function hasAuthoritativePerformanceStatus(value?: string | null): boolean {
   return ['at-risk', 'on-track', 'high', 'new-starter'].includes(normalizedPerformanceStatus(value));
 }
 
-export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean }) {
+export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { embedded?: boolean; embeddedLearners?: CaseloadApiLearner[] }) {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
   // Whose caseload this is: the signed-in coach, or the coach an administrator
@@ -168,6 +168,13 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean 
     async function loadCaseload() {
       setLoading(true);
       setError(null);
+
+      if (embedded) {
+        setOwnerName(authenticatedCoachName);
+        setLearners((embeddedLearners || []).map(source => normalizeLearner(source, undefined)));
+        setLoading(false);
+        return;
+      }
 
       if (!authenticatedCoachEmail) {
         setOwnerName(authenticatedCoachName);
@@ -216,7 +223,7 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean 
 
     loadCaseload();
     return () => controller.abort();
-  }, [auth.account, authenticatedCoachEmail, authenticatedCoachName, isInitialized, reloadToken]);
+  }, [auth.account, authenticatedCoachEmail, authenticatedCoachName, embedded, embeddedLearners, isInitialized, reloadToken]);
 
   // --- derived data ---------------------------------------------------------
 
