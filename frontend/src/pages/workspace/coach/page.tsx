@@ -15,6 +15,7 @@ import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
 import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
+import { getOtjhGapStatus } from '@/pages/coach/caseload/lib/format';
 import styles from './dashboard.module.css';
 import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
 import { SectionHeader } from '@/components/ui/SectionHeader';
@@ -58,6 +59,27 @@ const COACHING_CALENDAR_WINDOW_DAYS = 7;
 function coachDashboardEndpoint() {
   return '/coach_api/coach/dashboard';
 }
+async function fetchCoachDashboardWithRetry(signal: AbortSignal, url: string) {
+  try {
+    return await fetchSharedJsonGet<CoachDashboardApiResponse>(url, {
+      signal,
+      credentials: 'include',
+    });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(resolve, 250);
+      signal.addEventListener('abort', () => {
+        window.clearTimeout(timeout);
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      }, { once: true });
+    });
+    return fetchSharedJsonGet<CoachDashboardApiResponse>(url, {
+      signal,
+      credentials: 'include',
+    });
+  }
+}
 
 function toIsoDate(value: Date) {
   const year = value.getFullYear();
@@ -91,6 +113,8 @@ interface CoachLearner {
   overallProgressAvailable?: boolean;
   attendanceRate: number;
   attendanceRateAvailable?: boolean;
+  attendanceLastSession?: string | null;
+  attendanceLastSessionDate?: string | null;
   otjhCompleted: number;
   otjhTarget: number;
   otjhVariance?: number | null;
@@ -155,7 +179,9 @@ interface CoachAssignedGroup {
 
 interface CoachDashboardApiResponse extends CaseloadApiResponse {
   monthlyRisk?: MonthlyRiskPoint[] | null;
-  attendance?: AttendanceApiResponse;
+  // Attendance is not a separate dataset: the backend overlays the one
+  // canonical figure directly onto each learners[] entry
+  // (attendanceRate/attendanceRateAvailable/attendanceLastSession*).
   reviewHistory?: {
     learners?: ReviewHistoryApiLearner[];
   };
@@ -165,20 +191,6 @@ interface CoachDashboardApiResponse extends CaseloadApiResponse {
   evidence?: MarkingQueueResponse;
   assignedGroups?: CoachAssignedGroup[];
   errors?: Record<string, string>;
-}
-
-interface AttendanceApiLearner {
-  id: string;
-  learner: string;
-  email?: string | null;
-  attendance: number | null;
-  hasAttendance?: boolean;
-  lastSession?: string | null;
-  lastSessionDate?: string | null;
-}
-
-interface AttendanceApiResponse {
-  learners?: AttendanceApiLearner[];
 }
 
 interface ReviewHistoryApiLearner {
@@ -242,12 +254,9 @@ function isVisibleRiskFlag(value?: string | null) {
     && normalized !== 'otjh at risk';
 }
 
-function normalizeOtjhStatus(value?: string | null): OtjhStatusKey {
-  const normalized = displayValue(value).toLowerCase().replace(/[\s_-]+/g, '');
-  if (normalized === 'atrisk') return 'at-risk';
-  if (normalized === 'needattention' || normalized === 'needsattention') return 'need-attention';
-  if (normalized === 'ontrack') return 'on-track';
-  return 'unknown';
+function canonicalOtjhStatus(learner: CoachLearner): OtjhStatusKey {
+  const status = getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status;
+  return status === 'unavailable' ? 'unknown' : status;
 }
 
 interface EvidenceQueueLearner {
@@ -336,8 +345,12 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     riskFlags,
     overallProgress: clampPercent(learner.overallProgress),
     overallProgressAvailable: learner.overallProgressAvailable,
-    attendanceRate: 0,
-    attendanceRateAvailable: false,
+    // The backend already joined this by stable learner id -- read it
+    // as-is rather than re-deriving it from a separate dataset.
+    attendanceRate: learner.attendanceRateAvailable ? clampPercent(learner.attendanceRate) : 0,
+    attendanceRateAvailable: Boolean(learner.attendanceRateAvailable),
+    attendanceLastSession: learner.attendanceLastSession ?? null,
+    attendanceLastSessionDate: learner.attendanceLastSessionDate ?? null,
     otjhCompleted: toNumber(learner.otjhCompleted),
     otjhTarget: Math.max(toNumber(learner.otjhTarget), 0),
     otjhVariance: learner.otjhVariance ?? null,
@@ -373,24 +386,6 @@ function ksbCellValue(learner: CoachLearner): string {
 }
 
 
-function findAttendanceRecord(learner: CoachLearner, attendanceLearners: AttendanceApiLearner[]) {
-  const learnerId = normalizeIdentity(learner.id);
-  const learnerEmail = normalizeIdentity(learner.email);
-  const learnerName = normalizeIdentity(learner.name);
-
-  return attendanceLearners.find((attendance) => {
-    const attendanceId = normalizeIdentity(attendance.id);
-    const attendanceEmail = normalizeIdentity(attendance.email);
-    const attendanceName = normalizeIdentity(attendance.learner);
-
-    return Boolean(
-      (learnerId && attendanceId && learnerId === attendanceId)
-      || (learnerEmail && attendanceEmail && learnerEmail === attendanceEmail)
-      || (learnerName && attendanceName && learnerName === attendanceName),
-    );
-  });
-}
-
 function eventBelongsToLearner(event: CoachCalendarEvent, learner: CoachLearner) {
   const learnerId = normalizeIdentity(learner.id);
   const learnerEmail = normalizeIdentity(learner.email);
@@ -425,12 +420,14 @@ function formatCompletedSessionDate(value?: string) {
 
 function mergeAttendanceRates(
   learners: CoachLearner[],
-  attendanceLearners: AttendanceApiLearner[],
   events: CoachCalendarEvent[],
 ): CoachLearner[] {
   return learners.map((learner): CoachLearner => {
-    const attendance = findAttendanceRecord(learner, attendanceLearners);
-    const attendanceDate = parseLocalDate(attendance?.lastSessionDate);
+    // Attendance is already joined onto this learner server-side by stable
+    // id (see coach_dashboard/apply_attendance_summary) -- no client-side
+    // matching by name/email against a separate dataset.
+    const hasAttendance = Boolean(learner.attendanceRateAvailable);
+    const attendanceDate = hasAttendance ? parseLocalDate(learner.attendanceLastSessionDate) : undefined;
     const completedEventDate = latestCompletedSessionDate(learner, events);
     const lastMcmDate = latestCompletedSessionDate(learner, events, event => event.source === 'mcr');
     const lastPrDate = latestCompletedSessionDate(learner, events, event => event.source === 'progress-review');
@@ -447,27 +444,19 @@ function mergeAttendanceRates(
     const lastSession = parsedCompletedEventDate
       && (!attendanceDate || parsedCompletedEventDate.getTime() > attendanceDate.getTime())
       ? formatDateLabel(completedEventDate)
-      : displayValue(attendance?.lastSession) !== EMPTY_VALUE
-        ? displayValue(attendance?.lastSession)
-        : formatDateLabel(attendance?.lastSessionDate);
-    const hasAttendance = Boolean(
-      attendance
-      && attendance.attendance !== null
-      && attendance.attendance !== undefined
-      && attendance.hasAttendance !== false,
-    );
+      : displayValue(learner.attendanceLastSession) !== EMPTY_VALUE
+        ? displayValue(learner.attendanceLastSession)
+        : formatDateLabel(learner.attendanceLastSessionDate);
 
     return {
       ...learner,
-      attendanceRate: hasAttendance ? clampPercent(attendance?.attendance) : 0,
-      attendanceRateAvailable: hasAttendance,
       // Use the latest completed occurrence across coaching, progress reviews
       // and live sessions. Future, in-progress and cancelled events are not
       // contacts, and the caseload payload's owner name is intentionally ignored.
       lastContact: lastSession,
       lastActivity: attendanceIsLatestActivity ? lastSession : learner.lastActivity,
       lastActivityDate: attendanceIsLatestActivity
-        ? (parsedCompletedEventDate && latestAttendanceDate === parsedCompletedEventDate ? completedEventDate : attendance?.lastSessionDate || null)
+        ? (parsedCompletedEventDate && latestAttendanceDate === parsedCompletedEventDate ? completedEventDate : learner.attendanceLastSessionDate || null)
         : learner.lastActivityDate,
       lastActivityLabel: attendanceIsLatestActivity ? 'Attendance' : learner.lastActivityLabel,
       lastMcm: formatCompletedSessionDate(lastMcmDate),
@@ -851,7 +840,7 @@ function buildOverdueMap(learners: CoachLearner[], events: CoachCalendarEvent[])
 
 function buildLearnerPriority(learner: CoachLearner, overdue?: OverdueSignal): LearnerPriority {
   const reasons: PriorityReason[] = [];
-  const otjhStatus = normalizeOtjhStatus(learner.otjhStatus);
+  const otjhStatus = canonicalOtjhStatus(learner);
   const otjhPercent = otjhPercentFor(learner);
 
   if (otjhStatus === 'at-risk') {
@@ -935,7 +924,7 @@ function percentTone(value?: number | null, warningThreshold = 50, successThresh
 
 /** The avatar ring colour: OTJH risk first, then programme stage. */
 function learnerAvatarTone(learner: CoachLearner): StatusTone {
-  const otjhStatus = normalizeOtjhStatus(learner.otjhStatus);
+  const otjhStatus = canonicalOtjhStatus(learner);
   if (otjhStatus === 'at-risk') return 'critical';
   if (otjhStatus === 'need-attention') return 'caution';
   const programmeStatus = normalizedProgramStatus(learner);
@@ -980,6 +969,10 @@ const KPI_FILTER_LABEL: Record<DashboardKpi, string> = {
   epa: 'EPA learners',
   evidence: 'Evidence awaiting review',
   reviews: 'Upcoming reviews',
+  'pending-marking': 'Pending marking',
+  'pr-week': 'Progress reviews this week',
+  'mcm-week': 'Monthly coaching meetings this week',
+  'catch-ups-week': 'Catch-ups this week',
 };
 
 function formatWeekRangeLabel() {
@@ -1071,6 +1064,7 @@ export default function CoachDashboard() {
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
   const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<CoachLearner[]>([]);
+  const [embeddedLearners, setEmbeddedLearners] = useState<CaseloadApiLearner[]>([]);
   const [monthlyRisk, setMonthlyRisk] = useState<MonthlyRiskPoint[] | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
   const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>([]);
@@ -1148,9 +1142,9 @@ export default function CoachDashboard() {
 
       try {
         const [dashboard, markingQueue, completedSessionHistory] = await Promise.all([
-          fetchSharedJsonGet<CoachDashboardApiResponse>(
+          fetchCoachDashboardWithRetry(
+            controller.signal,
             withCoachViewAs(coachDashboardEndpoint()),
-            { signal: controller.signal, credentials: 'include' },
           ),
           fetchSharedJsonGet<MarkingQueueResponse>(
             withCoachViewAs('/coach_api/coach/marking-queue?status=pending&page_size=1'),
@@ -1164,6 +1158,7 @@ export default function CoachDashboard() {
 
         const queueItems = (dashboard.evidence?.items || []).map(normalizeEvidenceQueueLearner);
         const normalizedLearners = (dashboard.learners || []).map(normalizeLearner);
+        setEmbeddedLearners((dashboard.learners || []) as CaseloadApiLearner[]);
         const attendanceLearners = dashboard.attendance?.learners || [];
         const reviewHistoryLearners = dashboard.reviewHistory?.learners || [];
         const events = sortEvents(dashboard.timetable?.events || []);
@@ -1173,7 +1168,7 @@ export default function CoachDashboard() {
         setOwnerName(displayValue(dashboard.owner?.name) === EMPTY_VALUE ? authenticatedCoachName : String(dashboard.owner?.name));
         setLearners(mergeEvidenceQueueIntoLearners(
           mergeReviewHistory(
-            mergeAttendanceRates(normalizedLearners, attendanceLearners, completedHistoryEvents),
+            mergeAttendanceRates(normalizedLearners, completedHistoryEvents),
             reviewHistoryLearners,
           ),
           queueItems,
@@ -1230,15 +1225,15 @@ export default function CoachDashboard() {
   const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
   const activeLearners = useMemo(() => enrichedLearners.filter(isActiveLearner), [enrichedLearners]);
   const atRiskLearners = useMemo(
-    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk'),
+    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'at-risk'),
     [activeLearners],
   );
   const needAttentionLearners = useMemo(
-    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'need-attention'),
+    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'need-attention'),
     [activeLearners],
   );
   const onTrackLearners = useMemo(
-    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'on-track'),
+    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'on-track'),
     [activeLearners],
   );
   const evidenceLearners = useMemo(
@@ -1336,7 +1331,7 @@ export default function CoachDashboard() {
       case 'at-risk':
       case 'need-attention':
       case 'on-track':
-        return learner => isActiveLearner(learner) && normalizeOtjhStatus(learner.otjhStatus) === kpiFilter;
+        return learner => isActiveLearner(learner) && canonicalOtjhStatus(learner) === kpiFilter;
       default: return null;
     }
   }, [kpiFilter]);
@@ -1422,7 +1417,7 @@ export default function CoachDashboard() {
         </section>
 
         <div id="learner-caseload" className={styles.fullWidthCaseload}>
-          <CoachCaseloadContent embedded />
+          <CoachCaseloadContent embedded embeddedLearners={embeddedLearners} />
         </div>
 
         <Panel className={styles.panel}>
@@ -1570,7 +1565,7 @@ function OtjhDistribution({ learners, unavailable }: { learners: CoachLearner[];
   const total = learners.length;
   let cursor = 0;
   const segments = statuses.map(status => {
-    const count = learners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === status.key).length;
+    const count = learners.filter(learner => canonicalOtjhStatus(learner) === status.key).length;
     const percent = total ? count / total * 100 : 0;
     const start = cursor;
     cursor += percent;
@@ -1605,7 +1600,7 @@ function AttentionLearnerRow({ learner, onOpen }: {
   learner: CoachLearner;
   onOpen: () => void;
 }) {
-  const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
+  const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
   const varianceLabel = otjhVarianceLabel(learner);
   return (
     <tr>
@@ -1679,7 +1674,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
       : type === 'epa'
         ? learners.filter(isEpaLearner)
     : type === 'on-track' || type === 'at-risk' || type === 'need-attention'
-      ? learners.filter(learner => isActiveLearner(learner) && normalizeOtjhStatus(learner.otjhStatus) === type)
+      ? learners.filter(learner => isActiveLearner(learner) && canonicalOtjhStatus(learner) === type)
       : [];
   const reviews = sortEvents(calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)));
   const evidenceLearners = evidenceQueue;
@@ -1754,7 +1749,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
           {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'completed' || type === 'epa') && (
             <div className="space-y-3.5">
               {modalLearners.map(learner => {
-                const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
+                const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
                 const attendance = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
                 const otjh = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
                 return (

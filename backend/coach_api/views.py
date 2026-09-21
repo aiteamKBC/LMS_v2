@@ -1,11 +1,12 @@
 import json
 import logging
+from time import perf_counter
 import os
 import re
 import hashlib
 from html import escape
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
 from time import perf_counter, sleep as _sleep
@@ -72,7 +73,13 @@ from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
 from learner_api.learner_detail import otjh_status_from_variance, refresh_learner_otjh_snapshot
-from learner_api.dashboard_metrics import read_metrics
+from learner_api.dashboard_metrics import (read_metrics, load_subject_attempts_bulk,
+                                            load_manual_hours_bulk, load_reflection_submissions_bulk,
+                                            load_audit_inputs_bulk, load_native_progress_bulk,
+                                            load_native_components_bulk, load_planned_hours_documents_bulk)
+from learner_api.dashboard_metrics import load_export_links_bulk
+from learner_api.learning_plan import _effective_plan_ids
+from learner_api.student_activity import load_direct_progress_records_bulk
 from learner_api.ksb_codes import extract_ksb_codes, normalize_ksb_parent_code
 from learner_api.progress_rules import progress_record_counts_as_achieved
 from audit_api.last_audit_ledger_views import _connection as audit_connection
@@ -131,6 +138,17 @@ from learner_api.review_progress_snapshot import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _coach_perf(endpoint, stage, started, *, learner_count=None, **extra):
+    payload = {
+        "event": "coach_perf", "endpoint": endpoint, "stage": stage,
+        "duration_ms": round((perf_counter() - started) * 1000, 2),
+    }
+    if learner_count is not None:
+        payload["learner_count"] = learner_count
+    payload.update(extra)
+    logger.info("coach_perf %s", payload)
 PROGRESS_REVIEW_RESPONSE_IDS = {
     "attendance_issues",
     "workplace_training_since_review",
@@ -2257,6 +2275,7 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     request per learner. Individual failures retain that learner's existing
     snapshot without making the rest of the caseload unavailable.
     """
+    perf_started = perf_counter()
     work = []
     for row in rows or []:
         source = getattr(row, "_caseload_source", None)
@@ -2267,19 +2286,129 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     if not work:
         return {}
 
-    def load(item):
-        profile_id, source, kind = item
-        try:
-            return profile_id, read_metrics(source, kind)
-        except (DatabaseError, ValueError) as exc:
-            logger.warning("Could not read canonical coach metrics for learner %s: %s", profile_id, exc)
-            return profile_id, None
-        finally:
-            close_old_connections()
+    enrolment_ids = [int(source.pk) for _, source, _ in work]
+    direct_progress = load_direct_progress_records_bulk(enrolment_ids)
+    attempt_keys = [
+        (int(source.pk), int(source.aptem_id))
+        for _, source, _ in work
+        if getattr(source, 'aptem_id', None) not in (None, '')
+    ]
+    subject_attempts = load_subject_attempts_bulk(attempt_keys)
+    manual_hours = load_manual_hours_bulk([aptem for _, aptem in attempt_keys])
+    reflection_keys = [(kind, int(source.pk)) for _, source, kind in work]
+    reflection_submissions = load_reflection_submissions_bulk(reflection_keys)
+    audit_inputs = load_audit_inputs_bulk([aptem for _, aptem in attempt_keys])
+    native_progress = load_native_progress_bulk(enrolment_ids)
+    plan_ids_by_enrolment = {
+        int(source.pk): _effective_plan_ids(source, {})
+        for _, source, _ in work
+    }
+    component_by_module = load_native_components_bulk(
+        [module_id for ids in plan_ids_by_enrolment.values() for module_id in ids]
+    )
+    planned_documents = load_planned_hours_documents_bulk([
+        (int(source.pk), kind) for _, source, kind in work
+    ])
+    audit_groups = {
+        int(item['group_id'])
+        for audit in audit_inputs.values()
+        for item in (audit or {}).get('historical', [])
+        if item.get('group_id') is not None
+    }
+    export_links = load_export_links_bulk(audit_groups)
 
-    with ThreadPoolExecutor(max_workers=min(4, len(work)), thread_name_prefix="coach-metrics") as executor:
-        results = executor.map(load, work)
-        return {profile_id: metrics for profile_id, metrics in results if metrics is not None}
+    def load_metrics_inputs(items):
+        """Load canonical inputs in one bounded, request-owned DB phase.
+
+        The calculation remains the existing ``read_metrics`` implementation;
+        importantly, it is not fanned out into ORM threads.  Django connections
+        are thread-local, so the previous per-learner executor multiplied DB
+        connections and could nest under the dashboard executor.
+        """
+        loaded = []
+        for item in items:
+            profile_id, source, kind = item
+            try:
+                loaded.append((profile_id, read_metrics(
+                    source, kind,
+                    preloaded={
+                        'direct_progress': direct_progress.get(int(source.pk), []),
+                        'subject_attempts': subject_attempts.get((int(source.pk), int(source.aptem_id)), set()),
+                        'manual_hours': manual_hours.get(int(source.aptem_id)),
+                        'reflection_submissions': reflection_submissions.get((kind, str(source.pk)), []),
+                        'audit_inputs': audit_inputs.get(int(source.aptem_id)),
+                        'native_progress': native_progress.get(int(source.pk), []),
+                        'effective_plan_ids': plan_ids_by_enrolment.get(int(source.pk), []),
+                        'native_components': [
+                            item for module_id in plan_ids_by_enrolment.get(int(source.pk), [])
+                            for item in component_by_module.get(str(module_id), [])
+                        ],
+                        'planned_hours_document': planned_documents.get((int(source.pk), kind)),
+                        'export_links': [
+                            row
+                            for group_id in {
+                                int(item['group_id'])
+                                for item in (audit_inputs.get(int(source.aptem_id)) or {}).get('historical', [])
+                                if item.get('group_id') is not None
+                            }
+                            for row in export_links.get(group_id, [])
+                        ],
+                    },
+                )))
+                if os.environ.get("COACH_KSB_DIAGNOSTICS") == "1" and profile_id in {315, 316, 318, 319}:
+                    metrics = loaded[-1][1] or {}
+                    preloaded = {
+                        'effective_plan_ids': plan_ids_by_enrolment.get(int(source.pk), []),
+                        'native_components': [
+                            component
+                            for module_id in plan_ids_by_enrolment.get(int(source.pk), [])
+                            for component in component_by_module.get(str(module_id), [])
+                        ],
+                        'native_progress': native_progress.get(int(source.pk), []),
+                        'audit_inputs': audit_inputs.get(int(source.aptem_id)) if getattr(source, 'aptem_id', None) not in (None, '') else None,
+                    }
+                    native_components = preloaded['native_components']
+                    audit_input = preloaded['audit_inputs'] or {}
+                    historical = audit_input.get('historical') or []
+                    native_mapping_count = sum(
+                        len(extract_ksb_codes(component.get('ksb_mappings')))
+                        for component in native_components
+                    )
+                    historical_mapping_count = sum(
+                        len(extract_ksb_codes(activity.get('ksb_mappings')))
+                        for activity in historical
+                    )
+                    ksb = metrics.get('ksb') or {}
+                    logger.info("coach_ksb_diagnostic %s", {
+                        'learnerProfileId': profile_id,
+                        'effectivePlanIds': preloaded['effective_plan_ids'],
+                        'nativeComponentsCount': len(native_components),
+                        'nativeKsbMappingsCount': native_mapping_count,
+                        'nativeProgressCount': len(preloaded['native_progress']),
+                        'auditIdentityReady': bool(audit_input.get('identity')),
+                        'historicalActivitiesCount': len(historical),
+                        'historicalMappedKsbCount': historical_mapping_count,
+                        'activityPointsMissing': ksb.get('reason') == 'activity_points_missing',
+                        'historicalActivitiesMissing': ksb.get('reason') == 'historical_activities_missing',
+                        'unmappedActivities': ksb.get('unmappedActivities'),
+                        'mappedCompleted': ksb.get('mappedCompleted'),
+                        'mappedTotal': ksb.get('mappedTotal'),
+                        'historicalCompleted': ksb.get('historicalCompleted'),
+                        'finalKsbStatus': ksb.get('status'),
+                        'finalKsbCompleted': ksb.get('completed'),
+                        'finalKsbTotal': ksb.get('total'),
+                        'finalKsbPercent': ksb.get('percent'),
+                    })
+            except (DatabaseError, ValueError) as exc:
+                logger.warning("Could not read canonical coach metrics for learner %s: %s", profile_id, exc)
+                # Preserve partial-success semantics: one bad learner does not
+                # discard metrics already loaded for the rest of the caseload.
+        return loaded
+
+    results = load_metrics_inputs(work)
+    result = {profile_id: metrics for profile_id, metrics in results if metrics is not None}
+    _coach_perf("dashboard", "canonical_metrics", perf_started, learner_count=len(work))
+    return result
 
 
 def caseload_canonical_attendance(rows) -> dict[int, dict]:
@@ -2302,9 +2431,8 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
         finally:
             close_old_connections()
 
-    with ThreadPoolExecutor(max_workers=min(4, len(work)), thread_name_prefix="coach-attendance") as executor:
-        results = executor.map(load, work)
-        return {profile_id: summary for profile_id, summary in results if summary is not None}
+    results = [load(item) for item in work]
+    return {profile_id: summary for profile_id, summary in results if summary is not None}
 
 
 def caseload_kbc_attendance_rates(rows) -> tuple[dict[int, int], dict[int, dict]]:
@@ -2403,7 +2531,7 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
         component_progress=component_progress, component_available=component_available,
     )
     payload["riskFlags"] = build_active_user_risk_flags(
-        otjh_status=payload.get("otjhStatus") or "", ksb_status=payload["ksbStatus"], progress_variance=progress_variance,
+        otjh_status=payload.get("otjhStatus") or "", ksb_status=payload.get("ksbStatus") or "", progress_variance=progress_variance,
         hours_progress=hours_progress, hours_available=hours_available,
         ksb_progress=ksb_progress, ksb_available=ksb_available,
         component_progress=component_progress, component_available=component_available,
@@ -2485,6 +2613,31 @@ def apply_audit_hour_totals(payload: dict, totals: dict | None) -> dict:
     payload["overallProgress"] = percentage(payload["otjhCompleted"], payload["otjhTarget"])
     payload["overallProgressAvailable"] = True
     payload["otjhSource"] = "audit"
+    return payload
+
+
+def apply_attendance_summary(payload: dict, metrics: dict | None) -> dict:
+    """Overlay the one canonical attendance summary on a serialized learner.
+
+    ``metrics`` comes from ``dashboard_attendance_rows``, joined by the same
+    stable LearnerProfile id every other dashboard enrichment uses. This is
+    the only place attendance is written onto the dashboard learner payload,
+    so the response never carries two attendance figures for the frontend to
+    reconcile. A missing/failed lookup leaves the unavailable placeholder
+    from ``serialize_caseload_dashboard_learner`` rather than a fake 0.
+    """
+    if not metrics:
+        return payload
+    has_attendance = bool(metrics.get("hasAttendance")) and metrics.get("attendance") is not None
+    if not has_attendance:
+        return payload
+    payload["attendanceRate"] = to_number(metrics.get("attendance"))
+    payload["attendanceRateAvailable"] = True
+    payload["attendancePresent"] = metrics.get("present")
+    payload["attendanceSessions"] = metrics.get("sessions")
+    payload["attendanceAbsent"] = metrics.get("absent")
+    payload["attendanceLastSession"] = metrics.get("lastSession")
+    payload["attendanceLastSessionDate"] = metrics.get("lastSessionDate")
     return payload
 
 
@@ -2646,6 +2799,8 @@ def serialize_caseload_learner(
         "nextCoaching": "--",
         "nextReview": "--",
         "lastContact": "--",
+        "lastPr": None,
+        "lastMcm": None,
         "lastAttendanceDate": "--",
         "lastProgressReview": "--",
         "lastReview": "--",
@@ -2728,8 +2883,17 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         "riskFlags": risk_flags,
         "overallProgress": hours_progress,
         "overallProgressAvailable": hours_available,
-        "attendanceRate": 0,
+        # Placeholder until apply_attendance_summary overlays the one
+        # canonical attendance figure below. Never a fake 0: a learner whose
+        # attendance enrichment failed or has no register must read as
+        # unavailable, not as "0% attendance".
+        "attendanceRate": None,
         "attendanceRateAvailable": False,
+        "attendancePresent": None,
+        "attendanceSessions": None,
+        "attendanceAbsent": None,
+        "attendanceLastSession": None,
+        "attendanceLastSessionDate": None,
         "otjhCompleted": to_number(getattr(row, "completed_hours", None)),
         "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
         "otjhMinimum": to_number(getattr(row, "minimum_hours", None)),
@@ -2747,16 +2911,15 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         "nextCoaching": "--",
         "nextReview": "--",
         "lastContact": "--",
+        "lastPr": None,
+        "lastMcm": None,
         "recentFlag": risk_flags[0] if risk_flags else None,
         "email": clean_text(getattr(row, "email", None)) or None,
         "progressVariance": progress_variance or "--",
         "startDate": format_date(getattr(row, "start_date", None)),
         "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
         "plannedEndDate": format_date(getattr(row, "end_date", None)),
-        "coachName": clean_text(getattr(row, "coach_name", None)) or None,
-        "coachEmail": clean_text(getattr(row, "coach_email", None)) or None,
         "rawProgramStatus": program_status or "--",
-        "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
     }
 
 
@@ -5755,6 +5918,14 @@ COACH_MEETING_SUMMARIES_RELATION = '"Coach".coach_meeting_summaries'
 COACH_MEETING_ATTENDANCE_STATUSES = {"attended", "absent", "pending", "extra"}
 COACH_MEETING_SUMMARY_TYPES = {"mcr", "progress-review", GENERIC_REVIEW_EVENT_TYPE}
 COACH_MEETING_SUMMARY_MODEL = getattr(settings, "OPENAI_MEETING_SUMMARY_MODEL", "") or getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
+COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
+# How much transcript the recap prompt may carry. The previous 18,000 was
+# under an hour of speech, so a normal coaching meeting was summarised from
+# its opening alone -- the agreed actions and next steps, which are stated at
+# the end, never reached the model and nothing said so. This is still a
+# fraction of the configured models' context windows (gpt-4.1-mini, gpt-5-mini)
+# and the 5 MB upload ceiling above remains the hard input bound.
+COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS = 120_000
 
 
 def graph_datetime_iso(value) -> str:
@@ -6443,22 +6614,80 @@ def coach_meeting_snapshot_datetime(value):
     return parse_graph_datetime(value) if value else None
 
 
+# Teams writes each spoken line as ``<v Speaker Name>text</v>``. The optional
+# ``.class`` suffixes belong to the tag, not to the name.
+VTT_VOICE_SPAN_RE = re.compile(r"<v(?:\.[^\s>]+)*\s+([^>]*)>", re.IGNORECASE)
+
+
 def coach_meeting_transcript_text(vtt_content: str) -> str:
-    """Return a readable transcript body from Graph's WebVTT payload."""
+    """Return a readable, speaker-attributed transcript body from WebVTT.
+
+    A cue is ``[identifier] / timing / payload``, and only the payload is
+    speech. Tracking that structure matters for a real Teams export:
+
+    * Teams writes a GUID as the cue identifier. Treating it as speech (as
+      dropping only all-digit lines did) filled the prompt with identifiers
+      instead of conversation, which mattered because the prompt is capped.
+    * The header block after ``WEBVTT`` (``Kind:``, ``Language:``) is not
+      speech either, and sits outside every cue.
+
+    Speaker names are kept: a recap built from an unattributed wall of text
+    cannot tell what the coach committed to from what the learner did, so it
+    attributes actions to the wrong person.
+    """
     lines = []
+    in_payload = False
     for raw_line in clean_text(vtt_content).splitlines():
         line = raw_line.strip()
         if not line:
+            # A blank line closes the current cue; anything before the next
+            # timing line is an identifier or a block we do not read.
+            in_payload = False
             continue
         upper = line.upper()
         if upper.startswith("WEBVTT") or upper.startswith("NOTE"):
+            in_payload = False
             continue
-        if "-->" in line or line.isdigit():
+        if "-->" in line:
+            in_payload = True
             continue
-        line = re.sub(r"<[^>]+>", "", line).strip()
-        if line:
-            lines.append(line)
+        if not in_payload:
+            continue
+        voice = VTT_VOICE_SPAN_RE.search(line)
+        speaker = clean_text(voice.group(1)) if voice else ""
+        text = re.sub(r"<[^>]+>", "", line).strip()
+        if not text:
+            continue
+        lines.append(f"{speaker}: {text}" if speaker else text)
     return "\n".join(lines)
+
+
+def uploaded_coach_meeting_transcript_text(upload) -> str:
+    """Validate and extract a coach-supplied WebVTT summary source.
+
+    Uploaded fallback transcripts are processed in memory. They are never
+    stored as, or confused with, Microsoft Teams transcript artifacts.
+    """
+    filename = clean_text(getattr(upload, "name", ""))
+    if not filename.lower().endswith(".vtt"):
+        raise ValueError("Upload a WebVTT transcript with a .vtt file extension.")
+    if int(getattr(upload, "size", 0) or 0) > COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES:
+        raise ValueError("The transcript is too large. Upload a .vtt file no larger than 5 MB.")
+
+    content = upload.read(COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES + 1)
+    if not content or len(content) > COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES:
+        raise ValueError("The transcript is empty or larger than the 5 MB limit.")
+    try:
+        decoded = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("The .vtt transcript must use UTF-8 text encoding.") from exc
+    if not decoded.lstrip().upper().startswith("WEBVTT"):
+        raise ValueError("The uploaded file is not a valid WebVTT transcript.")
+
+    transcript_text = coach_meeting_transcript_text(decoded)
+    if not transcript_text:
+        raise ValueError("The uploaded .vtt file does not contain any transcript text.")
+    return transcript_text
 
 
 def fetch_coach_meeting_transcript_content(base: str, artifact_id: str) -> dict:
@@ -6880,7 +7109,36 @@ def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent) -> d
     return {"artifactId": clean_text(row[0]), "text": clean_text(row[1])}
 
 
-def openai_meeting_summary(record: CoachCalendarEvent, transcript_text: str) -> tuple[dict, str]:
+@dataclass(frozen=True)
+class MeetingSummaryContext:
+    """The only meeting facts the recap prompt reads.
+
+    ``CoachCalendarEvent`` already has this shape, which is why
+    ``openai_meeting_summary`` takes either. A Review whose meeting was held
+    outside Teams has no calendar row to read these from, but it still has a
+    learner, a coach and a Review template -- see
+    ``_review_instance_meeting_summary_context``.
+    """
+
+    event_type: str = ""
+    review_template_id: str | None = None
+    learner_name: str = ""
+    owner_name: str = ""
+
+
+def meeting_summary_transcript_excerpt(transcript_text: str) -> tuple[str, bool]:
+    """The transcript the prompt carries, and whether anything was dropped.
+
+    Returned rather than silently applied so callers can tell the coach that
+    the recap was built from part of the meeting only.
+    """
+    excerpt = transcript_text[:COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS]
+    return excerpt, len(transcript_text) > len(excerpt)
+
+
+def openai_meeting_summary(
+    record: CoachCalendarEvent | MeetingSummaryContext, transcript_text: str,
+) -> tuple[dict, str]:
     if not getattr(settings, "OPENAI_API_KEY", ""):
         raise RuntimeError("OPENAI_API_KEY is not configured.")
     try:
@@ -6904,29 +7162,71 @@ def openai_meeting_summary(record: CoachCalendarEvent, transcript_text: str) -> 
         "Overview: 1-2 short sentences. Key points: 3-5 bullets. "
         "Actions: only agreed actions, with owner and dueDate if stated. "
         "Next steps: 2-4 clear steps. Support: include only if support needs were discussed.\n\n"
-        f"Transcript:\n{transcript_text[:18000]}"
+        f"Transcript:\n{meeting_summary_transcript_excerpt(transcript_text)[0]}"
     )
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
-    response = client.chat.completions.create(
-        model=COACH_MEETING_SUMMARY_MODEL,
-        messages=[
+    completion_options = {
+        "model": COACH_MEETING_SUMMARY_MODEL,
+        "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        response_format={"type": "json_object"},
-        max_completion_tokens=1200,
+        "response_format": {"type": "json_object"},
+        # This limit includes invisible reasoning tokens. The previous 1,200
+        # token budget could therefore finish successfully with no visible
+        # JSON content when a GPT-5 reasoning model was configured.
+        "max_completion_tokens": 4000,
+    }
+    if COACH_MEETING_SUMMARY_MODEL.lower().startswith("gpt-5"):
+        completion_options["reasoning_effort"] = "low"
+
+    response = client.chat.completions.create(
+        **completion_options,
     )
-    content = clean_text(response.choices[0].message.content if response.choices else "")
+    choice = response.choices[0] if response.choices else None
+    content = clean_text(choice.message.content if choice else "")
     if not content:
-        raise RuntimeError("The AI service returned an empty meeting summary.")
+        usage = getattr(response, "usage", None)
+        details = getattr(usage, "completion_tokens_details", None)
+        raise RuntimeError(
+            "The AI service returned an empty meeting summary "
+            f"(finish_reason={clean_text(getattr(choice, 'finish_reason', '')) or 'unknown'}, "
+            f"completion_tokens={getattr(usage, 'completion_tokens', None)}, "
+            f"reasoning_tokens={getattr(details, 'reasoning_tokens', None)})."
+        )
     try:
         payload = json.loads(content)
     except json.JSONDecodeError as exc:
         raise RuntimeError("The AI service returned an invalid meeting summary.") from exc
-    return normalize_meeting_summary_payload(payload, source), COACH_MEETING_SUMMARY_MODEL
+    summary = normalize_meeting_summary_payload(payload, record.event_type)
+    if not clean_text(summary.get("overview")):
+        raise RuntimeError("The AI service returned a meeting summary without an overview.")
+    return summary, COACH_MEETING_SUMMARY_MODEL
 
 
-def ensure_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
+def should_reuse_coach_meeting_summary(
+    existing,
+    transcript_hash: str,
+    *,
+    retry_failed: bool = False,
+) -> bool:
+    """Keep valid/edited summaries, but allow an explicit retry of a failed row."""
+    if not existing:
+        return False
+    existing_hash = clean_text(existing[0])
+    existing_status = clean_text(existing[1])
+    if existing_status == "edited":
+        return True
+    if existing_hash != transcript_hash:
+        return False
+    return not (retry_failed and existing_status == "failed")
+
+
+def ensure_coach_meeting_summary(
+    record: CoachCalendarEvent,
+    *,
+    retry_failed: bool = False,
+) -> dict | None:
     if clean_text(record.event_type).lower() not in COACH_MEETING_SUMMARY_TYPES:
         return None
     database = router.db_for_write(CoachCalendarEvent) or "default"
@@ -6954,9 +7254,11 @@ def ensure_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
         logger.exception("Unable to inspect coach meeting summary for event_key=%s", record.event_key)
         return None
 
-    if existing and clean_text(existing[0]) == transcript_hash:
-        return stored_coach_meeting_summary(record)
-    if existing and clean_text(existing[1]) == "edited":
+    if should_reuse_coach_meeting_summary(
+        existing,
+        transcript_hash,
+        retry_failed=retry_failed,
+    ):
         return stored_coach_meeting_summary(record)
 
     now = timezone.now()
@@ -7510,7 +7812,7 @@ def coach_timetable_event_artifacts(request, event_key):
             attendance_reports=snapshot["attendanceReports"],
             attendance_tracker=snapshot["attendanceTracker"],
         )
-        meeting_summary = ensure_coach_meeting_summary(record)
+        meeting_summary = ensure_coach_meeting_summary(record, retry_failed=True)
     else:
         snapshot = stored_coach_meeting_snapshot(record)
         status_code = 200
@@ -10170,6 +10472,39 @@ def dashboard_review_history(
     }
 
 
+def dashboard_latest_completed_review_dates(rows) -> dict[int, dict[str, str | None]]:
+    """Return latest completed PR/MCM dates keyed by stable profile id."""
+    profile_ids = [int(row.id) for row in rows or [] if getattr(row, "id", None) is not None]
+    if not profile_ids:
+        return {}
+    query = """
+        SELECT learner_id, review_type, completed_date
+        FROM "Learner".reviews
+        WHERE learner_id = ANY(%s)
+          AND LOWER(TRIM(status)) = 'completed'
+          AND completed_date IS NOT NULL
+        ORDER BY completed_date DESC, id DESC
+    """
+    result = {profile_id: {"lastPr": None, "lastMcm": None} for profile_id in profile_ids}
+    pr_types = {clean_text(value).casefold() for value in REVIEW_TYPES["progress-review"]}
+    mcm_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
+    try:
+        connection = connections[get_learner_db_alias()]
+        with connection.cursor() as cursor:
+            cursor.execute(query, [profile_ids])
+            for learner_id, review_type, completed_date in cursor.fetchall():
+                target = result.get(int(learner_id))
+                if target is None:
+                    continue
+                type_key = clean_text(review_type).casefold()
+                field = "lastPr" if type_key in pr_types else "lastMcm" if type_key in mcm_types else None
+                if field and target[field] is None:
+                    target[field] = format_date(completed_date)
+    except Exception as exc:
+        logger.warning("Could not load latest completed review dates: %s", exc)
+    return result
+
+
 def _latest_completed_review_date(reviews: list[dict]) -> str | None:
     """The latest completed imported review date, never a future planned date."""
     dates = [
@@ -10572,7 +10907,15 @@ def coach_directory(request):
 @require_GET
 def coach_dashboard(request):
     """Return every data set needed by the coach workspace in one request."""
+    endpoint_started = perf_counter()
     owner_email = authenticated_coach_email(request)
+    # The dashboard is read-only and expensive to assemble (caseload metrics,
+    # audit mirror and timetable).  Reuse the complete payload briefly so a
+    # browser refresh or React remount does not repeat all remote queries.
+    dashboard_cache_key = f"coach-dashboard:v4:{normalize_email(owner_email)}"
+    cached_dashboard = cache.get(dashboard_cache_key)
+    if cached_dashboard is not None:
+        return JsonResponse(cached_dashboard)
     today = date.today()
     calendar_end = today + timedelta(days=90)
 
@@ -10580,10 +10923,33 @@ def coach_dashboard(request):
         try:
             rows = fetch_caseload_dashboard_profiles(owner_email)
             learners = [serialize_caseload_dashboard_learner(row) for row in rows]
-            latest_activities = caseload_latest_learning_activities(rows)
-            audit_totals = caseload_audit_hour_totals(rows)
-            ksb_counts = caseload_evidenced_ksb_counts(rows)
-            canonical_metrics = caseload_canonical_metrics(rows)
+            review_dates = dashboard_latest_completed_review_dates(rows)
+            for row, learner in zip(rows, learners):
+                learner.update(review_dates.get(int(row.id), {}))
+            # These are independent read-only enrichments.  Running them in
+            # series made the dashboard wait for every remote/local query in
+            # turn (most noticeably the audit mirror).  Keep the same payload
+            # but overlap their latency so first paint is bounded by the
+            # slowest enrichment rather than their sum.
+            def run_enrichment(fn):
+                try:
+                    return fn(rows)
+                except Exception:
+                    # Metrics/attendance mirrors are optional dashboard
+                    # enrichments.  A transient remote DB failure must not
+                    # turn the whole coach dashboard into a 503.
+                    logger.warning("coach_dashboard_enrichment_failed", exc_info=True)
+                    return {}
+                finally:
+                    close_old_connections()
+
+            # Keep concurrency bounded: canonical metrics may fan out its own
+            # read-only workers, so a large outer pool can exhaust the DB pool
+            # during concurrent refreshes.
+            latest_activities = run_enrichment(caseload_latest_learning_activities)
+            audit_totals = run_enrichment(caseload_audit_hour_totals)
+            ksb_counts = run_enrichment(caseload_evidenced_ksb_counts)
+            canonical_metrics = run_enrichment(caseload_canonical_metrics)
             aptem_by_profile = caseload_aptem_ids(rows)
             for row, learner in zip(rows, learners):
                 apply_latest_learning_activity(learner, latest_activities.get(int(row.id)))
@@ -10638,57 +11004,39 @@ def coach_dashboard(request):
         # These sections use independent read-only connections. Running them
         # together makes initial page latency the duration of the slowest query
         # instead of the sum of both remote-database round trips.
-        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="coach-dashboard") as executor:
-            learners_future = executor.submit(load_dashboard_learners)
-            timetable_future = executor.submit(load_dashboard_timetable)
-            groups_future = executor.submit(load_assigned_groups)
-            dashboard_rows, learners, monthly_risk = learners_future.result()
-            timetable_payload = timetable_future.result()
-            assigned_groups = groups_future.result()
+        dashboard_rows, learners, monthly_risk = load_dashboard_learners()
+        timetable_payload = load_dashboard_timetable()
+        assigned_groups = load_assigned_groups()
         # Depends on the learner list, so it follows the pool rather than
-        # joining it. Resolve the Aptem bridge once and share it between the
-        # KBC attendance and imported review-history enrichments. Those two
-        # enrichments are independent read-only queries; run them together so
-        # a slow attendance source does not add its latency to review history.
+        # joining it.
         try:
             aptem_by_profile = caseload_aptem_ids(dashboard_rows)
-            def run_enrichment(fn, *args, **kwargs):
-                try:
-                    return fn(*args, **kwargs)
-                finally:
-                    close_old_connections()
-
-            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="coach-dashboard-enrichment") as executor:
-                attendance_future = executor.submit(
-                    run_enrichment,
-                    dashboard_attendance_rows,
-                    dashboard_rows,
-                    learners,
-                    aptem_by_profile=aptem_by_profile,
+            try:
+                attendance_rows = dashboard_attendance_rows(
+                    dashboard_rows, learners, aptem_by_profile=aptem_by_profile,
                 )
-                review_history_future = executor.submit(
-                    run_enrichment,
-                    dashboard_review_history,
-                    dashboard_rows,
-                    aptem_by_profile=aptem_by_profile,
-                )
-                try:
-                    attendance_rows = attendance_future.result()
-                except Exception:
-                    # Attendance is an optional dashboard enrichment. A
-                    # malformed source row or an unavailable side database
-                    # must not turn an otherwise valid caseload into a 503.
-                    logger.warning("Could not load dashboard attendance", exc_info=True)
-                    attendance_rows = []
-                try:
-                    review_history = review_history_future.result()
-                except Exception:
-                    logger.warning("Could not load dashboard review history", exc_info=True)
-                    review_history = {}
+            except Exception:
+                # Attendance is an optional dashboard enrichment. A malformed
+                # source row or an unavailable side database must not turn an
+                # otherwise valid caseload into a 503.
+                logger.warning("Could not load dashboard attendance", exc_info=True)
+                attendance_rows = []
         finally:
             close_old_connections()
+        # dashboard_attendance_rows is the one canonical attendance source:
+        # overlay it onto each learner here, by the same stable id every other
+        # enrichment above joins on, so the response never carries a second,
+        # independently-mergeable attendance dataset for the frontend to
+        # reconcile by email/name.
+        attendance_by_id = {
+            to_int(entry.get("id")): entry
+            for entry in attendance_rows
+            if to_int(entry.get("id")) is not None
+        }
+        for learner in learners:
+            apply_attendance_summary(learner, attendance_by_id.get(to_int(learner.get("id"))))
         owner_name = coach_staff_display_name(owner_email) or next(
-            (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
+            (clean_text(getattr(row, "coach_name", None)) for row in dashboard_rows if clean_text(getattr(row, "coach_name", None))),
             "Coach",
         )
     except Exception:
@@ -10700,8 +11048,7 @@ def coach_dashboard(request):
             status=503,
         )
 
-    return JsonResponse(
-        {
+    response_payload = {
             "owner": {
                 "name": timetable_payload.get("owner_name") or owner_name,
                 "email": owner_email,
@@ -10709,16 +11056,13 @@ def coach_dashboard(request):
             "learners": learners,
             "monthlyRisk": monthly_risk,
             "assignedGroups": assigned_groups,
-            # Attendance is one batched query and the caseload modal on this
-            # page renders it, so it ships here. Evidence stays empty: its
-            # dedicated page loads that expensive dataset on demand.
-            "attendance": {"learners": attendance_rows},
-            "reviewHistory": {
-                "learners": [
-                    review_history[profile_id]
-                    for profile_id in sorted(review_history)
-                ],
-            },
+            # Attendance is overlaid onto each learner above (the one
+            # canonical source); no separate attendance dataset ships here.
+            # Full imported review history (sections/fields/tables/rawText)
+            # is not needed by this dashboard -- it is not rendered here, and
+            # the caseload drawer that does need it loads /coach/caseload
+            # directly. Evidence stays empty: its dedicated page loads that
+            # expensive dataset on demand.
             "timetable": {
                 "summary": timetable_payload.get("summary", {}),
                 "events": timetable_payload.get("events", []),
@@ -10726,7 +11070,9 @@ def coach_dashboard(request):
             "evidence": {"items": []},
             "errors": {},
         }
-    )
+    _coach_perf("dashboard", "total", endpoint_started, learner_count=len(learners))
+    cache.set(dashboard_cache_key, response_payload, 30)
+    return JsonResponse(response_payload)
 
 @coach_access_required
 @require_GET
@@ -10844,9 +11190,18 @@ def coach_monthly_activity(request):
 @coach_access_required
 @require_GET
 def coach_caseload(request):
+    endpoint_started = perf_counter()
     owner_email = authenticated_coach_email(request)
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
     summary_only = clean_text(request.GET.get("summary")).casefold() in {"1", "true", "yes", "on"}
+    # Caseload enrichment is expensive and the page may request it again on a
+    # refresh/remount.  Keep a short per-coach snapshot for read-only GETs;
+    # live snapshot requests explicitly bypass this cache.
+    caseload_cache_key = f"coach-caseload:v2:{normalize_email(owner_email)}:{int(summary_only)}"
+    if not refresh_live_snapshots:
+        cached_caseload = cache.get(caseload_cache_key)
+        if cached_caseload is not None:
+            return JsonResponse(cached_caseload)
 
     try:
         if summary_only:
@@ -10858,13 +11213,24 @@ def coach_caseload(request):
                 serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
                 for row in rows
             ]
-        # Quote the same whole-programme OTJ figures the learner sees on their
-        # own workspace, rather than the training-plan reflection totals.
-        audit_totals = caseload_audit_hour_totals(rows)
-        ksb_counts = caseload_evidenced_ksb_counts(rows)
-        canonical_metrics = caseload_canonical_metrics(rows)
+        # These enrichments are independent. Running them serially made the
+        # first caseload load wait for every audit/metrics/review query in
+        # sequence. Bound the pool because canonical metrics can fan out its
+        # own read-only workers.
+        def run_optional(fn):
+            try:
+                return fn(rows)
+            except Exception:
+                logger.warning("coach_caseload_enrichment_failed", exc_info=True)
+                return {}
+            finally:
+                close_old_connections()
+
+        audit_totals = run_optional(caseload_audit_hour_totals)
+        ksb_counts = run_optional(caseload_evidenced_ksb_counts)
+        canonical_metrics = run_optional(caseload_canonical_metrics)
+        review_history = run_optional(dashboard_review_history)
         aptem_by_profile = caseload_aptem_ids(rows)
-        review_history = dashboard_review_history(rows)
         for row, learner in zip(rows, learners):
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
@@ -10890,12 +11256,14 @@ def coach_caseload(request):
         (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
         "Coach",
     )
-    return JsonResponse(
-        {
+    response_payload = {
             "owner": {"name": owner_name, "email": owner_email},
             "learners": learners,
         }
-    )
+    if not refresh_live_snapshots:
+        cache.set(caseload_cache_key, response_payload, 30)
+    _coach_perf("caseload", "total", endpoint_started, learner_count=len(learners))
+    return JsonResponse(response_payload)
 
 
 @coach_access_required
@@ -10948,6 +11316,7 @@ def coach_caseload_coach_rag(request, learner_id):
 @coach_access_required
 @require_GET
 def coach_attendance(request):
+    endpoint_started = perf_counter()
     owner_email = authenticated_coach_email(request)
 
     try:
@@ -11111,6 +11480,7 @@ def coach_attendance(request):
     active_trends = active_attendance_data["trends"]
     if not any(active_trends.values()):
         active_trends = fetch_learner_absence_data(active_email_keys)["trends"]
+    _coach_perf("attendance", "total", endpoint_started, learner_count=len(caseload_learners))
     return JsonResponse(
         {
             "owner": {"name": owner_name, "email": owner_email},
@@ -12017,6 +12387,88 @@ def _authorized_review_instance(request, instance_id):
     return instance_row, None
 
 
+def _review_instance_calendar_record(instance_row):
+    """The exact calendar event linked in both directions to this instance."""
+    calendar_event_id = instance_row.get("calendar_event_id")
+    if not calendar_event_id:
+        return None
+    return CoachCalendarEvent.objects.filter(
+        pk=calendar_event_id,
+        review_instance_id=instance_row.get("id"),
+        owner_email__iexact=instance_row.get("coach_email") or "",
+    ).first()
+
+
+def _review_instance_meeting_summary_context(instance_row) -> MeetingSummaryContext:
+    """Recap prompt metadata for a Review with no linked Teams meeting.
+
+    The linked calendar row normally carries the learner and coach names. A
+    meeting held outside Teams has no such row, so the same three facts come
+    from the instance itself. Read-only, and it never stands in for the
+    calendar row anywhere else -- only the prompt's labels are involved.
+    """
+    learner = LearnerProfile.objects.filter(pk=instance_row.get("learner_id")).first()
+    coach_email = clean_text(instance_row.get("coach_email"))
+    return MeetingSummaryContext(
+        review_template_id=clean_text(instance_row.get("review_template_id")) or None,
+        learner_name=(
+            clean_text(getattr(learner, "full_name", ""))
+            or clean_text(getattr(learner, "username", ""))
+        ),
+        owner_name=fetch_owner_name(coach_email, fallback="") if coach_email else "",
+    )
+
+
+def _review_instance_meeting_summary_source(instance_row, definition=None):
+    """Stored-only coach suggestion for one explicitly mapped MCM field.
+
+    This helper never contacts Graph or OpenAI. The formal answer remains on
+    the field inside ``definition['sections']`` and always wins in the client.
+    """
+    definition = definition or curriculum_review_instances.review_instance_form_definition(instance_row)
+    if definition.get("template", {}).get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_MCM:
+        return None
+    field = curriculum_review_instances.meeting_summary_field(definition)
+    if not field:
+        return None
+    source = {
+        "fieldId": field.get("id"),
+        "status": "unavailable",
+        "summaryText": "",
+        "generatedAt": None,
+        "editedAt": None,
+        "message": "No stored AI Meeting Summary is available yet.",
+    }
+    record = _review_instance_calendar_record(instance_row)
+    if not record:
+        return source
+    stored = stored_coach_meeting_summary(record)
+    if not stored:
+        return source
+    status = clean_text(stored.get("status")) or "ready"
+    source.update({
+        "status": status,
+        "generatedAt": stored.get("generatedAt"),
+        "editedAt": stored.get("editedAt"),
+        "message": (
+            "Meeting Summary generation failed. The formal Review answer was not changed."
+            if status == "failed"
+            else ""
+        ),
+    })
+    if status in {"ready", "edited"}:
+        source["summaryText"] = meeting_summary_plain_text(stored.get("summary") or {})
+    return source
+
+
+def _coach_review_instance_definition(instance_row):
+    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    source = _review_instance_meeting_summary_source(instance_row, definition)
+    if source is not None:
+        definition["meetingSummarySource"] = source
+    return definition
+
+
 @coach_access_required
 def coach_review_instance_for_event(request):
     """Open the Curriculum Review form for a calendar event.
@@ -12148,7 +12600,7 @@ def coach_review_instance_detail(request, instance_id):
     # to flip status to in-progress here. The real trigger is a confirmed
     # Microsoft Teams attendance signal; see
     # apply_teams_attendance_status_transition.
-    return JsonResponse(curriculum_review_instances.review_instance_form_definition(instance_row))
+    return JsonResponse(_coach_review_instance_definition(instance_row))
 
 
 @coach_access_required
@@ -12167,10 +12619,136 @@ def coach_review_instance_answers(request, instance_id):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
     owner_email = authenticated_coach_email(request)
     try:
-        result = curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
+        curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
     except ValueError as exc:
         return JsonResponse({'detail': str(exc)}, status=409)
-    return JsonResponse(result)
+    return JsonResponse(_coach_review_instance_definition(
+        curriculum_review_instances.get_review_instance(instance_row["id"])
+    ))
+
+
+@coach_access_required
+def coach_review_instance_meeting_summary(request, instance_id):
+    """Explicitly acquire/generate the AI suggestion for one mapped MCM.
+
+    Passive Review reads use ``_review_instance_meeting_summary_source`` and
+    never reach Graph/OpenAI. This POST reuses the same snapshot persistence,
+    transcript extraction and repaired generation pipeline as Check Teams, or
+    accepts one explicit .vtt fallback upload without creating a Teams
+    artifact. It never writes the formal Review answer.
+
+    The two routes differ in what they require. Generating from Teams needs a
+    linked meeting, because the transcript is fetched from it. An uploaded
+    .vtt does not: the coach already has the transcript, and a meeting that
+    ran outside Teams is the reason the upload exists. Only the Teams route
+    stores its result; an uploaded recap is returned for the coach to review
+    and save as the Review answer, and is never recorded as a Teams artifact.
+    """
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    if definition.get("template", {}).get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_MCM:
+        return JsonResponse({"detail": "Meeting Summary generation is only available on an MCM Review."}, status=404)
+    field = curriculum_review_instances.meeting_summary_field(definition)
+    if not field:
+        return JsonResponse({
+            "detail": "This Review Instance has no explicitly mapped Meeting Summary field. Enter the summary manually.",
+        }, status=409)
+    if instance_row.get("status") in {
+        curriculum_review_instances.STATUS_AWAITING_SIGNATURE,
+        curriculum_review_instances.STATUS_COMPLETED,
+    }:
+        return JsonResponse({"detail": "This Review has already been submitted and its answers are read-only."}, status=409)
+
+    record = _review_instance_calendar_record(instance_row)
+
+    uploaded_transcript = request.FILES.get("transcript")
+    if uploaded_transcript is not None:
+        # The upload is the documented route for a meeting that did NOT happen
+        # in Teams, so it deliberately runs before the linked-meeting check
+        # below. Requiring that link made the fallback unreachable in exactly
+        # the case it exists for. Nothing here contacts Graph or writes a Teams
+        # artifact; a calendar row, when one exists, only labels the prompt.
+        context = record or _review_instance_meeting_summary_context(instance_row)
+        try:
+            transcript_text = uploaded_coach_meeting_transcript_text(uploaded_transcript)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
+        try:
+            summary, _model = openai_meeting_summary(context, transcript_text)
+        except Exception:  # noqa: BLE001 - never expose provider details
+            logger.exception(
+                "Unable to generate coach meeting summary from uploaded transcript for review instance %s",
+                instance_row.get("id"),
+            )
+            return JsonResponse({
+                "detail": "The Meeting Summary could not be generated from the uploaded transcript. Your current Review answer has not been changed.",
+            }, status=502)
+        # Empty unless something qualifies THIS result, matching what
+        # _review_instance_meeting_summary_source sends for a clean read. The
+        # client supplies its own wording for the ordinary case and shows a
+        # message here as a caveat, so a silent partial recap is the one thing
+        # that must not happen.
+        message = ""
+        if meeting_summary_transcript_excerpt(transcript_text)[1]:
+            message = (
+                "The uploaded transcript was longer than this summary can cover, so only its "
+                "earlier part was used. Check the rest of the meeting yourself and add anything "
+                "the summary is missing."
+            )
+        return JsonResponse({
+            "meetingSummarySource": {
+                "fieldId": field.get("id"),
+                "status": "ready",
+                "summaryText": meeting_summary_plain_text(summary),
+                "generatedAt": timezone.now().isoformat(),
+                "editedAt": None,
+                "message": message,
+            }
+        })
+
+    if not record:
+        return JsonResponse({
+            "detail": "This Review is not linked to a scheduled Teams meeting. Upload the meeting transcript as a .vtt file, or enter the summary manually.",
+        }, status=409)
+
+    # A valid stored artifact is idempotent. In particular, a coach-edited AI
+    # artifact must never be replaced simply because this button was pressed.
+    existing = stored_coach_meeting_summary(record)
+    if existing and clean_text(existing.get("status")) in {"ready", "edited"}:
+        return JsonResponse({"meetingSummarySource": _review_instance_meeting_summary_source(instance_row, definition)})
+
+    snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
+    if error_payload:
+        return JsonResponse(error_payload, status=status_code)
+    persist_coach_meeting_snapshots(
+        record,
+        artifacts=snapshot["artifacts"],
+        attendance_reports=snapshot["attendanceReports"],
+        attendance_tracker=snapshot["attendanceTracker"],
+    )
+    if not stored_coach_meeting_transcript_for_summary(record):
+        # This is the moment the .vtt upload exists for, so it says so: Teams
+        # holds no transcript for a meeting that was moved, not recorded, or
+        # still processing, and the coach usually has the file already.
+        return JsonResponse({
+            "detail": "The Teams transcript is not available yet. Upload the meeting transcript as a .vtt file, "
+                      "or enter the summary manually. Your current Review answer has not been changed.",
+        }, status=409)
+
+    generated = ensure_coach_meeting_summary(record, retry_failed=True)
+    if not generated:
+        return JsonResponse({
+            "detail": "The Meeting Summary could not be generated. Your current Review answer has not been changed.",
+        }, status=502)
+    if clean_text(generated.get("status")) == "failed":
+        return JsonResponse({
+            "detail": "Meeting Summary generation failed. Your current Review answer has not been changed.",
+        }, status=502)
+    return JsonResponse({"meetingSummarySource": _review_instance_meeting_summary_source(instance_row, definition)})
 
 
 @coach_access_required
@@ -12243,7 +12821,7 @@ def coach_review_instance_progress(request, instance_id):
         return JsonResponse({"detail": "Progress could not be calculated. Please try again."}, status=503)
 
     return JsonResponse(
-        curriculum_review_instances.review_instance_form_definition(
+        _coach_review_instance_definition(
             curriculum_review_instances.get_review_instance(instance_row["id"]),
         )
     )
@@ -12256,8 +12834,21 @@ def coach_review_instance_complete(request, instance_id):
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
+    payload = {}
+    if request.body:
+        try:
+            payload = parse_json_body(request)
+        except ValidationError as exc:
+            return validation_error_response(exc)
+    if not isinstance(payload, dict):
+        return JsonResponse({"detail": "Request body must be a JSON object."}, status=400)
+    answers = payload.get("answers")
+    if answers is not None and not isinstance(answers, dict):
+        return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
     owner_email = authenticated_coach_email(request)
-    ok, errors = curriculum_review_instances.complete_review_instance(instance_row, actor=owner_email)
+    ok, errors = curriculum_review_instances.complete_review_instance(
+        instance_row, actor=owner_email, answers=answers,
+    )
     if not ok:
         # errors is {'status': [...]} for an invalid lifecycle transition (not
         # yet in-progress, or already submitted/completed) or {'fields': [...]}
@@ -12267,7 +12858,7 @@ def coach_review_instance_complete(request, instance_id):
         return JsonResponse({"detail": detail, "errors": errors}, status=400)
     instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
     _sync_calendar_record_to_review_instance_status(instance_row)
-    return JsonResponse(curriculum_review_instances.review_instance_form_definition(instance_row))
+    return JsonResponse(_coach_review_instance_definition(instance_row))
 
 
 @coach_access_required
@@ -12326,7 +12917,68 @@ def coach_review_instance_mark_in_progress_manually(request, instance_id):
 
     updated_instance = curriculum_review_instances.get_review_instance(instance_row["id"])
     _sync_calendar_record_to_review_instance_status(updated_instance)
-    return JsonResponse(curriculum_review_instances.review_instance_form_definition(updated_instance))
+    return JsonResponse(_coach_review_instance_definition(updated_instance))
+
+
+@coach_access_required
+@attributed_write_view
+def coach_review_instance_reopen(request, instance_id):
+    """Reopen a completed/awaiting-signature review so the coach can correct it.
+
+    See curriculum_api.review_instances.reopen_review_instance_for_editing for
+    the lifecycle/data rules this enforces -- including that every signature
+    already collected is cleared, with the pre-reopen answers and signatures
+    frozen into curriculum.review_instance_reopens first. This view is only
+    authorization + request parsing + actor attribution.
+
+    Same authorization model as coach_review_instance_mark_in_progress_manually
+    above: coach_access_required refuses an unrelated coach or a super-admin
+    with no coach selected, _authorized_review_instance refuses a coach whose
+    own email does not own this instance, and @attributed_write_view is what
+    lets a super-admin in view-as mode write here at all while keeping the
+    write attributed to them rather than to the coach whose workspace is open.
+
+    Unlike that view this does NOT call
+    _sync_calendar_record_to_review_instance_status afterwards: the reopen
+    already moved the linked Calendar row inside its own transaction (see
+    _mirror_linked_calendar_after_reopen), and that helper only knows how to
+    project completed/awaiting-signature forwards, so calling it here would be
+    a second, competing writer.
+    """
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+    try:
+        payload = parse_json_body(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+
+    owner_email = authenticated_coach_email(request)
+    actor = owner_email
+    if is_coach_view_as(request):
+        admin = getattr(request, "coach_view_as_admin", None)
+        admin_identity = clean_text(getattr(admin, "username", "") or getattr(admin, "email", "")) or "Administrator"
+        actor = f"{admin_identity} (for {owner_email})"
+
+    reason_code = clean_text(payload.get("reasonCode"))
+    note = clean_text(payload.get("note"))
+
+    try:
+        ok, result = curriculum_review_instances.reopen_review_instance_for_editing(
+            instance_row, reason_code=reason_code, note=note, actor=actor,
+        )
+    except ValueError as exc:
+        # A Calendar row that no longer matches its instance -- reconciliation,
+        # not user input. Same handling as the signature endpoint.
+        return JsonResponse({"detail": str(exc)}, status=400)
+    if not ok:
+        detail = next(iter(result.values()))[0] if result else "This review cannot be reopened."
+        return JsonResponse({"detail": detail, "errors": result}, status=400)
+
+    updated_instance = curriculum_review_instances.get_review_instance(instance_row["id"])
+    return JsonResponse(_coach_review_instance_definition(updated_instance))
 
 
 @coach_access_required
@@ -12355,7 +13007,9 @@ def coach_review_instance_signature(request, instance_id):
     # No mirror call here: record_review_instance_signature owns the calendar
     # projection for every signature, in the same transaction as the status
     # change. One canonical transition, one mirror.
-    return JsonResponse(result)
+    return JsonResponse(_coach_review_instance_definition(
+        curriculum_review_instances.get_review_instance(instance_row["id"])
+    ))
 
 
 def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:

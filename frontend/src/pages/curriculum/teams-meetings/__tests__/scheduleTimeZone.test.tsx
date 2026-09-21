@@ -47,14 +47,14 @@ describe('Egypt schedule and England display', () => {
     expect(input.scheduledOccurrences).toEqual([{ sessionNumber: 4, startDateTimeUtc: '2026-10-29T20:30:00Z', durationMinutes: 120 }]);
   });
 
-  it('summarizes distinct clock pairs once in the badge across Egypt and England clock changes', () => {
+  it('states just the soonest clock pair in the badge, not every DST-driven pairing', () => {
     const schedule = { ...row, timeZone: 'Africa/Cairo' };
     const plannedStarts = teamsCalendarOccurrences(schedule).map(item => item.startDateTimeUtc);
     render(<ModuleSessionSchedulePreview row={{ ...schedule, plannedStarts }} showAlternateTimeZones={false} />);
     const badge = screen.getByRole('note', { name: 'Session start times in Egypt and England' });
-    expect(badge.children).toHaveLength(2);
+    expect(badge.children).toHaveLength(1);
     expect(screen.getAllByText('Egypt: 9:00 AM · England: 7:00 AM')).toHaveLength(1);
-    expect(screen.getAllByText('Egypt: 9:00 AM · England: 6:00 AM')).toHaveLength(1);
+    expect(screen.queryByText('Egypt: 9:00 AM · England: 6:00 AM')).not.toBeInTheDocument();
     expect(badge.parentElement).toHaveTextContent('3 sessions');
     expect(badge.parentElement).toHaveTextContent('120 min each');
     expect(screen.queryByText(/Egypt:.*Oct/)).not.toBeInTheDocument();

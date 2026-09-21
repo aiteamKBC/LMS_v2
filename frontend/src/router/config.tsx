@@ -76,6 +76,7 @@ const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-c
 const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
 const CurriculumAuditTrailPersonPage = lazyRoute(() => import("../pages/curriculum/audit-trail/person/page"));
+const CurriculumArchive = lazyRoute(() => import("../pages/curriculum/archive/page"));
 const CurriculumCohorts = lazyRoute(() => import("../pages/curriculum/cohorts/page"));
 const CurriculumCohortWorkspace = lazyRoute(() => import("../pages/curriculum/cohort-workspace/page"));
 const CurriculumGroups = lazyRoute(() => import("../pages/curriculum/groups/page"));
@@ -941,6 +942,13 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/checkpoints",
     element: <CheckpointsPage />,
+  },
+  {
+    // Curriculum's archive, across all four record types. The per-list "View
+    // archived" toggles stay where they are; this is the one that answers
+    // "what did we archive" without knowing the list it came from.
+    path: "/curriculum/archive",
+    element: <CurriculumArchive />,
   },
   {
     path: "/curriculum/cohorts",

@@ -87,6 +87,7 @@ urlpatterns = [
     path('curriculum/modules/resolve-structures/', views.curriculum_module_structure_resolve, name='curriculum-module-structure-resolve'),
     # Before the '<str:identifier>' route below, or 'archived' is read as a module id.
     path('curriculum/modules/archived/', views.curriculum_archived_modules, name='curriculum-modules-archived'),
+    path('curriculum/modules/<str:module_catalogue_id>/archived-structure/', views.curriculum_archived_module_structure, name='curriculum-module-archived-structure'),
     path('curriculum/modules/<str:identifier>/restore/', views.curriculum_module_restore, name='curriculum-module-restore'),
     path('curriculum/modules/<str:module_catalogue_id>/structure/', views.curriculum_module_structure, name='curriculum-module-structure'),
     path('curriculum/modules/<str:module_catalogue_id>/settings/', views.curriculum_module_settings, name='curriculum-module-settings'),

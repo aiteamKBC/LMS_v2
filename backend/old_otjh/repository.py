@@ -423,7 +423,9 @@ def signature_owner(file_id):
     rows = query(f'''SELECT t.learner_id, s.report_month, s.signer_role,
         s.signature_source_document_id AS file_id FROM {SIGNOFFS} s
         JOIN {TRANSITIONS} t ON s.learner_id=t.aptem_id::text
-        AND s.programme_key=('otjh-transition:' || t.learner_id::text)
+        AND (s.programme_key=('otjh-transition:' || t.learner_id::text)
+             OR starts_with(s.programme_key,
+                            'otjh-transition:' || t.learner_id::text || ':resign-archive:'))
         WHERE s.audit_version=%s AND s.signature_source_document_id=%s
         AND s.review_confirmed IS TRUE AND coalesce(s.signature_data,'')<>'' ''',
         [VERSION, file_id])
