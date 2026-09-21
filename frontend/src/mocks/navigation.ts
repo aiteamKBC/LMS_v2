@@ -33,6 +33,9 @@ export const learnerNavItems: SidebarNavItem[] = [
   // Attendance — single item; reporting an absence is an action inside the page.
   { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
 
+  // Published forms explicitly assigned to the signed-in learner.
+  { id: 'learner-feedback', label: 'Feedback', icon: 'ri-survey-line', href: '/learner/feedback' },
+
   // My Progress
   {
     id: 'learner-group-monthly',
@@ -307,7 +310,16 @@ export const engagementNavItems: SidebarNavItem[] = [
       { id: 'engagement-clubs', label: 'Learner Clubs', icon: 'ri-team-line', href: '/engagement/clubs' },
     ],
   },
-  { id: 'engagement-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/engagement/reports' },
+  {
+    id: 'engagement-group-reports',
+    label: 'Reports',
+    icon: 'ri-bar-chart-box-line',
+    href: '',
+    children: [
+      { id: 'engagement-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/engagement/reports' },
+      { id: 'engagement-feedback', label: 'Feedback', icon: 'ri-survey-line', href: '/engagement/reports/feedback', matchPaths: ['/engagement/reports/feedback/create', '/engagement/reports/feedback/forms'] },
+    ],
+  },
 ];
 
 // ============================================================================

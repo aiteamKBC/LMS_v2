@@ -1,8 +1,23 @@
 from django.urls import path
 
-from . import views
+from . import feedback, views
 
 urlpatterns = [
+    # Reusable feedback-form engine. Staff management and learner-owned routes
+    # are separate so each view can enforce the narrowest role/ownership rule.
+    path('feedback/csrf/', feedback.csrf_token, name='feedback-csrf'),
+    path('feedback/forms/', feedback.forms_collection, name='feedback-forms'),
+    path('feedback/forms/<int:pk>/', feedback.form_detail, name='feedback-form-detail'),
+    path('feedback/forms/<int:pk>/status/', feedback.form_status, name='feedback-form-status'),
+    path('feedback/forms/<int:pk>/duplicate/', feedback.form_duplicate, name='feedback-form-duplicate'),
+    path('feedback/forms/<int:pk>/assignments/', feedback.form_assignments, name='feedback-form-assignments'),
+    path('feedback/learners/', feedback.learner_options, name='feedback-learners'),
+    path('feedback/responses/', feedback.responses_collection, name='feedback-responses'),
+    path('feedback/responses/<int:pk>/', feedback.response_detail, name='feedback-response-detail'),
+    path('feedback/analytics/', feedback.analytics, name='feedback-analytics'),
+    path('feedback/my-forms/', feedback.learner_forms, name='feedback-my-forms'),
+    path('feedback/my-forms/<int:pk>/', feedback.learner_form_detail, name='feedback-my-form-detail'),
+    path('feedback/my-forms/<int:pk>/response/', feedback.learner_response_save, name='feedback-my-form-response'),
     path('rewards/', views.rewards_collection, name='rewards-collection'),
     path('rewards/<int:pk>/', views.reward_detail, name='reward-detail'),
     path('voucher-claims/', views.voucher_claims_collection, name='voucher-claims-collection'),

@@ -494,3 +494,99 @@ class FlashCardView(models.Model):
 
     def __str__(self):
         return f'{self.learner_name} flipped card {self.flash_card_id}'
+
+
+# Feedback forms intentionally live in their own database schema, and nothing
+# in the form engine depends on an Engagement route. Like the rest of this
+# app's Neon-backed tables these mappings are unmanaged; see the manual SQL in
+# backend/sql/2026-09-20_feedback_forms.sql.
+class FeedbackForm(models.Model):
+    STATUS_CHOICES = [('draft', 'Draft'), ('published', 'Published'), ('closed', 'Closed')]
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default='')
+    instructions = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    start_date = models.DateTimeField(null=True, blank=True)
+    due_date = models.DateTimeField(null=True, blank=True)
+    anonymous_responses = models.BooleanField(default=False)
+    allow_save_continue = models.BooleanField(default=True)
+    allow_edit_after_submission = models.BooleanField(default=False)
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_forms'
+
+
+class FeedbackSection(models.Model):
+    form = models.ForeignKey(FeedbackForm, on_delete=models.CASCADE, related_name='sections', db_column='form_id')
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default='')
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_form_sections'
+        ordering = ['sort_order', 'id']
+
+
+class FeedbackQuestion(models.Model):
+    section = models.ForeignKey(FeedbackSection, on_delete=models.CASCADE, related_name='questions', db_column='section_id')
+    question_type = models.CharField(max_length=30)
+    question_text = models.TextField()
+    required = models.BooleanField(default=False)
+    help_text = models.TextField(blank=True, default='')
+    # Options, rating bounds and endpoint labels are deliberately one JSON
+    # configuration object so new question kinds do not require new columns.
+    config = models.JSONField(default=dict)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_questions'
+        ordering = ['sort_order', 'id']
+
+
+class FeedbackAssignment(models.Model):
+    form = models.ForeignKey(FeedbackForm, on_delete=models.CASCADE, related_name='assignments', db_column='form_id')
+    target_type = models.CharField(max_length=30)
+    target_id = models.CharField(max_length=100, null=True, blank=True)
+    assigned_by = models.CharField(max_length=255)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    due_date = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_assignments'
+
+
+class FeedbackResponse(models.Model):
+    STATUS_CHOICES = [('in_progress', 'In progress'), ('completed', 'Completed')]
+
+    form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='responses', db_column='form_id')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255)
+    programme = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress')
+    started_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_responses'
+
+
+class FeedbackAnswer(models.Model):
+    response = models.ForeignKey(FeedbackResponse, on_delete=models.CASCADE, related_name='answers', db_column='response_id')
+    question = models.ForeignKey(FeedbackQuestion, on_delete=models.PROTECT, related_name='answers', db_column='question_id')
+    answer = models.JSONField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_answers'

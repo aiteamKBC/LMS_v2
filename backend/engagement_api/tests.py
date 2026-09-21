@@ -17,7 +17,36 @@ from unittest import mock
 
 from django.test import RequestFactory, SimpleTestCase
 
-from . import hooks, permissions, services, views
+from . import feedback, hooks, permissions, services, views
+
+
+class FeedbackValidationTests(SimpleTestCase):
+    def test_feedback_csrf_endpoint_issues_a_token(self):
+        response = feedback.csrf_token(RequestFactory().get('/engagement_api/feedback/csrf/'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(json.loads(response.content)['csrfToken'])
+
+    def test_structure_rejects_unknown_question_type(self):
+        with self.assertRaisesMessage(ValueError, 'unsupported type'):
+            feedback._validated_sections([{
+                'title': 'Learning',
+                'questions': [{'type': 'executable_code', 'text': 'Run this?', 'config': {}}],
+            }])
+
+    def test_choice_question_requires_two_options(self):
+        with self.assertRaisesMessage(ValueError, 'at least two options'):
+            feedback._validated_sections([{
+                'title': 'Learning',
+                'questions': [{'type': 'single_choice', 'text': 'Choose', 'config': {'options': ['Only']}}],
+            }])
+
+    def test_answer_validation_enforces_question_configuration(self):
+        question = SimpleNamespace(question_type='rating', config={'min': 1, 'max': 5})
+        self.assertTrue(feedback._valid_answer(question, 5))
+        self.assertFalse(feedback._valid_answer(question, 6))
+        question = SimpleNamespace(question_type='dropdown', config={'options': ['Good', 'Poor']})
+        self.assertTrue(feedback._valid_answer(question, 'Good'))
+        self.assertFalse(feedback._valid_answer(question, 'Injected option'))
 
 
 def _account(*, role="learner", subject_type="learner", subject_id=61, display_name="Daniel Walsh", email="daniel@kbc.test"):

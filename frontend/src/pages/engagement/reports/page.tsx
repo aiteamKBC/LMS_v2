@@ -193,6 +193,9 @@ export default function EngagementReportsPage() {
           <button onClick={() => navigate('/engagement/attendance-risk')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200/50 transition-smooth cursor-pointer whitespace-nowrap">
             <AppIcon className="ri-alert-line text-sm"></AppIcon> Attendance Risk
           </button>
+          <button onClick={() => navigate('/engagement/reports/feedback')} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-50 border border-primary-200/60 rounded-lg text-[11px] font-semibold text-primary-700 hover:bg-primary-100 transition-smooth cursor-pointer whitespace-nowrap">
+            <AppIcon className="ri-survey-line text-sm"></AppIcon> Feedback
+          </button>
         </div>
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">

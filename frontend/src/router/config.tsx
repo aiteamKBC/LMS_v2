@@ -107,9 +107,14 @@ const EmployerWorkplaceConfirmations = lazyRoute(() => import("@/pages/employer/
 const EngagementClubsPage = lazyRoute(() => import("../pages/engagement/clubs/page"));
 const EngagementDashboard = lazyRoute(() => import("../pages/workspace/engagement/page"));
 const EngagementReportsPage = lazyRoute(() => import("../pages/engagement/reports/page"));
+const FeedbackPage = lazyRoute(() => import("../pages/engagement/feedback/page"));
+const FeedbackEditorPage = lazyRoute(() => import("../pages/engagement/feedback/editor/page"));
+const FeedbackPreviewPage = lazyRoute(() => import("../pages/engagement/feedback/preview/page"));
 const EventDetailPage = lazyRoute(() => import("../pages/learner/clubs/events/detail/page"));
 const EventsPage = lazyRoute(() => import("../pages/engagement/events/page"));
 const LearnerFlashCardsPage = lazyRoute(() => import("../pages/learner/flash-cards/page"));
+const LearnerFeedbackPage = lazyRoute(() => import("../pages/learner/feedback/page"));
+const LearnerFeedbackFormPage = lazyRoute(() => import("../pages/learner/feedback/form/page"));
 const FinanceReportsPage = lazyRoute(() => import("../pages/finance/reports/page"));
 const FinanceWorkspace = lazyRoute(() => import("../pages/workspace/finance/page"));
 const FlashCardsPage = lazyRoute(() => import("../pages/engagement/flash-cards/page"));
@@ -524,6 +529,14 @@ const routes: RouteObject[] = [
   {
     path: "/learner/attendance",
     element: <AttendancePage />,
+  },
+  {
+    path: "/learner/feedback",
+    element: <LearnerFeedbackPage />,
+  },
+  {
+    path: "/learner/feedback/:formId",
+    element: <LearnerFeedbackFormPage />,
   },
   {
     path: "/learner/catchup",
@@ -1162,6 +1175,22 @@ const routes: RouteObject[] = [
   {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,
+  },
+  {
+    path: "/engagement/reports/feedback",
+    element: <FeedbackPage />,
+  },
+  {
+    path: "/engagement/reports/feedback/create",
+    element: <FeedbackEditorPage />,
+  },
+  {
+    path: "/engagement/reports/feedback/forms/:formId/edit",
+    element: <FeedbackEditorPage />,
+  },
+  {
+    path: "/engagement/reports/feedback/forms/:formId/preview",
+    element: <FeedbackPreviewPage />,
   },
   {
     path: "/engagement/flash-cards",
