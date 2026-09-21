@@ -59,6 +59,28 @@ function coachDashboardEndpoint() {
   return '/coach_api/coach/dashboard';
 }
 
+async function fetchCoachDashboardWithRetry(signal: AbortSignal, url: string) {
+  try {
+    return await fetchSharedJsonGet<CoachDashboardApiResponse>(url, {
+      signal,
+      credentials: 'include',
+    });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(resolve, 250);
+      signal.addEventListener('abort', () => {
+        window.clearTimeout(timeout);
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      }, { once: true });
+    });
+    return fetchSharedJsonGet<CoachDashboardApiResponse>(url, {
+      signal,
+      credentials: 'include',
+    });
+  }
+}
+
 function toIsoDate(value: Date) {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, '0');
@@ -980,6 +1002,10 @@ const KPI_FILTER_LABEL: Record<DashboardKpi, string> = {
   epa: 'EPA learners',
   evidence: 'Evidence awaiting review',
   reviews: 'Upcoming reviews',
+  'pending-marking': 'Pending marking',
+  'pr-week': 'Progress reviews this week',
+  'mcm-week': 'Monthly coaching meetings this week',
+  'catch-ups-week': 'Catch-ups this week',
 };
 
 function formatWeekRangeLabel() {
@@ -1148,9 +1174,9 @@ export default function CoachDashboard() {
 
       try {
         const [dashboard, markingQueue, completedSessionHistory] = await Promise.all([
-          fetchSharedJsonGet<CoachDashboardApiResponse>(
+          fetchCoachDashboardWithRetry(
+            controller.signal,
             withCoachViewAs(coachDashboardEndpoint()),
-            { signal: controller.signal, credentials: 'include' },
           ),
           fetchSharedJsonGet<MarkingQueueResponse>(
             withCoachViewAs('/coach_api/coach/marking-queue?status=pending&page_size=1'),
