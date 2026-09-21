@@ -10580,10 +10580,35 @@ def coach_dashboard(request):
         try:
             rows = fetch_caseload_dashboard_profiles(owner_email)
             learners = [serialize_caseload_dashboard_learner(row) for row in rows]
-            latest_activities = caseload_latest_learning_activities(rows)
-            audit_totals = caseload_audit_hour_totals(rows)
-            ksb_counts = caseload_evidenced_ksb_counts(rows)
-            canonical_metrics = caseload_canonical_metrics(rows)
+            # These are independent read-only enrichments.  Running them in
+            # series made the dashboard wait for every remote/local query in
+            # turn (most noticeably the audit mirror).  Keep the same payload
+            # but overlap their latency so first paint is bounded by the
+            # slowest enrichment rather than their sum.
+            def run_enrichment(fn):
+                try:
+                    return fn(rows)
+                except Exception:
+                    # Metrics/attendance mirrors are optional dashboard
+                    # enrichments.  A transient remote DB failure must not
+                    # turn the whole coach dashboard into a 503.
+                    logger.warning("coach_dashboard_enrichment_failed", exc_info=True)
+                    return {}
+                finally:
+                    close_old_connections()
+
+            # Keep concurrency bounded: canonical metrics may fan out its own
+            # read-only workers, so a large outer pool can exhaust the DB pool
+            # during concurrent refreshes.
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="coach-dashboard-learners") as executor:
+                latest_future = executor.submit(run_enrichment, caseload_latest_learning_activities)
+                audit_future = executor.submit(run_enrichment, caseload_audit_hour_totals)
+                ksb_future = executor.submit(run_enrichment, caseload_evidenced_ksb_counts)
+                canonical_future = executor.submit(run_enrichment, caseload_canonical_metrics)
+                latest_activities = latest_future.result()
+                audit_totals = audit_future.result()
+                ksb_counts = ksb_future.result()
+                canonical_metrics = canonical_future.result()
             aptem_by_profile = caseload_aptem_ids(rows)
             for row, learner in zip(rows, learners):
                 apply_latest_learning_activity(learner, latest_activities.get(int(row.id)))
