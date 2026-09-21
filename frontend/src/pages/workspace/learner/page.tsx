@@ -121,7 +121,12 @@ export default function LearnerOverview() {
   const displayLearnerName = heroFullName;
   const displayCohort = heroCohort || EMPTY_VALUE;
   const headerDescription = [heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined;
-  const startDateDisplay = formatProgrammeStartDate(real?.learningAccess?.startDate ?? real?.programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
+  // The header states when *this learner* starts, so their own recorded date
+  // (Created_users.Learner_start_date) wins. learningAccess.startDate is the
+  // cohort's gating date -- right for "when does learning unlock", wrong here,
+  // because it reads back a cohort date for a learner whose own date differs.
+  const startDateDisplay = formatProgrammeStartDate(real?.learnerStartDate
+    || real?.learningAccess?.startDate || real?.programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plannedEndDisplay = formatProgrammeStartDate(real?.programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
     new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }));

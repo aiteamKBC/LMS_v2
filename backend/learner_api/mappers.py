@@ -1054,6 +1054,12 @@ def to_learner_detail(source, learner_profile):
         "programmeStatus": programme_status(source) or DEFAULT_PROGRAMME_STATUS,
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "programmeStartDate": _s(programme_start),
+        # The learner's own recorded start, straight from
+        # Created_users.Learner_start_date. programmeStartDate above resolves
+        # through the cohort when the learner has no date of their own, so it
+        # answers "when does this delivery run"; this answers "when does this
+        # learner start", which is what the dashboard header states.
+        "learnerStartDate": _s(getattr(source, "learner_start_date", None)),
         "programmeEndDate": _s(programme_end),
         "cohort": _s(source.cohort),
         "group": _s(source.group),

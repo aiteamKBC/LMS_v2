@@ -368,3 +368,38 @@ export function fetchPersonalCalendarAvailability(kind: LearnerKind, id: string,
   const query = new URLSearchParams({ start, end });
   return calendarConnectionRequest(`/learner_api/calendar-connections/${kind}/${id}/availability/?${query}`);
 }
+
+/** Where a learner stands on their first session — and whether their
+ *  programme is open to them yet. */
+export interface LearnerFirstSession {
+  caseOwner: { name: string; email: string } | null;
+  booked: boolean;
+  event: LearnerCalendarEvent | null;
+  /** The session date, "YYYY-MM-DD", or null when nothing is booked. */
+  startsOn: string | null;
+  /** 'book' — nothing booked yet. 'waiting' — booked, day not arrived.
+   *  'open' — the session day has come, so the programme runs normally. */
+  access: 'book' | 'waiting' | 'open';
+}
+
+/**
+ * The learner's first-session state.
+ *
+ * `access` is decided by the server, not here: a learner must not be able to
+ * reach their programme early by changing the clock on their own machine.
+ */
+export async function fetchLearnerFirstSession(
+  kind: LearnerKind,
+  id: string,
+  signal?: AbortSignal,
+): Promise<LearnerFirstSession> {
+  const response = await fetch(`${BASE}/${kind}/${id}/first-session/`, {
+    credentials: 'include',
+    signal,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || 'Could not check your first session.');
+  }
+  return result as LearnerFirstSession;
+}

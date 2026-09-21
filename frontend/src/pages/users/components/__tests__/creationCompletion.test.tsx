@@ -13,14 +13,6 @@ vi.mock('@/api/employers', () => ({ createEmployer: mocks.createEmployer, listEm
 vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: mocks.success, error: mocks.error }) }));
 vi.mock('../Modal', () => ({ Modal: ({ children, footer }: { children: React.ReactNode; footer: React.ReactNode }) => <div>{children}{footer}</div> }));
 
-/** A weekday comfortably ahead, so the booking calendar accepts it. */
-function futureWeekday(): string {
-  const day = new Date();
-  day.setDate(day.getDate() + 14);
-  while (day.getDay() === 0 || day.getDay() === 6) day.setDate(day.getDate() + 1);
-  return day.toISOString().slice(0, 10);
-}
-
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubGlobal('React', React); vi.stubGlobal('AppIcon', () => null);
 });
@@ -39,9 +31,10 @@ describe('successful creation awaiting a manual invitation', () => {
     if (kind === 'learner') {
       // A learner is now enrolled with a case owner and a booked first session,
       // so the form cannot be submitted without them.
+      // The first session is no longer arranged here: the learner books it
+      // themselves after signing in. A case owner is still required, because
+      // that is who they will book with.
       fireEvent.change(await screen.findByLabelText(/^Case owner/), { target: { value: 'Test Coach' } });
-      fireEvent.change(screen.getByLabelText(/^Session date/), { target: { value: futureWeekday() } });
-      fireEvent.change(screen.getByLabelText(/^Session time/), { target: { value: '10:00' } });
     }
     fireEvent.click(screen.getByRole('button', { name: /^Create/ }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(row));
