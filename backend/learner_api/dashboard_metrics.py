@@ -13,12 +13,13 @@ from .learner_detail import SOURCE_MODELS
 from .models import TrainingPlanDocument
 from .progress_rules import progress_counts_as_achieved
 from .student_activity_access import student_activity_available
-from .student_activity import _direct_progress_records, _direct_progress_otjh
+from .student_activity import _direct_progress_records, _direct_progress_otjh, load_direct_progress_records_bulk
 from .learning_plan import _effective_plan_ids
 from .training_plan_dashboard import find_contract, number, rows
 from .otjh_totals import completed_otjh, completed_actual_otjh
 
 log = logging.getLogger(__name__)
+_MISSING = object()
 
 
 def as_json(value, default):
@@ -170,10 +171,13 @@ def ksb_totals(native, progress, historical=None, attempts=None, links=None, led
             'codes': [{'code': code, **ratio(*counts)} for code, counts in sorted(by_code.items())]}
 
 
-def read_planned_hours(source, kind, cursor):
-    document = (TrainingPlanDocument.objects.using('enrolment')
-                .filter(learner_id=source.pk, learner_kind=kind, status=TrainingPlanDocument.STATUS_ACTIVE)
-                .order_by('-created_at', '-id').values('otjh').first())
+def read_planned_hours(source, kind, cursor, preloaded_document=_MISSING):
+    if preloaded_document is _MISSING:
+        document = (TrainingPlanDocument.objects.using('enrolment')
+                    .filter(learner_id=source.pk, learner_kind=kind, status=TrainingPlanDocument.STATUS_ACTIVE)
+                    .order_by('-created_at', '-id').values('otjh').first())
+    else:
+        document = preloaded_document
     if document is not None:
         snapshot = as_json(document['otjh'], {})
         planned = number(snapshot.get('plannedTotal')) if isinstance(snapshot, dict) else None
@@ -215,7 +219,8 @@ def read_aptem_planned_total(cursor, aptem_id):
 
 
 def metrics_from_loaded(source, kind, *, migrated, native, progress,
-                        direct_progress, historical, attempts, links, history_ready):
+                        direct_progress, historical, attempts, links, history_ready,
+                        manual_hours=_MISSING, preloaded=None):
     """Finish dashboard metrics from the activity snapshot already in memory.
 
     ``overview-week?section=dashboard`` and the standalone metrics endpoint use
@@ -224,28 +229,37 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     load them once without changing the metric definitions used elsewhere.
     """
     with connections['enrolment'].cursor() as cursor:
-        planned = read_planned_hours(source, kind, cursor)
+        planned_document = (preloaded or {}).get('planned_hours_document', _MISSING)
+        planned = read_planned_hours(source, kind, cursor, planned_document)
         aptem_planned_total = read_aptem_planned_total(cursor, int(str(source.aptem_id).strip())) if migrated else None
         old_hours = 0 if not migrated else None
         historical_refs = []
         if migrated:
-            cursor.execute('''SELECT SUM(actual_hours), array_agg(source_ref) FROM structured_manual_activities.manual_learner_activities
-                WHERE aptem_id=%s AND accepted=true AND deleted_at IS NULL''',
-                           [int(str(source.aptem_id).strip())])
-            retained = cursor.fetchone()
-            old_hours = number(retained[0])
-            historical_refs = retained[1] or []
+            if manual_hours is not _MISSING:
+                old_hours = manual_hours
+            else:
+                cursor.execute('''SELECT SUM(actual_hours), array_agg(source_ref)
+                    FROM structured_manual_activities.manual_learner_activities
+                    WHERE aptem_id=%s AND accepted=true AND deleted_at IS NULL''',
+                    [int(str(source.aptem_id).strip())])
+                retained = cursor.fetchone()
+                old_hours = number(retained[0])
+                historical_refs = retained[1] or []
     submissions_available = True
     try:
-        with connections['enrolment'].cursor() as cursor:
-            cursor.execute('''SELECT id, progress_entry_id, submitted_at, activity_id, component_ref, status, actual_time_hours,
-                    full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
-                FROM "Learner".learning_reflection_submissions
-                WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment'
-                ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
-            submissions = rows(cursor)
+        if preloaded is not None and 'reflection_submissions' in preloaded:
+            submissions_available = preloaded['reflection_submissions'] is not None
+            submissions = preloaded['reflection_submissions'] or []
+        else:
+            with connections['enrolment'].cursor() as cursor:
+                cursor.execute('''SELECT id, progress_entry_id, submitted_at, activity_id, component_ref, status, actual_time_hours,
+                        full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
+                    FROM "Learner".learning_reflection_submissions
+                    WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment'
+                    ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
+                submissions = rows(cursor)
     except (DatabaseError, psycopg.Error, StopIteration):
-        # Older installations may not have reflection submissions yet.
+        # Preserve the existing response while exposing unknown completed time.
         submissions = []
         submissions_available = False
     if planned is None and history_ready:
@@ -255,6 +269,7 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     if migrated and history_ready:
         with connections['enrolment'].cursor() as cursor:
             ledger = read_accepted_ksb_rows(cursor, source, kind)
+            historical_refs = list(set(historical_refs) | {row['source_ref'] for row in ledger if row.get('source_ref')})
     new_hours = (round(actual_hours - old_hours, 4)
                  if actual_hours is not None and old_hours is not None else round(_direct_progress_otjh(direct_progress), 4))
     return {
@@ -271,39 +286,57 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     }
 
 
-def read_metrics(source, kind):
+def read_metrics(source, kind, preloaded=None):
     migrated = student_activity_available(source.aptem_id)
-    direct_progress = _direct_progress_records(source.pk)
+    direct_progress = (preloaded or {}).get('direct_progress') if preloaded is not None else None
+    if direct_progress is None:
+        direct_progress = _direct_progress_records(source.pk)
     historical, attempts, links = [], set(), {}
     history_ready = not migrated
     with connections['enrolment'].cursor() as cursor:
-        module_ids = _effective_plan_ids(source, {})
-        cursor.execute('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
+        module_ids = ((preloaded or {}).get('effective_plan_ids', _MISSING)
+                      if preloaded is not None else _MISSING)
+        if module_ids is _MISSING:
+            module_ids = _effective_plan_ids(source, {})
+        if preloaded is not None and 'native_components' in preloaded:
+            native = preloaded['native_components']
+        else:
+            cursor.execute('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
                  FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
                    AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb) AS ksb_mappings,
                 coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                           WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
                          c.settings_json->>'linkedQuizId') AS quiz_id
-            FROM curriculum.components c
-            WHERE c.module_catalogue_id=ANY(%s)
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')''', [module_ids])
-        native = rows(cursor)
-        cursor.execute('''SELECT p.component_ref AS "componentId",p.quiz_ref AS "quizId",p.kind,p.passed
-            FROM "Learner".learners l JOIN "Learner".learner_progress_entries p ON p.learner_id=l.id
-            WHERE l.enrolment_id=%s AND p.kind<>'activity_event' ''', [source.pk])
-        # Imported completions of explicitly assigned native components remain
-        # achievements too. Only OTJ hours above exclude the imported mirror.
-        progress = rows(cursor)
+                FROM curriculum.components c
+                WHERE c.module_catalogue_id=ANY(%s)
+                  AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')''', [module_ids])
+            native = rows(cursor)
+        if preloaded is not None and 'native_progress' in preloaded:
+            progress = preloaded['native_progress']
+        else:
+            cursor.execute('''SELECT p.component_ref AS "componentId",p.quiz_ref AS "quizId",p.kind,p.passed
+                FROM "Learner".learners l JOIN "Learner".learner_progress_entries p ON p.learner_id=l.id
+                WHERE l.enrolment_id=%s AND p.kind<>'activity_event' ''', [source.pk])
+            # Imported completions of explicitly assigned native components remain
+            # achievements too. Only OTJ hours above exclude the imported mirror.
+            progress = rows(cursor)
         if migrated:
             aptem_id = int(str(source.aptem_id).strip())
-            cursor.execute('SELECT learner_email FROM "Last_audit".learners WHERE aptem_id=%s', [aptem_id])
-            identity = cursor.fetchone()
+            audit_input = (preloaded or {}).get('audit_inputs') if preloaded is not None else None
+            if audit_input is not None:
+                identity = audit_input.get('identity')
+            else:
+                cursor.execute('SELECT learner_email FROM "Last_audit".learners WHERE aptem_id=%s', [aptem_id])
+                identity = cursor.fetchone()
             if identity and identity[0] and source.email and identity[0].strip().casefold() != source.email.strip().casefold():
                 raise ValueError('The previous learning identity could not be verified.')
             history_ready = identity is not None
             if history_ready:
-                cursor.execute('''SELECT gl.group_id,ga.activity_id,r.status,r.video_completed,
+                if audit_input is not None:
+                    historical = audit_input.get('historical', [])
+                else:
+                    cursor.execute('''SELECT gl.group_id,ga.activity_id,r.status,r.video_completed,
                     r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
                     CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
                     CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb
@@ -322,17 +355,23 @@ def read_metrics(source, kind):
                     LEFT JOIN "Last_audit".activity_planned_hours ph ON ph.learner_id=l.learner_id AND ph.aptem_id=l.aptem_id
                         AND ph.ref=ga.activity_id::text AND ph.kind=CASE lower(coalesce(a.activity_type,r.activity_type))
                             WHEN 'video' THEN 'video' WHEN 'audio' THEN 'audio' WHEN 'reading+quiz' THEN 'reading_quiz' END
-                    WHERE l.aptem_id=%s''', [aptem_id])
+                        WHERE l.aptem_id=%s''', [aptem_id])
                 # Dashboard totals use the verified audit snapshot as their
                 # stable baseline. The external LMS inventory is a separate
                 # view and can contain newly published, unmapped activities;
                 # mixing it here changes both the denominator and KSB status.
-                historical = rows(cursor)
-                cursor.execute('''SELECT DISTINCT group_id,activity_id FROM "Learner".subject_activity_attempts
-                    WHERE enrolment_id=%s AND aptem_id=%s AND completed=true
-                      AND submitted_at IS NOT NULL''', [source.pk, aptem_id])
-                attempts = {(str(group), str(activity)) for group, activity in cursor.fetchall()}
-                cursor.execute('''WITH exports AS (
+                    historical = rows(cursor)
+                if preloaded is not None and 'subject_attempts' in preloaded:
+                    attempts = preloaded['subject_attempts']
+                else:
+                    cursor.execute('''SELECT DISTINCT group_id,activity_id FROM "Learner".subject_activity_attempts
+                        WHERE enrolment_id=%s AND aptem_id=%s AND completed=true
+                          AND submitted_at IS NOT NULL''', [source.pk, aptem_id])
+                    attempts = {(str(group), str(activity)) for group, activity in cursor.fetchall()}
+                if preloaded is not None and 'export_links' in preloaded:
+                    export_rows = preloaded['export_links']
+                else:
+                    cursor.execute('''WITH exports AS (
                     SELECT course_id,CASE WHEN jsonb_typeof(curriculum)='string'
                         THEN (curriculum #>> '{}')::jsonb ELSE curriculum END AS payload
                     FROM "MBA".course_curriculum WHERE course_id=ANY(%s))
@@ -341,15 +380,18 @@ def read_metrics(source, kind):
                         CASE WHEN jsonb_typeof(payload->'sections')='array' THEN payload->'sections' ELSE '[]'::jsonb END) section
                     CROSS JOIN LATERAL jsonb_array_elements(
                         CASE WHEN jsonb_typeof(section->'materials')='array' THEN section->'materials' ELSE '[]'::jsonb END) material''',
-                               [sorted({int(item['group_id']) for item in historical})])
+                                   [sorted({int(item['group_id']) for item in historical})])
+                    export_rows = cursor.fetchall()
                 candidates = {}
-                for group, activity, component in cursor.fetchall():
+                for group, activity, component in export_rows:
                     if component and activity:
                         candidates.setdefault(str(component), set()).add((str(group), str(activity)))
                 links = {component: next(iter(keys)) for component, keys in candidates.items() if len(keys) == 1}
     return metrics_from_loaded(source, kind, migrated=migrated, native=native,
         progress=progress, direct_progress=direct_progress, historical=historical,
-        attempts=attempts, links=links, history_ready=history_ready)
+        attempts=attempts, links=links, history_ready=history_ready,
+        manual_hours=(preloaded.get('manual_hours', _MISSING) if preloaded is not None else _MISSING),
+        preloaded=preloaded)
 
 
 @require_GET
@@ -371,3 +413,179 @@ def learner_metrics(request, kind, pk):
     response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'
     return response
+
+
+def load_subject_attempts_bulk(keys):
+    """Load completed submitted attempts for all stable enrolment/Aptem pairs."""
+    pairs = list(dict.fromkeys((int(enrolment), int(aptem)) for enrolment, aptem in (keys or []) if enrolment is not None and aptem is not None))
+    result = {pair: set() for pair in pairs}
+    if not pairs:
+        return result
+    placeholders = ','.join(['(%s,%s)'] * len(pairs))
+    params = [value for pair in pairs for value in pair]
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute(f'''SELECT DISTINCT enrolment_id, aptem_id, group_id, activity_id
+            FROM "Learner".subject_activity_attempts
+            WHERE (enrolment_id, aptem_id) IN ({placeholders})
+              AND completed=true AND submitted_at IS NOT NULL''', params)
+        for enrolment_id, aptem_id, group_id, activity_id in cursor.fetchall():
+            result.setdefault((int(enrolment_id), int(aptem_id)), set()).add((str(group_id), str(activity_id)))
+    return result
+
+
+def load_manual_hours_bulk(aptem_ids):
+    """Sum accepted, non-deleted manual hours by stable Aptem id."""
+    ids = list(dict.fromkeys(int(value) for value in (aptem_ids or []) if value not in (None, '')))
+    if not ids:
+        return {}
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute('''SELECT aptem_id, SUM(actual_hours)
+            FROM structured_manual_activities.manual_learner_activities
+            WHERE aptem_id=ANY(%s) AND accepted=true AND deleted_at IS NULL
+            GROUP BY aptem_id''', [ids])
+        return {int(aptem_id): number(total) for aptem_id, total in cursor.fetchall()}
+
+
+def load_reflection_submissions_bulk(keys):
+    """Load assignment reflection submissions keyed by (learner kind, profile id)."""
+    pairs = list(dict.fromkeys((str(kind), str(profile_id)) for kind, profile_id in (keys or []) if profile_id is not None))
+    result = {pair: [] for pair in pairs}
+    if not pairs:
+        return result
+    clauses = ' OR '.join(['(learner_kind=%s AND learner_id=%s)'] * len(pairs))
+    params = [value for pair in pairs for value in pair]
+    try:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute(f'''SELECT learner_kind, learner_id, id, progress_entry_id, submitted_at, activity_id, component_ref, status, actual_time_hours,
+                    full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
+                FROM "Learner".learning_reflection_submissions
+                WHERE activity_type='assignment' AND ({clauses})
+                ORDER BY submitted_at NULLS FIRST,id''', params)
+            for learner_kind, learner_id, entry_id, progress_entry_id, submitted_at, activity_id, component_ref, status, actual_time_hours, imported in cursor.fetchall():
+                result.setdefault((str(learner_kind), str(learner_id)), []).append({
+                    'id': entry_id, 'progress_entry_id': progress_entry_id, 'submitted_at': submitted_at,
+                    'activity_id': activity_id, 'component_ref': component_ref, 'status': status,
+                    'actual_time_hours': actual_time_hours, 'imported': imported,
+                })
+    except (DatabaseError, psycopg.Error, StopIteration):
+        return {pair: None for pair in pairs}
+    return result
+
+
+def load_audit_inputs_bulk(aptem_ids):
+    """Load audit identity and historical activity rows by stable Aptem id."""
+    ids = list(dict.fromkeys(int(value) for value in (aptem_ids or []) if value not in (None, '')))
+    result = {aptem_id: {'identity': None, 'historical': []} for aptem_id in ids}
+    if not ids:
+        return result
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute('SELECT aptem_id, learner_email FROM "Last_audit".learners WHERE aptem_id=ANY(%s)', [ids])
+        for aptem_id, email in cursor.fetchall():
+            result.setdefault(int(aptem_id), {'identity': None, 'historical': []})['identity'] = (email,)
+        cursor.execute('''SELECT l.aptem_id,gl.group_id,ga.activity_id,r.status,r.video_completed,
+            r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
+            CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
+            CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb
+                 THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
+            jsonb_path_query_array(CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
+                                   '$[*].code') AS ksb_mappings
+            FROM "Last_audit".learners l
+            JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
+            JOIN "Last_audit".group_activities ga ON ga.group_id=gl.group_id
+            JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
+            LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
+                ON lk.aptem_id=l.aptem_id AND lk.activity_id=ga.activity_id
+            LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=ga.activity_id
+            LEFT JOIN "Last_audit".activity_results r ON r.learner_id=l.learner_id
+                AND r.group_id=gl.group_id AND r.activity_id=ga.activity_id
+            LEFT JOIN "Last_audit".activity_planned_hours ph ON ph.learner_id=l.learner_id AND ph.aptem_id=l.aptem_id
+                AND ph.ref=ga.activity_id::text AND ph.kind=CASE lower(coalesce(a.activity_type,r.activity_type))
+                    WHEN 'video' THEN 'video' WHEN 'audio' THEN 'audio' WHEN 'reading+quiz' THEN 'reading_quiz' END
+            WHERE l.aptem_id=ANY(%s)''', [ids])
+        for item in rows(cursor):
+            aptem_id = int(item.pop('aptem_id'))
+            result.setdefault(aptem_id, {'identity': None, 'historical': []})['historical'].append(item)
+    return result
+
+
+def load_native_progress_bulk(enrolment_ids):
+    """Load native learner progress keyed by stable enrolment ID."""
+    ids = list(dict.fromkeys(int(value) for value in (enrolment_ids or []) if value is not None))
+    result = {enrolment_id: [] for enrolment_id in ids}
+    if not ids:
+        return result
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute('''SELECT l.enrolment_id,p.component_ref AS "componentId",p.quiz_ref AS "quizId",p.kind,p.passed
+            FROM "Learner".learners l
+            JOIN "Learner".learner_progress_entries p ON p.learner_id=l.id
+            WHERE l.enrolment_id=ANY(%s) AND p.kind<>'activity_event' ''', [ids])
+        for enrolment_id, component_id, quiz_id, kind, passed in cursor.fetchall():
+            result.setdefault(int(enrolment_id), []).append({
+                'componentId': component_id, 'quizId': quiz_id, 'kind': kind, 'passed': passed,
+            })
+    return result
+
+
+def load_native_components_bulk(module_ids):
+    """Load native components/KSB mappings keyed by module catalogue ID."""
+    ids = list(dict.fromkeys(str(value) for value in (module_ids or []) if value not in (None, '')))
+    result = {module_id: [] for module_id in ids}
+    if not ids:
+        return result
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute('''SELECT c.module_catalogue_id,c.id,c.type,c.expected_otjh AS expected_hours,
+                coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
+                (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
+                 FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
+                   AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb) AS ksb_mappings,
+                coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
+                          WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
+                         c.settings_json->>'linkedQuizId') AS quiz_id
+            FROM curriculum.components c
+            WHERE c.module_catalogue_id=ANY(%s)
+              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')''', [ids])
+        for item in rows(cursor):
+            result.setdefault(str(item.pop('module_catalogue_id')), []).append(item)
+    return result
+
+
+def load_planned_hours_documents_bulk(keys):
+    """Select the latest active training-plan document per (learner, kind)."""
+    pairs = list(dict.fromkeys((int(learner_id), str(kind)) for learner_id, kind in (keys or [])))
+    result = {pair: None for pair in pairs}
+    if not pairs:
+        return result
+    from django.db.models import Q
+    query = Q()
+    for learner_id, kind in pairs:
+        query |= Q(learner_id=learner_id, learner_kind=kind)
+    documents = (TrainingPlanDocument.objects.using('enrolment')
+                 .filter(query, status=TrainingPlanDocument.STATUS_ACTIVE)
+                 .order_by('learner_id', 'learner_kind', '-created_at', '-id')
+                 .values('learner_id', 'learner_kind', 'otjh'))
+    for document in documents:
+        pair = (int(document['learner_id']), str(document['learner_kind']))
+        if pair in result and result[pair] is None:
+            result[pair] = {'otjh': document['otjh']}
+    return result
+
+
+def load_export_links_bulk(group_ids):
+    """Load raw course-curriculum export rows keyed by audit group id."""
+    ids = list(dict.fromkeys(int(value) for value in (group_ids or []) if value is not None))
+    result = {group_id: [] for group_id in ids}
+    if not ids:
+        return result
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute('''WITH exports AS (
+                SELECT course_id,CASE WHEN jsonb_typeof(curriculum)='string'
+                    THEN (curriculum #>> '{}')::jsonb ELSE curriculum END AS payload
+                FROM "MBA".course_curriculum WHERE course_id=ANY(%s))
+            SELECT course_id,material->>'source_component_id',material->>'component_id'
+            FROM exports CROSS JOIN LATERAL jsonb_array_elements(
+                CASE WHEN jsonb_typeof(payload->'sections')='array' THEN payload->'sections' ELSE '[]'::jsonb END) section
+            CROSS JOIN LATERAL jsonb_array_elements(
+                CASE WHEN jsonb_typeof(section->'materials')='array' THEN section->'materials' ELSE '[]'::jsonb END) material''', [ids])
+        for group_id, activity, component in cursor.fetchall():
+            result.setdefault(int(group_id), []).append((group_id, activity, component))
+    return result

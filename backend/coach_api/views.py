@@ -5,7 +5,6 @@ import re
 import hashlib
 from html import escape
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
 from time import perf_counter, sleep as _sleep
@@ -72,7 +71,13 @@ from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
 from learner_api.learner_detail import otjh_status_from_variance, refresh_learner_otjh_snapshot
-from learner_api.dashboard_metrics import read_metrics
+from learner_api.dashboard_metrics import (read_metrics, load_subject_attempts_bulk,
+                                            load_manual_hours_bulk, load_reflection_submissions_bulk,
+                                            load_audit_inputs_bulk, load_native_progress_bulk,
+                                            load_native_components_bulk, load_planned_hours_documents_bulk)
+from learner_api.dashboard_metrics import load_export_links_bulk
+from learner_api.learning_plan import _effective_plan_ids
+from learner_api.student_activity import load_direct_progress_records_bulk
 from learner_api.ksb_codes import extract_ksb_codes, normalize_ksb_parent_code
 from learner_api.progress_rules import progress_record_counts_as_achieved
 from audit_api.last_audit_ledger_views import _connection as audit_connection
@@ -2267,19 +2272,83 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     if not work:
         return {}
 
-    def load(item):
-        profile_id, source, kind = item
-        try:
-            return profile_id, read_metrics(source, kind)
-        except (DatabaseError, ValueError) as exc:
-            logger.warning("Could not read canonical coach metrics for learner %s: %s", profile_id, exc)
-            return profile_id, None
-        finally:
-            close_old_connections()
+    enrolment_ids = [int(source.pk) for _, source, _ in work]
+    direct_progress = load_direct_progress_records_bulk(enrolment_ids)
+    attempt_keys = [
+        (int(source.pk), int(source.aptem_id))
+        for _, source, _ in work
+        if getattr(source, 'aptem_id', None) not in (None, '')
+    ]
+    subject_attempts = load_subject_attempts_bulk(attempt_keys)
+    manual_hours = load_manual_hours_bulk([aptem for _, aptem in attempt_keys])
+    reflection_keys = [(kind, int(source.pk)) for _, source, kind in work]
+    reflection_submissions = load_reflection_submissions_bulk(reflection_keys)
+    audit_inputs = load_audit_inputs_bulk([aptem for _, aptem in attempt_keys])
+    native_progress = load_native_progress_bulk(enrolment_ids)
+    plan_ids_by_enrolment = {
+        int(source.pk): _effective_plan_ids(source, {})
+        for _, source, _ in work
+    }
+    component_by_module = load_native_components_bulk(
+        [module_id for ids in plan_ids_by_enrolment.values() for module_id in ids]
+    )
+    planned_documents = load_planned_hours_documents_bulk([
+        (int(source.pk), kind) for _, source, kind in work
+    ])
+    audit_groups = {
+        int(item['group_id'])
+        for audit in audit_inputs.values()
+        for item in (audit or {}).get('historical', [])
+        if item.get('group_id') is not None
+    }
+    export_links = load_export_links_bulk(audit_groups)
 
-    with ThreadPoolExecutor(max_workers=min(4, len(work)), thread_name_prefix="coach-metrics") as executor:
-        results = executor.map(load, work)
-        return {profile_id: metrics for profile_id, metrics in results if metrics is not None}
+    def load_metrics_inputs(items):
+        """Load canonical inputs in one bounded, request-owned DB phase.
+
+        The calculation remains the existing ``read_metrics`` implementation;
+        importantly, it is not fanned out into ORM threads.  Django connections
+        are thread-local, so the previous per-learner executor multiplied DB
+        connections and could nest under the dashboard executor.
+        """
+        loaded = []
+        for item in items:
+            profile_id, source, kind = item
+            try:
+                loaded.append((profile_id, read_metrics(
+                    source, kind,
+                    preloaded={
+                        'direct_progress': direct_progress.get(int(source.pk), []),
+                        'subject_attempts': subject_attempts.get((int(source.pk), int(source.aptem_id)), set()),
+                        'manual_hours': manual_hours.get(int(source.aptem_id)),
+                        'reflection_submissions': reflection_submissions.get((kind, str(source.pk)), []),
+                        'audit_inputs': audit_inputs.get(int(source.aptem_id)),
+                        'native_progress': native_progress.get(int(source.pk), []),
+                        'effective_plan_ids': plan_ids_by_enrolment.get(int(source.pk), []),
+                        'native_components': [
+                            item for module_id in plan_ids_by_enrolment.get(int(source.pk), [])
+                            for item in component_by_module.get(str(module_id), [])
+                        ],
+                        'planned_hours_document': planned_documents.get((int(source.pk), kind)),
+                        'export_links': [
+                            row
+                            for group_id in {
+                                int(item['group_id'])
+                                for item in (audit_inputs.get(int(source.aptem_id)) or {}).get('historical', [])
+                                if item.get('group_id') is not None
+                            }
+                            for row in export_links.get(group_id, [])
+                        ],
+                    },
+                )))
+            except (DatabaseError, ValueError) as exc:
+                logger.warning("Could not read canonical coach metrics for learner %s: %s", profile_id, exc)
+                # Preserve partial-success semantics: one bad learner does not
+                # discard metrics already loaded for the rest of the caseload.
+        return loaded
+
+    results = load_metrics_inputs(work)
+    return {profile_id: metrics for profile_id, metrics in results if metrics is not None}
 
 
 def caseload_canonical_attendance(rows) -> dict[int, dict]:
@@ -2302,9 +2371,8 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
         finally:
             close_old_connections()
 
-    with ThreadPoolExecutor(max_workers=min(4, len(work)), thread_name_prefix="coach-attendance") as executor:
-        results = executor.map(load, work)
-        return {profile_id: summary for profile_id, summary in results if summary is not None}
+    results = [load(item) for item in work]
+    return {profile_id: summary for profile_id, summary in results if summary is not None}
 
 
 def caseload_kbc_attendance_rates(rows) -> tuple[dict[int, int], dict[int, dict]]:
@@ -2403,7 +2471,7 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
         component_progress=component_progress, component_available=component_available,
     )
     payload["riskFlags"] = build_active_user_risk_flags(
-        otjh_status=payload.get("otjhStatus") or "", ksb_status=payload["ksbStatus"], progress_variance=progress_variance,
+        otjh_status=payload.get("otjhStatus") or "", ksb_status=payload.get("ksbStatus") or "", progress_variance=progress_variance,
         hours_progress=hours_progress, hours_available=hours_available,
         ksb_progress=ksb_progress, ksb_available=ksb_available,
         component_progress=component_progress, component_available=component_available,
@@ -2485,6 +2553,28 @@ def apply_audit_hour_totals(payload: dict, totals: dict | None) -> dict:
     payload["overallProgress"] = percentage(payload["otjhCompleted"], payload["otjhTarget"])
     payload["overallProgressAvailable"] = True
     payload["otjhSource"] = "audit"
+    return payload
+
+
+def apply_attendance_summary(payload: dict, metrics: dict | None) -> dict:
+    """Overlay the one canonical attendance summary on a serialized learner.
+
+    ``metrics`` comes from ``dashboard_attendance_rows``, joined by the same
+    stable LearnerProfile id every other dashboard enrichment uses. This is
+    the only place attendance is written onto the dashboard learner payload,
+    so the response never carries two attendance figures for the frontend to
+    reconcile. A missing/failed lookup leaves the unavailable placeholder
+    from ``serialize_caseload_dashboard_learner`` rather than a fake 0.
+    """
+    if not metrics:
+        return payload
+    has_attendance = bool(metrics.get("hasAttendance")) and metrics.get("attendance") is not None
+    if not has_attendance:
+        return payload
+    payload["attendanceRate"] = to_number(metrics.get("attendance"))
+    payload["attendanceRateAvailable"] = True
+    payload["attendanceLastSession"] = metrics.get("lastSession")
+    payload["attendanceLastSessionDate"] = metrics.get("lastSessionDate")
     return payload
 
 
@@ -2728,8 +2818,14 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         "riskFlags": risk_flags,
         "overallProgress": hours_progress,
         "overallProgressAvailable": hours_available,
-        "attendanceRate": 0,
+        # Placeholder until apply_attendance_summary overlays the one
+        # canonical attendance figure below. Never a fake 0: a learner whose
+        # attendance enrichment failed or has no register must read as
+        # unavailable, not as "0% attendance".
+        "attendanceRate": None,
         "attendanceRateAvailable": False,
+        "attendanceLastSession": None,
+        "attendanceLastSessionDate": None,
         "otjhCompleted": to_number(getattr(row, "completed_hours", None)),
         "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
         "otjhMinimum": to_number(getattr(row, "minimum_hours", None)),
@@ -2753,10 +2849,7 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         "startDate": format_date(getattr(row, "start_date", None)),
         "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
         "plannedEndDate": format_date(getattr(row, "end_date", None)),
-        "coachName": clean_text(getattr(row, "coach_name", None)) or None,
-        "coachEmail": clean_text(getattr(row, "coach_email", None)) or None,
         "rawProgramStatus": program_status or "--",
-        "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
     }
 
 
@@ -10573,6 +10666,13 @@ def coach_directory(request):
 def coach_dashboard(request):
     """Return every data set needed by the coach workspace in one request."""
     owner_email = authenticated_coach_email(request)
+    # The dashboard is read-only and expensive to assemble (caseload metrics,
+    # audit mirror and timetable).  Reuse the complete payload briefly so a
+    # browser refresh or React remount does not repeat all remote queries.
+    dashboard_cache_key = f"coach-dashboard:v4:{normalize_email(owner_email)}"
+    cached_dashboard = cache.get(dashboard_cache_key)
+    if cached_dashboard is not None:
+        return JsonResponse(cached_dashboard)
     today = date.today()
     calendar_end = today + timedelta(days=90)
 
@@ -10580,10 +10680,30 @@ def coach_dashboard(request):
         try:
             rows = fetch_caseload_dashboard_profiles(owner_email)
             learners = [serialize_caseload_dashboard_learner(row) for row in rows]
-            latest_activities = caseload_latest_learning_activities(rows)
-            audit_totals = caseload_audit_hour_totals(rows)
-            ksb_counts = caseload_evidenced_ksb_counts(rows)
-            canonical_metrics = caseload_canonical_metrics(rows)
+            # These are independent read-only enrichments.  Running them in
+            # series made the dashboard wait for every remote/local query in
+            # turn (most noticeably the audit mirror).  Keep the same payload
+            # but overlap their latency so first paint is bounded by the
+            # slowest enrichment rather than their sum.
+            def run_enrichment(fn):
+                try:
+                    return fn(rows)
+                except Exception:
+                    # Metrics/attendance mirrors are optional dashboard
+                    # enrichments.  A transient remote DB failure must not
+                    # turn the whole coach dashboard into a 503.
+                    logger.warning("coach_dashboard_enrichment_failed", exc_info=True)
+                    return {}
+                finally:
+                    close_old_connections()
+
+            # Keep concurrency bounded: canonical metrics may fan out its own
+            # read-only workers, so a large outer pool can exhaust the DB pool
+            # during concurrent refreshes.
+            latest_activities = run_enrichment(caseload_latest_learning_activities)
+            audit_totals = run_enrichment(caseload_audit_hour_totals)
+            ksb_counts = run_enrichment(caseload_evidenced_ksb_counts)
+            canonical_metrics = run_enrichment(caseload_canonical_metrics)
             aptem_by_profile = caseload_aptem_ids(rows)
             for row, learner in zip(rows, learners):
                 apply_latest_learning_activity(learner, latest_activities.get(int(row.id)))
@@ -10638,57 +10758,39 @@ def coach_dashboard(request):
         # These sections use independent read-only connections. Running them
         # together makes initial page latency the duration of the slowest query
         # instead of the sum of both remote-database round trips.
-        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="coach-dashboard") as executor:
-            learners_future = executor.submit(load_dashboard_learners)
-            timetable_future = executor.submit(load_dashboard_timetable)
-            groups_future = executor.submit(load_assigned_groups)
-            dashboard_rows, learners, monthly_risk = learners_future.result()
-            timetable_payload = timetable_future.result()
-            assigned_groups = groups_future.result()
+        dashboard_rows, learners, monthly_risk = load_dashboard_learners()
+        timetable_payload = load_dashboard_timetable()
+        assigned_groups = load_assigned_groups()
         # Depends on the learner list, so it follows the pool rather than
-        # joining it. Resolve the Aptem bridge once and share it between the
-        # KBC attendance and imported review-history enrichments. Those two
-        # enrichments are independent read-only queries; run them together so
-        # a slow attendance source does not add its latency to review history.
+        # joining it.
         try:
             aptem_by_profile = caseload_aptem_ids(dashboard_rows)
-            def run_enrichment(fn, *args, **kwargs):
-                try:
-                    return fn(*args, **kwargs)
-                finally:
-                    close_old_connections()
-
-            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="coach-dashboard-enrichment") as executor:
-                attendance_future = executor.submit(
-                    run_enrichment,
-                    dashboard_attendance_rows,
-                    dashboard_rows,
-                    learners,
-                    aptem_by_profile=aptem_by_profile,
+            try:
+                attendance_rows = dashboard_attendance_rows(
+                    dashboard_rows, learners, aptem_by_profile=aptem_by_profile,
                 )
-                review_history_future = executor.submit(
-                    run_enrichment,
-                    dashboard_review_history,
-                    dashboard_rows,
-                    aptem_by_profile=aptem_by_profile,
-                )
-                try:
-                    attendance_rows = attendance_future.result()
-                except Exception:
-                    # Attendance is an optional dashboard enrichment. A
-                    # malformed source row or an unavailable side database
-                    # must not turn an otherwise valid caseload into a 503.
-                    logger.warning("Could not load dashboard attendance", exc_info=True)
-                    attendance_rows = []
-                try:
-                    review_history = review_history_future.result()
-                except Exception:
-                    logger.warning("Could not load dashboard review history", exc_info=True)
-                    review_history = {}
+            except Exception:
+                # Attendance is an optional dashboard enrichment. A malformed
+                # source row or an unavailable side database must not turn an
+                # otherwise valid caseload into a 503.
+                logger.warning("Could not load dashboard attendance", exc_info=True)
+                attendance_rows = []
         finally:
             close_old_connections()
+        # dashboard_attendance_rows is the one canonical attendance source:
+        # overlay it onto each learner here, by the same stable id every other
+        # enrichment above joins on, so the response never carries a second,
+        # independently-mergeable attendance dataset for the frontend to
+        # reconcile by email/name.
+        attendance_by_id = {
+            to_int(entry.get("id")): entry
+            for entry in attendance_rows
+            if to_int(entry.get("id")) is not None
+        }
+        for learner in learners:
+            apply_attendance_summary(learner, attendance_by_id.get(to_int(learner.get("id"))))
         owner_name = coach_staff_display_name(owner_email) or next(
-            (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
+            (clean_text(getattr(row, "coach_name", None)) for row in dashboard_rows if clean_text(getattr(row, "coach_name", None))),
             "Coach",
         )
     except Exception:
@@ -10700,8 +10802,7 @@ def coach_dashboard(request):
             status=503,
         )
 
-    return JsonResponse(
-        {
+    response_payload = {
             "owner": {
                 "name": timetable_payload.get("owner_name") or owner_name,
                 "email": owner_email,
@@ -10709,16 +10810,13 @@ def coach_dashboard(request):
             "learners": learners,
             "monthlyRisk": monthly_risk,
             "assignedGroups": assigned_groups,
-            # Attendance is one batched query and the caseload modal on this
-            # page renders it, so it ships here. Evidence stays empty: its
-            # dedicated page loads that expensive dataset on demand.
-            "attendance": {"learners": attendance_rows},
-            "reviewHistory": {
-                "learners": [
-                    review_history[profile_id]
-                    for profile_id in sorted(review_history)
-                ],
-            },
+            # Attendance is overlaid onto each learner above (the one
+            # canonical source); no separate attendance dataset ships here.
+            # Full imported review history (sections/fields/tables/rawText)
+            # is not needed by this dashboard -- it is not rendered here, and
+            # the caseload drawer that does need it loads /coach/caseload
+            # directly. Evidence stays empty: its dedicated page loads that
+            # expensive dataset on demand.
             "timetable": {
                 "summary": timetable_payload.get("summary", {}),
                 "events": timetable_payload.get("events", []),
@@ -10726,7 +10824,8 @@ def coach_dashboard(request):
             "evidence": {"items": []},
             "errors": {},
         }
-    )
+    cache.set(dashboard_cache_key, response_payload, 30)
+    return JsonResponse(response_payload)
 
 @coach_access_required
 @require_GET
@@ -10847,6 +10946,14 @@ def coach_caseload(request):
     owner_email = authenticated_coach_email(request)
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
     summary_only = clean_text(request.GET.get("summary")).casefold() in {"1", "true", "yes", "on"}
+    # Caseload enrichment is expensive and the page may request it again on a
+    # refresh/remount.  Keep a short per-coach snapshot for read-only GETs;
+    # live snapshot requests explicitly bypass this cache.
+    caseload_cache_key = f"coach-caseload:v2:{normalize_email(owner_email)}:{int(summary_only)}"
+    if not refresh_live_snapshots:
+        cached_caseload = cache.get(caseload_cache_key)
+        if cached_caseload is not None:
+            return JsonResponse(cached_caseload)
 
     try:
         if summary_only:
@@ -10858,13 +10965,24 @@ def coach_caseload(request):
                 serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
                 for row in rows
             ]
-        # Quote the same whole-programme OTJ figures the learner sees on their
-        # own workspace, rather than the training-plan reflection totals.
-        audit_totals = caseload_audit_hour_totals(rows)
-        ksb_counts = caseload_evidenced_ksb_counts(rows)
-        canonical_metrics = caseload_canonical_metrics(rows)
+        # These enrichments are independent. Running them serially made the
+        # first caseload load wait for every audit/metrics/review query in
+        # sequence. Bound the pool because canonical metrics can fan out its
+        # own read-only workers.
+        def run_optional(fn):
+            try:
+                return fn(rows)
+            except Exception:
+                logger.warning("coach_caseload_enrichment_failed", exc_info=True)
+                return {}
+            finally:
+                close_old_connections()
+
+        audit_totals = run_optional(caseload_audit_hour_totals)
+        ksb_counts = run_optional(caseload_evidenced_ksb_counts)
+        canonical_metrics = run_optional(caseload_canonical_metrics)
+        review_history = run_optional(dashboard_review_history)
         aptem_by_profile = caseload_aptem_ids(rows)
-        review_history = dashboard_review_history(rows)
         for row, learner in zip(rows, learners):
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
@@ -10890,12 +11008,13 @@ def coach_caseload(request):
         (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
         "Coach",
     )
-    return JsonResponse(
-        {
+    response_payload = {
             "owner": {"name": owner_name, "email": owner_email},
             "learners": learners,
         }
-    )
+    if not refresh_live_snapshots:
+        cache.set(caseload_cache_key, response_payload, 30)
+    return JsonResponse(response_payload)
 
 
 @coach_access_required
