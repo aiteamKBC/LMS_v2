@@ -17,7 +17,7 @@ import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE, formatHoursMinutes }
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import { WorkspaceDashboardLayout } from '@/components/feature/WorkspaceDashboardLayout';
 import { SectionHeader, SectionLabel } from '@/components/ui/SectionHeader';
-import { MetricCard, CompactMetric, MetricRow } from '@/components/ui/MetricCard';
+import { CompactMetric } from '@/components/ui/MetricCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ActionRow } from '@/components/ui/ActionRow';
@@ -1211,6 +1211,11 @@ export default function CoachDashboard() {
   const atRiskCount = atRiskLearners.length;
   const onTrackCount = onTrackLearners.length;
   const totalCaseload = enrichedLearners.length;
+  const classifiedActiveCount = onTrackCount + needAttentionLearners.length + atRiskCount;
+  const unclassifiedActiveCount = Math.max(activeLearners.length - classifiedActiveCount, 0);
+  const onTrackRate = activeLearners.length > 0
+    ? Math.round((onTrackCount / activeLearners.length) * 100)
+    : 0;
   const assignedGroupRows = useMemo(() => assignedGroups.map(group => {
     const groupLearners = activeLearners.filter(learner => learnerBelongsToAssignedGroup(learner, group));
     return {
@@ -1615,60 +1620,136 @@ export default function CoachDashboard() {
             CASELOAD HEALTH
             ═══════════════════════════════════════════════════ */}
         <SectionReveal delay={70}>
-          <div className="min-w-0">
-            <div className="space-y-3">
-              <SectionHeader icon="ri-heart-pulse-line" title="Caseload health" />
-              <div className="grid grid-cols-2 gap-3 min-[1600px]:grid-cols-5">
-                <FilterMetricCard
-                  label="Caseload"
-                  value={totalCaseload}
-                  note={`${onTrackCount} on track`}
-                  tone="brand"
-                  icon="ri-group-line"
-                  active={kpiFilter === 'caseload'}
-                  onFilter={() => setSelectedKpi('caseload')}
+          <section className="overflow-hidden rounded-xl border border-foreground-100/80 bg-gradient-to-br from-white via-white to-primary-50/45 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground-100/60 px-4 py-3.5 sm:px-5">
+              <div className="flex items-center gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-700 shadow-sm ring-1 ring-inset ring-primary-100">
+                  <AppIcon className="ri-heart-pulse-line text-lg"></AppIcon>
+                </span>
+                <div>
+                  <h2 className="font-heading text-base font-bold tracking-tight text-foreground-950">Learner health</h2>
+                  <p className="mt-0.5 text-[12px] text-foreground-500">OTJH status across {activeLearners.length} active learner{activeLearners.length === 1 ? '' : 's'}</p>
+                </div>
+              </div>
+              <Link
+                to="/coach/caseload"
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-foreground-200/70 bg-white/80 px-3 text-[12px] font-semibold text-foreground-700 shadow-sm transition-colors hover:border-primary-200 hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+              >
+                <AppIcon className="ri-group-line text-sm text-primary-600"></AppIcon>
+                All learners
+                <AppIcon className="ri-arrow-right-line text-sm"></AppIcon>
+              </Link>
+            </div>
+
+            <div className="grid min-w-0 gap-4 px-4 py-4 sm:px-5 sm:py-5 md:grid-cols-[minmax(13rem,0.72fr)_minmax(0,1.5fr)] md:items-center md:gap-5">
+              <div className="flex items-center gap-4 rounded-xl bg-primary-50/55 p-3.5 sm:gap-4 sm:p-4">
+                <button
+                  type="button"
+                  onClick={() => setSelectedKpi('on-track')}
+                  aria-label={`Open ${onTrackCount} on track learners`}
+                  className="relative h-24 w-24 shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-2"
+                >
+                  <svg className="h-full w-full -rotate-90" viewBox="0 0 100 100" aria-hidden="true">
+                    <circle cx="50" cy="50" r="42" fill="none" stroke="currentColor" strokeWidth="8" className="text-primary-100" />
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="42"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="8"
+                      strokeLinecap="round"
+                      pathLength="100"
+                      strokeDasharray={`${onTrackRate} 100`}
+                      className={atRiskCount > 0 ? 'text-red-500' : needAttentionLearners.length > 0 ? 'text-amber-500' : 'text-emerald-500'}
+                    />
+                  </svg>
+                  <span className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="font-heading text-xl font-bold leading-none tabular-nums text-foreground-950">{activeLearners.length ? `${onTrackRate}%` : EMPTY_VALUE}</span>
+                    <span className="mt-1 text-[10px] font-semibold text-foreground-400">on track</span>
+                  </span>
+                </button>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold leading-snug text-foreground-900">
+                    {atRiskCount + needAttentionLearners.length > 0
+                      ? `${atRiskCount + needAttentionLearners.length} need support`
+                      : 'Caseload is on track'}
+                  </p>
+                  <p className="mt-1.5 text-[12px] leading-relaxed text-foreground-500">
+                    {atRiskCount > 0
+                      ? `${atRiskCount} at risk and ${needAttentionLearners.length} requiring attention.`
+                      : needAttentionLearners.length > 0
+                        ? `${needAttentionLearners.length} learner${needAttentionLearners.length === 1 ? '' : 's'} requiring attention.`
+                        : 'No active learners currently need OTJH support.'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={scrollToAttention}
+                    className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-semibold text-primary-700 hover:text-primary-800 focus:outline-none focus-visible:underline"
+                  >
+                    Review priority queue
+                    <AppIcon className="ri-arrow-down-line text-xs"></AppIcon>
+                  </button>
+                </div>
+              </div>
+
+              <div className="min-w-0 divide-y divide-foreground-100">
+                <HealthStatusRow
+                  label="At risk"
+                  description="Immediate coaching action"
+                  icon="ri-alarm-warning-line"
+                  value={atRiskCount}
+                  total={activeLearners.length}
+                  tone="critical"
+                  active={kpiFilter === 'at-risk'}
+                  onClick={() => setSelectedKpi('at-risk')}
                 />
-                <FilterMetricCard
-                  label="Active"
-                  value={activeLearners.length}
-                  note="Currently active"
-                  tone="positive"
-                  icon="ri-user-follow-line"
-                  active={kpiFilter === 'active'}
-                  onFilter={() => setSelectedKpi('active')}
-                />
-                <FilterMetricCard
-                  label="Paused"
-                  value={onBreakLearners.length}
-                  note="Programme paused"
+                <HealthStatusRow
+                  label="Needs attention"
+                  description="Targeted support this week"
+                  icon="ri-error-warning-line"
+                  value={needAttentionLearners.length}
+                  total={activeLearners.length}
                   tone="caution"
-                  icon="ri-pause-line"
-                  active={kpiFilter === 'on-break'}
-                  onFilter={() => setSelectedKpi('on-break')}
+                  active={kpiFilter === 'need-attention'}
+                  onClick={() => setSelectedKpi('need-attention')}
                 />
-                <FilterMetricCard
-                  label="Completed"
-                  value={completedLearners.length}
-                  note="Finished the programme"
+                <HealthStatusRow
+                  label="On track"
+                  description="Meeting current OTJH target"
+                  icon="ri-checkbox-circle-line"
+                  value={onTrackCount}
+                  total={activeLearners.length}
                   tone="positive"
-                  icon="ri-verified-badge-line"
-                  active={kpiFilter === 'completed'}
-                  onFilter={() => setSelectedKpi('completed')}
+                  active={kpiFilter === 'on-track'}
+                  onClick={() => setSelectedKpi('on-track')}
                 />
-                <FilterMetricCard
-                  label="EPA"
-                  value={epaLearners.length}
-                  note="At EPA stage"
-                  tone="info"
-                  icon="ri-medal-line"
-                  active={kpiFilter === 'epa'}
-                  onFilter={() => setSelectedKpi('epa')}
-                />
+                {unclassifiedActiveCount > 0 && (
+                  <p className="flex items-center gap-2 px-2 py-2.5 text-[11px] text-foreground-400">
+                    <span className="h-1.5 w-1.5 rounded-full bg-foreground-300"></span>
+                    {unclassifiedActiveCount} awaiting a health status
+                  </p>
+                )}
               </div>
             </div>
 
-
-          </div>
+            <div className="flex flex-wrap items-center gap-2.5 border-t border-foreground-100/80 bg-white/55 px-4 py-3 sm:px-5">
+              <span className="mr-0.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-foreground-400">
+                <AppIcon className="ri-route-line text-sm"></AppIcon>
+                Other stages
+              </span>
+              <StagePill label="Paused" value={onBreakLearners.length} icon="ri-pause-line" tone="caution" active={kpiFilter === 'on-break'} onClick={() => setSelectedKpi('on-break')} />
+              <StagePill label="At EPA" value={epaLearners.length} icon="ri-medal-line" tone="info" active={kpiFilter === 'epa'} onClick={() => setSelectedKpi('epa')} />
+              <StagePill label="Completed" value={completedLearners.length} icon="ri-verified-badge-line" tone="positive" active={kpiFilter === 'completed'} onClick={() => setSelectedKpi('completed')} />
+              <button
+                type="button"
+                onClick={() => setSelectedKpi('caseload')}
+                className="ml-auto text-[11px] font-semibold text-foreground-500 hover:text-primary-700 focus:outline-none focus-visible:underline"
+              >
+                {totalCaseload} assigned in total
+              </button>
+            </div>
+          </section>
         </SectionReveal>
 
         {/* ═══════════════════════════════════════════════════
@@ -1859,49 +1940,77 @@ export default function CoachDashboard() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Metric cards — MetricCard/CompactMetric only filter the list
-   below when clicked, per the shared component's contract. The
-   overlay button adds the one thing that contract doesn't cover
-   for this page: a corner control that opens the KPI drill-down
-   modal without turning the whole card into a nested button.
+   Compact controls for the health breakdown and programme stages.
+   Each opens the existing KPI drill-down without giving every number
+   the visual weight of a full metric card.
    ═══════════════════════════════════════════════════════════ */
-function FilterMetricCard({ label, value, note, tone, icon, active, onFilter }: {
+function HealthStatusRow({ label, description, icon, value, total, tone, active, onClick }: {
+  label: string;
+  description: string;
+  icon: string;
+  value: number;
+  total: number;
+  tone: StatusTone;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const style = toneStyle(tone);
+  const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      aria-label={`Open ${label} learners`}
+      className={cn(
+        'group grid w-full min-w-0 grid-cols-[minmax(8.5rem,0.95fr)_minmax(4rem,1fr)_auto] items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-300 sm:grid-cols-[minmax(11rem,0.95fr)_minmax(5rem,1fr)_auto]',
+        active && 'bg-white ring-1 ring-primary-200',
+      )}
+    >
+      <span className="flex min-w-0 items-center gap-2.5">
+        <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border shadow-sm', style.bg, style.text, style.border)}>
+          <AppIcon className={`${icon} text-[15px]`}></AppIcon>
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate text-[12px] font-semibold text-foreground-800">{label}</span>
+          <span className="hidden truncate text-[10px] text-foreground-400 sm:block">{description}</span>
+        </span>
+      </span>
+      <span className="h-1.5 min-w-0 overflow-hidden rounded-full bg-foreground-100">
+        <span className={cn('block h-full rounded-full', style.dot)} style={{ width: `${percentage}%` }}></span>
+      </span>
+      <span className="flex items-center gap-2">
+        <span className={cn('min-w-5 text-right text-sm font-bold tabular-nums', style.text)}>{value}</span>
+        <AppIcon className="ri-arrow-right-s-line text-sm text-foreground-300 transition-transform group-hover:translate-x-0.5"></AppIcon>
+      </span>
+    </button>
+  );
+}
+
+function StagePill({ label, value, icon, tone, active, onClick }: {
   label: string;
   value: number;
-  note?: string;
-  tone: StatusTone;
   icon: string;
+  tone: StatusTone;
   active: boolean;
-  onFilter: () => void;
+  onClick: () => void;
 }) {
+  const style = toneStyle(tone);
   return (
-    <div className="relative">
-      <MetricCard
-        label={label}
-        value={value}
-        valuePosition="end"
-        note={note}
-        tone={tone}
-        icon={icon}
-        iconClassName="!bg-primary-100/60 !text-primary-600"
-        active={active}
-        className={cn(
-          'border border-transparent transition-all',
-          active ? 'border-primary-300 bg-primary-50/60 shadow-md ring-2 ring-primary-300/70' : '',
-        )}
-      />
-      <button
-        type="button"
-        onClick={onFilter}
-        aria-pressed={active}
-        aria-label={`Open ${label} details`}
-        title={`Open ${label} details`}
-        className="absolute inset-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-      />
-      <span className="pointer-events-none absolute right-2 top-2 z-10 text-foreground-400">
-        <AppIcon className="ri-arrow-right-up-line text-[14px]"></AppIcon>
-      </span>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      aria-label={`Open ${label} learners`}
+      className={cn(
+        'inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold shadow-sm transition-all hover:-translate-y-px hover:shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300',
+        active ? 'border-primary-300 bg-primary-50 text-primary-800' : cn(style.border, style.bg, style.text),
+      )}
+    >
+      <AppIcon className={`${icon} text-[13px]`}></AppIcon>
+      <span>{label}</span>
+      <span className="font-bold tabular-nums">{value}</span>
+    </button>
   );
 }
 
