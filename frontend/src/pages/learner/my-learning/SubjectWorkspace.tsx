@@ -11,8 +11,9 @@ import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMat
 import styles from './SubjectWorkspace.module.css';
 import { LearningCatalogue } from './LearningCatalogue';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
-import { certificateEligible, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity } from './subjectLearning';
+import { certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
+import type { PlanModule } from '@/api/trainingPlanDashboard';
 
 type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
@@ -433,7 +434,7 @@ function SubjectCertificateAction({
   </div>;
 }
 
-function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId }: {
+function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule }: {
   subject: Subject;
   cover?: string;
   tone?: SubjectCardTone;
@@ -442,6 +443,7 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
   csrfToken: string;
   kind?: string;
   learnerId?: string;
+  planModule?: PlanModule;
 }) {
   const total = subject.activities.length;
   const completed = subject.activities.filter((activity) => activity.completed).length;
@@ -449,6 +451,11 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
   const certificateReady = certificateEligible(subject, template);
   const status = isComplete ? 'Completed' : completed > 0 ? 'In progress' : total ? 'Not started' : 'No activities yet';
   const next = nextLearningWeek(subject)?.activities.find(entry => !entry.completed);
+  const moduleName = planModule?.title || subject.title;
+  const tutorName = planModule?.tutor_name?.trim() || 'To be assigned';
+  const startDate = planModule?.start_date ? learningDate(planModule.start_date) : 'Not scheduled';
+  const endDate = planModule?.end_date ? learningDate(planModule.end_date) : 'Not scheduled';
+  const sessionCount = planModule?.sessions_number;
   return <article className={`group ${styles.card} ${styles.subjectTheme}`} data-tone={tone}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
       <div className="relative w-full">
@@ -463,6 +470,12 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
           {certificateReady && <span className={styles.certificateBadge}><Award size={13} aria-hidden="true" />Ready</span>}
         </div>
         <h3 className={styles.cardTitle}>{subject.title}</h3>
+        <dl className={styles.moduleDetails} aria-label={`${moduleName} module details`}>
+          <div><dt>Tutor</dt><dd>{tutorName}</dd></div>
+          <div><dt>Start date</dt><dd>{startDate}</dd></div>
+          <div><dt>End date</dt><dd>{endDate}</dd></div>
+          <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
+        </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
         <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} progress`} /></div>
         <span className={styles.nextActivity}>{isComplete ? <CheckCircle2 size={20} /> : <BookOpen size={20} />}<span><small>{isComplete ? 'Well done' : 'Next up'}</small><strong>{isComplete ? 'All activities complete' : next?.title || 'Explore this subject'}</strong></span><ChevronRight size={16} /></span>
@@ -595,6 +608,14 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const subjectTones = useMemo(() => new Map([...subjects]
     .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
     .map((subject, index) => [subject.id, SUBJECT_CARD_TONES[index % SUBJECT_CARD_TONES.length]] as const)), [subjects]);
+  const planModulesBySubject = useMemo(() => {
+    const modules = new Map<string, PlanModule>();
+    for (const module of schedule?.modules || []) {
+      const subject = resolveLearningSubject(subjects, `current:${module.id}`, metadata, schedule);
+      if (subject && !modules.has(subject.id)) modules.set(subject.id, module);
+    }
+    return modules;
+  }, [subjects, metadata, schedule]);
   const covers = { ...data?.covers, ...metadata?.covers };
   const term = search.trim().toLocaleLowerCase();
   const planSelection = learningPlanSelection(subjects, real, metadata, schedule);
@@ -654,8 +675,9 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
       : !active ? <>
       <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={currentSubject} total={total} done={done} percent={percent} kind={kind} learnerId={learnerId}
         deadlines={deadlines}
+        moduleStartDate={subject => planModulesBySubject.get(subject.id)?.start_date}
         onContinue={subject => { setSearch(''); select(subject.id, 'current'); }}
-        renderCard={subject => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} />} />
+        renderCard={subject => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} planModule={planModulesBySubject.get(subject.id)} />} />
       {(data || metrics) && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals include accepted historical hours and new recorded learning. Planned hours come from your training plan.</p>}</>}
     </> : <>
       <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>

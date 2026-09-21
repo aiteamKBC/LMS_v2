@@ -55,7 +55,23 @@ export function timeMetaLabel(value: string): string {
 }
 
 /** Makes opaque audit identifiers readable while the raw value remains available in a tooltip. */
+/**
+ * A sensitive field records that it changed without recording what to: the
+ * stored value is a digest of itself, so two different values differ and the
+ * same value matches, and neither can be read back. See
+ * `system_audit/records.py` for which fields those are and why.
+ */
+export const REDACTED_PREFIX = 'redacted:';
+
+export function isRedacted(value: unknown): boolean {
+  return typeof value === 'string' && value.startsWith(REDACTED_PREFIX);
+}
+
 export function auditValueLabel(value: unknown): string {
+  // Said plainly rather than shown as a digest. "Hidden" on both sides of a
+  // diff is honest here in a way a count never is: the row above already says
+  // the field changed, and this says the value is deliberately not recorded.
+  if (isRedacted(value)) return 'Hidden — not recorded';
   if (value === null || value === undefined || value === '') return 'Empty';
   if (Array.isArray(value)) {
     const ids = value.filter(item => typeof item === 'string');
@@ -102,7 +118,8 @@ function parseAuditList(value: unknown): unknown[] | null {
   } catch { return null; }
 }
 
-export function auditModuleIds(value: unknown): string[] {
+/** The string ids inside a recorded list field, in the order they were saved. */
+export function auditIdList(value: unknown): string[] {
   return (parseAuditList(value) || [])
     .filter(item => typeof item === 'string')
     .map(item => item.trim())
@@ -114,13 +131,19 @@ export function auditModuleIds(value: unknown): string[] {
  * also contains a technical ID field. The ID remains available through the
  * value tooltip, while the visible value is useful to a person reading the
  * history.
+ *
+ * When the save recorded no names of its own, `names` resolves the ids against
+ * the live records. An id that resolves to nothing keeps its own text: a name
+ * that cannot be found is a gap in the lookup, not evidence that the record was
+ * never in the list, and dropping it would make a side of the diff shorter than
+ * what was actually saved.
  */
 export function auditFieldValueLabel(
   fieldLabel: string,
   value: unknown,
   fields: AuditFieldValue[],
   side: 'before' | 'after',
-  moduleTitles?: ReadonlyMap<string, string>,
+  names?: ReadonlyMap<string, string>,
 ): string {
   const namesLabel = /module\s+ids?/i.test(fieldLabel)
     ? /module\s+names?/i
@@ -142,15 +165,22 @@ export function auditFieldValueLabel(
     }
     if (typeof names === 'string' && names.trim()) return names.trim();
   }
-  if (/module\s+ids?/i.test(fieldLabel) && moduleTitles) {
-    const ids = parseAuditList(value)?.filter(item => typeof item === 'string') as string[] | undefined;
-    const titles = ids?.map(id => moduleTitles.get(id.trim().toLowerCase())).filter(Boolean) as string[] | undefined;
-    if (titles?.length) return titles.join(', ');
+  if (/(?:module|group)\s+ids?/i.test(fieldLabel) && names?.size) {
+    const ids = auditIdList(value);
+    // Shown only when at least one id could be named; a list of bare ids is no
+    // more readable than the count `auditValueLabel` falls back to, and the raw
+    // value stays in the tooltip either way.
+    if (ids.length && ids.some(id => names.get(id.toLowerCase()))) {
+      return ids.map(id => names.get(id.toLowerCase()) || id).join(', ');
+    }
   }
   return auditValueLabel(value);
 }
 
 export function auditValueTitle(value: unknown): string {
+  // No raw value in the tooltip either -- the tooltip is where the unredacted
+  // value normally lives, so it is the one place a redaction could leak.
+  if (isRedacted(value)) return 'This field is audited but its value is not recorded';
   if (value === null || value === undefined || value === '') return 'Empty';
   if (typeof value === 'string') return value;
   try { return JSON.stringify(value); } catch { return String(value); }

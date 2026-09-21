@@ -15,7 +15,7 @@ import { coachFetch } from '@/lib/coachFetch';
 import { initialsFor } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
-import { ReviewInstanceModal } from '@/pages/coach/shared/ReviewInstanceModal';
+import { reviewInstancePath, reviewInstanceRouteState } from '@/pages/coach/shared/reviewInstanceNavigation';
 import { createLearnerReviewAddition, fetchLearnerAdditionReviewTemplates, markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
 import type { LearnerAdditionReviewTemplate, LearnerAdditionReasonCode } from '@/api/reviewInstances';
 import {
@@ -447,7 +447,7 @@ function currentWeekRange(referenceDate = new Date()) {
   start.setDate(today.getDate() + mondayOffset);
 
   const end = new Date(start);
-  end.setDate(start.getDate() + 6);
+  end.setDate(start.getDate() + 4);
   return { start, end };
 }
 
@@ -928,10 +928,6 @@ export default function CoachTimetablePage() {
   const [eventActionError, setEventActionError] = useState<string | null>(null);
   const [eventActionNotice, setEventActionNotice] = useState<string | null>(null);
   const [progressReviewCompletionEvent, setProgressReviewCompletionEvent] = useState<TimetableEvent | null>(null);
-  // The Curriculum review form opened from an event, and its instance id. Any
-  // Review template's occurrence can open one; nothing here is per-review-type.
-  const [reviewFormEvent, setReviewFormEvent] = useState<TimetableEvent | null>(null);
-  const [reviewFormInstanceId, setReviewFormInstanceId] = useState('');
   const [reviewFormBusy, setReviewFormBusy] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleModalType, setScheduleModalType] = useState<SchedulableSource>('mcr');
@@ -1773,14 +1769,15 @@ export default function CoachTimetablePage() {
     setReviewFormBusy(true);
     try {
       const { instanceId } = await openReviewInstanceForEvent(event.eventKey);
-      setReviewFormInstanceId(instanceId);
-      setReviewFormEvent(event);
+      navigate(reviewInstancePath(instanceId), {
+        state: reviewInstanceRouteState(event, `${location.pathname}${location.search}`),
+      });
     } catch (err) {
       setEventActionError(err instanceof Error ? err.message : 'Unable to open this review form.');
     } finally {
       setReviewFormBusy(false);
     }
-  }, []);
+  }, [location.pathname, location.search, navigate]);
 
   const markReviewInProgress = useCallback(async (event: TimetableEvent) => {
     if (!event.eventKey) return;
@@ -3560,25 +3557,6 @@ export default function CoachTimetablePage() {
             </div>
           </div>
         </div>
-      )}
-      {reviewFormEvent && reviewFormInstanceId && (
-        <ReviewInstanceModal
-          key={reviewFormInstanceId}
-          event={reviewFormEvent}
-          instanceId={reviewFormInstanceId}
-          onClose={() => {
-            setReviewFormEvent(null);
-            setReviewFormInstanceId('');
-          }}
-          onStatusChanged={(status) => {
-            updateSingleEvent({ ...reviewFormEvent, status: status as TimetableEvent['status'] });
-          }}
-          onCompleted={(status) => {
-            updateSingleEvent({ ...reviewFormEvent, status: status as TimetableEvent['status'] });
-            setReviewFormEvent(null);
-            setReviewFormInstanceId('');
-          }}
-        />
       )}
       {progressReviewCompletionEvent && (
         <ProgressReviewCompletionModal

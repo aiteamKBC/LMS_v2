@@ -15,6 +15,7 @@ import json
 import logging
 import re
 from datetime import timedelta
+from decimal import Decimal
 from html import unescape
 from pathlib import Path
 from urllib.parse import urlparse
@@ -806,20 +807,27 @@ def _append_week_quizzes(weeks, components, assigned_modules=None):
     return next_weeks, next_components
 
 
-def _otjh_status(variance):
-    """RAG status from progress_variance (a decimal fraction):
-        On track       : variance > -0.05          (-4.999...% and better)
-        Need attention : -0.15 < variance <= -0.05  (-5% to -14.999...%)
-        At risk        : variance <= -0.15          (-15% and worse)
-    With no target yet (variance None) there's nothing to be behind on -> On track.
+def otjh_status_from_variance(variance):
+    """RAG status from the OTJH hour difference (actual minus target).
+
+    The coach and learner surfaces use the same absolute-hour thresholds:
+    a shortfall of 20 hours needs attention and a shortfall of 40 hours is at
+    risk. ``variance`` is retained as the argument name for compatibility with
+    existing callers, but it is an hour difference rather than a percentage.
     """
     if variance is None:
         return "On track"
-    if variance > -0.05:
-        return "On track"
-    if variance > -0.15:
+    shortfall = -Decimal(str(variance))
+    if shortfall >= Decimal("40"):
+        return "At risk"
+    if shortfall >= Decimal("20"):
         return "Need attention"
-    return "At risk"
+    return "On track"
+
+
+def _otjh_status(variance):
+    """Backward-compatible wrapper for the shared OTJH RAG rule."""
+    return otjh_status_from_variance(variance)
 
 
 def _week_target_rows(detail):
@@ -1063,7 +1071,7 @@ def _live_otjh_snapshot(detail, learner_profile=None):
     progress_hours_str = fmt_hours(progress_hours_num) if progress_hours_num >= 0 else f"-{fmt_hours(abs(progress_hours_num))}"
     variance_str = "" if variance is None else str(variance)
     variance_db = None if variance is None else variance
-    otjh_status = _otjh_status(variance)
+    otjh_status = _otjh_status(progress_hours_num)
 
     return {
         "planned_hours": planned,

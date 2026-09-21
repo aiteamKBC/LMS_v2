@@ -7,8 +7,8 @@
 // so nothing importing from here has to change.
 //
 // What stays local is genuinely caseload-specific: parsing the raw caseload
-// payload, joining it against the attendance payload, and the coach-RAG and
-// programme-status vocabularies that only this page edits or filters by.
+// payload, joining it against the attendance payload, and the programme-status
+// vocabulary that only this page filters by.
 // ============================================================================
 import {
   ATTENDANCE_EXPECTED_RATE,
@@ -57,42 +57,13 @@ export {
   daysBetween,
 };
 
-export function formatCoachRagValue(value?: string | null): string {
-  const normalized = (value || '').trim().toLowerCase();
-  if (normalized === 'green') return 'Green';
-  if (normalized === 'amber') return 'Amber';
-  if (normalized === 'red') return 'Red';
-  return EMPTY_VALUE;
-}
-
-export function getCoachRagOptionValue(value?: string | null): string {
-  const normalized = (value || '').trim().toLowerCase();
-  return normalized === 'green' || normalized === 'amber' || normalized === 'red' ? normalized : '';
-}
-
-export function getCoachRagDotClass(value?: string | null): string {
-  const normalized = displayValue(value).toLowerCase();
-  if (normalized === 'green') return 'bg-emerald-500';
-  if (normalized === 'amber') return 'bg-amber-500';
-  if (normalized === 'red') return 'bg-red-500';
-  return 'bg-foreground-300';
-}
-
-export function getCoachRagStyle(value?: string | null) {
-  const normalized = displayValue(value).toLowerCase();
-  if (normalized === 'red') return { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700' };
-  if (normalized === 'amber') return { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700' };
-  if (normalized === 'green') return { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700' };
-  return { bg: 'bg-background-100', border: 'border-foreground-200', text: 'text-foreground-500' };
-}
-
 // --- programme status -------------------------------------------------------
 
 export type ProgramStatusKey = 'active' | 'withdrawn' | 'break' | 'ready-to-enrol' | 'other';
 
 export function getProgramStatusKey(value?: string | null): ProgramStatusKey {
   const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
-  if (normalized === 'active') return 'active';
+  if (normalized === 'active' || normalized === 'delivery') return 'active';
   if (normalized === 'withdrawn') return 'withdrawn';
   if (normalized === 'break' || normalized === 'onbreak' || normalized === 'onabreak') return 'break';
   if (normalized === 'readytoenrol') return 'ready-to-enrol';
@@ -179,6 +150,12 @@ export function normalizeLearner(
     && attendance.hasAttendance !== false,
   );
   const programme = displayValue(attendance?.programme);
+  const learningActivityDate = learner.lastActivityDate || null;
+  const attendanceActivityDate = attendance?.lastSessionDate || null;
+  const attendanceIsLatest = Boolean(
+    attendanceActivityDate
+    && (!learningActivityDate || Date.parse(attendanceActivityDate) > Date.parse(learningActivityDate)),
+  );
 
   return {
     ...learner,
@@ -200,8 +177,13 @@ export function normalizeLearner(
     attendanceConsecutiveMissed: toOptionalNumber(attendance?.consecutiveMissed),
     attendanceLastSession: displayValue(attendance?.lastSession),
     attendanceLastSessionDate: attendance?.lastSessionDate || null,
-    lastProgressReview: gatewayReviewDate,
-    lastReview: gatewayReviewDate,
+    lastActivity: attendanceIsLatest
+      ? displayValue(attendance?.lastSession)
+      : displayValue(learner.lastActivity),
+    lastActivityDate: attendanceIsLatest ? attendanceActivityDate : learningActivityDate,
+    lastActivityLabel: attendanceIsLatest ? 'Attendance' : displayValue(learner.lastActivityLabel),
+    lastProgressReview: displayValue(learner.lastProgressReview),
+    lastReview: displayValue(learner.lastReview),
     lastCoachingSession: plannedEndDate,
     lastSubmittedEvidence: displayValue(learner.lastSubmittedEvidence),
     progressVariance: displayValue(learner.progressVariance),
@@ -211,7 +193,6 @@ export function normalizeLearner(
     coachName: displayValue(learner.coachName),
     coachEmail: displayValue(learner.coachEmail),
     rawProgramStatus: displayValue(learner.rawProgramStatus),
-    coachRag: formatCoachRagValue(learner.coachRag),
     otjhStatus: displayValue(learner.otjhStatus),
     ksbStatus: displayValue(learner.ksbStatus),
     email: learner.email || undefined,

@@ -597,6 +597,7 @@ export function CoachMeetingArtifactsPanel({
   visibleArtifactTypes = ['transcript', 'recording'],
   canEditSummary = showAttendance,
   saveSummary = updateCoachMeetingSummary,
+  refreshOnLoad = false,
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
@@ -607,6 +608,7 @@ export function CoachMeetingArtifactsPanel({
   visibleArtifactTypes?: string[];
   canEditSummary?: boolean;
   saveSummary?: typeof updateCoachMeetingSummary;
+  refreshOnLoad?: boolean;
 }) {
   const eventKey = event.eventKey || '';
   const hasTeamsLink = Boolean(event.meetingLink || event.graphWebLink);
@@ -644,9 +646,9 @@ export function CoachMeetingArtifactsPanel({
       return;
     }
     const controller = new AbortController();
-    loadArtifacts(controller.signal);
+    loadArtifacts(controller.signal, refreshOnLoad);
     return () => controller.abort();
-  }, [event.source, eventKey, hasTeamsLink, loadArtifacts]);
+  }, [event.source, eventKey, hasTeamsLink, loadArtifacts, refreshOnLoad]);
 
   useEffect(() => {
     if (!preview || preview.type !== 'transcript') {

@@ -24,7 +24,7 @@ import overviewStyles from './Overview.module.css';
 import { DashboardTrainingPlan } from './DashboardTrainingPlan';
 import { DashboardActivities } from './DashboardActivities';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
-import { useDashboardPlan } from './useDashboardPlan';
+import { combinedActualOtjh, useDashboardPlan } from './useDashboardPlan';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
 
 function formatProgrammeStartDate(value?: string | null): string {
@@ -121,8 +121,11 @@ export default function LearnerOverview() {
   const displayLearnerName = heroFullName;
   const displayCohort = heroCohort || EMPTY_VALUE;
   const headerDescription = [heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined;
-  const startDateDisplay = formatProgrammeStartDate(real?.learningAccess?.startDate ?? real?.programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
-  const plannedEndDisplay = formatProgrammeStartDate(real?.programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const programmeStartDate = dashboardPlan.data?.programmeStartDate
+    ?? real?.learningAccess?.startDate ?? real?.programmeStartDate;
+  const programmeEndDate = dashboardPlan.data?.programmeEndDate ?? real?.programmeEndDate;
+  const startDateDisplay = formatProgrammeStartDate(programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const plannedEndDisplay = formatProgrammeStartDate(programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
     new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }));
   const planPlaceholder = scheduleRead.loading ? 'Loading...' : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;
@@ -150,14 +153,18 @@ export default function LearnerOverview() {
   const attendanceTone: StatusTone = attendancePercent == null ? 'neutral' : 'brand';
 
   const otjPlannedHours = metrics.data?.otjh.planned;
-  const otjActualHours = metrics.data?.otjh.actual;
+  const otjActualHours = combinedActualOtjh(
+    metrics.data?.otjh,
+    dashboardPlan.data?.monthlyLogOtjh,
+    dashboardPlan.data?.auditOtjhCutoffMonth,
+  );
   const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
     ? Math.round((otjActualHours / otjPlannedHours) * 100)
     : null;
   const otjPlannedValue = otjPlannedHours != null ? `${otjPlannedHours.toFixed(2)} h`
     : metrics.loading ? 'Loading…' : 'Unavailable';
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h` : EMPTY_VALUE;
-  const otjCaption = metrics.loading ? 'Loading recorded time...' : metrics.data?.otjh.actual == null ? 'Recorded time unavailable'
+  const otjCaption = metrics.loading ? 'Loading recorded time...' : otjActualHours == null ? 'Recorded time unavailable'
     : otjPlannedHours == null ? 'Training plan target hours are not available yet.' : 'Across your programme';
   const otjTone: StatusTone = 'brand';
   const ksb = metrics.data?.ksb;
@@ -399,8 +406,8 @@ export default function LearnerOverview() {
 
         {real && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
         <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} plan={dashboardPlan} canOpenActivities
-          programmeStartDate={real?.learningAccess?.startDate ?? real?.programmeStartDate}
-          programmeEndDate={real?.programmeEndDate}
+          programmeStartDate={programmeStartDate}
+          programmeEndDate={programmeEndDate}
           canOpenRewards={!reviewingLearner} />
       </PageContainer>
     </WorkspaceShell>

@@ -283,7 +283,7 @@ export function HeroSkeleton() {
  * The rail width is imported rather than typed as a class so it cannot drift
  * away from the real sidebar's.
  */
-export function PageSkeleton({ workspaceRole }: { workspaceRole?: string } = {}) {
+export function PageSkeleton({ workspaceRole, hideSidebar = false }: { workspaceRole?: string; hideSidebar?: boolean } = {}) {
   const [sidebarExpanded] = useState(() => {
     try {
       return localStorage.getItem('kbc_sidebar_pinned') === 'true';
@@ -299,17 +299,19 @@ export function PageSkeleton({ workspaceRole }: { workspaceRole?: string } = {})
       aria-label="Loading page"
     >
       {/* Sidebar rail — hidden below md, matching the real off-canvas drawer. */}
-      <div
-        className="hidden lg:block shrink-0 my-3 ml-3 mr-3 rounded-[24px] bg-brand-deep p-4 space-y-4"
-        style={{ width: sidebarExpanded ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH, marginInline: SIDEBAR_CONTENT_GAP / 2 }}
-      >
-        <SkeletonBlock className="h-9 w-9 rounded-xl mx-auto" />
-        <div className="space-y-3 pt-2">
-          {Array.from({ length: 7 }).map((_, index) => (
-            <SkeletonBlock key={index} className="h-8 w-full rounded-lg" />
-          ))}
+      {!hideSidebar && (
+        <div
+          className="hidden lg:block shrink-0 my-3 ml-3 mr-3 rounded-[24px] bg-brand-deep p-4 space-y-4"
+          style={{ width: sidebarExpanded ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH, marginInline: SIDEBAR_CONTENT_GAP / 2 }}
+        >
+          <SkeletonBlock className="h-9 w-9 rounded-xl mx-auto" />
+          <div className="space-y-3 pt-2">
+            {Array.from({ length: 7 }).map((_, index) => (
+              <SkeletonBlock key={index} className="h-8 w-full rounded-lg" />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Header — same height, border and surface as Header.tsx. */}

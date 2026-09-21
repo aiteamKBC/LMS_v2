@@ -1,6 +1,6 @@
 import { useId, useState, type CSSProperties } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import type { TimelineModule } from './model';
+import { percent, type TimelineModule } from './model';
 import { moduleProgress } from './progress';
 import styles from './ProgressCharts.module.css';
 
@@ -11,8 +11,17 @@ type Props = {
   onModuleSelect: (module: TimelineModule) => void;
   programmeStartMonth?: string;
   programmeEndMonth?: string;
+  programmeSnapshot?: ProgrammeProgressSnapshot;
 };
-const colors = ['#6c50a5', '#315c85', '#398171', '#a97824', '#9b5981'];
+export type ProgrammeProgressSnapshot = {
+  overall: number | null;
+  otjhActual: number | null;
+  otjhTarget: number | null;
+  ksb: number | null;
+  attendancePresent: number | null;
+  attendanceTotal: number | null;
+};
+const colors = ['#6c50a5', '#315c85', '#398171', '#a97824', '#9b5981', '#5e6f91'];
 const percentage = (value: number | null) => value == null ? 'N/A' : `${value}%`;
 const hourNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
 
@@ -39,21 +48,24 @@ function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = '', pro
   const keys = monthRange([
     ...Object.keys(data.months),
     ...Object.keys(data.monthlyOtjh || {}),
+    ...Object.keys(data.monthlyLogOtjh || {}),
     ...data.actual.map(row => row.month),
   ], programmeStartMonth, programmeEndMonth);
   const recordedAvailable = data.actualAvailable !== false || Object.keys(data.monthlyOtjh || {}).length > 0;
   return keys.map(key => {
+    const useAudit = !!data.auditOtjhCutoffMonth && key <= data.auditOtjhCutoffMonth;
+    const monthlyLog = data.monthlyLogOtjh?.[key];
     const current = data.monthlyOtjh?.[key];
     const historical = data.actual.filter(row => row.month === key).reduce((sum, row) => sum + row.hours, 0);
     // Assignment marking is represented in submitted; other activity types
     // retain their existing submitted semantics. Historical actuals belong
     // only to completed, so never add them to the light-blue series.
-    const submitted = recordedAvailable ? (current?.submitted ?? 0) : null;
-    const completed = recordedAvailable ? historical + (current?.actual ?? 0) : null;
+    const submitted = monthlyLog ? monthlyLog.submitted : useAudit ? null : recordedAvailable ? (current?.submitted ?? 0) : null;
+    const completed = monthlyLog ? monthlyLog.completed : useAudit ? null : recordedAvailable ? historical + (current?.actual ?? 0) : null;
     return {
       key,
       label: new Date(`${key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
-      target: data.months[key]?.planned ?? current?.planned ?? null,
+      target: monthlyLog ? monthlyLog.target : useAudit ? null : data.months[key]?.planned ?? current?.planned ?? null,
       submitted,
       completed,
     };
@@ -100,7 +112,7 @@ function MonthTooltip({ row, id }: { row: MonthlyHours; id: string }) {
   </div>;
 }
 
-export function ProgressCharts({ modules, selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth }: Props) {
+export function ProgressCharts({ modules, selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth, programmeSnapshot }: Props) {
   const chartId = useId();
   const tooltipId = `${chartId}-monthly-tooltip`;
   const [activeMonth, setActiveMonth] = useState('');
@@ -111,7 +123,12 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   const activeIndex = Math.max(0, months.findIndex(row => row.key === activeMonth));
   const scale = scaleFor(months);
   const ticks = Array.from({ length: 5 }, (_, index) => scale.step * (4 - index));
-  const totalTarget = data.requiredOtjh ?? (months.every(row => row.target != null) ? months.reduce((sum, row) => sum + row.target!, 0) : null);
+  const moduleTargets = modules.map(module => module.detail?.total_otjh)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0);
+  // The chart is programme-wide: when module OTJH is authored, its overall
+  // target must include every such module (and ignore modules with no target).
+  const totalTarget = moduleTargets.length ? moduleTargets.reduce((sum, value) => sum + value, 0)
+    : data.requiredOtjh ?? (months.every(row => row.target != null) ? months.reduce((sum, row) => sum + row.target!, 0) : null);
   const totalSubmitted = months.every(row => row.submitted != null) ? months.reduce((sum, row) => sum + row.submitted!, 0) : null;
   const totalCompleted = months.every(row => row.completed != null) ? months.reduce((sum, row) => sum + row.completed!, 0) : null;
   const targetToDate = months.filter(row => row.key <= reportingMonth());
@@ -121,17 +138,46 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   const expectedPercent = ratio(expectedTarget, totalTarget);
   const overallVariance = expectedTarget == null || totalCompleted == null ? null : totalCompleted - expectedTarget;
   const variancePercent = ratio(overallVariance, totalTarget);
+  const programmeReviews = [...new Map(data.reviews.filter(review => review.source !== 'student-support' && review.status !== 'cancelled')
+    .map(review => [review.eventKey, review])).values()];
+  const activityDone = modules.reduce((sum, module) => sum + module.done, 0);
+  const activityTotal = modules.reduce((sum, module) => sum + module.activityCount, 0);
+  const wholeProgrammeProgress = programmeSnapshot ? {
+    value: programmeSnapshot.overall,
+    available: 6,
+    measures: [
+      { label: 'Overall', value: programmeSnapshot.overall, detail: percentage(programmeSnapshot.overall) },
+      { label: 'Attendance', value: programmeSnapshot.attendancePresent == null || programmeSnapshot.attendanceTotal == null
+        ? null : percent(programmeSnapshot.attendancePresent, programmeSnapshot.attendanceTotal),
+        detail: programmeSnapshot.attendancePresent == null || programmeSnapshot.attendanceTotal == null
+          ? 'Attendance unavailable' : `${programmeSnapshot.attendancePresent} / ${programmeSnapshot.attendanceTotal} sessions attended` },
+      { label: 'Activities', value: activityTotal ? percent(activityDone, activityTotal) : null,
+        detail: activityTotal ? `${activityDone} / ${activityTotal} completed across all modules` : 'No activities assigned' },
+      { label: 'Hours', value: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
+        ? null : percent(programmeSnapshot.otjhActual, programmeSnapshot.otjhTarget),
+        detail: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
+          ? 'Recorded hours unavailable' : `${hourNumber.format(programmeSnapshot.otjhActual)} / ${hourNumber.format(programmeSnapshot.otjhTarget)} hours` },
+      { label: 'KSBs', value: programmeSnapshot.ksb, detail: percentage(programmeSnapshot.ksb) },
+      { label: 'Reviews', value: programmeReviews.length
+        ? percent(programmeReviews.filter(review => review.status === 'completed').length, programmeReviews.length) : null,
+        detail: programmeReviews.length
+          ? `${programmeReviews.filter(review => review.status === 'completed').length} / ${programmeReviews.length} completed across the programme`
+          : 'No programme reviews' },
+    ],
+  } : null;
+  const chartProgress = wholeProgrammeProgress || selectedProgress;
+  const chartWidth = chartProgress?.measures.length === 6 ? 470 : 400;
   return <div className={styles.charts}>
-    <section className={styles.card} aria-label="Module progress">
-      <header><div><p className={styles.eyebrow}>Selected module</p><h2>Module progress</h2><p className={styles.subtitle}>{selected?.title || 'Choose a module in the timeline'}</p></div>
-        {selectedProgress && <strong className={styles.total}>{percentage(selectedProgress.value)}<small>Average</small></strong>}
+    <section className={styles.card} aria-label={programmeSnapshot ? 'Whole programme progress' : 'Module progress'}>
+      <header><div><p className={styles.eyebrow}>{programmeSnapshot ? 'Whole programme' : 'Selected module'}</p><h2>{programmeSnapshot ? 'Whole programme progress' : 'Module progress'}</h2><p className={styles.subtitle}>{programmeSnapshot ? 'Summary metrics for this learner across every module' : selected?.title || 'Choose a module in the timeline'}</p></div>
+        {chartProgress && <strong className={styles.total}>{percentage(chartProgress.value)}<small>{programmeSnapshot ? 'Overall' : 'Average'}</small></strong>}
       </header>
-      {selectedProgress ? <>
-        <svg className={styles.chart} viewBox="0 0 400 235" role="img" aria-labelledby={`${chartId}-title ${chartId}-description`}>
-          <title id={`${chartId}-title`}>{selected?.title} progress by measure</title>
-          <desc id={`${chartId}-description`}>{selectedProgress.measures.map(measure => `${measure.label}: ${percentage(measure.value)}, ${measure.detail}`).join('. ')}</desc>
-          {[0, 25, 50, 75, 100].map(value => <g key={value}><line x1="34" x2="393" y1={185 - value * 1.5} y2={185 - value * 1.5} className={styles.gridLine} /><text x="27" y={189 - value * 1.5} textAnchor="end" className={styles.axis}>{value}</text></g>)}
-          {selectedProgress.measures.map((measure, index) => {
+      {chartProgress ? <>
+        <svg className={styles.chart} viewBox={`0 0 ${chartWidth} 235`} role="img" aria-labelledby={`${chartId}-title ${chartId}-description`}>
+          <title id={`${chartId}-title`}>{programmeSnapshot ? 'Whole programme' : selected?.title} progress by measure</title>
+          <desc id={`${chartId}-description`}>{chartProgress.measures.map(measure => `${measure.label}: ${percentage(measure.value)}, ${measure.detail}`).join('. ')}</desc>
+          {[0, 25, 50, 75, 100].map(value => <g key={value}><line x1="34" x2={chartWidth - 7} y1={185 - value * 1.5} y2={185 - value * 1.5} className={styles.gridLine} /><text x="27" y={189 - value * 1.5} textAnchor="end" className={styles.axis}>{value}</text></g>)}
+          {chartProgress.measures.map((measure, index) => {
             const x = 46 + index * 71;
             return <g key={measure.label}>
               <rect x={x} y="35" width="36" height="150" rx="5" className={styles.track} />
@@ -141,10 +187,12 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
             </g>;
           })}
         </svg>
-        <dl className={styles.measures}>{selectedProgress.measures.map((measure, index) => <div key={measure.label}>
+        <dl className={styles.measures}>{chartProgress.measures.map((measure, index) => <div key={measure.label}>
           <dt><i style={{ background: colors[index] }} />{measure.label}</dt><dd>{measure.detail}</dd>
         </div>)}</dl>
-        <p className={styles.note}>Equal average of {selectedProgress.available} of 5 available measures. Each measure is capped at 100%.</p>
+        <p className={styles.note}>{programmeSnapshot
+          ? 'Overall, OTJH, KSB and attendance match the case-file cards. Activities and reviews are aggregated across all learner modules.'
+          : `Equal average of ${chartProgress.available} of 5 available measures. Each measure is capped at 100%.`}</p>
       </> : <p className={styles.empty}>Select a module to see attendance, activities, hours, KSBs and reviews.</p>}
     </section>
     <section className={styles.card} aria-label="Programme module progress">
@@ -171,7 +219,8 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
       {active && <div className={styles.tooltipPosition} style={{ '--tooltip-left': `${(activeIndex + .5) / months.length * 100}%` } as CSSProperties}>
         <MonthTooltip row={active} id={tooltipId} />
       </div>}
-      {months.length ? <div className={styles.monthlyScroll}>
+      {months.length ? <div className={styles.monthlyScroll} role="region" tabIndex={0}
+        aria-label="Monthly off-the-job hours chart. Scroll horizontally to view more months.">
         <div className={styles.monthlyPlot} style={{ minWidth: `${Math.max(36, months.length * 4.25)}rem` }}>
           <div className={styles.yAxis} aria-hidden="true">{ticks.map(value => <span key={value} style={{ bottom: `${value / scale.maximum * 100}%` }}>{hourNumber.format(value)}</span>)}</div>
           <div className={styles.grid} aria-hidden="true">{ticks.map(value => <i key={value} style={{ bottom: `${value / scale.maximum * 100}%` }} />)}</div>
