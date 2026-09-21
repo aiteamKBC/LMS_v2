@@ -191,16 +191,18 @@ class DashboardMetricsTests(SimpleTestCase):
                      patch('learner_api.dashboard_metrics._direct_progress_records', return_value=[]), \
                      patch('learner_api.dashboard_metrics._effective_plan_ids', return_value=['module-one']), \
                      patch('learner_api.dashboard_metrics.rows', side_effect=[native, progress, historical]), \
-                     patch('learner_api.dashboard_metrics.read_planned_hours', return_value=867):
+                     patch('learner_api.dashboard_metrics.read_planned_hours', return_value=867), \
+                     patch('learner_api.dashboard_metrics.read_aptem_planned_total', return_value=867), \
+                     patch('learner_api.dashboard_metrics.read_accepted_ksb_rows', return_value=[]):
                     cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
-                    cursor.fetchone.side_effect = [(source.email,), (1171.34,)]
+                    cursor.fetchone.side_effect = [(source.email,), (1171.34, [])]
                     cursor.fetchall.side_effect = [saved_attempts, [(2, '10', 'imported')]]
                     result = read_metrics(source, 'commercial')
                     self.assertEqual(tuple(result[metric][key] for metric in ('programme', 'ksb')
                                            for key in ('completed', 'total', 'percent')), expected)
                     self.assertEqual(result['ksb']['historicalCompleted'], 2)
                     self.assertEqual(result['otjh'], {'historical': 1171.34, 'new': 0,
-                                                     'actual': 1171.34, 'planned': 867})
+                                                     'actual': 1171.34, 'completed_actual': None, 'planned': 867})
             live.assert_not_called()
 
     def test_endpoint_scopes_identity_and_returns_retryable_error(self):

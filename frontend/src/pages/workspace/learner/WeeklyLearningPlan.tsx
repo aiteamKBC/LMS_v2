@@ -446,7 +446,7 @@ function activityTypeLabel(component: JourneyComponent): string {
 }
 
 function WeeklyLearningPlanSkeleton() {
-  return <section aria-busy="true" aria-label="Loading your weekly learning plan" className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+  return <section aria-busy="true" aria-label="Loading your weekly learning plan" className="col-span-full grid w-full min-w-0 grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)]">
     <Panel>
       <div className="mb-3 flex items-center gap-2 text-sm font-bold text-foreground-400"><BookOpen size={16} aria-hidden="true" />Weeks</div>
       <RowsSkeleton rows={4} avatar={false} />

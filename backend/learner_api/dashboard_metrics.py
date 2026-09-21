@@ -16,7 +16,7 @@ from .student_activity_access import student_activity_available
 from .student_activity import _direct_progress_records, _direct_progress_otjh, load_direct_progress_records_bulk
 from .learning_plan import _effective_plan_ids
 from .training_plan_dashboard import find_contract, number, rows
-from .otjh_totals import completed_otjh
+from .otjh_totals import completed_otjh, completed_actual_otjh
 
 log = logging.getLogger(__name__)
 _MISSING = object()
@@ -77,37 +77,90 @@ def programme_totals(historical, native, progress, attempts, links):
     return {**ratio(sum(activities.values()), len(activities)), 'historicalCompleted': old_complete}
 
 
-def ksb_totals(native, progress, historical=None, attempts=None, links=None):
+def read_accepted_ksb_rows(cursor, source, kind):
+    """Read accepted monthly activities using explicit learner/activity identity."""
+    cursor.execute('''SELECT r.id, r.group_id, r.activity_id, r.source_ref,
+            coalesce(p.component_ref, s.component_ref) AS component_ref,
+            coalesce(j.ksbs, CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
+                     a.raw #> '{live_lms_component,ksbs}') AS ksb_mappings
+        FROM structured_manual_activities.manual_learner_activities r
+        LEFT JOIN structured_manual_activities.learner_journal_row_ksbs j
+          ON j.row_id=r.id AND j.aptem_id=r.aptem_id
+        LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
+          ON lk.activity_id=r.activity_id AND lk.aptem_id=r.aptem_id
+        LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=r.activity_id
+        LEFT JOIN "Last_audit".activities a ON a.activity_id=r.activity_id
+        LEFT JOIN "Learner".learners l ON l.enrolment_id=%s
+        LEFT JOIN "Learner".learner_progress_entries p
+          ON p.learner_id=l.id AND r.source_ref='progress:' || p.id::text
+        LEFT JOIN "Learner".learning_reflection_submissions s
+          ON s.learner_id=%s AND s.learner_kind=%s AND r.source_ref='reflection:' || s.id::text
+        WHERE r.aptem_id=%s AND r.accepted=true AND r.deleted_at IS NULL''',
+        [source.pk, str(source.pk), kind, int(str(source.aptem_id).strip())])
+    return rows(cursor)
+
+
+def ksb_totals(native, progress, historical=None, attempts=None, links=None, ledger=None):
     completed_ids = {str(item.get('componentId')) for item in progress
                      if item.get('componentId') and progress_counts_as_achieved(item.get('kind'), item.get('passed'))}
     passed_quizzes = {str(item.get('quizId')) for item in progress
                       if item.get('quizId') and progress_counts_as_achieved(item.get('kind'), item.get('passed'))}
     points = {}
     old_points = {}
-    missing = 0
+    missing = set()
+    mapped = set()
     attempts, links = attempts or set(), links or {}
+    # Journal evidence fills missing catalogue mappings. Never match by title.
+    ledger_codes = {}
+    native_ids = {str(item['id']) for item in native}
+    for item in ledger or []:
+        component = str(item.get('component_ref') or '')
+        source_parts = str(item.get('source_ref') or '').split(':')
+        if not component and len(source_parts) > 1 and source_parts[0] == 'asg' and source_parts[1] in native_ids:
+            component = source_parts[1]
+        if component:
+            key = links.get(component, ('native', component))
+        elif item.get('group_id') is not None and item.get('activity_id') is not None:
+            key = (str(item['group_id']), str(item['activity_id']))
+        else:
+            key = ('ledger', str(item.get('source_ref') or item['id']))
+        codes = point_codes(item.get('ksb_mappings')) if item.get('ksb_mappings') is not None else None
+        if codes is None:
+            missing.add(key)
+            continue
+        ledger_codes.setdefault(key, set()).update(codes)
+        mapped.add(key)
+        for code in codes:
+            old_points[(*key, code)] = True
+            points[(*key, code)] = True
     for item in historical or []:
         key = (str(item['group_id']), str(item['activity_id']))
         codes = point_codes(item.get('ksb_mappings')) if item.get('ksb_mappings') is not None else None
+        if key in ledger_codes:
+            codes = (codes or set()) | ledger_codes[key]
         if codes is None:
-            missing += 1
+            missing.add(key)
             continue
+        mapped.add(key)
         done = _is_completed(item) or key in attempts
         for code in codes:
             old_points[(*key, code)] = old_points.get((*key, code), False) or _is_completed(item)
             points[(*key, code)] = points.get((*key, code), False) or done
     historical_done = sum(old_points.values())
     for item in native:
+        key = links.get(str(item['id']), ('native', str(item['id'])))
         codes = point_codes(item.get('ksb_mappings'))
         if codes is None:
-            missing += 1
+            missing.add(key)
             continue
-        key = links.get(str(item['id']), ('native', str(item['id'])))
+        mapped.add(key)
         done = str(item['id']) in completed_ids or key in attempts or bool(item.get('quiz_id') and str(item['quiz_id']) in passed_quizzes)
         for code in codes:
             points[(*key, code)] = points.get((*key, code), False) or done
+    missing -= mapped
     if missing:
-        return {**unavailable('activity_points_missing'), 'unmappedActivities': missing,
+        return {**unavailable('activity_points_missing'), 'unmappedActivities': len(missing),
+                'historicalCompleted': historical_done,
                 'mappedCompleted': sum(points.values()), 'mappedTotal': len(points)}
     by_code = {}
     for (*_, code), done in points.items():
@@ -158,9 +211,16 @@ def activity_planned_hours(historical, native, links):
     return round(sum(planned.values()), 4)
 
 
+def read_aptem_planned_total(cursor, aptem_id):
+    """Read the retained programme total using the learner's Aptem identity."""
+    cursor.execute('SELECT planned_hours_total FROM "Last_audit".learners WHERE aptem_id=%s', [aptem_id])
+    records = cursor.fetchall()
+    return number(records[0][0]) if len(records) == 1 else None
+
+
 def metrics_from_loaded(source, kind, *, migrated, native, progress,
                         direct_progress, historical, attempts, links, history_ready,
-                        manual_hours=None, preloaded=None):
+                        manual_hours=_MISSING, preloaded=None):
     """Finish dashboard metrics from the activity snapshot already in memory.
 
     ``overview-week?section=dashboard`` and the standalone metrics endpoint use
@@ -169,43 +229,59 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     load them once without changing the metric definitions used elsewhere.
     """
     with connections['enrolment'].cursor() as cursor:
-        planned_document = (preloaded or {}).get('planned_hours_document', _MISSING) if preloaded is not None else _MISSING
+        planned_document = (preloaded or {}).get('planned_hours_document', _MISSING)
         planned = read_planned_hours(source, kind, cursor, planned_document)
+        aptem_planned_total = read_aptem_planned_total(cursor, int(str(source.aptem_id).strip())) if migrated else None
         old_hours = 0 if not migrated else None
+        historical_refs = []
         if migrated:
             if manual_hours is not _MISSING:
                 old_hours = manual_hours
             else:
-                cursor.execute('''SELECT SUM(actual_hours) FROM structured_manual_activities.manual_learner_activities
+                cursor.execute('''SELECT SUM(actual_hours), array_agg(source_ref)
+                    FROM structured_manual_activities.manual_learner_activities
                     WHERE aptem_id=%s AND accepted=true AND deleted_at IS NULL''',
-                               [int(str(source.aptem_id).strip())])
-                old_hours = number(cursor.fetchone()[0])
+                    [int(str(source.aptem_id).strip())])
+                retained = cursor.fetchone()
+                old_hours = number(retained[0])
+                historical_refs = retained[1] or []
+    submissions_available = True
     try:
         if preloaded is not None and 'reflection_submissions' in preloaded:
-            submissions = preloaded['reflection_submissions']
+            submissions_available = preloaded['reflection_submissions'] is not None
+            submissions = preloaded['reflection_submissions'] or []
         else:
             with connections['enrolment'].cursor() as cursor:
-                cursor.execute('''SELECT activity_id, component_ref, status, actual_time_hours,
+                cursor.execute('''SELECT id, progress_entry_id, submitted_at, activity_id, component_ref, status, actual_time_hours,
                         full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
                     FROM "Learner".learning_reflection_submissions
                     WHERE learner_kind=%s AND learner_id=%s AND activity_type='assignment'
                     ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
                 submissions = rows(cursor)
     except (DatabaseError, psycopg.Error, StopIteration):
-        # Older installations may not have reflection submissions yet.
+        # Preserve the existing response while exposing unknown completed time.
         submissions = []
+        submissions_available = False
     if planned is None and history_ready:
         planned = activity_planned_hours(historical, native, links)
     actual_hours = completed_otjh(native, direct_progress, submissions, old_hours)
+    ledger = []
+    if migrated and history_ready:
+        with connections['enrolment'].cursor() as cursor:
+            ledger = read_accepted_ksb_rows(cursor, source, kind)
+            historical_refs = list(set(historical_refs) | {row['source_ref'] for row in ledger if row.get('source_ref')})
     new_hours = (round(actual_hours - old_hours, 4)
                  if actual_hours is not None and old_hours is not None else round(_direct_progress_otjh(direct_progress), 4))
     return {
         'migrated': migrated,
+        'aptem_planned_total': aptem_planned_total,
         'programme': programme_totals(historical, native, progress, attempts, links) if history_ready
                      else unavailable('historical_activities_missing'),
         'otjh': {'historical': old_hours, 'new': new_hours,
+                 'completed_actual': completed_actual_otjh(native, direct_progress,
+                     submissions if submissions_available else None, old_hours, historical_refs),
                  'actual': actual_hours, 'planned': planned},
-        'ksb': ksb_totals(native, progress, historical, attempts, links) if history_ready
+        'ksb': ksb_totals(native, progress, historical, attempts, links, ledger) if history_ready
                else unavailable('historical_activities_missing'),
     }
 
@@ -380,18 +456,19 @@ def load_reflection_submissions_bulk(keys):
     params = [value for pair in pairs for value in pair]
     try:
         with connections['enrolment'].cursor() as cursor:
-            cursor.execute(f'''SELECT learner_kind, learner_id, activity_id, component_ref, status, actual_time_hours,
+            cursor.execute(f'''SELECT learner_kind, learner_id, id, progress_entry_id, submitted_at, activity_id, component_ref, status, actual_time_hours,
                     full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
                 FROM "Learner".learning_reflection_submissions
                 WHERE activity_type='assignment' AND ({clauses})
                 ORDER BY submitted_at NULLS FIRST,id''', params)
-            for learner_kind, learner_id, activity_id, component_ref, status, actual_time_hours, imported in cursor.fetchall():
+            for learner_kind, learner_id, entry_id, progress_entry_id, submitted_at, activity_id, component_ref, status, actual_time_hours, imported in cursor.fetchall():
                 result.setdefault((str(learner_kind), str(learner_id)), []).append({
+                    'id': entry_id, 'progress_entry_id': progress_entry_id, 'submitted_at': submitted_at,
                     'activity_id': activity_id, 'component_ref': component_ref, 'status': status,
                     'actual_time_hours': actual_time_hours, 'imported': imported,
                 })
     except (DatabaseError, psycopg.Error, StopIteration):
-        return result
+        return {pair: None for pair in pairs}
     return result
 
 

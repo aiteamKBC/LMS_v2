@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LogSummary } from '@/features/monthly-logs/api';
-import { combinedActualOtjh, monthlyLogOtjh } from '../useDashboardPlan';
+import { contractPlannedOtjh, monthlyLogActualOtjh, monthlyLogOtjh } from '../useDashboardPlan';
 
 describe('dashboard OTJH source transition', () => {
   it('maps retained Audit values and LMS months into the chart payload', () => {
@@ -33,23 +33,25 @@ describe('dashboard OTJH source transition', () => {
     });
   });
 
-  it('adds completed LMS activity after August to the retained Audit actual', () => {
-    expect(combinedActualOtjh(
-      { historical: 294.63, actual: 294.63 },
-      {
-        '2026-08': { completed: 18 },
-        '2026-09': { completed: 2.5 },
-        '2026-10': { completed: 1.25 },
-      },
-      '2026-08',
-    )).toBe(298.38);
+  it('sums accepted log months once, including months after the Audit cutoff', () => {
+    expect(monthlyLogActualOtjh({
+      '2026-08': { completed: 18 },
+      '2026-09': { completed: 2.5 },
+      '2026-10': { completed: 1.25 },
+    })).toBe(21.75);
+    expect(monthlyLogActualOtjh(undefined)).toBeNull();
+    expect(monthlyLogActualOtjh({})).toBe(0);
   });
 
-  it('keeps the canonical actual when no Audit transition applies', () => {
-    expect(combinedActualOtjh(
-      { historical: null, actual: 7.5 },
-      { '2026-09': { completed: 2.5 } },
-      undefined,
-    )).toBe(7.5);
+  it('uses all parsed PDF months and preserves a genuine zero target', () => {
+    const month = { label: '', topics: [], source: 'contract', planned: 0 };
+    expect(contractPlannedOtjh({ contractStatus: 'ready', months: {
+      '2026-08': { ...month, planned: 32 }, '2026-09': { ...month, planned: 37 },
+      '2027-01': { ...month, planned: 35 },
+    } })).toBe(104);
+    expect(contractPlannedOtjh({ contractStatus: 'ready', months: { '2026-08': month } })).toBe(0);
+    expect(contractPlannedOtjh({ contractStatus: 'ready', months: { '2026-08': { ...month, planned: null } } })).toBeNull();
+    expect(contractPlannedOtjh({ contractStatus: 'unavailable', months: {} })).toBeNull();
+    expect(contractPlannedOtjh(undefined)).toBeNull();
   });
 });
