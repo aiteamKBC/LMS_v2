@@ -464,6 +464,26 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         )
         self.assertEqual(result["ksbStatus"], "Started")
 
+    def test_missing_ksb_status_does_not_break_canonical_overlay(self):
+        payload = {"otjhCompleted": 4, "otjhTarget": 5, "ksbProgressAvailable": False}
+        metrics = {
+            "programme": {"completed": 1, "total": 2, "percent": 50, "status": "ready"},
+            "otjh": {},
+            "ksb": {"completed": None, "total": None, "percent": None, "status": "unavailable"},
+        }
+        result = apply_canonical_learner_metrics(payload, metrics)
+        self.assertNotIn("ksbStatus", result)
+        self.assertEqual(result["metricsSource"], "learner-dashboard")
+
+    def test_ready_ksb_status_is_still_derived(self):
+        payload = {"otjhCompleted": 4, "otjhTarget": 5, "ksbProgressAvailable": False}
+        metrics = {
+            "programme": {}, "otjh": {},
+            "ksb": {"completed": 2, "total": 4, "percent": 50, "status": "ready"},
+        }
+        result = apply_canonical_learner_metrics(payload, metrics)
+        self.assertEqual(result["ksbStatus"], derive_ksb_status(2, 4))
+
 
 class SourceProfileIdentityTests(SimpleTestCase):
     @patch("coach_api.views.EnrolmentUser.all_learners.annotate")
