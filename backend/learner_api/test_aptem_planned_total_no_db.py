@@ -29,7 +29,7 @@ class AptemPlannedTotalTests(unittest.TestCase):
         cursor.fetchall.return_value = [(410,)]
         cursor.fetchone.return_value = (12, [])
         namespace = {
-            'read_accepted_ksb_rows': lambda *args: [], 'connections': connections, 'number': lambda value: value,
+            'read_accepted_ksb_rows': lambda *args: [], '_MISSING': object(), 'connections': connections, 'number': lambda value: value,
             'read_planned_hours': lambda *args: 999, 'rows': lambda cursor: [],
             'completed_otjh': lambda *args: 12, 'completed_actual_otjh': lambda *args: 12, 'programme_totals': lambda *args: {},
             'ksb_totals': lambda *args: {}, '_direct_progress_otjh': lambda value: 0,

@@ -132,7 +132,7 @@ def load_direct_progress_records_bulk(enrolment_ids):
         learner_id__in=[profile.id for profile in profiles],
         component_link_source__in=('direct', 'quiz_ref'),
     ).exclude(kind='activity_event').values(
-        'learner_id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
+        'id', 'learner_id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
         'module_title', 'week_title', 'reported_time', 'claimed_seconds', 'verified_seconds',
         'time_tracking_source', 'expected_otjh', 'submitted_at', 'passed',
     )
@@ -141,6 +141,7 @@ def load_direct_progress_records_bulk(enrolment_ids):
     for profile in profiles:
         rows = entries_by_profile.get(int(profile.id), [])
         records = [{
+            'sourceRef': f"progress:{row['id']}" if row.get('id') is not None else None,
             'kind': row['kind'], 'componentId': row['component_ref'], 'quizId': row['quiz_ref'],
             'componentTitle': row['component_title'], 'componentType': row['component_type'],
             'moduleTitle': row['module_title'], 'weekTitle': row['week_title'],
