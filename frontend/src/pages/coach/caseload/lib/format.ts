@@ -99,6 +99,18 @@ export function getOtjhStatusKey(value?: string | null): 'on-track' | 'need-atte
   return 'other';
 }
 
+export function getOtjhGapStatus(actual?: number | null, target?: number | null) {
+  if (actual === null || actual === undefined || !Number.isFinite(actual)
+    || target === null || target === undefined || !Number.isFinite(target) || target <= 0) {
+    return { gapHours: null, status: 'unavailable' as const, available: false };
+  }
+  const gapHours = Math.max(target - actual, 0);
+  const status = gapHours > 40 ? 'at-risk' as const
+    : gapHours > 20 ? 'need-attention' as const
+    : 'on-track' as const;
+  return { gapHours, status, available: true };
+}
+
 export function normalizeAttendanceRisk(value?: string | null): AttendanceRisk | null {
   const normalized = (value || '').trim().toLowerCase();
   if (normalized === 'green' || normalized === 'amber' || normalized === 'red') return normalized;

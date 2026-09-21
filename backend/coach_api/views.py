@@ -2355,6 +2355,50 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
                         ],
                     },
                 )))
+                if os.environ.get("COACH_KSB_DIAGNOSTICS") == "1" and profile_id in {315, 316, 318, 319}:
+                    metrics = loaded[-1][1] or {}
+                    preloaded = {
+                        'effective_plan_ids': plan_ids_by_enrolment.get(int(source.pk), []),
+                        'native_components': [
+                            component
+                            for module_id in plan_ids_by_enrolment.get(int(source.pk), [])
+                            for component in component_by_module.get(str(module_id), [])
+                        ],
+                        'native_progress': native_progress.get(int(source.pk), []),
+                        'audit_inputs': audit_inputs.get(int(source.aptem_id)) if getattr(source, 'aptem_id', None) not in (None, '') else None,
+                    }
+                    native_components = preloaded['native_components']
+                    audit_input = preloaded['audit_inputs'] or {}
+                    historical = audit_input.get('historical') or []
+                    native_mapping_count = sum(
+                        len(extract_ksb_codes(component.get('ksb_mappings')))
+                        for component in native_components
+                    )
+                    historical_mapping_count = sum(
+                        len(extract_ksb_codes(activity.get('ksb_mappings')))
+                        for activity in historical
+                    )
+                    ksb = metrics.get('ksb') or {}
+                    logger.info("coach_ksb_diagnostic %s", {
+                        'learnerProfileId': profile_id,
+                        'effectivePlanIds': preloaded['effective_plan_ids'],
+                        'nativeComponentsCount': len(native_components),
+                        'nativeKsbMappingsCount': native_mapping_count,
+                        'nativeProgressCount': len(preloaded['native_progress']),
+                        'auditIdentityReady': bool(audit_input.get('identity')),
+                        'historicalActivitiesCount': len(historical),
+                        'historicalMappedKsbCount': historical_mapping_count,
+                        'activityPointsMissing': ksb.get('reason') == 'activity_points_missing',
+                        'historicalActivitiesMissing': ksb.get('reason') == 'historical_activities_missing',
+                        'unmappedActivities': ksb.get('unmappedActivities'),
+                        'mappedCompleted': ksb.get('mappedCompleted'),
+                        'mappedTotal': ksb.get('mappedTotal'),
+                        'historicalCompleted': ksb.get('historicalCompleted'),
+                        'finalKsbStatus': ksb.get('status'),
+                        'finalKsbCompleted': ksb.get('completed'),
+                        'finalKsbTotal': ksb.get('total'),
+                        'finalKsbPercent': ksb.get('percent'),
+                    })
             except (DatabaseError, ValueError) as exc:
                 logger.warning("Could not read canonical coach metrics for learner %s: %s", profile_id, exc)
                 # Preserve partial-success semantics: one bad learner does not
@@ -2589,6 +2633,9 @@ def apply_attendance_summary(payload: dict, metrics: dict | None) -> dict:
         return payload
     payload["attendanceRate"] = to_number(metrics.get("attendance"))
     payload["attendanceRateAvailable"] = True
+    payload["attendancePresent"] = metrics.get("present")
+    payload["attendanceSessions"] = metrics.get("sessions")
+    payload["attendanceAbsent"] = metrics.get("absent")
     payload["attendanceLastSession"] = metrics.get("lastSession")
     payload["attendanceLastSessionDate"] = metrics.get("lastSessionDate")
     return payload
@@ -2752,6 +2799,8 @@ def serialize_caseload_learner(
         "nextCoaching": "--",
         "nextReview": "--",
         "lastContact": "--",
+        "lastPr": None,
+        "lastMcm": None,
         "lastAttendanceDate": "--",
         "lastProgressReview": "--",
         "lastReview": "--",
@@ -2840,6 +2889,9 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         # unavailable, not as "0% attendance".
         "attendanceRate": None,
         "attendanceRateAvailable": False,
+        "attendancePresent": None,
+        "attendanceSessions": None,
+        "attendanceAbsent": None,
         "attendanceLastSession": None,
         "attendanceLastSessionDate": None,
         "otjhCompleted": to_number(getattr(row, "completed_hours", None)),
@@ -2859,6 +2911,8 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         "nextCoaching": "--",
         "nextReview": "--",
         "lastContact": "--",
+        "lastPr": None,
+        "lastMcm": None,
         "recentFlag": risk_flags[0] if risk_flags else None,
         "email": clean_text(getattr(row, "email", None)) or None,
         "progressVariance": progress_variance or "--",
@@ -10418,6 +10472,39 @@ def dashboard_review_history(
     }
 
 
+def dashboard_latest_completed_review_dates(rows) -> dict[int, dict[str, str | None]]:
+    """Return latest completed PR/MCM dates keyed by stable profile id."""
+    profile_ids = [int(row.id) for row in rows or [] if getattr(row, "id", None) is not None]
+    if not profile_ids:
+        return {}
+    query = """
+        SELECT learner_id, review_type, completed_date
+        FROM "Learner".reviews
+        WHERE learner_id = ANY(%s)
+          AND LOWER(TRIM(status)) = 'completed'
+          AND completed_date IS NOT NULL
+        ORDER BY completed_date DESC, id DESC
+    """
+    result = {profile_id: {"lastPr": None, "lastMcm": None} for profile_id in profile_ids}
+    pr_types = {clean_text(value).casefold() for value in REVIEW_TYPES["progress-review"]}
+    mcm_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
+    try:
+        connection = connections[get_learner_db_alias()]
+        with connection.cursor() as cursor:
+            cursor.execute(query, [profile_ids])
+            for learner_id, review_type, completed_date in cursor.fetchall():
+                target = result.get(int(learner_id))
+                if target is None:
+                    continue
+                type_key = clean_text(review_type).casefold()
+                field = "lastPr" if type_key in pr_types else "lastMcm" if type_key in mcm_types else None
+                if field and target[field] is None:
+                    target[field] = format_date(completed_date)
+    except Exception as exc:
+        logger.warning("Could not load latest completed review dates: %s", exc)
+    return result
+
+
 def _latest_completed_review_date(reviews: list[dict]) -> str | None:
     """The latest completed imported review date, never a future planned date."""
     dates = [
@@ -10836,6 +10923,9 @@ def coach_dashboard(request):
         try:
             rows = fetch_caseload_dashboard_profiles(owner_email)
             learners = [serialize_caseload_dashboard_learner(row) for row in rows]
+            review_dates = dashboard_latest_completed_review_dates(rows)
+            for row, learner in zip(rows, learners):
+                learner.update(review_dates.get(int(row.id), {}))
             # These are independent read-only enrichments.  Running them in
             # series made the dashboard wait for every remote/local query in
             # turn (most noticeably the audit mirror).  Keep the same payload

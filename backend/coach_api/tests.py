@@ -771,11 +771,17 @@ class ApplyAttendanceSummaryTests(SimpleTestCase):
         apply_attendance_summary(payload, {
             "hasAttendance": True,
             "attendance": 87,
+            "present": 39,
+            "sessions": 44,
+            "absent": 5,
             "lastSession": "10 Sep 2026",
             "lastSessionDate": "2026-09-10",
         })
         self.assertEqual(payload["attendanceRate"], 87)
         self.assertTrue(payload["attendanceRateAvailable"])
+        self.assertEqual(payload["attendancePresent"], 39)
+        self.assertEqual(payload["attendanceSessions"], 44)
+        self.assertEqual(payload["attendanceAbsent"], 5)
         self.assertEqual(payload["attendanceLastSession"], "10 Sep 2026")
         self.assertEqual(payload["attendanceLastSessionDate"], "2026-09-10")
 

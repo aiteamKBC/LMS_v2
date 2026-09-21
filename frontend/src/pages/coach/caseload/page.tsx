@@ -181,6 +181,9 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
           learner: source.name || '',
           attendance: source.attendanceRate,
           hasAttendance: source.attendanceRateAvailable,
+          sessions: source.attendanceSessions,
+          present: source.attendancePresent,
+          absent: source.attendanceAbsent,
           lastSession: source.attendanceLastSession,
           lastSessionDate: source.attendanceLastSessionDate,
         } : null)));

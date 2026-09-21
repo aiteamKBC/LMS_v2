@@ -14,9 +14,9 @@ const counts: CaseloadCounts = {
 const learner = {
   id: '42', name: 'Emma Carter', initials: 'EC', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', group: 'G1',
   status: 'on-track', enrollmentStatus: 'active', riskFlags: [], otjhStatus: 'on-track', overallProgress: 78, overallProgressAvailable: true,
-  attendanceRate: 80, attendanceRateAvailable: true, componentsCompleted: 8, componentsPlanned: 10,
+  attendanceRate: 80, attendanceRateAvailable: true, attendanceSessions: 10, attendancePresent: 9, attendanceAbsent: 1, componentsCompleted: 8, componentsPlanned: 10,
   otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
-  evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, attendancePresent: 9, attendanceAbsent: 1, nextCoaching: '20 Sep 2026', nextReview: '--',
+  evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, nextCoaching: '20 Sep 2026', nextReview: '--',
   lastContact: '--', lastAttendanceDate: '--', lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--',
   lastActivity: '19 Sep 2026', lastActivityDate: '2026-09-19T12:30:00Z', lastActivityLabel: 'Latest quiz',
   lastSubmittedEvidence: '--', recentFlag: null, progressVariance: '--', startDate: '--', gatewayReviewDate: '--', plannedEndDate: '--',

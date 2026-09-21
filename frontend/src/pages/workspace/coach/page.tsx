@@ -15,6 +15,7 @@ import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
 import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
+import { getOtjhGapStatus } from '@/pages/coach/caseload/lib/format';
 import styles from './dashboard.module.css';
 import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
 import { SectionHeader } from '@/components/ui/SectionHeader';
@@ -58,7 +59,6 @@ const COACHING_CALENDAR_WINDOW_DAYS = 7;
 function coachDashboardEndpoint() {
   return '/coach_api/coach/dashboard';
 }
-
 async function fetchCoachDashboardWithRetry(signal: AbortSignal, url: string) {
   try {
     return await fetchSharedJsonGet<CoachDashboardApiResponse>(url, {
@@ -254,12 +254,9 @@ function isVisibleRiskFlag(value?: string | null) {
     && normalized !== 'otjh at risk';
 }
 
-function normalizeOtjhStatus(value?: string | null): OtjhStatusKey {
-  const normalized = displayValue(value).toLowerCase().replace(/[\s_-]+/g, '');
-  if (normalized === 'atrisk') return 'at-risk';
-  if (normalized === 'needattention' || normalized === 'needsattention') return 'need-attention';
-  if (normalized === 'ontrack') return 'on-track';
-  return 'unknown';
+function canonicalOtjhStatus(learner: CoachLearner): OtjhStatusKey {
+  const status = getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status;
+  return status === 'unavailable' ? 'unknown' : status;
 }
 
 interface EvidenceQueueLearner {
@@ -843,7 +840,7 @@ function buildOverdueMap(learners: CoachLearner[], events: CoachCalendarEvent[])
 
 function buildLearnerPriority(learner: CoachLearner, overdue?: OverdueSignal): LearnerPriority {
   const reasons: PriorityReason[] = [];
-  const otjhStatus = normalizeOtjhStatus(learner.otjhStatus);
+  const otjhStatus = canonicalOtjhStatus(learner);
   const otjhPercent = otjhPercentFor(learner);
 
   if (otjhStatus === 'at-risk') {
@@ -927,7 +924,7 @@ function percentTone(value?: number | null, warningThreshold = 50, successThresh
 
 /** The avatar ring colour: OTJH risk first, then programme stage. */
 function learnerAvatarTone(learner: CoachLearner): StatusTone {
-  const otjhStatus = normalizeOtjhStatus(learner.otjhStatus);
+  const otjhStatus = canonicalOtjhStatus(learner);
   if (otjhStatus === 'at-risk') return 'critical';
   if (otjhStatus === 'need-attention') return 'caution';
   const programmeStatus = normalizedProgramStatus(learner);
@@ -1228,15 +1225,15 @@ export default function CoachDashboard() {
   const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
   const activeLearners = useMemo(() => enrichedLearners.filter(isActiveLearner), [enrichedLearners]);
   const atRiskLearners = useMemo(
-    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk'),
+    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'at-risk'),
     [activeLearners],
   );
   const needAttentionLearners = useMemo(
-    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'need-attention'),
+    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'need-attention'),
     [activeLearners],
   );
   const onTrackLearners = useMemo(
-    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'on-track'),
+    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'on-track'),
     [activeLearners],
   );
   const evidenceLearners = useMemo(
@@ -1334,7 +1331,7 @@ export default function CoachDashboard() {
       case 'at-risk':
       case 'need-attention':
       case 'on-track':
-        return learner => isActiveLearner(learner) && normalizeOtjhStatus(learner.otjhStatus) === kpiFilter;
+        return learner => isActiveLearner(learner) && canonicalOtjhStatus(learner) === kpiFilter;
       default: return null;
     }
   }, [kpiFilter]);
@@ -1568,7 +1565,7 @@ function OtjhDistribution({ learners, unavailable }: { learners: CoachLearner[];
   const total = learners.length;
   let cursor = 0;
   const segments = statuses.map(status => {
-    const count = learners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === status.key).length;
+    const count = learners.filter(learner => canonicalOtjhStatus(learner) === status.key).length;
     const percent = total ? count / total * 100 : 0;
     const start = cursor;
     cursor += percent;
@@ -1603,7 +1600,7 @@ function AttentionLearnerRow({ learner, onOpen }: {
   learner: CoachLearner;
   onOpen: () => void;
 }) {
-  const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
+  const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
   const varianceLabel = otjhVarianceLabel(learner);
   return (
     <tr>
@@ -1677,7 +1674,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
       : type === 'epa'
         ? learners.filter(isEpaLearner)
     : type === 'on-track' || type === 'at-risk' || type === 'need-attention'
-      ? learners.filter(learner => isActiveLearner(learner) && normalizeOtjhStatus(learner.otjhStatus) === type)
+      ? learners.filter(learner => isActiveLearner(learner) && canonicalOtjhStatus(learner) === type)
       : [];
   const reviews = sortEvents(calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)));
   const evidenceLearners = evidenceQueue;
@@ -1752,7 +1749,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
           {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'completed' || type === 'epa') && (
             <div className="space-y-3.5">
               {modalLearners.map(learner => {
-                const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
+                const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
                 const attendance = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
                 const otjh = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
                 return (
