@@ -16,6 +16,15 @@ it('renders pages without a browser save toolbar and cleans up the PDF', async (
   expect(screen.getByText('Assignment 5 - September 2026.pdf')).toBeVisible();
   expect(getDocument).toHaveBeenCalledWith({ data: new Uint8Array(bytes) });
   expect(view.container.querySelector('iframe')).toBeNull();
+  const sheet = screen.getByLabelText('Report page 1');
+  expect(sheet).toHaveStyle({ width: '100%', maxWidth: '794px', height: 'auto' });
+  fireEvent.click(screen.getByRole('button', { name: 'Zoom out report' }));
+  expect(sheet).toHaveStyle({ width: '75%', maxWidth: '595.5px' });
+  expect(screen.getByLabelText('Report zoom level')).toHaveTextContent('75%');
+  fireEvent.click(screen.getByRole('button', { name: 'Zoom out report' }));
+  expect(screen.getByRole('button', { name: 'Zoom out report' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Reset zoom' }));
+  expect(sheet).toHaveStyle({ maxWidth: '794px' });
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
   await waitFor(() => expect(getPage).toHaveBeenLastCalledWith(2));
   expect(screen.getByText('Page 2 of 2')).toBeVisible();

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import styles from './monthlySubmission.module.css';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -6,6 +7,7 @@ export function AssignmentPdfPreview({ url, filename }: { url: string; filename:
   const canvas = useRef<HTMLCanvasElement>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
+  const [zoom, setZoom] = useState(100);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -38,7 +40,7 @@ export function AssignmentPdfPreview({ url, filename }: { url: string; filename:
     void (async () => {
       const sheet = await pdf.getPage(page);
       if (!active || !canvas.current) return;
-      const viewport = sheet.getViewport({ scale: 1.5 });
+      const viewport = sheet.getViewport({ scale: 2 });
       const target = canvas.current;
       target.width = Math.ceil(viewport.width); target.height = Math.ceil(viewport.height);
       render = sheet.render({ canvas: target, canvasContext: target.getContext('2d')!, viewport });
@@ -47,15 +49,21 @@ export function AssignmentPdfPreview({ url, filename }: { url: string; filename:
     })().catch(() => { if (active) { setBusy(false); setError('This page could not be previewed. You can still download the PDF.'); } });
     return () => { active = false; render?.cancel(); };
   }, [pdf, page]);
-  return <section aria-label="Assignment report PDF preview">
+  return <section className={styles.pdfViewer} aria-label="Assignment report PDF preview">
     <p className="mb-3 break-words text-sm font-semibold">{filename}</p>
-    {pdf && <div className="mb-3 flex items-center gap-3 text-sm">
+    {pdf && <div className={styles.pdfToolbar}>
       <button type="button" disabled={page === 1 || busy} onClick={() => setPage(value => value - 1)}>Previous page</button>
       <span>Page {page} of {pdf.numPages}</span>
       <button type="button" disabled={page === pdf.numPages || busy} onClick={() => setPage(value => value + 1)}>Next page</button>
+      <div className={styles.pdfZoom} aria-label="Report zoom">
+        <button type="button" aria-label="Zoom out report" disabled={zoom <= 50} onClick={() => setZoom(value => value - 25)}>-</button>
+        <output aria-label="Report zoom level">{zoom}%</output>
+        <button type="button" aria-label="Zoom in report" disabled={zoom >= 150} onClick={() => setZoom(value => value + 25)}>+</button>
+        <button type="button" onClick={() => setZoom(100)}>Reset zoom</button>
+      </div>
     </div>}
     {busy && <p role="status">Loading PDF preview…</p>}
     {error && <div role="alert"><p>{error}</p><button type="button" className="mt-2 text-sm font-semibold text-blue-700" onClick={() => setRetry(value => value + 1)}>Retry preview</button></div>}
-    <canvas ref={canvas} aria-label={`Report page ${page}`} style={{ display: busy || error ? 'none' : 'block', width: '100%', height: 'auto' }} />
+    <div className={styles.pdfStage}><canvas ref={canvas} aria-label={`Report page ${page}`} style={{ display: busy || error ? 'none' : 'block', width: `${zoom}%`, maxWidth: `${794 * zoom / 100}px`, height: 'auto' }} /></div>
   </section>;
 }

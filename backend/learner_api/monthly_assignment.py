@@ -138,6 +138,8 @@ def approved_evidence_ids(payload):
 
 
 def booked_coaching(payload):
+    if resubmission_booking_satisfied(payload):
+        return True
     from .calendar import _learner_calendar_record
     monthly = mapping(payload.get("monthlyAssignment"))
     windows = coaching_booking_windows(monthly.get("month"))
@@ -147,6 +149,35 @@ def booked_coaching(payload):
     return bool(record and record.event_type == "mcr" and record.scheduled_date
                 and any(start <= record.scheduled_date <= end for start, end in windows)
                 and record.status in ("scheduled", "in-progress", "completed", "awaiting-signature"))
+
+
+def resubmission_booking_satisfied(payload):
+    """Only stored rejected attempts can carry a previously verified MCM booking."""
+    from .assignment_attempts import document, HISTORY_KEY
+    with connections["enrolment"].cursor() as cur:
+        cur.execute(
+            'SELECT status, full_submission FROM "Learner"."learning_reflection_submissions" '
+            "WHERE learner_kind = %s AND learner_id = %s AND activity_type = 'assignment' AND activity_id = %s",
+            [payload.get("learnerKind"), str(payload.get("learnerId")), payload.get("activityId")],
+        )
+        row = cur.fetchone()
+    if not row or row[0] not in ("rejected", "draft"):
+        return False
+    stored = document(row[1])
+    previous = stored
+    if row[0] == "draft":
+        history = stored.get(HISTORY_KEY)
+        if not isinstance(history, list) or not history or mapping(history[-1]).get("status") != "rejected":
+            return False
+        previous = document(history[-1].get("content"))
+    monthly = mapping(previous.get("monthlyAssignment"))
+    return bool(
+        previous.get("submissionOrigin") not in ("imported_legacy", "classified_legacy")
+        and monthly.get("month") == mapping(payload.get("monthlyAssignment")).get("month")
+        and text(monthly.get("meetingKey"))
+        and any(mapping(check).get("key") == "meeting" and mapping(check).get("passed") is True
+                for check in items(previous.get("qualityChecks")))
+    )
 
 
 def available_ksb_codes(payload):
@@ -223,6 +254,9 @@ def parse_request(request):
 def check_assignment(request):
     try:
         payload = parse_request(request)
+        if payload.get("activityType") == "extra_activity":
+            from .extra_activities import extra_activity_checks
+            return JsonResponse({"checks": extra_activity_checks(payload)})
         return JsonResponse({"checks": assignment_checks(payload)})
     except (ValueError, TypeError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)

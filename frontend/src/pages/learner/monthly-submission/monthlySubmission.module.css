@@ -3,6 +3,14 @@
 .pageHeader h1 { margin: 0; font-size: 28px; font-weight: 750; letter-spacing: -.7px; }
 .pageHeader p { max-width: 850px; margin: 8px 0 0; color: #62758b; font-size: 14px; line-height: 1.7; }
 .total { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 10px 14px; background: white; border: 1px solid #dce4ed; border-radius: 24px; font-size: 13px; }
+.monthSelector { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding: 24px; border: 1px solid #d7e4f3; border-radius: 16px; background: #edf5ff; }
+.monthSelector h2 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 24px; font-weight: 750; }
+.monthSelector p:not(.eyebrow) { margin: 8px 0 0; color: #526b85; font-size: 13px; }
+.monthSelectLabel { display: grid; gap: 10px; width: 360px; max-width: 100%; min-width: 0; color: #294e73; font-size: 15px; font-weight: 700; }
+.monthSelectLabel select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 58px; padding: 14px 40px 14px 18px; border: 2px solid #91accb; border-radius: 12px; background: white; color: #18304d; font-family: inherit; font-size: 18px; font-weight: 650; line-height: 1.5; cursor: pointer; box-shadow: 0 3px 10px #17324c0d; }
+.monthSelectLabel select:hover { border-color: #315d8b; }
+.monthSelectLabel option { padding: 12px 16px; background: white; color: #18304d; font-size: 18px; font-weight: 500; }
+.monthSelectLabel select:focus-visible { outline: 3px solid #5b8bc5; outline-offset: 3px; }
 .months { display: flex; gap: 12px; overflow-x: auto; padding: 3px 3px 9px; scroll-snap-type: x proximity; }
 .month { display: flex; flex-direction: column; gap: 7px; min-width: 210px; max-width: 280px; flex: 1 0 210px; text-align: left; border: 1px solid #dce4ed; background: white; border-radius: 14px; padding: 16px; scroll-snap-align: start; transition: border-color .15s, background .15s; }
 .month[aria-pressed="true"] { background: #edf5ff; border-color: #5b8bc5; box-shadow: 0 0 0 1px #5b8bc5; }
@@ -19,6 +27,27 @@
 .focus { margin-top: 6px; font-size: 14px; color: #4a6684; line-height: 1.6; }
 .status { display: inline-flex; align-items: center; gap: 5px; width: fit-content; flex-shrink: 0; border-radius: 20px; padding: 6px 10px; background: #edf2f8; color: #48617f; font-size: 11px; font-weight: 650; }
 .positive { color: #217251; background: #e5f5ec; }
+.status[data-status='accepted'], .status[data-status='completed'] { color: #166534; background: #dcfce7; }
+.status[data-status='rejected'], .status[data-status='referred'], .status[data-status='returned'] { color: #991b1b; background: #fee2e2; }
+.status[data-status='submitted_for_tutor_review'] { color: #1e40af; background: #dbeafe; }
+.status[data-status='draft'] { color: #6b21a8; background: #f3e8ff; }
+.status[data-status='todo'], .status[data-status='partial'], .status[data-status='escalated'] { color: #854d0e; background: #fef3c7; }
+.statusFilters { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.statusFilters button { min-height: 44px; padding: 10px 22px; border: 1px solid #cad6e3; border-radius: 10px; background: white; color: #294e73; font-size: 14px; font-weight: 700; }
+.statusFilters button[aria-pressed='true'] { background: #18304d; border-color: #18304d; color: white; }
+.statusFilters button[data-filter='accepted'][aria-pressed='true'] { background: #166534; border-color: #166534; }
+.statusFilters button[data-filter='rejected'][aria-pressed='true'] { background: #991b1b; border-color: #991b1b; }
+.filterEmpty { padding: 24px; border: 1px dashed #bdccdc; border-radius: 12px; background: white; color: #526b85; font-size: 14px; line-height: 1.7; }
+.submissions { display: grid; gap: 16px; margin: 24px 0; }
+.submissions > .sectionHeading { align-items: center; flex-wrap: wrap; }
+.submissions h3, .submissionAttempt h4, .submissionAttempt h5 { margin: 0; }
+.submissionAttempt { padding: 20px; border: 1px solid #d7e4f3; border-radius: 14px; background: #f8fbff; min-width: 0; }
+.submissionAttempt h4 { font-size: 16px; font-weight: 750; }
+.submissionAttempt h5 { margin-top: 18px; font-size: 14px; font-weight: 700; color: #294e73; }
+.attemptFeedback, .submittedAnswer p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.8; margin: 8px 0 0; }
+.submittedAnswer { margin-top: 14px; }
+.submittedAnswer summary { cursor: pointer; color: #294e73; font-size: 14px; font-weight: 650; padding: 8px 0; }
+.submittedAnswer summary:focus-visible { outline: 3px solid #5b8bc5; outline-offset: 3px; }
 .heroBody { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 30%); gap: 32px; padding: 28px; }
 .brief { min-width: 0; }
 .brief h3 { font-size: 19px; font-weight: 700; margin: 0 0 14px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -65,6 +94,9 @@
 .primary, .secondary { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 46px; padding: 12px 19px; border-radius: 10px; font-size: 13px; font-weight: 650; text-decoration: none; }
 .primary { background: #183652; color: white; border: 1px solid #183652; }
 .primary:hover { background: #244f77; }
+.primary[data-status='rejected'] { background: #b91c1c; border-color: #b91c1c; box-shadow: 0 3px 8px #b91c1c26; }
+.primary[data-status='rejected']:hover { background: #991b1b; border-color: #991b1b; }
+.primary[data-status='rejected']:focus-visible { outline: 3px solid #b91c1c; outline-offset: 3px; }
 .primary:disabled { opacity: .55; cursor: not-allowed; }
 .secondary { color: #294e73; background: white; border: 1px solid #bbcede; }
 .secondary:hover { background: #f2f7fc; }
@@ -90,6 +122,7 @@
 .unscheduled { margin: 0 0 16px; color: #62758b; font-size: 13px; }
 .page button:focus-visible, .page a:focus-visible { outline: 3px solid #5b8bc5; outline-offset: 3px; }
 @media (max-width: 760px) {
+  .monthSelectLabel { width: 100%; }
   .page { padding: 16px; gap: 20px; }
   .pageHeader { flex-direction: column; }
   .pageHeader h1 { font-size: 24px; }
@@ -107,3 +140,15 @@
   .actions > * { width: 100%; }
   .attachment .actions { width: 100%; }
 }
+
+.pdfViewer { min-width: 0; border: 1px solid #d8e3ee; border-radius: 14px; background: #f3f6fa; padding: 16px; }
+.pdfToolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 16px; font-size: 13px; }
+.pdfToolbar button { padding: 7px 10px; border: 1px solid #c9d8e7; border-radius: 8px; background: white; color: #17324d; font-weight: 600; }
+.pdfToolbar button:hover:not(:disabled) { background: #e8f0f8; }
+.pdfToolbar button:focus-visible { outline: 2px solid #3578b8; outline-offset: 2px; }
+.pdfToolbar button:disabled { opacity: .45; cursor: not-allowed; }
+.pdfZoom { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.pdfZoom output { min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
+.pdfStage { display: flex; justify-content: center; min-width: 0; }
+.pdfStage canvas { min-width: 0; flex-shrink: 1; box-shadow: 0 3px 16px #17324d1a; background: white; }
+@media (max-width: 600px) { .pdfViewer { padding: 10px; } .pdfZoom { width: 100%; margin-left: 0; } }
