@@ -57,6 +57,11 @@ export default function StudentHome() {
 function StaffStudentHome() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
+  // A staff/admin review must be represented by the URL before the learner
+  // reads begin. This makes a bare workspace entry safe across refreshes.
+  if (!urlKind && !urlId && kind && id) {
+    return <Navigate to={`/workspace/learner/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`} replace />;
+  }
   return <LearnerHome key={`${kind}:${id}`} kind={kind} id={id} preview />;
 }
 

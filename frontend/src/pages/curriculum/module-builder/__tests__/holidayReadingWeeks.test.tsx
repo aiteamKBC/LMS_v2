@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -195,5 +195,57 @@ describe('what the holiday notice shows', () => {
     );
 
     expect(screen.getByTestId('week-holiday-notice').textContent || '').toContain('7 May 2027');
+  });
+});
+
+/**
+ * The hint a curriculum author writes for a holiday week.
+ *
+ * Authored on the notice itself, so it can only ever be written for a week a
+ * holiday lands on, and only where an editor is passed -- the read-only screens
+ * never pass one, which is what keeps the control out of everybody else's
+ * hands. Writing it does not publish it: the switch is a separate decision.
+ */
+describe('the note a curriculum author writes on a holiday week', () => {
+  const SLOT = { slotNumber: 5, date: '2027-05-03', day: 'Monday', holidays: [EARLY_MAY] };
+
+  it('offers no control at all to a screen that only reads the notice', () => {
+    render(<WeekHolidayNotice slot={SLOT} />);
+
+    expect(screen.queryByTestId('week-holiday-note-summary')).toBeNull();
+    expect(screen.queryByRole('button', { name: /note for learners/i })).toBeNull();
+  });
+
+  it('says a written note is hidden until the author turns it on', () => {
+    const { rerender } = render(
+      <WeekHolidayNotice slot={SLOT} note={{ enabled: false, message: 'No session -- finish Assignment 2.', onChange: () => {} }} />,
+    );
+
+    expect(screen.getByTestId('week-holiday-note-summary').textContent || '').toContain('Hidden from learners');
+
+    rerender(
+      <WeekHolidayNotice slot={SLOT} note={{ enabled: true, message: 'No session -- finish Assignment 2.', onChange: () => {} }} />,
+    );
+    expect(screen.getByTestId('week-holiday-note-summary').textContent || '').toContain('Shown to learners');
+  });
+
+  it('cannot publish an empty note', () => {
+    const changes: Array<{ enabled: boolean; message: string }> = [];
+    render(<WeekHolidayNotice slot={SLOT} note={{ enabled: false, message: '', onChange: next => changes.push(next) }} />);
+    fireEvent.click(screen.getByRole('button', { name: /add note for learners/i }));
+
+    expect(screen.getByRole('checkbox')).toBeDisabled();
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Campus closed -- catch up on the reading.' } });
+    expect(changes.at(-1)).toEqual({ enabled: false, message: 'Campus closed -- catch up on the reading.' });
+  });
+
+  it('un-publishes a note whose text is cleared, rather than showing an empty hint', () => {
+    const changes: Array<{ enabled: boolean; message: string }> = [];
+    render(<WeekHolidayNotice slot={SLOT} note={{ enabled: true, message: 'Campus closed.', onChange: next => changes.push(next) }} />);
+    fireEvent.click(screen.getByRole('button', { name: /edit note for learners/i }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '' } });
+
+    expect(changes.at(-1)).toEqual({ enabled: false, message: '' });
   });
 });

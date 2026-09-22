@@ -111,11 +111,15 @@ class LearnerReviewFormAccessTestCase(LearnerReviewPageTestCase):
         return record
 
     def _view(self, record, event_key='missing'):
-        """The learner's read-only Review endpoint. Ownership resolution is
-        `_learner_calendar_record`'s own contract and is stubbed here."""
+        """The learner's Review endpoint. Ownership resolution is
+        `_learner_calendar_record`'s own contract and is stubbed here.
+
+        Unwraps both @csrf_exempt and @learner_self_or_staff -- same two-layer
+        stack learner_progress_review_sign already carries below, see its own
+        `.__wrapped__.__wrapped__` call further down this file."""
         request = SimpleNamespace(method='GET')
         with patch('learner_api.calendar._learner_calendar_record', return_value=record):
-            response = learner_calendar_event_review.__wrapped__(
+            response = learner_calendar_event_review.__wrapped__.__wrapped__(
                 request, 'apprenticeship', 101, record.event_key if record else event_key,
             )
         return response.status_code, json.loads(response.content.decode())

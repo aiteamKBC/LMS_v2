@@ -164,6 +164,10 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   // first and draws it as a book -- the icon three of its neighbours already
   // wear. What the row is about is the archive, not the workspace it is in.
   if (/archive/.test(key)) return Archive;
+  // Same collision for the Quality row: 'curriculum-quality' also starts with
+  // 'curriculum-', so without this it fell into the book branch below and sat
+  // right next to Programmes wearing the identical icon.
+  if (id === 'curriculum-quality') return ShieldCheck;
   if (/^reports?$|\breports?\b/.test(key)) return FileText;
   if (/message|communication|feedback/.test(key)) return MessageSquare;
   if (/support|ticket|knowledge-base|help/.test(key)) return LifeBuoy;

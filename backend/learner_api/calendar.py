@@ -48,6 +48,7 @@ from .first_session import (
     uk_today as first_session_uk_today,
 )
 from login.permissions import learner_self_or_staff
+from login.sessions import authenticate_request
 
 logger = logging.getLogger(__name__)
 
@@ -765,15 +766,21 @@ def _learner_booking_record(kind, pk, event_key):
     return record
 
 
+@csrf_exempt
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_review(request, kind, pk, event_key):
-    """Return the read-only Curriculum form for a learner calendar event.
+    """Return the Curriculum form for a learner calendar event, or (POST)
+    save the learner's own answers to whichever fields the Review's
+    Curriculum template opted the Learner into answering.
 
-    The endpoint never creates a review instance. Unscheduled occurrences
-    expose a read-only template preview; booked instances retain their snapshot.
+    The endpoint never creates a review instance -- GET on an unscheduled
+    occurrence exposes a read-only template preview; POST requires a booked
+    instance to already exist (the coach's meeting is what creates it).
     """
-    if request.method != "GET":
+    if request.method not in ("GET", "POST"):
         return _error("Method not allowed.", 405)
+    if request.method == "POST":
+        return _save_learner_review_answers(request, kind, pk, event_key)
     record = _learner_calendar_record(kind, pk, event_key)
     from curriculum_api import review_instances, reviews
     instance_id = _s(getattr(record, "review_instance_id", ""))
@@ -838,6 +845,47 @@ def learner_calendar_event_review(request, kind, pk, event_key):
     if not definition['template']['visibleTo'].get('participant', True):
         return _error('This review is not visible to the learner.', 403)
     return JsonResponse(_learner_visible_review_definition(definition))
+
+
+def _save_learner_review_answers(request, kind, pk, event_key):
+    """POST /learner_api/calendar/<kind>/<pk>/events/<event_key>/review/
+
+    Saves only the fields the Review's Curriculum template opted the
+    Learner ('participant') into answering -- every other field stays the
+    coach's/Curriculum's, exactly as before this endpoint accepted writes.
+    """
+    from curriculum_api import review_instances
+
+    record = _learner_calendar_record(kind, pk, event_key)
+    instance_id = _s(getattr(record, "review_instance_id", ""))
+    if not instance_id:
+        return _error("This review has not been booked yet.", 404)
+    instance = review_instances.get_review_instance(instance_id)
+    if not instance:
+        return _error("Review instance not found.", 404)
+    definition = review_instances.review_instance_form_definition(instance)
+    if not definition['template']['visibleTo'].get('participant', True):
+        return _error('This review is not visible to the learner.', 403)
+
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return _error("Invalid JSON body.", 400)
+    answers = payload.get("answers")
+    if not isinstance(answers, dict):
+        return _error("answers must be an object keyed by field id.", 400)
+
+    account = authenticate_request(request)
+    actor = _s(getattr(account, "email", "")) or f"learner:{pk}"
+    try:
+        updated = review_instances.save_review_instance_answers_for_role(
+            instance, answers, "participant", actor=actor,
+        )
+    except PermissionError as exc:
+        return _error(str(exc), 403)
+    except ValueError as exc:
+        return _error(str(exc), 409)
+    return JsonResponse(_learner_visible_review_definition(updated))
 
 
 def _learner_visible_review_definition(definition):

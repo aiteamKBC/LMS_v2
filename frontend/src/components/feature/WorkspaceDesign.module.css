@@ -42,6 +42,33 @@
   background-image: none !important;
 }
 
+/* Module Builder's catalogue list is long enough that a hidden scrollbar
+   leaves no sign there is more to scroll to. Opt this one panel back into a
+   visible scrollbar without touching the hidden-scrollbar default anywhere
+   else. */
+:global(.dashboard-theme[data-workspace-role]).shell :global(.module-catalogue-scroll) {
+  scrollbar-width: thin !important;
+  scrollbar-color: oklch(var(--foreground-400)) oklch(var(--background-100)) !important;
+  scrollbar-gutter: stable !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.module-catalogue-scroll)::-webkit-scrollbar {
+  display: block !important;
+  width: 10px !important;
+  height: 10px !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.module-catalogue-scroll)::-webkit-scrollbar-track {
+  background: oklch(var(--background-100)) !important;
+  border-radius: 999px;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.module-catalogue-scroll)::-webkit-scrollbar-thumb {
+  background: oklch(var(--foreground-400)) !important;
+  border-radius: 999px;
+  border: 2px solid oklch(var(--background-100));
+}
+
 /* A 1920px display at 150% browser zoom exposes about 1280 CSS pixels. Keep
    every coach route inside that effective viewport and let wide data tables
    own their horizontal scrolling instead of widening the whole workspace. */

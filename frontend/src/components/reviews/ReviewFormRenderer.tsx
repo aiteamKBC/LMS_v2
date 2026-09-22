@@ -28,6 +28,11 @@ interface ReviewFormRendererProps {
   onAnswerChange: (fieldId: string, value: unknown) => void;
   errors?: ReviewFieldErrorSet;
   readOnly?: boolean;
+  /** Per-field override of `readOnly`, e.g. so a Learner/Employer viewer can
+   *  write exactly the fields their role was opted into (see
+   *  computeWritableFieldIds) while every other field stays read-only. Takes
+   *  priority over the blanket `readOnly` prop whenever it is supplied. */
+  fieldReadOnly?: (field: ReviewFieldDefinition) => boolean;
   openSectionId: string;
   onOpenSectionChange: (sectionId: string) => void;
   renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
@@ -41,7 +46,6 @@ interface ReviewFormRendererProps {
     },
   ) => ReactNode | undefined;
   variant?: 'accordion' | 'steps';
-  stepOffset?: number;
 }
 
 function fieldAnswered(field: ReviewFieldDefinition, answers: Record<string, unknown>) {
@@ -62,12 +66,12 @@ export function ReviewFormRenderer({
   onAnswerChange,
   errors,
   readOnly,
+  fieldReadOnly,
   openSectionId,
   onOpenSectionChange,
   renderFieldAddon,
   renderFieldInput,
   variant = 'accordion',
-  stepOffset = 0,
 }: ReviewFormRendererProps) {
   const enabledSections = sections
     .filter((section) => section.enabled)
@@ -77,7 +81,7 @@ export function ReviewFormRenderer({
   if (variant === 'steps') {
     const activeIndex = Math.max(0, enabledSections.findIndex(section => section.id === openSectionId));
     const activeSection = enabledSections[activeIndex];
-    const totalSteps = enabledSections.length + stepOffset;
+    const totalSteps = enabledSections.length;
 
     if (!activeSection) return null;
 
@@ -85,21 +89,10 @@ export function ReviewFormRenderer({
       <div className="grid items-start gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
         <nav aria-label="Review steps" className="rounded-2xl border border-background-200 bg-white p-3 lg:sticky lg:top-4">
           <ol className="space-y-1.5">
-            {Array.from({ length: stepOffset }, (_, index) => (
-              <li key={`completed-step-${index + 1}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-foreground-500">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-                  <AppIcon className="ri-check-line"></AppIcon>
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-[11px] font-bold uppercase tracking-[0.1em]">Step {index + 1}</span>
-                  <span className="block truncate text-xs font-semibold">{index === 0 ? 'Review selected' : 'Details confirmed'}</span>
-                </span>
-              </li>
-            ))}
             {enabledSections.map((section, sectionIndex) => {
               const selected = section.id === activeSection.id;
               const complete = computeMissingRequiredFields([section], answers).size === 0;
-              const stepNumber = sectionIndex + stepOffset + 1;
+              const stepNumber = sectionIndex + 1;
               return (
                 <li key={section.id}>
                   <button
@@ -136,11 +129,11 @@ export function ReviewFormRenderer({
           <header className="border-b border-primary-100 bg-primary-50/70 px-5 py-4 sm:px-6">
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-sm font-bold text-white">
-                {activeIndex + stepOffset + 1}
+                {activeIndex + 1}
               </span>
               <div className="min-w-0">
                 <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary-600">
-                  Step {activeIndex + stepOffset + 1} of {totalSteps}
+                  Step {activeIndex + 1} of {totalSteps}
                 </p>
                 <h2 id={`review-step-${activeSection.id}`} className="mt-1 text-base font-bold text-foreground-950">
                   {activeSection.title}
@@ -163,6 +156,7 @@ export function ReviewFormRenderer({
                   onAnswerChange={onAnswerChange}
                   errors={errors}
                   readOnly={readOnly}
+                  fieldReadOnly={fieldReadOnly}
                   renderFieldAddon={renderFieldAddon}
                   renderFieldInput={renderFieldInput}
                 />
@@ -237,6 +231,7 @@ export function ReviewFormRenderer({
                       onAnswerChange={onAnswerChange}
                       errors={errors}
                       readOnly={readOnly}
+                      fieldReadOnly={fieldReadOnly}
                       renderFieldAddon={renderFieldAddon}
                       renderFieldInput={renderFieldInput}
                     />
@@ -251,7 +246,7 @@ export function ReviewFormRenderer({
 }
 
 function ReviewFieldControl({
-  field, index, answers, onAnswerChange, errors, readOnly, renderFieldAddon, renderFieldInput,
+  field, index, answers, onAnswerChange, errors, readOnly, fieldReadOnly, renderFieldAddon, renderFieldInput,
 }: {
   field: ReviewFieldDefinition;
   index: number;
@@ -259,12 +254,14 @@ function ReviewFieldControl({
   onAnswerChange: (fieldId: string, value: unknown) => void;
   errors?: ReviewFieldErrorSet;
   readOnly?: boolean;
+  fieldReadOnly?: (field: ReviewFieldDefinition) => boolean;
   renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
   renderFieldInput?: ReviewFormRendererProps['renderFieldInput'];
 }) {
   const value = answers[field.id];
   const invalid = Boolean(errors?.missingFieldIds.has(field.id));
   const isMeetingSummary = field.configuration?.semanticKey === 'meeting_summary';
+  const effectiveReadOnly = fieldReadOnly ? fieldReadOnly(field) : Boolean(readOnly);
 
   if (field.fieldType === 'title_description') {
     const description = String(field.configuration?.description || '');
@@ -273,8 +270,8 @@ function ReviewFieldControl({
         <div className="flex items-start gap-3">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary-100 text-[12px] font-bold text-primary-700">{index + 1}</span>
           <div>
-            <p className="text-xs font-bold text-foreground-800">{field.title}</p>
-            {description ? <p className="mt-1 text-[12px] leading-4 text-foreground-400">{description}</p> : null}
+            <p className="text-sm font-semibold leading-5 text-foreground-900">{field.title}</p>
+            {description ? <p className="mt-1 text-sm leading-5 text-foreground-500">{description}</p> : null}
           </div>
         </div>
       </div>
@@ -284,7 +281,7 @@ function ReviewFieldControl({
   if (field.fieldType === 'action_button') {
     return (
       <div className="rounded-2xl border border-background-200 bg-background-50 p-4">
-        <button type="button" disabled={readOnly} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
+        <button type="button" disabled={effectiveReadOnly} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
           <AppIcon className="ri-flashlight-line"></AppIcon>{field.title}
         </button>
       </div>
@@ -293,8 +290,8 @@ function ReviewFieldControl({
 
   return (
     <div className={cn('rounded-2xl border bg-background-50 p-4 transition focus-within:border-primary-300 focus-within:shadow-sm', invalid ? 'border-red-300' : 'border-background-200')}>
-      <label className="mb-2 block text-xs font-bold text-foreground-800">
-        <span className="mr-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-100 px-1 text-[12px] text-primary-700">{index + 1}</span>
+      <label className="mb-2.5 block !text-base !font-semibold !leading-5 !text-foreground-900">
+        <span className="mr-2 inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-primary-100 px-1 text-xs font-bold text-primary-700">{index + 1}</span>
         {isMeetingSummary ? 'Meeting Summary' : field.title}
         {field.required ? <span className="ml-1 text-red-500">*</span> : null}
       </label>
@@ -303,19 +300,19 @@ function ReviewFieldControl({
       {renderFieldInput?.(field, {
         value,
         onChange: (next) => onAnswerChange(field.id, next),
-        readOnly: Boolean(readOnly),
+        readOnly: effectiveReadOnly,
         invalid,
       }) ?? (
-        <ReviewFieldInput field={field} value={value} onChange={(next) => onAnswerChange(field.id, next)} readOnly={readOnly} />
+        <ReviewFieldInput field={field} value={value} onChange={(next) => onAnswerChange(field.id, next)} readOnly={effectiveReadOnly} />
       )}
 
       {field.fieldType === 'boolean_case_block' ? (
         <div className="mt-3 space-y-3 border-l-2 border-primary-100 pl-4">
           {value === 'yes' ? (field.yesFields || []).map((child, childIndex) => (
-            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />
+            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} fieldReadOnly={fieldReadOnly} renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />
           )) : null}
           {value === 'no' ? (field.noFields || []).map((child, childIndex) => (
-            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />
+            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} fieldReadOnly={fieldReadOnly} renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />
           )) : null}
         </div>
       ) : null}
@@ -409,7 +406,7 @@ function ReviewFieldInput({
               disabled={readOnly}
               onClick={() => onChange(option)}
               className={cn(
-                'flex h-11 items-center justify-center gap-2 rounded-lg border text-xs font-bold capitalize transition',
+                'flex h-11 items-center justify-center gap-2 rounded-lg border !text-sm !font-semibold !capitalize !leading-5 transition',
                 value === option
                   ? (option === 'yes' ? 'border-emerald-500 bg-emerald-500 text-white shadow-sm' : 'border-foreground-700 bg-foreground-800 text-white shadow-sm')
                   : 'border-background-300 bg-white text-foreground-600 hover:border-primary-300 hover:bg-primary-50',
@@ -431,7 +428,7 @@ function ReviewFieldInput({
               disabled={readOnly}
               onClick={() => onChange(option)}
               className={cn(
-                'min-h-10 rounded-lg border px-3 py-2 text-left text-[12px] font-semibold transition',
+                'min-h-10 rounded-lg border px-3 py-2 text-left !text-sm !font-medium !leading-5 transition',
                 value === option ? 'border-primary-600 bg-primary-600 text-white shadow-sm' : 'border-background-300 bg-white text-foreground-600 hover:border-primary-300 hover:bg-primary-50',
               )}
             >
@@ -479,6 +476,28 @@ export function computeVisibleRequiredFields(sections: ReviewSectionDefinition[]
     walk(section.fields, true);
   }
   return required;
+}
+
+/**
+ * Field ids this respondent role ('participant' i.e. Learner, or 'employer')
+ * was opted into answering by the Curriculum template, at any nesting depth.
+ * Mirrors the backend's review_instances.writable_field_ids_for_role exactly
+ * -- the Coach is never checked against this and can always answer every
+ * field regardless, so this is only ever used for the Learner/Employer
+ * surfaces that share this same renderer read-only by default.
+ */
+export function computeWritableFieldIds(sections: ReviewSectionDefinition[], role: 'participant' | 'employer'): Set<string> {
+  const ids = new Set<string>();
+  const walk = (fields: ReviewFieldDefinition[]) => {
+    for (const field of fields) {
+      const roles = (field.configuration?.respondentRoles as string[] | undefined) || [];
+      if (roles.includes(role)) ids.add(field.id);
+      walk(field.yesFields || []);
+      walk(field.noFields || []);
+    }
+  };
+  for (const section of sections) walk(section.fields);
+  return ids;
 }
 
 export function computeMissingRequiredFields(sections: ReviewSectionDefinition[], answers: Record<string, unknown>): Set<string> {

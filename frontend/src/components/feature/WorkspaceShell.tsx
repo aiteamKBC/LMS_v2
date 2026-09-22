@@ -15,6 +15,7 @@ import { ArrowLeft } from 'lucide-react';
 import design from './WorkspaceDesign.module.css';
 import { activePersonalLearning } from '@/lib/personalLearning';
 import { PersonalLearningBanner } from './PersonalLearningBanner';
+import { learnerHref, learnerIdentityFromPath, type LearnerRoutePage } from '@/lib/learnerRoutes';
 
 interface WorkspaceShellProps {
   children: ReactNode;
@@ -214,9 +215,27 @@ export function WorkspaceShell({
   const navItems = personal
     ? gatedNavItems.filter(item => ['learner-my-learning', 'learner-map'].includes(item.id))
     : gatedNavItems;
-  const workspaceNavItems = auth.account?.role === 'admin' && !navItems.some(item => item.id === 'personal-courses')
-    ? [...navItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
+  const routeLearner = role === 'learner' ? learnerIdentityFromPath(location.pathname) : null;
+  const learnerPageById: Record<string, LearnerRoutePage> = {
+    'learner-overview': 'dashboard', 'learner-my-learning': 'my-learning',
+    'learner-group-monthly': 'my-progress',
+    'learner-monthly-submission': 'monthly-submission', 'learner-monthly-logs': 'monthly-logs',
+    'learner-monthly-coaching': 'monthly-coaching', 'learner-progress-reviews': 'reviews',
+    'learner-attendance': 'attendance', 'learner-evidence': 'evidence', 'learner-calendar': 'calendar',
+  };
+  const stableNavItems = routeLearner
+    ? navItems.map(item => {
+      const page = learnerPageById[item.id];
+      const children = item.children?.map(child => {
+        const childPage = learnerPageById[child.id];
+        return childPage ? { ...child, href: learnerHref(childPage, routeLearner.kind, routeLearner.id) } : child;
+      });
+      return page ? { ...item, href: learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
+    })
     : navItems;
+  const workspaceNavItems = auth.account?.role === 'admin' && !navItems.some(item => item.id === 'personal-courses')
+    ? [...stableNavItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
+    : stableNavItems;
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');
