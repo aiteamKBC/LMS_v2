@@ -1425,7 +1425,7 @@ def semantic_review_fields(definition, semantic_key):
 
 
 def meeting_summary_field(definition):
-    """Return the single explicitly mapped formal MCM summary field.
+    """Return the single explicitly mapped formal Review summary field.
 
     Multiple markers are ambiguous and therefore behave like no mapping.
     Template validation prevents new duplicates; this defensive rule keeps

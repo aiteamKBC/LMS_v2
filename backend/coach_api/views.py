@@ -5962,6 +5962,14 @@ COACH_MEETING_ATTENDANCE_RELATION = '"Coach".coach_meeting_attendance'
 COACH_MEETING_SUMMARIES_RELATION = '"Coach".coach_meeting_summaries'
 COACH_MEETING_ATTENDANCE_STATUSES = {"attended", "absent", "pending", "extra"}
 COACH_MEETING_SUMMARY_TYPES = {"mcr", "progress-review", GENERIC_REVIEW_EVENT_TYPE}
+# Review types whose explicitly mapped Meeting Summary field may receive the
+# transcript-generated suggestion.  The underlying Teams/transcript pipeline
+# already supports both event types; this set keeps Review-form exposure
+# deliberate and aligned with the Curriculum Form Builder validation.
+REVIEW_MEETING_SUMMARY_REVIEW_TYPES = {
+    curriculum_review_types.REVIEW_TYPE_CODE_MCM,
+    curriculum_review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
+}
 COACH_MEETING_SUMMARY_MODEL = getattr(settings, "OPENAI_MEETING_SUMMARY_MODEL", "") or getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
 COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 # How much transcript the recap prompt may carry. The previous 18,000 was
@@ -12487,13 +12495,13 @@ def _review_instance_meeting_summary_context(instance_row) -> MeetingSummaryCont
 
 
 def _review_instance_meeting_summary_source(instance_row, definition=None):
-    """Stored-only coach suggestion for one explicitly mapped MCM field.
+    """Stored-only coach suggestion for one mapped MCM/Progress Review field.
 
     This helper never contacts Graph or OpenAI. The formal answer remains on
     the field inside ``definition['sections']`` and always wins in the client.
     """
     definition = definition or curriculum_review_instances.review_instance_form_definition(instance_row)
-    if definition.get("template", {}).get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_MCM:
+    if definition.get("template", {}).get("reviewTypeCode") not in REVIEW_MEETING_SUMMARY_REVIEW_TYPES:
         return None
     field = curriculum_review_instances.meeting_summary_field(definition)
     if not field:
@@ -12811,7 +12819,7 @@ def coach_review_instance_answers(request, instance_id):
 
 @coach_access_required
 def coach_review_instance_meeting_summary(request, instance_id):
-    """Explicitly acquire/generate the AI suggestion for one mapped MCM.
+    """Explicitly acquire/generate the AI suggestion for one mapped MCM/PR.
 
     Passive Review reads use ``_review_instance_meeting_summary_source`` and
     never reach Graph/OpenAI. This POST reuses the same snapshot persistence,
@@ -12832,8 +12840,8 @@ def coach_review_instance_meeting_summary(request, instance_id):
     if error:
         return error
     definition = curriculum_review_instances.review_instance_form_definition(instance_row)
-    if definition.get("template", {}).get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_MCM:
-        return JsonResponse({"detail": "Meeting Summary generation is only available on an MCM Review."}, status=404)
+    if definition.get("template", {}).get("reviewTypeCode") not in REVIEW_MEETING_SUMMARY_REVIEW_TYPES:
+        return JsonResponse({"detail": "Meeting Summary generation is only available on a Monthly Coaching Meeting or Progress Review."}, status=404)
     field = curriculum_review_instances.meeting_summary_field(definition)
     if not field:
         return JsonResponse({
