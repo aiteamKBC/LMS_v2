@@ -28,9 +28,9 @@ function AccountSettings() {
   </div>;
 }
 
-export function StudentHomeHeader({ name, homeHref, identity, events, loading, error, onRetry }: {
+export function StudentHomeHeader({ name, homeHref, identity, events, loading, error, onRetry, embedded = false }: {
   name: string; homeHref: string; identity: string; events: HomeEvent[];
-  loading: boolean; error: boolean; onRetry: () => void;
+  loading: boolean; error: boolean; onRetry: () => void; embedded?: boolean;
 }) {
   const { logout } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
@@ -84,6 +84,49 @@ export function StudentHomeHeader({ name, homeHref, identity, events, loading, e
     panelTrigger.current = trigger;
     setProfileOpen(false); setPanel(next);
   };
+
+  if (embedded) {
+    return <>
+      <div className={styles.headerTools} aria-label="Learner tools">
+        <button type="button" className={styles.headerAction} aria-label={unread ? `Notifications, ${unread} new` : 'Notifications'}
+          aria-haspopup="dialog" aria-expanded={panel === 'notifications'} onClick={event => openPanel('notifications', event.currentTarget)}>
+          <span className={styles.notificationBell}><Bell aria-hidden="true"/>{unread > 0 && <span className={styles.notificationDot} aria-hidden="true"/>}</span><span className={styles.headerControlLabel}>Notifications</span>
+        </button>
+        <a className={`${styles.headerAction} ${styles.headerResource}`} href="https://kentbusinesscollege.com/learners/career-planner/">
+          <Compass aria-hidden="true"/><span>Career Planner</span>
+        </a>
+        <button type="button" className={`${styles.headerAction} ${styles.headerResource}`} aria-label="Feedback — coming soon" disabled>
+          <MessageSquare aria-hidden="true"/><span className={styles.headerResourceLabel}>Feedback<span className={styles.comingSoon}>Coming soon</span></span>
+        </button>
+        <button type="button" className={styles.headerAction} aria-label="Help & Support" aria-haspopup="dialog"
+          aria-expanded={panel === 'help'} onClick={event => openPanel('help', event.currentTarget)}>
+          <CircleHelp aria-hidden="true"/><span className={styles.headerControlLabel}>Help &amp; Support</span>
+        </button>
+        <button type="button" className={styles.headerAction} aria-label="Settings" aria-haspopup="dialog"
+          aria-expanded={panel === 'settings'} onClick={event => openPanel('settings', event.currentTarget)}>
+          <Settings aria-hidden="true"/><span className={styles.headerControlLabel}>Settings</span>
+        </button>
+      </div>
+      {panel && <Modal title={panel === 'notifications' ? 'Notifications' : panel === 'help' ? 'Help & Support' : 'Settings'}
+        onClose={() => setPanel(null)} size="max-w-lg" className={styles.headerDialog} returnFocusRef={panelTrigger}>
+        {panel === 'notifications' ? <div className={styles.headerDialogBody}>
+          <p>Reminders from your learning schedule.</p>
+          {notifications.length > 0 && <ul className={styles.headerNotifications}>{notifications.map(event => <li key={event.id}>
+            <Link to={event.href} onClick={() => setPanel(null)}><strong>{event.title}</strong><span>{event.detail}</span>
+              <time dateTime={event.date!}>{new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/London' }).format(new Date(event.date!))}</time>
+            </Link>
+          </li>)}</ul>}
+          {loading && <p role="status">Loading notifications…</p>}
+          {error ? <div role="alert"><p>Some reminders could not be loaded.</p><button className={styles.headerDialogLink} onClick={onRetry}>Try again</button></div>
+            : !loading && !notifications.length && <p>You’re all caught up. No upcoming reminders.</p>}
+        </div> : panel === 'settings' ? <AccountSettings/> : <div className={styles.headerDialogBody}>
+          <p>Use Continue Learning to open this week’s material, and Dashboard to explore your progress and learning tools.</p>
+          <Link className={styles.headerDialogLink} to="/user-guide">Open the learner guide<ArrowRight aria-hidden="true"/></Link>
+          <Link className={styles.headerDialogLink} to="/learner/monthly-coaching">Get learning support from your coach<ArrowRight aria-hidden="true"/></Link>
+        </div>}
+      </Modal>}
+    </>;
+  }
 
   return <>
     <header className={styles.header}>

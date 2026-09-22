@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '../WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -70,8 +70,11 @@ it.each([
   // These links must already exist before ever visiting Dashboard.
   expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
   expect(sidebar().getByRole('link', { name: 'Attendance' })).toBeVisible();
-  fireEvent.click(sidebar().getByRole('button', { name: 'My Progress' }));
-  expect(sidebar().getByRole('link', { name: 'Monthly Logs' })).toBeVisible();
+  const progressToggle = sidebar().getByRole('button', { name: 'My Progress' });
+  if (progressToggle.getAttribute('aria-expanded') !== 'true') {
+    await act(async () => { fireEvent.click(progressToggle); });
+  }
+  await waitFor(() => expect(sidebar().getByRole('link', { name: 'Monthly Logs' })).toBeVisible());
   expect(sidebar().queryByRole('link', { name: 'Evidence' })).toBeNull();
   const initialDestinations = destinations();
   expect(new Set(initialDestinations).size).toBe(initialDestinations.length);

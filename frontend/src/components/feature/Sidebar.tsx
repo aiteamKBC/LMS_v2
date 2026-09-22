@@ -42,6 +42,7 @@ import {
   LifeBuoy,
   Link2,
   LockKeyhole,
+  LogOut,
   MessageSquare,
   Menu,
   PanelLeftClose,
@@ -69,6 +70,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { LEARNER_LOGO_URL, LEARNER_SIDEBAR_PATTERN_URL, LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
+import { SignOutConfirmModal } from './Header';
 
 // ============================================================================
 // Workspace navigation.
@@ -264,6 +267,7 @@ export function Sidebar({
   role,
   roleLabel,
   navItems,
+  userName,
   pinned = false,
   onPinChange,
   mobileOpen,
@@ -272,7 +276,8 @@ export function Sidebar({
 }: SidebarProps) {
   const location = useLocation();
   const secondaryNavigationId = `${role}-secondary-navigation`;
-  const { canSeeNavItem } = useAuth();
+  const { auth, canSeeNavItem, logout } = useAuth();
+  const [signOutOpen, setSignOutOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
@@ -512,64 +517,62 @@ export function Sidebar({
     </div>
   );
 
+  const learnerPanel = (instance: 'desktop' | 'mobile') => (
+    <div className="kbc-learner-sidebar-panel relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-[#4f2d7f] text-white">
+      <div
+        aria-hidden="true"
+        className="kbc-learner-sidebar-pattern pointer-events-none absolute inset-0"
+        style={{ backgroundImage: `url(${LEARNER_SIDEBAR_PATTERN_URL})` }}
+      />
+      <div className="relative z-10 flex min-h-[112px] shrink-0 items-center border-b border-white/15 px-7 py-6">
+        <img
+          src={LEARNER_LOGO_URL}
+          alt="Kent Business College"
+          className="h-auto w-[168px] max-w-full object-contain object-left"
+        />
+      </div>
+      <nav
+        id={`${role}-${instance}-primary-navigation`}
+        aria-label="Learner primary navigation"
+        className="relative z-10 min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-7 [scrollbar-width:none]"
+      >
+        {filteredNavItems.map(item => hasChildren(item) ? (
+          <ExpandedGroup
+            key={item.id}
+            item={item}
+            isActive={isActive}
+            isExpanded={expandedGroups.has(item.id)}
+            onToggle={() => toggleGroup(item.id)}
+            onNavigate={onCloseMobile}
+            presentation="row"
+          />
+        ) : (
+          <ExpandedLink key={item.id} item={item} isActive={isActive} onNavigate={onCloseMobile} presentation="row" />
+        ))}
+      </nav>
+      <div className="relative z-10 shrink-0 border-t border-white/15 px-5 py-5">
+        <button
+          type="button"
+          onClick={() => setSignOutOpen(true)}
+          className="kbc-learner-signout flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5c94f] focus-visible:ring-inset"
+        >
+          <LogOut aria-hidden="true" size={21} strokeWidth={1.8} />
+          <span>Sign out</span>
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <>
       {role === 'learner' ? (
         <aside
           aria-label={`${roleLabel} sidebar`}
           data-workspace-role={role}
-          className="fixed bottom-3 left-3 top-3 z-40 hidden flex-col overflow-hidden rounded-[24px] bg-brand-deep shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex"
-          style={{ width: pinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH }}
+          className="kbc-learner-sidebar fixed bottom-0 left-0 top-0 z-40 hidden flex-col overflow-hidden shadow-sm lg:flex"
+          style={{ width: LEARNER_SIDEBAR_WIDTH }}
         >
-          <div className={`flex shrink-0 items-center ${pinned ? 'gap-3 px-5 py-5' : 'flex-col pt-5'}`}>
-            <img
-              src="https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp"
-              alt="KENT logo"
-              className="h-10 w-10 shrink-0 rounded-xl object-contain"
-            />
-            {pinned && <span className="min-w-0 flex-1 truncate font-heading text-lg font-bold text-white">{roleLabel}</span>}
-            {onPinChange && (
-              <button
-                type="button"
-                onClick={() => onPinChange(!pinned)}
-                aria-label={pinned ? 'Collapse navigation' : 'Expand navigation'}
-                aria-expanded={pinned}
-                aria-controls={`${role}-primary-navigation`}
-                title={pinned ? 'Collapse navigation' : 'Expand navigation'}
-                className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-white/90 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/80 ${pinned ? '' : 'mt-5'}`}
-              >
-                <Menu className="h-6 w-6" aria-hidden="true" />
-              </button>
-            )}
-          </div>
-          <nav
-            id={`${role}-primary-navigation`}
-            aria-label={`${roleLabel} primary navigation`}
-            className={`min-h-0 flex-1 overflow-y-auto pb-6 [scrollbar-width:thin] ${pinned ? 'space-y-1 px-3' : 'mt-7 space-y-4 px-5'}`}
-          >
-            {filteredNavItems.map(item => (
-              hasChildren(item) ? (
-                <ExpandedGroup
-                  key={item.id}
-                  item={item}
-                  isActive={isActive}
-                  isExpanded={pinned && expandedGroups.has(item.id)}
-                  onToggle={() => {
-                    if (!pinned) {
-                      onPinChange?.(true);
-                      setExpandedGroups(previous => new Set(previous).add(item.id));
-                    } else {
-                      toggleGroup(item.id);
-                    }
-                  }}
-                  onNavigate={onCloseMobile}
-                  presentation={pinned ? 'row' : 'rail'}
-                />
-              ) : (
-                <ExpandedLink key={item.id} item={item} isActive={isActive} onNavigate={onCloseMobile} presentation={pinned ? 'row' : 'rail'} />
-              )
-            ))}
-          </nav>
+          {learnerPanel('desktop')}
         </aside>
       ) : (
       <aside
@@ -670,20 +673,31 @@ export function Sidebar({
 
       {/* Mobile drawer — the same expanded panel */}
       <div
+        id={`${role}-mobile-navigation`}
         aria-label={`${roleLabel} mobile navigation`}
         aria-hidden={!mobileOpen}
         inert={!mobileOpen}
-        className={`fixed left-0 top-0 z-50 h-screen w-[268px] shadow-xl transition-transform duration-300 ease-out lg:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`fixed left-0 top-0 z-50 h-screen shadow-xl transition-transform duration-300 ease-out lg:hidden ${role === 'learner' ? 'w-[min(240px,86vw)]' : 'w-[268px]'} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        {panel('expanded')}
+        {role === 'learner' ? learnerPanel('mobile') : panel('expanded')}
         <button
+          type="button"
           onClick={onCloseMobile}
           aria-label="Close navigation"
-          className="absolute right-2.5 top-3 flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-colors hover:bg-primary-50 hover:text-primary-700"
+          className={`absolute right-2.5 top-3 z-20 flex cursor-pointer items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5c94f] ${role === 'learner' ? 'h-11 w-11 text-white hover:bg-white/15' : 'h-8 w-8 text-foreground-400 hover:bg-primary-50 hover:text-primary-700'}`}
         >
           <X size={18} strokeWidth={1.8} aria-hidden="true" />
         </button>
       </div>
+      {role === 'learner' && signOutOpen && createPortal(
+        <SignOutConfirmModal
+          displayName={userName || auth.user?.fullName || 'User'}
+          email={auth.user?.email || 'Signed in'}
+          onClose={() => setSignOutOpen(false)}
+          onConfirm={() => { setSignOutOpen(false); logout(); }}
+        />,
+        document.body,
+      )}
     </>
   );
 }
@@ -828,7 +842,7 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
         {presentation === 'rail' && item.statusDot && !item.badge ? <RailDot className="bg-red-500" /> : null}
         {presentation === 'rail' && (item.comingSoon || item.tag) && !item.badge && !item.statusDot ? <RailDot className="bg-amber-400" /> : null}
       </span>
-      <span className={presentation === 'rail' ? 'sr-only' : 'min-w-0 flex-1 truncate'}>{item.label}</span>
+      <span className={presentation === 'rail' ? 'sr-only' : presentation === 'row' ? 'min-w-0 flex-1 whitespace-normal break-words text-left' : 'min-w-0 flex-1 truncate'}>{item.label}</span>
       {presentation !== 'rail' && (
         <span className="flex shrink-0 items-center gap-1.5">
           {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
@@ -854,6 +868,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
   presentation?: 'rail' | 'row' | 'tiles';
 }) {
   const anyChildActive = item.children?.some(child => isActive(child.href, child.matchPaths)) ?? false;
+  const activeChildIndex = item.children?.findIndex(child => isActive(child.href, child.matchPaths)) ?? -1;
 
   return (
     <div>
@@ -867,7 +882,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
         type="button"
         onClick={onToggle}
         aria-expanded={isExpanded}
-        aria-current={presentation === 'rail' && anyChildActive ? 'true' : undefined}
+        aria-current={(presentation === 'rail' || presentation === 'row') && anyChildActive ? 'true' : undefined}
         title={presentation === 'rail' ? item.label : undefined}
         className={presentation === 'rail'
           ? `relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${anyChildActive ? 'bg-brand-accent text-white shadow-sm' : 'bg-white/10 text-white/75 hover:bg-white/20 hover:text-white'}`
@@ -879,22 +894,36 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
         <span className={presentation ? 'flex h-5 w-5 shrink-0 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} className={presentation ? 'h-5 w-5' : undefined} />
         </span>
-        <span className={presentation === 'rail' ? 'sr-only' : 'min-w-0 flex-1 truncate text-left'}>{item.label}</span>
+        <span className={presentation === 'rail' ? 'sr-only' : presentation === 'row' ? 'min-w-0 flex-1 whitespace-normal break-words text-left' : 'min-w-0 flex-1 truncate text-left'}>{item.label}</span>
         <span className={presentation === 'rail' ? 'sr-only' : 'flex shrink-0 items-center gap-1.5'}>
           {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
           {item.badge ? <NavBadge count={item.badge} /> : null}
-          {isExpanded
-            ? <ChevronUp size={14} strokeWidth={1.8} className="text-foreground-300" aria-hidden="true" />
-            : <ChevronDown size={14} strokeWidth={1.8} className="text-foreground-300" aria-hidden="true" />}
+          {presentation === 'row'
+            ? <ChevronDown size={14} strokeWidth={1.8} className={`text-foreground-300 transition-transform duration-300 motion-reduce:transition-none ${isExpanded ? 'rotate-180' : ''}`} aria-hidden="true" />
+            : isExpanded
+              ? <ChevronUp size={14} strokeWidth={1.8} className="text-foreground-300" aria-hidden="true" />
+              : <ChevronDown size={14} strokeWidth={1.8} className="text-foreground-300" aria-hidden="true" />}
         </span>
       </button>
       )}
 
-      {presentation !== 'rail' && isExpanded && item.children && (
-        <div className={presentation === 'tiles' ? 'grid grid-cols-1 gap-2' : presentation === 'row' ? 'ml-3 mt-1 space-y-1 border-l border-white/15 pl-3' : 'ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2'}>
-          {item.children.map(child => {
+      {presentation !== 'rail' && (isExpanded || presentation === 'row') && item.children && (
+        <div
+          className={presentation === 'tiles' ? 'grid grid-cols-1 gap-2' : presentation === 'row' ? 'kbc-learner-submenu' : 'ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2'}
+          data-open={presentation === 'row' ? isExpanded : undefined}
+          aria-hidden={presentation === 'row' && !isExpanded ? true : undefined}
+        >
+          {presentation === 'row' && (
+            <span className="kbc-learner-submenu-track" aria-hidden="true">
+              <span
+                className="kbc-learner-submenu-track-fill"
+                style={{ height: activeChildIndex >= 0 ? `${(activeChildIndex + 0.5) * 42}px` : '0px' }}
+              />
+            </span>
+          )}
+          {item.children.map((child, childIndex) => {
             if (presentation === 'row') {
-              return <ExpandedLink key={child.id} item={child} isActive={isActive} onNavigate={onNavigate} presentation="row" />;
+              return <div key={child.id} className="kbc-learner-submenu-item" data-active-path={activeChildIndex >= childIndex ? 'true' : 'false'}><ExpandedLink item={child} isActive={isActive} onNavigate={onNavigate} presentation="row" /></div>;
             }
             const childActive = isActive(child.href, child.matchPaths);
             if (presentation === 'tiles') {

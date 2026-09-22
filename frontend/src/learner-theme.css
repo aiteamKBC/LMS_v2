@@ -461,3 +461,223 @@ body .dashboard-theme[data-workspace-role="learner"] [aria-busy="true"] .kbc-ske
     overflow-x: clip !important;
   }
 }
+
+/* Shared learner shell reference treatment. These rules are intentionally
+   scoped to the learner shell so admin, coach, tutor and curriculum chrome
+   keep their existing layouts and colours. */
+.dashboard-theme[data-workspace-role="learner"] {
+  --kbc-learner-primary: #4f2d7f;
+  --kbc-learner-primary-hover: #3f2466;
+  --kbc-learner-primary-dark: #362055;
+  --kbc-learner-secondary: #f5c94f;
+  --kbc-learner-secondary-hover: #e4b936;
+  --kbc-learner-secondary-soft: #fff8d8;
+  --kbc-learner-surface: #ffffff;
+  --kbc-learner-page: #f7f8fb;
+  --kbc-learner-border: #e2e8f0;
+  --kbc-learner-text: #1e293b;
+  --kbc-learner-muted: #64748b;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar,
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel {
+  background: #4f2d7f !important;
+}
+
+body:has(.dashboard-theme[data-workspace-role="learner"]) .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel,
+body:has(.dashboard-theme[data-workspace-role="learner"]) .dashboard-theme[data-workspace-role="learner"] .kbc-learner-header {
+  background: #4f2d7f !important;
+}
+
+.kbc-learner-sidebar-pattern {
+  background-position: left bottom;
+  background-repeat: no-repeat;
+  background-size: 58% auto;
+  opacity: 0.1;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a, button) {
+  color: #ffffff;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a, button):not([aria-current="page"]):not([aria-current="true"]) {
+  background: transparent;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a, button):not([aria-current="page"]):not([aria-current="true"]):hover,
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a, button):not([aria-current="page"]):not([aria-current="true"]):focus-visible {
+  background: rgb(255 255 255 / 0.1);
+  color: #ffffff;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a[aria-current="page"], button[aria-current="true"]) {
+  background: #f5c94f !important;
+  color: #4f2d7f !important;
+  font-weight: 600;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a[aria-current="page"], button[aria-current="true"]) :is(svg, span) {
+  color: inherit;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-signout:hover,
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-signout:focus-visible {
+  background: rgb(255 255 255 / 0.1);
+}
+
+.kbc-learner-submenu {
+  position: relative;
+  max-height: 0;
+  margin: 0 0 0 14px;
+  padding: 0 0 0 20px;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-8px);
+  transition: max-height 300ms ease, margin-top 300ms ease, padding-bottom 300ms ease, opacity 220ms ease, transform 300ms ease, visibility 0s linear 300ms;
+}
+
+.kbc-learner-submenu[data-open="true"] {
+  max-height: 520px;
+  margin-top: 5px;
+  padding-bottom: 4px;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+
+.kbc-learner-submenu-track,
+.kbc-learner-submenu-track-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 2px;
+  border-radius: 999px;
+}
+
+.kbc-learner-submenu-track {
+  bottom: 12px;
+  background: rgb(255 255 255 / 0.25);
+}
+
+.kbc-learner-submenu-track-fill {
+  height: 0;
+  background: #ffffff;
+  box-shadow: 0 0 7px rgb(255 255 255 / 0.35);
+  transition: height 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.kbc-learner-submenu[data-open="false"] .kbc-learner-submenu-track-fill {
+  height: 0 !important;
+  transition-duration: 180ms;
+}
+
+.kbc-learner-submenu-item {
+  position: relative;
+}
+
+.kbc-learner-submenu-item::before {
+  position: absolute;
+  top: 50%;
+  left: -20px;
+  width: 20px;
+  height: 12px;
+  border-bottom: 2px solid rgb(255 255 255 / 0.25);
+  border-left: 2px solid rgb(255 255 255 / 0.25);
+  border-bottom-left-radius: 10px;
+  content: '';
+  transform: translateY(-100%);
+  transition: border-color 300ms ease, width 300ms ease;
+}
+
+.kbc-learner-submenu-item[data-active-path="true"]::before {
+  border-color: #ffffff;
+}
+
+.kbc-learner-submenu-item > a {
+  min-height: 42px;
+  border-radius: 10px;
+  background: transparent !important;
+  color: rgb(255 255 255 / 0.72) !important;
+}
+
+.kbc-learner-submenu-item > a:hover,
+.kbc-learner-submenu-item > a:focus-visible {
+  background: rgb(255 255 255 / 0.1) !important;
+  color: #ffffff !important;
+}
+
+.kbc-learner-submenu-item > a[aria-current="page"] {
+  background: rgb(245 201 79 / 0.18) !important;
+  color: #ffffff !important;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kbc-learner-submenu,
+  .kbc-learner-submenu[data-open="true"] {
+    transition: none;
+    transform: none;
+  }
+
+  .kbc-learner-submenu-track-fill,
+  .kbc-learner-submenu-item::before {
+    transition: none;
+  }
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-header {
+  height: 80px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #4f2d7f !important;
+  color: #ffffff !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-header-pattern {
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-size: auto 190%;
+  opacity: 0.12;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-header :is(.kbc-topbar-title, .kbc-topbar-subtitle, .kbc-topbar-user-name) {
+  color: #ffffff !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-header .kbc-navigation-menu {
+  position: relative;
+  z-index: 1;
+  color: #ffffff;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-header > :not(.kbc-learner-header-pattern) {
+  position: relative;
+  z-index: 1;
+}
+
+.dashboard-theme.workspace-shell[data-workspace-role="learner"] {
+  --kbc-sidebar-offset: 0px;
+  overflow-x: hidden;
+}
+
+@media (min-width: 1024px) {
+  .dashboard-theme.workspace-shell[data-workspace-role="learner"] {
+    --kbc-sidebar-offset: 240px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .kbc-learner-sidebar-panel {
+    width: min(240px, 86vw);
+  }
+
+  .kbc-learner-header {
+    height: 64px !important;
+  }
+}
