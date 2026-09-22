@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { componentLooksUnedited, firstValidationMessage, normaliseComponentSettings, validateComponentAuthoring, validateModuleAuthoringStructure } from './componentAuthoringModel';
+import { componentLooksUnedited, componentTypeDescription, firstValidationMessage, normaliseComponentSettings, validateComponentAuthoring, validateModuleAuthoringStructure } from './componentAuthoringModel';
 import { createEmptyComponent } from './moduleAuthoringData';
 
 describe('normaliseComponentSettings week-template compatibility', () => {
@@ -220,7 +220,100 @@ describe('componentLooksUnedited', () => {
     expect(componentLooksUnedited({ ...fresh('video'), description: 'Watch before the session' })).toBe(false);
     expect(componentLooksUnedited({ ...fresh('video'), expectedOtjh: 1.5 })).toBe(false);
     expect(componentLooksUnedited({ ...fresh('reading'), ksbMappings: [{ id: 'k1', code: 'K1' }] as never })).toBe(false);
+    const booked = fresh('live-session');
+    expect(componentLooksUnedited({ ...booked, settings: { ...booked.settings, teamsMeetingUrl: 'https://teams.microsoft.com/l/meetup-join/example' } })).toBe(false);
+  });
+
+  it('ignores the date the scheduling planner stamps onto every live session, not something an author typed', () => {
+    // applyModuleWeekSessionPlan stamps these the moment the module's session
+    // plan loads -- which can be right after adding a live session, since a
+    // new one changes the module's session count and re-triggers the fetch.
+    // Neither editor has a control that writes them directly.
     const dated = fresh('live-session');
-    expect(componentLooksUnedited({ ...dated, settings: { ...dated.settings, sessionDate: '2026-10-05' } })).toBe(false);
+    expect(componentLooksUnedited({
+      ...dated,
+      settings: {
+        ...dated.settings,
+        sessionDate: '2026-10-23', sessionDay: 'Friday', sessionTime: '09:00',
+        sessionDateTimeUtc: '2026-10-23T09:00:00Z', teamsStartDateTimeUtc: '2026-10-23T09:00:00Z',
+        // The same planner pass re-derives the duration alongside the date
+        // and overwrites whatever was there, with its own tracking mirror --
+        // neither is a control an author has typed into.
+        durationMinutes: 90, teamsDurationMinutes: 90, sessionRescheduled: true,
+      },
+    })).toBe(true);
+  });
+
+  it('still catches a real duration edit -- on every OTHER type, where it is authored, not planner-owned', () => {
+    expect(componentLooksUnedited({ ...fresh('video'), settings: { ...fresh('video').settings, durationMinutes: 25 } })).toBe(false);
+    expect(componentLooksUnedited({ ...fresh('podcast'), settings: { ...fresh('podcast').settings, durationMinutes: 45 } })).toBe(false);
+  });
+
+  it('recognises the week builder rail\'s own auto title, not just the definition\'s', () => {
+    // The shared week rail titles a new `video` component "Recorded Session N"
+    // (weekTypeLabel's override), not "Video N" (the definition's own label).
+    // A caller passing that label must still see it as untouched.
+    const video = { ...fresh('video'), title: 'Recorded Session 1' };
+    expect(componentLooksUnedited(video)).toBe(false);
+    expect(componentLooksUnedited(video, 'Recorded Session')).toBe(true);
+    // The definition's own label still counts as untouched even when a caller
+    // supplies an override — the module builder's own convention is not broken.
+    expect(componentLooksUnedited({ ...fresh('video'), title: 'Video 3' }, 'Recorded Session')).toBe(true);
+  });
+
+  it('ignores the group assignment the app self-heals on the first open, not on an edit', () => {
+    // AssignedGroupsSection stamps the component's locked delivery group into
+    // selectedGroupKeys/selectedGroupNames the moment its editor mounts --
+    // before the author has touched anything -- so this alone must not clear
+    // the hint. placedCopy* is written on a DIFFERENT component when this one
+    // is placed as a copy, same story.
+    const quiz = fresh('quiz');
+    expect(componentLooksUnedited({
+      ...quiz,
+      settings: { ...quiz.settings, selectedGroupKeys: ['group-1'], selectedGroupNames: ['Cohort A'] },
+    })).toBe(true);
+    expect(componentLooksUnedited({
+      ...quiz,
+      settings: { ...quiz.settings, placedCopyGroupKeys: ['group-2'], placedCopyModuleCatalogueIds: ['MOD-1'], placedCopyWeekIds: ['week-9'], placedCopyComponentIds: ['comp-9'] },
+    })).toBe(true);
+    // A real assignment change on top still clears it.
+    expect(componentLooksUnedited({
+      ...quiz,
+      settings: { ...quiz.settings, selectedGroupKeys: ['group-1'], linkedQuizId: 'quiz-42' },
+    })).toBe(false);
+  });
+
+  it('recognises the module builder\'s own boilerplate description, not just an empty one', () => {
+    // ModuleWeekPanel's own "Add component" button (createNamedComponent, in
+    // module-builder/page.tsx) stamps this type blurb straight into
+    // `description` on creation -- the week rail's inline "Add component"
+    // leaves it empty instead. Whichever button made it, nobody has typed
+    // anything into it yet.
+    const stamped = { ...fresh('live-session'), description: componentTypeDescription('live-session') };
+    expect(componentLooksUnedited(stamped)).toBe(true);
+    // A genuinely authored description -- even one that happens to start the
+    // same way -- still clears the hint.
+    expect(componentLooksUnedited({ ...stamped, description: `${componentTypeDescription('live-session')} — covers weeks 1-3 induction` })).toBe(false);
+  });
+
+  it('survives the recalculation every add triggers, not just the raw defaults', () => {
+    // `normaliseComponentSettings` (run by `recalculateModule` right after any
+    // add, from either button) rewrites a couple of default values to their
+    // canonical name on the very first pass: podcast's 'External URL' becomes
+    // 'External Link', reading's 'Written in LMS' becomes 'Text'. A component
+    // that has been through that rewrite once -- which every component has,
+    // by the time it renders -- must still read as untouched.
+    const podcast = fresh('podcast');
+    const recalculatedPodcast = { ...podcast, settings: normaliseComponentSettings('podcast', podcast.settings) };
+    expect(recalculatedPodcast.settings.podcastSource).toBe('External Link');
+    expect(componentLooksUnedited(recalculatedPodcast)).toBe(true);
+
+    const reading = fresh('reading');
+    const recalculatedReading = { ...reading, settings: normaliseComponentSettings('reading', reading.settings) };
+    expect(recalculatedReading.settings.readingSource).toBe('Text');
+    expect(componentLooksUnedited(recalculatedReading)).toBe(true);
+
+    // A real choice on top of the same recalculation still clears the hint.
+    expect(componentLooksUnedited({ ...recalculatedPodcast, settings: { ...recalculatedPodcast.settings, podcastUrl: 'https://example.invalid/ep1' } })).toBe(false);
   });
 });

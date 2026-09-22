@@ -565,6 +565,34 @@ export function defaultReflectionPrompt(type: ModuleComponentType) {
   return 'What did you learn? How will you apply this at work? Which KSBs did this develop?';
 }
 
+// The one-line blurb the module builder's own type picker shows under each
+// type ("Tutor-led session via Teams", …) and stamps straight onto a
+// component's `description` when it is added from there (`createNamedComponent`
+// in module-builder/page.tsx). The week rail's inline "Add component" leaves
+// `description` empty instead -- so a component created from the OTHER add
+// button would otherwise read as authored from the moment it exists, purely
+// because of which button made it. `componentLooksUnedited` treats this text
+// the same way it treats an empty description: not something an author typed.
+const COMPONENT_TYPE_DESCRIPTIONS: Record<ModuleComponentType, string> = {
+  'live-session': 'Tutor-led session via Teams',
+  video: 'Upload or link a video',
+  podcast: 'Upload audio or podcast link',
+  reading: 'PDF, Word, or typed text',
+  powerpoint: 'Slide deck for the week',
+  quiz: 'Short weekly check',
+  assignment: 'Monthly submission task',
+  reflection: 'Learner written reflection',
+  checkpoint: 'End-of-month KSB check',
+  'monthly-ksb-quiz': 'Tracks KSB progression',
+  'coaching-preparation': 'Monthly coaching meeting prep',
+  'recording-placeholder': 'Teams recording placeholder',
+  'workplace-evidence': 'Workplace evidence upload',
+};
+
+export function componentTypeDescription(type: ModuleComponentType) {
+  return COMPONENT_TYPE_DESCRIPTIONS[type] || 'Add a component';
+}
+
 export type ComponentValidationTarget = {
   title: string;
   type: ModuleComponentType;
@@ -701,6 +729,59 @@ export type ComponentAuthoringSnapshot = {
   settings?: ComponentSettings;
 };
 
+/**
+ * Settings the app writes on its own -- opening a component is enough, no
+ * authoring required -- so a non-empty value here is not evidence anyone
+ * touched the component.
+ *
+ * `selectedGroupKeys`/`selectedGroupNames` are the concrete case:
+ * `AssignedGroupsSection`'s self-heal effect (week-builder/page.tsx) stamps the
+ * component's own locked delivery group into these the moment its editor
+ * mounts, so every component in a group-scoped week picks them up on the very
+ * first open. `placedCopy*` mirrors that -- it is written when a *different*
+ * component's group toggle places a copy of this one, never by editing this
+ * one directly.
+ *
+ * `sessionDate`/`sessionDay`/`sessionTime`/`sessionDateTimeUtc`/
+ * `teamsStartDateTimeUtc` are a live session's own case: the scheduling
+ * planner (`applyModuleWeekSessionPlan`) stamps these onto every live-session
+ * component the moment the module's session plan loads -- which can be right
+ * after adding one, since a new live session changes the module's session
+ * count and re-triggers the plan fetch. No control in either editor lets an
+ * author type into these directly; the session runs on its week's date until
+ * something is actually booked (`teamsMeetingUrl` etc., which IS authored and
+ * still clears the hint).
+ */
+const AUTO_MANAGED_SETTING_KEYS = new Set([
+  'selectedGroupKeys',
+  'selectedGroupNames',
+  'placedCopyGroupKeys',
+  'placedCopyModuleCatalogueIds',
+  'placedCopyWeekIds',
+  'placedCopyComponentIds',
+  'sessionDate',
+  'sessionDay',
+  'sessionTime',
+  'sessionDateTimeUtc',
+  'teamsStartDateTimeUtc',
+]);
+
+/**
+ * `durationMinutes` is genuinely authored content on every other type -- a
+ * typed number, never touched again -- but on a live session it is planner
+ * territory until Teams books it: the same `applyModuleWeekSessionPlan` pass
+ * that stamps the date re-derives it every time and overwrites whatever was
+ * there (see the duration check in `moduleAuthoringData.ts`), and
+ * `teamsDurationMinutes`/`sessionRescheduled` are its own tracking mirrors of
+ * that, never written by a control in either editor. Scoped to live-session
+ * alone so a real duration typed on a video or podcast still counts.
+ */
+const LIVE_SESSION_AUTO_MANAGED_SETTING_KEYS = new Set([
+  'durationMinutes',
+  'teamsDurationMinutes',
+  'sessionRescheduled',
+]);
+
 function settingValueEmpty(value: unknown) {
   if (value === undefined || value === null) return true;
   if (Array.isArray(value)) return value.length === 0;
@@ -722,27 +803,50 @@ function settingValuesMatch(left: unknown, right: unknown) {
  * programme's points rules at creation, so a component nobody has opened can
  * already hold a number the definition does not.
  */
-export function componentLooksUnedited(component: ComponentAuthoringSnapshot): boolean {
+export function componentLooksUnedited(component: ComponentAuthoringSnapshot, typeLabel?: string): boolean {
   const definition = getComponentDefinition(component.type);
   const title = String(component.title || '').trim();
-  const autoTitle = new RegExp(`^${definition.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s+\\d+)?$`, 'i');
-  if (title && !autoTitle.test(title)) return false;
-  if (String(component.description || '').trim()) return false;
+  // The auto-generated title an author never touched depends on where the
+  // component was added from: the module builder stamps `definition.label`
+  // ("Video 3"), but the week builder's rail -- which both surfaces share --
+  // stamps its own display label instead ("Recorded Session 1" for the same
+  // `video` type; see `weekTypeLabel`). A caller using a different label
+  // convention passes it in; otherwise this falls back to the definition's.
+  const label = typeLabel || definition.label;
+  const autoTitlePattern = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s+\\d+)?$`, 'i');
+  const matchesAutoTitle = autoTitlePattern(definition.label).test(title) || autoTitlePattern(label).test(title);
+  if (title && !matchesAutoTitle) return false;
+  const description = String(component.description || '').trim();
+  // Same story as the title: one add button leaves this empty, the other
+  // stamps the type's own boilerplate blurb -- neither is something an author
+  // wrote.
+  if (description && description !== componentTypeDescription(component.type)) return false;
   if ((component.ksbMappings || []).length > 0) return false;
   if (component.expectedOtjh !== undefined && Number(component.expectedOtjh) !== definition.defaultOtjh) return false;
   if (component.reflectionRequired !== undefined && component.reflectionRequired !== definition.reflectionDefault) return false;
   if (component.workplaceEvidenceRequired !== undefined && component.workplaceEvidenceRequired !== definition.workplaceEvidenceDefault) return false;
   if (component.tutorValidationRequired !== undefined && component.tutorValidationRequired !== definition.tutorValidationDefault) return false;
-  const defaults = definition.defaultSettings;
+  const rawDefaults = definition.defaultSettings;
+  // `normaliseComponentSettings` rewrites a handful of legacy-named default
+  // values the moment the module first recalculates -- which happens right
+  // after any add, from either button -- e.g. podcast's
+  // `podcastSource: 'External URL'` becomes `'External Link'`, reading's
+  // `readingSource: 'Written in LMS'` becomes `'Text'`. That is
+  // canonicalisation, not authoring, so a component can genuinely be caught in
+  // either state depending on whether a recalculation has run yet: both count
+  // as untouched.
+  const recalculatedDefaults = normaliseComponentSettings(component.type, rawDefaults);
   const reflectionQuestion = String(component.reflectionQuestion || '').trim();
-  if (reflectionQuestion && reflectionQuestion !== String(defaults.reflectionPrompt || '').trim()) return false;
+  if (reflectionQuestion && reflectionQuestion !== String(rawDefaults.reflectionPrompt || '').trim()) return false;
   const settings = component.settings || {};
   return !Object.keys(settings).some(key => {
+    if (AUTO_MANAGED_SETTING_KEYS.has(key)) return false;
+    if (component.type === 'live-session' && LIVE_SESSION_AUTO_MANAGED_SETTING_KEYS.has(key)) return false;
     const value = settings[key];
     // An empty value is nothing an author typed, whether or not the type
     // declares the key: a blank `videoUrl` and a missing one say the same thing.
     if (settingValueEmpty(value)) return false;
-    return !settingValuesMatch(value, defaults[key]);
+    return !settingValuesMatch(value, rawDefaults[key]) && !settingValuesMatch(value, recalculatedDefaults[key]);
   });
 }
 
