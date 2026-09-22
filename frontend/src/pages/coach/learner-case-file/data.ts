@@ -362,16 +362,13 @@ export function useCoachLearnerCaseFileData(args: {
       setLoading(true);
       setError(null);
 
-      // These are independent requests. Start learner detail immediately when the
-      // URL already contains a numeric id instead of waiting for all coach-wide
-      // collections first (the old flow added both request times together).
+      // Load the profile list first. The remaining coach-wide projections are
+      // expensive and each may consume a pooled connection for a long time;
+      // starting all four together starves login/session and learner requests.
+      // They are fetched after caseload resolution, preserving the payload while
+      // avoiding an initial pool-wide burst.
       const requestedMarkingLearnerId = args.enrolmentId?.trim() || rawLearnerId;
-      const coachDataPromise = Promise.allSettled([
-        fetchCoachCaseload(),
-        fetchCoachAttendance(),
-        fetchCoachMarkingQueue(requestedMarkingLearnerId, rawLearnerName),
-        fetchCoachTimetable(),
-      ]);
+      const caseloadPromise = fetchCoachCaseload();
       const directId = numericId(rawLearnerId);
       // rawLearnerId is the coach-side LearnerProfile id -- a disjoint pk space
       // from enrolment."Created_users".id, which /learner-detail/ actually
@@ -426,7 +423,16 @@ export function useCoachLearnerCaseFileData(args: {
         }
       }
 
-      const [caseloadResult, attendanceResult, markingResult, timetableResult] = await coachDataPromise;
+      const caseloadResult = await Promise.allSettled([caseloadPromise]).then(([result]) => result);
+
+      // Keep these projections serial as well. Each endpoint can perform many
+      // learner/database reads; overlapping them recreates the pool starvation
+      // seen during a normal case-file load.
+      const attendanceResult = await Promise.allSettled([fetchCoachAttendance()]).then(([result]) => result);
+      const markingResult = await Promise.allSettled([
+        fetchCoachMarkingQueue(requestedMarkingLearnerId, rawLearnerName),
+      ]).then(([result]) => result);
+      const timetableResult = await Promise.allSettled([fetchCoachTimetable()]).then(([result]) => result);
 
       if (cancelled) {
         return;
