@@ -1024,6 +1024,7 @@ def ensure_program_config_archive_columns():
             'status': 'varchar(32)',
             'ksb_profile_source_id': 'varchar(128)',
             'required_otjh': 'numeric(8, 2)',
+            'display_order': 'integer',
         })
     except Exception as exc:
         logger.warning('Could not inspect programme config archive columns: %s', exc)
@@ -7122,10 +7123,18 @@ def get_skills_england_ksb_rows():
 
 @scoped_curriculum_read
 def get_program_config_rows_raw():
+    # The order the curator dragged the cards into comes first; name orders
+    # anything never dragged, and is the whole order on a database that predates
+    # backend/sql/2026-09-22_programme_display_order.sql.
+    try:
+        ordered_by_hand = has_column('programmes', 'display_order')
+    except Exception:
+        ordered_by_hand = False
+    ordering = 'order by coalesce(display_order, 0), name' if ordered_by_hand else 'order by name'
     return fetch_all(f'''
         select *
         from {table_name("programmes")}
-        order by name
+        {ordering}
     ''')
 
 
@@ -8400,6 +8409,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             'ksbProfileSourceId': normalise_ksb_profile_source_value((config or {}).get('ksb_profile_source_id') or ''),
             'requiredOtjh': parse_required_otjh((config or {}).get('required_otjh')),
             'freeComponents': parse_int(free_counts.get('components'), 0),
+            # The card's place in the hand-picked order. Reading it back is what
+            # lets the grid tell a saved order from the alphabetical fallback.
+            'displayOrder': parse_int((config or {}).get('display_order'), 0),
         })
     return programmes
 
@@ -20126,6 +20138,60 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility):
             'weekTemplates': config_week_templates,
         },
     }
+
+
+@csrf_exempt
+def curriculum_programme_reorder(request):
+    """Save the order the programme cards were dragged into.
+
+    The body is the ids in the order they should read, top-left first. Only the
+    programmes named are renumbered, and they are renumbered from 1 upward in
+    the order given, so a partial list (one page of the grid) still lands in a
+    stable order relative to itself. 0 stays reserved for "never ordered", which
+    keeps untouched programmes ahead of nothing and still alphabetical among
+    themselves.
+    """
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+    raw_order = payload.get('order')
+    if not isinstance(raw_order, list):
+        return json_error('Missing required fields.', fields=['order'])
+
+    ensure_program_config_archive_columns()
+    if not has_column('programmes', 'display_order'):
+        return json_error(
+            'This database has no programme display_order column yet. Apply '
+            'backend/sql/2026-09-22_programme_display_order.sql first.',
+            status=409,
+        )
+
+    programme_ids = unique(clean_str(value) for value in raw_order if clean_str(value))
+    if not programme_ids:
+        return json_error('No programmes were given to order.')
+
+    configs = get_program_config_rows()
+    configs_by_id = {programme_config_identity(config): config for config in configs}
+    unknown = [programme_id for programme_id in programme_ids if programme_id not in configs_by_id]
+    if unknown:
+        return json_error('Unknown programmes in the order.', fields=unknown, status=404)
+
+    key_column = programme_config_key_column()
+    with transaction.atomic():
+        for position, programme_id in enumerate(programme_ids, start=1):
+            key_value = configs_by_id[programme_id].get(key_column)
+            update_rows(
+                'programmes',
+                f'{quote_ident(key_column)} = %s',
+                [key_value],
+                {'display_order': position, 'updated_at': datetime.utcnow()},
+            )
+    invalidate_curriculum_cache()
+    log_curriculum_decision('programme.reorder', outcome='saved', entity_id=','.join(programme_ids[:10]))
+    return JsonResponse({'saved': True, 'order': programme_ids})
 
 
 @csrf_exempt
