@@ -54,6 +54,12 @@ export interface UserListRow {
    * rows, same as `programme`.
    */
   cohort?: string;
+  /**
+   * Who owns this learner's case. Absent for staff, admin and employer rows.
+   * The Case owner filter builds its options from the values present across
+   * the loaded rows, so it always offers the owners who really exist.
+   */
+  caseOwner?: string;
   notesCount?: number;
   hasTasks?: boolean;
   reference?: string;

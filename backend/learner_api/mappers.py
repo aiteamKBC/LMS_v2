@@ -108,6 +108,10 @@ def to_list_row(u):
         # The cohort too, so the directory can offer a programme -> cohort ->
         # group filter cascade. Absent on staff/employer rows, like programme.
         "cohort": _s(u.cohort),
+        # Who owns this learner's case. The directory's Case owner filter builds
+        # its list from the values actually present here rather than a fixed
+        # roster, so an owner who leaves or joins needs no code change.
+        "caseOwner": _s(getattr(u, "case_owner", "")),
         "notesCount": 0,
         # Same reasoning as learningPlan above.
         "hasTasks": True,
