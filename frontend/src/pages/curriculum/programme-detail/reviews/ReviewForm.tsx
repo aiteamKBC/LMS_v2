@@ -993,10 +993,10 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
       0,
     );
     const meetingSummaryCount = sections.reduce((total, item) => total + countMeetingSummaryFields(item.fields), 0);
-    if (meetingSummaryCount > 0 && selectedReviewTypeCode !== 'mcm') {
-      next.sections = 'Only a Monthly Coaching Meeting may define a Meeting Summary field.';
+    if (meetingSummaryCount > 0 && !['mcm', 'progress_review'].includes(selectedReviewTypeCode)) {
+      next.sections = 'Only a Monthly Coaching Meeting or Progress Review may define a Meeting Summary field.';
     } else if (meetingSummaryCount > 1) {
-      next.sections = 'A Monthly Coaching Meeting can define only one Meeting Summary field.';
+      next.sections = 'A Review can define only one Meeting Summary field.';
     }
     return next;
   };
@@ -1299,7 +1299,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
                     index={index}
                     total={sections.length}
                     errors={errors}
-                    allowMeetingSummary={selectedReviewTypeCode === 'mcm'}
+                    allowMeetingSummary={selectedReviewTypeCode === 'mcm' || selectedReviewTypeCode === 'progress_review'}
                     onChange={updated => setSections(prev => prev.map(s => (s.key === updated.key ? updated : s)))}
                     onRemove={() => setSections(prev => prev.filter(s => s.key !== sectionDraft.key))}
                     onMove={direction => setSections(prev => {

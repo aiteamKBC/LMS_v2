@@ -21,7 +21,7 @@ describe('progressReviews api client', () => {
 
     const learners = await fetchActiveLearners();
 
-    expect(fetch).toHaveBeenCalledWith('/api/progress-reviews/learners/active/', expect.objectContaining({ cache: 'no-store' }));
+    expect(fetch).toHaveBeenCalledWith('/progress_reviews_api/learners/active/', expect.objectContaining({ cache: 'no-store' }));
     expect(learners).toEqual([{ learnerId: 42, fullName: 'Jordan Example' }]);
   });
 
@@ -31,7 +31,7 @@ describe('progressReviews api client', () => {
 
     const periods = await fetchReviewPeriods(42);
 
-    expect(fetch).toHaveBeenCalledWith('/api/progress-reviews/42/periods/', expect.anything());
+    expect(fetch).toHaveBeenCalledWith('/progress_reviews_api/42/periods/', expect.anything());
     expect(periods[0].review_number).toBe(1);
   });
 
@@ -41,7 +41,7 @@ describe('progressReviews api client', () => {
 
     await fetchReviewPack(42, '2026-06-15');
 
-    expect(fetch).toHaveBeenCalledWith('/api/progress-reviews/42/pack/?review_date=2026-06-15', expect.anything());
+    expect(fetch).toHaveBeenCalledWith('/progress_reviews_api/42/pack/?review_date=2026-06-15', expect.anything());
   });
 
   it('omits the query string when no review_date is given', async () => {
@@ -50,7 +50,7 @@ describe('progressReviews api client', () => {
 
     await fetchReviewPack(42);
 
-    expect(fetch).toHaveBeenCalledWith('/api/progress-reviews/42/pack/', expect.anything());
+    expect(fetch).toHaveBeenCalledWith('/progress_reviews_api/42/pack/', expect.anything());
   });
 
   it('posts to generate and returns the result', async () => {
@@ -61,7 +61,7 @@ describe('progressReviews api client', () => {
     const generated = await generateProgressReview(42);
 
     expect(fetch).toHaveBeenCalledWith(
-      '/api/progress-reviews/42/generate/',
+      '/progress_reviews_api/42/generate/',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({}) }),
     );
     expect(generated).toEqual(result);
@@ -81,7 +81,7 @@ describe('progressReviews api client', () => {
     await bulkGenerateProgressReviews({ learnerIds: [1, 2], reviewDate: '2026-06-15' });
 
     expect(fetch).toHaveBeenCalledWith(
-      '/api/progress-reviews/bulk-generate/',
+      '/progress_reviews_api/bulk-generate/',
       expect.objectContaining({ body: JSON.stringify({ learner_ids: [1, 2], review_date: '2026-06-15' }) }),
     );
   });
@@ -92,7 +92,7 @@ describe('progressReviews api client', () => {
 
     const url = await fetchProgressReviewDownloadUrl('run-1');
 
-    expect(fetch).toHaveBeenCalledWith('/api/progress-reviews/run-1/download/', expect.anything());
+    expect(fetch).toHaveBeenCalledWith('/progress_reviews_api/run-1/download/', expect.anything());
     expect(url).toBe('https://example.blob.core.windows.net/x.pptx?sig=1');
   });
 
@@ -102,7 +102,7 @@ describe('progressReviews api client', () => {
 
     const result = await fetchLatestRun(42, '2026-10-26');
 
-    expect(fetch).toHaveBeenCalledWith('/api/progress-reviews/42/runs/latest/?review_date=2026-10-26', expect.anything());
+    expect(fetch).toHaveBeenCalledWith('/progress_reviews_api/42/runs/latest/?review_date=2026-10-26', expect.anything());
     expect(result).toEqual({ exists: true, reviewId: 'run-1', generationStatus: 'completed' });
   });
 
