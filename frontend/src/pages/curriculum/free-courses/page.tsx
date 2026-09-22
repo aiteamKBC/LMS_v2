@@ -9,7 +9,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes } from '@/lib/format';
-import { fetchCurriculumProgrammeDetail, fetchCurriculumProgrammes, fetchFreeProgrammeModules, injectFreeCourseIntoGroup, saveFreeProgrammeModules, type ConvertFreeCourseResult, type CurriculumProgramme, type CurriculumProgrammeDetail, type FreeProgrammeComponentInput, type FreeProgrammeModule, type FreeProgrammeModuleInput } from '@/lib/curriculumApi';
+import { fetchCurriculumModules, fetchCurriculumProgrammeDetail, fetchCurriculumProgrammes, fetchFreeProgrammeModules, importModuleToFreeCourses, injectFreeCourseIntoGroup, saveFreeProgrammeModules, type ConvertFreeCourseResult, type CurriculumModule, type CurriculumProgramme, type CurriculumProgrammeDetail, type FreeProgrammeComponentInput, type FreeProgrammeModule, type FreeProgrammeModuleInput } from '@/lib/curriculumApi';
 import {
   fetchWeekTemplateDetail,
   fetchWeekTemplates,
@@ -208,6 +208,27 @@ export default function FreeCoursesPage() {
   );
   const convertCohorts = convertDetail?.cohorts ?? [];
   const convertGroups = convertCohorts.find(cohort => cohort.id === convertCohortId)?.groups ?? [];
+  // Import a programme module -> a new free course (the reverse direction).
+  const [importOpen, setImportOpen] = useState(false);
+  const [importModules, setImportModules] = useState<CurriculumModule[]>([]);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importSearch, setImportSearch] = useState('');
+  const [importSelectedId, setImportSelectedId] = useState('');
+  const [importMode, setImportMode] = useState<'clone' | 'move'>('clone');
+  const [importing, setImporting] = useState(false);
+  const moduleKey = (module: CurriculumModule) => module.moduleCatalogueId || module.id;
+  // Live, convertible modules only — hide programme-deleted/archived ones.
+  const importOptions = useMemo(
+    () => importModules.filter(module => !module.isProgrammeDeleted && (module.status || '').toLowerCase() !== 'archived'),
+    [importModules],
+  );
+  const importFiltered = useMemo(() => {
+    const term = importSearch.trim().toLowerCase();
+    if (!term) return importOptions;
+    return importOptions.filter(module =>
+      [module.name, module.programme, module.cohort, module.group].filter(Boolean).some(value => String(value).toLowerCase().includes(term)),
+    );
+  }, [importOptions, importSearch]);
   const selectedComponent = course.components.find(component => component.id === selectedComponentId) || course.components[0];
   const firstLockedIndex = course.components.findIndex(component => component.kind === 'quiz');
   const learnerCompletedCount = course.components.filter(component => completedPreviewIds.has(component.id)).length;
@@ -282,6 +303,20 @@ export default function FreeCoursesPage() {
       .finally(() => { if (active) setConvertDetailLoading(false); });
     return () => { active = false; controller.abort(); };
   }, [convertProgrammeId]);
+
+  // Load the flat module catalogue the first time the import picker opens.
+  // Re-entry is gated on the loaded result, never the loading flag (StrictMode).
+  useEffect(() => {
+    if (!importOpen || importModules.length) return;
+    const controller = new AbortController();
+    let active = true;
+    setImportLoading(true);
+    fetchCurriculumModules(controller.signal, { compact: true })
+      .then(modules => { if (active) setImportModules(modules); })
+      .catch(() => { if (active) setImportModules([]); })
+      .finally(() => { if (active) setImportLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [importOpen, importModules.length]);
 
   const totals = useMemo(() => ({
     weeks: selectedWeekIds.size,
@@ -670,6 +705,48 @@ export default function FreeCoursesPage() {
     }
   };
 
+  const openImportPicker = () => {
+    setImportOpen(true);
+    setImportSearch('');
+    setImportSelectedId('');
+    setImportMode('clone');
+  };
+
+  const closeImportPicker = () => {
+    if (importing) return;
+    setImportOpen(false);
+  };
+
+  const submitImport = async () => {
+    if (!importSelectedId || importing) return;
+    const module = importOptions.find(item => moduleKey(item) === importSelectedId);
+    if (!module) return;
+    const isMove = importMode === 'move';
+    let imported = false;
+    setImporting(true);
+    try {
+      await showCurriculumConfirm({
+        title: isMove ? 'Move to a free course?' : 'Copy to a free course?',
+        text: isMove
+          ? `"${module.name}" will be copied into a new free course, then ARCHIVED from ${module.programme || 'its programme'}. Its KSB mappings and hours are not carried over.`
+          : `"${module.name}" will be copied into a new free course. The module stays in ${module.programme || 'its programme'}. Its KSB mappings and hours are not carried over.`,
+        icon: isMove ? 'warning' : 'question',
+        confirmButtonText: isMove ? 'Move it' : 'Create free course',
+        cancelButtonText: 'Cancel',
+        onConfirm: async () => {
+          const result = await importModuleToFreeCourses('FREE-COURSES', { moduleCatalogueId: moduleKey(module), mode: importMode });
+          setSavedModules(result.modules || []);
+          imported = true;
+        },
+        successTitle: isMove ? 'Module moved to free courses' : 'Free course created',
+        successText: `"${module.name}" is now available under Free courses.`,
+      });
+    } finally {
+      setImporting(false);
+    }
+    if (imported) setImportOpen(false);
+  };
+
   return (
     <WorkspaceShell
       role="curriculum"
@@ -696,14 +773,24 @@ export default function FreeCoursesPage() {
             { label: 'Quizzes', value: String(totals.quizzes), icon: 'ri-questionnaire-line' },
           ]}
           actions={(
-            <button
-              type="button"
-              onClick={openAddWizard}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-bold text-primary-900 transition hover:bg-primary-50"
-            >
-              <AppIcon name="ri-add-line" size={16} />
-              Add free course
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={openImportPicker}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-primary-300 bg-white/70 px-4 text-sm font-bold text-primary-800 transition hover:bg-white"
+              >
+                <AppIcon name="ri-download-2-line" size={16} />
+                Import from a programme
+              </button>
+              <button
+                type="button"
+                onClick={openAddWizard}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-bold text-primary-900 transition hover:bg-primary-50"
+              >
+                <AppIcon name="ri-add-line" size={16} />
+                Add free course
+              </button>
+            </div>
           )}
         />
 
@@ -1206,6 +1293,134 @@ export default function FreeCoursesPage() {
                     <AppIcon name={converting ? 'ri-loader-4-line' : 'ri-exchange-line'} className={converting ? 'animate-spin' : ''} size={15} />
                     {convertMode === 'move' ? 'Move into group' : 'Add module'}
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {importOpen && (
+            <div className="fixed inset-0 z-50 overflow-y-auto bg-foreground-950/55 px-4 py-6 backdrop-blur-sm">
+              <div className="mx-auto flex max-h-[calc(100vh-48px)] max-w-[680px] flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+                <div className="flex items-center justify-between gap-3 border-b border-background-200 px-5 py-4">
+                  <div>
+                    <h2 className="font-heading text-xl font-bold text-foreground-950">Import from a programme</h2>
+                    <p className="mt-1 text-sm text-foreground-500">Turn a programme module into a free course. KSBs and hours aren’t carried over.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeImportPicker}
+                    disabled={importing}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-foreground-500 transition hover:bg-background-100 hover:text-foreground-900 disabled:opacity-50"
+                    aria-label="Close import dialog"
+                  >
+                    <AppIcon name="ri-close-line" size={18} />
+                  </button>
+                </div>
+
+                <div className="border-b border-background-200 px-5 py-3">
+                  <div className="flex h-10 items-center gap-2 rounded-lg border border-background-300 px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
+                    <AppIcon name="ri-search-line" size={16} className="text-foreground-400" />
+                    <input
+                      type="text"
+                      autoFocus
+                      value={importSearch}
+                      onChange={event => setImportSearch(event.target.value)}
+                      placeholder="Search modules by name or programme…"
+                      className="h-full w-full bg-transparent text-sm text-foreground-900 outline-none placeholder:text-foreground-400"
+                    />
+                  </div>
+                </div>
+
+                <div className="min-h-[180px] flex-1 overflow-y-auto px-2 py-2">
+                  {importLoading ? (
+                    <p className="flex items-center gap-2 px-3 py-6 text-sm text-foreground-500"><AppIcon name="ri-loader-4-line" className="animate-spin" size={16} />Loading modules…</p>
+                  ) : importFiltered.length === 0 ? (
+                    <p className="px-3 py-6 text-center text-sm text-foreground-500">{importOptions.length === 0 ? 'No modules are available to import.' : 'No modules match your search.'}</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {importFiltered.map(module => {
+                        const key = moduleKey(module);
+                        const selected = key === importSelectedId;
+                        const context = [module.programme, module.cohort, module.group].filter(Boolean).join(' · ');
+                        const facts = [`${module.weeks || 0} ${module.weeks === 1 ? 'week' : 'weeks'}`, `${module.lessons || 0} lessons`, `${module.quizzes || 0} quizzes`].join(' · ');
+                        return (
+                          <li key={key}>
+                            <button
+                              type="button"
+                              onClick={() => setImportSelectedId(key)}
+                              className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
+                                selected ? 'border-primary-300 bg-primary-50 ring-1 ring-primary-200' : 'border-transparent hover:border-background-300 hover:bg-background-50'
+                              }`}
+                            >
+                              <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background-100 text-foreground-400">
+                                {module.coverImage ? <img src={module.coverImage} alt="" className="h-full w-full object-cover" /> : <AppIcon name="ri-book-2-line" size={18} />}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-bold text-foreground-900">{module.name || 'Untitled module'}</span>
+                                {context && <span className="block truncate text-[11px] text-foreground-500">{context}</span>}
+                                <span className="mt-0.5 block text-[11px] text-foreground-400">{facts}</span>
+                              </span>
+                              {selected && <AppIcon name="ri-checkbox-circle-fill" size={18} className="shrink-0 text-primary-600" />}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="border-t border-background-200 px-5 py-4">
+                  <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-foreground-500">Mode</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      { value: 'clone', title: 'Clone', hint: 'Keep the module in its programme' },
+                      { value: 'move', title: 'Move', hint: 'Archive the module after' },
+                    ] as const).map(option => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setImportMode(option.value)}
+                        className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                          importMode === option.value
+                            ? option.value === 'move'
+                              ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
+                              : 'border-primary-300 bg-primary-50 ring-1 ring-primary-200'
+                            : 'border-background-300 bg-white hover:border-background-400'
+                        }`}
+                      >
+                        <span className={`flex items-center gap-1.5 text-sm font-bold ${importMode === option.value && option.value === 'move' ? 'text-red-700' : 'text-foreground-900'}`}>
+                          <AppIcon name={option.value === 'move' ? 'ri-scissors-cut-line' : 'ri-file-copy-line'} size={15} />
+                          {option.title}
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-foreground-500">{option.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {importMode === 'move' && (
+                    <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-5 text-red-700">
+                      <AppIcon name="ri-alert-line" size={14} className="mt-0.5 shrink-0" />
+                      The module will be archived from its programme (reversible). Enrolled learners’ saved training plans are not changed.
+                    </p>
+                  )}
+                  <div className="mt-4 flex items-center justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={closeImportPicker}
+                      disabled={importing}
+                      className="inline-flex h-10 items-center justify-center rounded-lg px-4 text-sm font-bold text-foreground-600 transition hover:bg-background-100 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { void submitImport(); }}
+                      disabled={importing || !importSelectedId}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-bold text-white transition hover:bg-primary-600 disabled:opacity-60"
+                    >
+                      <AppIcon name={importing ? 'ri-loader-4-line' : 'ri-download-2-line'} className={importing ? 'animate-spin' : ''} size={15} />
+                      {importMode === 'move' ? 'Move to free course' : 'Convert to free course'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
