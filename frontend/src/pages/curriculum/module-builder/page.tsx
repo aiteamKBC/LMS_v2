@@ -156,6 +156,7 @@ import {
   MEDIA_SOURCE_TYPES,
   PODCAST_SOURCE_TYPES,
   READING_SOURCE_TYPES,
+  componentTypeDescription,
   firstValidationMessage,
   normaliseVideoSourceType,
   providerForVideoSourceType,
@@ -9108,25 +9109,6 @@ function createNamedComponent(week: ModuleWeek, type: ModuleComponentType, index
 
 function createNamedComponents(week: ModuleWeek, types: ModuleComponentType[]) {
   return types.map((type, index) => createNamedComponent(week, type, week.components.length + index + 1));
-}
-
-function componentTypeDescription(type: ModuleComponentType) {
-  const descriptions: Record<ModuleComponentType, string> = {
-    'live-session': 'Tutor-led session via Teams',
-    video: 'Upload or link a video',
-    podcast: 'Upload audio or podcast link',
-    reading: 'PDF, Word, or typed text',
-    powerpoint: 'Slide deck for the week',
-    quiz: 'Short weekly check',
-    assignment: 'Monthly submission task',
-    reflection: 'Learner written reflection',
-    checkpoint: 'End-of-month KSB check',
-    'monthly-ksb-quiz': 'Tracks KSB progression',
-    'coaching-preparation': 'Monthly coaching meeting prep',
-    'recording-placeholder': 'Teams recording placeholder',
-    'workplace-evidence': 'Workplace evidence upload',
-  };
-  return descriptions[type] || 'Add a component';
 }
 
 function nextModuleNumber(modules: ModuleCatalogueItem[]) {

@@ -954,31 +954,38 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
   // the empty settings that adding it produced. Said on the row so a week of
   // twenty components shows at a glance which ones are still placeholders --
   // it is a hint and nothing else, and it disappears on the first real edit.
-  const unedited = componentLooksUnedited(component);
+  const unedited = componentLooksUnedited(component, weekTypeLabel(component.type));
   return (
-    <div id={`node-${component.id}`} data-focused={focused || undefined} className="group/node flex gap-3">
-      <SpineGutter>
-        <span className={`grid place-items-center w-7 h-7 rounded-full text-white text-[11px] font-bold shadow-sm ${tone.marker} ${selected ? 'ring-4 ' + tone.grip : ''}`}>{index + 1}</span>
-      </SpineGutter>
-      <div
-        onClick={onSelect}
-        className={`min-w-0 flex-1 my-1 flex items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
-      >
-        <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
-        <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
-        <span className="flex-1 min-w-0">
+    <div id={`node-${component.id}`} data-focused={focused || undefined} className="group/node">
+      {/* Its own row above the card rather than beside the title: the title
+          line already truncates in a narrow rail, and a component's name is
+          what an author scans for -- the hint says something ABOUT the row,
+          so it sits over the row instead of competing with what's in it. */}
+      {unedited && (
+        <div className="ml-10 flex items-center">
+          <span
+            data-testid="component-unedited-hint"
+            title="Nothing has been filled in on this component yet — it still has its default title, hours and empty content. Select it to author it."
+            className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-indigo-700"
+          >
+            <AppIcon className="ri-edit-box-line text-[10px]"></AppIcon>
+            Not edited yet
+          </span>
+        </div>
+      )}
+      <div className="flex gap-3">
+        <SpineGutter>
+          <span className={`grid place-items-center w-7 h-7 rounded-full text-white text-[11px] font-bold shadow-sm ${tone.marker} ${selected ? 'ring-4 ' + tone.grip : ''}`}>{index + 1}</span>
+        </SpineGutter>
+        <div
+          onClick={onSelect}
+          className={`min-w-0 flex-1 my-1 flex items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
+        >
+          <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
+          <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
+          <span className="flex-1 min-w-0">
           <span className="flex min-w-0 items-center gap-2">
             <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold truncate ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{component.title || weekTypeLabel(component.type)}</span>
-            {unedited && (
-              <span
-                data-testid="component-unedited-hint"
-                title="Nothing has been filled in on this component yet — it still has its default title, hours and empty content. Select it to author it."
-                className="shrink-0 inline-flex items-center gap-1 rounded-full border border-dashed border-background-300 bg-background-100 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-foreground-500"
-              >
-                <AppIcon className="ri-edit-box-line text-[10px]"></AppIcon>
-                Not edited yet
-              </span>
-            )}
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
@@ -1039,6 +1046,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
             <button type="button" aria-label={`Delete ${component.title || weekTypeLabel(component.type)}`} title="Delete component" onClick={e => { e.stopPropagation(); onDelete?.(); }} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-red-100 hover:text-red-600"><AppIcon className="ri-delete-bin-line text-[13px]"></AppIcon></button>
           </span>
         )}
+        </div>
       </div>
     </div>
   );
