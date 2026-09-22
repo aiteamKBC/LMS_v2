@@ -10,6 +10,8 @@ import {
 } from '@/api/learningPlan';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { updateEnrolmentUser } from '@/api/enrolmentUsers';
+import { fetchFreeProgrammeModules } from '@/lib/curriculumApi';
+import type { FreeCourseAssignment } from '@/api/trainingPlan';
 import { Modal } from './Modal';
 import { btnPrimary, btnSecondary, inputClass } from './ui';
 import { RowsSkeleton, SkeletonBlock } from '@/components/feature/Skeletons';
@@ -44,6 +46,22 @@ import { RowsSkeleton, SkeletonBlock } from '@/components/feature/Skeletons';
 /** Whether a learner is placed well enough for a plan to mean anything. */
 function isPlaced(learner: { programme?: string; cohort?: string; group?: string }) {
   return Boolean(learner.programme?.trim() && learner.cohort?.trim() && learner.group?.trim());
+}
+
+// Free courses are authored under one synthetic programme id (see the
+// free-courses curriculum editor); their rows share a courseId. Collapse them to
+// distinct { freeCourseId, courseName } options so each course is offered once.
+const FREE_COURSES_PROGRAMME_ID = 'FREE-COURSES';
+
+interface FreeCourseOption {
+  freeCourseId: string;
+  courseName: string;
+}
+
+function freeCoursesEqual(a: FreeCourseAssignment[], b: FreeCourseAssignment[]) {
+  const key = (list: FreeCourseAssignment[]) =>
+    list.map((f) => f.freeCourseId).sort().join('|');
+  return key(a) === key(b);
 }
 
 interface Props {
@@ -92,6 +110,16 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   const dirtyRef = useRef(false);
   const placingRef = useRef(false);
 
+  // Free courses assigned to this learner, the picker options, and a dirty flag
+  // so the background refresh does not discard unsaved free-course edits.
+  const [freeCourses, setFreeCourses] = useState<FreeCourseAssignment[]>([]);
+  const [freeCourseOptions, setFreeCourseOptions] = useState<FreeCourseOption[]>([]);
+  // The catalogue endpoint is slow on a cold cache, so track the load: an empty
+  // dropdown while it is still in flight reads as "no courses", not "loading".
+  const [freeCoursesLoading, setFreeCoursesLoading] = useState(true);
+  const [freeCoursePicker, setFreeCoursePicker] = useState('');
+  const freeDirtyRef = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -100,6 +128,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
         if (cancelled) return;
         setData(res);
         setPlan(res.plan);
+        setFreeCourses(res.freeCourses ?? []);
         // Default to the learner's own programme: adding from theirs is the
         // ordinary case, and anything else is a deliberate choice.
         setPickerProgramme(res.learner.programmeId || '');
@@ -120,6 +149,29 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
       cancelled = true;
     };
   }, [learnerId]);
+
+  // The catalogue of free courses to offer, loaded once. Their rows share a
+  // courseId, so collapse to distinct courses. Never fatal — a failed load just
+  // leaves nothing to add.
+  useEffect(() => {
+    if (readOnly) return;
+    let cancelled = false;
+    setFreeCoursesLoading(true);
+    fetchFreeProgrammeModules(FREE_COURSES_PROGRAMME_ID)
+      .then((modules) => {
+        if (cancelled) return;
+        const byCourse = new Map<string, FreeCourseOption>();
+        for (const m of modules) {
+          const id = m.courseId || m.id;
+          if (!id || byCourse.has(id)) continue;
+          byCourse.set(id, { freeCourseId: id, courseName: m.courseName || m.title || 'Untitled course' });
+        }
+        setFreeCourseOptions([...byCourse.values()]);
+      })
+      .catch(() => !cancelled && setFreeCourseOptions([]))
+      .finally(() => !cancelled && setFreeCoursesLoading(false));
+    return () => { cancelled = true; };
+  }, [readOnly]);
 
   // Groups and modules are edited on other screens, often in another tab while
   // this one sits open. Coming back to the window re-reads the plan, so the
@@ -143,6 +195,8 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
         const res = await fetchLearningPlan(learnerId);
         if (cancelled) return;
         setData(res);
+        // Keep this session's free-course edits; otherwise take the server's.
+        if (!freeDirtyRef.current) setFreeCourses(res.freeCourses ?? []);
         setPlan((current) => {
           // Nothing touched yet, so the server's plan is simply the truth.
           if (!dirtyRef.current) return res.plan;
@@ -288,13 +342,20 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   // not stored on the learner yet, so saving is what adopts it. `dirty` cannot
   // see that either — the server already merged it into `data.plan`, so the two
   // match — hence the same allowance the unsaved preset gets.
+  // A change to the free-course assignments is its own reason to save, the same
+  // as a change to the module list.
+  const freeCoursesDirty = useMemo(
+    () => (data ? !freeCoursesEqual(freeCourses, data.freeCourses ?? []) : false),
+    [data, freeCourses],
+  );
+
   const canSave = useMemo(() => {
     if (!data) return false;
     // `fromAptem` rows are in the same position as `inherited` ones: the
     // server merged them into the shown plan, so `dirty` is blind to them,
     // and saving is what actually records them on the learner.
-    return dirty || (!data.saved && plan.length > 0) || plan.some((m) => m.inherited || m.fromAptem);
-  }, [data, dirty, plan]);
+    return dirty || freeCoursesDirty || (!data.saved && plan.length > 0) || plan.some((m) => m.inherited || m.fromAptem);
+  }, [data, dirty, freeCoursesDirty, plan]);
 
   // Each of these is the staff member editing the plan by hand, which is what
   // the background refresh must not overwrite.
@@ -306,6 +367,22 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
     dirtyRef.current = true;
     setPlan((rows) => [...rows, module]);
     setSearch('');
+  };
+
+  // Free courses carry no hours/KSBs, so they are added and removed as a plain
+  // list — no catalogue tree to pull in like a module.
+  const addFreeCourse = (option: FreeCourseOption) => {
+    freeDirtyRef.current = true;
+    setFreeCourses((rows) =>
+      rows.some((f) => f.freeCourseId === option.freeCourseId)
+        ? rows
+        : [...rows, { freeCourseId: option.freeCourseId, courseName: option.courseName, addedAt: new Date().toISOString() }],
+    );
+    setFreeCoursePicker('');
+  };
+  const removeFreeCourse = (freeCourseId: string) => {
+    freeDirtyRef.current = true;
+    setFreeCourses((rows) => rows.filter((f) => f.freeCourseId !== freeCourseId));
   };
 
   const resetToGroup = () => {
@@ -367,12 +444,14 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
     savingRef.current = true;
     setError('');
     try {
-      const res = await saveLearningPlan(learnerId, plan.map((m) => m.moduleId));
+      const res = await saveLearningPlan(learnerId, plan.map((m) => m.moduleId), freeCourses);
       setData(res);
       setPlan(res.plan);
+      setFreeCourses(res.freeCourses ?? []);
       // Saved: the plan on screen and the stored one agree again, so a later
       // refresh is free to take the server's version wholesale.
       dirtyRef.current = false;
+      freeDirtyRef.current = false;
       toast.success(
         'Learning plan saved',
         `${res.totals.moduleCount} module${res.totals.moduleCount === 1 ? '' : 's'} · ${formatHours(res.totals.totalHours)}`,
@@ -880,6 +959,82 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
               )}
             </div>
           )}
+
+          {/* Free courses — optional extras assigned to the learner. Held apart
+              from the modules above: no hours, no KSBs, no progress, and no
+              programme/group needed. */}
+          <div>
+            <div className="flex items-baseline justify-between gap-3 mb-2">
+              <h3 className="text-[13px] font-semibold text-foreground-800">Free courses</h3>
+              <span className="text-[11px] text-foreground-500">Extras — no hours or KSBs</span>
+            </div>
+
+            {freeCourses.length === 0 ? (
+              <p className="text-[12px] text-foreground-400">
+                {readOnly ? 'No free courses assigned.' : 'No free courses assigned yet — add one below.'}
+              </p>
+            ) : (
+              <ul className="rounded-xl border border-foreground-200/60 divide-y divide-foreground-200/40">
+                {freeCourses.map((f) => (
+                  <li key={f.freeCourseId} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <span className="text-[13px] text-foreground-900 inline-flex items-center gap-2 min-w-0">
+                      <i className="ri-gift-line text-primary-600 shrink-0" />
+                      <span className="truncate">{f.courseName || f.freeCourseId}</span>
+                    </span>
+                    {!readOnly && (
+                      <button
+                        type="button"
+                        onClick={() => removeFreeCourse(f.freeCourseId)}
+                        title={`Remove ${f.courseName || f.freeCourseId}`}
+                        className="text-foreground-400 hover:text-red-600 cursor-pointer shrink-0"
+                      >
+                        <i className="ri-close-line" />
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {!readOnly && (() => {
+              const assigned = new Set(freeCourses.map((f) => f.freeCourseId));
+              const available = freeCourseOptions.filter((o) => !assigned.has(o.freeCourseId));
+              // Distinguish "still loading" from "genuinely none left": an empty
+              // dropdown during the cold-cache fetch otherwise reads as broken.
+              const placeholder = freeCoursesLoading
+                ? 'Loading free courses…'
+                : available.length === 0
+                  ? 'No free courses to add'
+                  : 'Add a free course…';
+              return (
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                  <select
+                    className={`${inputClass} sm:max-w-[20rem]`}
+                    value={freeCoursePicker}
+                    onChange={(e) => setFreeCoursePicker(e.target.value)}
+                    disabled={freeCoursesLoading || available.length === 0}
+                    aria-label="Free course to add"
+                  >
+                    <option value="">{placeholder}</option>
+                    {available.map((o) => (
+                      <option key={o.freeCourseId} value={o.freeCourseId}>{o.courseName}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className={btnSecondary}
+                    disabled={!freeCoursePicker}
+                    onClick={() => {
+                      const option = freeCourseOptions.find((o) => o.freeCourseId === freeCoursePicker);
+                      if (option) addFreeCourse(option);
+                    }}
+                  >
+                    Add free course
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       )}
     </Modal>

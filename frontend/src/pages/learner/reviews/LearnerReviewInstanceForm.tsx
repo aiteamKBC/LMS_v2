@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
+import { ReviewFormRenderer, computeWritableFieldIds } from '@/components/reviews/ReviewFormRenderer';
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
@@ -10,7 +10,9 @@ import { flattenReviewFields } from '@/api/reviewInstances';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 
 /**
- * The learner's half of the ONE Curriculum-driven Review form.
+ * The learner's half of the ONE Curriculum-driven Review form -- also reused
+ * as-is for the Employer's half (see viewerRole below), since both are the
+ * same "someone other than the coach reads/answers this Review" surface.
  *
  * Coach opens a Review instance through ReviewInstanceModal; the learner reads
  * the very same `review_instance_form_definition` here and hands it to the very
@@ -18,9 +20,12 @@ import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
  * fields, conditional fields, required rules and signatures all arrive from the
  * Curriculum template the occurrence was generated from.
  *
- * Read-only on purpose. The Review belongs to the coach's record of the
- * meeting: the learner sees what was authored and answered, and signs through
- * the page's existing signature flow, but never writes answers here.
+ * Read-only by default -- the Review is the coach's record of the meeting.
+ * A field only becomes writable here when the Curriculum template's Form
+ * Builder explicitly opts `viewerRole` into answering it (see
+ * computeWritableFieldIds / reviews.FIELD_RESPONDENT_ROLES), and only once
+ * the caller supplies `onSaveAnswers` -- omitted, the form stays exactly as
+ * read-only as it always has.
  */
 
 export interface LearnerReviewInstanceState {
@@ -96,7 +101,30 @@ export function useLearnerReviewInstance(
   return { definition, loading, error, refresh };
 }
 
-export function LearnerReviewInstanceForm({ definition, onSign, onDownload, signatoryName = 'Learner' }: { definition: LearnerReviewDefinition; onSign?: (signature: string) => Promise<void>; onDownload?: () => Promise<void>; signatoryName?: string }) {
+function seedAnswersFromDefinition(definition: LearnerReviewDefinition): Record<string, unknown> {
+  const saved: Record<string, unknown> = {};
+  for (const field of flattenReviewFields(definition.sections)) {
+    if (field.answer !== undefined && field.answer !== null) saved[field.id] = field.answer;
+  }
+  return saved;
+}
+
+export function LearnerReviewInstanceForm({
+  definition, onSign, onDownload, signatoryName = 'Learner',
+  viewerRole = 'participant', onSaveAnswers,
+}: {
+  definition: LearnerReviewDefinition;
+  onSign?: (signature: string) => Promise<void>;
+  onDownload?: () => Promise<void>;
+  signatoryName?: string;
+  /** Which respondent role this rendering represents -- 'participant' (the
+   *  Learner) unless the caller is the Employer's own surface. */
+  viewerRole?: 'participant' | 'employer';
+  /** Persists a role-scoped subset of answers and returns the refreshed
+   *  definition. Omitted (every existing caller until it opts in), the form
+   *  stays fully read-only exactly as it always has. */
+  onSaveAnswers?: (answers: Record<string, unknown>) => Promise<LearnerReviewDefinition>;
+}) {
   const [openSectionId, setOpenSectionId] = useState('');
   const [signing, setSigning] = useState(false);
   const [signatureError, setSignatureError] = useState('');
@@ -105,6 +133,9 @@ export function LearnerReviewInstanceForm({ definition, onSign, onDownload, sign
   const [drawingSignature, setDrawingSignature] = useState(false);
   const signingInFlight = useRef(false);
   const signatureSection = useRef<HTMLDivElement>(null);
+  const [answers, setAnswers] = useState<Record<string, unknown>>(() => seedAnswersFromDefinition(definition));
+  const [savingAnswers, setSavingAnswers] = useState(false);
+  const [saveAnswersError, setSaveAnswersError] = useState('');
 
   function showSignatures() {
     setSignatureOpen(true);
@@ -140,17 +171,47 @@ export function LearnerReviewInstanceForm({ definition, onSign, onDownload, sign
   }, [signatoryName]);
 
   // The renderer draws from `answers`, not from the field rows, so the saved
-  // answers are seeded the same way ReviewInstanceModal seeds them.
-  const answers = useMemo(() => {
-    const saved: Record<string, unknown> = {};
-    for (const field of flattenReviewFields(definition.sections)) {
-      if (field.answer !== undefined && field.answer !== null) saved[field.id] = field.answer;
-    }
-    return saved;
+  // answers are seeded the same way ReviewInstanceModal seeds them. Kept as
+  // state (not a pure derivation) so a writable field's own edits show
+  // immediately, then reseeded whenever a fresh definition arrives (a new
+  // occurrence opened, or this component's own save below returns one).
+  useEffect(() => {
+    setAnswers(seedAnswersFromDefinition(definition));
   }, [definition]);
 
   const requiredSignatures = Object.values(definition.signatures).filter(state => state.required);
   const submitted = ['awaiting-signature', 'completed'].includes(definition.instance?.status || '');
+  // Exactly the fields the Curriculum template opted this viewer into
+  // answering -- every other field stays read-only regardless of onSaveAnswers.
+  const writableFieldIds = useMemo(
+    () => computeWritableFieldIds(definition.sections, viewerRole),
+    [definition, viewerRole],
+  );
+  // Writing follows the same lifecycle rule the backend enforces: once the
+  // review reaches the signature step, its answers are frozen for everyone.
+  const canWriteAnswers = Boolean(onSaveAnswers) && !submitted;
+
+  const handleAnswerChange = useCallback((fieldId: string, value: unknown) => {
+    if (!canWriteAnswers || !writableFieldIds.has(fieldId)) return;
+    setAnswers(current => ({ ...current, [fieldId]: value }));
+    setSaveAnswersError('');
+  }, [canWriteAnswers, writableFieldIds]);
+
+  const saveAnswers = async () => {
+    if (!onSaveAnswers || savingAnswers) return;
+    setSavingAnswers(true);
+    setSaveAnswersError('');
+    try {
+      const payload: Record<string, unknown> = {};
+      for (const fieldId of writableFieldIds) payload[fieldId] = answers[fieldId];
+      const updated = await onSaveAnswers(payload);
+      setAnswers(seedAnswersFromDefinition(updated));
+    } catch (reason) {
+      setSaveAnswersError(reason instanceof Error ? reason.message : 'Could not save your answers. Please try again.');
+    } finally {
+      setSavingAnswers(false);
+    }
+  };
   const allSigned = requiredSignatures.length > 0 && requiredSignatures.every(state => state.signed);
   const learnerSigned = Boolean(definition.signatures.participant?.signed);
   const canSign = Boolean(onSign && submitted && definition.signatures.participant?.required && !learnerSigned);
@@ -200,11 +261,31 @@ export function LearnerReviewInstanceForm({ definition, onSign, onDownload, sign
         />
       ) : null}
 
+      {canWriteAnswers && writableFieldIds.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary-200 bg-primary-50/70 px-4 py-3">
+          <p className="text-xs text-primary-900">
+            <AppIcon className="ri-edit-2-line mr-1.5" />
+            Your coach has opened some fields here for you to answer directly.
+          </p>
+          <button
+            type="button"
+            onClick={() => void saveAnswers()}
+            disabled={savingAnswers}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-xs font-bold text-white transition hover:bg-primary-700 disabled:opacity-60"
+          >
+            {savingAnswers && <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>}
+            Save my answers
+          </button>
+        </div>
+      )}
+      {saveAnswersError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveAnswersError}</p>}
+
       <ReviewFormRenderer
         sections={definition.sections}
         answers={answers}
-        onAnswerChange={() => undefined}
+        onAnswerChange={handleAnswerChange}
         readOnly
+        fieldReadOnly={field => !canWriteAnswers || !writableFieldIds.has(field.id)}
         openSectionId={openSectionId}
         onOpenSectionChange={setOpenSectionId}
       />

@@ -149,6 +149,20 @@ vi.mock('../calendarActions', () => ({ calendarAction: vi.fn() }));
 const probeModuleTeamsAttachment = vi.fn(async () => 0);
 const fetchCurriculumTeamsMeetingSummaries = vi.fn(async () => summaries);
 const fetchCurriculumSessions = vi.fn<typeof import('@/lib/curriculumApi').fetchCurriculumSessions>(async () => sessions);
+const fetchModuleSessionPlan = vi.fn(async (moduleId: string) => ({
+  sessions: sessions
+    .filter(item => item.moduleCatalogueId === moduleId)
+    .map((item, index) => ({
+      sessionNumber: index + 1,
+      date: item.date,
+      day: item.day,
+      startTime: item.startTime,
+      endTime: item.endTime,
+      durationMinutes: 120,
+      skippedHolidays: item.skippedHolidays || [],
+    })),
+  skippedHolidays: [], finalEndDate: '', warnings: [],
+}));
 
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
@@ -192,6 +206,8 @@ vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
     timeZone: 'GMT Standard Time', timeZoneIana: 'Europe/London',
   })),
   loadTeamsMeetingArtifacts: vi.fn(async () => artifacts),
+  fetchModuleSessionPlan: (...args: unknown[]) => fetchModuleSessionPlan(...(args as [string])),
+  loadModuleStructure: vi.fn(async () => null),
   syncTeamsMeetingArtifacts: (...args: unknown[]) => syncTeamsMeetingArtifacts(...(args as [])),
   restoreModuleTeamsMeeting: (...args: unknown[]) => restoreModuleTeamsMeeting(...(args as [])),
   probeModuleTeamsAttachment: (...args: unknown[]) => probeModuleTeamsAttachment(...(args as [])),

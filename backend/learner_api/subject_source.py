@@ -16,6 +16,7 @@ import threading
 from time import monotonic
 from urllib.parse import urlsplit
 import urllib.request
+import logging
 
 from django.conf import settings
 
@@ -31,6 +32,11 @@ _gates = [threading.Lock() for _ in range(32)]
 TTL = 300
 FAILURE_TTL = 30
 MAX_CACHE_BYTES = 64 * 1024 * 1024
+logger = logging.getLogger(__name__)
+
+def _endpoint_label(endpoint):
+    parsed = urlsplit(str(endpoint or ''))
+    return f'{parsed.hostname or ""}{parsed.path}'
 
 
 def _remember(key, fetch):
@@ -68,23 +74,37 @@ def _remember(key, fetch):
 
 
 def _page(endpoint, secret, page):
+    started = monotonic()
+    label = _endpoint_label(endpoint)
     request = urllib.request.Request(f'{endpoint}?page={page}&per_page=20', headers={
         'X-KBC-API-Key': secret, 'Accept': 'application/json',
         'Accept-Encoding': 'gzip', 'User-Agent': 'KBC-LearningOS/1.0',
     })
     # Full source pages are large; the live audit observed valid responses
     # exceeding 15 seconds. Match the bounded timeout used by that audit.
-    with urllib.request.build_opener(_SameHostRedirect()).open(request, timeout=45) as response:
-        stream = gzip.GzipFile(fileobj=response) if response.headers.get('Content-Encoding') == 'gzip' else response
-        raw = stream.read(80 * 1024 * 1024 + 1)
+    try:
+        with urllib.request.build_opener(_SameHostRedirect()).open(request, timeout=45) as response:
+            stream = gzip.GzipFile(fileobj=response) if response.headers.get('Content-Encoding') == 'gzip' else response
+            raw = stream.read(80 * 1024 * 1024 + 1)
+            logger.info('learner_live_source stage=source_request result=success page=%s http_status=%s endpoint=%s elapsed_ms=%d', page, getattr(response, 'status', None), label, int((monotonic() - started) * 1000))
+    except Exception as exc:
+        logger.warning('learner_live_source stage=source_request result=failed page=%s http_status=%s exception=%s endpoint=%s elapsed_ms=%d', page, getattr(exc, 'code', None), type(exc).__name__, label, int((monotonic() - started) * 1000))
+        raise
     if len(raw) > 80 * 1024 * 1024:
         raise ValueError('Source response exceeds limit')
-    payload = json.loads(raw)
+    try:
+        payload = json.loads(raw)
+    except Exception as exc:
+        logger.warning('learner_live_source stage=schema_validation result=invalid exception=%s endpoint=%s page=%s elapsed_ms=%d', type(exc).__name__, label, page, int((monotonic() - started) * 1000))
+        raise
     if not isinstance(payload, dict):
+        logger.warning('learner_live_source stage=schema_validation result=invalid exception=ValueError endpoint=%s page=%s elapsed_ms=%d', label, page, int((monotonic() - started) * 1000))
         raise ValueError('Invalid source response')
     pg = payload.get('pagination') or {}
     if pg.get('page') != page or pg.get('per_page') != 20 or not isinstance(payload.get('groups'), list):
+        logger.warning('learner_live_source stage=schema_validation result=invalid exception=ValueError endpoint=%s page=%s elapsed_ms=%d', label, page, int((monotonic() - started) * 1000))
         raise ValueError('Source pagination was not honoured')
+    logger.info('learner_live_source stage=schema_validation result=success endpoint=%s page=%s elapsed_ms=%d', label, page, int((monotonic() - started) * 1000))
     return payload
 
 
@@ -141,7 +161,12 @@ def _select(payload, ident, email):
                        'activities': _unique_activities(definitions), 'results': results})
         if not isinstance(email, str):
             groups[-1]['_learner_email'] = str(matches[0]['learner_email']).strip().casefold()
-    return groups if found else None
+    if not found:
+        logger.info('learner_live_source stage=learner_match result=no-match source_learner_id=%s id_match=no email_match=no', ident)
+        return None
+    logger.info('learner_live_source stage=learner_match result=success source_learner_id=%s id_match=yes email_match=yes membership_groups=%s', ident, len(groups))
+    logger.info('learner_live_source stage=membership_match result=success source_learner_id=%s matching_groups=%s', ident, len(groups))
+    return groups
 
 
 def _read_identity(endpoint, secret, ident, email, pages):
@@ -165,7 +190,9 @@ def read_learner(cursor, aptem_id, email):
     email = str(email or '').strip().casefold()
     secret = getattr(settings, 'KBC_LMS_API_KEY', '')
     endpoint = getattr(settings, 'KBC_LMS_SCHEMA_URL', '')
+    label = _endpoint_label(endpoint)
     if not email or not secret or not endpoint:
+        logger.warning('learner_live_source stage=configuration result=failed aptem_id=%s endpoint_configured=%s api_key_configured=%s', aptem_id, bool(endpoint), bool(secret))
         return None
     cursor.execute('''SELECT l.learner_id,coalesce(a.lms_learner_id,l.learner_id),
         CASE WHEN a.lms_learner_id IS NULL THEN l.learner_email ELSE a.lms_email END
@@ -174,15 +201,22 @@ def read_learner(cursor, aptem_id, email):
           ON a.aptem_id=l.aptem_id AND a.canonical_lms_id=l.learner_id
         WHERE l.aptem_id=%s AND lower(btrim(l.learner_email))=%s''', [aptem_id, email])
     identities = cursor.fetchall()
-    if not identities or len({row[0] for row in identities}) != 1:
+    if not identities:
+        logger.warning('learner_live_source stage=database_identity result=no-match aptem_id=%s aliases=0', aptem_id)
+        return None
+    if len({row[0] for row in identities}) != 1:
+        logger.warning('learner_live_source stage=database_identity result=invalid aptem_id=%s reason=multiple_canonical_rows aliases=%s', aptem_id, len(identities))
         return None
     sources = tuple(sorted({(int(row[1]), str(row[2] or '').strip().casefold()) for row in identities}))
     # The enrolment email verifies the canonical learner above. Each stored
     # alias then verifies its own original email, which can be a former account.
     if any(not source_email for _, source_email in sources):
+        logger.warning('learner_live_source stage=database_identity result=invalid aptem_id=%s reason=missing_alias_email aliases=%s', aptem_id, len(sources))
         return None
     if len({ident for ident, _ in sources}) != len(sources):
+        logger.warning('learner_live_source stage=database_identity result=invalid aptem_id=%s reason=duplicate_source_ids aliases=%s', aptem_id, len(sources))
         return None
+    logger.info('learner_live_source stage=database_identity result=success aptem_id=%s aliases=%s endpoint=%s', aptem_id, len(sources), label)
     key = ('learner', endpoint, hashlib.sha256(secret.encode()).hexdigest(), sources, email)
     def fetch():
         pages, groups = {}, {}
@@ -201,7 +235,12 @@ def read_learner(cursor, aptem_id, email):
                 else:
                     groups[group['id']] = {**group, '_learner_id': ident, '_learner_email': group.get('_learner_email', source_email)}
         return {'groups': list(groups.values())}
-    return _remember(key, fetch)
+    result = _remember(key, fetch)
+    if result is None:
+        logger.warning('learner_live_source stage=final_result result=historical_fallback aptem_id=%s endpoint=%s', aptem_id, label)
+    else:
+        logger.info('learner_live_source stage=final_result result=success aptem_id=%s groups=%s endpoint=%s', aptem_id, len(result.get('groups') or []), label)
+    return result
 
 
 def _section_dates(sections):

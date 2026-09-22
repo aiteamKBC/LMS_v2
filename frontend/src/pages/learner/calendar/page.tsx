@@ -18,7 +18,7 @@ import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import {
   fetchLearnerCalendarEvents, bookLearnerCalendarSession, rescheduleLearnerCalendarSession, fetchLearnerCoach,
-  fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl,
+  fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers,
   fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
   disconnectPersonalCalendar, fetchPersonalCalendarAvailability,
   type LearnerCalendarEvent, type BookableSessionType, type PersonalCalendarConnection,
@@ -1361,7 +1361,11 @@ function LearnerCalendarBody() {
                   {([
                     { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
                     { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
-                    { value: 'first-session' as BookableSessionType, label: 'First Session', icon: 'ri-hand-heart-line', desc: 'Your first session with your coach' },
+                    // No First Session tile: it is booked with the case owner
+                    // when the learner is enrolled, before they can sign in, so
+                    // there is nothing here for a learner to request. Existing
+                    // first sessions still display, reschedule and cancel — only
+                    // the way to ask for a new one has moved.
                     { value: 'progress-review' as BookableSessionType, label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
                     { value: 'mcr' as BookableSessionType, label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
                     { value: 'gateway' as BookableSessionType, label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
@@ -1558,7 +1562,7 @@ function LearnerCalendarBody() {
           </dl>
           {showEventDetails.description && <div className="mb-5 border-t border-foreground-100 pt-4"><h3 className="mb-2 text-xs font-semibold text-foreground-500">About this event</h3><p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground-700">{showEventDetails.description}</p></div>}
             {showEventDetails.syncWarning && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">{showEventDetails.syncWarning}</p>}
-            {selectedReview.loading ? <RowsSkeleton rows={3} /> : selectedReview.error ? <p role="alert" className="mb-4 text-sm text-red-600">{selectedReview.error}</p> : selectedReview.definition ? <LearnerReviewInstanceForm definition={selectedReview.definition} /> : null}
+            {selectedReview.loading ? <RowsSkeleton rows={3} /> : selectedReview.error ? <p role="alert" className="mb-4 text-sm text-red-600">{selectedReview.error}</p> : selectedReview.definition ? <LearnerReviewInstanceForm definition={selectedReview.definition} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, showEventDetails.eventKey || showEventDetails.id, answers)} /> : null}
             {shouldShowMeetingArtifacts(showEventDetails) ? (
               <CoachMeetingArtifactsPanel event={{ id: showEventDetails.id, eventKey: showEventDetails.eventKey, source: showEventDetails.source, meetingLink: showEventDetails.meetingLink }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="mb-5 border-primary-100 bg-primary-50/30" />
             ) : null}

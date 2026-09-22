@@ -18,23 +18,36 @@ const subject = { id: 'current:M1', title: 'Marketing', source: 'current' as con
   directHours: 2, ksbProgress: { completed: 3, total: 4 } };
 
 describe('dashboard module progress', () => {
-  it('averages the five measures equally and counts only reviews within module dates', () => {
-    const result = moduleProgress(buildPlanModules([subject], data)[0], data);
-    expect(result.measures.map(measure => measure.value)).toEqual([50, 40, 20, 75, 50]);
-    expect(result.value).toBe(47);
+  it('uses activity completion for module progress and counts only reviews within module dates', () => {
+    const result = moduleProgress(buildPlanModules([subject], data)[0], data, Date.parse('2026-09-20T12:00:00Z'));
+    expect(result.measures.map(measure => measure.value)).toEqual([33.33, 40, 20, 75, 50]);
+    expect(result.measures[0].detail).toBe('1 / 3 ended sessions attended · 1 pending');
+    expect(result.value).toBe(40);
     expect(result.available).toBe(5);
   });
-  it('uses rescheduled review dates and excludes future sessions without a mark', () => {
+  it('uses rescheduled review dates', () => {
     const changed = { ...data, reviews: data.reviews.map(review => review.eventKey === 'pending' ? { ...review, scheduledDate: '2026-11-01' } : review) };
-    const result = moduleProgress(buildPlanModules([subject], changed)[0], changed);
-    expect(result.measures[0].value).toBe(50);
+    const result = moduleProgress(buildPlanModules([subject], changed)[0], changed, Date.parse('2026-09-20T12:00:00Z'));
+    expect(result.measures[0].value).toBe(33.33);
     expect(result.measures[4].value).toBe(100);
+  });
+  it('excludes future sessions and counts ended sessions without attendance as pending', () => {
+    const sessions = [
+      { ...data.sessions[0], id: 'attended', start: '2026-09-10T10:00:00Z', attended: true },
+      { ...data.sessions[0], id: 'absent', start: '2026-09-11T10:00:00Z', attended: false },
+      { ...data.sessions[0], id: 'pending', start: '2026-09-12T10:00:00Z', attended: null },
+      { ...data.sessions[0], id: 'future', start: '2026-09-21T10:00:00Z', attended: null },
+    ];
+    const current = { ...data, sessions };
+    const result = moduleProgress(buildPlanModules([subject], current)[0], current, Date.parse('2026-09-20T12:00:00Z'));
+    expect(result.measures[0]).toEqual({ label: 'Attendance', value: 33.33,
+      detail: '1 / 3 ended sessions attended · 1 pending' });
   });
   it('distinguishes missing measures from zero and caps over-target hours', () => {
     const module = buildPlanModules([{ ...subject, directHours: 20, ksbProgress: null }], { ...data, sessions: [], reviews: [] })[0];
     const result = moduleProgress(module, { ...data, reviews: [] });
     expect(result.measures.map(measure => measure.value)).toEqual([null, 40, 100, null, null]);
-    expect(result.value).toBe(70);
+    expect(result.value).toBe(40);
     expect(result.available).toBe(2);
     expect(result.measures[2].detail).toBe('20 / 10 hours');
     expect(moduleProgress({ ...module, done: 0, activityCount: 0, actual: null }, { ...data, reviews: [] }).value).toBeNull();

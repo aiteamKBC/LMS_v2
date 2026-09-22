@@ -12,8 +12,8 @@ from io import BytesIO
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .review_instances import SIGNATURE_ROLES, meeting_summary_field, required_signature_roles
 
-SIGNATURE_ROLES = ('advisor', 'employer', 'participant', 'referrer')
 ROLE_LABELS = {'advisor': 'Advisor', 'employer': 'Employer', 'participant': 'Participant', 'referrer': 'Referrer'}
 IMAGE_PATTERN = re.compile(r'^data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$', re.I)
 
@@ -36,14 +36,11 @@ def pdf_availability(definition):
     if review_type_code(definition) not in EXPORTABLE_REVIEW_TYPES:
         return None
     signatures = definition.get('signatures', {})
-    required = {role for role in SIGNATURE_ROLES if signatures.get(role, {}).get('required')}
-    # A learner acknowledgement is always needed for this signed MCM export,
-    # including old templates that did not request one when they were authored.
-    required.add('participant')
+    required = required_signature_roles(signatures)
     if (definition.get('instance') or {}).get('status') != 'completed' or any(
         not signatures.get(role, {}).get('signed') for role in required
     ):
-        return {'available': False, 'reason': 'The PDF is available after the learner and all required parties have signed.'}
+        return {'available': False, 'reason': 'The PDF is available after the review is completed and all required parties have signed.'}
     for role in required:
         state = signatures[role]
         if not state.get('signedName') or not state.get('signedAt') or not IMAGE_PATTERN.fullmatch(state.get('signature') or ''):
@@ -343,11 +340,21 @@ def build_mcm_pdf(definition, information):
             Spacer(1, 16),
         ])
 
+    formal_meeting_summary = (
+        meeting_summary_field(definition)
+        if review_type_code(definition) == REVIEW_TYPE_MCM
+        else None
+    )
+
     for block in sorted(definition.get('sections', []), key=lambda item: item.get('displayOrder', 0)):
         if not block.get('enabled', True):
             continue
         rows = []
         for field in visible_fields(block.get('fields')):
+            # The canonical summary has its dedicated PDF block below. Skip it
+            # here so the exact formal answer is rendered once, not duplicated.
+            if formal_meeting_summary and field.get('id') == formal_meeting_summary.get('id'):
+                continue
             if field.get('fieldType') == 'action_button':
                 continue
             kind = field.get('fieldType')
@@ -383,13 +390,10 @@ def build_mcm_pdf(definition, information):
             ] if history else [paragraph('No completed Progress Reviews recorded.')]),
             Spacer(1, 16),
         ])
-    else:
-        # A presentation-only placeholder, matching the legacy reference PDF's
-        # structure -- the Review Instance owns no meeting-summary field today,
-        # so this always shows "No Summary Generated". If one is added later,
-        # this reads it instead, without any dependency on the separate
-        # coach_meeting_summaries/CoachCalendarEvent AI-summary feature.
-        summary = definition.get('meetingSummary')
+    elif review_type_code(definition) == REVIEW_TYPE_MCM:
+        # The signed document reads only the answer attached to this frozen
+        # semantic field. It never reaches the mutable Coach AI artifact.
+        summary = formal_meeting_summary.get('answer') if formal_meeting_summary else None
         summary_text = summary.strip() if isinstance(summary, str) and summary.strip() else 'No Summary Generated'
         story.extend([section('Meeting Summary', [paragraph(summary_text)]), Spacer(1, 16)])
 
@@ -398,7 +402,10 @@ def build_mcm_pdf(definition, information):
     story.append(PageBreak())
     for role in SIGNATURE_ROLES:
         state = definition['signatures'].get(role, {})
-        if not (state.get('required') or role == 'participant' or state.get('signed')):
+        # Frozen requirements are authoritative. An optional party is shown
+        # only when they actually signed; the PDF must not invent a learner
+        # requirement that Curriculum did not freeze onto this instance.
+        if not (state.get('required') or state.get('signed')):
             continue
         image = _signature_image(state)
         content = [paragraph(f"Name: {state['signedName']}"), Spacer(1, 6), paragraph('Signature:', True),

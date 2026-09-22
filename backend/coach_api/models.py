@@ -223,3 +223,49 @@ class CoachAbsenceReport(models.Model):
 
     def __str__(self):
         return f"{self.learner_name}: {self.session_title} ({self.status})"
+
+
+class CoachCalendarColorPreference(models.Model):
+    """Per-coach timetable colours: one row per category default or per
+    single-event override. Never read by the timetable event builders in
+    views.py -- the frontend merges these into eventConfig() output itself,
+    so booking/Teams code paths are untouched by this feature."""
+
+    SCOPE_CATEGORY = "category"
+    SCOPE_EVENT = "event"
+    SCOPE_CHOICES = [(SCOPE_CATEGORY, "Category"), (SCOPE_EVENT, "Event")]
+
+    owner_email = models.EmailField(max_length=255, db_index=True)
+    scope = models.CharField(max_length=16, choices=SCOPE_CHOICES)
+    scope_key = models.CharField(max_length=255)
+    color = models.CharField(max_length=7)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name(
+            "coach_test_calendar_color_preferences",
+            'Coach"."coach_calendar_color_preference',
+        )
+        indexes = [
+            models.Index(fields=["owner_email", "scope"], name="coach_color_owner_scope_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner_email", "scope", "scope_key"],
+                name="coach_color_pref_owner_scope_key_uniq",
+            ),
+            models.CheckConstraint(
+                # Literal values, not the SCOPE_* class attributes: see the
+                # matching comment on CoachCalendarEvent's constraint above.
+                condition=models.Q(scope__in=["category", "event"]),
+                name="coach_color_pref_scope_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(color__regex=r"^#[0-9A-Fa-f]{6}$"),
+                name="coach_color_pref_color_format_valid",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.scope}:{self.scope_key} for {self.owner_email}"

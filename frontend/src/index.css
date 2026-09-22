@@ -5942,6 +5942,142 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   }
 }
 
+/* Coach workspace readability layer. Scoped to Coach so the larger type,
+   controls and spacing do not alter learner, admin or curriculum workspaces. */
+.dashboard-theme[data-workspace-role="coach"] {
+  --kbc-control-height: 2.75rem;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .kbc-workspace-topbar {
+  min-height: 4.75rem;
+  height: auto;
+  padding-block: 0.75rem;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .kbc-topbar-title {
+  font-size: 1.25rem !important;
+  line-height: 1.3 !important;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .kbc-topbar-subtitle,
+.dashboard-theme[data-workspace-role="coach"] .kbc-topbar-user-name {
+  font-size: 0.9375rem !important;
+  line-height: 1.45 !important;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-breadcrumbs,
+.dashboard-theme[data-workspace-role="coach"] .workspace-breadcrumbs nav {
+  min-height: 2.75rem;
+  font-size: 0.875rem !important;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main {
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .page-container {
+  width: 100%;
+  max-width: none;
+  padding: 1.25rem 1.5rem 2rem;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main :is(h1, [role="heading"][aria-level="1"]) {
+  font-size: clamp(1.75rem, 2.4vw, 2.25rem) !important;
+  line-height: 1.25 !important;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main h2 {
+  font-size: clamp(1.3rem, 1.8vw, 1.6rem) !important;
+  line-height: 1.35 !important;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main h3 {
+  font-size: 1.125rem !important;
+  line-height: 1.4 !important;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main :is(p, label, legend, li, dt, dd) {
+  line-height: 1.55;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main :is(input, textarea, select) {
+  min-height: 2.75rem;
+  font-size: 1rem !important;
+  line-height: 1.5;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main :is(button, [role="button"], a[class*="inline-flex"]),
+.dashboard-theme[data-workspace-role="coach"] [role="dialog"] :is(button, [role="button"]) {
+  min-height: 2.75rem;
+  font-size: 0.9375rem;
+  line-height: 1.35;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main :is(.ui-panel, .ui-metric-card, .card-premium) {
+  padding: clamp(1rem, 1.6vw, 1.5rem);
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main table thead th {
+  height: 3rem;
+  padding: 0.75rem 0.875rem;
+  font-size: 0.875rem;
+  line-height: 1.35;
+  letter-spacing: 0.025em;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main table tbody td {
+  height: 3.75rem;
+  padding: 0.75rem 0.875rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main .ui-status-badge {
+  min-height: 1.875rem;
+  padding-inline: 0.625rem;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main :is(.overflow-x-auto, [class*="tableScroll"]) {
+  max-width: 100%;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+
+.dashboard-theme[data-workspace-role="coach"] .workspace-main :is(p, td, th, label, button, a, span) {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1023px) {
+  .dashboard-theme[data-workspace-role="coach"] .page-container {
+    padding: 1rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .dashboard-theme[data-workspace-role="coach"] .workspace-main {
+    padding: 0.5rem;
+  }
+
+  .dashboard-theme[data-workspace-role="coach"] .page-container {
+    padding: 0.75rem;
+  }
+
+  .dashboard-theme[data-workspace-role="coach"] .kbc-workspace-topbar {
+    min-height: 4.25rem;
+  }
+
+  .dashboard-theme[data-workspace-role="coach"] .workspace-main table {
+    min-width: 46rem;
+  }
+
+  .dashboard-theme[data-workspace-role="coach"] .workspace-main :is(button, [role="button"], a[class*="inline-flex"]) {
+    min-height: 2.875rem;
+  }
+}
+
 /* Curriculum Library heroes use a leading icon in each KPI tile so every
    library destination shares the same compact reference treatment. */
 .dashboard-theme .workspace-main .curriculum-library-hero {

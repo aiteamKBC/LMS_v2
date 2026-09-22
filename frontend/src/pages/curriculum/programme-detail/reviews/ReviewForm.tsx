@@ -34,8 +34,10 @@ import {
   type ReviewFieldType,
   type ReviewNotificationFlags,
   type ReviewParticipantRole,
+  type ReviewFieldRespondentRole,
   type ReviewRecurrenceUnit,
   type ReviewRoleFlags,
+  type RespondentRolesConfiguration,
   type ReviewSection,
   type ReviewSectionInput,
   type ReviewSummary,
@@ -51,12 +53,25 @@ const ROLES: ReviewParticipantRole[] = ['advisor', 'employer', 'participant', 'r
 const ROLE_LABEL: Record<ReviewParticipantRole, string> = {
   advisor: 'Advisor', employer: 'Employer', participant: 'Participant', referrer: 'Referrer',
 };
+
+// Who besides the Coach (always allowed) may answer one field. Kept separate
+// from ROLES/ROLE_LABEL above -- a field can never be answered by an Advisor
+// selection (the coach already can) or a Referrer (not a respondent here).
+const RESPONDENT_ROLES: ReviewFieldRespondentRole[] = ['participant', 'employer'];
+const RESPONDENT_ROLE_LABEL: Record<ReviewFieldRespondentRole, string> = {
+  participant: 'Learner', employer: 'Employer',
+};
+
+function fieldRespondentRoles(field: { configuration?: unknown }): ReviewFieldRespondentRole[] {
+  return (field.configuration as RespondentRolesConfiguration | undefined)?.respondentRoles || [];
+}
 const RECURRENCE_UNITS: ReviewRecurrenceUnit[] = ['days', 'weeks', 'months'];
 
 /** Mirrors curriculum_api.review_instances.RAG_SEMANTIC_KEY -- the marker a
  *  Progress Review's RAG question carries so its answer is found by the
  *  template's own configuration, never by matching a question title. */
 const RAG_SEMANTIC_KEY = 'rag_status';
+const MEETING_SUMMARY_SEMANTIC_KEY = 'meeting_summary';
 
 // A "Post code and Address" field always collects this fixed set of lines
 // together, as one answer -- there is nothing to configure, this is shown
@@ -222,6 +237,33 @@ function OptionListEditor({ options, onChange }: { options: string[]; onChange: 
   );
 }
 
+// By default only the Coach can answer a field -- the whole Review is the
+// coach's record of the meeting (see ReviewFormRenderer's docstring). This
+// picker is how a field is opted into also being answered directly by the
+// Learner and/or the Employer; the coach can always still answer it too.
+function RespondentRolePicker({ value, onChange }: { value: ReviewFieldRespondentRole[]; onChange: (value: ReviewFieldRespondentRole[]) => void }) {
+  const toggle = (role: ReviewFieldRespondentRole, checked: boolean) => {
+    onChange(checked ? [...value.filter(r => r !== role), role] : value.filter(r => r !== role));
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-background-300 bg-white px-3 py-2">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Who can answer</span>
+      <span className="text-[11px] font-semibold text-foreground-500">Coach (always)</span>
+      {RESPONDENT_ROLES.map(role => (
+        <label key={role} className="flex items-center gap-1.5 text-[12px] font-semibold text-foreground-700">
+          <input
+            type="checkbox"
+            checked={value.includes(role)}
+            onChange={event => toggle(role, event.target.checked)}
+            className="h-4 w-4 rounded border-background-300 text-primary-600 focus:ring-primary-300"
+          />
+          {RESPONDENT_ROLE_LABEL[role]}
+        </label>
+      ))}
+    </div>
+  );
+}
+
 // --------------------------------------------------------------- field row
 
 // A field's own depth counts from 0 at the top of a section. Once a field
@@ -231,7 +273,7 @@ function OptionListEditor({ options, onChange }: { options: string[]; onChange: 
 // ever reaches a save-time error.
 const MAX_FIELD_NESTING_DEPTH = 8;
 
-function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove, onMove }: {
+function FieldRow({ field, path, index, total, depth, errors, allowMeetingSummary, onChange, onRemove, onMove }: {
   field: DraftField;
   /** Dotted/bracketed location matching the backend's error keys, e.g. sections[0].fields[1]. */
   path: string;
@@ -240,6 +282,7 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
   /** 0 for a section's direct fields; +1 for every IF YES/IF NO level in. */
   depth: number;
   errors: Record<string, string>;
+  allowMeetingSummary: boolean;
   onChange: (field: DraftField) => void;
   onRemove: () => void;
   onMove: (direction: -1 | 1) => void;
@@ -253,6 +296,7 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
   const description = (field.configuration as TitleDescriptionConfiguration | undefined)?.description || '';
   const options = (field.configuration as ListItemConfiguration | undefined)?.options || [];
   const isRagQuestion = (field.configuration as ListItemConfiguration | undefined)?.semanticKey === RAG_SEMANTIC_KEY;
+  const isMeetingSummary = (field.configuration as Record<string, unknown> | undefined)?.semanticKey === MEETING_SUMMARY_SEMANTIC_KEY;
   const branchFieldCount = countFields(field.yesFields) + countFields(field.noFields);
 
   const handleTypeChange = (nextType: ReviewFieldType) => {
@@ -363,6 +407,15 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
         </div>
       </div>
 
+      {!displayOnly && (
+        <div className="mt-3">
+          <RespondentRolePicker
+            value={fieldRespondentRoles(field)}
+            onChange={respondentRoles => onChange({ ...field, configuration: { ...field.configuration, respondentRoles } })}
+          />
+        </div>
+      )}
+
       {field.fieldType === 'list_item' && (
         <div className="mt-3">
           <FormField label="List options" error={optionsError} hint="Shown to the person answering, in this order.">
@@ -391,6 +444,24 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
             This is the RAG status question
           </label>
         </div>
+      )}
+
+      {allowMeetingSummary && (field.fieldType === 'text' || field.fieldType === 'text_multiline') && (
+        <label className="mt-3 flex items-center gap-2 text-[12px] font-semibold text-foreground-700">
+          <input
+            type="checkbox"
+            checked={isMeetingSummary}
+            onChange={event => {
+              const { semanticKey: _dropped, ...rest } = (field.configuration as Record<string, unknown> | undefined) || {};
+              onChange({
+                ...field,
+                configuration: event.target.checked ? { ...rest, semanticKey: MEETING_SUMMARY_SEMANTIC_KEY } : rest,
+              });
+            }}
+            className="h-4 w-4 rounded border-background-300 text-primary-600 focus:ring-primary-300"
+          />
+          This is the canonical Meeting Summary
+        </label>
       )}
 
       {field.fieldType === 'title_description' && (
@@ -439,6 +510,7 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
             fields={field.yesFields}
             depth={depth + 1}
             errors={errors}
+            allowMeetingSummary={allowMeetingSummary}
             onChange={yesFields => onChange({ ...field, yesFields })}
           />
           <ConditionalBranch
@@ -447,6 +519,7 @@ function FieldRow({ field, path, index, total, depth, errors, onChange, onRemove
             fields={field.noFields}
             depth={depth + 1}
             errors={errors}
+            allowMeetingSummary={allowMeetingSummary}
             onChange={noFields => onChange({ ...field, noFields })}
           />
         </div>
@@ -478,12 +551,13 @@ const BRANCH_STYLE = {
   },
 } as const;
 
-function ConditionalBranch({ branch, path, fields, depth, errors, onChange }: {
+function ConditionalBranch({ branch, path, fields, depth, errors, allowMeetingSummary, onChange }: {
   branch: 'yes' | 'no';
   path: string;
   fields: DraftField[];
   depth: number;
   errors: Record<string, string>;
+  allowMeetingSummary: boolean;
   onChange: (fields: DraftField[]) => void;
 }) {
   const style = BRANCH_STYLE[branch];
@@ -503,6 +577,7 @@ function ConditionalBranch({ branch, path, fields, depth, errors, onChange }: {
             total={fields.length}
             depth={depth}
             errors={errors}
+            allowMeetingSummary={allowMeetingSummary}
             onChange={updated => onChange(fields.map(f => (f.key === updated.key ? updated : f)))}
             onRemove={() => onChange(fields.filter(f => f.key !== child.key))}
             onMove={direction => {
@@ -533,11 +608,32 @@ function countFields(fields: DraftField[]): number {
   return fields.reduce((total, field) => total + 1 + countFields(field.yesFields) + countFields(field.noFields), 0);
 }
 
-function SectionCard({ section, index, total, errors, onChange, onRemove, onMove }: {
+// Bulk-apply one respondent role to every answerable field in a section
+// (including nested IF YES/IF NO children) in one action -- a convenience
+// over toggling each field's own RespondentRolePicker individually. A
+// display-only field (title_description/action_button) never collects an
+// answer, so it is left untouched either way.
+function applySectionRespondentRole(fields: DraftField[], role: ReviewFieldRespondentRole, enabled: boolean): DraftField[] {
+  return fields.map(field => {
+    const roles = fieldRespondentRoles(field);
+    const nextRoles = isDisplayOnly(field.fieldType)
+      ? roles
+      : (enabled ? [...roles.filter(r => r !== role), role] : roles.filter(r => r !== role));
+    return {
+      ...field,
+      configuration: { ...field.configuration, respondentRoles: nextRoles },
+      yesFields: applySectionRespondentRole(field.yesFields, role, enabled),
+      noFields: applySectionRespondentRole(field.noFields, role, enabled),
+    };
+  });
+}
+
+function SectionCard({ section, index, total, errors, allowMeetingSummary, onChange, onRemove, onMove }: {
   section: DraftSection;
   index: number;
   total: number;
   errors: Record<string, string>;
+  allowMeetingSummary: boolean;
   onChange: (section: DraftSection) => void;
   onRemove: () => void;
   onMove: (direction: -1 | 1) => void;
@@ -597,7 +693,31 @@ function SectionCard({ section, index, total, errors, onChange, onRemove, onMove
 
       {expanded && (
         <div className="space-y-3 border-t border-background-100 p-3">
-          <p className="text-[11px] font-semibold text-foreground-400">{fieldCount} field{fieldCount === 1 ? '' : 's'} in this section</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold text-foreground-400">{fieldCount} field{fieldCount === 1 ? '' : 's'} in this section</p>
+            {fieldCount > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-foreground-400">Set every field in this section:</span>
+                {RESPONDENT_ROLES.map(role => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => onChange({ ...section, fields: applySectionRespondentRole(section.fields, role, true) })}
+                    className="inline-flex h-7 items-center rounded-full border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 hover:bg-primary-100"
+                  >
+                    Allow {RESPONDENT_ROLE_LABEL[role]}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...section, fields: RESPONDENT_ROLES.reduce((fields, role) => applySectionRespondentRole(fields, role, false), section.fields) })}
+                  className="inline-flex h-7 items-center rounded-full border border-background-200 bg-background-50 px-2.5 text-[11px] font-bold text-foreground-600 hover:bg-background-100"
+                >
+                  Coach only
+                </button>
+              </div>
+            )}
+          </div>
           {section.fields.length === 0 && (
             <p className="rounded-lg border border-dashed border-background-300 bg-background-50 px-4 py-6 text-center text-[12px] text-foreground-400">
               No fields yet. Add the first one below.
@@ -613,6 +733,7 @@ function SectionCard({ section, index, total, errors, onChange, onRemove, onMove
                 total={section.fields.length}
                 depth={0}
                 errors={errors}
+                allowMeetingSummary={allowMeetingSummary}
                 onChange={updated => onChange({ ...section, fields: section.fields.map(f => (f.key === updated.key ? updated : f)) })}
                 onRemove={() => onChange({ ...section, fields: section.fields.filter(f => f.key !== field.key) })}
                 onMove={direction => {
@@ -791,6 +912,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     }
     return options;
   }, [reviewTypes, reviewTypeId, review]);
+  const selectedReviewTypeCode = reviewTypeOptions.find(type => type.id === reviewTypeId)?.code || '';
 
   const handleTypeCreated = (created: ReviewType) => {
     setReviewTypes(current => [...current.filter(type => type.id !== created.id), created]);
@@ -863,6 +985,19 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     const expectedOtjhNumber = Number(expectedOtjh);
     if (!Number.isFinite(expectedOtjhNumber) || expectedOtjhNumber < 0) next.expectedOtjh = 'Expected OTJH must be zero or a positive number.';
     Object.assign(next, validateSections(sections));
+    const countMeetingSummaryFields = (fields: DraftField[]): number => fields.reduce(
+      (total, field) => total
+        + ((field.configuration as Record<string, unknown> | undefined)?.semanticKey === MEETING_SUMMARY_SEMANTIC_KEY ? 1 : 0)
+        + countMeetingSummaryFields(field.yesFields)
+        + countMeetingSummaryFields(field.noFields),
+      0,
+    );
+    const meetingSummaryCount = sections.reduce((total, item) => total + countMeetingSummaryFields(item.fields), 0);
+    if (meetingSummaryCount > 0 && selectedReviewTypeCode !== 'mcm') {
+      next.sections = 'Only a Monthly Coaching Meeting may define a Meeting Summary field.';
+    } else if (meetingSummaryCount > 1) {
+      next.sections = 'A Monthly Coaching Meeting can define only one Meeting Summary field.';
+    }
     return next;
   };
 
@@ -1164,6 +1299,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
                     index={index}
                     total={sections.length}
                     errors={errors}
+                    allowMeetingSummary={selectedReviewTypeCode === 'mcm'}
                     onChange={updated => setSections(prev => prev.map(s => (s.key === updated.key ? updated : s)))}
                     onRemove={() => setSections(prev => prev.filter(s => s.key !== sectionDraft.key))}
                     onMove={direction => setSections(prev => {

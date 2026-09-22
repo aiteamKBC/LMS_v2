@@ -116,15 +116,15 @@ def live_material(ident):
 
 
 def catalogue(ids):
-    from .repository import query
+    from .repository import source_query
     if not ids:
         return {}
-    definitions = query('''SELECT activity_id, title, activity_type, video_iframe_url,
+    definitions = source_query('''SELECT activity_id, title, activity_type, video_iframe_url,
         reading_iframe_url, reading_type, reading_text_body,
         raw #>> '{audio,iframe_url}' AS audio_iframe_url,
         quiz_id, quiz_body, quiz_questions FROM "Last_audit".activities
         WHERE activity_id=ANY(%s)''', [list(ids)])
-    snapshots = query('''SELECT material_id, title, payload, source_url, backup_status,
+    snapshots = source_query('''SELECT material_id, title, payload, source_url, backup_status,
         blob_container, blob_name, blob_content_type, blob_size_bytes, updated_at FROM
         structured_manual_activities.lms_material_snapshots WHERE material_id=ANY(%s)''', [list(ids)])
     result = {row['activity_id']: row for row in definitions}
@@ -195,7 +195,7 @@ def resolve(learner, rows, *, companions=False, refresh_missing=True):
     identities = {row['id']: source_ids(row) for row in rows}
     ids = {ident for _, row_ids in identities.values() for ident in row_ids}
     definitions = catalogue(ids)
-    attempts = repo.query('''SELECT activity_id, group_id, quiz_attempted, quiz_passed,
+    attempts = repo.source_query('''SELECT activity_id, group_id, quiz_attempted, quiz_passed,
         quiz_score, quiz_maximum_score, quiz_attempt_number, quiz_answers
         FROM "Last_audit".activity_results WHERE learner_id=%s AND activity_id=ANY(%s)''',
         [learner.get('lms_id'), list(ids)]) if ids and learner.get('lms_id') else []
@@ -350,7 +350,7 @@ def add_companions(group, parts):
     for part in parts:
         if part['quiz'] and not part['url'] and not part['html']:
             # Honour explicitly arranged reading/quiz pairs in this same group.
-            paired = repo.query('''SELECT reading_activity_id FROM structured_manual_activities.reading_quiz_pairs
+            paired = repo.source_query('''SELECT reading_activity_id FROM structured_manual_activities.reading_quiz_pairs
                 WHERE group_id=%s AND quiz_activity_id=%s ORDER BY id''', [group, part['id']])
             candidates = []
             if paired:
@@ -366,7 +366,7 @@ def add_companions(group, parts):
                                        'content_url': url, 'reading_text_body': html,
                                        'reading_type': obj(item.get('material')).get('content_type') or item.get('reading_type')})
             else:
-                with repo.connections[repo.DB].cursor() as cursor:
+                with repo.source_connection().cursor() as cursor:
                     companion = _companion_reading_part(cursor, group, part['id'], part['title'])
                 if companion:
                     candidates.append(companion)

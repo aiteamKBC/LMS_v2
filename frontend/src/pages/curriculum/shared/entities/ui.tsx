@@ -230,7 +230,10 @@ export function EntityFilterBar({
   const sortDirty = Boolean(sort) && sort!.value !== (sort!.defaultValue ?? '');
   const dirty = !disabled && (isDirty ?? (Boolean(search) || selects.some(select => select.value) || sortDirty));
   return (
-    <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-3.5">
+    // This toolbar reports its own searches, filters and sorts below, by name.
+    // The mark tells the LMS-wide capture listener to leave it alone, so one
+    // filter change is one row in the audit trail rather than two.
+    <div data-audit="manual" className="rounded-2xl border border-foreground-200/60 bg-background-50 p-3.5">
       <div className="flex flex-col gap-2.5 xl:flex-row xl:items-end xl:justify-between">
         <div className="grid flex-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
           <label className="block">
@@ -331,6 +334,7 @@ export function EntityTable<T>({
   rowKey,
   renderRow,
   getRowHref,
+  onRowIntent,
   loading,
   refreshing,
   highlightKey,
@@ -348,6 +352,13 @@ export function EntityTable<T>({
    * (StackedCell's `href`) should do the same, or the click fires both.
    */
   getRowHref?: (row: T) => string | undefined;
+  /**
+   * Called when a row is about to be opened -- pointer over it, or keyboard
+   * focus on it. For fetching what the next page will need before the click,
+   * so it is already in hand when the click happens. Must be cheap and
+   * idempotent: it fires again every time the pointer crosses the row.
+   */
+  onRowIntent?: (row: T) => void;
   loading?: boolean;
   /** A background reload is running behind the rows already on screen. */
   refreshing?: boolean;
@@ -421,6 +432,8 @@ export function EntityTable<T>({
                     }}
                     role={href ? 'button' : undefined}
                     tabIndex={href ? 0 : undefined}
+                    onPointerEnter={onRowIntent ? () => onRowIntent(row) : undefined}
+                    onFocus={onRowIntent ? () => onRowIntent(row) : undefined}
                     onClick={href ? () => navigate(href) : undefined}
                     onKeyDown={href ? event => {
                       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(href); }

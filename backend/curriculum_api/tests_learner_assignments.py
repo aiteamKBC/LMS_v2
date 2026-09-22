@@ -110,6 +110,16 @@ class AssignmentTests(SimpleTestCase):
                 patch.object(views, 'curriculum_row_effectively_deleted', side_effect=lambda row: bool(row.get('deleted_at'))):
             self.assertEqual(assignments._target('cohort', 'COHORT-1')['moduleIds'], ['MOD-1', 'MOD-2'])
 
+    def test_module_target_prefers_stored_catalogue_identifier(self):
+        from . import views
+        row = {'module_catalogue_id': 'MOD-1', 'title': 'Leadership'}
+        with patch.object(views, 'resolve_stored_module_catalogue_id', return_value='MOD-1') as resolve, \
+                patch.object(views, 'authoring_fetch_all', return_value=[row]), \
+                patch.object(views, 'curriculum_row_effectively_deleted', return_value=False):
+            target = assignments._target('module', 'MOD-1')
+        resolve.assert_called_once_with('MOD-1')
+        self.assertEqual(target['moduleIds'], ['MOD-1'])
+
 
 class AssignmentEndpointTests(SimpleTestCase):
     def setUp(self):
@@ -151,6 +161,16 @@ class AssignmentEndpointTests(SimpleTestCase):
         with patch.object(assignments, '_assign', side_effect=DatabaseError('failed')):
             self.assertEqual(self.post({'learnerIds': ['1']}).status_code, 503)
         self.invalidate.assert_not_called()
+
+    def test_delete_removes_only_selected_learner(self):
+        request = self.factory.delete('/', json.dumps({'learnerIds': ['1']}), content_type='application/json')
+        # autospec: a bare Mock accepts any arity, which is how _unassign
+        # shipped taking one fewer argument than _handle passes it.
+        with patch.object(assignments, '_unassign', return_value=True, autospec=True) as unassign:
+            response = assignments.module_learner_assignments(request, 'MOD-1')
+        self.assertEqual(response.status_code, 200)
+        unassign.assert_called_once()
+        self.invalidate.assert_called_once()
 
     def test_learners_cannot_read_or_write_directory(self):
         with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner')):

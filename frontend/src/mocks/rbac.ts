@@ -674,6 +674,10 @@ export const NAV_PERMISSIONS: NavPermissionMap[] = [
   { navId: 'performance', allowedRoles: ['leadership', 'tenant-admin', 'super-admin'] },
   // Auditor nav
   { navId: 'audit-trail', allowedRoles: ['auditor', 'compliance', 'tenant-admin', 'super-admin'] },
+  // The system-wide Audit Trail. Same four roles as the scoped one above:
+  // widening what a page can show is not a reason to widen who can open it,
+  // and this one shows every workspace at once.
+  { navId: 'admin-audit-trail', allowedRoles: ['auditor', 'compliance', 'tenant-admin', 'super-admin'] },
   // Reports
   { navId: 'reports', allowedRoles: ['coach', 'tutor', 'employer', 'engagement', 'compliance', 'qa', 'mis', 'leadership', 'finance', 'auditor', 'tenant-admin', 'super-admin'] },
 ];

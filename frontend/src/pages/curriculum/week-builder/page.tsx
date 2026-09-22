@@ -48,12 +48,13 @@ import {
   type WeekTemplateCourseType,
   type WorkspaceQuizSummary,
 } from './weekTemplateData';
-import { MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceType, type ComponentSettingValue } from '@/pages/curriculum/module-builder/componentAuthoringModel';
+import { MEDIA_SOURCE_TYPES, componentLooksUnedited, normaliseVideoSourceType, providerForVideoSourceType, type ComponentSettingValue } from '@/pages/curriculum/module-builder/componentAuthoringModel';
 // Round-trip this week's components to Excel for ChatGPT KSB mapping. xlsx is
 // dynamically imported inside the helpers, so it stays off this page's bundle.
 import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
+import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
 import { loadModuleStructure, saveModuleStructure, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
 import { LiveSessionArtifactsPanel } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
@@ -68,7 +69,7 @@ const QuizEditorPanel = lazy(() => import('@/pages/curriculum/quiz-xml/edit/Quiz
 const GuidedQuizUpload = lazy(() => import('./GuidedQuizUpload').then(m => ({ default: m.GuidedQuizUpload })));
 
 export type { WeekScope };
-export interface GroupOption { key: string; name: string; cohort?: string; cohortId?: string; programmeId?: string; programme?: string }
+export interface GroupOption { key: string; name: string; cohort?: string; cohortId?: string; programmeId?: string; programme?: string; moduleCount?: number }
 export type WeekComponentUploader = (componentId: string, file: File, componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment') => Promise<WeekComponentUploadResult>;
 
 const curriculumNav = roleNavMap.curriculum;
@@ -486,9 +487,24 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
         const resolvedModuleName = weekModule?.name || '';
         setModuleName(resolvedModuleName);
 
+        // The "Assigned groups" picker only ever offers live programmes — an
+        // archived programme has nothing left to deliver into, so its cohorts
+        // and groups would just be dead ends in the dropdown.
+        const archivedProgrammeKeys = new Set<string>();
+        programmes.forEach(programme => {
+          if (programme.isArchived || programme.status === 'archived') {
+            [programme.id, programme.sourceId, programme.name].forEach(key => {
+              if (key) archivedProgrammeKeys.add(norm(key));
+            });
+          }
+        });
+        const liveGroups = groups.filter(group => (
+          ![group.programmeId, group.programme].some(key => key && archivedProgrammeKeys.has(norm(key)))
+        ));
+
         let scoped = initial.courseType === 'paid'
-          ? groups.filter(group => group.programmeId === initial.programmeId || group.programme === initial.programmeName)
-          : groups;
+          ? liveGroups.filter(group => group.programmeId === initial.programmeId || group.programme === initial.programmeName)
+          : liveGroups;
         // Narrow to the week's module when we can resolve it — but only if that
         // actually leaves some groups, so a naming mismatch never empties the
         // picker (fall back to the programme-scoped set).
@@ -502,9 +518,9 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
         // the same Teams link across a duplicated module), so the picker
         // must never hide groups outside this week's own programme/module —
         // it only lists the scoped-in ones first, for convenience.
-        const preferred = scoped.length ? scoped : groups;
+        const preferred = scoped.length ? scoped : liveGroups;
         const preferredIds = new Set(preferred.map(group => group.id));
-        const ordered = [...preferred, ...groups.filter(group => !preferredIds.has(group.id))];
+        const ordered = [...preferred, ...liveGroups.filter(group => !preferredIds.has(group.id))];
         // A group's own `programme` name is blank on plenty of records — the
         // raw programmeId is meaningless to a tutor, so resolve the readable
         // name from the programme list instead (matching id/sourceId/name,
@@ -518,7 +534,22 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
         const resolveProgrammeName = (group: typeof groups[number]) => (
           group.programme || programmeNameByKey.get(norm(group.programmeId)) || group.programmeId || ''
         );
-        setGroupOptions(ordered.map(group => ({ key: group.id, name: group.name, cohort: group.cohort, cohortId: group.cohortId, programmeId: group.programmeId, programme: resolveProgrammeName(group) })));
+        // `group.modules` is a compact, occasionally stale name list. Count
+        // the same concrete module rows the placement modal will display so
+        // the group card never says "No modules" when the next click finds some.
+        setGroupOptions(ordered.map(group => ({
+          key: group.id,
+          name: group.name,
+          cohort: group.cohort,
+          cohortId: group.cohortId,
+          programmeId: group.programmeId,
+          programme: resolveProgrammeName(group),
+          moduleCount: moduleCountForGroup(modules, {
+            groupId: group.id,
+            groupName: group.name,
+            programmeId: group.programmeId,
+          }),
+        })));
       })
       .catch(() => { /* picker stays empty */ })
       .finally(() => { if (active) setScopeReady(true); });
@@ -878,6 +909,14 @@ interface RailNodeProps {
   onSelect?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
+  /**
+   * Other weeks in the same module the clone button can copy this component
+   * into. Left unset (the standalone week builder and templates, which only
+   * ever hold one week) collapses the clone button back to its old
+   * single-click "duplicate in this week" behaviour.
+   */
+  otherWeeks?: { id: string; label: string }[];
+  onCopyToWeek?: (weekId: string) => void;
 }
 
 // Sortable wrapper — @dnd-kit gives smooth transforms + keyboard support, and
@@ -892,7 +931,7 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, index, selected, focused = false, issues, weekSessionDate, holidayDates, dateDrift, dragging, onSelect, onDuplicate, onDelete, otherWeeks, onCopyToWeek, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const isLiveSession = component.type === 'live-session';
@@ -911,20 +950,42 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
     && scheduledDate
     && (holidayDates || []).includes(scheduledDate.slice(0, 10)),
   );
+  // Nobody has opened this one yet: it still carries the title, the defaults and
+  // the empty settings that adding it produced. Said on the row so a week of
+  // twenty components shows at a glance which ones are still placeholders --
+  // it is a hint and nothing else, and it disappears on the first real edit.
+  const unedited = componentLooksUnedited(component, weekTypeLabel(component.type));
   return (
-    <div id={`node-${component.id}`} data-focused={focused || undefined} className="group/node flex gap-3">
-      <SpineGutter>
-        <span className={`grid place-items-center w-7 h-7 rounded-full text-white text-[11px] font-bold shadow-sm ${tone.marker} ${selected ? 'ring-4 ' + tone.grip : ''}`}>{index + 1}</span>
-      </SpineGutter>
-      <div
-        onClick={onSelect}
-        className={`min-w-0 flex-1 my-1 flex items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
-      >
-        <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
-        <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
-        <span className="flex-1 min-w-0">
+    <div id={`node-${component.id}`} data-focused={focused || undefined} className="group/node">
+      {/* Its own row above the card rather than beside the title: the title
+          line already truncates in a narrow rail, and a component's name is
+          what an author scans for -- the hint says something ABOUT the row,
+          so it sits over the row instead of competing with what's in it. */}
+      {unedited && (
+        <div className="ml-10 flex items-center">
+          <span
+            data-testid="component-unedited-hint"
+            title="Nothing has been filled in on this component yet — it still has its default title, hours and empty content. Select it to author it."
+            className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-indigo-700"
+          >
+            <AppIcon className="ri-edit-box-line text-[10px]"></AppIcon>
+            Not edited yet
+          </span>
+        </div>
+      )}
+      <div className="flex gap-3">
+        <SpineGutter>
+          <span className={`grid place-items-center w-7 h-7 rounded-full text-white text-[11px] font-bold shadow-sm ${tone.marker} ${selected ? 'ring-4 ' + tone.grip : ''}`}>{index + 1}</span>
+        </SpineGutter>
+        <div
+          onClick={onSelect}
+          className={`min-w-0 flex-1 my-1 flex items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : focused ? 'border-primary-400 bg-primary-50 shadow-md ring-4 ring-primary-200/70' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
+        >
+          <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
+          <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
+          <span className="flex-1 min-w-0">
           <span className="flex min-w-0 items-center gap-2">
-            <span onMouseEnter={showFullTextWhenTruncated} className="min-w-0 flex-1 text-[13px] font-bold text-foreground-900 truncate">{component.title || weekTypeLabel(component.type)}</span>
+            <span onMouseEnter={showFullTextWhenTruncated} className={`min-w-0 flex-1 text-[13px] font-bold truncate ${unedited ? 'text-foreground-500' : 'text-foreground-900'}`}>{component.title || weekTypeLabel(component.type)}</span>
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
@@ -974,11 +1035,86 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
         </span>
         {(onDuplicate || onDelete) && (
           <span className="flex shrink-0 items-center gap-0.5">
-            <button type="button" aria-label={`Duplicate ${component.title || weekTypeLabel(component.type)}`} title="Duplicate component" onClick={e => { e.stopPropagation(); onDuplicate?.(); }} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-primary-600"><AppIcon className="ri-file-copy-line text-[13px]"></AppIcon></button>
+            {onDuplicate && (
+              <CloneComponentButton
+                label={component.title || weekTypeLabel(component.type)}
+                otherWeeks={otherWeeks}
+                onDuplicateSameWeek={onDuplicate}
+                onCopyToWeek={onCopyToWeek}
+              />
+            )}
             <button type="button" aria-label={`Delete ${component.title || weekTypeLabel(component.type)}`} title="Delete component" onClick={e => { e.stopPropagation(); onDelete?.(); }} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-red-100 hover:text-red-600"><AppIcon className="ri-delete-bin-line text-[13px]"></AppIcon></button>
           </span>
         )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+// The clone button: a single click still just duplicates in place wherever the
+// rail has nowhere else to put the copy (the standalone week builder, week
+// templates). Inside the module builder, where a week sits alongside its
+// siblings, it opens a small menu instead so the same button can also send the
+// copy to another week -- one action, offered where it applies.
+function CloneComponentButton({ label, otherWeeks, onDuplicateSameWeek, onCopyToWeek }: {
+  label: string;
+  otherWeeks?: { id: string; label: string }[];
+  onDuplicateSameWeek: () => void;
+  onCopyToWeek?: (weekId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const hasOtherWeeks = Boolean(onCopyToWeek && otherWeeks && otherWeeks.length > 0);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-label={`Duplicate ${label}`}
+        aria-haspopup={hasOtherWeeks ? 'menu' : undefined}
+        aria-expanded={hasOtherWeeks ? open : undefined}
+        title={hasOtherWeeks ? 'Duplicate component' : 'Duplicate component in this week'}
+        onClick={e => {
+          e.stopPropagation();
+          if (!hasOtherWeeks) { onDuplicateSameWeek(); return; }
+          setOpen(prev => !prev);
+        }}
+        className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-primary-600"
+      >
+        <AppIcon className="ri-file-copy-line text-[13px]"></AppIcon>
+      </button>
+      {open && hasOtherWeeks && (
+        <div role="menu" onClick={e => e.stopPropagation()} className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-xl border border-background-200 bg-background-50 py-1 shadow-xl">
+          <button type="button" role="menuitem" onClick={() => { setOpen(false); onDuplicateSameWeek(); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-800 hover:bg-background-100">
+            <AppIcon className="ri-file-copy-line text-[13px] text-foreground-400"></AppIcon>
+            Duplicate in this week
+          </button>
+          <p className="mt-1 border-t border-background-200 px-3 pb-1 pt-1.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">Copy to another week</p>
+          <div className="max-h-48 overflow-y-auto">
+            {otherWeeks!.map(week => (
+              <button key={week.id} type="button" role="menuitem" onClick={() => { setOpen(false); onCopyToWeek?.(week.id); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-foreground-700 hover:bg-primary-50 hover:text-primary-700">
+                <AppIcon className="ri-arrow-right-up-line text-[13px] text-foreground-400"></AppIcon>
+                <span className="truncate">{week.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1133,9 +1269,18 @@ export interface WeekComponentRailProps {
   // module builder owns the picker and the copy, and a surface without one (a
   // week template, say) simply does not pass it and shows no Reuse action.
   onReuseComponents?: () => void;
+  // The module's other weeks, for the clone button's "copy to another week"
+  // option. Only the module builder has other weeks to offer; a standalone
+  // week builder or template editor holds a single week and leaves this unset,
+  // which collapses the clone button back to a plain in-place duplicate.
+  otherWeeks?: { id: string; label: string }[];
+  // Sends a copy of the given component to the chosen week. Paired with
+  // `otherWeeks` -- the caller owns the module's week structure, so this is
+  // where the clone actually lands.
+  onCopyComponentToWeek?: (component: ModuleComponent, weekId: string) => void;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, components, selectedId, focusedId = '', onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, holidayDates, dateDriftByComponentId, onReuseComponents, otherWeeks, onCopyComponentToWeek }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [componentSearch, setComponentSearch] = useState('');
@@ -1252,6 +1397,8 @@ export function WeekComponentRail({ weekId, components, selectedId, focusedId = 
                     onSelect={() => onSelectId(component.id)}
                     onDuplicate={() => duplicateComponent(component)}
                     onDelete={() => removeComponent(component.id)}
+                    otherWeeks={otherWeeks}
+                    onCopyToWeek={targetWeekId => onCopyComponentToWeek?.(component, targetWeekId)}
                     issues={validateWeekComponent(component).length}
                     weekSessionDate={weekSessionDate}
                     holidayDates={holidayDates}
@@ -2834,6 +2981,7 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
         <GroupPlacementPanel
           key={browsingOption.key}
           component={component}
+          groupId={browsingOption.key}
           groupName={browsingOption.name}
           programmeId={browsingOption.programmeId || programmeId}
           onClose={() => setBrowsingKey(null)}
@@ -2990,7 +3138,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
                 tabIndex={0}
                 onClick={() => (on ? onToggle(option.key) : onBrowse(option.key))}
                 onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); on ? onToggle(option.key) : onBrowse(option.key); } }}
-                title={on ? 'Click to unassign' : "Not yet assigned — click to place this part in this group's week"}
+                title={on ? 'Click to unassign' : `${option.moduleCount ? 'Contains modules' : 'No modules'} — click to place this part in this group's week`}
                 className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${browsing ? 'border-primary-400 bg-primary-50 ring-2 ring-primary-200' : on ? 'border-primary-300 bg-primary-50' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
               >
                 <input
@@ -3007,7 +3155,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
                       {[option.cohort, option.programme].filter(Boolean).join(' · ')}
                     </span>
                   )}
-                  {!on && <span className="mt-0.5 block truncate text-[10px] font-semibold text-primary-500">{browsing ? 'Browsing…' : "Not assigned — click to place a copy here"}</span>}
+                  {!on && <span className="mt-0.5 block truncate text-[10px] font-semibold text-primary-500">{browsing ? 'Browsing…' : `${option.moduleCount ? 'Contains modules' : 'No modules'} — click to place a copy here`}</span>}
                 </span>
               </div>
             );

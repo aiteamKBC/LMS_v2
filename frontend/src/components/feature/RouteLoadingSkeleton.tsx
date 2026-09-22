@@ -11,5 +11,9 @@ export function RouteLoadingSkeleton() {
   const learnerRoute = pathname === '/learner'
     || pathname.startsWith('/learner/')
     || pathname.startsWith('/workspace/learner');
-  return <PageSkeleton workspaceRole={learnerRoute ? 'learner' : undefined} />;
+  const coachRoute = pathname === '/coach'
+    || pathname.startsWith('/coach/')
+    || pathname === '/workspace/coach'
+    || pathname.startsWith('/workspace/coach/');
+  return <PageSkeleton workspaceRole={learnerRoute ? 'learner' : coachRoute ? 'coach' : undefined} hideSidebar={coachRoute} />;
 }

@@ -143,7 +143,7 @@ describe('Super Admin secondary navigation preview', () => {
     const secondary = panel.getByRole('link', { name: 'Dashboard' });
     expect(panel.getAllByRole('link')).toHaveLength(1);
     expect(secondary).toHaveAttribute('href', '/workspace/admin');
-    expect(secondary.querySelector('svg')?.innerHTML).toBe(rail.getByRole('link', { name: 'Dashboard' }).querySelector('svg')?.innerHTML);
+    expect(secondary.querySelector('svg')).toBeNull();
   });
 
   it('supports keyboard focus and starts with the current route group', () => {

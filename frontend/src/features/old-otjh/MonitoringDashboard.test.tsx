@@ -62,28 +62,22 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe('record monitoring', () => {
-  it('places admin monitoring inside the previous learning records submenu', async () => {
+  it('keeps previous learning records out of the coach sidebar for administrators', async () => {
     viewer.access = 'super-admin';
     page();
     await screen.findByRole('table', { name: 'Active learner records' });
     const items = shellNavigation.mock.lastCall![0] as SidebarNavItem[];
     expect(items.some(item => item.id === 'record-monitor')).toBe(false);
-    expect(items.map(item => item.id)).toEqual(coachNavItems.map(item => item.id));
-    expect(items.filter(item => item.id !== 'coach-previous-records')).toEqual(coachNavItems.filter(item => item.id !== 'coach-previous-records'));
-    expect(items.find(item => item.id === 'coach-previous-records')?.children).toEqual(expect.arrayContaining([
-      expect.objectContaining({ href: '/old-otjh/coach' }),
-      expect.objectContaining({ id: 'record-monitor', href: '/old-otjh/monitor' }),
-    ]));
+    expect(items).toEqual(coachNavItems);
+    expect(items.some(item => item.id === 'coach-previous-records')).toBe(false);
   });
-  it('keeps the full coach menu on monthly records without offering admin monitoring', async () => {
+  it('keeps previous learning records out of the coach sidebar on monthly records', async () => {
     viewer.access = 'coach';
     page('/old-otjh/coach/42/months/2026-07');
     await waitFor(() => expect(getSummary).toHaveBeenCalled());
     const items = shellNavigation.mock.lastCall![0] as SidebarNavItem[];
-    expect(items.map(item => item.id)).toEqual(coachNavItems.map(item => item.id));
-    expect(items.find(item => item.id === 'coach-previous-records')?.children).toEqual([
-      expect.objectContaining({ id: 'previous-records-list', href: '/old-otjh/coach' }),
-    ]);
+    expect(items).toEqual(coachNavItems);
+    expect(items.some(item => item.id === 'coach-previous-records')).toBe(false);
   });
   it('keeps record-monitor accounts on their restricted navigation', async () => {
     page();

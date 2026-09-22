@@ -86,10 +86,15 @@ DB_STATEMENT_TIMEOUT_MS = int(os.environ.get('DB_STATEMENT_TIMEOUT_MS', '15000')
 # thread per request). A per-process pool is shared across threads instead.
 # Django requires CONN_MAX_AGE=0 when a pool is configured.
 DB_POOL = os.environ.get('DB_POOL', 'true').lower() != 'false'
+# A local runserver can start before Neon has finished opening a connection.
+# Pool checkout needs its own budget: connect_timeout applies per address.
+DB_POOL_TIMEOUT = int(os.environ.get(
+    'DB_POOL_TIMEOUT', '45' if 'runserver' in sys.argv else str(DB_CONNECT_TIMEOUT),
+))
 DB_POOL_OPTIONS = {
     'min_size': 1,
     'max_size': int(os.environ.get('DB_POOL_MAX_SIZE', '10')),
-    'timeout': DB_CONNECT_TIMEOUT,
+    'timeout': DB_POOL_TIMEOUT,
     # Neon closes idle server-side connections; retire pooled connections
     # before that happens so requests never receive a dead socket. Django 6
     # already installs psycopg_pool's check_connection on every pool it
@@ -338,6 +343,10 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # Outermost on purpose: a cancelled request unwinds through every
+    # middleware below, and this one's handler is the last chance to hand
+    # its pooled connection back. See config/db_release.py.
+    'config.db_release.ReleaseConnectionOnAbortMiddleware',
     'config.observability.RequestObservabilityMiddleware',
     'django.middleware.security.SecurityMiddleware',
     # Compress JSON/CSS/JS responses when the reverse proxy has not already done
@@ -489,6 +498,16 @@ if USE_SQLITE_FOR_TESTS:
     MIGRATION_MODULES = {
         'chat': None,
         'coach_api': None,
+        # Same reason curriculum_api is skipped on the Neon test build below:
+        # several of its migrations run raw DDL against externally owned
+        # (managed = False) curriculum tables that no fresh test database has --
+        # 0054 alters curriculum.components, and 0058 indexes
+        # curriculum.live_sessions. On sqlite that aborts the build with
+        # "no such table: main.live_sessions" before any test runs. Every model
+        # in the app is managed = False, so skipping creates no tables and needs
+        # no schema; suites that need a curriculum table provision it themselves
+        # (e.g. review_instances.provision_review_instance_tables).
+        'curriculum_api': None,
     }
 elif "test" in sys.argv and not USE_SECURITY_TEST_BRANCH:
     # Neon test build only. Some apps' migrations DDL or query their externally
@@ -557,6 +576,21 @@ if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment']['TEST'] = {
         'NAME': os.environ.get('ENROLMENT_TEST_DB_NAME', 'test_neondb_enrolment'),
     }
+elif USE_SQLITE_FOR_TESTS:
+    # Isolated sqlite runs still need the alias to EXIST: ~29 suites declare
+    # `databases = {'default', 'enrolment'}`, and without an entry here Django's
+    # system checks abort the whole run with ConnectionDoesNotExist before any
+    # test executes. A TEST MIRROR (not a second NAME) is what is wanted: on
+    # sqlite the two aliases are one database, so mirroring makes `enrolment`
+    # reuse `default`'s test connection instead of creating an empty second one
+    # that none of the unmanaged tables would exist in.
+    #
+    # The production-safety reasoning above does not apply here and is not
+    # weakened: this branch is unreachable unless DJANGO_USE_SQLITE is set, in
+    # which case `default` is a local sqlite file and login.test_runner's
+    # Neon-branch provisioning never runs.
+    DATABASES['enrolment'] = dict(DATABASES['default'])
+    DATABASES['enrolment']['TEST'] = {'MIRROR': 'default'}
 
 # Learner Log Pro reads Audit.mre from its own Neon branch. Keeping it on a
 # separate alias prevents the imported audit workspace from changing the LMS's

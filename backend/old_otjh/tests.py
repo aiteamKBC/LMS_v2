@@ -50,6 +50,7 @@ class TransitionTests(SimpleTestCase):
             'content_review': lambda *_: {'ready': True, 'issues': []},
             'activity_row': lambda learner, month, ident: {'id': 3, 'activity_id': 9} if ident == 3 else None,
             'activity_parts': lambda *_: [{'id': 9, 'title': 'Activity', 'url': 'https://example.org/reading', 'html': None, 'quiz': None}],
+            'programme_dates': lambda *_: {'start_date': None, 'planned_end_date': None},
             'report_profile': lambda *_: {'start_date': None, 'planned_end_date': None, 'first_evidence_date': None},
             'atomic': nullcontext,
             'save_signature': self.save_sign,
@@ -341,6 +342,15 @@ class TransitionTests(SimpleTestCase):
         self.assertEqual(self.events[0][3].id, self.user.id)
         self.assertIn('file_sha256', self.events[0][5])
 
+    def test_provisional_snapshot_metadata_is_recorded_when_signing(self):
+        self.rows[0].update({'provisional': True, 'provisional_fields': ['actual', 'ksb']})
+        service.sign(self.learner(), '2026-07', self.user, 'learner', b'png', service.digest(self.rows), {})
+        metadata = self.events[0][5]
+        self.assertTrue(metadata['provisional_snapshot'])
+        self.assertEqual(metadata['provisional_source'], 'formula_reconstruction')
+        self.assertEqual(metadata['provisional_row_count'], 1)
+        self.assertEqual(metadata['provisional_fields'], ['actual', 'ksb'])
+
     def test_failed_write_cleans_new_image(self):
         self.mocks['save_signature'].side_effect = DatabaseError('simulated')
         with self.assertRaises(DatabaseError):
@@ -414,6 +424,31 @@ class TransitionTests(SimpleTestCase):
         self.assertEqual(result['months'][0]['training_plan_target'], 31)
         self.assertEqual(result['months'][0]['planned_hours'], 2)
         self.assertEqual(result['months'][1]['training_plan_target'], 0)
+
+    def test_read_only_summary_runs_from_aptem_start_month_through_august(self):
+        self.history[0]['planned_hours_monthly'] = {
+            '2026-01': 3,
+            '2026-02': 30,
+            '2026-08': 20,
+        }
+        self.sources[:] = [
+            {'month': '2025-12', 'row_count': 1, 'planned_hours': 2, 'actual_hours': 2,
+             'not_accepted_hours': 0},
+            {'month': '2026-01', 'row_count': 4, 'planned_hours': 3, 'actual_hours': 1.53,
+             'not_accepted_hours': 0},
+        ]
+        self.mocks['programme_dates'].side_effect = lambda *_: {
+            'start_date': '2026-01-19', 'planned_end_date': '2027-01-31',
+        }
+
+        result = service.summary({**self.learner(), '_read_only': True})
+
+        self.assertEqual(result['months'][0]['month'], '2026-01')
+        self.assertEqual(result['months'][-1]['month'], '2026-08')
+        self.assertEqual(len(result['months']), 8)
+        self.assertEqual(result['months'][0]['training_plan_target'], 3)
+        self.assertEqual(result['months'][0]['actual_hours'], 1.53)
+        self.assertEqual(result['months'][1]['actual_hours'], 0)
 
     def test_embedded_activity_is_read_from_the_authorized_month_and_row(self):
         response = views.rows(self.request(path='/audit_api/last-audit/manual/rows?month=2026-07&activity_id=3'))
@@ -753,6 +788,19 @@ class TransitionTests(SimpleTestCase):
 
 
 class EnrolmentSignatureTests(SimpleTestCase):
+    def test_audit_source_reads_use_the_audit_connection_scope(self):
+        seen_aliases = []
+
+        def read(_sql, _params=()):
+            seen_aliases.append(repo._query_alias.get())
+            return []
+
+        with patch.object(repo, 'resolve', return_value='audit'), patch.object(repo, 'query', side_effect=read):
+            repo.source_query('SELECT 1')
+
+        self.assertEqual(seen_aliases, ['audit'])
+        self.assertIsNone(repo._query_alias.get())
+
     def test_one_capture_can_serve_multiple_months_for_the_same_learner(self):
         rows = [{'learner_id': 7, 'signer_role': 'learner', 'report_month': month, 'file_id': 'a' * 32}
                 for month in ['2026-07', '2026-08']]

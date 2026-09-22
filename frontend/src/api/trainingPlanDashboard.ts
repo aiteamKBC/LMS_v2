@@ -25,7 +25,15 @@ export type PlanSlotHoliday = { id?: string; label: string; startDate: string; e
 export type PlanCurriculumSlot = { slotNumber: number; date: string; day: string;
   type: 'live-session' | 'reading-week'; cause?: string; sessionNumber: number | null; holidays: PlanSlotHoliday[];
   /** The authored week's own id/title/outcomes (curriculum.weeks), matched by sessionNumber. Absent when no week was authored at that number. */
-  weekId?: string; weekTitle?: string; learningOutcomes?: string[] };
+  weekId?: string; weekTitle?: string; learningOutcomes?: string[];
+  /**
+   * The curriculum team's hint for this holiday week, when they published one.
+   *
+   * Served only for a slot a holiday actually lands on, and only when the
+   * author turned the hint on -- an unpublished note never leaves the server,
+   * so there is nothing here for a learner screen to decide about.
+   */
+  holidayNote?: string };
 export type PlanModule = { id: string; title: string; description: string; start_date: string | null; end_date: string | null; tutor_name: string; coach_name: string;
   programme_name?: string; cohort_name?: string; group_name?: string; total_otjh?: number | null;
   weeks_number?: number | null; sessions_number?: number | null;
@@ -41,10 +49,20 @@ export type PlanModule = { id: string; title: string; description: string; start
   /** Where the run would have ended with nothing closed. */
   originalEndDate?: string };
 export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'> & { meetingLink?: string | null };
+export type PlanModuleSummary = { id: string; moduleIds: string[]; completed: number; total: number; directHours?: number | null; ksbProgress?: { completed: number; total: number } | null; dates: string[]; title: string; source: string };
 export type TrainingPlanDashboard = {
+  /** Per-module activity/hour/KSB summaries already loaded by the overview read. */
+  planSubjects?: PlanModuleSummary[];
   months: Record<string, PlanMonth>;
+  /** Programme dates recorded on the selected Aptem Training Plan contract. */
+  programmeStartDate?: string | null;
+  programmeEndDate?: string | null;
   /** Monthly OTJH; assignment submissions use marking status, other activity types keep their existing semantics. */
   monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; missingPlannedActivities: number }>;
+  /** Authoritative Monthly Logs totals: retained Audit history, then LMS months. */
+  monthlyLogOtjh?: Record<string, { target: number | null; submitted: number; completed: number }>;
+  /** Last YYYY-MM month whose OTJH figures must come from Audit rather than live LMS calculations. */
+  auditOtjhCutoffMonth?: string;
   /** Whole-programme OTJH requirement from the shared dashboard metrics. */
   requiredOtjh?: number | null;
   actual: { month: string; groupId: string | null; hours: number; count: number }[];
@@ -63,7 +81,8 @@ export function fetchTrainingPlanDashboard(kind: LearnerKind, id: string, signal
   return readLearnerJson<TrainingPlanDashboard>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=overview`, { signal, ttlMs: 30_000, revalidate: true });
 }
 
-export type TrainingPlanContract = Pick<TrainingPlanDashboard, 'months' | 'contractStatus'>;
+export type TrainingPlanContract = Pick<TrainingPlanDashboard,
+  'months' | 'contractStatus' | 'programmeStartDate' | 'programmeEndDate'>;
 export function fetchTrainingPlanContract(kind: LearnerKind, id: string, signal?: AbortSignal) {
   return subjectRequest<TrainingPlanContract>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=contract`, { signal });
 }

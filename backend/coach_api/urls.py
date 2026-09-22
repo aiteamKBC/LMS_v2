@@ -4,6 +4,7 @@ from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
 from . import personal_learning
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
+from .meeting_reminders import coach_meeting_reminder
 from .review_pdf import coach_mcm_pdf
 from .views import (
     coach_attendance,
@@ -15,13 +16,17 @@ from .views import (
     coach_directory,
     coach_evidence_awaiting_review,
     coach_marking_queue,
+    coach_imported_review_history,
     coach_monthly_activity,
     coach_review_instance_answers,
     coach_review_instance_complete,
     coach_review_instance_progress,
     coach_review_instance_detail,
+    coach_review_instance_previous,
     coach_review_instance_for_event,
     coach_review_instance_mark_in_progress_manually,
+    coach_review_instance_meeting_summary,
+    coach_review_instance_reopen,
     coach_review_instance_signature,
     coach_review_learner_addition_templates,
     coach_review_learner_additions_create,
@@ -44,6 +49,7 @@ urlpatterns = [
     path('coaches', coach_directory, name='coach-directory'),
     path('coach/dashboard', coach_dashboard, name='coach-dashboard'),
     path('coach/caseload', coach_caseload, name='coach-caseload'),
+    path('coach/imported-review-history', coach_imported_review_history, name='coach-imported-review-history'),
     path('coach/caseload/<int:learner_id>/coach-rag', coach_caseload_coach_rag, name='coach-caseload-coach-rag'),
     path('coach/attendance', coach_attendance, name='coach-attendance'),
     path('coach/attendance/details', coach_attendance_details, name='coach-attendance-details'),
@@ -62,6 +68,7 @@ urlpatterns = [
     path('coach/timetable/events/book', coach_timetable_book_event, name='coach-timetable-event-book'),
     path('coach/timetable/events/schedule', coach_timetable_schedule_event, name='coach-timetable-event-schedule'),
     path('coach/timetable/events/action', coach_timetable_event_action, name='coach-timetable-event-action'),
+    path('coach/timetable/events/<str:event_key>/reminder', coach_meeting_reminder, name='coach-meeting-reminder'),
     path('coach/timetable/events/<str:event_key>/artifacts', coach_timetable_event_artifacts, name='coach-timetable-event-artifacts'),
     path('coach/timetable/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content', coach_timetable_event_artifact_content, name='coach-timetable-event-artifact-content'),
     path('coach/timetable/events/<str:event_key>/summary', coach_timetable_event_summary, name='coach-timetable-event-summary'),
@@ -81,8 +88,13 @@ urlpatterns = [
     ),
     path('coach/reviews/learner-additions', coach_review_learner_additions_create, name='coach-review-learner-additions-create'),
     path('coach/reviews/<str:instance_id>', coach_review_instance_detail, name='coach-review-instance-detail'),
+    path('coach/reviews/<str:instance_id>/previous', coach_review_instance_previous, name='coach-review-instance-previous'),
     path('coach/reviews/<str:instance_id>/answers', coach_review_instance_answers, name='coach-review-instance-answers'),
+    path('coach/reviews/<str:instance_id>/meeting-summary', coach_review_instance_meeting_summary, name='coach-review-instance-meeting-summary'),
     path('coach/reviews/<str:instance_id>/complete', coach_review_instance_complete, name='coach-review-instance-complete'),
+    # Reopens a completed/awaiting-signature review for correction. Clears every
+    # signature already collected -- see reopen_review_instance_for_editing.
+    path('coach/reviews/<str:instance_id>/reopen', coach_review_instance_reopen, name='coach-review-instance-reopen'),
     # Progress Review only: freeze this instance's learner-progress figures.
     # An explicit coach action -- no other route ever recalculates them.
     path('coach/reviews/<str:instance_id>/progress', coach_review_instance_progress, name='coach-review-instance-progress'),

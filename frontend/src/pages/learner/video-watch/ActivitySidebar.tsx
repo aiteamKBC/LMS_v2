@@ -4,6 +4,8 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import { componentTypeMeta, gradePercent, hasComponentContent, isComponentComplete } from '@/utils/learnerJourney';
 import { overviewSchedule } from '@/api/learnerOverview';
+import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
+import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import {
   isNavigableComponent,
@@ -67,7 +69,10 @@ export function ActivitySidebar({
 }: ActivitySidebarProps) {
   const navigate = useNavigate();
   const learnerKind = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
-  const schedule = useLiveLearnerRead(learnerKind, id, weeks.length > 1, overviewSchedule.read, overviewSchedule.peek);
+  // Read the plan whenever there is a week to describe, not only when the list
+  // below has more than one row: a single-week module can still fall on a
+  // holiday, and its hint has to reach the learner too.
+  const schedule = useLiveLearnerRead(learnerKind, id, weeks.length > 0, overviewSchedule.read, overviewSchedule.peek);
   const moduleIds = new Set(weeks.flatMap(week => week.components.flatMap(component => component.moduleId ? [component.moduleId] : [])));
   const matchingModules = (schedule.data?.modules || []).filter(module => moduleIds.size
     ? moduleIds.has(module.id) : module.title.trim().toLowerCase() === moduleTitle.trim().toLowerCase());
@@ -88,6 +93,10 @@ export function ActivitySidebar({
   const currentWeekLabel = activeWeekIndex < 0 ? weekTitle : weekDisplayLabel(weeks, activeWeekIndex);
   const hasUnavailableContent = weekComponents.some((c) => !hasComponentContent(c));
   const monthHeadings = weekMonthHeadings(weeks, plannedModule?.start_date);
+  // Only weeks the curriculum team published a holiday hint for appear here.
+  const holidayNotes = weekHolidayNotes(plannedModule?.curriculumSlots);
+  const currentWeekNote = holidayNotes.get(weeks.find(w => w.active)?.weekId
+    || weekComponents.find(c => c.weekId)?.weekId || '');
 
   /** Whether this row is the activity the host page is showing. */
   const isCurrentRow = (c: JourneyComponent) => (
@@ -107,6 +116,7 @@ export function ActivitySidebar({
             {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
           </p>
           {hasUnavailableContent && <p className="mt-2 text-[11px] leading-4 text-foreground-500">Locked activities have no learning content available yet.</p>}
+          <HolidayNoteHint note={currentWeekNote} className="mt-2" />
         </div>
         <ul className="divide-y divide-background-300">
           {weekComponents.map((c) => {
@@ -193,6 +203,7 @@ export function ActivitySidebar({
               // started yet.
               const viewable = w.count > 0;
               const expanded = viewable && weekKey === expandedWeek;
+              const weekNote = w.weekId ? holidayNotes.get(w.weekId) : undefined;
               return (
                 <li key={weekKey}>
                   {monthHeadings[index] && <h3 className="border-b border-background-300 bg-background-100 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-foreground-600">{monthHeadings[index]}</h3>}
@@ -240,6 +251,11 @@ export function ActivitySidebar({
                       />
                     )}
                   </button>
+
+                  {/* The curriculum team's hint for this week, outside the row's
+                      button so it stays readable rather than becoming part of
+                      the label that opens the week. */}
+                  {weekNote && <HolidayNoteHint note={weekNote} className="mx-4 mb-2.5" />}
 
                   {/* The week's own activities, under the week they belong to.
                       Everything is listed, including what cannot be started

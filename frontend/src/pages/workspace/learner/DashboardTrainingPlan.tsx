@@ -6,10 +6,17 @@ import { dashboardPlanSubjects } from './dashboardPlan';
 import { TrainingPlanDetails } from '@/pages/learner/training-plan-timeline/TrainingPlanDetails';
 import { WeeklyLearningPlan } from './WeeklyLearningPlan';
 import { DashboardRewards } from './DashboardRewards';
+import type { ProgrammeProgressSnapshot } from '@/pages/learner/training-plan-timeline/ProgressCharts';
 import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */
-export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities = true, programmeStartDate, programmeEndDate, canOpenRewards = true }: { kind: LearnerKind; learnerId: string; plan: DashboardPlanState; canOpenActivities?: boolean; programmeStartDate?: string | null; programmeEndDate?: string | null; canOpenRewards?: boolean }) {
+export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities = true, programmeStartDate, programmeEndDate,
+  canOpenRewards = true, showRewards = true, activityOverviewOnly = false, timelineOnly = false, programmeSnapshot }: {
+  kind: LearnerKind; learnerId: string; plan: DashboardPlanState; canOpenActivities?: boolean;
+  programmeStartDate?: string | null; programmeEndDate?: string | null; canOpenRewards?: boolean;
+  showRewards?: boolean; activityOverviewOnly?: boolean; timelineOnly?: boolean;
+  programmeSnapshot?: ProgrammeProgressSnapshot;
+}) {
   const { data, subjects: summaries, loading, error, refresh, retryContract, week, schedule } = plan;
   const [params] = useSearchParams();
   const { hash } = useLocation();
@@ -30,18 +37,18 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
     target?.scrollIntoView({ block: 'start' });
   }, [hasSnapshot, scrollDestination, initialSubjectId, hash]);
 
-  return <div ref={anchor} className={styles.root}>
+  return <div ref={anchor} className={`${styles.root} ${activityOverviewOnly || timelineOnly ? styles.embeddedLearnerTheme : ''}`}>
     {error && <div role="alert" className={styles.error}><span>Your monthly learning could not refresh. {error}</span><button onClick={refresh}>Retry monthly learning</button></div>}
     {hasSnapshot && data ? <TrainingPlanDetails key={destination} data={data} subjects={subjects} kind={kind} learnerId={learnerId}
-      weeklyFocus={weeklyFocus} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} />
+      weeklyFocus={weeklyFocus} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} activityOverviewOnly={activityOverviewOnly} timelineOnly={timelineOnly} programmeSnapshot={programmeSnapshot} />
       : <>
-        <div className={`${styles.topRow} ${weeklyFocus ? styles.withWeeklyFocus : ''}`}>
-          {weeklyFocus}
+        <div className={`${styles.topRow} ${weeklyFocus && !timelineOnly ? styles.withWeeklyFocus : ''}`}>
+          {!timelineOnly && weeklyFocus}
           {!error && <div role="status" aria-label="Loading monthly learning and coaching" className={styles.loading}>
             <div aria-hidden="true"><span /><span /><span /></div>
           </div>}
         </div>
       </>}
-    <DashboardRewards kind={kind} learnerId={learnerId} canOpenRewards={canOpenRewards} />
+    {showRewards && <DashboardRewards kind={kind} learnerId={learnerId} canOpenRewards={canOpenRewards} />}
   </div>;
 }

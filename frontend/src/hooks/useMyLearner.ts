@@ -1,6 +1,7 @@
 import type { LearnerKind } from '@/api/learnerDetail';
 import { useLocation } from 'react-router-dom';
 import { ownPersonalLearning, parsePersonalLearning, rememberPersonalLearning } from '@/lib/personalLearning';
+import { learnerIdentityFromPath } from '@/lib/learnerRoutes';
 
 /**
  * Learner sessions always resolve to the account's enrolment id. Staff review
@@ -58,6 +59,12 @@ export function rememberSignedInLearner(
     ? { kind: learnerType === 'commercial' ? 'commercial' : 'apprenticeship', id: String(subjectId) }
     : null;
   if (signedInLearner) rememberLearner(signedInLearner.kind, signedInLearner.id);
+  else {
+    // A staff/admin session has no implicit learner target.  Remove any
+    // persisted review selection so a parameterless learner route cannot
+    // silently inherit the previous user's learner.
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* storage unavailable */ }
+  }
 }
 
 /** Persist the active learner so paramless /learner/* pages resolve to it. */
@@ -78,13 +85,18 @@ export function rememberLearner(kind: string | undefined, id: string | undefined
 
 /** Resolve which real learner the bare /learner/* self-view pages should load. */
 export function useMyLearner(): { kind: LearnerKind; id: string } {
-  return getRememberedLearner()!;
+  const { pathname } = useLocation();
+  const fromUrl = learnerIdentityFromPath(pathname);
+  if (signedInLearner) return signedInLearner;
+  return fromUrl || getRememberedLearner()!;
 }
 
 /** Preserve an explicit learner when following a Training Plan booking link. */
 export function useLinkedLearner(): { kind: LearnerKind; id: string } {
-  const { search } = useLocation();
+  const { search, pathname } = useLocation();
   if (signedInLearner) return signedInLearner;
+  const fromUrl = learnerIdentityFromPath(pathname);
+  if (fromUrl) { rememberLearner(fromUrl.kind, fromUrl.id); return fromUrl; }
   const params = new URLSearchParams(search);
   const kind = params.get('kind');
   const id = params.get('learner');

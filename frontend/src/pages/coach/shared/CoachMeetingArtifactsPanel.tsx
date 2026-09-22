@@ -253,6 +253,8 @@ function MeetingSummaryCard({
   }
 
   const edited = meetingSummary.status === 'edited';
+  const failed = meetingSummary.status === 'failed';
+  const statusLabel = edited ? 'Coach edited' : failed ? 'Generation failed' : 'AI generated';
   const timestamp = summaryDate(meetingSummary.editedAt || meetingSummary.generatedAt);
   const save = async () => {
     if (!onSave) return;
@@ -292,9 +294,13 @@ function MeetingSummaryCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn(
               'rounded-full px-2.5 py-1 text-[11px] font-bold',
-              edited ? 'bg-emerald-50 text-emerald-700' : 'bg-white text-primary-700',
+              edited
+                ? 'bg-emerald-50 text-emerald-700'
+                : failed
+                  ? 'bg-red-50 text-red-700'
+                  : 'bg-white text-primary-700',
             )}>
-              {edited ? 'Coach edited' : 'AI generated'}
+              {statusLabel}
             </span>
             {timestamp ? <span className="text-[11px] font-semibold text-foreground-500">{timestamp}</span> : null}
             {canEdit && !editing ? (
@@ -312,6 +318,13 @@ function MeetingSummaryCard({
       </div>
 
       <div className="space-y-4 p-4">
+        {failed && !editing ? (
+          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
+            Meeting recap generation failed. No AI recap is available yet.
+          </div>
+        ) : null}
+        {!failed || editing ? (
+          <>
         <div className="rounded-lg border border-background-200 bg-background-50 p-3">
           <p className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-foreground-500">
             <AppIcon className="ri-file-list-3-line text-primary-500"></AppIcon>
@@ -436,6 +449,8 @@ function MeetingSummaryCard({
               Save recap
             </button>
           </div>
+        ) : null}
+          </>
         ) : null}
       </div>
     </div>
@@ -597,6 +612,7 @@ export function CoachMeetingArtifactsPanel({
   visibleArtifactTypes = ['transcript', 'recording'],
   canEditSummary = showAttendance,
   saveSummary = updateCoachMeetingSummary,
+  refreshOnLoad = false,
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
@@ -607,6 +623,7 @@ export function CoachMeetingArtifactsPanel({
   visibleArtifactTypes?: string[];
   canEditSummary?: boolean;
   saveSummary?: typeof updateCoachMeetingSummary;
+  refreshOnLoad?: boolean;
 }) {
   const eventKey = event.eventKey || '';
   const hasTeamsLink = Boolean(event.meetingLink || event.graphWebLink);
@@ -644,9 +661,9 @@ export function CoachMeetingArtifactsPanel({
       return;
     }
     const controller = new AbortController();
-    loadArtifacts(controller.signal);
+    loadArtifacts(controller.signal, refreshOnLoad);
     return () => controller.abort();
-  }, [event.source, eventKey, hasTeamsLink, loadArtifacts]);
+  }, [event.source, eventKey, hasTeamsLink, loadArtifacts, refreshOnLoad]);
 
   useEffect(() => {
     if (!preview || preview.type !== 'transcript') {
