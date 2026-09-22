@@ -745,7 +745,6 @@ def enrolment_users(request):
             payload = _parse_body(request)
             fields = write_fields(payload, require_create=True)
             _check_employer_id(fields)
-            row = _create_enrolment_user(request, fields)
         except ValidationError as exc:
             return _error(str(exc), 400)
 
@@ -766,10 +765,17 @@ def enrolment_users(request):
                     "A case owner is required to book the learner's first session.", 400
                 )
 
+        # The one and only write. It runs after the slot checks above so a bad
+        # date is refused before a learner exists, which is what those checks
+        # are for -- an earlier duplicate call here created the learner first,
+        # then raised on its own email guard when this one ran, returning 500
+        # for a learner that had in fact been created.
         try:
             row = _create_enrolment_user(
                 request, fields, session_date=session_date, session_time=session_time,
             )
+        except ValidationError as exc:
+            return _error(str(exc), 400)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(row, status=201)
