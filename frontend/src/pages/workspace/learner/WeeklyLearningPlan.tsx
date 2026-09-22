@@ -10,6 +10,7 @@ import { dateLabel, ukDate, ukTime } from './overviewSchedule';
 import { learnerHeaderPlan } from './learnerHeaderPlan';
 import { completedComponentIds, ksbTypeCode, resourceTypeMeta, type JourneyComponent } from '@/utils/learnerJourney';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
@@ -137,6 +138,9 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
                 <span className="sr-only">{stateLabel}{active ? ', selected' : ''}</span>
               </span>
             </button>
+            {/* Outside the row's button: the curriculum team's hint is there to
+                be read, not to become part of the label that selects the week. */}
+            {week.kind === 'session' && <HolidayNoteHint note={week.holidayNote} className="mt-1.5" />}
           </li>;
         })}
       </ol>
@@ -157,6 +161,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
           {selectedIndex >= 0 ? <p className="mt-1 text-sm font-medium text-foreground-500">
             {(() => { const { start, end } = weekWindow(weeks, selectedIndex); return `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`; })()}
           </p> : null}
+          {selectedWeek.kind === 'session' && <HolidayNoteHint note={selectedWeek.holidayNote} className="mt-2.5 text-xs" />}
 
             </div>
 

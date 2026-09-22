@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { firstValidationMessage, normaliseComponentSettings, validateComponentAuthoring, validateModuleAuthoringStructure } from './componentAuthoringModel';
+import { componentLooksUnedited, firstValidationMessage, normaliseComponentSettings, validateComponentAuthoring, validateModuleAuthoringStructure } from './componentAuthoringModel';
+import { createEmptyComponent } from './moduleAuthoringData';
 
 describe('normaliseComponentSettings week-template compatibility', () => {
   it('identifies every invalid component by week and title in the save message', () => {
@@ -200,5 +201,26 @@ describe('normaliseComponentSettings week-template compatibility', () => {
     expect(settings.teamsOccurrenceId).toBe('');
     expect(settings.teamsSessionNumber).toBe('');
     expect(normaliseComponentSettings('live-session', {})).not.toHaveProperty('teamsSessionNumber');
+  });
+});
+
+describe('componentLooksUnedited', () => {
+  const fresh = (type: Parameters<typeof createEmptyComponent>[1], index = 3) => createEmptyComponent('week-1', type, index);
+
+  it('marks a component nobody has opened yet', () => {
+    expect(componentLooksUnedited(fresh('video'))).toBe(true);
+    expect(componentLooksUnedited(fresh('live-session'))).toBe(true);
+    // Points are stamped from the programme's points rules on creation, so a
+    // number the definition does not carry is not an author's edit.
+    expect(componentLooksUnedited({ ...fresh('reading'), points: 45 })).toBe(true);
+  });
+
+  it('clears the hint as soon as anything is authored', () => {
+    expect(componentLooksUnedited({ ...fresh('video'), title: 'Cost of poor quality' })).toBe(false);
+    expect(componentLooksUnedited({ ...fresh('video'), description: 'Watch before the session' })).toBe(false);
+    expect(componentLooksUnedited({ ...fresh('video'), expectedOtjh: 1.5 })).toBe(false);
+    expect(componentLooksUnedited({ ...fresh('reading'), ksbMappings: [{ id: 'k1', code: 'K1' }] as never })).toBe(false);
+    const dated = fresh('live-session');
+    expect(componentLooksUnedited({ ...dated, settings: { ...dated.settings, sessionDate: '2026-10-05' } })).toBe(false);
   });
 });

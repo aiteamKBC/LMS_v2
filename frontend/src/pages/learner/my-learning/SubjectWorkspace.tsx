@@ -11,6 +11,8 @@ import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMat
 import styles from './SubjectWorkspace.module.css';
 import { LearningCatalogue } from './LearningCatalogue';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
+import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
+import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
 import type { PlanModule } from '@/api/trainingPlanDashboard';
@@ -632,6 +634,10 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     : planSelection.status === 'undated' ? 'Your training plan needs module dates before a current module can be identified. You can still choose a module below.'
     : 'No scheduled module is available in your learning map. Choose a module below to explore your learning.';
   const weeks = active ? subjectMapWeeks(active, real, metadata, schedule) : [];
+  // The curriculum team's holiday hints for the module on screen. Only weeks
+  // they published one for are in here, so a lookup that misses shows nothing.
+  const holidayNotes = weekHolidayNotes(activePlan?.curriculumSlots
+    || (active ? planModulesBySubject.get(active.id)?.curriculumSlots : undefined));
   const activeWeek = continueCurrentWeek && active ? continuingLearningWeek(active)
     : selectedWeek ? weeks.find(week => week.id === selectedWeek) : undefined;
   const visibleActivities = active ? active.activities.filter((entry) => !term || active.title.toLocaleLowerCase().includes(term) || entry.title.toLocaleLowerCase().includes(term)) : [];
@@ -665,13 +671,13 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     </div>}
     {activeWeek ? <>
       <button onClick={() => select(active!.id)} className={styles.textLink}><ChevronLeft size={17} />{view === 'map' ? 'Back to timeline' : 'Back to subject'}</button>
-      <section className={styles.weekMaterial} aria-label={`${activeWeek.label} materials`}><header><p className={styles.eyebrow}>{activeWeek.label}</p><h3>{activeWeek.title}</h3><Progress done={activeWeek.activities.filter(a => a.completed).length} total={activeWeek.activities.length} label="Week progress" /></header>
+      <section className={styles.weekMaterial} aria-label={`${activeWeek.label} materials`}><header><p className={styles.eyebrow}>{activeWeek.label}</p><h3>{activeWeek.title}</h3><HolidayNoteHint note={activeWeek.weekId ? holidayNotes.get(activeWeek.weekId) : undefined} className="mb-2" /><Progress done={activeWeek.activities.filter(a => a.completed).length} total={activeWeek.activities.length} label="Week progress" /></header>
         {activeWeek.activities.filter(entry => !term || active!.title.toLowerCase().includes(term) || entry.title.toLowerCase().includes(term)).map(entry => <ActivityRow key={entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={result => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />)}
         {!activeWeek.activities.length && <p className="p-6 text-sm text-foreground-500">Learning materials will appear here when they are added to this week.</p>}
         {activeWeek.activities.length > 0 && !activeWeek.activities.some(entry => !term || active!.title.toLowerCase().includes(term) || entry.title.toLowerCase().includes(term)) && <p className="p-6 text-sm text-foreground-500">No activities match your search.</p>}
       </section>
     </> : selectedWeek && active ? <div className={styles.empty}><p>{continueCurrentWeek ? 'Learning materials will appear here when they are added to this module.' : 'This week is no longer available in this module.'}</p><button onClick={() => select(active.id)}>View module</button></div>
-      : view === 'map' ? (active ? <SubjectTimeline subject={active} weeks={weeks} search={search} onOpen={week => { setSearch(''); select(active.id, week); }} /> : !selected && <div className={styles.empty}>{noScheduledModule}</div>)
+      : view === 'map' ? (active ? <SubjectTimeline subject={active} weeks={weeks} search={search} holidayNotes={holidayNotes} onOpen={week => { setSearch(''); select(active.id, week); }} /> : !selected && <div className={styles.empty}>{noScheduledModule}</div>)
       : !active ? <>
       <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={currentSubject} total={total} done={done} percent={percent} kind={kind} learnerId={learnerId}
         deadlines={deadlines}
