@@ -14,6 +14,7 @@ from coach_api.views import (
     MeetingSummaryContext,
     coach_meeting_transcript_text,
     coach_review_instance_meeting_summary,
+    coach_review_instance_previous,
     coach_timetable_event_artifacts,
     ensure_coach_meeting_summary,
     meeting_summary_transcript_excerpt,
@@ -534,3 +535,53 @@ class MeetingSummaryTranscriptBudgetTests(SimpleTestCase):
         hour_of_speech = "Coach Example: A sentence of about sixty characters here.\n" * 1000
         self.assertGreater(len(hour_of_speech), 18_000)
         self.assertFalse(meeting_summary_transcript_excerpt(hour_of_speech)[1])
+
+
+class PreviousReviewSessionTests(SimpleTestCase):
+    def test_resolves_the_immediately_previous_occurrence_without_live_services(self):
+        current = {
+            "id": "mcm-3",
+            "review_template_id": "template-mcm",
+            "learner_id": 42,
+            "occurrence_number": 3,
+            "coach_email": "coach@example.test",
+        }
+        previous = {
+            "id": "mcm-2",
+            "review_template_id": "template-mcm",
+            "learner_id": 42,
+            "occurrence_number": 2,
+            "coach_email": "coach@example.test",
+            "target_date": "2026-08-14",
+            "completed_at": "2026-08-15T10:00:00+00:00",
+            "status": "completed",
+        }
+        definition = {
+            "template": {"name": "Monthly coaching", "reviewTypeCode": "mcm"},
+            "sections": [],
+        }
+        request = RequestFactory().get("/coach_api/coach/reviews/mcm-3/previous")
+        request.coach_email = "coach@example.test"
+        record = SimpleNamespace(event_key="mcm:42:2")
+
+        with patch("coach_api.views._authorized_review_instance", return_value=(current, None)), \
+             patch("coach_api.views.curriculum_review_instances.find_review_instance", return_value=previous) as find_instance, \
+             patch("coach_api.views.curriculum_review_instances.review_instance_form_definition", return_value=definition), \
+             patch("coach_api.views._review_instance_calendar_record", return_value=record), \
+             patch("coach_api.views.stored_coach_meeting_summary", return_value={
+                 "status": "ready",
+                 "summary": {"overview": "The learner completed the agreed action."},
+             }), \
+             patch("coach_api.views.stored_coach_meeting_transcript_for_summary", return_value={
+                 "text": "Coach: Let us review the agreed action.",
+             }):
+            response = unwrap(coach_review_instance_previous)(request, "mcm-3")
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["instance"]["id"], "mcm-2")
+        self.assertEqual(payload["instance"]["occurrenceNumber"], 2)
+        self.assertEqual(payload["summaryText"], "The learner completed the agreed action.")
+        self.assertEqual(payload["transcriptText"], "Coach: Let us review the agreed action.")
+        find_instance.assert_called_once_with("template-mcm", 42, 2)

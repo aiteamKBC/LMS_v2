@@ -119,6 +119,23 @@ export function fetchLearnerEventReviewInstance(
   return request<LearnerReviewDefinition | { instance: null }>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`, { signal, credentials: 'include' });
 }
 
+/** Save the learner's own answers to whichever fields the Curriculum
+ * template opted the Learner into answering -- every other field id is
+ * rejected server-side, so only the fields this form actually unlocked
+ * should ever be posted here. */
+export function saveLearnerEventReviewAnswers(
+  kind: LearnerKind,
+  learnerId: string,
+  eventKey: string,
+  answers: Record<string, unknown>,
+): Promise<LearnerReviewDefinition> {
+  return request<LearnerReviewDefinition>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`, {
+    method: 'POST',
+    credentials: 'include',
+    body: JSON.stringify({ answers }),
+  });
+}
+
 export async function downloadLearnerMcmPdf(kind: LearnerKind, learnerId: string, eventKey: string): Promise<void> {
   const { saveReviewPdfResponse } = await import('./reviewPdf');
   await saveReviewPdfResponse(await fetch(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/pdf/`, { credentials: 'include' }));
