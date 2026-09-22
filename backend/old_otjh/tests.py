@@ -342,6 +342,15 @@ class TransitionTests(SimpleTestCase):
         self.assertEqual(self.events[0][3].id, self.user.id)
         self.assertIn('file_sha256', self.events[0][5])
 
+    def test_provisional_snapshot_metadata_is_recorded_when_signing(self):
+        self.rows[0].update({'provisional': True, 'provisional_fields': ['actual', 'ksb']})
+        service.sign(self.learner(), '2026-07', self.user, 'learner', b'png', service.digest(self.rows), {})
+        metadata = self.events[0][5]
+        self.assertTrue(metadata['provisional_snapshot'])
+        self.assertEqual(metadata['provisional_source'], 'formula_reconstruction')
+        self.assertEqual(metadata['provisional_row_count'], 1)
+        self.assertEqual(metadata['provisional_fields'], ['actual', 'ksb'])
+
     def test_failed_write_cleans_new_image(self):
         self.mocks['save_signature'].side_effect = DatabaseError('simulated')
         with self.assertRaises(DatabaseError):
