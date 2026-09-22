@@ -1,4 +1,5 @@
 import { useAuth } from './useAuth';
+import { parsePersonalLearning } from '@/lib/personalLearning';
 
 /**
  * Whether the person looking at a learner's workspace may act *as* that learner.
@@ -31,6 +32,7 @@ export function useLearnerWorkspaceAccess(
 ): LearnerWorkspaceAccess {
   const { auth, isInitialized } = useAuth();
   const account = auth.account;
+  const personal = parsePersonalLearning(learnerId);
 
   const isSelf = Boolean(
     account
@@ -53,7 +55,9 @@ export function useLearnerWorkspaceAccess(
   // every one of these actions is a deliberate click, not an auto-submit.
   const isAdmin = account?.role === 'admin'
     && Number.isSafeInteger(Number(learnerId)) && Number(learnerId) > 0;
-  const canProgress = isDemoPreview || (isInitialized && (isSelf || isAdmin));
+  const canProgress = personal
+    ? isInitialized && account?.role === 'admin' && account.id === personal.accountId
+    : isDemoPreview || (isInitialized && (isSelf || isAdmin));
 
   return { canProgress, showReadOnlyNotice: isInitialized && !canProgress };
 }

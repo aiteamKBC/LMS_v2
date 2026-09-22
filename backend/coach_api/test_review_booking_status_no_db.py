@@ -68,11 +68,13 @@ class ReviewBookingStatusTests(unittest.TestCase):
         self.curriculum = SimpleNamespace(
             connection=SimpleNamespace(vendor='postgresql'), table_name=lambda name: name,
             fetch_all=self.fetch_instance, update_rows=self.update_instance,
+            clean_str=lambda value: str(value or '').strip(),
         )
         self.engine = dict(curriculum_views=self.curriculum, REVIEW_INSTANCES_TABLE='review_instances',
                            datetime=datetime, **constants)
         load(BACKEND / 'curriculum_api/review_instances.py',
-             {'get_review_instance', 'mark_review_instance_scheduled', 'mark_review_instance_in_progress_from_attendance'},
+             {'get_review_instance', 'mark_review_instance_scheduled',
+              'mark_review_instance_not_scheduled', 'mark_review_instance_in_progress_from_attendance'},
              self.engine)
         self.engine.update(
             OCCURRENCE_SOURCE_GENERATED='generated', OCCURRENCE_SOURCE_MANUAL='manual',
@@ -92,7 +94,11 @@ class ReviewBookingStatusTests(unittest.TestCase):
         load(BACKEND / 'coach_api/views.py', {
             'persist_calendar_sync_reservation', 'sync_scheduled_review_instance',
             'require_review_template_for_first_linkage', 'ensure_review_instance_for_calendar_record',
+            'LegacyReviewReconciliationRequiredError', 'cancel_reserved_calendar_event',
         }, self.coach.__dict__)
+        self.cancel_warning = ''
+        self.coach.delete_calendar_event_from_graph = Mock(side_effect=self.cancel_graph)
+        self.coach.public_graph_sync_warning = lambda warning: warning
         self.coach.synchronize_reserved_calendar_event.side_effect = self.graph
         self.base.ns['CoachCalendarEvent'] = model
         load(BACKEND / 'learner_api/calendar.py', {'learner_calendar_reschedule'}, self.base.ns)
@@ -135,9 +141,17 @@ class ReviewBookingStatusTests(unittest.TestCase):
     def update_instance(self, table, where, params, values):
         self.assertGreater(self.depth, 0)
         self.assertEqual(table, 'review_instances')
-        self.assertEqual(where, 'id = %s and status = %s')
+        self.assertTrue(where.startswith('id = %s and status = %s'))
         if self.instance['id'] != params[0] or self.instance['status'] != params[1]:
             return []
+        if len(params) > 2:
+            expected = (
+                self.instance['calendar_event_id'], self.instance['learner_id'],
+                self.instance['review_template_id'], self.instance['coach_email'].strip().lower(),
+            )
+            actual = (params[2], params[3], params[4], params[5].strip().lower())
+            if actual != expected:
+                return []
         self.updates.append(copy.deepcopy(values))
         self.instance.update(values)
         return [copy.deepcopy(self.instance)]
@@ -152,6 +166,15 @@ class ReviewBookingStatusTests(unittest.TestCase):
         self.assertEqual(pk, 1)
         self.assertEqual(self.instance['status'], 'scheduled')
         return self.read_record(), self.warning, True
+
+    def cancel_graph(self, record):
+        self.assertEqual(self.depth, 0, 'Graph cancellation must run after local commit')
+        self.assertEqual(self.record['status'], 'not-scheduled')
+        self.assertEqual(self.instance['status'], 'not-scheduled')
+        return self.cancel_warning
+
+    def cancel(self):
+        return self.coach.cancel_reserved_calendar_event(self.read_record())
 
     def prepare_coach_endpoint(self):
         ns = self.coach.__dict__
@@ -385,6 +408,138 @@ class ReviewBookingStatusTests(unittest.TestCase):
         self.assertEqual(audit.call_args.kwargs['reason_code'], 'coach-confirmed-live-start')
         self.assertEqual(audit.call_args.kwargs['review_instance_id'], self.instance['id'])
         self.assertEqual(self.record['meeting_link'], '')
+
+    def test_cancel_moves_calendar_and_instance_together(self):
+        self.assertEqual(self.base.book().status_code, 200)
+
+        record, warning = self.cancel()
+
+        self.assertEqual(warning, '')
+        self.assertEqual(record.status, 'not-scheduled')
+        self.assertEqual(self.record['status'], 'not-scheduled')
+        self.assertEqual(self.instance['status'], 'not-scheduled')
+        self.assertIsNone(self.record['scheduled_date'])
+        self.assertIsNone(self.record['scheduled_time'])
+        self.assertEqual(self.record['sync_state'], 'cancelled')
+        self.assertEqual(self.record['graph_event_id'], '')
+        self.assertEqual(self.record['meeting_link'], '')
+
+    def test_cancel_then_rebook_keeps_both_statuses_consistent(self):
+        self.assertEqual(self.base.book().status_code, 200)
+        self.cancel()
+
+        self.assertEqual(self.base.book().status_code, 200)
+
+        self.assertEqual(self.record['status'], 'scheduled')
+        self.assertEqual(self.instance['status'], 'scheduled')
+
+    def test_cancel_graph_failure_keeps_local_statuses_equal_and_reconcilable(self):
+        self.assertEqual(self.base.book().status_code, 200)
+        self.cancel_warning = 'Synthetic cancellation failure'
+
+        record, warning = self.cancel()
+
+        self.assertEqual(warning, self.cancel_warning)
+        self.assertEqual(record.status, 'not-scheduled')
+        self.assertEqual(self.instance['status'], 'not-scheduled')
+        self.assertEqual(self.record['sync_state'], 'reconciliation')
+        self.assertEqual(self.record['graph_event_id'], 'GRAPH-SYNTHETIC')
+        self.assertTrue(self.record['meeting_link'])
+
+    def test_cancel_retry_is_idempotent(self):
+        self.assertEqual(self.base.book().status_code, 200)
+        self.cancel_warning = 'Synthetic cancellation failure'
+        self.cancel()
+        updates_after_first = len(self.updates)
+
+        self.cancel_warning = ''
+        self.cancel()
+
+        self.assertEqual(self.record['status'], 'not-scheduled')
+        self.assertEqual(self.instance['status'], 'not-scheduled')
+        self.assertEqual(len(self.updates), updates_after_first)
+        self.assertEqual(self.coach.delete_calendar_event_from_graph.call_count, 2)
+
+    def test_cancel_rejects_scheduled_calendar_with_started_instance(self):
+        self.record['status'] = 'scheduled'
+        self.instance['status'] = 'in-progress'
+        before = copy.deepcopy((self.record, self.instance))
+        with self.assertRaisesRegex(self.coach.LearnerCalendarConflict, 'cannot be cancelled'):
+            self.cancel()
+        self.assertEqual((self.record, self.instance), before)
+        self.coach.delete_calendar_event_from_graph.assert_not_called()
+
+    def test_non_review_advanced_event_keeps_legacy_cancellation_semantics(self):
+        self.record.update(
+            event_type='catch-up',
+            review_instance_id='',
+            status='completed',
+        )
+        record, warning = self.cancel()
+        self.assertEqual(warning, '')
+        self.assertEqual(record.status, 'not-scheduled')
+        self.assertEqual(self.record['status'], 'not-scheduled')
+        self.coach.delete_calendar_event_from_graph.assert_called_once()
+
+    def test_cancel_rejects_every_advanced_instance_before_graph(self):
+        for status in ('in-progress', 'awaiting-signature', 'completed'):
+            with self.subTest(status=status):
+                self.record['status'] = self.instance['status'] = status
+                before = copy.deepcopy((self.record, self.instance))
+                with self.assertRaisesRegex(self.coach.LearnerCalendarConflict, 'cannot be cancelled'):
+                    self.cancel()
+                self.assertEqual((self.record, self.instance), before)
+        self.coach.delete_calendar_event_from_graph.assert_not_called()
+
+    def test_cancel_never_mutates_another_learners_instance(self):
+        self.record['status'] = self.instance['status'] = 'scheduled'
+        self.instance['learner_id'] = 999
+        before = copy.deepcopy((self.record, self.instance))
+
+        with self.assertRaisesRegex(self.coach.LearnerCalendarConflict, 'link is inconsistent'):
+            self.cancel()
+
+        self.assertEqual((self.record, self.instance), before)
+        self.coach.delete_calendar_event_from_graph.assert_not_called()
+
+    def test_advanced_unlinked_legacy_review_requires_reconciliation(self):
+        self.record.update(review_instance_id='', review_template_id='', status='completed')
+        before = copy.deepcopy(self.record)
+
+        with self.assertRaisesRegex(
+            self.coach.LearnerCalendarConflict,
+            'LEGACY_REVIEW_RECONCILIATION_REQUIRED',
+        ):
+            self.cancel()
+
+        self.assertEqual(self.record, before)
+        self.coach.delete_calendar_event_from_graph.assert_not_called()
+
+    def test_first_linkage_refuses_non_scheduled_calendar_status(self):
+        self.record.update(review_instance_id='', status='completed')
+        row = self.read_record()
+
+        with self.assertRaisesRegex(
+            self.coach.LegacyReviewReconciliationRequiredError,
+            'LEGACY_REVIEW_RECONCILIATION_REQUIRED',
+        ):
+            self.coach.ensure_review_instance_for_calendar_record(row, self.base.event)
+
+        self.coach.curriculum_review_instances.ensure_review_instance.assert_not_called()
+
+    def test_calendar_status_mirror_does_not_skip_lifecycle_steps(self):
+        self.coach.datetime = datetime
+        load(BACKEND / 'coach_api/views.py',
+             {'_sync_calendar_record_to_review_instance_status'}, self.coach.__dict__)
+
+        self.coach._sync_calendar_record_to_review_instance_status({
+            'calendar_event_id': 1, 'status': 'completed', 'completed_at': datetime.utcnow(),
+        })
+
+        filters = self.manager.filter.call_args.kwargs
+        self.assertEqual(filters['pk'], 1)
+        self.assertNotIn('not-scheduled', filters['status__in'])
+        self.assertNotIn('scheduled', filters['status__in'])
 
     def test_stale_scheduling_request_cannot_overwrite_a_started_booking(self):
         candidate = self.read_record()

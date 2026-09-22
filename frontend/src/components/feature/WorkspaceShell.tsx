@@ -1,7 +1,8 @@
-import { useState, type CSSProperties, type ReactNode, useEffect } from 'react';
+import { useState, useRef, useCallback, type CSSProperties, type ReactNode, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Sidebar, SidebarIcon, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP, type SidebarNavItem } from './Sidebar';
 import { CoachViewAsBar } from './CoachViewAsBar';
+import { CoachSidebar } from './CoachSidebar';
 import { Header } from './Header';
 import { AppIcon } from './AppIcon';
 import { GlobalSearch } from './GlobalSearch';
@@ -11,6 +12,8 @@ import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
 import { getRememberedLearner } from '@/hooks/useMyLearner';
 import { ArrowLeft } from 'lucide-react';
 import design from './WorkspaceDesign.module.css';
+import { activePersonalLearning } from '@/lib/personalLearning';
+import { PersonalLearningBanner } from './PersonalLearningBanner';
 
 interface WorkspaceShellProps {
   children: ReactNode;
@@ -43,6 +46,9 @@ interface BreadcrumbItem {
 
 const ROUTE_HISTORY_KEY = 'lmsRouteHistory';
 const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
+const COACH_SIDEBAR_COLLAPSED_KEY = 'kbc_coach_sidebar_collapsed';
+const COACH_SIDEBAR_WIDTH = 240;
+const COACH_SIDEBAR_COLLAPSED_WIDTH = 76;
 
 /**
  * Whether the sidebar's secondary navigation is open.
@@ -53,6 +59,14 @@ const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
 function readPinnedPreference() {
   try {
     return localStorage.getItem(SIDEBAR_PINNED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function readCoachSidebarCollapsed() {
+  try {
+    return localStorage.getItem(COACH_SIDEBAR_COLLAPSED_KEY) === 'true';
   } catch {
     return false;
   }
@@ -174,6 +188,8 @@ export function WorkspaceShell({
   // every page, while learner-type and navigation permissions still apply.
   const { auth, isAdmin } = useAuth();
   const location = useLocation();
+  const personalContext = activePersonalLearning(location.pathname);
+  const personal = auth.account?.role === 'admin' && personalContext?.accountId === auth.account.id ? personalContext : null;
   // Keep the approved admin page styling in the shared directory, but let the
   // selected workspace supply its own menu, labels and breadcrumbs.
   const isAdminDirectory = isAdmin && /^\/(?:users|employers)(?:\/|$)/.test(location.pathname);
@@ -190,13 +206,22 @@ export function WorkspaceShell({
   const currentLearner = role === 'learner' ? getRememberedLearner() : null;
   const reviewingLearner = isStaffOrAdmin
     && !isOwnLearnerRecord(auth.account, currentLearner?.kind, currentLearner?.id);
-  const navItems = useLearnerNavGate(filterLearnerNavigation ? role : '', navItemsProp, reviewingLearner);
+  const gatedNavItems = useLearnerNavGate(filterLearnerNavigation && !personal ? role : '', navItemsProp, reviewingLearner);
+  const navItems = personal
+    ? gatedNavItems.filter(item => ['learner-my-learning', 'learner-map'].includes(item.id))
+    : gatedNavItems;
+  const workspaceNavItems = auth.account?.role === 'admin' && !navItems.some(item => item.id === 'personal-courses')
+    ? [...navItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
+    : navItems;
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const closeMobileSidebar = useCallback(() => setMobileSidebarOpen(false), []);
+  const accountButtonRef = useRef<HTMLButtonElement>(null);
   const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
+  const [coachSidebarCollapsed, setCoachSidebarCollapsed] = useState(readCoachSidebarCollapsed);
 
   const handlePinChange = (pinned: boolean) => {
     setSidebarPinned(pinned);
@@ -205,8 +230,15 @@ export function WorkspaceShell({
     } catch { /* Ignore unavailable browser storage. */ }
   };
 
+  const handleCoachSidebarCollapsedChange = (collapsed: boolean) => {
+    setCoachSidebarCollapsed(collapsed);
+    try {
+      localStorage.setItem(COACH_SIDEBAR_COLLAPSED_KEY, String(collapsed));
+    } catch { /* Ignore unavailable browser storage. */ }
+  };
+
   const displayName = (isAdminDirectory ? auth.account?.displayName || auth.user?.fullName : userName) || auth.user?.fullName || 'User';
-  const displayRole = userRole || auth.roles[0]?.name || roleLabel;
+  const displayRole = personal ? 'Admin · Learner' : userRole || auth.roles[0]?.name || roleLabel;
   const defaultWorkspaceLabel = workspaceLabel || roleLabel + ' Workspace';
 
   // Close mobile sidebar on route change
@@ -256,26 +288,33 @@ export function WorkspaceShell({
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
-      style={{ '--kbc-sidebar-width': `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
+      style={{ '--kbc-sidebar-width': role === 'coach'
+        ? `${coachSidebarCollapsed ? COACH_SIDEBAR_COLLAPSED_WIDTH : COACH_SIDEBAR_WIDTH}px`
+        : `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
     >
-      <Sidebar
+      {role === 'coach' ? <CoachSidebar navItems={navItems} userName={displayName} userRole={displayRole}
+        mobileOpen={mobileSidebarOpen} onCloseMobile={closeMobileSidebar}
+        collapsed={coachSidebarCollapsed} onCollapsedChange={handleCoachSidebarCollapsedChange}
+        onOpenAccount={() => { accountButtonRef.current?.focus(); accountButtonRef.current?.click(); }} /> : <Sidebar
         role={role}
         roleLabel={roleLabel}
-        navItems={navItems}
+        navItems={workspaceNavItems}
         userName={displayName}
         userRole={displayRole}
         pinned={sidebarPinned}
         onPinChange={handlePinChange}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
-      />
+      />}
       {/* Reserve the shared sidebar width and gutters for every workspace. */}
       <div
         className="workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out motion-reduce:transition-none"
         style={{ marginLeft: 'var(--kbc-sidebar-offset, 0px)' }}
       >
+        {personal && <PersonalLearningBanner context={personal} />}
         {!hidePageChrome && (
           <Header
+            accountButtonRef={accountButtonRef}
             pageTitle={pageTitle}
             pageIcon={headerNavItem ? <SidebarIcon id={headerNavItem.id} label={headerNavItem.label} sourceIcon={headerNavItem.icon} className="h-5 w-5" /> : undefined}
             pageSubtitle={pageSubtitle}
@@ -284,7 +323,8 @@ export function WorkspaceShell({
             onToggleMobileSidebar={handleToggleMobileSidebar}
             mobileSidebarOpen={mobileSidebarOpen}
             role={chromeRole}
-            workspaceLabel={roleLabel}
+            workspaceLabel={personal ? 'Learner' : roleLabel}
+            personalLearning={Boolean(personal)}
           />
         )}
 

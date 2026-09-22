@@ -55,7 +55,12 @@ vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({
 
 vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
   ComponentEditor: () => null,
-  WeekComponentRail: () => null,
+  WeekComponentRail: ({ components, onChange }: {
+    components: Array<{ id: string }>;
+    onChange: (components: Array<{ id: string }>) => void;
+  }) => (
+    <button type="button" onClick={() => onChange([...components].reverse())}>Reorder components</button>
+  ),
   WeekOverviewPanel: () => null,
 }));
 
@@ -80,6 +85,13 @@ const modules = [
     status: 'draft',
   },
 ] as CurriculumModule[];
+
+// The workspace reads the signed-in account (it decides which learner preview
+// an admin is offered). Without this the page throws on its first line and
+// every case below fails before it has asserted anything about saving.
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
+}));
 
 vi.mock('@/hooks/useCurriculumModules', () => ({
   useCurriculumModules: () => ({ modules, loading: false, error: null, reload }),
@@ -113,7 +125,36 @@ function storedStructure(revision = 'rev-1') {
         title: 'Week one',
         summary: '',
         learningOutcomes: [],
-        components: [],
+        components: [
+          {
+            id: 'COMPONENT-1',
+            type: 'reading',
+            title: 'First component',
+            description: '',
+            expectedOtjh: 1,
+            points: 5,
+            reflectionRequired: false,
+            reflectionQuestion: '',
+            workplaceEvidenceRequired: false,
+            tutorValidationRequired: false,
+            ksbMappings: [],
+            settings: {},
+          },
+          {
+            id: 'COMPONENT-2',
+            type: 'reading',
+            title: 'Second component',
+            description: '',
+            expectedOtjh: 1,
+            points: 5,
+            reflectionRequired: false,
+            reflectionQuestion: '',
+            workplaceEvidenceRequired: false,
+            tutorValidationRequired: false,
+            ksbMappings: [],
+            settings: {},
+          },
+        ],
         ksbMappings: [],
       },
     ],
@@ -121,7 +162,7 @@ function storedStructure(revision = 'rev-1') {
   };
 }
 
-type SavedModule = { weekStructure: Array<{ title: string }>; structureRevision?: string };
+type SavedModule = { weekStructure: Array<{ title: string; components: Array<{ id: string }> }>; structureRevision?: string };
 type SaveCall = [string, SavedModule, { expectedRevision?: string } | undefined];
 
 /**
@@ -340,9 +381,14 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
 
     await userEvent.type(title, ' mine');
 
-    await waitFor(() => expect(saveState()).toBe('Conflict - reload before saving again'), { timeout: 8000 });
+    // Reloading the page is no longer what the reader is asked for: the refusal
+    // carries the stored revision, so the workspace offers to load that version
+    // instead. What has not changed is that nothing of theirs is touched until
+    // they choose it.
+    await waitFor(() => expect(saveState()).toBe('Conflict - load the saved version to continue'), { timeout: 8000 });
     expect(title).toHaveValue('Week one mine');
     expect(await screen.findByText(/changed after you opened it/)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Load their version' })).toBeInTheDocument();
     // Disarmed: typing again must not fire the refused payload at the backend
     // once per burst for as long as the workspace stays open.
     await userEvent.type(title, '!');
@@ -383,6 +429,17 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
     expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one!');
     expect(saveCalls()[0][2]?.expectedRevision).toBe('rev-1');
+  });
+
+  it('saves the component order chosen in the course structure', async () => {
+    await openWorkspace();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reorder components' }));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
+    expect(saveCalls()[0][1].weekStructure[0].components.map(component => component.id))
+      .toEqual(['COMPONENT-2', 'COMPONENT-1']);
   });
 
   it('holds every edit until Save is pressed once auto save is turned off again', async () => {

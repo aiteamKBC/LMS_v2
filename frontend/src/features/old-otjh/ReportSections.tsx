@@ -109,8 +109,8 @@ export function ActivityLog({ data, aptemId, loadContent, contentScope, initialS
             <td data-label="Category"><span className="text-[12px] text-foreground-600">{row.category}</span></td>
             <td className={styles.activityCell}><ActivityDescription row={row} expanded={expanded?.rowId === row.id} onOpen={documentId => open(row.id, documentId)} /></td>
             <td data-label="Timestamp"><span className="font-mono text-[11px]">{row.timestamp_label || row.activity_time || '—'}</span></td>
-            <td data-label="Actual"><span className={`${styles.actualValue} whitespace-nowrap font-mono text-[12px] font-medium`}>{duration(row.actual_hours)}</span>
-              <span className={`mt-1 block text-[10px] ${row.accepted ? 'text-emerald-700' : 'text-foreground-500'}`}>{row.accepted ? 'Accepted' : 'Not accepted'}</span></td>
+            <td data-label="Actual"><span className={`${styles.actualValue} whitespace-nowrap font-mono text-[12px] font-medium`}>{row.actual_pending ? 'Pending' : duration(row.actual_hours)}</span>
+              <span className={`mt-1 block text-[10px] ${row.actual_pending ? 'text-amber-700' : row.accepted ? 'text-emerald-700' : 'text-foreground-500'}`}>{row.actual_pending ? 'Actual pending' : row.accepted ? 'Accepted' : 'Not accepted'}</span></td>
             <td data-label="KSB scope"><div className="flex flex-wrap gap-1">{row.ksb_codes?.length ? row.ksb_codes.map(code => <span key={code} className={styles.ksbBadge} data-kind={code.charAt(0).toUpperCase()}>{code}</span>) : <span className="text-foreground-400">—</span>}</div></td>
           </tr>{expanded?.rowId === row.id && <tr className={styles.expansionRow}><td colSpan={6} id={`activity-content-${row.id}`}>
             <ActivityExpansion key={`${row.id}-${expanded.documentId ?? 'content'}`} row={row} month={data.month} aptemId={aptemId} initialDocumentId={expanded.documentId} onClose={close} loadContent={loadContent} contentScope={contentScope} />

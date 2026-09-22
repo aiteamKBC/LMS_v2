@@ -3,7 +3,7 @@ import json
 import logging
 from collections import defaultdict
 
-from django.db import connections, DatabaseError
+from django.db import connections, DatabaseError, transaction
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
@@ -12,6 +12,8 @@ from login.permissions import require_role, learner_self_or_staff
 
 from .session_results_policy import session_roster, attendance_csv, instant, session_runs
 from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
+from .session_sync_runtime import start_requested_sync
+from .session_transfer_progress import summarize_transfers
 
 log = logging.getLogger(__name__)
 
@@ -176,6 +178,24 @@ def unavailable():
     return JsonResponse({'error': 'Saved session results are unavailable. Check the session archive setup and try again.'}, status=503)
 
 
+def add_sync_progress(jobs):
+    if not jobs:
+        return
+    rows = read('''SELECT o.live_session_id,o.session_number,a.artifact_type,r.status,
+        CASE WHEN a.metadata::jsonb->'lmsArchiveProgress'->>'leaseId'=j.lease_id
+            THEN (a.metadata::jsonb->'lmsArchiveProgress')-'leaseId' ELSE NULL END AS transfer
+        FROM curriculum.live_session_artifacts a
+        JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
+        JOIN curriculum.session_result_jobs j ON j.live_session_id=o.live_session_id
+        LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
+        WHERE o.live_session_id=ANY(%s) AND a.artifact_type IN ('recording','transcript')''',
+        [[job['live_session_id'] for job in jobs]])
+    for job in jobs:
+        job['progress'] = summarize_transfers([row for row in rows if row['live_session_id'] == job['live_session_id']])
+        if job['state'] not in {'running', 'failed'}:
+            job['progress']['transfer'] = None
+
+
 @require_GET
 @require_role('admin', 'staff')
 def module_results(request, module_id):
@@ -204,6 +224,7 @@ def module_results(request, module_id):
         if series:
             try:
                 payload['jobs'] = read('SELECT live_session_id,state,last_error,finished_at FROM curriculum.session_result_jobs WHERE live_session_id=ANY(%s)', [ids])
+                add_sync_progress(payload['jobs'])
             except DatabaseError as error:
                 if not archive_schema_missing(error):
                     raise
@@ -221,7 +242,16 @@ def admin_session(request, series_id, session_number):
         sessions = result_rows(series[0], session_number=session_number) if series else []
         if not sessions:
             return JsonResponse({'error': 'Session not found.'}, status=404)
-        return JsonResponse({'sessions': sessions})
+        job = None
+        try:
+            jobs = read('''SELECT live_session_id,state,last_error,started_at,finished_at
+                FROM curriculum.session_result_jobs WHERE live_session_id=%s''', [series_id])
+            job = jobs[0] if jobs else None
+            add_sync_progress(jobs)
+        except DatabaseError as error:
+            if not archive_schema_missing(error):
+                raise
+        return JsonResponse({'sessions': sessions, 'job': job})
     except DatabaseError:
         return unavailable()
 
@@ -292,11 +322,16 @@ def queue_sync(request, series_id):
     try:
         if not read('SELECT id FROM curriculum.live_sessions WHERE id=%s', [series_id]):
             return JsonResponse({'error': 'Session not found.'}, status=404)
-        with connections['default'].cursor() as cursor:
+        with transaction.atomic(), connections['default'].cursor() as cursor:
             cursor.execute('''INSERT INTO curriculum.session_result_jobs(live_session_id,force_refresh) VALUES (%s,true)
                 ON CONFLICT(live_session_id) DO UPDATE SET state='queued',requested_at=now(),next_attempt_at=now(),attempts=0,last_error='',force_refresh=true
                 WHERE session_result_jobs.state NOT IN ('running','queued')''', [series_id])
-        return JsonResponse({'state': 'queued', 'message': 'Sync requested. Results will be saved in the background.'}, status=202)
+            transaction.on_commit(lambda: start_requested_sync(series_id))
+        return JsonResponse({'state': 'queued', 'message': 'Sync requested. Results will update automatically as processing completes.'}, status=202)
+    except RuntimeError:
+        log.error('Could not start requested session sync. The saved request remains queued.')
+        return JsonResponse({'error': 'Your sync request was saved, but processing could not start. Please retry or contact an administrator.',
+                             'code': 'session_sync_start_failed'}, status=503)
     except DatabaseError as error:
         if archive_schema_missing(error):
             return JsonResponse({'error': 'Recording storage needs setup before synchronization can run.',

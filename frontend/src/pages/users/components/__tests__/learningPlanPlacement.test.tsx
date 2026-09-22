@@ -15,6 +15,7 @@ const updateEnrolmentUser = vi.fn();
 const fetchProgrammes = vi.fn();
 const fetchCohorts = vi.fn();
 const fetchGroups = vi.fn();
+const fetchFreeProgrammeModules = vi.fn();
 
 vi.mock('@/api/learningPlan', async () => {
   const actual = await vi.importActual<typeof import('@/api/learningPlan')>('@/api/learningPlan');
@@ -22,6 +23,10 @@ vi.mock('@/api/learningPlan', async () => {
 });
 vi.mock('@/api/enrolmentUsers', () => ({ updateEnrolmentUser }));
 vi.mock('@/api/curriculum', () => ({ fetchProgrammes, fetchCohorts, fetchGroups }));
+vi.mock('@/lib/curriculumApi', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/curriculumApi')>('@/lib/curriculumApi');
+  return { ...actual, fetchFreeProgrammeModules };
+});
 vi.mock('@/hooks/useToast', () => ({
   useToast: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }),
 }));
@@ -69,6 +74,7 @@ describe('learning plan placement step', () => {
     fetchProgrammes.mockResolvedValue(['Final Test', 'MBA']);
     fetchCohorts.mockResolvedValue(['Final Cohort']);
     fetchGroups.mockResolvedValue(['Aya Group', 'Final Group']);
+    fetchFreeProgrammeModules.mockResolvedValue([]);
   });
 
   it('asks an unplaced learner for a programme, cohort and group', async () => {
@@ -139,6 +145,28 @@ describe('learning plan placement step', () => {
     expect(await screen.findByText('Add a module')).toBeTruthy();
     // The directory lists programme and group in their own columns.
     expect(onSaved).toHaveBeenCalled();
+  });
+
+  it('shows a loading state for the free-course picker, then its options', async () => {
+    // A placed learner goes straight to the plan, where the free-course picker
+    // lives. Hold the catalogue fetch open so the loading state is observable.
+    fetchLearningPlan.mockResolvedValue(planResponse(PLACED));
+    let resolveFree: (value: unknown[]) => void = () => {};
+    fetchFreeProgrammeModules.mockReturnValue(new Promise((resolve) => { resolveFree = resolve; }));
+
+    render(<LearningPlanModal learnerId="91" learnerName="Aya Aya Test" onClose={vi.fn()} />);
+
+    // While the fetch is in flight the dropdown says so, rather than reading as
+    // "no courses" (the bug this fixes).
+    expect(await screen.findByRole('option', { name: 'Loading free courses…' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'First Aid' })).toBeNull();
+
+    // Once it resolves, the option appears in place — no reopen needed.
+    resolveFree([
+      { id: 'w1', courseId: 'FREECOURSE-1', courseName: 'First Aid', title: 'wk', description: '', displayOrder: 0, componentCount: 0, totalOtjh: 0, components: [] },
+    ] as unknown[]);
+    expect(await screen.findByRole('option', { name: 'First Aid' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Loading free courses…' })).toBeNull();
   });
 
   it('does not offer the chooser to a reader who cannot edit', async () => {

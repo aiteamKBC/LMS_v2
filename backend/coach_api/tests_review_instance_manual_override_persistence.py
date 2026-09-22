@@ -223,7 +223,7 @@ class ManualOverridePersistenceTestCase(TestCase):
     def test_awaiting_signature_creates_no_row(self):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
-        review_instances.set_review_instance_status(instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='test')
+        review_instances.force_review_instance_status_for_tests(instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='test')
         response = self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self._override_rows(record.review_instance_id), [])
@@ -231,7 +231,7 @@ class ManualOverridePersistenceTestCase(TestCase):
     def test_completed_creates_no_row(self):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
-        review_instances.set_review_instance_status(
+        review_instances.force_review_instance_status_for_tests(
             instance['id'], review_instances.STATUS_COMPLETED, actor='test',
             extra={'completed_at': curriculum_views.datetime.utcnow()},
         )
@@ -246,7 +246,7 @@ class ManualOverridePersistenceTestCase(TestCase):
         instance = self._instance(record)
         # A stale in-memory instance_row (still says 'scheduled') racing
         # against a status that has already moved on underneath it.
-        review_instances.set_review_instance_status(instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='test')
+        review_instances.force_review_instance_status_for_tests(instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='test')
         ok, result = review_instances.mark_review_instance_in_progress_manually(
             instance, reason_code='attendance-not-detected', actor=COACH_EMAIL,
         )

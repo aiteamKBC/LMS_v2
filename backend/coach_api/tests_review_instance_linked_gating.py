@@ -147,6 +147,37 @@ class LinkedReviewGatingTestCase(TestCase):
         # the signature actually landed on, not a parallel write here.
         self.assertEqual(record.status, CoachCalendarEvent.STATUS_COMPLETED)
 
+    def test_advanced_unlinked_review_open_requires_reconciliation_and_keeps_legacy_content(self):
+        record = self._record(
+            event_key=MCM_EVENT["eventKey"], event_type="mcr",
+            review_instance_id=None, status=CoachCalendarEvent.STATUS_COMPLETED,
+        )
+        record.review_template_id = "REV-LEGACY"
+        record.review_responses = {"mcm_outcome": "Green", "historical": "kept"}
+        record.save(update_fields=["review_template_id", "review_responses", "updated_at"])
+        base_event = {
+            **MCM_EVENT,
+            "reviewTemplateId": "REV-LEGACY",
+            "occurrenceNumber": 1,
+            "occurrenceSource": "generated",
+        }
+        request = self.factory.post(
+            "/coach_api/coach/reviews/open",
+            data=json.dumps({"eventKey": MCM_EVENT["eventKey"]}),
+            content_type="application/json",
+        )
+        request.coach_email = "coach@example.com"
+        with patch.object(views, "find_generated_timetable_event", return_value=(base_event, "Coach One")),              patch.object(views.curriculum_reviews, "get_review_template_row", return_value={"id": "REV-LEGACY"}),              patch.object(curriculum_review_instances, "ensure_review_instance") as ensure:
+            response = unwrap(views.coach_review_instance_for_event)(request)
+
+        self.assertEqual(response.status_code, 409)
+        body = json.loads(response.content)
+        self.assertEqual(body["code"], "LEGACY_REVIEW_RECONCILIATION_REQUIRED")
+        ensure.assert_not_called()
+        record.refresh_from_db()
+        self.assertEqual(record.review_instance_id, "")
+        self.assertEqual(record.review_responses["historical"], "kept")
+
     # -- 3. Linked review normal new-engine completion continues to work -----
     # (already covered by curriculum_api.tests_review_instances /
     # coach_api.tests_review_architecture; not duplicated here.)

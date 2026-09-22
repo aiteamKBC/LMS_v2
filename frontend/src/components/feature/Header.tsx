@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ReactNode } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ReactNode, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Moon, Sun } from 'lucide-react';
@@ -14,6 +14,7 @@ import { WorkspaceSwitcher } from '@/components/feature/WorkspaceSwitcher';
 import { PreviousRecordMenuItem } from '@/features/old-otjh/PreviousRecordMenuItem';
 
 interface HeaderProps {
+  accountButtonRef?: RefObject<HTMLButtonElement | null>;
   pageTitle: string;
   pageIcon?: ReactNode;
   pageSubtitle?: string;
@@ -23,6 +24,7 @@ interface HeaderProps {
   mobileSidebarOpen?: boolean;
   role?: string;
   workspaceLabel?: string;
+  personalLearning?: boolean;
 }
 
 /** "Demo Admin" -> "DA". A single word falls back to its first two letters. */
@@ -165,7 +167,7 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role, workspaceLabel }: HeaderProps) {
+export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role, workspaceLabel, personalLearning = false }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
@@ -301,12 +303,17 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
 
       {/* Keep the workspace switcher available in the shared top bar so
           administrators can return to the workspace list from any page. */}
-      <WorkspaceSwitcher />
+      {!personalLearning && <WorkspaceSwitcher />}
+
+      {role === 'coach' && <Link to="/workspace/coach#learner-caseload" className="coach-header-search" aria-label="Search learners">
+        <AppIcon name="ri-search-line" /><span>Search learners...</span>
+      </Link>}
 
       {/* Profile and its existing account actions. */}
       <div className="flex shrink-0 items-center gap-0.5 lg:border-l lg:border-white/15 lg:pl-4">
         <div className="relative" ref={profileRef}>
           <button
+            ref={accountButtonRef}
             onClick={() => { closeOthers('profile'); setProfileOpen(!profileOpen); }}
             aria-haspopup="menu"
             aria-expanded={profileOpen}
@@ -472,7 +479,7 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
       </div>
     </header>
 
-    {role && createPortal(
+    {role && role !== 'coach' && createPortal(
       <button
         type="button"
         onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}

@@ -14,3 +14,7 @@ from django.core.wsgi import get_wsgi_application
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 
 application = get_wsgi_application()
+
+from curriculum_api.session_sync_runtime import SessionSyncWSGI
+
+application = SessionSyncWSGI(application)

@@ -19,11 +19,11 @@ only ever linked to a real occurrence Curriculum's own engine produced.
 
 Usage, in order:
 
-    python manage.py reconcile_legacy_review_events --event-id 146 --event-id 148 \\
-        --event-id 149 --event-id 150 --event-id 151 --dry-run
+    python manage.py reconcile_legacy_review_events --event-id 152 \\
+        --event-id 156 --dry-run
 
-    python manage.py reconcile_legacy_review_events --event-id 146 --event-id 148 \\
-        --event-id 149 --event-id 150 --event-id 151 --apply
+    python manage.py reconcile_legacy_review_events --event-id 152 \\
+        --event-id 156 --apply
 
 Default is --dry-run (read-only). Every id must be on ALLOWED_EVENT_IDS
 below -- this command refuses to touch anything else, so it can never become
@@ -44,17 +44,18 @@ from coach_api.views import (
     resolve_caseload_source_row,
 )
 
-#: The only ids this command will ever act on -- five confirmed-real MCM
+#: The only ids this command will ever act on -- seven confirmed-real MCM
 #: bookings created before the generic-request linkage guard existed. Every
 #: other legacy unlinked row (the test/demo set handled by
 #: cleanup_legacy_reviews) is out of scope here on purpose.
-ALLOWED_EVENT_IDS = frozenset({146, 148, 149, 150, 151})
+ALLOWED_EVENT_IDS = frozenset({146, 148, 149, 150, 151, 152, 156})
 
-# These five assignment-created bookings stored the learner-selected booking
-# date as target_date. The current Curriculum correctly produces October MCM
-# occurrence 1 on 2026-10-15. Each override is deliberately guarded by the
-# exact legacy target date that was owner-reviewed in production; a changed
-# row falls back to normal exact matching and is never silently remapped.
+# These assignment-created bookings stored the learner-selected booking date
+# as target_date. Each override points only to the October MCM occurrence 1
+# that production's Curriculum engine returned during the owner-reviewed
+# dry-run. It is deliberately guarded by that exact legacy target date; a
+# changed row falls back to normal exact matching and is never silently
+# remapped.
 APPROVED_LEGACY_MAPPINGS = {
     146: {
         "legacy_target_date": "2026-10-05", "source": "mcr",
@@ -76,11 +77,23 @@ APPROVED_LEGACY_MAPPINGS = {
         "legacy_target_date": "2026-10-27", "source": "mcr",
         "canonical_target_date": "2026-10-15", "occurrence_number": 1,
     },
+    152: {
+        "legacy_target_date": "2026-10-29", "source": "mcr",
+        "canonical_target_date": "2026-10-15", "occurrence_number": 1,
+    },
+    156: {
+        "legacy_target_date": "2026-10-30", "source": "mcr",
+        "canonical_target_date": "2026-10-16", "occurrence_number": 1,
+    },
 }
 
 #: Review event types this command understands. Matches CoachCalendarEvent's
-#: own review-driven vocabulary; the five allowlisted rows are all 'mcr'.
+#: own review-driven vocabulary; the seven allowlisted rows are all 'mcr'.
 RECONCILABLE_EVENT_TYPES = ("mcr", "progress-review")
+
+# Confirmed Test data is permanently excluded even if somebody later expands
+# the real-row allowlist by mistake.
+CONFIRMED_TEST_EVENT_IDS = frozenset({129, 130, 133, 138})
 
 
 def _blank(value) -> bool:
@@ -208,6 +221,20 @@ class Command(BaseCommand):
                     f"{record.review_template_id!r}, review_instance_id="
                     f"{record.review_instance_id!r}) -- refusing to guess which "
                     "half is correct."
+                ),
+            )
+
+        if record.status in {
+            CoachCalendarEvent.STATUS_IN_PROGRESS,
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+            CoachCalendarEvent.STATUS_COMPLETED,
+        }:
+            return ReconciliationOutcome(
+                record.id,
+                "SKIPPED_ADVANCED_STATUS",
+                message=(
+                    f"Calendar status {record.status!r} is beyond scheduled; "
+                    "refusing to manufacture a new Review Instance lifecycle."
                 ),
             )
 
@@ -352,6 +379,13 @@ class Command(BaseCommand):
         event_ids = options["event_ids"] or []
         apply_changes = options["apply"]
         dry_run = options["dry_run"] or not apply_changes
+
+        confirmed_test = sorted(set(event_ids) & CONFIRMED_TEST_EVENT_IDS)
+        if confirmed_test:
+            raise CommandError(
+                f"ABORT: event id(s) {confirmed_test} are confirmed Test data and "
+                "must be cleaned up, never reconciled."
+            )
 
         unlisted = sorted(set(event_ids) - ALLOWED_EVENT_IDS)
         if unlisted:

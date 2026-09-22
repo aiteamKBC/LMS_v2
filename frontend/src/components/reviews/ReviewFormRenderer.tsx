@@ -1,6 +1,7 @@
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
 import { flattenReviewFields, type ReviewFieldDefinition, type ReviewSectionDefinition } from '@/api/reviewInstances';
+import type { ReactNode } from 'react';
 
 /**
  * Renders whatever sections/fields a Curriculum Review template defines --
@@ -29,6 +30,18 @@ interface ReviewFormRendererProps {
   readOnly?: boolean;
   openSectionId: string;
   onOpenSectionChange: (sectionId: string) => void;
+  renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
+  renderFieldInput?: (
+    field: ReviewFieldDefinition,
+    context: {
+      value: unknown;
+      onChange: (value: unknown) => void;
+      readOnly: boolean;
+      invalid: boolean;
+    },
+  ) => ReactNode | undefined;
+  variant?: 'accordion' | 'steps';
+  stepOffset?: number;
 }
 
 function fieldAnswered(field: ReviewFieldDefinition, answers: Record<string, unknown>) {
@@ -44,12 +57,147 @@ function sectionRequiredFields(section: ReviewSectionDefinition) {
 }
 
 export function ReviewFormRenderer({
-  sections, answers, onAnswerChange, errors, readOnly, openSectionId, onOpenSectionChange,
+  sections,
+  answers,
+  onAnswerChange,
+  errors,
+  readOnly,
+  openSectionId,
+  onOpenSectionChange,
+  renderFieldAddon,
+  renderFieldInput,
+  variant = 'accordion',
+  stepOffset = 0,
 }: ReviewFormRendererProps) {
   const enabledSections = sections
     .filter((section) => section.enabled)
     .slice()
     .sort((a, b) => a.displayOrder - b.displayOrder);
+
+  if (variant === 'steps') {
+    const activeIndex = Math.max(0, enabledSections.findIndex(section => section.id === openSectionId));
+    const activeSection = enabledSections[activeIndex];
+    const totalSteps = enabledSections.length + stepOffset;
+
+    if (!activeSection) return null;
+
+    return (
+      <div className="grid items-start gap-5 lg:grid-cols-[17rem_minmax(0,1fr)]">
+        <nav aria-label="Review steps" className="rounded-2xl border border-background-200 bg-white p-3 lg:sticky lg:top-4">
+          <ol className="space-y-1.5">
+            {Array.from({ length: stepOffset }, (_, index) => (
+              <li key={`completed-step-${index + 1}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-foreground-500">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                  <AppIcon className="ri-check-line"></AppIcon>
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[11px] font-bold uppercase tracking-[0.1em]">Step {index + 1}</span>
+                  <span className="block truncate text-xs font-semibold">{index === 0 ? 'Review selected' : 'Details confirmed'}</span>
+                </span>
+              </li>
+            ))}
+            {enabledSections.map((section, sectionIndex) => {
+              const selected = section.id === activeSection.id;
+              const complete = computeMissingRequiredFields([section], answers).size === 0;
+              const stepNumber = sectionIndex + stepOffset + 1;
+              return (
+                <li key={section.id}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenSectionChange(section.id)}
+                    aria-current={selected ? 'step' : undefined}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition',
+                      selected ? 'bg-primary-50 text-primary-900 ring-1 ring-primary-200' : 'text-foreground-600 hover:bg-background-100',
+                    )}
+                  >
+                    <span className={cn(
+                      'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-xs font-bold',
+                      selected
+                        ? 'border-primary-600 bg-primary-600 text-white'
+                        : complete
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : 'border-background-300 bg-white text-foreground-500',
+                    )}>
+                      {complete && !selected ? <AppIcon className="ri-check-line"></AppIcon> : stepNumber}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] font-bold uppercase tracking-[0.1em]">Step {stepNumber}</span>
+                      <span className="mt-0.5 block text-xs font-semibold leading-4">{section.title}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
+
+        <section className="overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm" aria-labelledby={`review-step-${activeSection.id}`}>
+          <header className="border-b border-primary-100 bg-primary-50/70 px-5 py-4 sm:px-6">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-sm font-bold text-white">
+                {activeIndex + stepOffset + 1}
+              </span>
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary-600">
+                  Step {activeIndex + stepOffset + 1} of {totalSteps}
+                </p>
+                <h2 id={`review-step-${activeSection.id}`} className="mt-1 text-base font-bold text-foreground-950">
+                  {activeSection.title}
+                </h2>
+                {activeSection.estimatedMinutes ? <p className="mt-1 text-xs text-foreground-500">About {activeSection.estimatedMinutes} minutes</p> : null}
+              </div>
+            </div>
+          </header>
+
+          <div className="space-y-3 p-4 sm:p-6">
+            {activeSection.fields
+              .slice()
+              .sort((a, b) => a.displayOrder - b.displayOrder)
+              .map((field, fieldIndex) => (
+                <ReviewFieldControl
+                  key={field.id}
+                  field={field}
+                  index={fieldIndex}
+                  answers={answers}
+                  onAnswerChange={onAnswerChange}
+                  errors={errors}
+                  readOnly={readOnly}
+                  renderFieldAddon={renderFieldAddon}
+                  renderFieldInput={renderFieldInput}
+                />
+              ))}
+          </div>
+
+          {enabledSections.length > 1 ? (
+            <footer className="flex items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-4 py-3 sm:px-6">
+              <button
+                type="button"
+                onClick={() => onOpenSectionChange(enabledSections[activeIndex - 1].id)}
+                disabled={activeIndex === 0}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-foreground-600 transition hover:bg-background-100 disabled:invisible"
+              >
+                <AppIcon className="ri-arrow-left-line"></AppIcon>Previous
+              </button>
+              {activeIndex < enabledSections.length - 1 ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenSectionChange(enabledSections[activeIndex + 1].id)}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-xs font-bold text-white transition hover:bg-primary-700"
+                >
+                  Next step<AppIcon className="ri-arrow-right-line"></AppIcon>
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                  <AppIcon className="ri-checkbox-circle-line"></AppIcon>Final form step
+                </span>
+              )}
+            </footer>
+          ) : null}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -89,6 +237,8 @@ export function ReviewFormRenderer({
                       onAnswerChange={onAnswerChange}
                       errors={errors}
                       readOnly={readOnly}
+                      renderFieldAddon={renderFieldAddon}
+                      renderFieldInput={renderFieldInput}
                     />
                   ))}
               </div>
@@ -101,7 +251,7 @@ export function ReviewFormRenderer({
 }
 
 function ReviewFieldControl({
-  field, index, answers, onAnswerChange, errors, readOnly,
+  field, index, answers, onAnswerChange, errors, readOnly, renderFieldAddon, renderFieldInput,
 }: {
   field: ReviewFieldDefinition;
   index: number;
@@ -109,9 +259,12 @@ function ReviewFieldControl({
   onAnswerChange: (fieldId: string, value: unknown) => void;
   errors?: ReviewFieldErrorSet;
   readOnly?: boolean;
+  renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
+  renderFieldInput?: ReviewFormRendererProps['renderFieldInput'];
 }) {
   const value = answers[field.id];
-  const invalid = errors?.missingFieldIds.has(field.id);
+  const invalid = Boolean(errors?.missingFieldIds.has(field.id));
+  const isMeetingSummary = field.configuration?.semanticKey === 'meeting_summary';
 
   if (field.fieldType === 'title_description') {
     const description = String(field.configuration?.description || '');
@@ -142,19 +295,27 @@ function ReviewFieldControl({
     <div className={cn('rounded-2xl border bg-background-50 p-4 transition focus-within:border-primary-300 focus-within:shadow-sm', invalid ? 'border-red-300' : 'border-background-200')}>
       <label className="mb-2 block text-xs font-bold text-foreground-800">
         <span className="mr-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-100 px-1 text-[12px] text-primary-700">{index + 1}</span>
-        {field.title}
+        {isMeetingSummary ? 'Meeting Summary' : field.title}
         {field.required ? <span className="ml-1 text-red-500">*</span> : null}
       </label>
 
-      <ReviewFieldInput field={field} value={value} onChange={(next) => onAnswerChange(field.id, next)} readOnly={readOnly} />
+      {renderFieldAddon?.(field)}
+      {renderFieldInput?.(field, {
+        value,
+        onChange: (next) => onAnswerChange(field.id, next),
+        readOnly: Boolean(readOnly),
+        invalid,
+      }) ?? (
+        <ReviewFieldInput field={field} value={value} onChange={(next) => onAnswerChange(field.id, next)} readOnly={readOnly} />
+      )}
 
       {field.fieldType === 'boolean_case_block' ? (
         <div className="mt-3 space-y-3 border-l-2 border-primary-100 pl-4">
           {value === 'yes' ? (field.yesFields || []).map((child, childIndex) => (
-            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} />
+            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />
           )) : null}
           {value === 'no' ? (field.noFields || []).map((child, childIndex) => (
-            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} />
+            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />
           )) : null}
         </div>
       ) : null}
@@ -180,7 +341,7 @@ function ReviewFieldInput({
           value={stringValue}
           onChange={(e) => onChange(e.target.value)}
           rows={3}
-          maxLength={4000}
+          maxLength={field.configuration?.semanticKey === 'meeting_summary' ? undefined : 4000}
           disabled={readOnly}
           placeholder={String(field.configuration?.placeholder || '')}
           className="w-full resize-y rounded-lg border border-background-300 bg-white px-3.5 py-3 text-sm text-foreground-800 outline-none transition placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-200 disabled:bg-background-100"

@@ -178,7 +178,7 @@ class ReviewProgressSnapshotTestCase(TestCase):
             with self.subTest(status=status):
                 instance = self._instance(template, occurrence_number=hash(status) % 90 + 5)
                 review_instances.save_review_instance_progress_snapshot(instance, snapshot(), actor='test')
-                review_instances.set_review_instance_status(instance['id'], status, actor='test')
+                review_instances.force_review_instance_status_for_tests(instance['id'], status, actor='test')
                 signed = review_instances.get_review_instance(instance['id'])
 
                 with self.assertRaisesMessage(ValueError, 'cannot be recalculated after the signature step begins'):
@@ -197,7 +197,7 @@ class ReviewProgressSnapshotTestCase(TestCase):
         template = self._template(self._programme())
         instance = self._instance(template)
         review_instances.save_review_instance_progress_snapshot(instance, snapshot(), actor='test')
-        review_instances.set_review_instance_status(
+        review_instances.force_review_instance_status_for_tests(
             instance['id'], review_instances.STATUS_COMPLETED, actor='test')
 
         # A newer review for the same learner records much higher figures.
@@ -220,7 +220,7 @@ class ReviewProgressSnapshotTestCase(TestCase):
     def test_rag_is_read_through_the_templates_marker_not_a_question_title(self):
         template = self._template(self._programme())
         instance = self._instance(template)
-        review_instances.set_review_instance_status(
+        review_instances.force_review_instance_status_for_tests(
             instance['id'], review_instances.STATUS_IN_PROGRESS, actor='test')
         started = review_instances.get_review_instance(instance['id'])
         review_instances.save_review_instance_answers(
@@ -240,13 +240,13 @@ class ReviewProgressSnapshotTestCase(TestCase):
         older = self._instance(template, occurrence_number=1, target_date=date(2025, 4, 16))
         newer = self._instance(template, occurrence_number=2, target_date=date(2026, 1, 3))
         for instance, answer in ((older, ''), (newer, 'Green')):
-            review_instances.set_review_instance_status(
+            review_instances.force_review_instance_status_for_tests(
                 instance['id'], review_instances.STATUS_IN_PROGRESS, actor='test')
             started = review_instances.get_review_instance(instance['id'])
             if answer:
                 review_instances.save_review_instance_answers(
                     started, {self._rag_field_id(started): answer}, actor='test')
-            review_instances.set_review_instance_status(
+            review_instances.force_review_instance_status_for_tests(
                 instance['id'], review_instances.STATUS_COMPLETED, actor='test')
 
         history = review_instances.progress_review_rag_history(101)
@@ -260,17 +260,17 @@ class ReviewProgressSnapshotTestCase(TestCase):
                                       review_type_code=review_types.REVIEW_TYPE_CODE_MCM)
 
         completed = self._instance(progress_template, occurrence_number=1)
-        review_instances.set_review_instance_status(
+        review_instances.force_review_instance_status_for_tests(
             completed['id'], review_instances.STATUS_COMPLETED, actor='test')
         # Same learner, still in progress.
         self._instance(progress_template, occurrence_number=2, target_date=date(2026, 4, 3))
         # Same learner, a different Review Type, completed.
         other_type = self._instance(mcm_template, occurrence_number=1, target_date=date(2026, 2, 1))
-        review_instances.set_review_instance_status(
+        review_instances.force_review_instance_status_for_tests(
             other_type['id'], review_instances.STATUS_COMPLETED, actor='test')
         # A different learner's completed Progress Review.
         other_learner = self._instance(progress_template, learner_id=202, occurrence_number=1)
-        review_instances.set_review_instance_status(
+        review_instances.force_review_instance_status_for_tests(
             other_learner['id'], review_instances.STATUS_COMPLETED, actor='test')
 
         history = review_instances.progress_review_rag_history(101)

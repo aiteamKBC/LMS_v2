@@ -54,3 +54,14 @@ export async function assignCurriculumLearners(target: LearnerAssignmentTarget, 
   invalidateLearnerDetailCache();
   return result;
 }
+
+export async function unassignCurriculumLearners(target: LearnerAssignmentTarget, learnerIds: string[]) {
+  const result = await fetchCurriculumJson<LearnerAssignmentResult>(path(target), {
+    method: 'DELETE', body: JSON.stringify({ learnerIds }), timeoutMs: 180_000,
+    credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+  });
+  clearCurriculumGetCache();
+  learnerIds.forEach(id => invalidateWizardCacheById(id));
+  invalidateLearnerDetailCache();
+  return result;
+}

@@ -96,6 +96,14 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         groups = calendar_groups(combined, graph_settings)
         if not groups:
             return v.json_error('No weekday sessions were supplied.')
+        requested_targets = [item for _day, items in groups for item in items]
+        if not combined.get('peopleOnly'):
+            non_delivery_reason = v.teams_non_delivery_reason(
+                requested_targets,
+                v.graph_timezone_iana(graph_settings),
+            )
+            if non_delivery_reason:
+                return v.json_error(non_delivery_reason, status=400, code='non_delivery_date')
         prepared = []
         zone = ZoneInfo(v.graph_timezone_iana(graph_settings))
         for day, items in groups:
@@ -248,6 +256,9 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             'duration_minutes': combined.get('durationMinutes') or 60, 'repeat_pattern': 'weekly',
             'repeat_occurrences': len(requested_numbers), 'module_title': v.teams_calendar_subject(combined, series),
             'attendees': v.json_db_value(attendees), 'presenters': v.json_db_value(presenters), 'co_organizers': v.json_db_value(co_organizers),
+            'recording': combined.get('recording') or 'none',
+            'lobby_bypass': combined.get('lobbyBypass') or 'invited',
+            'spoken_language': combined.get('spokenLanguage') or 'en-GB',
             'warnings': v.json_db_value(warnings), 'updated_at': datetime.utcnow(),
             'hide_attendees': True,
         })

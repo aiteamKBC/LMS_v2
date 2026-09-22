@@ -1,3 +1,4 @@
+import { learningFetch } from '@/lib/personalLearning';
 import { readLearnerJson } from './learnerRead';
 // ============================================================================
 // Quiz-taking API client.
@@ -144,7 +145,7 @@ async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T
   if (!init?.method || init.method.toUpperCase() === 'GET') return readLearnerJson<T>(url, { ...init, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...init?.headers } });
   let res: Response;
   try {
-    res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...init });
+    res = await learningFetch(url, { headers: { 'Content-Type': 'application/json' }, ...init });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
@@ -156,8 +157,8 @@ async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T
   return data as T;
 }
 
-export function fetchQuiz(quizId: number): Promise<Quiz> {
-  return request<Quiz>(`${BASE}/${quizId}/`);
+export function fetchQuiz(quizId: number, learnerId?: string): Promise<Quiz> {
+  return request<Quiz>(`${BASE}/${quizId}/${learnerId?.startsWith('pl.') ? `?learnerId=${encodeURIComponent(learnerId)}` : ''}`);
 }
 
 export function submitQuizAttempt(

@@ -111,7 +111,7 @@ export function moduleVisualEnd(module: { end: string; detail?: { effectiveEndDa
 export type CurriculumRow =
   | { kind: 'session'; slotNumber: number; date: string; sessionNumber: number;
       title: string; start: string | null; minutes: number | null; attended: boolean | null; joinUrl: string | null;
-      holidays: PlanSlotHoliday[] }
+      holidays: PlanSlotHoliday[]; weekId?: string; weekTitle?: string; learningOutcomes?: string[] }
   /** Kept for a payload from an older, genuinely closing scheduler; today's spine never emits one. */
   | { kind: 'reading-week'; slotNumber: number; date: string; holidays: PlanSlotHoliday[] };
 
@@ -157,6 +157,9 @@ export function buildCurriculumTimeline(
       attended: session?.attended ?? null,
       joinUrl: session?.joinUrl || null,
       holidays: slot.holidays || [],
+      weekId: slot.weekId,
+      weekTitle: slot.weekTitle,
+      learningOutcomes: slot.learningOutcomes || [],
     };
   });
 }
@@ -188,10 +191,17 @@ export function uniquePlanSessions(modules: TimelineModule[]) {
 export function monthMetrics(month: string, modules: TimelineModule[], data: TrainingPlanDashboard) {
   const dates = modules.flatMap(module => module.dates).filter(date => date.startsWith(month));
   const weeks = new Set(dates.map(weekKey)).size;
+  const monthlyLog = data.monthlyLogOtjh?.[month];
   const current = data.monthlyOtjh?.[month];
-  const planned = data.months[month]?.planned ?? current?.planned ?? null;
+  const useAudit = !!data.auditOtjhCutoffMonth && month <= data.auditOtjhCutoffMonth;
+  // Monthly Logs is the authoritative per-month total when it exists. It
+  // already combines retained Audit history and current LMS completions, so
+  // adding `actual` rows or `monthlyOtjh.actual` here would double-count.
+  const planned = monthlyLog ? monthlyLog.target : useAudit ? null : data.months[month]?.planned ?? current?.planned ?? null;
   const historicalActual = data.actual.filter(row => row.month === month).reduce((sum, row) => sum + row.hours, 0);
-  const actual = data.actualAvailable === false && !data.monthlyOtjh ? null : historicalActual + (current?.actual || 0);
+  const actual = monthlyLog ? monthlyLog.completed
+    : useAudit ? null
+      : data.actualAvailable === false && !data.monthlyOtjh ? null : historicalActual + (current?.actual || 0);
   const explicit = data.months[month]?.weeklyTarget;
   return { planned, actual, remaining: planned === null || actual === null ? null : Math.max(0, planned - actual), weeks,
     weekly: explicit ?? (planned !== null && weeks > 0 ? planned / weeks : null), progress: planned === null || actual === null ? null : percent(actual, planned) };

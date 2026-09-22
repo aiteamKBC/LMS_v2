@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadModuleSessions, requestSessionSync, type SessionResult } from '@/api/sessionResults';
 import { SessionResults } from '@/components/feature/SessionResults';
+import { SessionSyncStatus } from '@/components/feature/SessionSyncStatus';
 import { formatSystemTimestamp } from '@/lib/format';
 import { useSavedSessionData } from '@/hooks/useSavedSessionData';
 
@@ -31,15 +32,15 @@ export function SessionResultsDialog({ moduleId, onClose }: { moduleId: string; 
 export function ModuleSessions({ moduleId }: { moduleId: string }) {
   const [selected, setSelected] = useState<SessionResult>();
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState<{ seriesId: string; message: string } | null>(null);
   const [busy, setBusy] = useState('');
   const load = useCallback((signal: AbortSignal) => loadModuleSessions(moduleId, signal), [moduleId]);
-  const saved = useSavedSessionData(load, !selected);
+  const saved = useSavedSessionData(load, !selected, data => Boolean(data?.jobs.some(job => ['queued', 'running'].includes(job.state))));
   const { data, loading } = saved;
-  useEffect(() => { setSelected(undefined); setNotice(''); setError(''); }, [moduleId]);
+  useEffect(() => { setSelected(undefined); setNotice(null); setError(''); }, [moduleId]);
   const sync = async (id: string) => {
-    setBusy(id); setError('');
-    try { const result = await requestSessionSync(id); setNotice(result.message); }
+    setBusy(id); setError(''); setNotice(null);
+    try { const result = await requestSessionSync(id); setNotice({ seriesId: id, message: result.message }); saved.refresh(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not request synchronization.'); }
     finally { setBusy(''); }
   };
@@ -54,13 +55,13 @@ export function ModuleSessions({ moduleId }: { moduleId: string }) {
     <SessionResults seriesId={selected.seriesId} sessionNumber={selected.sessionNumber} /></div>;
   return <section className="space-y-4" aria-label="Sessions and recordings">
     <header className="flex items-center justify-between gap-4"><div><h2 className="text-lg font-bold">Sessions & Recordings</h2><p className="mt-1 text-sm text-foreground-500">Open a session to review its recording, transcript and attendance.</p></div>
-      <button disabled={loading} onClick={saved.refresh} className="rounded-lg border bg-white px-3 py-2 text-sm">Refresh</button></header>
+      <button disabled={loading || saved.refreshing} aria-busy={saved.refreshing} onClick={saved.refresh} className="rounded-lg border bg-white px-3 py-2 text-sm disabled:opacity-60">{saved.refreshing && !loading ? 'Refreshing…' : 'Refresh'}</button></header>
     {(error || saved.error) && <p role="alert" className="rounded-lg bg-red-50 p-4 text-sm text-red-800">{error || saved.error}</p>}
     {data?.warning && <p role="status" className="rounded-lg bg-amber-50 p-4 text-sm text-amber-900">{data.warning}</p>}
-    {notice && <p role="status" className="rounded-lg bg-primary-50 p-4 text-sm">{notice}</p>}
+    {notice && !data?.jobs.some(job => job.live_session_id === notice.seriesId) && <p role="status" className="rounded-lg bg-primary-50 p-4 text-sm">{notice.message}</p>}
     {loading ? <p role="status">Loading saved sessions…</p> : !data?.series.length ? !error && !saved.error && <p className="rounded-xl border bg-white p-6 text-sm">No Teams sessions are linked to this module yet.</p> : data.series.map(series => <div key={series.id} className="overflow-hidden rounded-xl border bg-white">
       <div className="flex items-center justify-between gap-3 border-b bg-primary-50/40 p-4"><strong>{series.title}</strong><button disabled={Boolean(busy) || data.syncAvailable === false} onClick={() => void sync(series.id)} className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy === series.id ? 'Requesting…' : 'Sync attendance & files'}</button></div>
-      {data.jobs.filter(job => job.live_session_id === series.id && job.state !== 'complete').map(job => <p key={job.live_session_id} role="status" className="bg-amber-50 px-4 py-3 text-sm">{job.state === 'failed' ? job.last_error || 'Sync needs retry.' : `Sync ${job.state}. Saved results remain available.`}</p>)}
+      {data.jobs.filter(job => job.live_session_id === series.id).map(job => <SessionSyncStatus key={job.live_session_id} job={job} />)}
       <ul className="divide-y">{series.sessions.map(session => <li key={session.id}><button onClick={() => setSelected(session)} className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-background-50"><span><strong className="block text-sm">Session {session.sessionNumber}</strong><span className="text-xs text-foreground-500">{formatSystemTimestamp(session.startsAt)}</span></span><span className="text-right text-xs"><span className="block font-semibold">{session.reportReady ? 'Attendance report saved' : 'Awaiting attendance report'}</span><span className="text-foreground-500">{session.fileCount || 0} files · Open session →</span></span></button></li>)}</ul>
     </div>)}
   </section>;

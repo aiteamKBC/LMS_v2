@@ -11,6 +11,7 @@ import type {
 } from '@/lib/curriculumApi';
 import { cleanText, formatDateLabel, normaliseKey } from '../shared/entities/model';
 import { EntityEmptyState, EntityHero, InlineError } from '../shared/entities/ui';
+import { recordCurriculumAction } from '@/lib/curriculumActivity';
 
 /**
  * Curriculum reports, built from the live curriculum payload at the moment the
@@ -489,4 +490,11 @@ function downloadCsv(report: ReportDefinition): void {
   link.download = `curriculum-${report.id}-${new Date().toISOString().slice(0, 10)}.csv`;
   link.click();
   URL.revokeObjectURL(url);
+  // Recorded for the Audit Trail: which report left the building, and how many
+  // rows of it. The file itself is never sent anywhere — only its name.
+  recordCurriculumAction(
+    'export',
+    { format: 'csv', fileName: link.download, count: report.rows.length },
+    { type: 'report', id: report.id, label: report.name },
+  );
 }

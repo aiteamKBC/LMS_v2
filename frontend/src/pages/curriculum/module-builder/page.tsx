@@ -8,17 +8,15 @@ import { framingRefusedHost } from '@/components/feature/VideoPlayer';
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
 import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { formatHoursMinutes } from '@/lib/format';
 import { curriculumNavItems } from '@/mocks/navigation';
-import {
-  fetchModuleLearners,
-  saveModuleLearners,
-  type ModuleLearnerRow,
-} from '@/api/learningPlan';
+import { fetchLearnerAssignments, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import {
   curriculumErrorMessage,
   fetchCurriculumHolidays,
   fetchCurriculumOverview,
+  fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
@@ -26,7 +24,9 @@ import {
   type CurriculumGroup,
   type CurriculumHoliday,
   type CurriculumKsbSet,
+  type CurriculumProgrammeAssignedLearner,
   type CurriculumProgramme,
+  type CurriculumScopeLearnerKsbImpactResponse,
   type LibraryComponent,
   type CurriculumStaffProfile,
   type CurriculumStandard,
@@ -51,16 +51,23 @@ import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
 import { LearnerPreview } from './LearnerPreview';
+import { AiMaterialModal } from './AiMaterialModal';
+import { ModuleLearnerProgressDialog } from './ModuleLearnerProgressDialog';
+import { LearnerAssignmentDrawer } from '../shared/entities/LearnerAssignmentDrawer';
+import { PersonalLearningEntry } from '@/components/feature/PersonalLearningEntry';
+import { useAuth } from '@/hooks/useAuth';
 import { SessionResultsDialog } from '../module-workspace/ModuleSessions';
 import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
 // The holiday notice, shared with the module workspace so a week touched by a
 // ticked holiday reads the same wherever the curriculum is shown.
 import { WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
 import { showFullTextWhenTruncated } from '../shared/entities/truncationTitle';
+import { moduleCountForGroup, moduleMatchesGroup } from '../shared/entities/groupModuleMatch';
 import { permanentlyDeleteModuleWithConfirm, restoreModuleWithConfirm } from '../shared/entities/archive';
 import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
+import { PlaceWeekDrawer } from './PlaceWeekDrawer';
 import {
   calculateQualityChecklist,
   componentTypeGroups,
@@ -214,12 +221,24 @@ const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: s
   // claim they were.
   'saving-more': { text: 'Saving... later edits still pending', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
   failed: { text: 'Save failed - your changes are still here', tone: 'text-rose-700', icon: 'ri-error-warning-line' },
-  conflict: { text: 'Conflict - reload before saving again', tone: 'text-rose-700', icon: 'ri-git-branch-line' },
+  conflict: { text: 'Conflict - load the saved version to continue', tone: 'text-rose-700', icon: 'ri-git-branch-line' },
   locked: { text: 'Read-only - archived programme', tone: 'text-amber-700', icon: 'ri-lock-line' },
 };
 
 /** A save the backend turned down. `conflict` is never worth retrying as-is. */
 type WorkspaceSaveFailure = { kind: 'error' | 'conflict'; message: string };
+
+/**
+ * The floor between two live reads of the open module's structure.
+ *
+ * The epoch poll reports that curriculum changed, never what changed, so every
+ * write in the estate arrives here as a reason to look. Looking costs a forced
+ * rebuild of the whole structure -- 175 KB and every week, component and
+ * mapping for a module the size of the one this was found on -- so a busy hour
+ * elsewhere in the LMS must not turn into one of those per write. Writes to
+ * this module survive the wait: the next tick still finds them.
+ */
+const LIVE_SYNC_MIN_INTERVAL_MS = 8_000;
 
 const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
@@ -280,6 +299,14 @@ type ModuleScopeLock = {
   ksbSourceId: string;
   ksbSourceLabel: string;
   locked: boolean;
+};
+
+type ModuleHierarchyLink = { label: string; href: string };
+type ModuleHierarchyInfo = {
+  programme?: ModuleHierarchyLink;
+  cohort?: ModuleHierarchyLink;
+  group?: ModuleHierarchyLink;
+  current: string;
 };
 
 type QuizPackageSummary = {
@@ -346,6 +373,7 @@ async function showBuilderDeleteSwal({
 }
 
 export default function ModuleBuilder() {
+  const { auth } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCreateScopeRef = useRef({
     programmeId: (searchParams.get('programme') || searchParams.get('programmeId') || '').trim(),
@@ -369,6 +397,7 @@ export default function ModuleBuilder() {
   // catalogue no longer carries a third change-tutor drawer of its own.
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [focusedComponentId, setFocusedComponentId] = useState('');
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
@@ -383,10 +412,11 @@ export default function ModuleBuilder() {
   const [duplicatingModuleComplete, setDuplicatingModuleComplete] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [sessionResultsOpen, setSessionResultsOpen] = useState(false);
+  const [aiMaterialOpen, setAiMaterialOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   // Which list the catalogue is showing. Nothing is read until the archive is
   // opened; see useCurriculumArchive, which Cohorts and Groups share.
-  const [showArchived, setShowArchived] = useState(false);
+  const [showArchived, setShowArchived] = useState(() => searchParams.get('view') === 'archive');
   const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
@@ -402,6 +432,18 @@ export default function ModuleBuilder() {
   const [ksbMapLoadingId, setKsbMapLoadingId] = useState<string | null>(null);
   const [programmeKsbLoading, setProgrammeKsbLoading] = useState(false);
   const [sessionKsbMappingOpen, setSessionKsbMappingOpen] = useState(false);
+  const [learnerAssignmentTarget, setLearnerAssignmentTarget] = useState<LearnerAssignmentTarget | null>(null);
+  // The card's "Learners (N)" comes from the module list, and that read is the
+  // slow one -- it times out often enough that a save would otherwise leave the
+  // badge showing the number from before it. The save already knows the new
+  // figure, so it paints it here and the next successful list read takes over.
+  const [learnerCountOverrides, setLearnerCountOverrides] = useState<Record<string, number>>({});
+  const learnerAssignmentModuleIdRef = useRef('');
+  const [learnerProgress, setLearnerProgress] = useState<{
+    target: LearnerAssignmentTarget;
+    impact: CurriculumScopeLearnerKsbImpactResponse;
+    assignedLearners: CurriculumProgrammeAssignedLearner[];
+  } | null>(null);
   const [dragState, setDragState] = useState<DragState>(null);
   const [quizPackages, setQuizPackages] = useState<QuizPackageSummary[]>([]);
   const [quizzesLoading, setQuizzesLoading] = useState(false);
@@ -410,6 +452,30 @@ export default function ModuleBuilder() {
   const [storageVersion, setStorageVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveFailure, setSaveFailure] = useState<WorkspaceSaveFailure | null>(null);
+  /**
+   * Somebody else's save landed on the module this workspace is holding, and
+   * the workspace has edits of its own so it cannot simply take it.
+   *
+   * Set only in that case. With nothing unsaved the new version is adopted
+   * silently -- there is no decision to put to the reader -- and this stays
+   * null. `revision` is what was seen, so the same write is not announced twice
+   * while the reader keeps working.
+   */
+  const [remoteUpdate, setRemoteUpdate] = useState<{ revision: string } | null>(null);
+  /**
+   * When the live sync last asked the server for this module's structure.
+   *
+   * Every curriculum write in the estate reaches this tab as "something
+   * changed" -- the epoch counter says that much and no more -- and a module
+   * this size is a 175 KB rebuild. Without a floor, a colleague saving a
+   * different programme repeatedly would have this workspace re-reading 222
+   * components each time for a module nobody touched.
+   */
+  const liveSyncReadAtRef = useRef(0);
+  /** The trailing half of that floor: a tick waiting for the cooldown to pass. */
+  const liveSyncPendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Read through a ref so the trailing tick runs today's callback, not the one that scheduled it. */
+  const liveSyncRef = useRef<() => void | Promise<void>>(() => undefined);
   // The state the in-flight save is carrying. Anything the reader types after
   // this is not in that request, which is what the footer has to be able to say.
   const [savingSnapshot, setSavingSnapshot] = useState('');
@@ -422,6 +488,9 @@ export default function ModuleBuilder() {
   // step (a delete, an export) and are better dismissed than re-run blind.
   const [actionMessageRetry, setActionMessageRetry] = useState<(() => void) | null>(null);
   const deepLinkedModuleRef = useRef('');
+  // `setSearchParams` and the editor state are scheduled independently. This
+  // marks the short hand-off while a catalogue click adds its module param.
+  const pendingModuleNavigationRef = useRef('');
   // Until the user drives a filter themselves the URL is read-only: the existing
   // programme deep link resolves an id into a name a beat later, and a sync that
   // deleted params it had not written would erase it before that happens.
@@ -503,17 +572,31 @@ export default function ModuleBuilder() {
   useEffect(() => {
     let active = true;
     const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
-    loadCurriculumScope().then(({ groups, programmes }) => {
+    loadCurriculumScope().then(({ groups, modules, programmes }) => {
       if (!active) return;
+      // The picker only ever offers live programmes — an archived programme
+      // has nothing left to deliver into, so its cohorts and groups would
+      // just be dead ends in the dropdown.
+      const archivedProgrammeKeys = new Set<string>();
+      programmes.forEach(programme => {
+        if (programme.isArchived || programme.status === 'archived') {
+          [programme.id, programme.sourceId, programme.name].forEach(key => {
+            if (key) archivedProgrammeKeys.add(norm(key));
+          });
+        }
+      });
+      const liveGroups = groups.filter(group => (
+        ![group.programmeId, group.programme].some(key => key && archivedProgrammeKeys.has(norm(key)))
+      ));
       // Every group stays reachable here, not just this module's own programme:
       // a live-session component is routinely shared across a duplicated
       // module living in a *different* programme/cohort (same Teams link, two
       // cohorts), and "Assigned groups" is exactly where that other group is
       // picked to place the shared copy. Own-programme groups are only
       // surfaced first for convenience.
-      const ownProgramme = groups.filter(group => norm(group.programmeId) === norm(workingModule?.programmeId) || norm(group.programme) === norm(workingModule?.programmeName));
+      const ownProgramme = liveGroups.filter(group => norm(group.programmeId) === norm(workingModule?.programmeId) || norm(group.programme) === norm(workingModule?.programmeName));
       const ownProgrammeIds = new Set(ownProgramme.map(group => group.id));
-      const ordered = [...ownProgramme, ...groups.filter(group => !ownProgrammeIds.has(group.id))];
+      const ordered = [...ownProgramme, ...liveGroups.filter(group => !ownProgrammeIds.has(group.id))];
       // A group's own `programme` name is blank on plenty of records — the raw
       // programmeId (e.g. "PROG-20260827123438706373") is meaningless to a
       // tutor, so resolve the readable name from the programme list instead,
@@ -527,7 +610,19 @@ export default function ModuleBuilder() {
       const resolveProgrammeName = (group: typeof groups[number]) => (
         group.programme || programmeNameByKey.get(norm(group.programmeId)) || group.programmeId || ''
       );
-      setComponentGroupOptions(ordered.map(group => ({ key: group.id, name: group.name, cohort: group.cohort, cohortId: group.cohortId, programmeId: group.programmeId, programme: resolveProgrammeName(group) })));
+      setComponentGroupOptions(ordered.map(group => ({
+        key: group.id,
+        name: group.name,
+        cohort: group.cohort,
+        cohortId: group.cohortId,
+        programmeId: group.programmeId,
+        programme: resolveProgrammeName(group),
+        moduleCount: moduleCountForGroup(modules, {
+          groupId: group.id,
+          groupName: group.name,
+          programmeId: group.programmeId,
+        }),
+      })));
     }).catch(() => {});
     return () => { active = false; };
   }, [workingModule?.programmeId, workingModule?.programmeName]);
@@ -545,8 +640,7 @@ export default function ModuleBuilder() {
     loadCurriculumScope()
       .then((scope) => {
         if (!active) return;
-        const cohorts = (scope as unknown as { cohorts?: CurriculumCohort[] }).cohorts || [];
-        setScopeCohorts(cohorts);
+        setScopeCohorts(scope.cohorts);
         setScopeGroups(scope.groups);
       })
       .catch(() => {})
@@ -561,16 +655,32 @@ export default function ModuleBuilder() {
       .filter(module => (
         !hiddenModuleIds.has(module.catalogueId)
         && moduleBelongsToVisibleProgramme(module, curriculumProgrammes)
-      ));
-  }, [modules, storageVersion, hiddenModuleIds, curriculumProgrammes]);
+      ))
+      .map(module => (module.catalogueId in learnerCountOverrides
+        ? { ...module, assignedLearnerCount: learnerCountOverrides[module.catalogueId] }
+        : module));
+  }, [modules, storageVersion, hiddenModuleIds, curriculumProgrammes, learnerCountOverrides]);
+
+  // A successful list read is the authority again, so the save-time figure is
+  // dropped. A failed one never replaces `modules`, which is what keeps the
+  // painted count on screen instead of reverting to the stale one.
+  useEffect(() => {
+    setLearnerCountOverrides(previous => (Object.keys(previous).length ? {} : previous));
+  }, [modules]);
 
   const programmeOptions = useMemo(() => {
     const byName = new Map<string, string>();
-    curriculumProgrammes.forEach(programme => {
-      const name = String(programme.name || programme.sourceId || programme.id || '').trim();
-      if (!name) return;
-      byName.set(normaliseDeepLinkValue(name) || name.toLowerCase(), name);
-    });
+    curriculumProgrammes
+      // `curriculumProgrammes` is fetched with visibility 'all' so archived
+      // programmes stay resolvable elsewhere (naming an already-archived
+      // module's programme) — but the filter itself should only ever offer
+      // programmes still open for delivery.
+      .filter(programme => !programme.isArchived && programme.status !== 'archived')
+      .forEach(programme => {
+        const name = String(programme.name || programme.sourceId || programme.id || '').trim();
+        if (!name) return;
+        byName.set(normaliseDeepLinkValue(name) || name.toLowerCase(), name);
+      });
     return ['All', ...Array.from(byName.values()).sort((a, b) => a.localeCompare(b))];
   }, [curriculumProgrammes]);
 
@@ -900,6 +1010,10 @@ export default function ModuleBuilder() {
    * cohorts and no modules report "no cohorts".
    */
   const cohortFilterOptions = useMemo(() => {
+    // The catalogue filter follows the delivery hierarchy. Showing every
+    // cohort before its programme is chosen makes it possible to assemble an
+    // impossible Programme / Cohort / Group combination.
+    if (programmeFilter === 'All') return [];
     const options = new Map<string, string>();
     scopeCohorts
       .filter(cohort => recordMatchesProgrammeFilter(cohort.programme, cohort.programmeId, programmeFilter, curriculumProgrammes))
@@ -918,6 +1032,9 @@ export default function ModuleBuilder() {
 
   /** The groups of the programme and cohort in the filter, on the same terms. */
   const groupFilterOptions = useMemo(() => {
+    // A group is always owned by one cohort, so it is not a meaningful filter
+    // until both of its parents have been selected.
+    if (programmeFilter === 'All' || !cohortFilter) return [];
     const options = new Map<string, string>();
     scopeGroups
       .filter(group => (
@@ -1059,7 +1176,11 @@ export default function ModuleBuilder() {
     await new Promise(resolve => window.setTimeout(resolve, 120));
   }, []);
 
-  const openModule = useCallback(async (module: ModuleCatalogueItem, openSettings = false) => {
+  const openModule = useCallback(async (
+    module: ModuleCatalogueItem,
+    openSettings = false,
+    historyMode: 'replace' | 'push' = 'replace',
+  ) => {
     const structureId = moduleStructureIdentifier(module);
     setOpeningModule({ title: module.title, mode: openSettings ? 'settings' : 'builder' });
     setOpeningModuleComplete(false);
@@ -1121,6 +1242,11 @@ export default function ModuleBuilder() {
       // the structure that was just read, so a save based on this copy is
       // accepted only while the module is still that copy.
       serverRevisionRef.current = next.structureRevision || '';
+      // This read IS the latest version, so any notice about one left over from
+      // the module before this has nothing left to announce. The live-sync
+      // cooldown is deliberately NOT armed here: the first write this workspace
+      // hears after opening is the one worth looking at immediately.
+      setRemoteUpdate(null);
       // Armed only for a module whose stored structure was actually read back.
       // Anything else is a fabricated shell -- see the guard above, which is the
       // same reason spelt out for the manual save.
@@ -1136,23 +1262,28 @@ export default function ModuleBuilder() {
       // had been authoring for an hour was shown a module list instead of their
       // module and read that as their work being gone.
       //
-      // `replace`, so opening a module is not a history step of its own: Back
-      // still means "the page I came from", which for most readers is the
-      // programme they clicked through from.
+      // A direct link and a newly created module replace their provisional
+      // address: Back should leave the workspace. A catalogue action is a real
+      // drill-in, though, so it pushes one entry and Back returns to the same
+      // filtered module list instead of skipping to the page before it.
       //
       // The ref is stamped here as well as in the deep-link effect below. It is
       // that effect's "this key is already dealt with" mark, and without it
       // closing the module -- which clears the param -- could be raced by the
       // effect re-reading the param that is still there and re-opening it.
       deepLinkedModuleRef.current = next.catalogueId || '';
+      pendingModuleNavigationRef.current = next.catalogueId || '';
       setSearchParams(previous => {
         const params = new URLSearchParams(previous);
         if (next.catalogueId) params.set('module', next.catalogueId);
         params.delete('moduleTitle');
         return params;
-      }, { replace: true });
+      }, { replace: historyMode === 'replace' });
       setWorkingModule(next);
       setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
+      setFocusedComponentId(deepLinkTarget.selection?.kind === 'component' && new URLSearchParams(window.location.search).get('focus') === 'component'
+        ? deepLinkTarget.selection.componentId
+        : '');
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
@@ -1217,6 +1348,49 @@ export default function ModuleBuilder() {
       setKsbMapLoadingId(null);
     }
   }, [workingModule]);
+
+  const openLearnerAction = useCallback(async (module: ModuleBuilderListItem) => {
+    const identifier = moduleLearnerIdentifier(module);
+    if (!identifier) {
+      setActionMessage(`Unable to open learner assignments for ${module.title}: no module identifier was returned.`);
+      return null;
+    }
+    const target: LearnerAssignmentTarget = { scope: 'module', id: identifier, name: module.title };
+    // The drawer reports back a count, not a module, and the card is keyed by
+    // catalogueId rather than by the assignment identifier.
+    learnerAssignmentModuleIdRef.current = module.catalogueId;
+    setActionMessage(null);
+    setActionMessageRetry(null);
+    try {
+      const directory = await fetchLearnerAssignments(target);
+      // The assignment directory is the membership authority. The impact
+      // endpoint adds OTJH/KSB progress, but may not return a newly/directly
+      // assigned learner that has no placement or activity to aggregate yet.
+      const assignedLearners: CurriculumProgrammeAssignedLearner[] = directory.learners
+        .filter(learner => learner.assigned)
+        .map(learner => ({
+          id: learner.id,
+          name: learner.name,
+          email: learner.email,
+          programme: learner.programme,
+          programmeStatus: learner.programmeStatus,
+          cohort: learner.cohort,
+          group: learner.group,
+          lifecycleStatus: learner.programmeStatus,
+        }));
+      const assignedCount = assignedLearners.length;
+      if (assignedCount === 0) {
+        setLearnerAssignmentTarget(target);
+        return 0;
+      }
+      const impact = await fetchCurriculumScopeLearnerKsbImpact('module', identifier, { learnerStatus: 'all' });
+      setLearnerProgress({ target, impact, assignedLearners });
+      return assignedCount;
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : `Unable to load learners for ${module.title}.`);
+      return null;
+    }
+  }, []);
 
   const openProgrammeKsbMap = useCallback(async () => {
     if (programmeFilter === 'All' || programmeKsbLoading) return;
@@ -1585,6 +1759,11 @@ export default function ModuleBuilder() {
         autoSaveArmedRef.current = false;
         setSaveFailure({ kind: 'conflict', message: err.message });
         setActionMessage(err.message);
+        // The refusal names the revision that is stored now, so the way out is
+        // offered here rather than several seconds later when the live sync
+        // gets to it: the banner's "Load their version" is what re-arms this
+        // workspace, and it is the same choice either route arrives at.
+        if (err.currentRevision) setRemoteUpdate({ revision: err.currentRevision });
         return null;
       }
       // `curriculumErrorMessage` unwraps the handler's own sentence -- the
@@ -1821,7 +2000,7 @@ export default function ModuleBuilder() {
     });
   };
 
-  const closeWorkingModule = () => {
+  const clearWorkingModule = useCallback(() => {
     savedModuleSnapshotRef.current = '';
     // Everything the save pipeline knows belonged to the module being left.
     // Carrying a revision or an armed auto-save into the next one would have it
@@ -1829,8 +2008,25 @@ export default function ModuleBuilder() {
     serverRevisionRef.current = '';
     autoSaveArmedRef.current = false;
     autoSaveAttemptRef.current = '';
+    // Announced about the module being left. Carrying it into the next one
+    // would report somebody else's write on a module it never happened to.
+    setRemoteUpdate(null);
+    liveSyncReadAtRef.current = 0;
     setSaveFailure(null);
     setSavingSnapshot('');
+    setWorkingModule(null);
+    setSelection(null);
+    setSettingsOpen(false);
+    setPreviewOpen(false);
+    setLessonPickerWeekId(null);
+    setNoticeAlert(null);
+    setActionMessage(null);
+    // Browser Forward must reload the module from the restored address.
+    deepLinkedModuleRef.current = '';
+  }, []);
+
+  const closeWorkingModule = () => {
+    clearWorkingModule();
     // Back out of the address too, or a reload from the catalogue would re-open
     // the module the reader just left. The week/component deep-link targets go
     // with it: they only mean anything inside the module that owns them.
@@ -1840,14 +2036,22 @@ export default function ModuleBuilder() {
         .forEach(key => params.delete(key));
       return params;
     }, { replace: true });
-    setWorkingModule(null);
-    setSelection(null);
-    setSettingsOpen(false);
-    setPreviewOpen(false);
-    setLessonPickerWeekId(null);
-    setNoticeAlert(null);
-    setActionMessage(null);
   };
+
+  // A catalogue click adds the editor to browser history. This route stays
+  // mounted after browser Back, so clear the editor when its catalogue URL
+  // returns instead of leaving the previous module on screen.
+  useEffect(() => {
+    const moduleTarget = ['module', 'moduleId', 'catalogueId', 'moduleTitle']
+      .map(key => searchParams.get(key) || '')
+      .find(Boolean) || '';
+    if (moduleTarget) {
+      pendingModuleNavigationRef.current = '';
+      return;
+    }
+    if (!workingModule || pendingModuleNavigationRef.current) return;
+    clearWorkingModule();
+  }, [clearWorkingModule, searchParams, workingModule]);
 
   const restoreSavedWorkingModule = useCallback(() => {
     if (!savedModuleSnapshotRef.current) return workingModule;
@@ -1880,38 +2084,173 @@ export default function ModuleBuilder() {
     setSelection(nextSelection);
   }, [workingModule]);
 
-  // The placement drawer PATCHes the name, dates, tutor and group straight to
-  // the store while the builder is holding its own copy of the module. Without
-  // this the workspace keeps showing the old placement and the next builder
-  // save writes that stale copy back over what the drawer just stored. Weeks
-  // and components are the builder's own, so work in progress is kept.
-  const syncWorkingModuleFromStore = useCallback(async () => {
+  /**
+   * Replace what this workspace holds with the module as it is stored now.
+   *
+   * The whole structure, not a merge: the weeks and components are the ones the
+   * other writer saved, and the revision that arrives with them is what makes
+   * the next save from here legal again. Only ever called with nothing unsaved
+   * to lose, or after the reader has chosen to let their edits go.
+   *
+   * Throws rather than returning quietly when the read fails, so a caller
+   * showing a confirmation keeps it open and says so instead of reporting a
+   * version it never loaded.
+   */
+  const adoptStoredModule = useCallback(async () => {
     const current = workingModule;
     if (!current) return;
     const structureId = moduleStructureIdentifier(current);
     if (!structureId) return;
-    // Fresh, not the shared two-minute cache: this runs because the drawer has
-    // just written, and a cached answer would hand back the pre-write module --
-    // together with the pre-write revision, which would then refuse the
-    // workspace's own next save as stale.
-    const remote = await loadModuleStructure(structureId, { skipCache: true }).catch(() => null);
-    if (!remote) return;
-    const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
-    const merged = {
+    liveSyncReadAtRef.current = Date.now();
+    // Fresh for the same reason opening a module is: this copy is the one the
+    // next save writes back in full, and a cached answer would put pre-write
+    // weeks into a workspace that then stores them.
+    const remote = await loadModuleStructure(structureId, { skipCache: true });
+    if (!remote) throw new Error('The saved version of this module could not be read.');
+    const stored = recalculateModule(getDefaultStructure({
       ...current,
       ...remote,
       sessionsNumber: remote.sessionsNumber || current.sessionsNumber,
       weeks: remote.weeks || current.weeks,
       sourceModule: current.sourceModule || remote.sourceModule,
       deliveryUsages: (remote as ModuleBuilderListItem).deliveryUsages || (current as ModuleBuilderListItem).deliveryUsages,
-    } as ModuleBuilderListItem;
-    const stored = recalculateModule(getDefaultStructure(merged));
+    } as ModuleBuilderListItem));
     savedModuleSnapshotRef.current = moduleSnapshot(stored);
-    serverRevisionRef.current = remote.structureRevision || '';
-    const next = dirty ? recalculateModule({ ...stored, weekStructure: current.weekStructure }) : stored;
-    setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? next : latest));
-    if (selection) applySelectionSafely(selection, next);
+    serverRevisionRef.current = stored.structureRevision || remote.structureRevision || '';
+    // The stored structure has been read back, which is the one condition that
+    // makes saving unprompted safe -- the same condition openModule arms on.
+    // It is also how a workspace that was disarmed by a conflict is allowed to
+    // save again.
+    autoSaveArmedRef.current = true;
+    setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? stored : latest));
+    if (selection) applySelectionSafely(selection, stored);
+    setRemoteUpdate(null);
+    // Nothing of the reader's is waiting any more, so a refusal from before
+    // this read is answered rather than left sitting on screen.
+    setSaveFailure(null);
   }, [applySelectionSafely, selection, workingModule]);
+
+  /**
+   * Read the stored revision, and say so if it is not the one this workspace is
+   * based on. Nothing the reader is holding is touched.
+   *
+   * Deliberately NOT paired with taking the remote revision: a workspace with
+   * unsaved weeks that adopts the stored fingerprint is a false valid state.
+   * Its next save then carries local content under a revision it never read,
+   * the guard has nothing left to refuse, and the other writer's work is
+   * replaced with no error raised anywhere. The local revision stays the local
+   * revision until the reader chooses to load the stored version, and the
+   * remote one is held separately, as an announcement.
+   */
+  const noteRemoteRevision = useCallback(async (structureId: string) => {
+    liveSyncReadAtRef.current = Date.now();
+    const remote = await loadModuleStructure(structureId, { skipCache: true }).catch(() => null);
+    const revision = remote?.structureRevision || '';
+    // The write was somewhere else in the curriculum: this module is still the
+    // one this workspace read, so there is nothing to tell the reader about.
+    if (!revision || revision === serverRevisionRef.current) return;
+    setRemoteUpdate(existing => (existing && existing.revision === revision ? existing : { revision }));
+  }, []);
+
+  /**
+   * The placement drawer PATCHes the name, dates, tutor and group straight to
+   * the store while the builder is holding its own copy of the module, so the
+   * workspace has to be told what was just written or it keeps showing the old
+   * placement and writes it back on its next save.
+   *
+   * Which it does depends on the same question everything else here turns on.
+   * Nothing unsaved: take the stored module whole -- content and revision
+   * together, from one read. Unsaved edits: keep every one of them and say the
+   * module moved, because a merge that kept local weeks while adopting the
+   * stored revision would hand this workspace a licence to overwrite the very
+   * write it was told about.
+   */
+  const syncWorkingModuleFromStore = useCallback(async () => {
+    const current = workingModule;
+    if (!current) return;
+    const structureId = moduleStructureIdentifier(current);
+    if (!structureId) return;
+    const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
+    if (!dirty) {
+      // A failed read leaves the workspace as it was; the drawer has still
+      // saved, and the banner or the next write says so.
+      await adoptStoredModule().catch(() => undefined);
+      return;
+    }
+    await noteRemoteRevision(structureId);
+  }, [adoptStoredModule, noteRemoteRevision, workingModule]);
+
+  /**
+   * What this workspace does when a write lands somewhere else -- another tab,
+   * another person, another machine.
+   *
+   * Nothing unsaved: take it. The reader is looking at a record rather than
+   * editing one, and a screen that quietly disagrees with the database is the
+   * whole complaint this answers.
+   *
+   * Unsaved edits: say so and change nothing. Their weeks and components stay
+   * exactly where they are -- adopting over them is the overwrite the save
+   * guard exists to prevent, and doing it silently would be worse than the
+   * stale screen was. The banner offers the two honest ways out.
+   */
+  const liveSyncWorkingModule = useCallback(async () => {
+    const current = workingModule;
+    // Nothing open: the catalogue behind this is the live surface.
+    if (!current) {
+      reload();
+      return;
+    }
+    const structureId = moduleStructureIdentifier(current);
+    if (!structureId) return;
+    // A save in flight is already deciding what this module is. Reading now
+    // would race its reply, and whichever landed second would win.
+    if (savingRef.current) return;
+    const sinceLastRead = Date.now() - liveSyncReadAtRef.current;
+    if (sinceLastRead < LIVE_SYNC_MIN_INTERVAL_MS) {
+      // Held back, not dropped. A colleague's only save of the hour landing a
+      // second after this workspace last looked would otherwise go unmentioned
+      // until something else happened to write.
+      if (!liveSyncPendingRef.current) {
+        liveSyncPendingRef.current = setTimeout(() => {
+          liveSyncPendingRef.current = null;
+          void liveSyncRef.current();
+        }, LIVE_SYNC_MIN_INTERVAL_MS - sinceLastRead);
+      }
+      return;
+    }
+    const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
+    if (!dirty) {
+      // A failed read leaves the workspace exactly as it was. The next write in
+      // the estate, or the reader coming back to the tab, asks again.
+      await adoptStoredModule().catch(() => undefined);
+      reload();
+      return;
+    }
+    await noteRemoteRevision(structureId);
+  }, [adoptStoredModule, noteRemoteRevision, reload, workingModule]);
+
+  liveSyncRef.current = liveSyncWorkingModule;
+  useEffect(() => () => {
+    if (liveSyncPendingRef.current) clearTimeout(liveSyncPendingRef.current);
+  }, []);
+
+  // Both triggers: a write heard while the tab is open, and the reader coming
+  // back to it. Held off while a module is still opening, because the copy it
+  // is about to install is the fresh one anyway.
+  useLiveRefresh(liveSyncWorkingModule, { enabled: !openingModule });
+
+  const loadRemoteModuleVersion = useCallback(async () => {
+    await showCurriculumConfirm({
+      title: 'Load the saved version?',
+      text: 'The edits you have made here since your last save are replaced by the version that was just saved by someone else. This cannot be undone.',
+      icon: 'warning',
+      confirmButtonText: 'Yes, load it',
+      cancelButtonText: 'Keep my edits',
+      successTitle: 'Saved version loaded',
+      successText: 'You are now editing the version that was just saved.',
+      onConfirm: async () => { await adoptStoredModule(); },
+    });
+  }, [adoptStoredModule]);
 
   const requestDirtyNavigation = useCallback(async (onNavigate: (moduleAfterDiscard?: ModuleCatalogueItem | null) => void | Promise<void>) => {
     if (saving) return;
@@ -1954,8 +2293,15 @@ export default function ModuleBuilder() {
   }, [hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
 
   const requestSelectionChange = useCallback((nextSelection: Selection) => {
+    setFocusedComponentId('');
     applySelectionSafely(nextSelection);
   }, [applySelectionSafely]);
+
+  useEffect(() => {
+    if (!focusedComponentId) return undefined;
+    const timer = window.setTimeout(() => setFocusedComponentId(''), 6000);
+    return () => window.clearTimeout(timer);
+  }, [focusedComponentId]);
 
   // The dates the weeks run on come from the module's own session plan, so
   // adding or removing a week has to re-read it: week N is session N, and the
@@ -2156,6 +2502,7 @@ export default function ModuleBuilder() {
           <WorkspaceHeader
             module={workingModule}
             programmeOptions={programmeOptions.filter(option => option !== 'All')}
+            hierarchy={workingHierarchy}
             scopeLock={workingModuleScopeLock}
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
@@ -2182,9 +2529,11 @@ export default function ModuleBuilder() {
 
           <div className="flex flex-wrap justify-end gap-2 py-3">
             <button type="button" onClick={() => setPreviewOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">Preview as learner</button>
+            <button type="button" onClick={() => setAiMaterialOpen(true)} className="rounded-lg border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700">AI Material</button>
             <button type="button" onClick={() => setSessionResultsOpen(true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white">Sessions & Recordings</button>
           </div>
           {sessionResultsOpen && <SessionResultsDialog moduleId={workingModule.catalogueId || workingModule.id} onClose={() => setSessionResultsOpen(false)} />}
+          {aiMaterialOpen && <AiMaterialModal moduleCatalogueId={workingModule.catalogueId || workingModule.id} moduleTitle={workingModule.title} onClose={() => setAiMaterialOpen(false)} />}
           {(saving || (actionMessage && !deletingModuleId)) && (
             <SaveStatusPanel
               saving={saving}
@@ -2192,6 +2541,35 @@ export default function ModuleBuilder() {
               error={actionMessage && !deletingModuleId ? actionMessage : null}
               module={workingModule}
             />
+          )}
+
+          {/* Only ever on screen with unsaved edits in the workspace: with
+              nothing to lose the new version is already installed and there is
+              nothing to ask. Neither button is destructive by accident --
+              loading confirms first, and keeping simply dismisses. */}
+          {remoteUpdate && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800">
+              <span className="flex items-center gap-2">
+                <AppIcon className="ri-refresh-line shrink-0 text-base"></AppIcon>
+                This module was saved somewhere else while you were editing. Your edits are still here - load their version to start from it, or keep editing.
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => { void loadRemoteModuleVersion(); }}
+                  className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-bold text-amber-800 hover:bg-amber-100"
+                >
+                  Load their version
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRemoteUpdate(null)}
+                  className="rounded-lg px-3 py-1.5 font-bold text-amber-700 hover:bg-amber-100"
+                >
+                  Keep editing
+                </button>
+              </span>
+            </div>
           )}
 
           {workingModuleProgrammeArchived && (
@@ -2219,6 +2597,7 @@ export default function ModuleBuilder() {
               onAddWeekFromTemplate={() => setWeekTemplateImportOpen(true)}
               onReuseComponents={weekId => setReusePickerWeekId(weekId)}
               onCreateTeamsMeeting={() => setModuleTeamsMeetingOpen(true)}
+              focusedComponentId={focusedComponentId}
               onAddWeek={() => {
                 const week = createEmptyWeek(workingModule.id, workingModule.weekStructure.length + 1);
                 updateWorkingModule(module => ({ ...module, weekStructure: [...module.weekStructure, week] }));
@@ -2253,7 +2632,13 @@ export default function ModuleBuilder() {
 
             <div className="min-w-0">
               {selectedComponent && selectedWeek ? (
-                <ModuleBuilderScrollArea className="h-[calc(100vh-140px)] min-h-[420px]" contentClassName="pr-2.5">
+                <ModuleBuilderScrollArea className={`h-[calc(100vh-140px)] min-h-[420px] ${focusedComponentId === selectedComponent.id ? 'rounded-xl ring-2 ring-primary-400 ring-offset-2 ring-offset-background-100' : ''}`} contentClassName="pr-2.5">
+                  {focusedComponentId === selectedComponent.id && (
+                    <div className="mb-3 flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-semibold text-primary-800" role="status">
+                      <AppIcon className="ri-focus-3-line shrink-0 text-primary-600" />
+                      This is the component you opened from Audit Trail.
+                    </div>
+                  )}
                   <WeekComponentEditor
                     component={selectedComponent}
                     onChange={updates => updateWorkingModule(module => {
@@ -2305,6 +2690,8 @@ export default function ModuleBuilder() {
               ) : selectedWeek ? (
                 <ModuleWeekPanel
                   week={selectedWeek}
+                  module={workingModule}
+                  groupOptions={componentGroupOptions}
                   onChange={updates => updateWorkingModule(module => ({
                     ...module,
                     weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? { ...week, ...updates } : week),
@@ -2397,7 +2784,9 @@ export default function ModuleBuilder() {
             await reload({ silent: true });
           }}
         />
-        {previewOpen && <LearnerPreview module={workingModule} initialComponentId={selectedComponent?.id} onClose={() => setPreviewOpen(false)} />}
+        {previewOpen && (auth.account?.role === 'admin'
+          ? <PersonalLearningEntry moduleId={workingModule.catalogueId} title={workingModule.title} unsaved={hasUnsavedWorkingModuleChanges} onClose={() => setPreviewOpen(false)} />
+          : <LearnerPreview module={workingModule} initialComponentId={selectedComponent?.id} onClose={() => setPreviewOpen(false)} />)}
         {sessionKsbMappingOpen && (
           <SessionKsbMappingModal
             module={workingModule}
@@ -2438,6 +2827,13 @@ export default function ModuleBuilder() {
           <TeamsMeetingModal
             module={workingModule}
             unsavedChanges={hasUnsavedWorkingModuleChanges}
+            onRestored={restored => {
+              if (restored.catalogueId !== workingModule.catalogueId) return;
+              const next = recalculateModule({ ...workingModule, ...restored, sourceModule: workingModule.sourceModule || restored.sourceModule });
+              savedModuleSnapshotRef.current = moduleSnapshot(next);
+              serverRevisionRef.current = restored.structureRevision || '';
+              setWorkingModule(next);
+            }}
             onClose={() => setModuleTeamsMeetingOpen(false)}
             onCreated={applyModuleTeamsSeries}
           />
@@ -2606,22 +3002,24 @@ export default function ModuleBuilder() {
                 aria-label="Cohort"
                 value={cohortFilter}
                 onChange={event => changeFilter(() => { setCohortFilter(event.target.value); setGroupFilter(''); })}
+                disabled={programmeFilter === 'All'}
                 className={FILTER_SELECT_CLASS}
               >
                 <option value="">{cohortFilterOptions.length
                   ? 'All cohorts'
-                  : programmeFilter === 'All' ? 'No cohorts' : 'No cohorts in this programme'}</option>
+                  : programmeFilter === 'All' ? 'Choose programme first' : 'No cohorts in this programme'}</option>
                 {cohortFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
               <select
                 aria-label="Group"
                 value={groupFilter}
                 onChange={event => changeFilter(() => setGroupFilter(event.target.value))}
+                disabled={programmeFilter === 'All' || !cohortFilter}
                 className={FILTER_SELECT_CLASS}
               >
                 <option value="">{groupFilterOptions.length
                   ? 'All groups'
-                  : cohortFilter ? 'No groups in this cohort' : 'No groups'}</option>
+                  : !cohortFilter ? 'Choose cohort first' : 'No groups in this cohort'}</option>
                 {groupFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
               <select
@@ -2662,6 +3060,7 @@ export default function ModuleBuilder() {
                     teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
+                    onLearners={() => openLearnerAction(module)}
                     onBuild={() => openModule(module)}
                     onSettings={() => openPlacementForm(module)}
                     onDuplicate={() => duplicateModule(module)}
@@ -2767,6 +3166,28 @@ export default function ModuleBuilder() {
             onClose={() => setProgrammeKsbMap(null)}
           />
         )}
+        <LearnerAssignmentDrawer
+          target={learnerAssignmentTarget}
+          onClose={() => setLearnerAssignmentTarget(null)}
+          onAssigned={result => {
+            const catalogueId = learnerAssignmentModuleIdRef.current;
+            setLearnerAssignmentTarget(null);
+            if (catalogueId) setLearnerCountOverrides(previous => ({ ...previous, [catalogueId]: result.learnerCount }));
+            void reload({ silent: true });
+          }}
+        />
+        {learnerProgress && (
+          <ModuleLearnerProgressDialog
+            moduleName={learnerProgress.target.name}
+            impact={learnerProgress.impact}
+            assignedLearners={learnerProgress.assignedLearners}
+            onClose={() => setLearnerProgress(null)}
+            onAssignMore={() => {
+              setLearnerProgress(null);
+              setLearnerAssignmentTarget(learnerProgress.target);
+            }}
+          />
+        )}
         {openingModule && (
           <OpeningModuleAlert
             title={openingModule.title}
@@ -2834,9 +3255,10 @@ function SaveStatusPanel({ saving, elapsedSeconds, error, module }: {
   );
 }
 
-function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
+function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
+  hierarchy: ModuleHierarchyInfo | null;
   ksbProfileOptions: Array<{ id: string; label: string }>;
   ksbProfileValue: string;
   scopeLock: ModuleScopeLock | null;
@@ -2903,6 +3325,24 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
             </select>
             {programmeLocked && <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked to programme KSB source</span>}
           </label>
+          <div className="block min-w-0">
+            <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Cohort</span>
+            {hierarchy?.cohort ? (
+              <a href={hierarchy.cohort.href} className="flex h-8 w-full items-center truncate rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-semibold text-foreground-700 hover:text-primary-600" title={hierarchy.cohort.label}>{hierarchy.cohort.label}</a>
+            ) : (
+              <div className="flex h-8 w-full items-center rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-semibold text-foreground-500">Unassigned</div>
+            )}
+            <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked from module delivery scope</span>
+          </div>
+          <div className="block min-w-0">
+            <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Group</span>
+            {hierarchy?.group ? (
+              <a href={hierarchy.group.href} className="flex h-8 w-full items-center truncate rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-semibold text-foreground-700 hover:text-primary-600" title={hierarchy.group.label}>{hierarchy.group.label}</a>
+            ) : (
+              <div className="flex h-8 w-full items-center rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-semibold text-foreground-500">Unassigned</div>
+            )}
+            <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked from module delivery scope</span>
+          </div>
       </div>
     </div>
   );
@@ -3013,7 +3453,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onReuseComponents, onCreateTeamsMeeting, pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onReuseComponents, onCreateTeamsMeeting, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -3034,6 +3474,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
    * first create is offered from inside the builder.
    */
   onCreateTeamsMeeting: () => void;
+  focusedComponentId?: string;
   pointsByType: Partial<Record<ModuleComponentType, number>>;
   /**
    * The module's flat dated plan. A week owns one slot per delivery day, so the
@@ -3091,6 +3532,15 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     if (run?.length) return run;
     return week.sessionDate ? [cleanText(week.sessionDate).slice(0, 10)] : [];
   };
+  const deliveryDays = Array.from(new Set([
+    ...(module.weeklySchedule || []).map(slot => cleanText(slot.day)),
+    ...cleanText(module.deliveryMetadata?.weekDays).split(',').map(day => day.trim()),
+  ].filter(Boolean))).join(', ');
+  const moduleStartDate = cleanText(module.startDate).slice(0, 10);
+  const moduleStartWeekday = moduleStartDate
+    ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${moduleStartDate}T12:00:00Z`))
+    : '';
+  const firstDeliveryDate = module.weekStructure.flatMap(sessionDatesOf).find(Boolean) || '';
 
   // The weeks, split into the months they run in. A module is authored week by
   // week but delivered and reported on by month, so the rail says which month
@@ -3215,6 +3665,17 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     };
   }, [expandedWeekIds.size, module.weekStructure.length, updateStructureScrollbar]);
 
+  useEffect(() => {
+    if (!focusedComponentId) return;
+    const focusedWeek = module.weekStructure.find(week => week.components.some(component => component.id === focusedComponentId));
+    if (!focusedWeek) return;
+    if (!expandedWeekIds.has(focusedWeek.id)) {
+      onExpandedWeekIdsChange(new Set([focusedWeek.id]));
+      return;
+    }
+    document.getElementById(`node-${focusedComponentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [expandedWeekIds, focusedComponentId, module.weekStructure, onExpandedWeekIdsChange]);
+
   return (
     <aside className="flex h-[calc(100vh-140px)] min-h-0 flex-col overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm xl:sticky xl:top-4">
       <div className="shrink-0 border-b border-background-200 bg-background-50 p-3">
@@ -3310,19 +3771,40 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           const monthId = monthGroupIdByWeekId.get(week.id);
           const monthCollapsed = Boolean(monthId && collapsedMonthIds.has(monthId));
           const weekHolidayNotices = holidayNoticesByWeekId.get(week.id) || [];
+          // A module can start part-way through a calendar week. If no delivery
+          // day falls in that short opening window, this week is intentionally
+          // undated rather than failed or unsaved.
+          const hasDeliveryDate = sessionDatesOf(week).length > 0;
           // A copied live session carries no meeting of its own, and nothing
           // about the row says so -- so the week says it, until it is booked.
           const unbookedCopiedSessions = week.components.filter(isUnbookedCopiedLiveSession).length;
           return (
             <Fragment key={week.id}>
-            {monthHeading && (
+            {monthHeading && (monthHeading.key ? (
               <div className="flex items-baseline justify-between gap-2 px-1 pb-0.5 pt-2 first:pt-0">
                 <p className="text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">{monthHeading.label}</p>
                 <p className="text-[10px] font-semibold text-foreground-400">
                   {monthHeading.rows} {monthHeading.rows === 1 ? 'week' : 'weeks'} · {monthHeading.otjh.toFixed(1)}h
                 </p>
               </div>
-            )}
+            ) : (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                  <AppIcon className="ri-calendar-close-line text-sm"></AppIcon>
+                  No delivery date in this calendar week
+                </p>
+                <p className="mt-1 text-[10px] leading-4 text-amber-800">
+                  {moduleStartDate && moduleStartWeekday && deliveryDays ? (
+                    <>
+                      This module starts on {moduleStartWeekday}, {formatDateLabel(moduleStartDate)}. Its delivery day{deliveryDays.includes(',') ? 's are' : ' is'} {deliveryDays}, which {deliveryDays.includes(',') ? 'do' : 'does'} not fall within this opening calendar week.
+                      {firstDeliveryDate && <> First delivery: {new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${firstDeliveryDate}T12:00:00Z`))}, {formatDateLabel(firstDeliveryDate)}.</>}
+                    </>
+                  ) : (
+                    <>This is not an unsaved week. No scheduled delivery day falls within this short start window, so the next week is shown under its delivery month.</>
+                  )}
+                </p>
+              </div>
+            ))}
             {monthCollapsed ? null : <div
               className={`relative overflow-visible rounded-xl border transition-smooth ${dragging ? 'border-primary-300 bg-background-50 shadow-lg ring-2 ring-primary-200' : active ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
             >
@@ -3361,6 +3843,12 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       <>
                         <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
                         <span className="truncate">{formatDateLabel(week.sessionDate)}</span>
+                      </>
+                    )}
+                    {!hasDeliveryDate && (
+                      <>
+                        <span className="h-1 w-1 rounded-full bg-amber-400"></span>
+                        <span className="font-semibold text-amber-700">No delivery date this week</span>
                       </>
                     )}
                   </p>
@@ -3421,6 +3909,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     weekId={week.id}
                     components={week.components}
                     selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
+                    focusedId={focusedComponentId}
                     onSelectId={componentId => { if (componentId) onSelectComponent(week.id, componentId); }}
                     onChange={next => onComponentsChange(week.id, next)}
                     pointsByType={pointsByType}
@@ -3794,8 +4283,10 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
 // different: it copies real authored components out of the library instead
 // of creating empty ones. The only saved-template control on this screen is
 // "From template" in the Course structure rail, which builds a whole new week.
-function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
+function ModuleWeekPanel({ week, module, groupOptions, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
   week: ModuleWeek;
+  module: ModuleCatalogueItem;
+  groupOptions: GroupOption[];
   onChange: (updates: Partial<ModuleWeek>) => void;
   onOpenSessionKsbMapping?: () => void;
   onAddLesson: () => void;
@@ -3836,6 +4327,114 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
         onChangeSummary={value => onChange({ summary: value })}
         onChangeLearningOutcomes={value => onChange({ learningOutcomes: value })}
       />
+
+      <WeekAssignedGroupsSection week={week} module={module} groupOptions={groupOptions} />
+    </section>
+  );
+}
+
+function WeekAssignedGroupsSection({ week, module, groupOptions }: {
+  week: ModuleWeek;
+  module: ModuleCatalogueItem;
+  groupOptions: GroupOption[];
+}) {
+  const normalise = (value?: string) => String(value || '').trim().toLowerCase();
+  const [programmeFilter, setProgrammeFilter] = useState('');
+  const [cohortFilter, setCohortFilter] = useState('');
+  const [placingGroupKey, setPlacingGroupKey] = useState('');
+  const [placedGroupKeys, setPlacedGroupKeys] = useState<string[]>([]);
+  const [savedPlacedGroupKeys, setSavedPlacedGroupKeys] = useState<string[]>([]);
+  const programmes = useMemo(() => Array.from(new Map(groupOptions
+    .map(option => [option.programmeId || option.programme || '', option.programme || option.programmeId || ''] as const)
+    .filter(([id]) => Boolean(id))).entries()).map(([id, name]) => ({ id, name })), [groupOptions]);
+  const cohorts = useMemo(() => Array.from(new Map(groupOptions
+    .filter(option => !programmeFilter || option.programmeId === programmeFilter || option.programme === programmeFilter)
+    .map(option => [option.cohortId || option.cohort || '', option.cohort || option.cohortId || ''] as const)
+    .filter(([id]) => Boolean(id))).entries()).map(([id, name]) => ({ id, name })), [groupOptions, programmeFilter]);
+  const visibleGroups = groupOptions.filter(option => (
+    (!programmeFilter || option.programmeId === programmeFilter || option.programme === programmeFilter)
+    && (!cohortFilter || option.cohortId === cohortFilter || option.cohort === cohortFilter)
+  ));
+  const sourceGroup = groupOptions.find(option => (
+    normalise(option.key) === normalise(module.groupId)
+    || normalise(option.name) === normalise(module.group)
+  ));
+  const placingGroup = groupOptions.find(option => option.key === placingGroupKey) || null;
+  const visibleGroupKey = visibleGroups.map(option => option.key).join('|');
+
+  // The destination stores an independent week with its source `copiedFromId`.
+  // Read that provenance once a programme/cohort is narrowed so the section
+  // still says Placed after this source module has been reopened.
+  useEffect(() => {
+    if (!programmeFilter || !cohortFilter || !visibleGroups.length) {
+      setSavedPlacedGroupKeys([]);
+      return undefined;
+    }
+    let active = true;
+    void loadCurriculumScope().then(async scope => {
+      const candidates = scope.modules
+        .map(module => ({
+          module,
+          group: visibleGroups.find(option => moduleMatchesGroup(module, {
+            groupId: option.key,
+            groupName: option.name,
+            programmeId: option.programmeId,
+          })),
+        }))
+        .filter((entry): entry is { module: typeof scope.modules[number]; group: GroupOption } => Boolean(entry.group));
+      const matches = await Promise.all(candidates.map(async entry => {
+        const id = entry.module.moduleCatalogueId || entry.module.catalogueId || entry.module.id;
+        const structure = id ? await loadModuleStructure(id) : null;
+        return structure?.weekStructure.some(candidate => candidate.copiedFromId === week.id) ? entry.group.key : '';
+      }));
+      if (active) setSavedPlacedGroupKeys(matches.filter(Boolean));
+    }).catch(() => { if (active) setSavedPlacedGroupKeys([]); });
+    return () => { active = false; };
+  }, [cohortFilter, programmeFilter, visibleGroupKey, week.id]);
+
+  return (
+    <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
+      <div className="flex items-start gap-2">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-group-line" /></span>
+        <div>
+          <h3 className="text-[13px] font-heading font-bold text-foreground-900">Assigned groups</h3>
+          <p className="mt-0.5 text-[11px] leading-4 text-foreground-500">Copy this complete week, including its outcomes, KSBs and components, into another delivery group.</p>
+        </div>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <select aria-label="Week assigned groups programme" value={programmeFilter} onChange={event => { setProgrammeFilter(event.target.value); setCohortFilter(''); }} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300">
+          <option value="">All programmes</option>
+          {programmes.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+        </select>
+        <select aria-label="Week assigned groups cohort" value={cohortFilter} onChange={event => setCohortFilter(event.target.value)} disabled={!programmeFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
+          <option value="">{programmeFilter ? 'All cohorts' : 'Choose programme first'}</option>
+          {cohorts.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+        </select>
+      </div>
+      {!programmeFilter ? <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-3 text-center text-[11px] font-semibold text-foreground-500">Choose a programme, then a cohort, to view delivery groups.</p>
+        : !cohortFilter ? <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-3 text-center text-[11px] font-semibold text-foreground-500">Choose a cohort to view delivery groups.</p>
+          : visibleGroups.length ? <div className="mt-3 grid gap-2 md:grid-cols-2">{visibleGroups.map(option => {
+            const ownGroup = option.key === sourceGroup?.key;
+            const placed = placedGroupKeys.includes(option.key) || savedPlacedGroupKeys.includes(option.key);
+            return <div key={option.key} className="flex items-start gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+              <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full ${ownGroup || placed ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-400'}`}><AppIcon className={ownGroup || placed ? 'ri-check-line text-[11px]' : 'ri-group-line text-[10px]'} /></span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-bold text-foreground-800">{option.name}</span><span className="block truncate text-[10px] text-foreground-400">{option.cohort || 'No cohort'}</span></span>
+              {ownGroup ? <span className="text-[10px] font-bold text-foreground-400">Current</span>
+                : placed ? <span className="text-[10px] font-bold text-emerald-700">Placed</span>
+                  : <button type="button" onClick={() => setPlacingGroupKey(option.key)} className="shrink-0 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-bold text-primary-700 hover:bg-primary-100">Place week</button>}
+            </div>;
+          })}</div> : <p className="mt-3 text-center text-[11px] text-foreground-400">No groups match this programme and cohort.</p>}
+      {placingGroup && <PlaceWeekDrawer
+        week={week}
+        groupId={placingGroup.key}
+        groupName={placingGroup.name}
+        programmeId={placingGroup.programmeId || module.programmeId}
+        onClose={() => setPlacingGroupKey('')}
+        onPlaced={() => {
+          setPlacedGroupKeys(current => current.includes(placingGroup.key) ? current : [...current, placingGroup.key]);
+          setPlacingGroupKey('');
+        }}
+      />}
     </section>
   );
 }
@@ -3977,6 +4576,14 @@ function TypeSpecificFields({
   const [uploadingResource, setUploadingResource] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
+  const [groupProgrammeFilter, setGroupProgrammeFilter] = useState('');
+  const [groupCohortFilter, setGroupCohortFilter] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
+  useEffect(() => {
+    setGroupProgrammeFilter('');
+    setGroupCohortFilter('');
+    setGroupFilter('');
+  }, [component.id, module.catalogueId]);
 
   const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment') => {
     setUploadingResource(true);
@@ -4018,6 +4625,19 @@ function TypeSpecificFields({
     const groupOptions = liveSessionGroupOptions(module);
     const selectedGroupKeys = getStringArray('selectedGroupKeys');
     const selectedGroupSet = new Set(selectedGroupKeys);
+    const programmeOptions = Array.from(new Map(groupOptions.map(option => [option.programmeId || option.programme, option.programme])).entries())
+      .filter(([value, label]) => value && label)
+      .map(([value, label]) => ({ value, label }));
+    const cohortOptions = Array.from(new Map(groupOptions
+      .filter(option => !groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter)
+      .map(option => [option.cohortId || option.cohort, option.cohort])).entries())
+      .filter(([value, label]) => value && label)
+      .map(([value, label]) => ({ value, label }));
+    const filteredGroupOptions = groupOptions.filter(option => (
+      (!groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter)
+      && (!groupCohortFilter || option.cohortId === groupCohortFilter || option.cohort === groupCohortFilter)
+      && (!groupFilter || option.key === groupFilter)
+    ));
     const updateSelectedGroups = (nextKeys: string[]) => {
       const nextSet = new Set(nextKeys);
       onSettingChange('selectedGroupKeys', nextKeys);
@@ -4040,9 +4660,9 @@ function TypeSpecificFields({
               <p className="text-[10px] font-bold uppercase text-foreground-400">Assigned groups</p>
               <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">{selectedGroupKeys.length} of {groupOptions.length} selected</p>
             </div>
-            {!!groupOptions.length && (
+            {!!groupOptions.length && groupProgrammeFilter && groupCohortFilter && (
               <div className="flex items-center gap-1.5">
-                <button type="button" onClick={() => updateSelectedGroups(groupOptions.map(option => option.key))} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
+                <button type="button" onClick={() => updateSelectedGroups(Array.from(new Set([...selectedGroupKeys, ...filteredGroupOptions.map(option => option.key)])))} disabled={!filteredGroupOptions.length} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200 disabled:opacity-40">
                   Select all
                 </button>
                 <button type="button" onClick={() => updateSelectedGroups([])} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
@@ -4052,8 +4672,26 @@ function TypeSpecificFields({
             )}
           </div>
           {groupOptions.length ? (
-            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-              {groupOptions.map(option => (
+            <>
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                <select aria-label="Assigned groups programme" value={groupProgrammeFilter} onChange={event => { setGroupProgrammeFilter(event.target.value); setGroupCohortFilter(''); setGroupFilter(''); }} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300">
+                  <option value="">Select a programme</option>
+                  {programmeOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <select aria-label="Assigned groups cohort" value={groupCohortFilter} onChange={event => { setGroupCohortFilter(event.target.value); setGroupFilter(''); }} disabled={!groupProgrammeFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
+                  <option value="">{groupProgrammeFilter ? 'Select a cohort' : 'Choose programme first'}</option>
+                  {cohortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <select aria-label="Assigned groups group" value={groupFilter} onChange={event => setGroupFilter(event.target.value)} disabled={!groupCohortFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
+                  <option value="">{groupCohortFilter ? 'All groups in cohort' : 'Choose cohort first'}</option>
+                  {groupOptions.filter(option => (!groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter) && (!groupCohortFilter || option.cohortId === groupCohortFilter || option.cohort === groupCohortFilter)).map(option => <option key={option.key} value={option.key}>{option.group}</option>)}
+                </select>
+              </div>
+              {!groupProgrammeFilter || !groupCohortFilter ? (
+                <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">Choose a programme, then a cohort, to view delivery groups.</p>
+              ) : (
+              <div className="mt-3 grid max-h-64 grid-cols-1 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+              {filteredGroupOptions.map(option => (
                 <label key={option.key} className={`flex min-h-10 items-start gap-2 rounded-lg border px-3 py-2 transition-smooth ${selectedGroupSet.has(option.key) ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-100/50 text-foreground-700 hover:border-primary-200'}`}>
                   <input
                     type="checkbox"
@@ -4067,7 +4705,10 @@ function TypeSpecificFields({
                   </span>
                 </label>
               ))}
-            </div>
+              {!filteredGroupOptions.length && <p className="col-span-full rounded-lg border border-dashed border-background-300 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">No groups match these filters.</p>}
+            </div>)
+            }
+            </>
           ) : (
             <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">
               No delivery groups are linked to this module yet.
@@ -4108,10 +4749,15 @@ function TypeSpecificFields({
           <TeamsMeetingModal
             component={component}
             module={module}
+            onRestored={restored => {
+              const saved = restored.weekStructure.flatMap(item => item.components).find(item => item.id === component.id);
+              if (saved) onChange({ settings: { ...component.settings, ...saved.settings } });
+            }}
             onClose={() => setTeamsMeetingOpen(false)}
             onCreated={(result, input) => {
               const meeting = result.meeting;
               onSettingChange('liveSessionUrl', meeting.joinUrl || meeting.webLink);
+              onSettingChange('teamsMeetingUrl', meeting.joinUrl || meeting.webLink);
               onSettingChange('teamsCalendarSeries', JSON.stringify(meeting.calendarSeries || []));
               onSettingChange('teamsOnlineMeetingId', meeting.onlineMeetingId);
               onSettingChange('teamsEventId', meeting.eventId);
@@ -6390,7 +7036,7 @@ function ArchivedModulesPanel({ records, loading, error, busyId, onRestore, onDe
   onRestore: (module: CurriculumArchivedModule) => void;
   onDelete: (module: CurriculumArchivedModule) => void;
 }) {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get('archiveModule') || '');
   const [programmeFilter, setProgrammeFilter] = useState('All');
 
   const programmeOptions = useMemo(() => {
@@ -6554,6 +7200,7 @@ function ModuleCatalogueCard({
   teamsSummary,
   onKsbMap,
   ksbMapLoading,
+  onLearners,
   onBuild,
   onSettings,
   onDuplicate,
@@ -6563,6 +7210,7 @@ function ModuleCatalogueCard({
   teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
+  onLearners: () => Promise<number | null>;
   onBuild: () => void;
   onSettings: () => void;
   onDuplicate: () => void;
@@ -6581,6 +7229,13 @@ function ModuleCatalogueCard({
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
   const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
+  // Seeded from the bulk overview count so the badge shows without a click;
+  // a click still refreshes it with the freshest number as the dialog opens.
+  const [assignedLearnerCount, setAssignedLearnerCount] = useState<number | null>(module.assignedLearnerCount ?? null);
+  const [learnersLoading, setLearnersLoading] = useState(false);
+  // The card instance survives a list reload (same key), so a fresh overview
+  // count has to be pushed in rather than only read once at mount.
+  useEffect(() => { setAssignedLearnerCount(module.assignedLearnerCount ?? null); }, [module.assignedLearnerCount]);
   // Legacy fallbacks retained by the merge were:
   // weekCount = module.weekStructure.length || module.weeks || 0
 
@@ -6614,6 +7269,26 @@ function ModuleCatalogueCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+          <button
+            type="button"
+            onClick={async () => {
+              if (learnersLoading) return;
+              setLearnersLoading(true);
+              try {
+                const count = await onLearners();
+                if (count !== null) setAssignedLearnerCount(count);
+              } finally {
+                setLearnersLoading(false);
+              }
+            }}
+            disabled={learnersLoading}
+            aria-busy={learnersLoading}
+            title={assignedLearnerCount === 0 ? 'Assign learners to this module' : assignedLearnerCount === null ? 'Assign learners or view learner progress' : 'View assigned learners and their progress'}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
+          >
+            <AppIcon name={learnersLoading ? 'ri-loader-4-line' : assignedLearnerCount ? 'ri-group-line' : 'ri-user-add-line'} className={learnersLoading ? 'animate-spin' : ''} size={15}></AppIcon>
+            {learnersLoading ? 'Loading learners...' : assignedLearnerCount === 0 ? 'Assign learners' : assignedLearnerCount === null ? 'Learners' : `Learners (${assignedLearnerCount})`}
+          </button>
           {primaryDeliveryHref && (
             <Link
               to={primaryDeliveryHref}
@@ -7561,13 +8236,15 @@ function liveSessionGroupOptions(module: ModuleCatalogueItem) {
     .map(usage => {
       const group = cleanModuleMeta(usage.group);
       if (!group) return null;
+      const programme = cleanModuleMeta(usage.programme);
+      const programmeId = cleanModuleMeta(usage.programmeId);
       const cohort = cleanModuleMeta(usage.cohort);
       const groupId = cleanModuleMeta(usage.groupId);
       const cohortId = cleanModuleMeta(usage.cohortId);
       const key = groupId || [cohortId || cohort, group].filter(Boolean).join('::') || group;
-      return { key, group, cohort, groupId, cohortId };
+      return { key, group, cohort, groupId, cohortId, programme, programmeId };
     })
-    .filter((option): option is { key: string; group: string; cohort: string; groupId: string; cohortId: string } => Boolean(option?.key && option.group))
+    .filter((option): option is { key: string; group: string; cohort: string; groupId: string; cohortId: string; programme: string; programmeId: string } => Boolean(option?.key && option.group))
     .filter(option => {
       const uniqueKey = normaliseQuizText(option.key);
       if (seen.has(uniqueKey)) return false;
@@ -7814,6 +8491,10 @@ function cleanModuleMeta(value?: string) {
   const text = String(value || '').trim();
   if (!text || ['unassigned cohort', 'default group', 'unassigned'].includes(text.toLowerCase())) return '';
   return text;
+}
+
+function moduleLearnerIdentifier(module: Pick<ModuleCatalogueItem, 'catalogueId' | 'id' | 'sourceModule'>) {
+  return cleanModuleMeta(module.catalogueId || module.sourceModule?.moduleCatalogueId || module.sourceModule?.moduleId || module.id);
 }
 
 function IconButton({ label, icon, onClick, tone = 'default' }: { label: string; icon: string; onClick: () => void; tone?: 'default' | 'danger' }) {

@@ -2,8 +2,8 @@ import { readLearnerJson, invalidateLearnerReads } from '@/api/learnerRead';
 import { coachViewAs } from '@/lib/coachViewAs';
 import type { ActivityContent, JournalSummary, MonthDetail, MonthState, SignatureCaptureMethod } from '@/features/old-otjh/api';
 
-export type LogMonth = MonthState & { source: 'legacy' | 'lms'; is_open?: boolean };
-export type LogDetail = MonthDetail & { source: 'legacy' | 'lms'; is_open?: boolean };
+export type LogMonth = MonthState & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null };
+export type LogDetail = MonthDetail & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null; demo_only?: boolean };
 export type LogSummary = Omit<JournalSummary, 'months'> & {
   months: LogMonth[]; total_months: number; completed_months: number; read_only: boolean; csrf_token: string;
 };
@@ -21,7 +21,8 @@ function url(path: string, perspective: LogPerspective) {
 }
 const read = <T,>(path: string, signal?: AbortSignal, perspective: LogPerspective = 'coach') => readLearnerJson<T>(url(path, perspective), { signal, ttlMs: 0 });
 export const getLogSummary = (id: string, signal?: AbortSignal, perspective: LogPerspective = 'coach') => read<LogSummary>(`${id}/`, signal, perspective);
-export const getLogMonth = (id: string, month: string, signal?: AbortSignal, perspective: LogPerspective = 'coach') => read<LogDetail>(`${id}/${month}/`, signal, perspective);
+export const getLogMonth = (id: string, month: string, signal?: AbortSignal, perspective: LogPerspective = 'coach', demo = false) =>
+  read<LogDetail>(`${id}/${month}/${demo ? '?demo=1' : ''}`, signal, perspective);
 export async function getLogContent(id: string, month: string, rowId: number, perspective: LogPerspective = 'coach') {
   const content = await read<ActivityContent>(`${id}/${month}/activities/${rowId}/`, undefined, perspective);
   return { ...content, parts: content.parts.map(part => ({ ...part,

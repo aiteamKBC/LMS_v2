@@ -1,7 +1,9 @@
 from .coach_availability import coach_available_slots, case_owner_available_slots
 from . import presentation_design
+from . import personal_learning
 from . import learner_import
 from . import monthly_reflection_ai
+from .assignment_ai_check import assignment_ai_check
 from . import ksb_generation
 from django.urls import path
 from . import monthly_logs
@@ -16,12 +18,15 @@ from .attendance_mode import attendance_mode, review_attendance_mode
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
-from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path('personal-learning/courses/', personal_learning.courses),
+    path('personal-learning/verify/<uuid:token>/', personal_learning.verify_certificate),
+    path('personal-learning/<str:identity>/request/', personal_learning.learner_request),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/join/', session_results.learner_join),
     path('session-catchup/<str:kind>/<int:learner_id>/', link_catchup),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/', session_results.learner_results),
@@ -144,6 +149,11 @@ urlpatterns = [
     path("subject-covers/<int:pk>/", student_activity.subject_covers, name="subject-covers"),
     path("subject-cover/<str:subject_ref>/", student_activity.upload_subject_cover, name="subject-cover-upload"),
     path("training-plan/<str:kind>/<int:pk>/", training_plan_view.training_plan, name="training-plan"),
+    # The free courses assigned to this learner, each with its authored
+    # week/activity tree. Read-only; no hours/KSBs/progress (see free_courses_view).
+    path("free-courses/<str:kind>/<int:pk>/", free_courses_view.free_courses, name="learner-free-courses"),
+    path("free-courses/<str:kind>/<int:pk>/complete/", free_courses_view.complete_free_course_activity, name="learner-free-course-complete"),
+    path("free-courses/<str:kind>/<int:pk>/quiz/<str:component_id>/submit/", free_courses_view.submit_free_course_quiz, name="learner-free-course-quiz-submit"),
     path("training-plan-dashboard/<str:kind>/<int:pk>/", training_plan_dashboard.training_plan_dashboard, name="training-plan-dashboard"),
     path("certificates/verify/<uuid:token>/", certificates.verify_certificate, name="learner-certificate-verify"),
     path("certificates/<str:kind>/<int:pk>/modules/<str:module_ref>/", certificates.learner_module_certificate_status, name="learner-module-certificate-status"),
@@ -193,6 +203,7 @@ urlpatterns = [
     ),
     path("monthly-reports/<str:kind>/<int:pk>/", monthly_reports.monthly_reports, name="learner-monthly-reports"),
     path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
+    path("reflection/assignment/ai-check/", assignment_ai_check, name="monthly-assignment-ai-check"),
     path("reflection/assignment/legacy-document/<int:evidence_id>/", legacy_assignments.open_legacy_assignment_document, name="legacy-assignment-document"),
     path("reflection/assignment/presentation-design/", presentation_design.upload_design, name="presentation-design"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),

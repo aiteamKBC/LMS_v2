@@ -4,6 +4,7 @@ import {
   formatCalendarDateTime,
   getCalendarTimeZone,
   parseUtcInstant,
+  utcIsoToCalendarParts,
   zonedNaiveToUtcIso,
   type TeamsMeetingInput,
 } from '../module-builder/moduleAuthoringData';
@@ -16,7 +17,7 @@ import {
   type HolidayShiftPlan,
 } from '../shared/entities/sessionShiftPreview';
 import { FormField, SelectControl, TextAreaControl, TextControl } from '../shared/entities/ui';
-import { calendarInputError, normalizedClock, clockLabel } from './calendarTime';
+import { calendarInputError, normalizedClock, clockLabel, durationLabel, reviewDateLabel } from './calendarTime';
 
 // ============================================================================
 // The one create form for a module's Teams calendar.
@@ -54,6 +55,11 @@ export function minuteKey(value: unknown): string {
  * the whole curriculum's session collection back to find one module's.
  */
 export interface TeamsPlannedSession {
+  /** Existing bookings retain their exact instant, number and elapsed duration. */
+  startDateTimeUtc?: string;
+  sessionNumber?: number;
+  durationMinutes?: number;
+  timeZone?: string;
   /** `YYYY-MM-DD` in the business zone. */
   date: string;
   startTime: string;
@@ -62,6 +68,8 @@ export interface TeamsPlannedSession {
   skippedHolidays?: string[];
   /** The live-session component this date belongs to, when the caller knows it. */
   componentId?: string;
+  /** Display-only title from the matched live-session component. */
+  componentTitle?: string;
 }
 
 /** `YYYY-MM-DDTHH:mm` for a stored session — the wall clock the group meets on. */
@@ -101,8 +109,8 @@ export function naiveLocalFromUtc(value: unknown, timeZone = getCalendarTimeZone
 }
 
 /** A date and time as the Microsoft calendar shows it, not as this reader's PC does. */
-export const calendarLabel = (value: string) => {
-  const [date, time] = formatCalendarDateTime(value).split(', ');
+export const calendarLabel = (value: string, timeZone = getCalendarTimeZone()) => {
+  const [date, time] = formatCalendarDateTime(value, timeZone).split(', ');
   return time ? `${date}, ${clockLabel(time)}` : date;
 };
 
@@ -181,6 +189,7 @@ function HolidayWarningNote({ plan }: { plan: HolidayShiftPlan }) {
  * copy of that page.
  */
 export interface TeamsSchedulePreviewRow {
+  timeZone?: string;
   name: string;
   sessions: TeamsPlannedSession[];
   /** The module's own session dates, as the UTC instants Teams would hold. */
@@ -190,6 +199,89 @@ export interface TeamsSchedulePreviewRow {
   durationMinutes: number;
   /** Present once the module has a Teams calendar; only its existence matters here. */
   summary?: unknown;
+  /**
+   * The weekly slot the module's group runs to, when the caller knows it.
+   *
+   * The length of a session is the group's to state -- "Friday 12:00 PM to 2:00
+   * PM" is two hours -- and a module inherits it. It is shown here so the reader
+   * can see where 60 or 120 minutes came from, and so a session whose stored
+   * clock no longer agrees with its group is visible before the invitations go
+   * out. Optional: the Module Builder door has the group's name but not its
+   * times, and an absent pattern says nothing rather than guessing one.
+   */
+  groupPattern?: GroupDeliveryPattern;
+}
+
+/** A group's weekly slot: the day it meets on and the clock it occupies. */
+export interface GroupDeliveryPattern {
+  /** The group's own name, so the line can say who it is about. */
+  name: string;
+  /** "Thursday" or "Monday, Wednesday" -- empty when the group names no day. */
+  days: string;
+  /** `HH:MM`, normalised. Empty when the group has no readable time. */
+  startTime: string;
+  endTime: string;
+  /** The span between them, or 0 when either is missing. */
+  durationMinutes: number;
+}
+
+/**
+ * How long Create will book every session for, or 0 when each keeps its own.
+ *
+ * The Duration field is an override, not a display: leaving it on "Use
+ * scheduled duration for each session" sends each session's own length. Both
+ * the preview and the payload read it from here so the dates on screen are the
+ * dates that get booked.
+ */
+function overrideDurationMinutes(form: TeamsCalendarForm, row: { durationMinutes: number }): number {
+  if (!form.durationMinutes) return 0;
+  return Math.max(15, Number(form.durationMinutes) || row.durationMinutes || DEFAULT_DURATION_MINUTES);
+}
+
+/**
+ * Where the session length on these rows came from.
+ *
+ * The group owns the weekly slot, so it owns the length: a group that meets
+ * Friday 12:00 PM to 2:00 PM delivers two-hour sessions, and a module under it
+ * inherits that unless one of its own sessions was saved with a different clock.
+ * This says the group's slot out loud and counts the sessions that disagree with
+ * it, because a list of 60s with a single 120 in the middle is otherwise
+ * unexplainable from this screen. It reports; it never rewrites a stored time.
+ */
+function GroupPatternNote({ pattern, lengths, overrideDuration }: {
+  pattern?: GroupDeliveryPattern;
+  lengths: number[];
+  overrideDuration: number;
+}) {
+  if (!pattern) return null;
+  const slot = pattern.startTime && pattern.endTime
+    ? `${clockLabel(pattern.startTime)} - ${clockLabel(pattern.endTime)}`
+    : '';
+  const differing = pattern.durationMinutes && !overrideDuration
+    ? lengths.filter(value => value !== pattern.durationMinutes).length
+    : 0;
+  return (
+    <div className="border-b border-background-200 bg-background-100/40 px-3 py-2.5 text-[11px] leading-relaxed text-foreground-600">
+      <p>
+        <span className="font-bold text-foreground-700">{pattern.name}</span>
+        {pattern.days ? ` delivers ${pattern.days}` : ' has no delivery day set'}
+        {slot ? `, ${slot}` : ', and no session times'}
+        {pattern.durationMinutes ? ` — ${durationLabel(pattern.durationMinutes)} a session.` : '.'}
+      </p>
+      {Boolean(differing) && (
+        <p className="mt-1 font-semibold text-amber-700">
+          {differing === 1 ? '1 session below keeps' : `${differing} sessions below keep`} a different length.
+          Each is booked at its own stored time — correct those on the module, not here.
+        </p>
+      )}
+      {Boolean(overrideDuration) && (
+        <p className="mt-1 font-semibold text-amber-700">
+          Duration is set to {durationLabel(overrideDuration)}, so every session below is booked at that
+          length whatever the module stored.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function ModuleSessionSchedulePreview({
@@ -199,6 +291,8 @@ export function ModuleSessionSchedulePreview({
   holidayLabelFor,
   renderActions,
   renderFacts,
+  overrideDuration = 0,
+  showAlternateTimeZones = true,
 }: {
   row: TeamsSchedulePreviewRow;
   title?: string;
@@ -208,6 +302,15 @@ export function ModuleSessionSchedulePreview({
   renderActions?: (index: number, durationMinutes: number) => ReactNode;
   /** What one meeting left behind — attendance, transcript, recording. */
   renderFacts?: (index: number, durationMinutes: number) => ReactNode;
+  /**
+   * One length for every session, when the form is overriding them.
+   *
+   * The preview is a promise about what will be booked, so an override has to
+   * be visible on the rows it changes. Without it the list went on showing each
+   * session's stored length while Create sent a different one.
+   */
+  overrideDuration?: number;
+  showAlternateTimeZones?: boolean;
 }) {
   const plan = buildHolidayShiftPlan(row.sessions, holidayLabelFor);
   const hasCalendar = Boolean(row.summary);
@@ -220,23 +323,28 @@ export function ModuleSessionSchedulePreview({
   const occurrences = sessionRows.map((session, index) => {
     const teamsUtc = calendarDates?.[index] || row.teamsStarts[index] || '';
     const plannedUtc = session
-      ? row.plannedStarts[index] || zonedNaiveToUtcIso(sessionNaiveLocal(session))
+      ? row.plannedStarts[index] || zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || row.timeZone)
       : '';
-    const durationMinutes = session
-      ? Math.max(15, minutesBetween(session.startTime, session.endTime) || row.durationMinutes)
-      : row.durationMinutes;
+    const durationMinutes = overrideDuration || (session
+      ? session.durationMinutes || Math.max(15, minutesBetween(session.startTime, session.endTime) || row.durationMinutes)
+      : row.durationMinutes);
     const gap = teamsGapNote(plannedUtc, teamsUtc, hasCalendar);
     const facts = renderFacts?.(index, durationMinutes);
     return {
       session,
+      name: session?.componentTitle,
       plannedUtc: plannedUtc || teamsUtc,
       teamsUtc,
       durationMinutes,
-      shift: plan.shifts[index],
+      shift: plan.shifts[index] && { ...plan.shifts[index], sessionNumber: session?.sessionNumber ?? plan.shifts[index].sessionNumber },
       matches: gap.matches,
       actions: renderActions?.(index, durationMinutes),
-      extra: gap.note || facts || !session ? (
+      extra: (showAlternateTimeZones || !session || facts || gap.note) ? (
         <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {showAlternateTimeZones && <>
+            <span>Egypt: {reviewDateLabel(plannedUtc || teamsUtc, 'Africa/Cairo')}</span>
+            <span>England: {reviewDateLabel(plannedUtc || teamsUtc, 'Europe/London')}</span>
+          </>}
           {!session && <span className="font-semibold text-amber-700">Held on Teams, but the module has no session on this date.</span>}
           {facts}
           {gap.note && <span className="font-semibold text-amber-700">{gap.note}</span>}
@@ -248,6 +356,20 @@ export function ModuleSessionSchedulePreview({
   // repeated down twenty rows is read as decoration, not as a fact.
   const durations = Array.from(new Set(occurrences.map(item => item.durationMinutes)));
   const uniformDuration = durations.length === 1 ? durations[0] : 0;
+  // The compact modal states one clock pair, from the soonest occurrence --
+  // not every distinct pairing a long module can pick up from genuinely
+  // different weekly slots or daylight-saving drift between the two zones.
+  const countryTimes = showAlternateTimeZones ? [] : (() => {
+    const first = occurrences.find(item => {
+      const egypt = utcIsoToCalendarParts(item.plannedUtc, 'Africa/Cairo');
+      const england = utcIsoToCalendarParts(item.plannedUtc, 'Europe/London');
+      return Boolean(egypt.time && england.time);
+    });
+    if (!first) return [];
+    const egypt = utcIsoToCalendarParts(first.plannedUtc, 'Africa/Cairo');
+    const england = utcIsoToCalendarParts(first.plannedUtc, 'Europe/London');
+    return [`Egypt: ${clockLabel(egypt.time)} · England: ${clockLabel(england.time)}${england.date < egypt.date ? ' (previous day)' : ''}`];
+  })();
 
   return (
     <div className="overflow-hidden rounded-xl border border-background-200 bg-background-50">
@@ -259,13 +381,19 @@ export function ModuleSessionSchedulePreview({
             {row.name}
           </p>
         </div>
-        <div className="flex flex-wrap gap-1.5 text-[10px] font-bold uppercase tracking-wide">
+        <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide">
           <span className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 text-foreground-600">
             {occurrences.length} session{occurrences.length === 1 ? '' : 's'}
           </span>
           {Boolean(uniformDuration) && (
             <span className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 text-foreground-600">
               {uniformDuration} min each
+            </span>
+          )}
+          {countryTimes.length > 0 && (
+            <span role="note" aria-label="Session start times in Egypt and England"
+              className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 normal-case text-foreground-600">
+              {countryTimes.map(label => <span key={label}>{label}</span>)}
             </span>
           )}
           {/* Counts the dates a holiday lands on, not dates a holiday moved:
@@ -278,13 +406,19 @@ export function ModuleSessionSchedulePreview({
           </span>
         </div>
       </div>
+      <GroupPatternNote
+        pattern={row.groupPattern}
+        lengths={occurrences.map(item => item.durationMinutes)}
+        overrideDuration={overrideDuration}
+      />
       <HolidayWarningNote plan={plan} />
       {occurrences.length ? (
         <>
           <CompactSchedulePreview
             occurrences={occurrences}
             showDuration={!uniformDuration}
-            formatLabel={(plannedUtc, date) => calendarLabel(plannedUtc || date)}
+            showSessionNumbers={false}
+            formatLabel={(plannedUtc, date) => calendarLabel(plannedUtc || date, row.timeZone)}
           />
           {/* A note about a pending change is only useful next to the thing
               that makes it happen. */}
@@ -317,6 +451,7 @@ export function ModuleSessionSchedulePreview({
 
 /** Everything the create form holds, and nothing a caller has to reproduce. */
 export interface TeamsCalendarForm {
+  scheduleTimeZone?: 'Africa/Cairo' | 'Europe/London';
   seriesMode?: 'auto' | 'shared' | 'per_day';
   title: string;
   organizerEmail: string;
@@ -333,6 +468,7 @@ export interface TeamsCalendarForm {
 
 export function emptyTeamsCalendarForm(): TeamsCalendarForm {
   return {
+    scheduleTimeZone: 'Africa/Cairo',
     title: '',
     organizerEmail: '',
     attendees: '',
@@ -354,11 +490,11 @@ export interface TeamsCalendarTarget extends TeamsSchedulePreviewRow {
 }
 
 /** The module's own session dates, in the shape the Teams endpoints take. */
-export function teamsCalendarOccurrences(row: TeamsCalendarTarget) {
+export function teamsCalendarOccurrences(row: TeamsCalendarTarget, timeZone?: string) {
   return row.sessions.map((session, index) => ({
-    sessionNumber: index + 1,
-    startDateTimeUtc: zonedNaiveToUtcIso(sessionNaiveLocal(session)),
-    durationMinutes: Math.max(15, minutesBetween(session.startTime, session.endTime) || row.durationMinutes),
+    sessionNumber: session.sessionNumber ?? index + 1,
+    startDateTimeUtc: session.startDateTimeUtc || zonedNaiveToUtcIso(sessionNaiveLocal(session), timeZone || session.timeZone || row.timeZone),
+    durationMinutes: session.durationMinutes || Math.max(15, minutesBetween(session.startTime, session.endTime) || row.durationMinutes),
   }));
 }
 
@@ -374,8 +510,12 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
   if (invalid) throw new Error(invalid);
   const meetingTitle = cleanText(row.name) || 'Live session';
   const duration = Math.max(15, Number(form.durationMinutes) || row.durationMinutes || DEFAULT_DURATION_MINUTES);
-  const occurrences = teamsCalendarOccurrences(row).map(occurrence => form.durationMinutes ? { ...occurrence, durationMinutes: duration } : occurrence);
+  // Read through the same helper the preview reads, so the lengths on screen
+  // are the lengths that get booked.
+  const override = overrideDurationMinutes(form, row);
+  const occurrences = teamsCalendarOccurrences(row, form.scheduleTimeZone).map(occurrence => (override ? { ...occurrence, durationMinutes: override } : occurrence));
   return {
+    ...(form.scheduleTimeZone ? { scheduleTimeZone: form.scheduleTimeZone } : {}),
     title: meetingTitle,
     organizerEmail: form.organizerEmail.trim(),
     attendees: emailList(form.attendees),
@@ -415,8 +555,8 @@ const DURATION_OPTIONS = [30, 45, 60, 90, 120, 180];
  * The standard lengths plus whatever the group was actually created with, so a
  * non-standard session duration still shows its own value rather than blank.
  */
-function durationOptions(picked: string, groupMinutes: number) {
-  const minutes = Array.from(new Set([...DURATION_OPTIONS, groupMinutes, Number(picked) || 0]))
+function durationOptions(picked: string, ...groupMinutes: number[]) {
+  const minutes = Array.from(new Set([...DURATION_OPTIONS, ...groupMinutes, Number(picked) || 0]))
     .filter(value => value > 0)
     .sort((left, right) => left - right);
   return minutes.map(value => {
@@ -427,6 +567,32 @@ function durationOptions(picked: string, groupMinutes: number) {
     if (rest || !hours) parts.push(`${rest} minute${rest === 1 ? '' : 's'}`);
     return { value: String(value), label: parts.join(' ') };
   });
+}
+
+/**
+ * Every choice the Duration field offers, leading with "leave them alone".
+ *
+ * A list that omits the empty option is a one-way door: the form opens with no
+ * override, the select shows its first length instead, and the reader cannot
+ * get back to "each session keeps its own" once they have touched it. That is
+ * what the Teams Meetings page's own copy of this field had become.
+ */
+function durationSelectOptions(form: TeamsCalendarForm, row: TeamsSchedulePreviewRow) {
+  return [
+    { value: '', label: 'Use scheduled duration for each session' },
+    ...durationOptions(form.durationMinutes, row.durationMinutes, row.groupPattern?.durationMinutes || 0),
+  ];
+}
+
+/** Where the offered default comes from, and what choosing one does. */
+function durationFieldHint(row: TeamsSchedulePreviewRow, firstPlannedUtc: string): string {
+  return [
+    row.groupPattern?.durationMinutes
+      ? `${row.groupPattern.name} runs ${durationLabel(row.groupPattern.durationMinutes)} sessions.`
+      : '',
+    firstPlannedUtc ? `First session ${calendarLabel(firstPlannedUtc, row.timeZone)}.` : '',
+    'Choosing a length here books every session above at it.',
+  ].filter(Boolean).join(' ');
 }
 
 /**
@@ -444,6 +610,8 @@ export function TeamsCalendarFormBody({
   prefilling,
   onPrefill,
   timeZoneLabel,
+  existingCalendar = false,
+  showAlternateTimeZones = true,
 }: {
   row: TeamsCalendarTarget;
   form: TeamsCalendarForm;
@@ -453,8 +621,13 @@ export function TeamsCalendarFormBody({
   prefilling?: boolean;
   onPrefill?: () => void;
   timeZoneLabel?: string;
+  existingCalendar?: boolean;
+  showAlternateTimeZones?: boolean;
 }) {
-  const firstPlanned = row.plannedStarts[0] || '';
+  const previewRow = { ...row, timeZone: form.scheduleTimeZone || row.timeZone,
+    plannedStarts: teamsCalendarOccurrences(row, form.scheduleTimeZone).map(item => item.startDateTimeUtc) };
+  const firstPlanned = previewRow.plannedStarts[0] || '';
+  const override = overrideDurationMinutes(form, row);
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/60 px-4 py-3">
@@ -462,7 +635,16 @@ export function TeamsCalendarFormBody({
           <AppIcon className="ri-microsoft-teams-line text-base"></AppIcon>
         </span>
         <p className="text-[12px] text-foreground-600">
-          {row.sessions.length
+          {existingCalendar
+            // The dates below are what Update SENDS, not what Teams currently
+            // holds -- they are the module's plan, and the two disagree exactly
+            // when the calendar is out of date, which is when this dialog
+            // matters most. Each row says for itself if Teams is holding it on
+            // another day, so the banner does not have to claim a provenance
+            // that would be wrong on the rare calendar whose live-session
+            // components have all been deleted.
+            ? 'Update sends the dates below to this existing Teams calendar and refreshes the links in the module’s live-session components. A session Teams is still holding on another day is marked on its own row.'
+            : row.sessions.length
             ? `Create puts one Teams meeting on each of the ${row.sessions.length} session date${row.sessions.length === 1 ? '' : 's'} below and writes the join link into this module’s live-session components. The dates come from the module, not from this form.`
             : 'This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.'}
         </p>
@@ -471,37 +653,45 @@ export function TeamsCalendarFormBody({
       {Boolean(row.sessions.length) && (
         <>
           <ModuleSessionSchedulePreview
-            row={row}
-            title="Dates the calendar will be created on"
+            row={previewRow}
+            title={existingCalendar ? 'Dates Update will send' : 'Dates the calendar will be created on'}
             holidayLabelFor={holidayLabelFor}
+            overrideDuration={override}
+            showAlternateTimeZones={showAlternateTimeZones}
           />
 
+          <FormField label="Schedule time zone" hint={showAlternateTimeZones
+            ? 'Group/module times are interpreted in this zone. Each date above shows the same meeting in Egypt and England, including daylight-saving changes.'
+            : 'Dates and times above use this schedule time zone, including daylight-saving changes.'}>
+            <SelectControl value={form.scheduleTimeZone || getCalendarTimeZone()}
+              disabled={existingCalendar}
+              onChange={value => patch({ scheduleTimeZone: value as TeamsCalendarForm['scheduleTimeZone'] })}
+              options={[{ value: 'Africa/Cairo', label: 'Egypt (Africa/Cairo)' }, { value: 'Europe/London', label: 'England (Europe/London)' }]} />
+          </FormField>
           <FormField label="Teams series and links" hint="Different start times or durations need a separate weekly series for each day. Each day's link repeats every week.">
-            <SelectControl value={form.seriesMode || 'auto'} onChange={value => patch({ seriesMode: value as TeamsCalendarForm['seriesMode'] })} options={[
+            <SelectControl disabled={existingCalendar} value={form.seriesMode || 'auto'} onChange={value => patch({ seriesMode: value as TeamsCalendarForm['seriesMode'] })} options={[
               { value: 'auto', label: 'Automatic: share a link when times match' },
               { value: 'per_day', label: 'Separate series and link for each day' },
-              ...(new Set(teamsCalendarOccurrences(row).map(item => `${naiveLocalFromUtc(item.startDateTimeUtc).slice(11)}:${form.durationMinutes || item.durationMinutes}`)).size <= 1 ? [{ value: 'shared', label: 'One series and link for all days' }] : []),
+              ...(existingCalendar || new Set(teamsCalendarOccurrences(row).map(item => `${naiveLocalFromUtc(item.startDateTimeUtc).slice(11)}:${form.durationMinutes || item.durationMinutes}`)).size <= 1 ? [{ value: 'shared', label: 'One series and link for all days' }] : []),
             ]} />
           </FormField>
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField
               label="Organizer Microsoft 365 email"
               required
-              hint="The calendar this series is created in. The selected account must allow this app to manage Teams meetings."
+              hint={existingCalendar ? 'This organizer owns the existing calendar.' : 'The calendar this series is created in. The selected account must allow this app to manage Teams meetings.'}
             >
-              <EntraPeopleInput single label="Organizer"
+              {existingCalendar ? <input aria-label="Organizer" readOnly value={form.organizerEmail}
+                className="h-11 w-full rounded-lg border border-background-200 bg-background-100 px-3 text-[13px]" /> : <EntraPeopleInput single label="Organizer"
                 value={form.organizerEmail}
                 onChange={value => patch({ organizerEmail: value })}
-              />
+              />}
             </FormField>
-            <FormField
-              label="Duration"
-              hint={firstPlanned ? `First session ${calendarLabel(firstPlanned)}.` : 'Defaults to the group session length.'}
-            >
+            <FormField label="Duration" hint={durationFieldHint(previewRow, firstPlanned)}>
               <SelectControl
                 value={form.durationMinutes}
                 onChange={value => patch({ durationMinutes: value })}
-                options={[{ value: '', label: 'Use scheduled duration for each session' }, ...durationOptions(form.durationMinutes, row.durationMinutes)]}
+                options={durationSelectOptions(form, row)}
               />
             </FormField>
             <FormField label="Who can bypass the lobby?">
@@ -540,13 +730,13 @@ export function TeamsCalendarFormBody({
                 ]}
               />
             </FormField>
-            <FormField label="Details" hint="Optional. Included in the calendar invitation.">
+            {existingCalendar ? <p className="self-center text-[11px] text-foreground-500">The existing invitation text is preserved. Edit its details in Outlook.</p> : <FormField label="Details" hint="Optional. Included in the calendar invitation.">
               <TextAreaControl
                 value={form.details}
                 onChange={value => patch({ details: value })}
                 rows={2}
               />
-            </FormField>
+            </FormField>}
             {onPrefill && (
               <div className="sm:col-span-2 -mb-2 flex items-center justify-end">
                 <button
@@ -582,10 +772,10 @@ export function TeamsCalendarFormBody({
               />
             </FormField>
           </div>
-          {timeZoneLabel && (
+          {(form.scheduleTimeZone || timeZoneLabel) && (
             <p className="text-[10px] font-semibold text-foreground-400">
               <AppIcon className="ri-time-line mr-1"></AppIcon>
-              Microsoft calendar time zone: {timeZoneLabel}
+              Schedule time zone: {form.scheduleTimeZone === 'Africa/Cairo' ? 'Egypt (Africa/Cairo)' : form.scheduleTimeZone === 'Europe/London' ? 'England (Europe/London)' : timeZoneLabel}
             </p>
           )}
         </>

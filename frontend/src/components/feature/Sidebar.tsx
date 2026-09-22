@@ -147,12 +147,20 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   // 'learner-home ... ri-home-line' would otherwise never be reached.
   if (/\bhome\b/.test(key)) return HomeIcon;
   if (/dashboard|overview/.test(key)) return LayoutDashboard;
+  if (id === 'coach-marking-queue') return ClipboardList;
+  if (id === 'coach-catchup-queue') return RefreshCw;
   // Curriculum workspace groups get distinct icons so the sidebar is scannable.
   if (/programme\s*-?\s*design|programme-design/.test(key)) return Presentation;
   if (/curriculum\s*-?\s*builder|curriculum-builder/.test(key)) return Workflow;
   if (/assessment\s*-?\s*design|assessment-design/.test(key)) return ClipboardList;
   if (/delivery\s*-?\s*planning|delivery-planning/.test(key)) return CalendarDays;
   if (/quality\s*&?\s*publishing|quality.*publish/.test(key)) return ShieldCheck;
+  // Tested up here rather than with the other generic branches near the bottom:
+  // every curriculum nav id begins with 'curriculum-', so the broad
+  // programme/module/curriculum branch further down claims an archive row
+  // first and draws it as a book -- the icon three of its neighbours already
+  // wear. What the row is about is the archive, not the workspace it is in.
+  if (/archive/.test(key)) return Archive;
   if (/^reports?$|\breports?\b/.test(key)) return FileText;
   if (/message|communication|feedback/.test(key)) return MessageSquare;
   if (/support|ticket|knowledge-base|help/.test(key)) return LifeBuoy;
@@ -182,7 +190,6 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   if (/upload|import/.test(key)) return Upload;
   if (/link|mapping/.test(key)) return Link2;
   if (/version|branch/.test(key)) return GitBranch;
-  if (/archive/.test(key)) return Archive;
   if (/reward|recognition|achievement|trophy|award/.test(key)) return Trophy;
   if (/gift|voucher|claim|points/.test(key)) return Gift;
   if (/shopping|shop/.test(key)) return ShoppingBag;
@@ -780,22 +787,16 @@ function SecondaryNavCard({ item, active, onNavigate }: {
       to={item.href ?? '#'}
       aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
-      className={`group flex min-h-[68px] w-full min-w-0 items-center gap-2.5 rounded-2xl border px-2.5 py-3 text-left transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/80 motion-reduce:!transition-none ${active ? 'border-white/90 bg-white/95 text-brand shadow-sm' : 'border-white/10 bg-white/5 text-white/90 hover:border-white/25 hover:bg-white/10 hover:text-white'}`}
+      className={`group flex min-h-10 w-full min-w-0 items-center rounded-lg px-3 py-2 text-left text-[13px] leading-snug transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/80 motion-reduce:!transition-none ${active ? 'bg-brand-accent font-semibold text-white' : 'text-white/75 hover:bg-white/10 hover:text-white'}`}
     >
-      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${active ? 'bg-brand text-white' : 'bg-white/10 text-white/90 group-hover:bg-white/15 group-hover:text-white'}`}>
-        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block break-words text-[13px] font-semibold leading-[1.4]">{item.label}</span>
-        {hasStatus && (
-          <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
-            {item.statusDot && <StatusDot color={item.statusDot} />}
-            {item.badge ? <NavBadge count={item.badge} /> : null}
-          </span>
-        )}
-      </span>
-      <ChevronRight size={14} strokeWidth={1.8} className={`shrink-0 ${active ? 'text-brand' : 'text-white/40 group-hover:text-white/80'}`} aria-hidden="true" />
+      <span className="min-w-0 flex-1 break-words">{item.label}</span>
+      {hasStatus && (
+        <span className="ml-2 flex shrink-0 items-center gap-1.5">
+          {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
+          {item.statusDot && <StatusDot color={item.statusDot} />}
+          {item.badge ? <NavBadge count={item.badge} /> : null}
+        </span>
+      )}
     </Link>
   );
 }
@@ -857,7 +858,10 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
   return (
     <div>
       {presentation === 'tiles' ? (
-        <p className="mb-3 border-b border-white/10 px-1 pb-3 text-[14px] font-semibold leading-snug tracking-wide text-white">{item.label}</p>
+        <div className="mb-3 flex min-h-12 items-center gap-2.5 rounded-lg border border-white/90 bg-brand-accent px-3 py-2 text-[13px] font-semibold leading-snug text-white shadow-sm">
+          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />
+          <span className="min-w-0 flex-1">{item.label}</span>
+        </div>
       ) : (
       <button
         type="button"

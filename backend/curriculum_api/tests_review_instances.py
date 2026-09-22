@@ -71,7 +71,7 @@ class ReviewInstancesTestCase(TestCase):
         .apply_teams_attendance_status_transition) for tests that only care
         about field validation/completion, not the attendance transition
         itself."""
-        review_instances.set_review_instance_status(instance['id'], review_instances.STATUS_IN_PROGRESS, actor='test')
+        review_instances.force_review_instance_status_for_tests(instance['id'], review_instances.STATUS_IN_PROGRESS, actor='test')
         return review_instances.get_review_instance(instance['id'])
 
     def _programme(self, programme_id='PROG-DATA', name='Data Technician'):
@@ -250,6 +250,49 @@ class ReviewInstancesTestCase(TestCase):
         definition = review_instances.review_instance_form_definition(reloaded)
         saved_answer = definition['sections'][0]['fields'][0]['answer']
         self.assertEqual(saved_answer, 'Draft note')
+
+    def test_send_for_signatures_saves_and_freezes_the_same_final_answers(self):
+        review_id = self._create_review('PROG-A', name='Monthly Coaching Meeting', interval=1, unit='months')
+        instance = review_instances.ensure_review_instance(
+            self._template_row(review_id), learner_id=1, learner_kind='commercial', programme_id='PROG-A',
+            occurrence_number=1, target_date=date(2026, 9, 2), coach_email='coach@example.com',
+        )
+        instance = self._start(instance)
+        field_id = reviews.get_review_field_rows(review_id)[0]['id']
+        ok, errors = review_instances.complete_review_instance(
+            instance, actor='coach@example.com', answers={field_id: 'Exact final summary wording'},
+        )
+        self.assertTrue(ok, errors)
+        submitted = review_instances.review_instance_form_definition(
+            review_instances.get_review_instance(instance['id'])
+        )
+        self.assertEqual(submitted['instance']['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(submitted['sections'][0]['fields'][0]['answer'], 'Exact final summary wording')
+        with self.assertRaisesMessage(ValueError, 'Submitted review answers cannot be changed'):
+            review_instances.save_review_instance_answers(
+                instance, {field_id: 'Late stale replacement'}, actor='coach@example.com',
+            )
+
+    def test_stale_save_rechecks_locked_status_before_writing(self):
+        review_id = self._create_review('PROG-A', name='Monthly Coaching Meeting', interval=1, unit='months')
+        instance = review_instances.ensure_review_instance(
+            self._template_row(review_id), learner_id=1, learner_kind='commercial', programme_id='PROG-A',
+            occurrence_number=1, target_date=date(2026, 9, 2), coach_email='coach@example.com',
+        )
+        stale_in_progress = self._start(instance)
+        field_id = reviews.get_review_field_rows(review_id)[0]['id']
+        review_instances.force_review_instance_status_for_tests(
+            instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='concurrent-submit',
+        )
+        with self.assertRaisesMessage(ValueError, 'Submitted review answers cannot be changed'):
+            review_instances.save_review_instance_answers(
+                stale_in_progress, {field_id: 'Must not be written'}, actor='stale-request',
+            )
+        self.assertIsNone(
+            review_instances.review_instance_form_definition(
+                review_instances.get_review_instance(instance['id'])
+            )['sections'][0]['fields'][0]['answer']
+        )
 
     def test_ensure_review_instance_is_idempotent(self):
         review_id = self._create_review('PROG-A', name='Monthly Coaching Meeting', interval=1, unit='months')

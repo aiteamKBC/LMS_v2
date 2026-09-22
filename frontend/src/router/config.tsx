@@ -14,6 +14,8 @@ import { studentWorkspaceRoutes } from "./studentWorkspaceRoutes";
 // already-open tab no longer exist, and the first navigation would otherwise
 // fail with "Failed to fetch dynamically imported module". See ./lazyRoute.
 const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/page"));
+const SystemAuditTrailPage = lazyRoute(() => import("../pages/admin/audit-trail/page"));
+const SystemAuditTrailPersonPage = lazyRoute(() => import("../pages/admin/audit-trail/person/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
 const AdminCertificatesPage = lazyRoute(() => import("../pages/admin/certificates/page"));
 const AdminDocumentsPage = lazyRoute(() => import("../pages/admin/documents/page"));
@@ -45,7 +47,6 @@ const ClubDetailPage = lazyRoute(() => import("../pages/learner/clubs/detail/pag
 const ClubDiscussionDetailPage = lazyRoute(() => import("../pages/learner/clubs/discussion-detail/page"));
 const ClubEventsPage = lazyRoute(() => import("../pages/learner/clubs/events/page"));
 const ClubsPage = lazyRoute(() => import("../pages/learner/clubs/page"));
-const CoachAbsenceReports = lazyRoute(() => import("../pages/coach/absence-reports/page"));
 const CoachAiMarking = lazyRoute(() => import("../pages/coach/ai-marking/page"));
 const CoachAttendance = lazyRoute(() => import("../pages/coach/attendance/page"));
 const CoachAttendanceProfile = lazyRoute(() => import("../pages/coach/attendance-profile/page"));
@@ -57,8 +58,9 @@ const CoachEvidenceValidation = lazyRoute(() => import("../pages/coach/evidence-
 const CoachKsbImpact = lazyRoute(() => import("../pages/coach/ksb-impact/page"));
 const CoachMarkingQueue = lazyRoute(() => import("../pages/coach/marking-queue/page"));
 const CoachMarkingReviewPage = lazyRoute(() => import("../pages/coach/marking-review/page"));
-const CoachMeetings = lazyRoute(() => import("../pages/coach/meetings/page"));
+const CoachMonthlyCoaching = lazyRoute(() => import("../pages/coach/monthly-coaching/page"));
 const CoachMeetingDetail = lazyRoute(() => import("../pages/coach/meeting-detail/page"));
+const CoachReviewInstancePage = lazyRoute(() => import("../pages/coach/review-instance/page"));
 const MonthlyLogsPage = lazyRoute(() => import("../features/monthly-logs/page"));
 const CoachOtjhReports = lazyRoute(() => import("../pages/coach/otjh-reports/page"));
 const CoachMonthlyReports = lazyRoute(() => import("../pages/coach/monthly-reports/page"));
@@ -73,6 +75,8 @@ const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/pa
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
+const CurriculumAuditTrailPersonPage = lazyRoute(() => import("../pages/curriculum/audit-trail/person/page"));
+const CurriculumArchive = lazyRoute(() => import("../pages/curriculum/archive/page"));
 const CurriculumCohorts = lazyRoute(() => import("../pages/curriculum/cohorts/page"));
 const CurriculumCohortWorkspace = lazyRoute(() => import("../pages/curriculum/cohort-workspace/page"));
 const CurriculumGroups = lazyRoute(() => import("../pages/curriculum/groups/page"));
@@ -189,6 +193,7 @@ const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"))
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
+const PersonalCoursesPage = lazyRoute(() => import("../pages/personal-learning/page"));
 const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/schedule/page"));
 const NotFound = lazyRoute(() => import("../pages/NotFound"));
 const PaymentsPage = lazyRoute(() => import("../pages/finance/payments/page"));
@@ -451,6 +456,10 @@ const routes: RouteObject[] = [
   {
     path: "/learner/week/:weekNumber",
     element: <WeekDetailPage />,
+  },
+  {
+    path: "/my-courses",
+    element: <PersonalCoursesPage />,
   },
   {
     // Canonical URL for the merged Overview/Modules/Quizzes page. The three
@@ -750,7 +759,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/coach/absence-reports",
-    element: <CoachAbsenceReports />,
+    element: <Navigate to="/coach/attendance" replace />,
   },
   {
     path: "/coach/catchup-queue",
@@ -769,8 +778,8 @@ const routes: RouteObject[] = [
     element: <CoachAiMarking />,
   },
   {
-    path: "/coach/meetings",
-    element: <CoachMeetings />,
+    path: "/coach/monthly-coaching",
+    element: <CoachMonthlyCoaching />,
   },
   {
     path: "/coach/meetings/:eventKey",
@@ -797,6 +806,10 @@ const routes: RouteObject[] = [
     element: <CoachMeetingDetail />,
   },
   {
+    path: "/coach/review-instances/:instanceId",
+    element: <CoachReviewInstancePage />,
+  },
+  {
     path: "/coach/ksb-impact",
     element: <CoachKsbImpact />,
   },
@@ -815,6 +828,20 @@ const routes: RouteObject[] = [
   {
     path: "/admin/access-logs",
     element: <AdminAccessLogsPage />,
+  },
+  {
+    // The system-wide Audit Trail: every workspace, not just Curriculum.
+    // Curriculum keeps its own scoped door at /curriculum/audit-trail; both
+    // render the same component from features/audit-trail.
+    path: "/admin/audit-trail",
+    element: <SystemAuditTrailPage />,
+  },
+  {
+    // One person's own page rather than a panel over the list: an audit finding
+    // is something people send each other, and a link to it has to survive
+    // being pasted into a message.
+    path: "/admin/audit-trail/people/:email",
+    element: <SystemAuditTrailPersonPage />,
   },
   {
     path: "/admin/system",
@@ -915,6 +942,13 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/checkpoints",
     element: <CheckpointsPage />,
+  },
+  {
+    // Curriculum's archive, across all four record types. The per-list "View
+    // archived" toggles stay where they are; this is the one that answers
+    // "what did we archive" without knowing the list it came from.
+    path: "/curriculum/archive",
+    element: <CurriculumArchive />,
   },
   {
     path: "/curriculum/cohorts",
@@ -1126,6 +1160,13 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/audit-trail",
     element: <CurriculumAuditTrailPage />,
+  },
+  {
+    // One person's own page rather than a panel over the list: an audit finding
+    // is something people send each other, and a link to it has to survive
+    // being pasted into a message.
+    path: "/curriculum/audit-trail/people/:email",
+    element: <CurriculumAuditTrailPersonPage />,
   },
   {
     path: "/curriculum/published",
@@ -1503,6 +1544,10 @@ const routes: RouteObject[] = [
     element: <CertificateVerificationPage />,
   },
   {
+    path: "/verify-personal-certificate/:token",
+    element: <CertificateVerificationPage personal />,
+  },
+  {
     path: "*",
     element: <NotFound />,
   },
@@ -1537,6 +1582,7 @@ const PUBLIC_PATHS = new Set([
 
 const PUBLIC_PREFIXES = [
   "/verify-certificate/",
+  "/verify-personal-certificate/",
 ];
 
 const isPublic = (route: RouteObject) =>

@@ -18,7 +18,7 @@ import {
   type CoachCalendarEvent,
   type CoachReviewGenerationIssue,
 } from '@/pages/coach/shared/calendarEvents';
-import { fetchStudentActivity } from '@/api/studentActivity';
+import { fetchLearnerMetrics } from '@/api/learnerMetrics';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
 import { coachFetch } from '@/lib/coachFetch';
@@ -31,6 +31,17 @@ interface CoachCompletedKsbDetail {
   code: string;
   type?: string;
   description?: string;
+  sources?: Array<{
+    id?: string;
+    title?: string;
+    typeLabel?: string;
+    kind?: string;
+    source?: string;
+    activityId?: string;
+    completedAt?: string;
+    status?: string;
+    module?: string;
+  }>;
 }
 
 export interface CoachCaseloadLearner {
@@ -97,6 +108,7 @@ interface CoachCaseloadResponse {
 }
 
 export interface CoachAttendanceLearner {
+  sessionHistory?: import('@/api/learnerAttendance').AttendanceSessionRow[];
   id: string;
   learner: string;
   initials: string;
@@ -160,6 +172,16 @@ export interface CoachMarkingQueueItem {
   type: string | null;
   due: string | null;
   words: number | null;
+  activityId?: string | null;
+  activityTitle?: string | null;
+  submittedAt?: string | null;
+}
+
+export interface CaseFileMarkingSubmission {
+  id: string;
+  activityId: string;
+  activityTitle: string;
+  submittedAt: string | null;
 }
 
 interface CoachMarkingQueueResponse {
@@ -176,6 +198,9 @@ export interface CaseFileActivityItem {
 
 export interface CaseFileUpcomingSession {
   id: string;
+  kind: 'live' | 'review';
+  status: CoachCalendarEvent['status'];
+  statusLabel: string;
   day: string;
   title: string;
   date: string;
@@ -197,6 +222,7 @@ export interface CaseFileReviewMeeting {
   status: CoachCalendarEvent['status'];
   statusLabel: string;
   isNext: boolean;
+  notes?: string;
 }
 
 export interface CaseFileReviewGroup {
@@ -207,6 +233,9 @@ export interface CaseFileReviewGroup {
 
 export interface CoachLearnerCaseFileData {
   learnerId: string;
+  /** enrolment."Created_users" id used by the learner workspace APIs. */
+  enrolmentId: string | null;
+  learnerIdentityIds?: string[];
   kind: LearnerKind | null;
   snapshot: CoachCaseloadLearner | null;
   attendance: CoachAttendanceLearner | null;
@@ -228,11 +257,19 @@ export interface CoachLearnerCaseFileData {
   employerPhone: string;
   overallProgress: number | null;
   attendanceRate: number | null;
+  attendancePresentCount: number | null;
+  attendanceSessionCount: number | null;
+  attendanceAbsentCount: number | null;
   otjhCompleted: number | null;
   otjhTarget: number | null;
   otjhPlanned: number | null;
   ksbProgress: number | null;
+  metricsAvailable?: boolean;
+  ksbStatus?: 'ready' | 'empty' | 'unavailable';
   ksbEvidencedCount: number | null;
+  ksbTotalCount: number | null;
+  mappedKsbCodes: string[];
+  ksbCodeProgress: Array<{ code: string; completed: number; total: number }>;
   evidenceCount: number | null;
   startDate: string;
   gatewayReviewDate: string;
@@ -246,6 +283,39 @@ export interface CoachLearnerCaseFileData {
   reviewGroups: CaseFileReviewGroup[];
   reviewGenerationIssues: CoachReviewGenerationIssue[];
   reviewsLoading: boolean;
+  markingSubmissions?: CaseFileMarkingSubmission[];
+  coachNotes?: string[];
+}
+
+export interface CaseFileOtjhMetrics {
+  logged: number | null;
+  target: number | null;
+  programmeTotal: number | null;
+  remaining: number | null;
+  progressPercent: number | null;
+}
+
+/**
+ * Shared presentation selector for the Case File OTJH values. The values are
+ * selected by buildCaseFileData from the existing audit/detail sources; this
+ * helper only keeps every Case File surface internally consistent.
+ */
+export function selectCaseFileOtjh(data: Pick<CoachLearnerCaseFileData, 'otjhCompleted' | 'otjhTarget' | 'otjhPlanned' | 'totalExpectedOtjh'>): CaseFileOtjhMetrics {
+  const logged = data.otjhCompleted;
+  const target = data.otjhTarget;
+  const programmeTotal = data.totalExpectedOtjh > 0 ? data.totalExpectedOtjh : data.otjhPlanned;
+  const remaining = logged !== null && target !== null ? Math.max(0, target - logged) : null;
+  const progressPercent = logged !== null && target !== null && target > 0
+    ? Math.min(100, Math.round((logged / target) * 100))
+    : null;
+  return { logged, target, programmeTotal, remaining, progressPercent };
+}
+
+/** Match the backend canonical KSB identity: child codes resolve to parent codes. */
+export function normalizeKsbCode(value: string | null | undefined): string {
+  const code = String(value || '').trim().toUpperCase();
+  const match = code.match(/^([KSB])(\d+)(?:\.\d+)?$/);
+  return match ? `${match[1]}${match[2]}` : code;
 }
 
 export interface CaseFileTabProps {
@@ -295,10 +365,11 @@ export function useCoachLearnerCaseFileData(args: {
       // These are independent requests. Start learner detail immediately when the
       // URL already contains a numeric id instead of waiting for all coach-wide
       // collections first (the old flow added both request times together).
+      const requestedMarkingLearnerId = args.enrolmentId?.trim() || rawLearnerId;
       const coachDataPromise = Promise.allSettled([
         fetchCoachCaseload(),
         fetchCoachAttendance(),
-        fetchCoachMarkingQueue(rawLearnerId, rawLearnerName),
+        fetchCoachMarkingQueue(requestedMarkingLearnerId, rawLearnerName),
         fetchCoachTimetable(),
       ]);
       const directId = numericId(rawLearnerId);
@@ -312,7 +383,7 @@ export function useCoachLearnerCaseFileData(args: {
       const directDetailPromise = directEnrolmentId
         ? fetchAnyLearnerDetail(directEnrolmentId, args.kind ?? undefined)
         : null;
-      let auditHours: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null = null;
+      let learnerMetrics: CaseFileLearnerMetrics | null = null;
       let liveAttendance: LearnerAttendance | null = null;
 
       let detail: LearnerDetail | null = null;
@@ -324,8 +395,8 @@ export function useCoachLearnerCaseFileData(args: {
           const detailResult = await directDetailPromise;
           detail = detailResult.detail;
           resolvedKind = detailResult.kind;
-          [auditHours, liveAttendance] = await Promise.all([
-            fetchAuditHours(resolvedKind, directEnrolmentId),
+          [learnerMetrics, liveAttendance] = await Promise.all([
+            fetchCaseFileMetrics(resolvedKind, directEnrolmentId),
             fetchCaseFileAttendance(resolvedKind, directEnrolmentId),
           ]);
 
@@ -333,6 +404,7 @@ export function useCoachLearnerCaseFileData(args: {
           // Coach metrics continue enriching it in the background.
           const initialData = buildCaseFileData({
             learnerId: directId,
+            enrolmentId: directEnrolmentId,
             kind: resolvedKind,
             snapshot: null,
             attendance: null,
@@ -342,7 +414,7 @@ export function useCoachLearnerCaseFileData(args: {
             timetableEvents: [],
             reviewGenerationIssues: [],
             reviewsLoading: true,
-            auditHours,
+            learnerMetrics,
             liveAttendance,
           });
           if (!cancelled && initialData) {
@@ -362,7 +434,7 @@ export function useCoachLearnerCaseFileData(args: {
 
       const caseload = caseloadResult.status === 'fulfilled' ? caseloadResult.value : [];
       const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : [];
-      const marking = markingResult.status === 'fulfilled' ? markingResult.value : [];
+      let marking = markingResult.status === 'fulfilled' ? markingResult.value : [];
       const timetable = timetableResult.status === 'fulfilled'
         ? timetableResult.value
         : { events: [], reviewGenerationIssues: [] };
@@ -382,6 +454,14 @@ export function useCoachLearnerCaseFileData(args: {
         || null;
       const resolvedDetailKind = args.kind ?? snapshot?.learnerType ?? attendanceLearner?.learnerType ?? undefined;
 
+      if (resolvedEnrolmentId && resolvedEnrolmentId !== requestedMarkingLearnerId) {
+        try {
+          marking = await fetchCoachMarkingQueue(resolvedEnrolmentId, rawLearnerName);
+        } catch {
+          // Keep the first safe response; the rest of the case file can still render.
+        }
+      }
+
       // Non-numeric routes need coach data to resolve the id. Numeric routes have
       // already loaded detail above, concurrently with the coach requests.
       if ((resolvedEnrolmentId || resolvedId) && !directDetailPromise) {
@@ -394,12 +474,12 @@ export function useCoachLearnerCaseFileData(args: {
         }
       }
 
-      if (!auditHours || !liveAttendance) {
-        const [hours, attendanceRecord] = await Promise.all([
-          auditHours ? Promise.resolve(auditHours) : fetchAuditHours(resolvedKind, resolvedEnrolmentId),
+      if (!learnerMetrics || !liveAttendance) {
+        const [metrics, attendanceRecord] = await Promise.all([
+          learnerMetrics ? Promise.resolve(learnerMetrics) : fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId),
           liveAttendance ? Promise.resolve(liveAttendance) : fetchCaseFileAttendance(resolvedKind, resolvedEnrolmentId),
         ]);
-        auditHours = hours;
+        learnerMetrics = metrics;
         liveAttendance = attendanceRecord;
       }
 
@@ -409,16 +489,18 @@ export function useCoachLearnerCaseFileData(args: {
 
       const finalData = buildCaseFileData({
         learnerId: resolvedId || rawLearnerId || '',
+        enrolmentId: resolvedEnrolmentId,
         kind: resolvedKind,
         snapshot,
         attendance: attendanceLearner,
         evidence,
+        markingItems: marking,
         detail,
         caseload,
         timetableEvents,
         reviewGenerationIssues: timetable.reviewGenerationIssues,
         reviewsLoading: false,
-        auditHours,
+        learnerMetrics,
         liveAttendance,
       });
 
@@ -635,23 +717,45 @@ async function fetchCoachTimetable() {
   };
 }
 
-/** The whole-programme OTJ hours the learner sees on their own workspace:
- *  TP Planned from the audit mirror, LMS Actual from the accepted ledger.
- *  The coach case file has to quote these same figures rather than
- *  learner-detail's training-plan reflection totals, which read as 0h.
- *  Returns null whenever the learner has no audit record -- the caller then
- *  keeps whatever it already had. */
-async function fetchAuditHours(kind: LearnerKind | null, enrolmentId: string | null) {
+type CaseFileLearnerMetrics = {
+  programmeCompleted: number | null;
+  programmeTotal: number | null;
+  programmeProgress: number | null;
+  planned: number | null;
+  actual: number | null;
+  ksbCompleted: number | null;
+  ksbTotal: number | null;
+  ksbCodes: string[];
+  ksbCodeProgress: Array<{ code: string; completed: number; total: number }>;
+  ksbProgress: number | null;
+  ksbStatus: 'ready' | 'empty' | 'unavailable';
+};
+
+/** Canonical totals used by the learner dashboard. Programme, OTJH and KSB
+ * figures must describe the same learner facts on both workspaces. */
+async function fetchCaseFileMetrics(kind: LearnerKind | null, enrolmentId: string | null): Promise<CaseFileLearnerMetrics | null> {
   if (!kind || !enrolmentId) return null;
   try {
-    const activity = await fetchStudentActivity(kind, enrolmentId);
-    const planned = activity?.audit_tp_planned ?? null;
-    const actual = activity?.audit_lms_actual ?? null;
-    const ksbEvidenced = activity?.audit_ksb_evidenced ?? null;
-    if (planned == null && actual == null && ksbEvidenced == null) return null;
-    return { planned, actual, ksbEvidenced };
+    const metrics = await fetchLearnerMetrics(kind, enrolmentId);
+    return {
+      programmeCompleted: metrics.programme.completed,
+      programmeTotal: metrics.programme.total,
+      programmeProgress: metrics.programme.percent,
+      planned: metrics.otjh.planned,
+      actual: metrics.otjh.actual,
+      ksbCompleted: metrics.ksb.completed,
+      ksbTotal: metrics.ksb.total,
+      ksbCodes: (metrics.ksb.codes || []).map((item) => item.code),
+      ksbCodeProgress: (metrics.ksb.codes || []).map((item) => ({
+        code: item.code,
+        completed: item.completed,
+        total: item.total,
+      })),
+      ksbProgress: metrics.ksb.percent,
+      ksbStatus: metrics.ksb.status,
+    };
   } catch {
-    // A learner with no Aptem link 404s here. That is not a case-file error.
+    // Missing canonical metrics must not make the rest of the case file fail.
     return null;
   }
 }
@@ -741,6 +845,12 @@ function matchesLearner(
     return true;
   }
 
+  // A supplied learner id is authoritative. Never cross-wire records by name
+  // when the stable identity did not match.
+  if (learnerId) {
+    return false;
+  }
+
   if (!learnerName || !candidateName) {
     return false;
   }
@@ -753,18 +863,6 @@ function numericId(value?: string | null) {
     return null;
   }
   return /^\d+$/.test(value.trim()) ? value.trim() : null;
-}
-
-function normalizeMatchValue(value?: string | null) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function normalizeEmailMatchValue(value?: string | null) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function normalizePersonName(value?: string | null) {
-  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
 function isUpcomingCalendarEvent(event: CoachCalendarEvent) {
@@ -780,74 +878,35 @@ function isUpcomingCalendarEvent(event: CoachCalendarEvent) {
 
 function liveSessionMatchesLearner(
   event: CoachCalendarEvent,
-  learner: Pick<CoachLearnerCaseFileData, 'programme' | 'cohort' | 'group'>,
+  learnerIdentityIds: string[],
 ) {
   if (event.source !== 'live-session') {
     return false;
   }
-
-  const learnerGroup = normalizeMatchValue(learner.group);
-  const learnerCohort = normalizeMatchValue(learner.cohort);
-  const learnerProgramme = normalizeMatchValue(learner.programme);
-  const eventGroup = normalizeMatchValue(event.group);
-  const eventCohort = normalizeMatchValue(event.cohort);
-  const eventProgramme = normalizeMatchValue(event.programme);
-
-  if (learnerGroup && eventGroup && learnerGroup === eventGroup) {
-    if (learnerCohort && eventCohort && learnerCohort !== eventCohort) {
-      return false;
-    }
-    if (learnerProgramme && eventProgramme && learnerProgramme !== eventProgramme) {
-      return false;
-    }
-    return true;
-  }
-
-  if (!learnerGroup && learnerCohort && eventCohort && learnerCohort === eventCohort) {
-    return !learnerProgramme || !eventProgramme || learnerProgramme === eventProgramme;
-  }
-
-  return false;
+  const eventIdentityIds = [event.learnerId, event.enrolmentId]
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+  return eventIdentityIds.some(id => learnerIdentityIds.includes(id));
 }
 
 function reviewEventMatchesLearner(
   event: CoachCalendarEvent,
-  learner: Pick<CoachLearnerCaseFileData, 'learnerId' | 'displayName' | 'email' | 'programme' | 'cohort'>,
+  learner: Pick<CoachLearnerCaseFileData, 'learnerId' | 'learnerIdentityIds'>,
 ) {
   if (!isReviewCalendarEvent(event) || event.status === 'cancelled') {
     return false;
   }
 
-  const learnerId = numericId(learner.learnerId) || String(learner.learnerId || '').trim();
-  const eventLearnerId = String(event.learnerId || '').trim();
-  if (learnerId && eventLearnerId && learnerId === eventLearnerId) {
+  const learnerIds = new Set((learner.learnerIdentityIds || [learner.learnerId])
+    .map(value => String(value || '').trim())
+    .filter(Boolean));
+  const eventIdentityIds = [event.learnerId, event.enrolmentId]
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+  if (eventIdentityIds.some(id => learnerIds.has(id))) {
     return true;
   }
-
-  const learnerEmail = normalizeEmailMatchValue(learner.email);
-  const eventEmail = normalizeEmailMatchValue(event.email);
-  if (learnerEmail && eventEmail && learnerEmail === eventEmail) {
-    return true;
-  }
-
-  const learnerName = normalizePersonName(learner.displayName);
-  const eventLearnerName = normalizePersonName(event.learner);
-  if (!learnerName || !eventLearnerName || learnerName !== eventLearnerName) {
-    return false;
-  }
-
-  const learnerCohort = normalizeMatchValue(learner.cohort);
-  const learnerProgramme = normalizeMatchValue(learner.programme);
-  const eventCohort = normalizeMatchValue(event.cohort);
-  const eventProgramme = normalizeMatchValue(event.programme);
-  if (learnerCohort && eventCohort && learnerCohort !== eventCohort) {
-    return false;
-  }
-  if (learnerProgramme && eventProgramme && learnerProgramme !== eventProgramme) {
-    return false;
-  }
-
-  return true;
+  return false;
 }
 
 function isReviewCalendarEvent(event: CoachCalendarEvent) {
@@ -874,7 +933,7 @@ function sortLearnerScheduleEvents(events: CoachCalendarEvent[]) {
 }
 
 function buildReviewMeetingItems(
-  learner: Pick<CoachLearnerCaseFileData, 'learnerId' | 'displayName' | 'email' | 'programme' | 'cohort'>,
+  learner: Pick<CoachLearnerCaseFileData, 'learnerId' | 'learnerIdentityIds'>,
   timetableEvents: CoachCalendarEvent[],
 ): CaseFileReviewMeeting[] {
   const fallbackDetail = 'Review from the coach schedule.';
@@ -911,6 +970,7 @@ function buildReviewMeetingItems(
       status: event.status,
       statusLabel: calendarStatusLabel(event.status),
       isNext,
+      notes: String(event.notes || '').trim() || undefined,
     };
   });
 }
@@ -953,21 +1013,26 @@ function reviewGroupRank(title: string) {
   return 10;
 }
 
-function buildUpcomingLiveSessions(
-  learner: Pick<CoachLearnerCaseFileData, 'programme' | 'cohort' | 'group'>,
+export function buildUpcomingSchedule(
+  learnerIdentityIds: string[],
   timetableEvents: CoachCalendarEvent[],
 ): CaseFileUpcomingSession[] {
-  if (!learner.group && !learner.cohort) {
+  if (learnerIdentityIds.length === 0) {
     return [];
   }
 
   return sortEvents(
-    timetableEvents.filter((event) =>
-      liveSessionMatchesLearner(event, learner)
+    timetableEvents.filter((event) => {
+      const matchesLiveSession = liveSessionMatchesLearner(event, learnerIdentityIds);
+      const matchesReview = reviewEventMatchesLearner(event, {
+        learnerId: learnerIdentityIds[0] || '',
+        learnerIdentityIds,
+      });
+      return (matchesLiveSession || matchesReview)
       && isUpcomingCalendarEvent(event)
       && event.status !== 'cancelled'
-      && event.status !== 'completed',
-    ),
+      && event.status !== 'completed';
+    }),
   )
     .slice(0, 3)
     .map((event) => {
@@ -977,33 +1042,39 @@ function buildUpcomingLiveSessions(
       const date = formatCalendarDateLabel(displayDate);
       const dateShort = formatUpcomingDateShort(displayDate);
       const time = formatCalendarTimeLabel(event);
+      const review = isReviewCalendarEvent(event);
       return {
         id: event.eventKey || event.id,
+        kind: review ? 'review' : 'live',
+        status: event.status,
+        statusLabel: calendarStatusLabel(event.status),
         day,
-        title: event.title || event.module || 'Live session',
+        title: event.title || (review ? reviewTypeLabel(event) : event.module || 'Live session'),
         date,
         time,
         summary: `${dayShort} ${dateShort} · ${time}`,
         detail: [
-          event.tutor ? `Tutor: ${event.tutor}` : '',
+          review ? reviewTypeLabel(event) : event.tutor ? `Tutor: ${event.tutor}` : '',
           event.group ? `Group: ${event.group}` : '',
-        ].filter(Boolean).join(' - ') || 'Live session from the learner delivery plan.',
+        ].filter(Boolean).join(' - ') || (review ? 'Review from the coach schedule.' : 'Live session from the learner delivery plan.'),
       };
     });
 }
 
 function buildCaseFileData(args: {
   learnerId: string;
+  enrolmentId: string | null;
   kind: LearnerKind | null;
   snapshot: CoachCaseloadLearner | null;
   attendance: CoachAttendanceLearner | null;
   evidence: CoachMarkingQueueItem | null;
+  markingItems?: CoachMarkingQueueItem[];
   detail: LearnerDetail | null;
   caseload: CoachCaseloadLearner[];
   timetableEvents: CoachCalendarEvent[];
   reviewGenerationIssues: CoachReviewGenerationIssue[];
   reviewsLoading?: boolean;
-  auditHours?: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null;
+  learnerMetrics?: CaseFileLearnerMetrics | null;
   liveAttendance?: LearnerAttendance | null;
 }): CoachLearnerCaseFileData | null {
   const displayName = args.detail?.name || args.snapshot?.name || args.attendance?.learner || args.evidence?.learner || '';
@@ -1025,50 +1096,45 @@ function buildCaseFileData(args: {
         ...(args.detail?.componentProgress || []).flatMap((entry) => entry.ksbs || []),
         ...(args.snapshot?.ksbCompletedDetails || []).map((entry) => entry.code || ''),
       ]
-        .map((code) => String(code || '').trim().toUpperCase())
+        .map((code) => normalizeKsbCode(code))
         .filter(Boolean),
     ),
   ).sort();
   const programme = args.detail?.programme || args.attendance?.programme || '';
   const group = args.detail?.group || args.snapshot?.group || args.attendance?.group || '';
   const email = args.detail?.email || args.snapshot?.email || args.attendance?.email || args.evidence?.email || '';
-  const upcomingSessions = buildUpcomingLiveSessions(
-    {
-      programme,
-      cohort,
-      group,
-    },
-    args.timetableEvents,
-  );
+  const learnerIdentityIds = Array.from(new Set([
+    args.learnerId,
+    args.snapshot?.id,
+    args.snapshot?.enrolmentId,
+    args.attendance?.id,
+    args.attendance?.enrolmentId,
+    args.evidence?.learnerId,
+    args.detail?.id,
+  ].map(value => String(value || '').trim()).filter(Boolean)));
+  const upcomingSessions = buildUpcomingSchedule(learnerIdentityIds, args.timetableEvents);
   const reviewEventContext = {
     learnerId: args.learnerId,
-    displayName,
-    email,
-    programme,
-    cohort,
+    learnerIdentityIds,
   };
   const allReviewMeetings = buildReviewMeetingItems(reviewEventContext, args.timetableEvents);
   const progressReviews = allReviewMeetings.filter(item => item.source === 'progress-review' || item.reviewTypeName === 'Progress Review');
   const monthlyCoachMeetings = allReviewMeetings.filter(item => item.source === 'mcr' || item.reviewTypeName === 'Monthly Coaching Meeting');
-  // The audit pair wins over learner-detail's training-plan reflection totals,
-  // so the coach reads the same OTJ hours the learner sees on their own
-  // workspace. `targetHours` paces the plan to the current week, so it is
-  // rescaled by that same proportion rather than left against the old plan.
-  const auditActual = args.auditHours?.actual ?? null;
-  const auditPlanned = args.auditHours?.planned ?? null;
-  const rawDetailTarget = parseHoursValue(args.detail?.targetHours);
+  // Use the exact programme/OTJH totals displayed by the learner dashboard.
+  // The coach view must not turn the learner's whole-plan target into a
+  // cumulative target-to-date or substitute OTJH progress for programme progress.
+  const canonicalActual = args.learnerMetrics?.actual ?? null;
+  const canonicalPlanned = args.learnerMetrics?.planned ?? null;
   const rawDetailPlanned = parseHoursValue(args.detail?.plannedHours) ?? (args.detail?.totalExpectedOtjh || null);
-  const detailCompletedHours = auditActual ?? parseHoursValue(args.detail?.completedHours);
-  const pacing = rawDetailTarget != null && rawDetailPlanned ? rawDetailTarget / rawDetailPlanned : null;
-  const detailTargetHours = auditPlanned != null
-    ? (pacing != null && pacing > 0 && pacing <= 1
-        ? Math.round(auditPlanned * pacing * 100) / 100
-        : auditPlanned)
-    : rawDetailTarget;
-  const detailPlannedHours = auditPlanned ?? rawDetailPlanned;
+  const detailCompletedHours = canonicalActual ?? parseHoursValue(args.detail?.completedHours);
+  const detailTargetHours = canonicalPlanned ?? parseHoursValue(args.detail?.targetHours);
+  const detailPlannedHours = canonicalPlanned ?? rawDetailPlanned;
+  const metricsAvailable = Boolean(args.learnerMetrics);
+  const overallProgress = metricsAvailable ? args.learnerMetrics?.programmeProgress ?? null : null;
 
   return {
     learnerId: args.learnerId,
+    enrolmentId: args.enrolmentId,
     kind: args.kind,
     snapshot: args.snapshot,
     attendance: args.attendance,
@@ -1088,32 +1154,48 @@ function buildCaseFileData(args: {
     coachEmail: args.snapshot?.coachEmail || '',
     employerEmail: args.snapshot?.employerEmail || '',
     employerPhone: args.snapshot?.employerPhone || '',
-    overallProgress: args.snapshot?.overallProgress ?? args.attendance?.overallProgress ?? null,
+    overallProgress,
+    // Prefer the learner's canonical register. The coach attendance projection
+    // remains a fallback so a temporary register failure does not blank the file.
     attendanceRate: args.liveAttendance?.attendanceRate ?? args.attendance?.attendance ?? null,
-    otjhCompleted: detailCompletedHours ?? args.snapshot?.otjhCompleted ?? args.attendance?.otjhCompleted ?? null,
-    otjhTarget: detailTargetHours ?? args.snapshot?.otjhTarget ?? args.attendance?.otjhTarget ?? null,
-    otjhPlanned: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? null,
-    ksbProgress: args.snapshot?.ksbProgress ?? args.attendance?.ksbProgress ?? null,
-    // Distinct KSB codes evidenced in the audit mapping -- a count, as the
-    // learner's own workspace shows it. The mapping spans several standards
-    // and carries no per-learner denominator, so there is no percentage to
-    // derive; `ksbProgress` above stays the curriculum figure.
-    ksbEvidencedCount: args.auditHours?.ksbEvidenced ?? null,
+    attendancePresentCount: args.liveAttendance?.present ?? args.attendance?.present ?? null,
+    attendanceSessionCount: args.liveAttendance?.sessions ?? args.attendance?.sessions ?? null,
+    attendanceAbsentCount: args.liveAttendance?.absent ?? args.attendance?.absent ?? null,
+    otjhCompleted: metricsAvailable ? detailCompletedHours ?? null : null,
+    otjhTarget: metricsAvailable ? detailTargetHours ?? null : null,
+    otjhPlanned: metricsAvailable ? detailPlannedHours ?? null : null,
+    ksbProgress: metricsAvailable ? args.learnerMetrics?.ksbProgress ?? null : null,
+    metricsAvailable,
+    ksbStatus: args.learnerMetrics?.ksbStatus,
+    // Counts remain available to the detailed KSB section, while the header
+    // consistently uses the canonical percentage in `ksbProgress`.
+    ksbEvidencedCount: args.learnerMetrics?.ksbCompleted ?? null,
+    ksbTotalCount: args.learnerMetrics?.ksbTotal ?? null,
+    mappedKsbCodes: args.learnerMetrics?.ksbCodes ?? [],
+    ksbCodeProgress: args.learnerMetrics?.ksbCodeProgress ?? [],
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
-    startDate: args.snapshot?.startDate || formatDisplayDate(args.detail?.quizAttempts[0]?.startedAt) || '--',
+    startDate: args.detail?.programmeStartDate || args.snapshot?.startDate || '--',
     gatewayReviewDate: args.snapshot?.gatewayReviewDate || '--',
     plannedEndDate: args.snapshot?.plannedEndDate || '--',
-    totalExpectedOtjh: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? 0,
+    totalExpectedOtjh: metricsAvailable ? detailPlannedHours ?? 0 : 0,
     touchedKsbCodes,
     activityItems: buildActivityItems(args.snapshot, args.detail, args.evidence),
     upcomingSessions,
     progressReviews,
     monthlyCoachMeetings,
     reviewGroups: buildReviewGroups(allReviewMeetings),
-    reviewGenerationIssues: args.reviewGenerationIssues.filter(
-      issue => String(issue.learnerId) === String(args.learnerId),
-    ),
+    learnerIdentityIds,
+    reviewGenerationIssues: args.reviewGenerationIssues.filter(issue => learnerIdentityIds.includes(String(issue.learnerId))),
     reviewsLoading: Boolean(args.reviewsLoading),
+    markingSubmissions: (args.markingItems || [])
+      .filter(item => item.id && item.activityId)
+      .map(item => ({
+        id: String(item.id),
+        activityId: String(item.activityId),
+        activityTitle: String(item.activityTitle || ''),
+        submittedAt: item.submittedAt || null,
+      })),
+    coachNotes: allReviewMeetings.map(item => item.notes || '').filter(Boolean).slice(0, 5),
   };
 }
 

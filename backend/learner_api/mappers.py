@@ -481,6 +481,32 @@ def _normalize_training_plan(value):
     return value
 
 
+# Free courses assigned to a learner. A pure assignment record, kept separate
+# from the training plan on purpose: it carries no hours, KSBs or progress, so
+# only the free-course id and its display name are stored. `addedAt` is passed
+# through when the client supplies it (the wizard stamps it on add).
+def _normalize_free_courses(value):
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValidationError("freeCourses must be a list.")
+    out = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        free_course_id = _s(item.get("freeCourseId"))
+        if not free_course_id or free_course_id in seen:
+            continue
+        seen.add(free_course_id)
+        out.append({
+            "freeCourseId": free_course_id,
+            "courseName": _s(item.get("courseName")),
+            "addedAt": _s(item.get("addedAt")),
+        })
+    return out
+
+
 def flatten_training_plan(plan):
     """Structured plan -> (module titles, week entries, component entries),
     each entry carrying its curriculum id alongside its title for exact

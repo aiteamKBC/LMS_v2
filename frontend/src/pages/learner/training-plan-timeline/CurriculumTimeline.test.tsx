@@ -95,6 +95,18 @@ describe('building the learner curriculum timeline', () => {
     expect(row.kind === 'session' && row.start).toBeNull();
   });
 
+  it('keeps the authored week identity and outcomes for the weekly learning view', () => {
+    const rows = buildCurriculumTimeline([
+      { ...slot(6, '2026-09-11', 6), weekId: 'W6', weekTitle: 'Campaign planning',
+        learningOutcomes: ['Plan a campaign', 'Measure results'] },
+    ], []);
+    const row = rows[0];
+
+    expect(row.kind === 'session' && row.weekId).toBe('W6');
+    expect(row.kind === 'session' && row.weekTitle).toBe('Campaign planning');
+    expect(row.kind === 'session' && row.learningOutcomes).toEqual(['Plan a campaign', 'Measure results']);
+  });
+
   it('returns nothing for a module with no plannable schedule', () => {
     expect(buildCurriculumTimeline(undefined, [])).toEqual([]);
     expect(buildCurriculumTimeline([], [])).toEqual([]);
@@ -137,7 +149,7 @@ describe('what the learner sees for a session on a holiday', () => {
 
     const flagged = screen.getByTestId('learner-holiday-session');
     expect(within(flagged).getByText('Week 4')).toBeVisible();
-    expect(within(flagged).getByText('Session 4')).toBeVisible();
+    expect(within(flagged).getByText('Week title to be confirmed')).toBeVisible();
     const text = flagged.textContent || '';
     expect(text).toContain('Early May bank holiday');
     expect(text).toContain('Bank holiday');
@@ -165,9 +177,32 @@ describe('what the learner sees for a session on a holiday', () => {
 
     const rows = [...screen.getByTestId('curriculum-timeline').querySelectorAll('li')];
     expect(rows).toHaveLength(6);
-    expect(rows[0].textContent).toContain('Research methods');
-    expect(rows[3].textContent).toContain('Session 4');
+    expect(rows[0].textContent).toContain('Week title to be confirmed');
+    expect(rows[0].textContent).not.toContain('Research methods');
+    expect(rows[3].textContent).not.toContain('Session 4');
     expect(rows[3].textContent).toContain('Early May bank holiday');
+  });
+
+  it('shows the authored week name instead of the booked session name', () => {
+    render(<CurriculumTimeline
+      slots={[{ ...slot(1, '2026-10-08', 1), weekTitle: 'Understanding customer needs' }]}
+      sessions={[session('S1', '2026-10-08', 'Session 1')]} />);
+
+    const row = screen.getByText('Understanding customer needs').closest('li')!;
+    expect(row).toHaveTextContent('8 Oct, 09:00 · 120 min');
+    expect(row).not.toHaveTextContent('UK time');
+    expect(row.textContent?.match(/8 Oct/g)).toHaveLength(1);
+    expect(screen.queryByText('Session 1')).not.toBeInTheDocument();
+  });
+
+  it('keeps an unbooked week date with the time status on the right', () => {
+    render(<CurriculumTimeline
+      slots={[{ ...slot(2, '2026-08-14', 2), weekTitle: 'Planning the campaign' }]}
+      sessions={[]} />);
+
+    const row = screen.getByText('Planning the campaign').closest('li')!;
+    expect(row).toHaveTextContent(/14 Aug(?: 2026)? · Time to be confirmed/);
+    expect(row.textContent?.match(/14 Aug/g)).toHaveLength(1);
   });
 
   it('counts the sessions on a holiday separately from the taught total', () => {

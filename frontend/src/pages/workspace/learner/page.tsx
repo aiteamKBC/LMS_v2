@@ -26,6 +26,8 @@ import { DashboardActivities } from './DashboardActivities';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardPlan } from './useDashboardPlan';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
+import { hasMonthlyHourData, monthFromDate, totalCompletedHours } from '@/pages/learner/training-plan-timeline/monthlyHours';
+import { dateKey } from '@/pages/learner/training-plan-timeline/model';
 
 function formatProgrammeStartDate(value?: string | null): string {
   if (!value) return '';
@@ -71,9 +73,9 @@ export default function LearnerOverview() {
   const skipPreStartData = isRealMode && (!real || isCommercialPreStart);
   const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
   const dashboardPlan = useDashboardPlan(learnerKind, id, isRealMode && !skipPreStartData);
-  // My Learning and Dashboard must quote the same programme snapshot. Keeping
-  // this on the shared metrics resource prevents the weekly overview response
-  // from becoming a second, independently cached source for OTJH totals.
+  // Programme and KSB cards share the canonical metrics with My Learning.
+  // Actual combines retained Audit hours and measured LMS completions once.
+  // Migrated Planned hours use the retained Aptem total.
   const metrics = useLearnerMetrics(learnerKind, id, isRealMode && !skipPreStartData);
   const scheduleRead = dashboardPlan.schedule;
   const [now, setNow] = useState(Date.now);
@@ -121,18 +123,11 @@ export default function LearnerOverview() {
   const displayLearnerName = heroFullName;
   const displayCohort = heroCohort || EMPTY_VALUE;
   const headerDescription = [heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined;
-  // The header states when *this learner* starts, so their own recorded date
-  // (Created_users.Learner_start_date) wins. learningAccess.startDate is the
-  // cohort's gating date -- right for "when does learning unlock", wrong here,
-  // because it reads back a cohort date for a learner whose own date differs.
-  const startDateDisplay = formatProgrammeStartDate(real?.learnerStartDate
-    || real?.learningAccess?.startDate || real?.programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
-  // Same reasoning as the start date above: the learner's own recorded end
-  // (Created_users.Learner_end_date) wins. programmeEndDate resolves through
-  // the delivery's end columns, which are empty for a learner whose end date
-  // is recorded only against themselves -- that read back as "--".
-  const plannedEndDisplay = formatProgrammeStartDate(real?.learnerEndDate
-    || real?.programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const programmeStartDate = dashboardPlan.data?.programmeStartDate
+    ?? real?.learningAccess?.startDate ?? real?.programmeStartDate;
+  const programmeEndDate = dashboardPlan.data?.programmeEndDate ?? real?.programmeEndDate;
+  const startDateDisplay = formatProgrammeStartDate(programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const plannedEndDisplay = formatProgrammeStartDate(programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
     new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }));
   const planPlaceholder = scheduleRead.loading ? 'Loading...' : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;
@@ -159,23 +154,34 @@ export default function LearnerOverview() {
       : attendanceRead.error ? 'Attendance unavailable' : 'No attendance records yet';
   const attendanceTone: StatusTone = attendancePercent == null ? 'neutral' : 'brand';
 
-  const otjPlannedHours = metrics.data?.otjh.planned;
-  const otjActualHours = metrics.data?.otjh.actual;
+  const otjPlannedHours = !metrics.data ? null : metrics.data.migrated
+    ? metrics.data.aptem_planned_total ?? null : dashboardPlan.otjh.planned;
+  const otjPlannedLoading = metrics.loading || (!metrics.data?.migrated && dashboardPlan.otjh.plannedLoading);
+  const otjChartDataAvailable = !!dashboardPlan.data && hasMonthlyHourData(dashboardPlan.data);
+  // Keep the headline card and the monthly chart on one calculation. If the
+  // chart has no monthly dataset at all, retain the metrics fallback so a plan
+  // service failure does not discard an otherwise available case-file total.
+  const otjActualHours = otjChartDataAvailable
+    ? totalCompletedHours(dashboardPlan.data!, monthFromDate(dateKey(programmeStartDate)), monthFromDate(dateKey(programmeEndDate)))
+    : metrics.data?.otjh.completed_actual ?? null;
   const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
     ? Math.round((otjActualHours / otjPlannedHours) * 100)
     : null;
   const otjPlannedValue = otjPlannedHours != null ? `${otjPlannedHours.toFixed(2)} h`
-    : metrics.loading ? 'Loading…' : 'Unavailable';
-  const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h` : EMPTY_VALUE;
-  const otjCaption = metrics.loading ? 'Loading recorded time...' : metrics.data?.otjh.actual == null ? 'Recorded time unavailable'
+    : otjPlannedLoading ? 'Loading…' : 'Unavailable';
+  const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h`
+    : metrics.loading ? 'Loading...' : 'Unavailable';
+  const otjCaption = metrics.loading || otjPlannedLoading ? 'Loading recorded time...' : otjActualHours == null ? 'Recorded time unavailable'
     : otjPlannedHours == null ? 'Training plan target hours are not available yet.' : 'Across your programme';
   const otjTone: StatusTone = 'brand';
   const ksb = metrics.data?.ksb;
   const ksbPercent = ksb?.percent ?? null;
-  const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;
+  const ksbValue = ksbPercent == null
+    ? ksb?.mappedCompleted != null ? `${ksb.mappedCompleted} points` : EMPTY_VALUE
+    : `${ksbPercent}%`;
   const ksbCaption = ksb?.total != null ? `${ksb.completed} of ${ksb.total} points achieved`
+    : ksb?.mappedCompleted != null ? `Recorded achievement; KSB mappings missing for ${ksb.unmappedActivities ?? 0} activities. Percentage unavailable.`
     : metrics.loading ? 'Loading KSB progress...' : 'KSB details unavailable';
-  const ksbTargetDetail = ksb?.total != null && ksb.total > 0 ? `${ksb.total.toLocaleString('en-GB')} KSB points` : 'KSB point total unavailable';
   const ksbTone: StatusTone = ksbPercent == null ? 'neutral'
     : ksbPercent >= 50 ? 'positive' : ksbPercent >= 30 ? 'caution' : 'critical';
 
@@ -398,18 +404,20 @@ export default function LearnerOverview() {
                 value={otjActualValue}
                 valueLabel="Actual"
                 targetValue={otjPlannedValue}
-                targetLabel="Target (TP Planned)"
+                targetLabel="Planned hours"
                 percent={otjPercent}
                 caption={otjCaption}
                 tone={otjTone}
               />
-              <ProgressStat href={ksbProgressHref} icon={BarChart3} label="KSB Progress" value={ksbValue} targetValue="100%" targetDetail={ksbTargetDetail} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
+              <ProgressStat href={ksbProgressHref} icon={BarChart3} label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
             </div>
         </div>
 
         {real && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
         <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} plan={dashboardPlan} canOpenActivities
-          programmeStartDate={real?.learningAccess?.startDate ?? real?.programmeStartDate} canOpenRewards={!reviewingLearner} />
+          programmeStartDate={programmeStartDate}
+          programmeEndDate={programmeEndDate}
+          canOpenRewards={!reviewingLearner} />
       </PageContainer>
     </WorkspaceShell>
   );
@@ -444,7 +452,7 @@ function ProgressStat({ href, icon: Icon, label, value, valueLabel = 'Current', 
   label: string;
   value: string;
   valueLabel?: string;
-  targetValue: string;
+  targetValue?: string;
   targetLabel?: string;
   targetDetail?: string;
   percent: number | null;
@@ -467,16 +475,16 @@ function ProgressStat({ href, icon: Icon, label, value, valueLabel = 'Current', 
         <AppIcon aria-hidden="true" className={`ri-arrow-right-s-line ${overviewStyles.metricArrow}`} />
       </div>
       <dl className={overviewStyles.metricValues}>
-        <div>
+        <div className={targetValue == null ? 'col-span-2' : undefined}>
           <dt className={overviewStyles.metricSubLabel}>{valueLabel}</dt>
           <dd className={`${overviewStyles.metricValue} ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</dd>
         </div>
-        <div>
+        {targetValue != null && <div>
           <dt className={overviewStyles.metricSubLabel}>{targetLabel}</dt>
           <dd className={`${overviewStyles.metricValue} text-foreground-900`}>{targetValue}
             {targetDetail && <span className={overviewStyles.metricValueDetail}>{targetDetail}</span>}
           </dd>
-        </div>
+        </div>}
       </dl>
       <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} height="h-3" className={overviewStyles.metricBar} />
       {caption ? <p className={overviewStyles.metricCaption}>

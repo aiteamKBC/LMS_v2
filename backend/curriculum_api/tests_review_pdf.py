@@ -9,6 +9,7 @@ from django.test import SimpleTestCase, RequestFactory
 from PIL import Image, ImageDraw
 from pypdf import PdfReader
 
+from .review_instances import meeting_summary_field, required_signature_roles
 from .review_pdf import build_mcm_pdf, pdf_availability, mcm_pdf_response
 
 
@@ -28,6 +29,8 @@ def sample_definition():
                        'employer': {'required': False, 'signed': False}, 'referrer': {'required': False, 'signed': False}},
         'sections': [{'id': 'one', 'title': 'Learning & reflection', 'enabled': True, 'displayOrder': 0, 'fields': [
             {'id': 'answer', 'title': 'What did you learn?', 'fieldType': 'text_multiline', 'answer': 'Saved learner answer <not markup>.'},
+            {'id': 'meeting-summary', 'title': 'Coach summary wording', 'fieldType': 'text_multiline',
+             'configuration': {'semanticKey': 'meeting_summary'}, 'answer': None},
             {'id': 'conditional', 'title': 'Any concerns?', 'fieldType': 'boolean_case_block', 'answer': 'no',
              'yesFields': [{'title': 'Hidden branch', 'fieldType': 'text', 'answer': 'HIDDEN-OLD-ANSWER'}],
              'noFields': [{'title': 'Next step', 'fieldType': 'text', 'answer': 'Continue the learning plan.'}]},
@@ -39,12 +42,105 @@ SAMPLE_INFORMATION = {'name': 'Sample learner', 'programme': 'Sample programme',
                       'endDate': '2027-01-01', 'employer': 'Sample employer', 'manager': 'Sample manager'}
 
 
-class SignedMcmPdfTests(SimpleTestCase):
-    def test_learner_signature_is_needed_even_if_an_old_template_omitted_it(self):
+class SignatureAvailabilityTests(SimpleTestCase):
+    def test_canonical_resolver_accepts_frozen_snapshot_and_serialized_shapes(self):
+        self.assertEqual(
+            required_signature_roles({
+                'advisor': True, 'participant': False, 'employer': True, 'referrer': False,
+            }),
+            ('advisor', 'employer'),
+        )
+        self.assertEqual(
+            required_signature_roles({
+                'advisor': {'required': True},
+                'participant': {'required': False},
+                'employer': {'required': True},
+                'referrer': {'required': False},
+            }),
+            ('advisor', 'employer'),
+        )
+
+    def test_coach_only_frozen_requirement_does_not_require_learner(self):
         definition = sample_definition()
         definition['signatures']['participant'] = {'required': False, 'signed': False}
+        self.assertTrue(pdf_availability(definition)['available'])
+
+    def test_coach_and_learner_frozen_requirements_require_both(self):
+        definition = sample_definition()
+        definition['signatures']['participant']['signed'] = False
         self.assertFalse(pdf_availability(definition)['available'])
-        self.assertEqual(mcm_pdf_response(definition, SAMPLE_INFORMATION).status_code, 409)
+        definition['signatures']['participant'] = sample_definition()['signatures']['participant']
+        self.assertTrue(pdf_availability(definition)['available'])
+
+    def test_coach_learner_and_employer_frozen_requirements_require_all_three(self):
+        definition = sample_definition()
+        definition['signatures']['employer'] = {'required': True, 'signed': False}
+        self.assertFalse(pdf_availability(definition)['available'])
+        definition['signatures']['employer'] = {
+            **sample_definition()['signatures']['participant'],
+            'signedName': 'Sample employer',
+        }
+        self.assertTrue(pdf_availability(definition)['available'])
+
+    def test_no_frozen_signature_requirements_allows_a_completed_review_pdf(self):
+        definition = sample_definition()
+        for role in definition['signatures']:
+            definition['signatures'][role] = {'required': False, 'signed': False}
+        self.assertTrue(pdf_availability(definition)['available'])
+
+    def test_optional_signatures_do_not_block_pdf_availability(self):
+        definition = sample_definition()
+        definition['signatures']['participant'] = {
+            'required': False,
+            'signed': False,
+            'signedName': '',
+            'signedAt': None,
+            'signature': 'not-an-image',
+        }
+        definition['signatures']['employer'] = {'required': False, 'signed': False}
+        self.assertTrue(pdf_availability(definition)['available'])
+
+    def test_each_missing_frozen_required_signature_blocks_pdf_availability(self):
+        for role in ('advisor', 'participant', 'employer'):
+            with self.subTest(role=role):
+                definition = sample_definition()
+                definition['signatures']['employer'] = {
+                    **sample_definition()['signatures']['participant'],
+                    'signedName': 'Sample employer',
+                }
+                definition['signatures'][role]['required'] = True
+                definition['signatures'][role]['signed'] = False
+                self.assertFalse(pdf_availability(definition)['available'])
+
+    def test_completed_review_keeps_its_frozen_requirements_when_live_template_changes(self):
+        definition = sample_definition()
+        definition['signatures']['participant'] = {'required': False, 'signed': False}
+        current_template = {'signatures': {'advisor': True, 'participant': True, 'employer': True}}
+        definition['template']['signatures'] = current_template['signatures']
+        self.assertTrue(pdf_availability(definition)['available'])
+        current_template['signatures']['referrer'] = True
+        self.assertTrue(pdf_availability(definition)['available'])
+
+
+class SignedMcmPdfTests(SimpleTestCase):
+    def test_meeting_summary_resolver_is_recursive_and_never_matches_labels(self):
+        definition = sample_definition()
+        mapped = definition['sections'][0]['fields'].pop(1)
+        definition['sections'][0]['fields'].append({
+            'id': 'case', 'title': 'Conditional', 'fieldType': 'boolean_case_block',
+            'yesFields': [{'id': 'label-only', 'title': 'Meeting Summary', 'configuration': {}}, mapped],
+            'noFields': [],
+        })
+        self.assertEqual(meeting_summary_field(definition)['id'], 'meeting-summary')
+        mapped['configuration'] = {}
+        self.assertIsNone(meeting_summary_field(definition))
+
+    def test_pdf_does_not_invent_an_optional_learner_signature(self):
+        definition = sample_definition()
+        definition['signatures']['participant'] = {'required': False, 'signed': False}
+        pdf = PdfReader(BytesIO(build_mcm_pdf(definition, SAMPLE_INFORMATION)))
+        text = '\n'.join(page.extract_text() for page in pdf.pages)
+        self.assertNotIn('Name: Sample learner', text)
 
     def test_all_required_signatures_and_completed_status_are_needed(self):
         for change in ('coach', 'employer', 'status', 'image', 'date', 'name'):
@@ -91,12 +187,7 @@ class SignedMcmPdfTests(SimpleTestCase):
         self.assertEqual(definition, original)
 
     def test_meeting_summary_section_shows_a_placeholder_when_the_instance_has_none(self):
-        # The Review Instance owns no meeting-summary field today -- this is
-        # a presentation-only requirement matching the reference PDF, not a
-        # dependency on the separate coach_meeting_summaries/CoachCalendarEvent
-        # AI-summary feature.
         definition = sample_definition()
-        self.assertNotIn('meetingSummary', definition)
         pdf = PdfReader(BytesIO(build_mcm_pdf(definition, SAMPLE_INFORMATION)))
         text = '\n'.join(page.extract_text() for page in pdf.pages)
         self.assertIn('Meeting Summary', text)
@@ -104,11 +195,12 @@ class SignedMcmPdfTests(SimpleTestCase):
 
     def test_meeting_summary_section_renders_a_saved_summary_when_present(self):
         definition = sample_definition()
-        definition['meetingSummary'] = 'Agreed to focus on time management next month.'
+        definition['sections'][0]['fields'][1]['answer'] = 'Agreed to focus on time management next month.'
         pdf = PdfReader(BytesIO(build_mcm_pdf(definition, SAMPLE_INFORMATION)))
         text = '\n'.join(page.extract_text() for page in pdf.pages)
         self.assertIn('Meeting Summary', text)
         self.assertIn('Agreed to focus on time management next month.', text)
+        self.assertEqual(text.count('Agreed to focus on time management next month.'), 1)
         self.assertNotIn('No Summary Generated', text)
 
     def test_invalid_or_remote_signature_never_produces_a_signed_pdf(self):
@@ -209,6 +301,36 @@ class ProgressReviewPdfTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('Progress-Review-REVI-SAMPLE.pdf', response['Content-Disposition'])
 
+    def test_progress_review_pdf_uses_its_frozen_signature_requirements(self):
+        definition = progress_review_definition(saved_snapshot())
+        definition['signatures']['participant'] = {'required': False, 'signed': False}
+        self.assertTrue(pdf_availability(definition)['available'])
+        definition['signatures']['employer'] = {'required': True, 'signed': False}
+        self.assertFalse(pdf_availability(definition)['available'])
+
+    def test_reference_progress_values_and_over_100_labels_render_without_recalculation(self):
+        snapshot = saved_snapshot(
+            ksbProgress={
+                'available': True,
+                'title': 'Project controls professional Apprenticeship Standard (v1.0) (Level 6)',
+                'actualPercent': 73,
+                'expectedPercent': 100,
+                'variancePercent': -27,
+                'varianceDirection': 'below',
+            },
+            offTheJobHours={
+                'actual': 120, 'expected': 41, 'planned': 100,
+                'actualPercent': 120.0, 'expectedPercent': 41.0,
+                'variancePercent': 79.0, 'varianceDirection': 'above',
+            },
+        )
+        text = self.pdf_text(progress_review_definition(snapshot))
+        self.assertIn('Project controls professional Apprenticeship Standard', text)
+        self.assertIn('73%', text)
+        self.assertIn('27% Below', text)
+        self.assertIn('120%', text)
+        self.assertIn('79% Above', text)
+
     def test_it_renders_the_saved_snapshot_rather_than_recalculating(self):
         definition = progress_review_definition(saved_snapshot())
         original = deepcopy(definition)
@@ -219,8 +341,11 @@ class ProgressReviewPdfTests(SimpleTestCase):
         # Exactly the stored figures, and the stored above/below annotations.
         self.assertIn('28%', text)
         self.assertIn('64%', text)
-        self.assertIn('23% above expected (expected 41%)', text)
-        self.assertIn('28% below expected (expected 56%)', text)
+        self.assertIn('23% Above', text)
+        self.assertIn('28% Below', text)
+        self.assertIn('Learning Plan Progress', text)
+        self.assertIn('Apprenticeship Standard progress', text)
+        self.assertIn('KSB progress was not available in this snapshot.', text)
         for later in LATER_LIVE_FIGURES:
             self.assertNotIn(later, text)
         # Rendering must not mutate what it was handed.

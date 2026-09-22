@@ -16,7 +16,7 @@ from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
-from .models import EnrolmentUser, LearnerProfile
+from .models import EnrolmentUser, LearnerProfile, LearnerProgressEntry
 from .learning_plan import _effective_plan_ids
 from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
                                     read_student_activity, read_student_material)
@@ -67,13 +67,14 @@ def _direct_progress_records(enrolment_id):
         .filter(component_link_source__in=('direct', 'quiz_ref'))
         .exclude(kind='activity_event')
         .values(
-            'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
+            'id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
             'module_title', 'week_title', 'reported_time', 'claimed_seconds',
             'verified_seconds', 'time_tracking_source', 'expected_otjh',
             'submitted_at', 'passed',
         )
     )
-    return [{
+    records = [{
+        'sourceRef': f"progress:{row['id']}" if row.get('id') is not None else None,
         'kind': row['kind'],
         'componentId': row['component_ref'],
         'quizId': row['quiz_ref'],
@@ -89,6 +90,88 @@ def _direct_progress_records(enrolment_id):
         'submittedAt': row['submitted_at'].isoformat() if row['submitted_at'] else '',
         'passed': row['passed'],
     } for row in entries]
+    component_ids = sorted({str(row['componentId']) for row in records if row.get('componentId')})
+    if not component_ids:
+        return records
+
+    # Assignment marking is stored separately from the progress row. Keep the
+    # coach decision beside the record so OTJH reporting can distinguish a
+    # hand-in from an accepted assignment without changing quiz semantics.
+    candidates = {str(enrolment_id), str(profile.id), str(profile.enrolment_id)}
+    try:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute('''SELECT DISTINCT ON (activity_id) activity_id,status
+                FROM "Learner"."learning_reflection_submissions"
+                WHERE learner_id::text=ANY(%s) AND activity_id=ANY(%s)
+                ORDER BY activity_id,submitted_at DESC NULLS LAST''', [sorted(candidates), component_ids])
+            statuses = {str(activity_id): str(status or '') for activity_id, status in cursor.fetchall()}
+    except DatabaseError:
+        # Older installations may not have the marking table yet. Preserve the
+        # existing progress response rather than making the overview unavailable.
+        statuses = {}
+    for record in records:
+        if record.get('componentId') in statuses:
+            record['markingStatus'] = statuses[record['componentId']]
+    return records
+
+
+def load_direct_progress_records_bulk(enrolment_ids):
+    """Load direct progress for several enrolments without per-learner ORM reads."""
+    ids = [int(value) for value in dict.fromkeys(enrolment_ids or []) if value is not None]
+    if not ids:
+        return {}
+    profiles = list(
+        LearnerProfile.objects.using('enrolment')
+        .filter(enrolment_id__in=ids)
+        .only('id', 'enrolment_id')
+    )
+    result = {enrolment_id: [] for enrolment_id in ids}
+    component_pairs = []
+    entries_by_profile = {}
+    entries = LearnerProgressEntry.objects.using('enrolment').filter(
+        learner_id__in=[profile.id for profile in profiles],
+        component_link_source__in=('direct', 'quiz_ref'),
+    ).exclude(kind='activity_event').values(
+        'id', 'learner_id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
+        'module_title', 'week_title', 'reported_time', 'claimed_seconds', 'verified_seconds',
+        'time_tracking_source', 'expected_otjh', 'submitted_at', 'passed',
+    )
+    for row in entries:
+        entries_by_profile.setdefault(int(row['learner_id']), []).append(row)
+    for profile in profiles:
+        rows = entries_by_profile.get(int(profile.id), [])
+        records = [{
+            'sourceRef': f"progress:{row['id']}" if row.get('id') is not None else None,
+            'kind': row['kind'], 'componentId': row['component_ref'], 'quizId': row['quiz_ref'],
+            'componentTitle': row['component_title'], 'componentType': row['component_type'],
+            'moduleTitle': row['module_title'], 'weekTitle': row['week_title'],
+            'reportedTime': row['reported_time'], 'claimedSeconds': row['claimed_seconds'],
+            'verifiedSeconds': row['verified_seconds'], 'timeTrackingSource': row['time_tracking_source'],
+            'expectedOtjh': float(row['expected_otjh']) if row['expected_otjh'] is not None else None,
+            'submittedAt': row['submitted_at'].isoformat() if row['submitted_at'] else '',
+            'passed': row['passed'],
+        } for row in rows]
+        result[int(profile.enrolment_id)] = records
+        component_pairs.append((profile, records))
+    component_ids = sorted({str(record['componentId']) for _, records in component_pairs for record in records if record.get('componentId')})
+    if not component_ids:
+        return result
+    candidates = sorted({str(value) for profile, _ in component_pairs for value in (profile.enrolment_id, profile.id)})
+    try:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute('''SELECT DISTINCT ON (learner_id::text, activity_id) learner_id::text, activity_id, status
+                FROM "Learner"."learning_reflection_submissions"
+                WHERE learner_id::text=ANY(%s) AND activity_id=ANY(%s)
+                ORDER BY learner_id::text, activity_id, submitted_at DESC NULLS LAST''', [candidates, component_ids])
+            statuses = {(learner, str(activity)): str(status or '') for learner, activity, status in cursor.fetchall()}
+    except DatabaseError:
+        statuses = {}
+    for profile, records in component_pairs:
+        for record in records:
+            status = statuses.get((str(profile.enrolment_id), str(record.get('componentId')))) or statuses.get((str(profile.id), str(record.get('componentId'))))
+            if status is not None:
+                record['markingStatus'] = status
+    return result
 
 
 def _direct_progress_otjh(progress):

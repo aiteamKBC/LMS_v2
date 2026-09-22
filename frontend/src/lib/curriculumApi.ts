@@ -293,8 +293,10 @@ export interface CurriculumModule {
   lessons: number;
   quizzes: number;
   /**
-   * Always 0 out of every module builder -- nothing counts assignments on a
-   * module row yet. Omitted from a `?compact=true` list for that reason.
+   * Learners currently assigned this module -- computed in bulk once per
+   * overview build (see `attach_module_assignment_counts` server-side), not
+   * per row, so listing many modules costs one pass over learners, not one
+   * query per module.
    */
   assignments?: number;
   status: 'published' | 'draft' | 'review' | string;
@@ -1223,6 +1225,7 @@ export interface CurriculumGroup {
 }
 
 export interface CurriculumSession {
+  timeZone?: string;
   id: string;
   trainingPlanId: number | string;
   programmeId?: string;
@@ -1265,6 +1268,7 @@ export interface CurriculumSession {
  * full week structure just to inspect a live-session component's settings.
  */
 export interface CurriculumTeamsMeetingSummary {
+  timeZone?: string;
   moduleCatalogueId: string;
   liveSessionId: string;
   status: string;
@@ -1658,6 +1662,12 @@ export interface CurriculumAuditEvent {
   snapshot: Record<string, unknown> | null;
   viaParent?: string;
   href: string;
+  /**
+   * Only set by the per-person activity read: true when the backend could
+   * place this save on a page the person was recorded as having open. The
+   * change feed never sets it, because it has no pages to place against.
+   */
+  placed?: boolean;
 }
 
 /** Someone who changed something in the window, for the actor filter. */
@@ -1697,8 +1707,184 @@ export interface CurriculumAuditTrail {
   /** The source and actor-type values the server recognises, for the filters. */
   sources: CurriculumAuditSource[];
   actorTypes: CurriculumAuditActorType[];
+  /**
+   * The record types this workspace actually audits, named by the server.
+   * Named there rather than listed here because the answer differs per
+   * workspace and grows as each one is wired up — a list held in the browser
+   * was the curriculum's ten types, so the system-wide trail offered a filter
+   * that could not name a learner, a coaching meeting or an employer.
+   */
+  entityTypes?: { value: string; label: string }[];
   actors: CurriculumAuditActor[];
   events: CurriculumAuditEvent[];
+}
+
+/**
+ * Who used Curriculum Studio, as opposed to what they changed.
+ *
+ * Three sources sit behind these shapes and the page has to be able to tell
+ * them apart, which is why each is flagged separately rather than merged into
+ * one silent total:
+ *
+ * * `visitsRecorded` - `curriculum.activity_events` exists, so pages opened and
+ *   read actions are being recorded. False means the table has not been created
+ *   yet and the reading half of the trail is simply not there. It is never
+ *   retroactive: nothing was recorded before the table existed.
+ * * `changesRecorded` - the revision log exists, so saves can be named.
+ * * `signInsRecorded` - `login."Login_audit"` could be read. Sign-ins are
+ *   account-wide, not curriculum-only, and are labelled as such.
+ */
+export interface CurriculumActivityPerson {
+  email: string;
+  name: string;
+  /** Their role at the time the activity was recorded. Empty if unknown. */
+  role: string;
+  firstSeen: string;
+  lastSeen: string;
+  /** Distinct browser sittings in the window. */
+  visits: number;
+  pageViews: number;
+  readActions: number;
+  /** How many DIFFERENT curriculum pages they opened, not how many times. */
+  pagesOpened: number;
+  /** Saves recorded against them in the revision log. */
+  changes: number;
+  signIns: number;
+  lastPageKey: string;
+  lastPageLabel: string;
+  /** The workspace of the last page they opened. */
+  lastWorkspace: string;
+  /**
+   * Which workspaces they were in over the window, most recent first.
+   * Empty when page opens are not being recorded: it is a fact about visits,
+   * so with no visits recorded there is nothing to say rather than nowhere
+   * to have been.
+   */
+  workspaces: { workspace: string; label: string; hits: number; lastAt: string }[];
+}
+
+export interface CurriculumActivityPeople {
+  generatedAt: string;
+  windowDays: number;
+  since: string;
+  /** The workspace this response was scoped to; empty means all of them. */
+  workspace: string;
+  /** Every workspace the server recognises, for the filter. */
+  workspaces: { value: string; label: string }[];
+  /**
+   * True once each row carries its own workspace column. False means the
+   * workspace is derived from the stored path on read -- the same answer,
+   * reached without an index.
+   */
+  workspaceRecorded: boolean;
+  /**
+   * The workspaces whose saves the Changes feed can actually name. The
+   * reading half covers every workspace; the writing half covers the ones
+   * wired into a revision log, and the page says which rather than letting an
+   * empty feed read as "nobody changed anything".
+   */
+  changeWorkspaces: string[];
+  visitsRecorded: boolean;
+  changesRecorded: boolean;
+  signInsRecorded: boolean;
+  truncated: boolean;
+  /** How many rows this response carries; `totals.people` counts everyone who matched. */
+  shown: number;
+  /** The server-side cap that `truncated` reports against. */
+  limit: number;
+  totals: {
+    people: number;
+    visits: number;
+    pageViews: number;
+    readActions: number;
+    changes: number;
+    signIns: number;
+  };
+  people: CurriculumActivityPerson[];
+}
+
+/** One thing done on a page that was not a save. */
+export interface CurriculumActivityAction {
+  id: string;
+  at: string;
+  kind: string;
+  /** "Searched", "Exported" - `kind` in words, resolved server-side. */
+  label: string;
+  targetType: string;
+  targetId: string;
+  targetLabel: string;
+  /** Short descriptive context: the term searched, the filter changed. */
+  detail: Record<string, string>;
+}
+
+/** One page opened during a visit, and everything that happened on it. */
+export interface CurriculumActivityPage {
+  id: string;
+  at: string;
+  /** When the last thing on this page happened, not when it was closed. */
+  endedAt: string;
+  path: string;
+  pageKey: string;
+  pageLabel: string;
+  targetType: string;
+  targetId: string;
+  targetLabel: string;
+  /** How long it was open. Null when the tab closed before it could be sent. */
+  durationMs: number | null;
+  actions: CurriculumActivityAction[];
+  /** Recorded saves that happened while this page was open. */
+  changes: CurriculumAuditEvent[];
+}
+
+/** One sitting in one browser tab. */
+export interface CurriculumActivityVisit {
+  id: string;
+  startedAt: string;
+  endedAt: string;
+  ip: string;
+  userAgent: string;
+  pages: CurriculumActivityPage[];
+  pageCount: number;
+  actionCount: number;
+  changeCount: number;
+}
+
+export interface CurriculumActivitySignIn {
+  at: string;
+  ip: string;
+  userAgent: string;
+}
+
+export interface CurriculumPersonActivity {
+  generatedAt: string;
+  windowDays: number;
+  since: string;
+  visitsRecorded: boolean;
+  changesRecorded: boolean;
+  signInsRecorded: boolean;
+  person: {
+    email: string;
+    name: string;
+    role: string;
+    firstSeen: string;
+    lastSeen: string;
+  };
+  counts: {
+    visits: number;
+    pageViews: number;
+    readActions: number;
+    changes: number;
+    /**
+     * How many of their changes could be placed on a page they were recorded
+     * as having open. The rest are still listed - a save whose navigation was
+     * never recorded is still a save.
+     */
+    changesOnAPage: number;
+    signIns: number;
+  };
+  visits: CurriculumActivityVisit[];
+  signIns: CurriculumActivitySignIn[];
+  changes: CurriculumAuditEvent[];
 }
 
 export type CurriculumVersionEntityType = 'module' | 'week' | 'component';
@@ -2323,13 +2509,23 @@ function notifyRemoteWrite(path: string): void {
 // ---------------------------------------------------------------------------
 
 const EPOCH_PATH = '/curriculum/cache-epoch/';
-// 10s rather than the 25s this shipped with. A reader watching a list
-// somebody else is editing waits half the interval on average, so this is
-// ~5s instead of ~12s. What it costs is one authenticated request per open
-// tab: two Redis GETs here, plus the single indexed LoginSession lookup
-// every request pays. The last_seen_at write is throttled to 5 minutes
-// (login/sessions.py), so polling faster adds reads, never writes.
-const EPOCH_POLL_INTERVAL_MS = 10_000;
+// 4s rather than the 10s before it (and the 25s this shipped with). A reader
+// watching a record somebody else is editing waits half the interval on
+// average, so this is ~2s instead of ~5s -- close enough to instant that a
+// second screen no longer reads as stale, which is the whole point of the
+// counter. Tabs of the same browser hear each other through BroadcastChannel
+// and do not wait for this at all.
+// What it costs is one authenticated request per open tab: the shared epoch
+// read (Redis where it is configured, otherwise the one-row counter table),
+// plus the single indexed LoginSession lookup every request pays. The
+// last_seen_at write is throttled to 5 minutes (login/sessions.py), so polling
+// faster adds reads, never writes. Below ~3s the request rate stops buying
+// perceptible freshness and starts being felt by the database, so this is the
+// floor rather than a number to keep lowering.
+// Exported so the tests can advance their fake clock by one tick of whatever
+// this is set to, rather than encoding the number and quietly meaning
+// something else the next time it moves.
+export const EPOCH_POLL_INTERVAL_MS = 4_000;
 // The endpoint ships with the backend, and the frontend can be deployed ahead of
 // it. Rather than call a missing URL every few seconds for the life of the tab,
 // give up after a few failures and leave the return-to-tab refresh to cover it.
@@ -2857,12 +3053,11 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  // Without a timeout this hangs on the browser's own default (minutes) when the
-  // backend is slow, leaving the catalogue's loading skeleton up long after a
-  // sibling request against the same server has already timed out and reported
-  // it. Matching that 30s budget lets the list fail into its own error+Retry
-  // banner instead of spinning forever.
-  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 30000 });
+  // A cold curriculum cache can need to rebuild the module catalogue and its
+  // authoring summaries. Give that read a minute, rather than reporting a
+  // misleading failure at 30 seconds, while still preventing a stuck request
+  // from leaving the catalogue loading forever.
+  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 60000 });
 }
 
 export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
@@ -3327,8 +3522,17 @@ export function fetchCurriculumAuditTrail(
     /** Narrow to one branch of the curriculum, as it was at the time. */
     scope?: 'programme' | 'cohort' | 'group' | 'module';
     scopeId?: string;
+    /**
+     * Which workspace's saves to read; '' or omitted reads every one.
+     *
+     * One revision log now holds the whole LMS, so the scoped door has to
+     * ask for its own workspace -- otherwise /curriculum/audit-trail would
+     * start showing learner and coaching saves the day those were wired in.
+     */
+    workspace?: string;
     signal?: AbortSignal;
     skipCache?: boolean;
+    revalidate?: boolean;
   } = {},
 ): Promise<CurriculumAuditTrail> {
   const query = new URLSearchParams();
@@ -3340,6 +3544,7 @@ export function fetchCurriculumAuditTrail(
   if (options.actor) query.set('actor', options.actor);
   if (options.source && options.source !== 'all') query.set('source', options.source);
   if (options.actorType && options.actorType !== 'all') query.set('actorType', options.actorType);
+  if (options.workspace) query.set('workspace', options.workspace);
   if (options.scope && options.scopeId) {
     query.set('scope', options.scope);
     query.set('scopeId', options.scopeId);
@@ -3348,8 +3553,52 @@ export function fetchCurriculumAuditTrail(
   return fetchJson<CurriculumAuditTrail>(`/curriculum/quality/audit-trail/${suffix}`, {
     signal: options.signal,
     skipCache: options.skipCache,
+    revalidate: options.revalidate,
     timeoutMs: 30000,
   });
+}
+
+/**
+ * Everyone who used Curriculum Studio in the window, one row each.
+ *
+ * Cached briefly like other read-only curriculum data. The page can request a
+ * network revalidation when the user presses Refresh without discarding the
+ * response for the next visit.
+ */
+export function fetchActivityPeople(
+  options: { days?: number; search?: string; workspace?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
+): Promise<CurriculumActivityPeople> {
+  const query = new URLSearchParams();
+  if (options.days) query.set('days', String(options.days));
+  if (options.search) query.set('search', options.search);
+  if (options.workspace) query.set('workspace', options.workspace);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumActivityPeople>(`/activity/people/${suffix}`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
+    timeoutMs: 30000,
+  });
+}
+
+/** One person: their visits, the pages in each, and what they did there. */
+export function fetchPersonActivity(
+  email: string,
+  options: { days?: number; workspace?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
+): Promise<CurriculumPersonActivity> {
+  const query = new URLSearchParams();
+  if (options.days) query.set('days', String(options.days));
+  if (options.workspace) query.set('workspace', options.workspace);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumPersonActivity>(
+    `/activity/people/${encodeURIComponent(email)}/${suffix}`,
+    {
+      signal: options.signal,
+      skipCache: options.skipCache,
+      revalidate: options.revalidate,
+      timeoutMs: 30000,
+    },
+  );
 }
 
 function postJson<T>(path: string, body: unknown): Promise<T> {
@@ -3687,6 +3936,82 @@ export function fetchArchivedCurriculumModules(signal?: AbortSignal): Promise<Cu
   return fetchCollection<CurriculumArchivedModule>('/curriculum/modules/archived/', { signal, revalidate: true });
 }
 
+/**
+ * A component inside an archived module's week, as the archive reads it back.
+ *
+ * Deliberately a subset of the builder's own component shape: this is a read,
+ * and everything an editor needs (settings, sources, completion rules) is not
+ * what a reader deciding whether to restore the module is looking at. The
+ * backend returns the full component either way -- narrowing it here is what
+ * stops the archive growing a second, drifting copy of the authoring model.
+ */
+export interface CurriculumArchivedModuleComponent {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  expectedOtjh: number;
+  points: number;
+  reflectionRequired: boolean;
+  workplaceEvidenceRequired: boolean;
+  tutorValidationRequired: boolean;
+  coachValidationRequired: boolean;
+  ksbMappings?: Array<{ code?: string }>;
+  settings?: Record<string, unknown>;
+}
+
+export interface CurriculumArchivedModuleWeek {
+  id: string;
+  weekNumber: number;
+  title: string;
+  summary: string;
+  /** The planned delivery date, when the module had a schedule to plan from. */
+  sessionDate?: string;
+  sessionDay?: string;
+  sessionStartTime?: string;
+  components: CurriculumArchivedModuleComponent[];
+  ksbMappings?: Array<{ code?: string }>;
+}
+
+export interface CurriculumArchivedModuleStructure {
+  catalogueId: string;
+  title: string;
+  description: string;
+  programmeName: string;
+  cohort: string;
+  group: string;
+  tutor: string;
+  status: string;
+  weeks: number;
+  sessionsNumber: number;
+  totalOtjh: number;
+  lessonCount: number;
+  quizCount: number;
+  weekStructure: CurriculumArchivedModuleWeek[];
+}
+
+/**
+ * An archived module's weeks and the components inside them.
+ *
+ * Its own endpoint rather than `/structure/`, because that one filters its
+ * children through the active-row predicates: an archived module read through it
+ * comes back with an empty week list, since the archive cascade soft-deleted
+ * every week and component under it. This one returns the set a restore would
+ * bring back. Read-only -- there is no PATCH beside it.
+ *
+ * `skipCache`: the archive is opened in order to act on it, and a module read
+ * here is one the reader is about to restore or delete.
+ */
+export function fetchArchivedModuleStructure(
+  id: string,
+  signal?: AbortSignal,
+): Promise<CurriculumArchivedModuleStructure> {
+  return fetchJson<CurriculumArchivedModuleStructure>(
+    `/curriculum/modules/${encodeURIComponent(id)}/archived-structure/`,
+    { signal, skipCache: true, timeoutMs: 30000 },
+  );
+}
+
 export type CurriculumRestoreResult = {
   restored: boolean;
   id: string;
@@ -3761,6 +4086,32 @@ export function fetchFreeProgrammeModules(programmeId: string, signal?: AbortSig
 
 export function saveFreeProgrammeModules(programmeId: string, input: { programmeName?: string; modules: FreeProgrammeModuleInput[] }) {
   return patchJson<{ saved: boolean; programmeId: string; modules: FreeProgrammeModule[] }>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/modules/`, input);
+}
+
+export interface ConvertFreeCourseInput {
+  courseId: string;
+  mode: 'clone' | 'move';
+  /** The EXISTING group the course is injected into as a new module. */
+  groupId: string;
+}
+
+export interface ConvertFreeCourseResult {
+  mode: 'clone' | 'move';
+  programmeId: string;
+  programmeName: string;
+  cohortId: string;
+  groupId: string;
+  moduleCatalogueId: string;
+}
+
+/**
+ * Inject one free course as a new module into an EXISTING programme group.
+ * `clone` leaves the free course in place; `move` also deletes it and removes it
+ * from any learner it was assigned to. Returns the ids so the caller can
+ * deep-link into the Module Builder to add KSBs/hours.
+ */
+export function injectFreeCourseIntoGroup(programmeId: string, input: ConvertFreeCourseInput) {
+  return postJson<ConvertFreeCourseResult>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/convert/`, input);
 }
 
 export function createGroupModule(groupId: string, input: CurriculumModuleAttachmentInput) {

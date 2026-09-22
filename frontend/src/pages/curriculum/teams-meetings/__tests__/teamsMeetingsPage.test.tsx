@@ -149,6 +149,20 @@ vi.mock('../calendarActions', () => ({ calendarAction: vi.fn() }));
 const probeModuleTeamsAttachment = vi.fn(async () => 0);
 const fetchCurriculumTeamsMeetingSummaries = vi.fn(async () => summaries);
 const fetchCurriculumSessions = vi.fn<typeof import('@/lib/curriculumApi').fetchCurriculumSessions>(async () => sessions);
+const fetchModuleSessionPlan = vi.fn(async (moduleId: string) => ({
+  sessions: sessions
+    .filter(item => item.moduleCatalogueId === moduleId)
+    .map((item, index) => ({
+      sessionNumber: index + 1,
+      date: item.date,
+      day: item.day,
+      startTime: item.startTime,
+      endTime: item.endTime,
+      durationMinutes: 120,
+      skippedHolidays: item.skippedHolidays || [],
+    })),
+  skippedHolidays: [], finalEndDate: '', warnings: [],
+}));
 
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
@@ -192,6 +206,8 @@ vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
     timeZone: 'GMT Standard Time', timeZoneIana: 'Europe/London',
   })),
   loadTeamsMeetingArtifacts: vi.fn(async () => artifacts),
+  fetchModuleSessionPlan: (...args: unknown[]) => fetchModuleSessionPlan(...(args as [string])),
+  loadModuleStructure: vi.fn(async () => null),
   syncTeamsMeetingArtifacts: (...args: unknown[]) => syncTeamsMeetingArtifacts(...(args as [])),
   restoreModuleTeamsMeeting: (...args: unknown[]) => restoreModuleTeamsMeeting(...(args as [])),
   probeModuleTeamsAttachment: (...args: unknown[]) => probeModuleTeamsAttachment(...(args as [])),
@@ -307,7 +323,9 @@ describe('Teams Meetings page', () => {
     fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.filter(item => item.liveSessionId !== 'LIVE-1'));
     await userEvent.click(dialog.getByRole('button', { name: 'Sync calendar status' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(await screen.findByText('This calendar was cancelled in Microsoft and is now cancelled in the LMS.')).toBeInTheDocument();
+    // Named: the check reads Microsoft for one calendar, and its verdict has to
+    // say which module it is about.
+    expect(await screen.findByText('Data Foundations — This calendar was cancelled in Microsoft and is now cancelled in the LMS.')).toBeInTheDocument();
     expect(syncTeamsMeetingArtifacts).not.toHaveBeenCalled();
     expect(createTeamsMeeting).not.toHaveBeenCalled();
   });
@@ -355,11 +373,52 @@ describe('Teams Meetings page', () => {
   it('shows a failed calendar check without removing the series or sending changes', async () => {
     vi.mocked(syncTeamsCalendarState).mockRejectedValue(new Error('Calendar status could not be checked.'));
     await renderPage();
-    expect(await screen.findByText('Calendar status could not be checked.')).toBeInTheDocument();
+    const failure = await screen.findByText(/Calendar status could not be checked\./);
+    // The sweep runs across every calendar on the page, so the module it failed
+    // on is named rather than left for the reader to guess.
+    expect(failure).toHaveTextContent(/^.+ — Calendar status could not be checked\.$/);
     expect(within(rowFor('Data Foundations')).getByText('In sync')).toBeInTheDocument();
     expect(createTeamsMeeting).not.toHaveBeenCalled();
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
     expect(syncTeamsMeetingArtifacts).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unrelated background matching warning out of the create dialog', async () => {
+    const message = 'Session 11 could not be matched to Microsoft; its status was preserved.';
+    let finishCheck!: (value: Awaited<ReturnType<typeof syncTeamsCalendarState>>) => void;
+    vi.mocked(syncTeamsCalendarState).mockImplementation(async id => id === 'LIVE-2'
+      ? new Promise(resolve => { finishCheck = resolve; })
+      : { changed: false, seriesStatus: 'active', cancelledSessions: [], errors: [] });
+    await renderPage();
+    await screen.findByText('Reporting Basics');
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    await waitFor(() => expect(finishCheck).toBeTypeOf('function'));
+    await act(async () => finishCheck({ changed: false, seriesStatus: 'active', cancelledSessions: [], errors: [message] }));
+    expect(dialog.queryByText(new RegExp(message))).not.toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: 'Create' })).toBeEnabled();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByText(new RegExp(message))).toHaveTextContent('Risk Management');
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+  });
+
+  it('keeps a matching warning visible in the dialog for the calendar it belongs to', async () => {
+    const message = 'Session 11 could not be matched to Microsoft; its status was preserved.';
+    let finishCheck!: (value: Awaited<ReturnType<typeof syncTeamsCalendarState>>) => void;
+    vi.mocked(syncTeamsCalendarState).mockImplementation(async id => id === 'LIVE-1'
+      ? new Promise(resolve => { finishCheck = resolve; })
+      : { changed: false, seriesStatus: 'active', cancelledSessions: [], errors: [] });
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    await waitFor(() => expect(finishCheck).toBeTypeOf('function'));
+    await act(async () => finishCheck({ changed: false, seriesStatus: 'active', cancelledSessions: [], errors: [message] }));
+    expect(dialog.getByText(new RegExp(message))).toHaveTextContent('Data Foundations');
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
   it('names the sessions whose Teams date no longer matches the module', async () => {
@@ -682,6 +741,9 @@ describe('Teams Meetings page', () => {
     expect(dialog.getByText('16 Sept 2026, 11:30 AM')).toBeInTheDocument();
     expect(dialog.getByText('21 Sept 2026, 11:00 AM')).toBeInTheDocument();
     expect(dialog.getByText('9 Nov 2026, 11:00 AM')).toBeInTheDocument();
+    // Keep exercising England's DST path explicitly now that new calendars default to Egypt.
+    await userEvent.click(dialog.getByRole('combobox', { name: /Schedule time zone/ }));
+    await userEvent.click(screen.getByRole('option', { name: 'England (Europe/London)' }));
     await userEvent.click(dialog.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(createTeamsMeeting).toHaveBeenCalledTimes(1));
@@ -764,12 +826,46 @@ describe('Teams Meetings page', () => {
     expect(input.title).toBe('Reporting Basics');
     expect(input.moduleTitle).toBe('Reporting Basics');
     expect(input.scheduledOccurrences.map(item => item.startDateTimeUtc)).toEqual([
-      '2026-09-04T08:30:00.000Z',
+      '2026-09-04T06:30:00.000Z',
     ]);
     await waitFor(() => expect(restoreModuleTeamsMeeting).toHaveBeenCalledWith(
       'MOD-3',
       { createMissingComponents: true },
     ));
+  });
+
+  /**
+   * A session's length comes from the group's weekly slot -- Group A runs
+   * 09:30 to 11:30, so a session is two hours -- and the Duration field is an
+   * override on top of that, not a description of it. Both have to be visible:
+   * a preview that goes on showing two hours while Create books one is a
+   * promise the calendar does not keep, and a select with no way back to "each
+   * session keeps its own" is a one-way door.
+   */
+  it('names the group session length and previews a duration override before it is sent', async () => {
+    await renderPage();
+    expect(await screen.findByText('Reporting Basics')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText(/delivers Wednesday, 9:30 AM - 11:30 AM/)).toBeInTheDocument();
+    expect(dialog.getByText('120 min each')).toBeInTheDocument();
+
+    await userEvent.click(dialog.getByRole('combobox', { name: /^Duration/ }));
+    expect(await screen.findByRole('option', { name: 'Use scheduled duration for each session' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('option', { name: '1 hour' }));
+
+    expect(dialog.getByText('60 min each')).toBeInTheDocument();
+    expect(dialog.getByText(/Duration is set to 1 hour/)).toBeInTheDocument();
+
+    await userEvent.click(dialog.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(createTeamsMeeting).toHaveBeenCalledTimes(1));
+    const [input] = createTeamsMeeting.mock.calls[0] as unknown as [{
+      durationMinutes: number;
+      scheduledOccurrences: Array<{ durationMinutes: number }>;
+    }];
+    expect(input.durationMinutes).toBe(60);
+    expect(input.scheduledOccurrences.map(item => item.durationMinutes)).toEqual([60]);
   });
 
   /**
