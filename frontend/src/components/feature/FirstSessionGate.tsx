@@ -5,7 +5,6 @@ import {
   bookLearnerCalendarSession,
   fetchFirstSessionSlots,
   fetchLearnerFirstSession,
-  rescheduleLearnerCalendarSession,
   ukOffsetForDate,
   type LearnerFirstSession,
   type SessionSlot,
@@ -134,7 +133,7 @@ function Holding({ state, kind, learnerId, onBooked, onSignOut }: {
     <div className="min-h-screen bg-background-200 px-4 py-10">
       <div className="mx-auto max-w-xl rounded-2xl border border-foreground-200 bg-background-50 p-6 sm:p-8">
         {state.access === 'waiting'
-          ? <Waiting state={state} kind={kind} learnerId={learnerId} onChanged={onBooked} />
+          ? <Waiting state={state} />
           : <Booking state={state} kind={kind} learnerId={learnerId} onBooked={onBooked} />}
         <div className="mt-6 flex flex-wrap items-center gap-4 border-t border-foreground-100 pt-4 text-[13px]">
           <a href="/learner/support" className="text-primary-600 hover:underline">Contact support</a>
@@ -147,26 +146,8 @@ function Holding({ state, kind, learnerId, onBooked, onSignOut }: {
   );
 }
 
-function Waiting({ state, kind, learnerId, onChanged }: {
-  state: LearnerFirstSession;
-  kind: LearnerKind;
-  learnerId: string;
-  onChanged: () => void;
-}) {
-  const [moving, setMoving] = useState(false);
+function Waiting({ state }: { state: LearnerFirstSession }) {
   const time = (state.event?.scheduledTime || '').slice(0, 5);
-
-  if (moving) {
-    return (
-      <Reschedule
-        state={state}
-        kind={kind}
-        learnerId={learnerId}
-        onDone={() => { setMoving(false); onChanged(); }}
-        onCancel={() => setMoving(false)}
-      />
-    );
-  }
 
   return (
     <>
@@ -196,18 +177,9 @@ function Waiting({ state, kind, learnerId, onChanged }: {
             Join the Teams meeting
           </a>
         )}
-        <button
-          type="button"
-          onClick={() => setMoving(true)}
-          className="inline-flex items-center gap-2 rounded-xl bg-background-100 px-4 py-2.5 text-[13px] font-semibold text-foreground-700 hover:bg-background-200"
-        >
-          <i className="ri-calendar-event-line" aria-hidden="true" />
-          Reschedule
-        </button>
       </div>
       <p className="mt-4 text-[12px] text-foreground-400">
-        The invitation is in your email. Moving the session moves the day your
-        programme starts.
+        The invitation is in your email.
       </p>
     </>
   );
@@ -272,135 +244,6 @@ function useSessionSlots(
  *  backend checks again too — this only keeps the button honest. */
 function bookable(slots: SessionSlot[], time: string): boolean {
   return slots.some(slot => slot.time === time && slot.available);
-}
-
-/** Move a session the learner has already booked.
- *
- *  The same endpoint the enrolment officer uses from the learner's record, so
- *  the existing Teams meeting is moved and both people are re-invited rather
- *  than a second meeting appearing. */
-function Reschedule({ state, kind, learnerId, onDone, onCancel }: {
-  state: LearnerFirstSession;
-  kind: LearnerKind;
-  learnerId: string;
-  onDone: () => void;
-  onCancel: () => void;
-}) {
-  const [date, setDate] = useState(state.startsOn || '');
-  const [time, setTime] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  // A time is not carried over from the existing booking: the hours offered
-  // are the ones free *now*, and the session's own hour is among them only
-  // because it is excluded from its own clash check. Making the learner pick
-  // is also what stops "Move my session" being pressable before they have.
-  const { slots, unconfirmed, loading, error: slotsError } = useSessionSlots(
-    kind, learnerId, date, () => setTime(''),
-  );
-
-  const eventKey = state.event?.eventKey || '';
-  const unchanged = date === state.startsOn
-    && time === (state.event?.scheduledTime || '').slice(0, 5);
-
-  const move = async () => {
-    if (saving || !date || unchanged || !eventKey || !bookable(slots, time)) return;
-    setSaving(true);
-    setError('');
-    try {
-      await rescheduleLearnerCalendarSession(kind, learnerId, {
-        eventKey,
-        scheduledDate: date,
-        scheduledTime: time,
-        durationMinutes: state.event?.durationMinutes || 60,
-        timezoneOffsetMinutes: ukOffsetForDate(date),
-      });
-      onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not move your session. Please try again.');
-      setSaving(false);
-    }
-  };
-
-  return (
-    <>
-      <h1 className="text-xl font-semibold text-foreground-900">Move your first session</h1>
-      <p className="mt-3 text-[14px] leading-relaxed text-foreground-600">
-        Pick a new day and time with{' '}
-        <span className="font-semibold text-foreground-800">
-          {state.caseOwner?.name || 'your case owner'}
-        </span>
-        . The existing Teams meeting moves and you will both be re-invited.
-      </p>
-
-      <div className="mt-5 flex flex-wrap items-start gap-4">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500">
-            Date
-          </span>
-          <input
-            type="date"
-            value={date}
-            min={earliestBookable()}
-            disabled={saving}
-            onChange={event => { setDate(event.target.value); setError(''); }}
-            className="rounded-lg border border-foreground-200 bg-background-50 px-3 py-2 text-[13px] font-medium text-foreground-900 outline-none focus:border-primary-400 disabled:opacity-60"
-          />
-          <span className="text-[11px] text-foreground-400">
-            Weekdays only — not weekends or UK bank holidays.
-          </span>
-        </label>
-      </div>
-
-      <div className="mt-4 flex flex-col gap-1.5">
-        <span id="reschedule-time-label" className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500">
-          Time (UK)
-        </span>
-        {date ? (
-          <SessionSlotPicker
-            slots={slots}
-            value={time}
-            onChange={next => { setTime(next); setError(''); }}
-            labelledBy="reschedule-time-label"
-            disabled={saving}
-            loading={loading}
-            error={slotsError}
-            unconfirmed={unconfirmed}
-          />
-        ) : (
-          <p className="text-[13px] text-foreground-500">Choose a date to see the times available.</p>
-        )}
-      </div>
-
-      {time && (
-        <p className="mt-2 text-[12px] text-foreground-500">
-          New time <span className="font-semibold">{slotLabel(time)}</span> UK time.
-        </p>
-      )}
-
-      <div className="mt-5 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void move()}
-          disabled={saving || unchanged || !date || !bookable(slots, time)}
-          className="inline-flex items-center gap-2 rounded-xl bg-primary-500 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          <i className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} aria-hidden="true" />
-          {saving ? 'Moving…' : 'Move my session'}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={saving}
-          className="rounded-xl px-4 py-2.5 text-[13px] font-medium text-foreground-600 hover:bg-background-100 disabled:opacity-60"
-        >
-          Keep it as it is
-        </button>
-      </div>
-
-      {error && <p role="alert" className="mt-3 text-[13px] text-red-700">{error}</p>}
-    </>
-  );
 }
 
 function Booking({ state, kind, learnerId, onBooked }: {
