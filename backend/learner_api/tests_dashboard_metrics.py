@@ -62,11 +62,12 @@ class DashboardMetricsTests(SimpleTestCase):
         result = ksb_totals(native, [{'componentId': 'a', 'kind': 'component'}])
         self.assertEqual((result['completed'], result['total'], result['percent']), (2, 3, 66.67))
 
-    def test_missing_migrated_ksb_data_stays_unknown(self):
+    def test_unmapped_historical_activity_does_not_poison_mapped_ksb_denominator(self):
         result = ksb_totals([{'id': 'a', 'ksb_mappings': ['K1']}], [],
                             [{'group_id': 1, 'activity_id': 2, 'ksb_mappings': None}])
-        self.assertEqual(result['status'], 'unavailable')
-        self.assertIsNone(result['total'])
+        self.assertEqual(result['status'], 'ready')
+        self.assertEqual((result['completed'], result['total'], result['percent']), (0, 1, 0.0))
+        self.assertEqual(result['unmappedActivities'], 1)
         self.assertEqual(result['mappedTotal'], 1)
 
     def test_historical_and_new_ksb_points_union_with_saved_attempts(self):

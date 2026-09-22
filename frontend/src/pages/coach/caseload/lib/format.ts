@@ -101,7 +101,7 @@ export function getOtjhStatusKey(value?: string | null): 'on-track' | 'need-atte
 
 export function getOtjhGapStatus(actual?: number | null, target?: number | null) {
   if (actual === null || actual === undefined || !Number.isFinite(actual)
-    || target === null || target === undefined || !Number.isFinite(target) || target <= 0) {
+    || target === null || target === undefined || !Number.isFinite(target) || target < 0) {
     return { gapHours: null, status: 'unavailable' as const, available: false };
   }
   const gapHours = Math.max(target - actual, 0);

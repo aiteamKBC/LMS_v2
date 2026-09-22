@@ -52,10 +52,10 @@ export interface Learner {
   /** enrolment."Created_users".id -- a different, disjoint pk space from `id`
    *  above (which is this LearnerProfile's own id). /learner-detail/ needs this one. */
   enrolmentId?: string | null;
-  /** Which module/week otjhTarget's cumulative-to-date figure currently falls in. */
+  /** Which module/week the cumulative target-to-date currently falls in. */
   currentModule?: string | null;
   currentWeek?: string | null;
-  /** Components expected by now, same pacing as otjhTarget -- not componentsPlanned's whole-plan total. */
+  /** Components expected by now; this is a component count, never OTJH hours. */
   componentsTargetToDate?: number | null;
   employer: string;
   cohortId: string;
@@ -75,8 +75,10 @@ export interface Learner {
   componentsPlanned?: number;
 
   otjhCompleted: number;
-  /** Cumulative planned hours up to and including the current week. */
-  otjhTarget: number;
+  /** Cumulative planned OTJH hours up to today; null when pacing is unavailable. */
+  otjhTargetToDate?: number | null;
+  /** Deprecated target-to-date alias retained for compatibility. */
+  otjhTarget?: number | null;
   /** Total planned hours for the whole programme. */
   otjhPlanned?: number;
   otjhMinimum?: number;
@@ -155,6 +157,8 @@ export interface CaseloadApiLearner extends Omit<Learner, 'enrollmentStatus' | '
   startDate?: string;
   gatewayReviewDate?: string;
   plannedEndDate?: string;
+  lastPr?: string | null;
+  lastMcm?: string | null;
 }
 
 export interface CaseloadApiResponse {

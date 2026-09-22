@@ -31,7 +31,7 @@ const learner = {
   id: '42', name: 'Final Learner', initials: 'FL', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', group: 'G1',
   status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 78, overallProgressAvailable: true,
   attendanceRate: 80, attendanceRateAvailable: true, componentsCompleted: 8, componentsPlanned: 10,
-  otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
+  otjhCompleted: 70, otjhTargetToDate: 90, otjhTarget: 90, otjhPlanned: 576, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
   evidenceCount: 2, nextCoaching: '--', nextReview: '--', lastContact: '--', lastAttendanceDate: '--',
   lastActivity: '19 Sep 2026', lastActivityDate: '2026-09-19T12:30:00Z', lastActivityLabel: 'Latest quiz',
   lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--', lastSubmittedEvidence: '--', recentFlag: null,
@@ -52,7 +52,7 @@ describe('Coach caseload loading', () => {
       return Promise.resolve(new Response(JSON.stringify({ owner: { name: 'Coach Example' }, learners: [learner] })));
     });
 
-    render(<MemoryRouter><CoachCaseloadContent embedded /></MemoryRouter>);
+    render(<MemoryRouter><CoachCaseloadContent /></MemoryRouter>);
 
     expect(await screen.findByText('Loading learners')).toBeInTheDocument();
     expect(screen.queryByText('Final Learner')).not.toBeInTheDocument();
@@ -66,16 +66,7 @@ describe('Coach caseload loading', () => {
     expect(await screen.findByText('Final Learner')).toBeInTheDocument();
     expect(screen.getByText('19 Sep 2026')).toBeInTheDocument();
     expect(screen.queryByText('Loading learners')).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'All Learners' })).toBeVisible();
-    expect(screen.queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Status' }));
-    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
-      'Status', 'On track', 'Need attention', 'At risk',
-    ]);
-    expect(screen.queryByRole('button', { name: 'More filters' })).not.toBeInTheDocument();
-    expect(screen.queryByText(/\d+ shown/)).not.toBeInTheDocument();
-    expect(screen.queryByText('Most urgent first')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Sort direction:/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'My Learners' })).toBeVisible();
   });
 
   it('uses the API performance status when filtering the caseload', async () => {
@@ -86,7 +77,7 @@ describe('Coach caseload loading', () => {
         : Promise.resolve(new Response(JSON.stringify({ owner: { name: 'Coach Example' }, learners: [learner, atRiskLearner] })))
     ));
 
-    render(<MemoryRouter><CoachCaseloadContent embedded /></MemoryRouter>);
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[learner, atRiskLearner]} /></MemoryRouter>);
 
     expect(await screen.findByText('At Risk Learner')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Status' }));

@@ -158,7 +158,12 @@ def ksb_totals(native, progress, historical=None, attempts=None, links=None, led
         for code in codes:
             points[(*key, code)] = points.get((*key, code), False) or done
     missing -= mapped
-    if missing:
+    # Historical/ledger rows can legitimately pre-date the current curriculum
+    # mapping catalogue.  They must not poison the denominator for activities
+    # that do have stable KSB mappings: no mapping is inferred here, and the
+    # unmapped rows remain visible as diagnostics.  Only a completely empty
+    # mapped set is unavailable.
+    if missing and not points:
         return {**unavailable('activity_points_missing'), 'unmappedActivities': len(missing),
                 'historicalCompleted': historical_done,
                 'mappedCompleted': sum(points.values()), 'mappedTotal': len(points)}
@@ -167,8 +172,13 @@ def ksb_totals(native, progress, historical=None, attempts=None, links=None, led
         counts = by_code.setdefault(code, [0, 0])
         counts[0] += bool(done)
         counts[1] += 1
-    return {**ratio(sum(points.values()), len(points)), 'historicalCompleted': historical_done,
+    result = {**ratio(sum(points.values()), len(points)), 'historicalCompleted': historical_done,
             'codes': [{'code': code, **ratio(*counts)} for code, counts in sorted(by_code.items())]}
+    if missing:
+        result['unmappedActivities'] = len(missing)
+        result['mappedCompleted'] = sum(points.values())
+        result['mappedTotal'] = len(points)
+    return result
 
 
 def read_planned_hours(source, kind, cursor, preloaded_document=_MISSING):

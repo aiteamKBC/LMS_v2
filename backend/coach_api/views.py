@@ -579,6 +579,28 @@ def to_number(value) -> float:
     return float(to_decimal(value))
 
 
+def optional_number(value):
+    """Parse a numeric contract field without turning missing into real zero."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        return float(Decimal(str(value)))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def otjh_contract_values(actual_value, target_to_date_value):
+    """Return variance and status for the explicit target-to-date contract."""
+    target_to_date = optional_number(target_to_date_value)
+    if target_to_date is None:
+        return None, "Unavailable"
+    actual = to_number(actual_value)
+    variance = round(actual - target_to_date, 2)
+    gap = target_to_date - actual
+    status = "At Risk" if gap > 40 else "Need Attention" if gap > 20 else "On Track"
+    return variance, status
+
+
 def percentage(numerator, denominator) -> int:
     denominator_value = to_decimal(denominator)
     if denominator_value <= 0:
@@ -2480,12 +2502,15 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     otjh = metrics.get("otjh") or {}
 
     old_plan = to_number(payload.get("otjhPlanned"))
-    old_target = to_number(payload.get("otjhTarget"))
+    old_target_to_date = optional_number(payload.get("otjhTargetToDate"))
     canonical_plan = otjh.get("planned")
     if canonical_plan is not None:
-        ratio = old_target / old_plan if old_plan > 0 else 0
-        if old_target > 1 and 0 < ratio <= 1:
-            payload["otjhTarget"] = max(round(to_number(canonical_plan) * ratio, 2), 1)
+        ratio = old_target_to_date / old_plan if old_target_to_date is not None and old_plan > 0 else None
+        payload["otjhTargetToDate"] = (
+            round(to_number(canonical_plan) * ratio, 2)
+            if ratio is not None and 0 <= ratio <= 1
+            else None
+        )
         payload["otjhPlanned"] = to_number(canonical_plan)
     if otjh.get("actual") is not None:
         payload["otjhCompleted"] = to_number(otjh["actual"])
@@ -2507,16 +2532,14 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
         payload["ksbProgressAvailable"] = True
         payload["ksbStatus"] = derive_ksb_status(ksb.get("completed"), ksb.get("total"))
 
-    target = to_number(payload.get("otjhTarget"))
+    target = optional_number(payload.get("otjhTargetToDate"))
     actual = to_number(payload.get("otjhCompleted"))
-    hours_available = target > 0
-    hours_progress = percentage(actual, target) if hours_available else 0
+    hours_available = target is not None
+    hours_progress = percentage(actual, target) if target is not None and target > 0 else 0
     payload["overallProgress"] = hours_progress
     payload["overallProgressAvailable"] = hours_available
     progress_variance = clean_text(payload.get("progressVariance"))
-    payload["otjhStatus"] = otjh_status_from_variance(
-        actual - target if target > 0 else None
-    )
+    payload["otjhVariance"], payload["otjhStatus"] = otjh_contract_values(actual, target)
     component_available = programme.get("status") == "ready"
     component_progress = int(round(to_number(programme.get("percent")))) if component_available else 0
     ksb_available = payload["ksbProgressAvailable"]
@@ -2581,23 +2604,15 @@ def apply_canonical_ksb_evidence(payload: dict, metrics: dict | None, aptem_id) 
 
 
 def apply_aptem_variance_status(payload: dict, aptem_id) -> dict:
-    """Set Aptem OTJH variance and RAG status from actual minus target."""
-    if aptem_id in (None, ""):
-        return payload
-    actual = to_number(payload.get("otjhCompleted"))
-    target = to_number(payload.get("otjhTarget"))
-    if target <= 0:
-        return payload
+    """Finalize OTJH variance/status from actual versus verified target-to-date.
 
-    variance = round(actual - target, 2)
-    payload["otjhVariance"] = variance
-    shortfall = -variance
-    if shortfall >= 40:
-        payload["otjhStatus"] = "At Risk"
-    elif shortfall >= 20:
-        payload["otjhStatus"] = "Need Attention"
-    else:
-        payload["otjhStatus"] = "On Track"
+    ``aptem_id`` remains in the signature for existing callers, but status is a
+    property of the normalized contract and is finalized for every learner.
+    """
+    actual = to_number(payload.get("otjhCompleted"))
+    target = optional_number(payload.get("otjhTargetToDate"))
+    payload["otjhTarget"] = target
+    payload["otjhVariance"], payload["otjhStatus"] = otjh_contract_values(actual, target)
     return payload
 
 
@@ -2622,7 +2637,7 @@ def apply_audit_hour_totals(payload: dict, totals: dict | None) -> dict:
 
     Mirrors the learner workspace's own precedence (workspace/learner/page.tsx):
     the Audit pair replaces completed/planned when present, and the
-    cumulative-to-date `otjhTarget` is rescaled by the same ratio so a card
+    cumulative-to-date `otjhTargetToDate` is rescaled by the same ratio so a card
     showing "x% - completed / target" stays internally consistent. A missing
     half of the pair leaves that half untouched.
     """
@@ -2634,24 +2649,24 @@ def apply_audit_hour_totals(payload: dict, totals: dict | None) -> dict:
         payload["otjhCompleted"] = actual
     if planned is not None:
         previous_planned = to_number(payload.get("otjhPlanned"))
-        previous_target = to_number(payload.get("otjhTarget"))
-        # otjhTarget paces the programme plan to the current week, so carry that
+        previous_target = optional_number(payload.get("otjhTargetToDate"))
+        # otjhTargetToDate paces the programme plan to the current week, so carry that
         # pacing over to the audit plan rather than dropping back to the whole
         # programme total, which would read as "behind" for everyone.
         #
-        # The serializers floor otjhTarget at 1 (`max(..., 1)`), so a stored 1
-        # against a larger plan is that placeholder rather than a real to-date
-        # figure -- rescaling it would invent a target. Those learners fall back
-        # to the whole audit plan, the same denominator their own workspace uses.
-        ratio = previous_target / previous_planned if previous_planned > 0 else 0
-        paced = previous_target > 1 and 0 < ratio <= 1
-        payload["otjhTarget"] = max(round(planned * ratio, 2), 1) if paced else planned
+        # A missing/invalid pacing ratio stays unavailable; never substitute the
+        # full audit plan because that would classify every learner against the
+        # wrong denominator.
+        ratio = previous_target / previous_planned if previous_target is not None and previous_planned > 0 else None
+        paced = ratio is not None and 0 <= ratio <= 1
+        payload["otjhTargetToDate"] = round(planned * ratio, 2) if paced else None
         payload["otjhPlanned"] = planned
     # `overallProgress` is the OTJH-against-target percentage the cards print
     # beside the hours ratio, so it has to be recomputed off the overlaid pair
     # or the two would disagree on the same card.
-    payload["overallProgress"] = percentage(payload["otjhCompleted"], payload["otjhTarget"])
-    payload["overallProgressAvailable"] = True
+    target_to_date = optional_number(payload.get("otjhTargetToDate"))
+    payload["overallProgress"] = percentage(payload["otjhCompleted"], target_to_date) if target_to_date is not None and target_to_date > 0 else 0
+    payload["overallProgressAvailable"] = target_to_date is not None
     payload["otjhSource"] = "audit"
     return payload
 
@@ -2713,13 +2728,12 @@ def serialize_caseload_learner(
     component_available = planned_components > 0
     component_progress = percentage(completed_components, planned_components) if component_available else 0
 
-    target_hours_value = (
-        clean_text(row.target_hours)
-        or clean_text(row.minimum_hours)
-        or clean_text(row.planned_hours)
-    )
-    hours_available = bool(clean_text(row.completed_hours) or target_hours_value)
-    hours_progress = percentage(row.completed_hours, target_hours_value) if target_hours_value else 0
+    target_to_date = optional_number(getattr(row, "target_hours", None))
+    planned_hours = optional_number(getattr(row, "planned_hours", None))
+    if planned_hours is None:
+        planned_hours = optional_number(getattr(row, "minimum_hours", None))
+    hours_available = target_to_date is not None
+    hours_progress = percentage(row.completed_hours, target_to_date) if target_to_date is not None and target_to_date > 0 else 0
 
     curriculum_ksbs = current_curriculum_ksb_items_for_learner(
         row,
@@ -2810,9 +2824,12 @@ def serialize_caseload_learner(
         "componentsCompleted": completed_components,
         "componentsPlanned": planned_components,
         "otjhCompleted": to_number(row.completed_hours),
-        "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
+        "otjhTargetToDate": target_to_date,
+        # Deprecated compatibility alias. It now has one meaning only and must
+        # never fall back to the full programme plan.
+        "otjhTarget": target_to_date,
         "otjhMinimum": to_number(row.minimum_hours),
-        "otjhPlanned": to_number(row.planned_hours),
+        "otjhPlanned": planned_hours,
         "otjhCompletedEntries": otjh_completed_entries,
         "otjhCompletedEntryCount": len(otjh_completed_entries),
         "otjhProgressHours": clean_text(row.progress_hours) or "--",
@@ -2863,13 +2880,12 @@ def serialize_caseload_learner(
 
 def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) -> dict:
     """Serialize only the fields the coach dashboard needs immediately."""
-    target_hours_value = (
-        clean_text(getattr(row, "target_hours", None))
-        or clean_text(getattr(row, "minimum_hours", None))
-        or clean_text(getattr(row, "planned_hours", None))
-    )
-    hours_available = bool(clean_text(getattr(row, "completed_hours", None)) or target_hours_value)
-    hours_progress = percentage(getattr(row, "completed_hours", None), target_hours_value) if target_hours_value else 0
+    target_to_date = optional_number(getattr(row, "target_hours", None))
+    planned_hours = optional_number(getattr(row, "planned_hours", None))
+    if planned_hours is None:
+        planned_hours = optional_number(getattr(row, "minimum_hours", None))
+    hours_available = target_to_date is not None
+    hours_progress = percentage(getattr(row, "completed_hours", None), target_to_date) if target_to_date is not None and target_to_date > 0 else 0
     otjh_status = clean_text(getattr(row, "otjh_status", None))
     progress_variance = clean_text(getattr(row, "progress_variance", None))
     program_status = get_lms_row_program_status(row)
@@ -2935,9 +2951,10 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         "attendanceLastSession": None,
         "attendanceLastSessionDate": None,
         "otjhCompleted": to_number(getattr(row, "completed_hours", None)),
-        "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
+        "otjhTargetToDate": target_to_date,
+        "otjhTarget": target_to_date,
         "otjhMinimum": to_number(getattr(row, "minimum_hours", None)),
-        "otjhPlanned": to_number(getattr(row, "planned_hours", None)),
+        "otjhPlanned": planned_hours,
         "otjhProgressHours": clean_text(getattr(row, "progress_hours", None)) or "--",
         "otjhStatus": otjh_status,
         "ksbCompleted": None,
@@ -2974,13 +2991,12 @@ def request_prefers_live_caseload_snapshots(request) -> bool:
 
 
 def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
-    target_hours_value = (
-        clean_text(row.target_hours)
-        or clean_text(row.minimum_hours)
-        or clean_text(row.planned_hours)
-    )
-    hours_available = bool(clean_text(row.completed_hours) or target_hours_value)
-    hours_progress = percentage(row.completed_hours, target_hours_value) if target_hours_value else 0
+    target_to_date = optional_number(getattr(row, "target_hours", None))
+    planned_hours = optional_number(getattr(row, "planned_hours", None))
+    if planned_hours is None:
+        planned_hours = optional_number(getattr(row, "minimum_hours", None))
+    hours_available = target_to_date is not None
+    hours_progress = percentage(row.completed_hours, target_to_date) if target_to_date is not None and target_to_date > 0 else 0
     programme_name = clean_text(getattr(row, "programme", None)) or "--"
     cohort_name = clean_text(getattr(row, "cohort", None)) or "--"
     group_name = clean_text(getattr(row, "group", None)) or "--"
@@ -3008,8 +3024,9 @@ def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
         "overallProgress": hours_progress,
         "overallProgressAvailable": hours_available,
         "otjhCompleted": to_number(row.completed_hours),
-        "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
-        "otjhPlanned": to_number(row.planned_hours),
+        "otjhTargetToDate": target_to_date,
+        "otjhTarget": target_to_date,
+        "otjhPlanned": planned_hours,
         "ksbProgress": 0,
         "ksbProgressAvailable": False,
         "coachName": clean_text(row.coach_name) or None,
@@ -4103,7 +4120,8 @@ def build_monthly_activity_learner(
             "monthlyTarget": monthly_target_hours,
             "progress": percentage(monthly_hours, monthly_target_hours),
             "completed": learner.get("otjhCompleted") or 0,
-            "target": learner.get("otjhTarget") or 0,
+            "targetToDate": learner.get("otjhTargetToDate"),
+            "planned": learner.get("otjhPlanned"),
         },
         "needsAction": needs_action[:5],
         "activities": activities,
@@ -4700,6 +4718,8 @@ def serialize_learner(row: dict) -> dict:
     )
     risk_flags = build_risk_flags(row, hours_progress, ksb_progress)
 
+    target_to_date = optional_number(row.get("expected_hours"))
+    planned_hours = max(to_int(row["minimum_hours"]), to_int(row["planned_hours"]), 1)
     return {
         "id": str(row["learner_id"]),
         "name": row["full_name"] or "Unknown learner",
@@ -4714,9 +4734,10 @@ def serialize_learner(row: dict) -> dict:
         "overallProgress": hours_progress,
         "attendanceRate": component_progress,
         "otjhCompleted": to_int(row["completed_hours"]),
-        "otjhTarget": max(to_int(row["minimum_hours"]), to_int(row["planned_hours"]), 1),
+        "otjhTargetToDate": target_to_date,
+        "otjhTarget": target_to_date,
         "otjhMinimum": to_int(row["minimum_hours"]),
-        "otjhPlanned": to_int(row["planned_hours"]),
+        "otjhPlanned": planned_hours,
         "otjhSubmitted": to_int(row["submitted_hours"]),
         "otjhForecast": to_int(row["forecast_hours"]),
         "otjhExpected": to_int(row["expected_hours"]),
@@ -10645,7 +10666,9 @@ def serialize_attendance_learner(
         "employer": learner["employer"],
         "overallProgress": learner["overallProgress"],
         "otjhCompleted": learner["otjhCompleted"],
-        "otjhTarget": learner["otjhPlanned"] or learner["otjhTarget"],
+        "otjhTargetToDate": learner.get("otjhTargetToDate"),
+        "otjhTarget": learner.get("otjhTargetToDate"),
+        "otjhPlanned": learner.get("otjhPlanned"),
         "ksbProgress": learner["ksbProgress"],
         "lastSession": attendance_metrics.get("lastSession", "--") if attendance_metrics else "--",
         "lastSessionDate": attendance_metrics.get("lastSessionDate") if attendance_metrics else None,

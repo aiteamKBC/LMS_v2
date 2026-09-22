@@ -5,10 +5,13 @@ import type { ReactNode } from 'react';
 import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 import CoachDashboard from '../page';
 
-const mocks = vi.hoisted(() => ({ load: vi.fn(), schedule: vi.fn(), calendar: vi.fn(), coachFetch: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  load: vi.fn(), schedule: vi.fn(), calendar: vi.fn(), coachFetch: vi.fn(),
+  coach: { email: 'coach@example.invalid', name: 'Example Coach', isInitialized: true, isViewingAsCoach: false },
+}));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ isInitialized: true, auth: { account: { email: 'coach@example.invalid' } } }) }));
-vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ email: 'coach@example.invalid', name: 'Example Coach', isInitialized: true, isViewingAsCoach: false }) }));
+vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => mocks.coach }));
 vi.mock('@/lib/sharedGetJson', () => ({ fetchSharedJsonGet: mocks.load }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: mocks.coachFetch }));
 vi.mock('@/pages/coach/shared/calendarEvents', async original => ({
@@ -24,21 +27,22 @@ const meeting: CoachCalendarEvent = { id: 'meeting-1', eventKey: 'mcr:1:1', titl
   learnerId: '1', learner: 'Example Learner', status: 'scheduled', scheduledDate: '2026-09-21', scheduledTime: '10:30', durationMinutes: 60 };
 beforeEach(() => {
   vi.clearAllMocks();
+  Object.assign(mocks.coach, { email: 'coach@example.invalid', name: 'Example Coach', isInitialized: true, isViewingAsCoach: false });
   mocks.calendar.mockResolvedValue({ events: [] });
   mocks.coachFetch.mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(
     url.includes('/attendance')
       ? { learners: [{ id: '1', learner: 'Example Learner', attendance: 90, hasAttendance: true }] }
       : { owner: { name: 'Example Coach' }, learners: [
-          { id: '1', name: 'Example Learner', learnerType: 'commercial', rawProgramStatus: 'active', otjhStatus: 'at-risk', otjhCompleted: 20, otjhTarget: 40 },
-          { id: '2', name: 'Attention Only Learner', learnerType: 'commercial', rawProgramStatus: 'active', otjhStatus: 'need-attention', otjhCompleted: 30, otjhTarget: 40 },
+          { id: '1', name: 'Example Learner', learnerType: 'commercial', rawProgramStatus: 'active', otjhStatus: 'at-risk', otjhCompleted: 20, otjhTargetToDate: 70, otjhTarget: 70, otjhPlanned: 576 },
+          { id: '2', name: 'Attention Only Learner', learnerType: 'commercial', rawProgramStatus: 'active', otjhStatus: 'need-attention', otjhCompleted: 30, otjhTargetToDate: 60, otjhTarget: 60, otjhPlanned: 576 },
         ] },
   ))));
   vi.useFakeTimers({ shouldAdvanceTime: true }); vi.setSystemTime(new Date('2026-09-18T10:00:00Z'));
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   HTMLDialogElement.prototype.close = function () { this.open = false; };
   mocks.load.mockResolvedValue({ owner: { name: 'Example Coach' }, learners: [{ id: '1', name: 'Example Learner', learnerType: 'commercial',
-    rawProgramStatus: 'active', otjhStatus: 'at-risk', otjhCompleted: 20, otjhTarget: 40 }, { id: '2', name: 'Attention Only Learner', learnerType: 'commercial',
-    rawProgramStatus: 'active', otjhStatus: 'need-attention', otjhCompleted: 30, otjhTarget: 40 }], monthlyRisk: [
+    rawProgramStatus: 'active', otjhStatus: 'at-risk', otjhCompleted: 20, otjhTargetToDate: 70, otjhTarget: 70, otjhPlanned: 576 }, { id: '2', name: 'Attention Only Learner', learnerType: 'commercial',
+    rawProgramStatus: 'active', otjhStatus: 'need-attention', otjhCompleted: 30, otjhTargetToDate: 60, otjhTarget: 60, otjhPlanned: 576 }], monthlyRisk: [
       { month: '2026-04', label: 'Apr', count: 3 }, { month: '2026-05', label: 'May', count: 2 },
       { month: '2026-06', label: 'Jun', count: 4 }, { month: '2026-07', label: 'Jul', count: 1 },
       { month: '2026-08', label: 'Aug', count: 2 }, { month: '2026-09', label: 'Sep', count: 1 },
@@ -46,6 +50,54 @@ beforeEach(() => {
       { ...meeting, id: 'live-1', eventKey: 'live-1', source: 'live-session', title: 'Example Lesson' }] } });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+it('shows only dashboard skeletons while the initial request is pending', () => {
+  vi.useRealTimers();
+  mocks.load.mockImplementation(() => new Promise(() => undefined));
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(screen.getByRole('status', { name: 'Loading coach dashboard' })).toBeVisible();
+  expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
+  expect(screen.queryByText('Data not available')).not.toBeInTheDocument();
+  expect(screen.queryByText('--')).not.toBeInTheDocument();
+});
+
+it('shows the learner table only after a successful response', async () => {
+  vi.useRealTimers();
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(screen.getByRole('status', { name: 'Loading coach dashboard' })).toBeVisible();
+  expect(await screen.findByText('Example Learner')).toBeVisible();
+  expect(screen.queryByRole('status', { name: 'Loading coach dashboard' })).not.toBeInTheDocument();
+});
+
+it('shows the learner empty state only after an empty response finishes', async () => {
+  vi.useRealTimers();
+  mocks.load.mockImplementation((url: string) => Promise.resolve(
+    url.includes('/marking-queue') ? { summary: { pendingItems: 0 } } : { owner: { name: 'Example Coach' }, learners: [], timetable: { events: [] } },
+  ));
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
+  expect(await screen.findByText('No learners assigned to you yet')).toBeVisible();
+});
+
+it('shows one dashboard error without a learner empty state', async () => {
+  vi.useRealTimers();
+  mocks.load.mockRejectedValue(new Error('Dashboard unavailable'));
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByText('Unable to load coach dashboard')).toBeVisible();
+  expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
+});
+
+it('returns immediately to skeletons when the selected coach changes', async () => {
+  vi.useRealTimers();
+  const { rerender } = render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByText('Example Learner')).toBeVisible();
+  mocks.load.mockImplementation(() => new Promise(() => undefined));
+  Object.assign(mocks.coach, { email: 'next-coach@example.invalid', name: 'Next Coach' });
+  rerender(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(screen.getByRole('status', { name: 'Loading coach dashboard' })).toBeVisible();
+  expect(screen.queryByText('Example Learner')).not.toBeInTheDocument();
+  expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
+});
 
 it('keeps the live session calendar link while showing the new actions only on coaching meetings', async () => {
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
