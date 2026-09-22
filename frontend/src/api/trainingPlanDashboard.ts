@@ -41,7 +41,10 @@ export type PlanModule = { id: string; title: string; description: string; start
   /** Where the run would have ended with nothing closed. */
   originalEndDate?: string };
 export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'> & { meetingLink?: string | null };
+export type PlanModuleSummary = { id: string; moduleIds: string[]; completed: number; total: number; directHours?: number | null; ksbProgress?: { completed: number; total: number } | null; dates: string[]; title: string; source: string };
 export type TrainingPlanDashboard = {
+  /** Per-module activity/hour/KSB summaries already loaded by the overview read. */
+  planSubjects?: PlanModuleSummary[];
   months: Record<string, PlanMonth>;
   /** Programme dates recorded on the selected Aptem Training Plan contract. */
   programmeStartDate?: string | null;

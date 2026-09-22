@@ -538,6 +538,10 @@ const routes: RouteObject[] = [
     element: <AttendancePage />,
   },
   {
+    path: "/learner/attendance/:kind/:id",
+    element: <AttendancePage />,
+  },
+  {
     path: "/learner/catchup",
     element: <CatchUpPage />,
   },
@@ -568,6 +572,14 @@ const routes: RouteObject[] = [
   {
     path: "/learner/evidence/:kind/:id",
     element: <EvidencePage />,
+  },
+  {
+    path: "/learner/my-progress",
+    element: <ProgressPage />,
+  },
+  {
+    path: "/learner/my-progress/:kind/:id",
+    element: <ProgressPage />,
   },
   {
     path: "/learner/quizzes",
@@ -630,9 +642,22 @@ const routes: RouteObject[] = [
     element: <MonthlyLogsPage />,
   },
   { path: "/learner/monthly-coaching", element: <MonthlyCoachingListPage /> },
+  { path: "/learner/monthly-coaching/:kind/:id", element: <MonthlyCoachingListPage /> },
   { path: "/learner/monthly-coaching/:sessionId", element: <MonthlyCoachingPage /> },
   {
     path: "/learner/progress-reviews",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/reviews",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/progress-reviews/:kind/:id",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/reviews/:kind/:id",
     element: <ProgressReviewsListPage />,
   },
   {
@@ -681,6 +706,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/calendar",
+    element: <LearnerCalendarPage />,
+  },
+  {
+    path: "/learner/calendar/:kind/:id",
     element: <LearnerCalendarPage />,
   },
   {

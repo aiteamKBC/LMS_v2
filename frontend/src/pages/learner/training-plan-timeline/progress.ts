@@ -39,7 +39,7 @@ export function moduleMeasures(module: TimelineModule, data: TrainingPlanDashboa
 
 export function moduleProgress(module: TimelineModule, data: TrainingPlanDashboard, now = Date.now()) {
   const measures = moduleMeasures(module, data, now);
-  const available = measures.filter(measure => measure.value != null);
-  return { measures, available: available.length,
-    value: available.length ? Math.round(available.reduce((sum, measure) => sum + measure.value!, 0) / available.length * 100) / 100 : null };
+  const activities = measures.find(measure => measure.label === 'Activities');
+  return { measures, available: measures.filter(measure => measure.value != null).length,
+    value: activities?.value ?? null };
 }
