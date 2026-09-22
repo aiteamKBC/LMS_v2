@@ -18,11 +18,11 @@ const subject = { id: 'current:M1', title: 'Marketing', source: 'current' as con
   directHours: 2, ksbProgress: { completed: 3, total: 4 } };
 
 describe('dashboard module progress', () => {
-  it('averages the five measures equally and counts only reviews within module dates', () => {
+  it('uses activity completion for module progress and counts only reviews within module dates', () => {
     const result = moduleProgress(buildPlanModules([subject], data)[0], data, Date.parse('2026-09-20T12:00:00Z'));
     expect(result.measures.map(measure => measure.value)).toEqual([33.33, 40, 20, 75, 50]);
     expect(result.measures[0].detail).toBe('1 / 3 ended sessions attended · 1 pending');
-    expect(result.value).toBe(43.67);
+    expect(result.value).toBe(40);
     expect(result.available).toBe(5);
   });
   it('uses rescheduled review dates', () => {
@@ -47,7 +47,7 @@ describe('dashboard module progress', () => {
     const module = buildPlanModules([{ ...subject, directHours: 20, ksbProgress: null }], { ...data, sessions: [], reviews: [] })[0];
     const result = moduleProgress(module, { ...data, reviews: [] });
     expect(result.measures.map(measure => measure.value)).toEqual([null, 40, 100, null, null]);
-    expect(result.value).toBe(70);
+    expect(result.value).toBe(40);
     expect(result.available).toBe(2);
     expect(result.measures[2].detail).toBe('20 / 10 hours');
     expect(moduleProgress({ ...module, done: 0, activityCount: 0, actual: null }, { ...data, reviews: [] }).value).toBeNull();

@@ -1,14 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
-import { calculateReviewInstanceProgress, completeReviewInstance, downloadReviewInstancePdf, fetchReviewInstanceForm, generateReviewMeetingSummary, reopenReviewInstance, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
+import { calculateReviewInstanceProgress, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateReviewMeetingSummary, reopenReviewInstance, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
 vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/reviewInstances')>(),
   fetchReviewInstanceForm: vi.fn(), saveReviewInstanceAnswers: vi.fn(), completeReviewInstance: vi.fn(), reopenReviewInstance: vi.fn(), signReviewInstance: vi.fn(),
-  downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(), generateReviewMeetingSummary: vi.fn(),
+  downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(), generateReviewMeetingSummary: vi.fn(), fetchPreviousReviewSession: vi.fn(),
 }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ signatoryName, onCommit }: { signatoryName: string; onCommit: (signature: string) => void }) => <div>
@@ -66,6 +66,16 @@ beforeEach(() => {
   vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(definition());
   vi.mocked(completeReviewInstance).mockResolvedValue(definition('awaiting-signature'));
   vi.mocked(reopenReviewInstance).mockResolvedValue(definition('in-progress'));
+  vi.mocked(fetchPreviousReviewSession).mockResolvedValue({
+    available: false,
+    reason: 'There is no previous occurrence for this Review.',
+    instance: null,
+    review: null,
+    summaryText: '',
+    transcriptText: '',
+    transcriptAvailable: false,
+    transcriptTruncated: false,
+  });
 });
 
 describe('review reopen flow', () => {
@@ -87,7 +97,37 @@ describe('review reopen flow', () => {
 afterEach(cleanup);
 
 describe('coach review page presentation', () => {
-  it('shows completed setup steps and starts Curriculum sections at step 3 without modal chrome', async () => {
+  it('loads the immediately previous occurrence for the same review', async () => {
+    const current = definition();
+    current.instance.occurrenceNumber = 3;
+    current.template.reviewTypeCode = 'mcm';
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(current);
+    vi.mocked(fetchPreviousReviewSession).mockResolvedValue({
+      available: true,
+      instance: {
+        id: 'instance-2',
+        occurrenceNumber: 2,
+        targetDate: '2026-08-14',
+        completedAt: '2026-08-15T10:00:00Z',
+        status: 'completed',
+      },
+      review: { name: 'Monthly coaching', reviewTypeCode: 'mcm', reviewTemplateId: 'template-1' },
+      summaryText: 'Prior coaching summary.',
+      transcriptText: 'Coach: Let us review the agreed action.\nLearner: It is complete.',
+      transcriptAvailable: true,
+      transcriptTruncated: false,
+    });
+
+    mount();
+    expect(await screen.findByRole('button', { name: 'View previous session' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'View previous session' }));
+
+    await waitFor(() => expect(fetchPreviousReviewSession).toHaveBeenCalledWith('instance-1'));
+    expect(await screen.findByText('Prior coaching summary.')).toBeVisible();
+    expect(screen.getByLabelText('Previous session transcript')).toHaveTextContent('Coach: Let us review the agreed action.');
+  });
+
+  it('starts Curriculum sections at step 1 without modal chrome', async () => {
     const pageDefinition = definition();
     pageDefinition.template.reviewTypeCode = 'mcm';
     pageDefinition.sections.push({
@@ -110,16 +150,16 @@ describe('coach review page presentation', () => {
     );
 
     expect(await screen.findByRole('navigation', { name: 'Review steps' })).toBeVisible();
-    expect(screen.getByText('Review selected')).toBeVisible();
-    expect(screen.getByText('Details confirmed')).toBeVisible();
+    expect(screen.queryByText('Review selected')).not.toBeInTheDocument();
+    expect(screen.queryByText('Details confirmed')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Monthly Coaching Meeting #1' })).toBeVisible();
-    expect(screen.getByText('Step 3')).toBeVisible();
-    expect(screen.getByText('Step 3 of 4')).toBeVisible();
+    expect(screen.getByText('Step 1')).toBeVisible();
+    expect(screen.getByText('Step 1 of 2')).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Next steps' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Final reflection' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
     expect(screen.getByRole('heading', { name: 'Final reflection' })).toBeVisible();
-    expect(screen.getByText('Step 4 of 4')).toBeVisible();
+    expect(screen.getByText('Step 2 of 2')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Close form' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Back to reviews' }));
     expect(onClose).toHaveBeenCalledOnce();

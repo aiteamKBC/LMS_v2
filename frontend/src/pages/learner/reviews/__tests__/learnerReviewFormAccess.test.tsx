@@ -411,6 +411,38 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     expect(requested.some((url) => url.includes(`${encodeURIComponent(SCHEDULED_MCM)}/review/`))).toBe(true);
   });
 
+  it('a field the Curriculum template opted the learner into answering is writable and saves only that field', () => {
+    reviewDefinition = definition({
+      sections: [{
+        id: 'SEC-1', title: 'Curriculum-authored section', estimatedMinutes: 10, displayOrder: 1, enabled: true,
+        fields: [
+          {
+            id: 'FLD-COACH', title: 'Coach only note', fieldType: 'text',
+            required: false, displayOrder: 1, configuration: {}, answer: 'Written by the coach.',
+          },
+          {
+            id: 'FLD-LEARNER', title: 'Your own reflection', fieldType: 'text',
+            required: false, displayOrder: 2, configuration: { respondentRoles: ['participant'] }, answer: 'Draft reflection.',
+          },
+        ],
+      }],
+    });
+    const onSaveAnswers = vi.fn().mockResolvedValue(reviewDefinition);
+    render(<LearnerReviewInstanceForm definition={reviewDefinition} onSaveAnswers={onSaveAnswers} />);
+
+    // The field not opted into by the template stays read-only exactly as before.
+    expect(screen.getByDisplayValue('Written by the coach.')).toBeDisabled();
+
+    // The opted-in field is writable.
+    const learnerField = screen.getByDisplayValue('Draft reflection.');
+    expect(learnerField).not.toBeDisabled();
+    fireEvent.change(learnerField, { target: { value: 'My updated reflection.' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+
+    expect(onSaveAnswers).toHaveBeenCalledWith({ 'FLD-LEARNER': 'My updated reflection.' });
+  });
+
   it('a scheduled Progress Review opens the same generic form', async () => {
     reviewDefinition = definition({ name: 'Quarterly Progress Conversation' });
     mountProgressReview(SCHEDULED_PR);

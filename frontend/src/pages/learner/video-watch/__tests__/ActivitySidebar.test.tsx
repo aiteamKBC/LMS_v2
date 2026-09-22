@@ -58,4 +58,51 @@ describe('module activity sidebar', () => {
     fireEvent.click(screen.getByRole('button', { name: /Lesson 9/ }));
     expect(screen.getByTestId('location')).toHaveTextContent('/learner/component/commercial/132/C9');
   });
+  describe("the curriculum team's published holiday hint", () => {
+    const NOTE = 'No live session this week. Use the workshop days to finish Assignment 2.';
+    const planWith = (slots: unknown[]) => ({ modules: [{ id: 'M1', title: 'Leadership', start_date: '2026-08-03', curriculumSlots: slots }] }) as TrainingPlanDashboard;
+    const planWeeks = weeks.map((week, index) => ({
+      ...week,
+      weekId: `WK${index + 1}`,
+      components: week.components.map(component => ({ ...component, moduleId: 'M1', weekId: `WK${index + 1}` })),
+    }));
+    const renderSidebar = (active: number) => render(<MemoryRouter><ActivitySidebar kind="commercial" id="132"
+      weekComponents={planWeeks[active].components} weekTitle={`Week ${active + 1}`} moduleTitle="Leadership"
+      weeks={planWeeks.map((week, index) => ({ ...week, active: index === active }))} completedIds={new Set()}
+      currentComponentId={`C${active + 1}`} routeFor={c => `/activity/${c.componentId}`} /></MemoryRouter>);
+
+    it('shows it against the week it was written for and no other', async () => {
+      vi.spyOn(overviewSchedule, 'peek').mockReturnValue(undefined);
+      vi.spyOn(overviewSchedule, 'read').mockResolvedValue(planWith([
+        { slotNumber: 3, date: '2026-09-11', sessionNumber: 3, type: 'live-session', holidays: [], weekId: 'WK3' },
+        { slotNumber: 9, date: '2026-10-02', sessionNumber: 9, type: 'live-session', holidays: [], weekId: 'WK9', holidayNote: NOTE },
+      ]));
+      renderSidebar(5);
+      const hint = await screen.findByTestId('learner-week-holiday-note');
+      expect(screen.getAllByTestId('learner-week-holiday-note')).toHaveLength(1);
+      expect(hint).toHaveTextContent(NOTE);
+      expect(hint.closest('li')).toHaveTextContent('Week 9');
+    });
+
+    it('repeats it in the current-week card when that week is the one open', async () => {
+      vi.spyOn(overviewSchedule, 'peek').mockReturnValue(undefined);
+      vi.spyOn(overviewSchedule, 'read').mockResolvedValue(planWith([
+        { slotNumber: 9, date: '2026-10-02', sessionNumber: 9, type: 'live-session', holidays: [], weekId: 'WK9', holidayNote: NOTE },
+      ]));
+      renderSidebar(8);
+      await screen.findAllByTestId('learner-week-holiday-note');
+      expect(screen.getAllByTestId('learner-week-holiday-note')).toHaveLength(2);
+      expect(screen.getByText('Current week').closest('div')).toHaveTextContent(NOTE);
+    });
+
+    it('shows nothing when the team published no hint for any week', async () => {
+      vi.spyOn(overviewSchedule, 'peek').mockReturnValue(undefined);
+      const read = vi.spyOn(overviewSchedule, 'read').mockResolvedValue(planWith([
+        { slotNumber: 9, date: '2026-10-02', sessionNumber: 9, type: 'live-session', holidays: [], weekId: 'WK9' },
+      ]));
+      renderSidebar(8);
+      await vi.waitFor(() => expect(read).toHaveBeenCalled());
+      expect(screen.queryByTestId('learner-week-holiday-note')).toBeNull();
+    });
+  });
 });

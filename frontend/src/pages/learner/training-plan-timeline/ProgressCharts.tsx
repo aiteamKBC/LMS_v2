@@ -126,7 +126,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   return <div className={styles.charts}>
     <section className={styles.card} aria-label={programmeSnapshot ? 'Whole programme progress' : 'Module progress'}>
       <header><div><p className={styles.eyebrow}>{programmeSnapshot ? 'Whole programme' : 'Selected module'}</p><h2>{programmeSnapshot ? 'Whole programme progress' : 'Module progress'}</h2><p className={styles.subtitle}>{programmeSnapshot ? 'Summary metrics for this learner across every module' : selected?.title || 'Choose a module in the timeline'}</p></div>
-        {chartProgress && <strong className={styles.total}>{percentage(chartProgress.value)}<small>{programmeSnapshot ? 'Overall' : 'Average'}</small></strong>}
+        {chartProgress && <strong className={styles.total}>{percentage(chartProgress.value)}<small>{programmeSnapshot ? 'Overall' : 'Activities'}</small></strong>}
       </header>
       {chartProgress ? <>
         <svg className={styles.chart} viewBox={`0 0 ${chartWidth} 235`} role="img" aria-labelledby={`${chartId}-title ${chartId}-description`}>
@@ -148,7 +148,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         </div>)}</dl>
         <p className={styles.note}>{programmeSnapshot
           ? 'Overall, OTJH, KSB and attendance match the case-file cards. Activities and reviews are aggregated across all learner modules.'
-          : `Equal average of ${chartProgress.available} of 5 available measures. Each measure is capped at 100%.`}</p>
+        : 'Module progress is based on completed activities out of assigned activities. Other measures are shown independently.'}</p>
       </> : <p className={styles.empty}>Select a module to see attendance, activities, hours, KSBs and reviews.</p>}
     </section>
     <section className={styles.card} aria-label="Programme module progress">
@@ -163,7 +163,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
           <span className={styles.coverage}>{progress.available} of 5 measures available</span>
         </button>;
       }) : <p className={styles.empty}>Your modules will appear here once assigned.</p>}</div>
-      <p className={styles.note}>Attendance, activities, hours, KSBs and reviews carry equal weight. Select a module to explore its details.</p>
+      <p className={styles.note}>Module progress is based on activities. Attendance, hours, KSBs and reviews are shown independently.</p>
     </section>
     <section className={`${styles.card} ${styles.monthlyCard}`} aria-label="Off-the-job hours by month">
       <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Off-The-Job Hours</h2><p className={styles.subtitle}>Target, submitted and completed hours for every month</p></div></header>

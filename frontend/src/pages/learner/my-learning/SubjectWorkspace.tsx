@@ -11,6 +11,8 @@ import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMat
 import styles from './SubjectWorkspace.module.css';
 import { LearningCatalogue } from './LearningCatalogue';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
+import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
+import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
 import type { PlanModule } from '@/api/trainingPlanDashboard';
@@ -82,14 +84,6 @@ function nativeActivitySchedule(schedule: Schedule | undefined, sessionDate?: st
   return schedule;
 }
 
-function normaliseSubjectTitle(value?: string | null): string {
-  return (value || '')
-    .replace(/&amp;/gi, '&')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLocaleLowerCase();
-}
-
 export function groupSubjectActivities(activities: SubjectEntry[]) {
   const months = new Map<string, Map<string, SubjectEntry[]>>();
   for (const activity of activities) {
@@ -122,41 +116,19 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
     subjects.set(key, subject);
   }
   const legacyByBuilder = new Map<string, string[]>();
-  const legacyByTitle = new Map<string, string[]>();
   for (const subject of subjects.values()) {
     const builder = builderSubjects[subject.id];
     if (builder) legacyByBuilder.set(builder.id, [...(legacyByBuilder.get(builder.id) || []), subject.id]);
-    const title = normaliseSubjectTitle(subject.title);
-    if (title) legacyByTitle.set(title, [...(legacyByTitle.get(title) || []), subject.id]);
   }
   for (const source of Object.values(activitySources)) {
     const key = `legacy:${source.group_id}`;
     if (!subjects.has(key)) continue;
     legacyByBuilder.set(source.module_id, [...new Set([...(legacyByBuilder.get(source.module_id) || []), key])]);
   }
-  const currentTitlesById = new Map<string, Set<string>>();
-  const currentIdsByTitle = new Map<string, Set<string>>();
-  const registerCurrentTitle = (moduleId: string, title?: string | null) => {
-    const normalised = normaliseSubjectTitle(title);
-    if (!moduleId || !normalised) return;
-    if (!currentTitlesById.has(moduleId)) currentTitlesById.set(moduleId, new Set());
-    currentTitlesById.get(moduleId)!.add(normalised);
-    if (!currentIdsByTitle.has(normalised)) currentIdsByTitle.set(normalised, new Set());
-    currentIdsByTitle.get(normalised)!.add(moduleId);
-  };
-  for (const subject of currentSubjects) registerCurrentTitle(subject.id, subject.title);
-  for (const item of real?.components || []) {
-    if (item.moduleId) registerCurrentTitle(item.moduleId, item.module);
-  }
   const currentKey = (moduleId: string) => {
     const matches = legacyByBuilder.get(moduleId);
     if (matches?.length === 1) return matches[0];
-    const titleMatches = new Set<string>();
-    for (const title of currentTitlesById.get(moduleId) || []) {
-      if (currentIdsByTitle.get(title)?.size !== 1) continue;
-      for (const legacyKey of legacyByTitle.get(title) || []) titleMatches.add(legacyKey);
-    }
-    return titleMatches.size === 1 ? [...titleMatches][0] : `current:${moduleId}`;
+    return `current:${moduleId}`;
   };
   const completed = completedComponentIds(real);
   for (const subject of currentSubjects) {
@@ -195,25 +167,35 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
     });
     subjects.set(key, subject);
   }
-  const nativeTitles = new Set([...currentSubjects.map((subject) => subject.title), ...(real?.components || []).map((item) => item.module)]);
   for (const title of real?.modules || []) {
-    if (nativeTitles.has(title)) continue;
-    const titleMatches = legacyByTitle.get(normaliseSubjectTitle(title));
-    if (titleMatches?.length !== 1) subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
+    subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
   }
   return [...subjects.values()].map((subject) => ({ ...subject, title: builderSubjects[subject.id]?.title || subject.title }))
     .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
 }
 
-/** One roll-up for imported history and all later current-platform progress.
- * Exact source links merge the two representations first. A unique title match
- * also merges the subject card when older imports have no source link. */
+/** One roll-up for imported history and all later current-platform progress. */
 export function buildUnifiedLearningSummary(
   data: StudentActivityResponse | null,
   real: LearnerDetail | null,
   metadata?: CoverMetadata | null,
 ): UnifiedLearningSummary {
   const subjects = subjectsFrom(data, real, metadata);
+  // Deduplicate only when the placement has an explicit stable identity. A
+  // title or position is never an identity fallback.
+  const seen = new Set<string>();
+  for (const subject of subjects) {
+    subject.activities = subject.activities.filter((entry) => {
+      const key = entry.legacy?.source_activity_id != null
+        ? `legacy:${entry.legacy.source_activity_id}`
+        : entry.native?.componentId ? `component:${entry.native.componentId}`
+          : entry.native?.quizMeta?.quizId ? `quiz:${entry.native.quizMeta.quizId}` : null;
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
   const activityCount = subjects.reduce((sum, subject) => sum + subject.activities.length, 0);
   const completedActivityCount = subjects.reduce(
     (sum, subject) => sum + subject.activities.filter((entry) => entry.completed).length,
@@ -449,7 +431,7 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
   const completed = subject.activities.filter((activity) => activity.completed).length;
   const isComplete = total > 0 && completed === total;
   const certificateReady = certificateEligible(subject, template);
-  const status = isComplete ? 'Completed' : completed > 0 ? 'In progress' : total ? 'Not started' : 'No activities yet';
+  const status = isComplete ? 'Completed' : completed > 0 ? 'In progress' : total ? 'Not started' : 'Unavailable';
   const next = nextLearningWeek(subject)?.activities.find(entry => !entry.completed);
   const moduleName = planModule?.title || subject.title;
   const tutorName = planModule?.tutor_name?.trim() || 'To be assigned';
@@ -632,6 +614,10 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     : planSelection.status === 'undated' ? 'Your training plan needs module dates before a current module can be identified. You can still choose a module below.'
     : 'No scheduled module is available in your learning map. Choose a module below to explore your learning.';
   const weeks = active ? subjectMapWeeks(active, real, metadata, schedule) : [];
+  // The curriculum team's holiday hints for the module on screen. Only weeks
+  // they published one for are in here, so a lookup that misses shows nothing.
+  const holidayNotes = weekHolidayNotes(activePlan?.curriculumSlots
+    || (active ? planModulesBySubject.get(active.id)?.curriculumSlots : undefined));
   const activeWeek = continueCurrentWeek && active ? continuingLearningWeek(active)
     : selectedWeek ? weeks.find(week => week.id === selectedWeek) : undefined;
   const visibleActivities = active ? active.activities.filter((entry) => !term || active.title.toLocaleLowerCase().includes(term) || entry.title.toLocaleLowerCase().includes(term)) : [];
@@ -665,13 +651,13 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     </div>}
     {activeWeek ? <>
       <button onClick={() => select(active!.id)} className={styles.textLink}><ChevronLeft size={17} />{view === 'map' ? 'Back to timeline' : 'Back to subject'}</button>
-      <section className={styles.weekMaterial} aria-label={`${activeWeek.label} materials`}><header><p className={styles.eyebrow}>{activeWeek.label}</p><h3>{activeWeek.title}</h3><Progress done={activeWeek.activities.filter(a => a.completed).length} total={activeWeek.activities.length} label="Week progress" /></header>
+      <section className={styles.weekMaterial} aria-label={`${activeWeek.label} materials`}><header><p className={styles.eyebrow}>{activeWeek.label}</p><h3>{activeWeek.title}</h3><HolidayNoteHint note={activeWeek.weekId ? holidayNotes.get(activeWeek.weekId) : undefined} className="mb-2" /><Progress done={activeWeek.activities.filter(a => a.completed).length} total={activeWeek.activities.length} label="Week progress" /></header>
         {activeWeek.activities.filter(entry => !term || active!.title.toLowerCase().includes(term) || entry.title.toLowerCase().includes(term)).map(entry => <ActivityRow key={entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={result => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />)}
         {!activeWeek.activities.length && <p className="p-6 text-sm text-foreground-500">Learning materials will appear here when they are added to this week.</p>}
         {activeWeek.activities.length > 0 && !activeWeek.activities.some(entry => !term || active!.title.toLowerCase().includes(term) || entry.title.toLowerCase().includes(term)) && <p className="p-6 text-sm text-foreground-500">No activities match your search.</p>}
       </section>
     </> : selectedWeek && active ? <div className={styles.empty}><p>{continueCurrentWeek ? 'Learning materials will appear here when they are added to this module.' : 'This week is no longer available in this module.'}</p><button onClick={() => select(active.id)}>View module</button></div>
-      : view === 'map' ? (active ? <SubjectTimeline subject={active} weeks={weeks} search={search} onOpen={week => { setSearch(''); select(active.id, week); }} /> : !selected && <div className={styles.empty}>{noScheduledModule}</div>)
+      : view === 'map' ? (active ? <SubjectTimeline subject={active} weeks={weeks} search={search} holidayNotes={holidayNotes} onOpen={week => { setSearch(''); select(active.id, week); }} /> : !selected && <div className={styles.empty}>{noScheduledModule}</div>)
       : !active ? <>
       <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={currentSubject} total={total} done={done} percent={percent} kind={kind} learnerId={learnerId}
         deadlines={deadlines}

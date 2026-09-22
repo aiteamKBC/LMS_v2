@@ -200,6 +200,12 @@ async function renderCatalogue(search = '') {
   return result;
 }
 
+/** Opens the app's SelectMenu combobox and picks the option with this label. */
+async function chooseOption(user: ReturnType<typeof userEvent.setup>, comboboxLabel: string, optionLabel: string) {
+  await user.click(screen.getByLabelText(comboboxLabel));
+  await user.click(await screen.findByRole('option', { name: optionLabel }));
+}
+
 /** The catalogue card a module's title sits in. */
 function cardFor(title: string) {
   const heading = screen.getByText(title);
@@ -408,16 +414,16 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
 
     expect(screen.getByLabelText('Cohort')).toBeDisabled();
     expect(screen.getByLabelText('Group')).toBeDisabled();
-    expect(within(screen.getByLabelText('Cohort')).getByRole('option')).toHaveTextContent('Choose programme first');
-    expect(within(screen.getByLabelText('Group')).getByRole('option')).toHaveTextContent('Choose cohort first');
+    expect(within(screen.getByLabelText('Cohort')).getByText('Choose programme first')).toBeInTheDocument();
+    expect(within(screen.getByLabelText('Group')).getByText('Choose cohort first')).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText('Programme'), 'Data Analyst');
+    await chooseOption(user, 'Programme', 'Data Analyst');
     expect(screen.getByLabelText('Cohort')).toBeEnabled();
     expect(screen.getByLabelText('Group')).toBeDisabled();
 
-    await user.selectOptions(screen.getByLabelText('Cohort'), 'COHORT-1');
+    await chooseOption(user, 'Cohort', 'Sept 2026');
     expect(screen.getByLabelText('Group')).toBeEnabled();
-    await user.selectOptions(screen.getByLabelText('Group'), 'GROUP-1');
+    await chooseOption(user, 'Group', 'Group A');
 
     expect(screen.getByText('Data Foundations')).toBeInTheDocument();
     expect(screen.queryByText('Network Basics')).not.toBeInTheDocument();
@@ -427,10 +433,11 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     const user = userEvent.setup();
     await renderCatalogue();
 
-    await user.selectOptions(screen.getByLabelText('Programme'), 'Data Analyst');
-    await user.selectOptions(screen.getByLabelText('Cohort'), 'COHORT-1');
+    await chooseOption(user, 'Programme', 'Data Analyst');
+    await chooseOption(user, 'Cohort', 'Sept 2026');
 
-    const groupOptions = within(screen.getByLabelText('Group')).getAllByRole('option');
+    await user.click(screen.getByLabelText('Group'));
+    const groupOptions = await screen.findAllByRole('option');
     expect(groupOptions.map(option => option.textContent)).toEqual(['All groups', 'Group A']);
   });
 
@@ -467,8 +474,8 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
 
     expect(await screen.findByRole('button', { name: /Back to modules/i })).toBeInTheDocument();
     const [programmeSelect, ksbSourceSelect] = screen.getAllByRole('combobox');
-    expect(programmeSelect).toHaveValue('Data Analyst');
-    expect(ksbSourceSelect).toHaveValue('KSBP-DATA');
+    expect(within(programmeSelect).getByText('Data Analyst')).toBeInTheDocument();
+    expect(within(ksbSourceSelect).getByText('Data Analyst')).toBeInTheDocument();
     expect(screen.getByText('Week 6')).toBeInTheDocument();
   });
 

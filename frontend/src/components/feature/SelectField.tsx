@@ -19,6 +19,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -65,10 +66,13 @@ export interface SelectMenuProps {
   triggerClassName?: string;
   menuClassName?: string;
   emptyMessage?: string;
+  /** Floor for the panel's width, for callers whose options run longer than the trigger they open from. */
+  menuMinWidth?: number;
 }
 
-const TRIGGER_HEIGHT = { sm: 'h-10', md: 'h-[42px]' } as const;
-const MENU_MAX_HEIGHT = 320;
+const TRIGGER_HEIGHT = { sm: 'h-11', md: 'h-12' } as const;
+const MENU_MAX_HEIGHT = 360;
+const MENU_MIN_WIDTH = 240;
 const TYPEAHEAD_RESET_MS = 900;
 
 export function SelectMenu({
@@ -91,6 +95,7 @@ export function SelectMenu({
   triggerClassName = '',
   menuClassName = '',
   emptyMessage = 'Nothing matches that',
+  menuMinWidth,
 }: SelectMenuProps) {
   const generatedId = useId();
   const listboxId = `select-menu-${generatedId}`;
@@ -155,7 +160,11 @@ export function SelectMenu({
 
   // Keep the panel pinned to the field through scrolling and resizing, flipping
   // above it when the list would otherwise run off the bottom of the viewport.
-  useEffect(() => {
+  // A layout effect (not a plain effect) so the first position is committed
+  // before the browser paints -- otherwise the panel flashes at its default
+  // {} style (the page's top-left corner) for a frame before jumping to the
+  // trigger.
+  useLayoutEffect(() => {
     if (!open) return undefined;
     const position = () => {
       const rect = triggerRef.current?.getBoundingClientRect();
@@ -164,13 +173,14 @@ export function SelectMenu({
       const gap = 6;
       const spaceBelow = window.innerHeight - rect.bottom;
       const flip = spaceBelow < height + gap + 12 && rect.top > spaceBelow;
+      const width = Math.min(Math.max(rect.width, menuMinWidth ?? MENU_MIN_WIDTH), window.innerWidth - 16);
       setAbove(flip);
       setPanelStyle({
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8)),
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
         top: flip
           ? Math.max(8, rect.top - height - gap)
           : Math.min(rect.bottom + gap, window.innerHeight - 8 - Math.min(height, window.innerHeight - 16)),
-        width: Math.max(rect.width, 200),
+        width,
         maxHeight: Math.max(120, Math.min(MENU_MAX_HEIGHT, flip ? rect.top - gap - 12 : spaceBelow - gap - 12)),
       });
     };
@@ -313,13 +323,13 @@ export function SelectMenu({
         className={`flex w-full items-center gap-2 rounded-lg border pl-3 pr-2 text-left outline-none transition-smooth ${TRIGGER_HEIGHT[size]} ${triggerTone} ${triggerClassName}`}
       >
         {selected?.icon && <AppIcon className={`${selected.icon} shrink-0 text-foreground-400`}></AppIcon>}
-        <span className={`min-w-0 flex-1 truncate text-[13px] ${selected ? 'font-semibold text-foreground-900' : 'font-medium text-foreground-400'}`}>
+        <span className={`min-w-0 flex-1 truncate text-[14px] ${selected ? 'font-semibold text-foreground-900' : 'font-medium text-foreground-400'}`}>
           {selected ? selected.label : placeholder}
         </span>
         {selected?.meta && (
-          <span className="shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{selected.meta}</span>
+          <span className="shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[11px] font-bold text-foreground-500">{selected.meta}</span>
         )}
-        <AppIcon className={`ri-arrow-down-s-line shrink-0 text-lg transition-transform ${disabled ? 'text-foreground-300' : 'text-foreground-400'} ${open ? 'rotate-180' : ''}`}></AppIcon>
+        <AppIcon className={`ri-arrow-down-s-line shrink-0 text-xl transition-transform ${disabled ? 'text-foreground-300' : 'text-foreground-400'} ${open ? 'rotate-180' : ''}`}></AppIcon>
       </button>
 
       {open && createPortal(
@@ -331,8 +341,8 @@ export function SelectMenu({
           className={`fixed z-[10050] flex flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl outline-none select-menu-pop ${above ? 'is-above' : ''} ${menuClassName}`}
         >
           {showSearch && (
-            <div className="flex items-center gap-2 border-b border-background-200 px-3 py-2">
-              <AppIcon className="ri-search-line shrink-0 text-sm text-foreground-300"></AppIcon>
+            <div className="flex items-center gap-2 border-b border-background-200 px-3 py-2.5">
+              <AppIcon className="ri-search-line shrink-0 text-base text-foreground-300"></AppIcon>
               <input
                 ref={searchRef}
                 value={query}
@@ -340,7 +350,7 @@ export function SelectMenu({
                 placeholder={searchPlaceholder}
                 aria-label={searchPlaceholder}
                 aria-controls={listboxId}
-                className="min-w-0 flex-1 !border-0 bg-transparent text-[13px] font-semibold text-foreground-900 !shadow-none !outline-none !ring-0 placeholder:font-medium placeholder:text-foreground-400"
+                className="min-w-0 flex-1 !border-0 bg-transparent text-[14px] font-semibold text-foreground-900 !shadow-none !outline-none !ring-0 placeholder:font-medium placeholder:text-foreground-400"
               />
               {query && (
                 <button
@@ -368,7 +378,7 @@ export function SelectMenu({
               return (
                 <div key={`${option.value}-${index}`}>
                   {heading && (
-                    <p className="sticky top-0 z-10 bg-background-50/95 px-2.5 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400 backdrop-blur">
+                    <p className="sticky top-0 z-10 bg-background-50/95 px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wider text-foreground-400 backdrop-blur">
                       {heading}
                     </p>
                   )}
@@ -382,7 +392,7 @@ export function SelectMenu({
                     disabled={option.disabled}
                     onMouseMove={() => { if (!option.disabled && highlight !== index) setHighlight(index); }}
                     onClick={() => commit(option)}
-                    className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left outline-none transition-smooth ${
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left outline-none transition-smooth ${
                       option.disabled
                         ? 'cursor-not-allowed text-foreground-300'
                         : active
@@ -392,19 +402,19 @@ export function SelectMenu({
                             : 'text-foreground-800'
                     }`}
                   >
-                    {option.icon && <AppIcon className={`${option.icon} shrink-0 text-base ${active ? 'text-primary-600' : 'text-foreground-400'}`}></AppIcon>}
+                    {option.icon && <AppIcon className={`${option.icon} shrink-0 text-lg ${active ? 'text-primary-600' : 'text-foreground-400'}`}></AppIcon>}
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-semibold">{option.label}</span>
+                      <span className="block whitespace-normal break-words text-[14px] font-semibold">{option.label}</span>
                       {option.description && (
-                        <span className="mt-0.5 block truncate text-[11px] font-medium text-foreground-400">{option.description}</span>
+                        <span className="mt-0.5 block whitespace-normal break-words text-[12px] font-medium text-foreground-400">{option.description}</span>
                       )}
                     </span>
                     {option.meta && (
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${active ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${active ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}>
                         {option.meta}
                       </span>
                     )}
-                    {active && <AppIcon className="ri-check-line shrink-0 text-base text-primary-600"></AppIcon>}
+                    {active && <AppIcon className="ri-check-line shrink-0 text-lg text-primary-600"></AppIcon>}
                   </button>
                 </div>
               );
