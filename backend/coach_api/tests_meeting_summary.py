@@ -342,6 +342,18 @@ class ReviewMeetingSummaryEndpointTests(SimpleTestCase):
         graph.assert_not_called()
         stored_generation.assert_not_called()
 
+    def test_progress_review_uploaded_vtt_generates_for_its_mapped_summary_field(self):
+        """Progress Reviews use the same transcript pipeline as MCM reviews."""
+        self.definition["template"]["reviewTypeCode"] = "progress_review"
+        self.record.event_type = "progress-review"
+
+        response = self.upload_transcript("Progress was reviewed and next steps agreed.")
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["meetingSummarySource"]["status"], "ready")
+        self.assertEqual(payload["meetingSummarySource"]["fieldId"], "REVF-SUMMARY")
+
     def test_uploaded_vtt_works_without_a_linked_teams_meeting(self):
         """The whole point of the fallback: the meeting was not held in Teams.
 

@@ -83,7 +83,7 @@ pptx_generator.py   clones templates/kbc_progress_review_template.pptx and
 runs.py             DB access for the three progress_review_* tables
 storage.py          Azure Blob upload/download for the generated .pptx file
 tables.py           idempotent CREATE TABLE for the three tables (raw SQL, no migration)
-views.py / urls.py  the six /api/progress-reviews/... endpoints
+views.py / urls.py  the six /progress_reviews_api/... endpoints
 ```
 
 ### Updating the template design
@@ -136,7 +136,7 @@ same credentials evidence uploads already use) for this to work; without them,
 ## Generating one learner's Progress Review
 
 ```
-POST /api/progress-reviews/<learner_id>/generate/
+POST /progress_reviews_api/<learner_id>/generate/
 Body (all optional): {"review_date": "YYYY-MM-DD"}
 ```
 
@@ -157,20 +157,20 @@ On success it returns:
   "reviewDate": "2026-06-15", "reviewPeriodStart": "…", "reviewPeriodEnd": "…",
   "generationStatus": "completed",
   "sourceWarnings": ["Attendance register could not be reached; …"],
-  "downloadUrl": "/api/progress-reviews/<reviewId>/download/"
+  "downloadUrl": "/progress_reviews_api/<reviewId>/download/"
 }
 ```
 
 Then fetch a short-lived download link:
 
 ```
-GET /api/progress-reviews/<reviewId>/download/   ->  {"url": "https://….blob.core.windows.net/...?<sas>", "filename": "…"}
+GET /progress_reviews_api/<reviewId>/download/   ->  {"url": "https://….blob.core.windows.net/...?<sas>", "filename": "…"}
 ```
 
 ## Bulk-generating for every active learner
 
 ```
-POST /api/progress-reviews/bulk-generate/
+POST /progress_reviews_api/bulk-generate/
 Body (all optional): {"learner_ids": [1, 2, 3], "review_date": "YYYY-MM-DD"}
 ```
 
@@ -191,14 +191,14 @@ in that learner's row and never stops the rest of the batch:
 Two read-only endpoints exist for the frontend's preview panel, and admit the
 learner themselves as well as staff (not just staff — see `views.py`):
 
-- `GET /api/progress-reviews/<learner_id>/periods/` — every 12-week review
+- `GET /progress_reviews_api/<learner_id>/periods/` — every 12-week review
   period the learner's programme generates, past and upcoming.
-- `GET /api/progress-reviews/<learner_id>/pack/?review_date=YYYY-MM-DD` — the
+- `GET /progress_reviews_api/<learner_id>/pack/?review_date=YYYY-MM-DD` — the
   full `progress_review_pack` JSON for one period, without creating a run or
   spending an Azure upload. Use this to show the "missing data" warnings and
   the calculated period before committing to `/generate`.
 
-`GET /api/progress-reviews/learners/active/` lists every active learner for a
+`GET /progress_reviews_api/learners/active/` lists every active learner for a
 "select learner" dropdown.
 
 ## Tests

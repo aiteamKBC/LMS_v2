@@ -394,6 +394,35 @@ describe('ReviewFormModal', () => {
     ));
   });
 
+  it('offers the canonical Meeting Summary marker on a Progress Review text field', async () => {
+    api.createReviewTemplate.mockResolvedValue({});
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await fillGeneralAndReachFormBuilder('Progress Review');
+    await userEvent.click(screen.getByRole('button', { name: /Add section/ }));
+    await userEvent.type(screen.getByLabelText(/Section title/), 'Meeting Summary');
+    await userEvent.click(screen.getByRole('button', { name: /Add field/ }));
+    await userEvent.type(screen.getByPlaceholderText('Question title'), 'Progress recap');
+
+    const marker = screen.getByLabelText('This is the canonical Meeting Summary');
+    expect(marker).not.toBeChecked();
+    await userEvent.click(marker);
+    await userEvent.click(screen.getByRole('button', { name: /Create review/ }));
+
+    await vi.waitFor(() => expect(api.createReviewTemplate).toHaveBeenCalledWith(
+      'PROG-DATA',
+      expect.objectContaining({
+        reviewTypeId: 'REVT-PROGRESS_REVIEW',
+        sections: expect.arrayContaining([
+          expect.objectContaining({
+            fields: expect.arrayContaining([
+              expect.objectContaining({ configuration: expect.objectContaining({ semanticKey: 'meeting_summary' }) }),
+            ]),
+          }),
+        ]),
+      }),
+    ));
+  });
+
   it('deleting a section with fields asks for confirmation', async () => {
     render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
     await fillGeneralAndReachFormBuilder();
