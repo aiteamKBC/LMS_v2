@@ -43,7 +43,9 @@ import {
 import type {
   AttendanceApiLearner,
   AttendanceApiResponse,
+  CaseloadApiLearner,
   CaseloadApiResponse,
+  EmbeddedCaseloadLearner,
   FilterOption,
   Learner,
   QuickViewTab,
@@ -129,7 +131,7 @@ function hasAuthoritativePerformanceStatus(value?: string | null): boolean {
   return ['at-risk', 'on-track', 'high', 'new-starter'].includes(normalizedPerformanceStatus(value));
 }
 
-export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { embedded?: boolean; embeddedLearners?: CaseloadApiLearner[] }) {
+export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { embedded?: boolean; embeddedLearners?: EmbeddedCaseloadLearner[] }) {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
   // Whose caseload this is: the signed-in coach, or the coach an administrator
@@ -176,7 +178,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
           // Dashboard uses compact names for these already-computed review dates.
           lastProgressReview: (source as CaseloadApiLearner & { lastProgressReview?: string }).lastProgressReview || source.lastPr,
           lastReview: (source as CaseloadApiLearner & { lastReview?: string }).lastReview || source.lastMcm,
-        }, source.attendanceRateAvailable ? {
+        } as CaseloadApiLearner, source.attendanceRateAvailable ? {
           id: source.id,
           learner: source.name || '',
           attendance: source.attendanceRate,
