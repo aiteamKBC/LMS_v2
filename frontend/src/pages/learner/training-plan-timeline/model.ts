@@ -34,9 +34,15 @@ export function reviewToBook(reviews: TrainingPlanDashboard['reviews']) {
 
 export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], data: TrainingPlanDashboard) {
   return subjects.map(subject => {
-    const summary = 'activities' in subject ? null : subject;
+    const initialSummary = 'activities' in subject ? null : subject;
     const activities = 'activities' in subject ? subject.activities : [];
     const moduleId = data.moduleLinks[subject.id]?.id || (subject.id.startsWith('current:') ? subject.id.slice(8) : null);
+    // Reuse the already-loaded overview summary for current modules too. The
+    // detail panel receives these summaries, while the timeline previously
+    // only used them for legacy subjects, dropping direct recorded hours and
+    // canonical activity/KSB values for selected current modules.
+    const summary = initialSummary || data.planSubjects?.find(item =>
+      item.id === subject.id || (moduleId != null && item.moduleIds.includes(moduleId)));
     const detail = data.modules.find(module => module.id === moduleId);
     const sessions = data.sessions.filter(session => session.moduleId === moduleId).map(session => {
       const matches = activities.filter(activity => Date.parse(activity.native?.sessionDateTimeUtc || '') === Date.parse(session.start)
@@ -61,11 +67,10 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
     }, {});
     const ksbCodes = summary?.ksbCodes || [...new Set(activities.flatMap(activity =>
       (activity.native?.ksbMappings || []).map(mapping => mapping.code).filter(Boolean)))].sort();
-    const ksbProgress = summary ? summary.ksbProgress : activities.some(activity => !activity.native?.ksbMappings) ? null
-      : activities.reduce((counts, activity) => {
-        const count = new Set((activity.native?.ksbMappings || []).map(mapping => mapping.code).filter(Boolean)).size;
-        return { total: counts.total + count, completed: counts.completed + (activity.completed ? count : 0) };
-      }, { completed: 0, total: 0 });
+    // Activity-to-KSB mappings are occurrence counts, not canonical learner KSB
+    // evidence/profile progress.  No safe per-module canonical KSB source is
+    // present in this payload, so the module indicator remains unavailable.
+    const ksbProgress = summary?.ksbProgress ?? null;
     const historicalHours = actual.length ? actual.reduce((sum, row) => sum + row.hours, 0) : null;
     const recordedHours = summary?.directHours != null
       ? groupId ? data.actualAvailable ? (historicalHours || 0) + summary.directHours : null : summary.directHours
@@ -111,7 +116,9 @@ export function moduleVisualEnd(module: { end: string; detail?: { effectiveEndDa
 export type CurriculumRow =
   | { kind: 'session'; slotNumber: number; date: string; sessionNumber: number;
       title: string; start: string | null; minutes: number | null; attended: boolean | null; joinUrl: string | null;
-      holidays: PlanSlotHoliday[]; weekId?: string; weekTitle?: string; learningOutcomes?: string[] }
+      holidays: PlanSlotHoliday[]; weekId?: string; weekTitle?: string; learningOutcomes?: string[];
+      /** The curriculum team's published hint for this holiday week, if there is one. */
+      holidayNote?: string }
   /** Kept for a payload from an older, genuinely closing scheduler; today's spine never emits one. */
   | { kind: 'reading-week'; slotNumber: number; date: string; holidays: PlanSlotHoliday[] };
 
@@ -160,6 +167,9 @@ export function buildCurriculumTimeline(
       weekId: slot.weekId,
       weekTitle: slot.weekTitle,
       learningOutcomes: slot.learningOutcomes || [],
+      // Carried through exactly as served: the week it belongs to is the week
+      // this row is, so it can never surface against another one.
+      holidayNote: slot.holidayNote,
     };
   });
 }
@@ -234,4 +244,24 @@ export function timelineMonthKeys(year: number, startMonth = 0) {
 
 export function timelinePeriodYear(month: string, startMonth = 0) {
   return Number(month.slice(0, 4)) - (Number(month.slice(5, 7)) - 1 < startMonth ? 1 : 0);
+}
+
+/**
+ * The curriculum team's published holiday hints for one module, by week id.
+ *
+ * `holidayNote` reaches a learner only on a slot whose week the author both
+ * clashed with a holiday and published a note for — the server decides both,
+ * so every entry here is already a hint this learner is meant to read. Keyed
+ * by `weekId` so a screen that lists weeks rather than delivery dates (My
+ * Learning, the week rail beside an activity) can show it against the one
+ * week it was written for.
+ */
+export function weekHolidayNotes(slots?: PlanCurriculumSlot[] | null): Map<string, string> {
+  const notes = new Map<string, string>();
+  for (const slot of slots || []) {
+    const note = (slot.holidayNote || '').trim();
+    const weekId = (slot.weekId || '').trim();
+    if (note && weekId && !notes.has(weekId)) notes.set(weekId, note);
+  }
+  return notes;
 }

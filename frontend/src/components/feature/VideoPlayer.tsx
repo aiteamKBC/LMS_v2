@@ -18,11 +18,53 @@ export interface ParsedVideo {
   fallbackSrc?: string;        // provider preview when viewing is allowed but downloading is not
 }
 
+/**
+ * Authors paste a provider's "copy embed code" snippet — a whole `<iframe …>`
+ * tag — into the Embed field as often as they paste a bare address. Only the
+ * src is playable: handing the markup itself to an iframe made the browser
+ * resolve it as a relative path, which landed the learner on a 404 instead of
+ * the video. The learner API already unwraps this server-side; do the same for
+ * anything parsed in the browser (the module builder's learner preview builds
+ * its components client-side and never passes through that API).
+ */
+// Kept here because the parser and player share the provider contract.
+// eslint-disable-next-line react-refresh/only-export-components
+export function embeddedSrc(value: string): string {
+  if (!value.includes('<')) return value;
+  const src = value.match(/<iframe\b[^>]*?\ssrc\s*=\s*["']([^"']+)["']/i)?.[1];
+  // Entity-decode: an embed snippet carries query separators as &amp;.
+  return src ? src.replace(/&amp;/g, '&').trim() : value;
+}
+
+/**
+ * Whether a source will be refused by the browser when we frame it.
+ *
+ * SharePoint and Stream answer with `frame-ancestors 'self' teams.microsoft.com
+ * … *.cloud.microsoft` — Microsoft's own surfaces only. The LMS origin is not on
+ * that list, so the frame is blocked and the learner gets "refused to connect"
+ * where the video belongs. Nothing in our code can override that: the header
+ * comes from the responding server, and the browser enforces it against us.
+ * Reported at authoring time so it does not reach a learner.
+ */
+// Kept here because the parser and player share the provider contract.
+// eslint-disable-next-line react-refresh/only-export-components
+export function framingRefusedHost(url: string): string {
+  let host = '';
+  try {
+    host = new URL(embeddedSrc(url.trim()).trim()).hostname.toLowerCase();
+  } catch {
+    return ''; // Not an absolute address — nothing to judge yet.
+  }
+  // The tenant host and Stream's own player both carry the SharePoint policy.
+  const refused = /(^|\.)sharepoint\.com$|(^|\.)sharepoint-df\.com$|^web\.microsoftstream\.com$/.test(host);
+  return refused ? host : '';
+}
+
 /** Classify a provider URL and extract the id/src needed to play it. */
 // Kept here because the parser and player share the provider contract.
 // eslint-disable-next-line react-refresh/only-export-components
 export function parseVideoUrl(url: string): ParsedVideo {
-  const clean = url.trim();
+  const clean = embeddedSrc(url.trim()).trim();
   const yt =
     clean.match(/(?:youtu\.be\/)([\w-]{6,})/) ||
     clean.match(/[?&]v=([\w-]{6,})/) ||

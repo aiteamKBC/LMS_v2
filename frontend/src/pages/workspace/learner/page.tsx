@@ -26,8 +26,6 @@ import { DashboardActivities } from './DashboardActivities';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardPlan } from './useDashboardPlan';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
-import { hasMonthlyHourData, monthFromDate, totalCompletedHours } from '@/pages/learner/training-plan-timeline/monthlyHours';
-import { dateKey } from '@/pages/learner/training-plan-timeline/model';
 
 function formatProgrammeStartDate(value?: string | null): string {
   if (!value) return '';
@@ -157,13 +155,9 @@ export default function LearnerOverview() {
   const otjPlannedHours = !metrics.data ? null : metrics.data.migrated
     ? metrics.data.aptem_planned_total ?? null : dashboardPlan.otjh.planned;
   const otjPlannedLoading = metrics.loading || (!metrics.data?.migrated && dashboardPlan.otjh.plannedLoading);
-  const otjChartDataAvailable = !!dashboardPlan.data && hasMonthlyHourData(dashboardPlan.data);
-  // Keep the headline card and the monthly chart on one calculation. If the
-  // chart has no monthly dataset at all, retain the metrics fallback so a plan
-  // service failure does not discard an otherwise available case-file total.
-  const otjActualHours = otjChartDataAvailable
-    ? totalCompletedHours(dashboardPlan.data!, monthFromDate(dateKey(programmeStartDate)), monthFromDate(dateKey(programmeEndDate)))
-    : metrics.data?.otjh.completed_actual ?? null;
+  // The headline is the canonical whole-programme metric. Monthly-log values
+  // remain available inside Monthly Focus, but must not replace this total.
+  const otjActualHours = metrics.data?.otjh.completed_actual ?? null;
   const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
     ? Math.round((otjActualHours / otjPlannedHours) * 100)
     : null;
@@ -176,11 +170,9 @@ export default function LearnerOverview() {
   const otjTone: StatusTone = 'brand';
   const ksb = metrics.data?.ksb;
   const ksbPercent = ksb?.percent ?? null;
-  const ksbValue = ksbPercent == null
-    ? ksb?.mappedCompleted != null ? `${ksb.mappedCompleted} points` : EMPTY_VALUE
-    : `${ksbPercent}%`;
+  const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;
   const ksbCaption = ksb?.total != null ? `${ksb.completed} of ${ksb.total} points achieved`
-    : ksb?.mappedCompleted != null ? `Recorded achievement; KSB mappings missing for ${ksb.unmappedActivities ?? 0} activities. Percentage unavailable.`
+    : ksb?.status === 'unavailable' ? 'KSB progress unavailable.'
     : metrics.loading ? 'Loading KSB progress...' : 'KSB details unavailable';
   const ksbTone: StatusTone = ksbPercent == null ? 'neutral'
     : ksbPercent >= 50 ? 'positive' : ksbPercent >= 30 ? 'caution' : 'critical';

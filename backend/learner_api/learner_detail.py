@@ -1898,6 +1898,7 @@ def learner_summary(request, kind, pk):
             "id", "username", "email", "phone_number", "programme",
             "programme_status", "cohort", "group", "employer", "employer_id",
             "learner_type", "aptem_id", "start_date", "end_date",
+            "learner_start_date",
             "practical_period_end_date", "apprenticeship_end_date",
         ).get(pk=pk)
         resolved_status = programme_status(source)
@@ -1923,6 +1924,14 @@ def learner_summary(request, kind, pk):
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "isActive": resolved_status.casefold() == "active",
         "programmeStartDate": _iso_date(start),
+        # See mappers.learner_detail_payload: the learner's own recorded start,
+        # unmediated by the cohort fallback that programmeStartDate applies.
+        "learnerStartDate": _s(getattr(source, "learner_start_date", None)),
+        # Mirrors learnerStartDate: the learner's own recorded end, straight
+        # from Created_users.Learner_end_date. programmeEndDate below resolves
+        # through the programme/apprenticeship columns, which stay empty for a
+        # learner whose end date is only recorded against themselves.
+        "learnerEndDate": _s(getattr(source, "learner_end_date", None)),
         "programmeEndDate": _iso_date(source.end_date or source.practical_period_end_date or source.apprenticeship_end_date or end),
         "accessGate": access_gate(source),
         "learningAccess": learning_access(source),

@@ -11,6 +11,9 @@ from .aptem_status import with_aptem_status
 DIRECTORY_FIELDS = (
     "id", "uuid", "username", "type", "email", "group", "status",
     "programme_status", "programme", "cohort", "organization", "learner_type",
+    # The directory's Case owner filter offers the owners actually present in
+    # these rows, so the column has to come back with them.
+    "case_owner",
 )
 
 

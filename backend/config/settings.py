@@ -343,6 +343,10 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # Outermost on purpose: a cancelled request unwinds through every
+    # middleware below, and this one's handler is the last chance to hand
+    # its pooled connection back. See config/db_release.py.
+    'config.db_release.ReleaseConnectionOnAbortMiddleware',
     'config.observability.RequestObservabilityMiddleware',
     'django.middleware.security.SecurityMiddleware',
     # Compress JSON/CSS/JS responses when the reverse proxy has not already done

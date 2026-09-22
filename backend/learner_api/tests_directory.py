@@ -19,6 +19,7 @@ def directory_learner(pk=1, has_plan=False, learner_type="commercial"):
         "type": "User", "email": "learner@example.test", "group": "Group A",
         "status": "FullUser", "programme_status": "Delivery", "programme": "Marketing",
         "cohort": "September", "organization": "REF-1", "learner_type": learner_type,
+        "case_owner": "Omar Badr",
     }
     loaded_fields = [
         field.attname
@@ -55,6 +56,22 @@ class DirectoryRowTests(SimpleTestCase):
                 learner.learning_plan = learning_plan
                 learner.training_plan = training_plan
                 self.assertEqual(to_list_row(learner)["hasLearningPlan"], expected)
+
+    def test_the_case_owner_reaches_the_row_without_a_deferred_fetch(self):
+        """The Case owner filter builds its options from these values, so the
+        column has to be in the projection as well as the payload."""
+        self.assertIn("case_owner", DIRECTORY_FIELDS)
+        learner = directory_learner()
+        with patch.object(EnrolmentUser, "refresh_from_db",
+                          side_effect=AssertionError("Deferred field fetched")):
+            self.assertEqual(to_list_row(learner)["caseOwner"], "Omar Badr")
+
+    def test_a_row_with_no_case_owner_reports_an_empty_string(self):
+        """Staff and employer rows have none. '' keeps them out of the filter's
+        option list rather than offering a blank entry."""
+        learner = directory_learner()
+        learner.case_owner = None
+        self.assertEqual(to_list_row(learner)["caseOwner"], "")
 
     def test_legacy_null_kind_keeps_apprenticeship_routing(self):
         row = to_list_row(directory_learner(learner_type=None))

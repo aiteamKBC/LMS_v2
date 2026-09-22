@@ -8,12 +8,14 @@ import {
   calculateReviewInstanceProgress,
   completeReviewInstance,
   downloadReviewInstancePdf,
+  fetchPreviousReviewSession,
   fetchReviewInstanceForm,
   flattenReviewFields,
   generateReviewMeetingSummary,
   reopenReviewInstance,
   saveReviewInstanceAnswers,
   signReviewInstance,
+  type PreviousReviewSession,
   type ReviewInstanceFormDefinition,
 } from '@/api/reviewInstances';
 import { ModalHeader, ModalShell } from './ModalHeader';
@@ -229,6 +231,10 @@ export function ReviewInstanceModal({
   const [pendingSummaryReplacement, setPendingSummaryReplacement] = useState('');
   const [summaryDraftSaved, setSummaryDraftSaved] = useState(false);
   const [expandedSummaryFieldId, setExpandedSummaryFieldId] = useState<string | null>(null);
+  const [previousSession, setPreviousSession] = useState<PreviousReviewSession | null>(null);
+  const [previousSessionLoading, setPreviousSessionLoading] = useState(false);
+  const [previousSessionOpen, setPreviousSessionOpen] = useState(false);
+  const [previousSessionError, setPreviousSessionError] = useState<string | null>(null);
   const expandSummaryButtonRef = useRef<HTMLButtonElement>(null);
   const transcriptUploadRef = useRef<HTMLInputElement>(null);
   const restoreExpandFocusRef = useRef(false);
@@ -270,6 +276,9 @@ export function ReviewInstanceModal({
         setSummaryNotice('');
         setSummaryDraftSaved(false);
         setExpandedSummaryFieldId(null);
+        setPreviousSession(null);
+        setPreviousSessionOpen(false);
+        setPreviousSessionError(null);
         answersRef.current = initialAnswers;
         setAnswers(initialAnswers);
         setOpenSectionId(data.sections.find((s) => s.enabled)?.id || '');
@@ -475,9 +484,29 @@ export function ReviewInstanceModal({
     }
   };
 
+  const loadPreviousSession = async () => {
+    if (!definition || previousSessionLoading) return;
+    setPreviousSessionLoading(true);
+    setPreviousSessionError(null);
+    try {
+      const previous = await fetchPreviousReviewSession(definition.instance.id);
+      setPreviousSession(previous);
+      setPreviousSessionOpen(previous.available);
+    } catch (err) {
+      if (isAbortError(err)) return;
+      setPreviousSessionError(err instanceof Error ? err.message : 'Unable to load the previous session.');
+    } finally {
+      setPreviousSessionLoading(false);
+    }
+  };
+
   const busy = saving || calculating || generatingSummary || uploadingTranscript || reopening;
   const pageMode = presentation === 'page';
   const headingLabel = definition ? reviewTypeLabel(definition) : '';
+  const previousOccurrenceNumber = definition && typeof definition.instance.occurrenceNumber === 'number'
+    ? definition.instance.occurrenceNumber - 1
+    : null;
+  const hasPreviousOccurrence = previousOccurrenceNumber !== null && previousOccurrenceNumber >= 1;
 
   if (expandedSummaryFieldId && meetingSummaryField) {
     return (
@@ -597,6 +626,76 @@ export function ReviewInstanceModal({
                 </div>
               ))}
             </div>
+
+            {hasPreviousOccurrence ? (
+              <section aria-label="Previous session context" className="rounded-2xl border border-primary-100 bg-white p-4 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary-600">Previous session context</p>
+                    <h2 className="mt-1 text-sm font-bold text-foreground-900">
+                      {headingLabel} #{previousOccurrenceNumber}
+                    </h2>
+                    <p className="mt-1 text-[12px] leading-5 text-foreground-500">
+                      Review the previous session&apos;s saved summary and transcript before completing this one.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { void loadPreviousSession(); }}
+                    disabled={previousSessionLoading}
+                    className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-primary-300 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 shadow-sm transition hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <AppIcon className={previousSessionLoading ? 'ri-loader-4-line animate-spin' : 'ri-history-line'} />
+                    {previousSessionLoading ? 'Loading previous session...' : previousSessionOpen ? 'Refresh previous session' : 'View previous session'}
+                  </button>
+                </div>
+
+                {previousSessionError ? (
+                  <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">
+                    {previousSessionError}
+                  </p>
+                ) : null}
+
+                {previousSession && !previousSession.available ? (
+                  <p className="mt-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[12px] text-foreground-600">
+                    {previousSession.reason || 'No previous session is available yet.'}
+                  </p>
+                ) : null}
+
+                {previousSession?.available && previousSessionOpen ? (
+                  <div className="mt-4 space-y-3 border-t border-background-200 pt-4">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-foreground-500">
+                      <span className="font-semibold text-foreground-700">
+                        {previousSession.review?.name || headingLabel} #{previousSession.instance?.occurrenceNumber ?? previousOccurrenceNumber}
+                      </span>
+                      {previousSession.instance?.targetDate ? <span>{formatDateLabel(previousSession.instance.targetDate)}</span> : null}
+                      {previousSession.instance?.status ? <span className="capitalize">{previousSession.instance.status.replaceAll('-', ' ')}</span> : null}
+                    </div>
+
+                    {previousSession.summaryText ? (
+                      <div className="rounded-xl border border-primary-100 bg-primary-50/70 p-3">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-primary-700">Saved summary</p>
+                        <p className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-foreground-700">{previousSession.summaryText}</p>
+                      </div>
+                    ) : null}
+
+                    {previousSession.transcriptAvailable ? (
+                      <details open className="rounded-xl border border-background-200 bg-background-50 p-3">
+                        <summary className="cursor-pointer text-[12px] font-bold text-foreground-800">Session transcript</summary>
+                        <pre aria-label="Previous session transcript" className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-background-200 bg-white p-3 text-[12px] leading-5 text-foreground-700">{previousSession.transcriptText}</pre>
+                        {previousSession.transcriptTruncated ? (
+                          <p className="mt-2 text-[11px] leading-5 text-amber-700">This transcript is truncated to keep the review responsive.</p>
+                        ) : null}
+                      </details>
+                    ) : (
+                      <p className="rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-[12px] text-foreground-600">
+                        No stored transcript is available for this session.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
 
             {definition.instance.status === 'scheduled' ? (
               <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -739,7 +838,6 @@ export function ReviewInstanceModal({
                 />
               ) : undefined}
               variant={pageMode ? 'steps' : 'accordion'}
-              stepOffset={pageMode ? 2 : 0}
             />
             {advisorSignaturePending ? (
               <section aria-label="Review signature step" tabIndex={-1} className="rounded-2xl border border-violet-200 bg-violet-50 p-4">

@@ -226,6 +226,9 @@ export interface CurriculumProgramme {
   // Off-the-job hours a learner must complete for the whole programme. null means no
   // target has been set, which is different from a target of zero.
   requiredOtjh?: number | null;
+  // Where this card sits in the hand-picked order. 0 means it has never been
+  // placed, and those read alphabetically ahead of the placed ones.
+  displayOrder?: number;
 }
 
 export interface CurriculumWeeklySession {
@@ -3706,6 +3709,14 @@ export function createCurriculumProgramme(input: CurriculumProgrammeInput) {
   return postJson<{ created: boolean; programme: CurriculumProgramme }>('/curriculum/programmes/', input);
 }
 
+/**
+ * Save the order the programme cards were dragged into. `order` is the ids top-left
+ * first; the server renumbers exactly those programmes from 1 upward.
+ */
+export function saveCurriculumProgrammeOrder(order: string[]) {
+  return postJson<{ saved: boolean; order: string[] }>('/curriculum/programmes/reorder/', { order });
+}
+
 export function updateCurriculumProgramme(id: string, input: CurriculumProgrammeInput) {
   return patchJson<{ updated: boolean; programme: CurriculumProgramme }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, input);
 }
@@ -4387,7 +4398,19 @@ export type ReviewParticipantRole = 'advisor' | 'employer' | 'participant' | 're
 
 export type ReviewConditionValue = 'yes' | 'no';
 
-export interface ListItemConfiguration {
+/** Non-advisor roles a Field's own configuration may opt into answering it.
+ * The advisor (coach) can always answer every field regardless of this list --
+ * see reviews.FIELD_RESPONDENT_ROLES on the backend. */
+export type ReviewFieldRespondentRole = 'participant' | 'employer';
+
+/** Carried by every answerable field's configuration alongside its
+ * type-specific shape (options, description, ...) -- never present on a
+ * display-only field (title_description/action_button). */
+export interface RespondentRolesConfiguration {
+  respondentRoles?: ReviewFieldRespondentRole[];
+}
+
+export interface ListItemConfiguration extends RespondentRolesConfiguration {
   options: string[];
   /** Marks this question as the one carrying a defined business meaning, so
    * readers find it by the template's own stable marker instead of matching a
@@ -4403,7 +4426,7 @@ export interface TitleDescriptionConfiguration {
 /** Discriminated by fieldType at the call site; falls back to a generic bag for
  * types (text, boolean, numeric, date, email, phone, postcode_address, ...)
  * that carry no field-specific configuration today. */
-export type ReviewFieldConfiguration = ListItemConfiguration | TitleDescriptionConfiguration | Record<string, unknown>;
+export type ReviewFieldConfiguration = ListItemConfiguration | TitleDescriptionConfiguration | (RespondentRolesConfiguration & Record<string, unknown>);
 
 export interface ReviewField {
   id: string;

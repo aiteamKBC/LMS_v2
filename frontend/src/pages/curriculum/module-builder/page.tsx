@@ -2,8 +2,10 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragE
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { SelectMenu, type SelectOption } from '@/components/feature/SelectField';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+import { framingRefusedHost } from '@/components/feature/VideoPlayer';
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
 import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
@@ -44,7 +46,6 @@ import {
   sortEntities,
   MODULE_SORT_OPTIONS,
 } from '../shared/entities/model';
-import { fetchArchivedCurriculumModules, type CurriculumArchivedModule } from '@/lib/curriculumApi';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
@@ -62,8 +63,6 @@ import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type Sav
 import { WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
 import { showFullTextWhenTruncated } from '../shared/entities/truncationTitle';
 import { moduleCountForGroup, moduleMatchesGroup } from '../shared/entities/groupModuleMatch';
-import { permanentlyDeleteModuleWithConfirm, restoreModuleWithConfirm } from '../shared/entities/archive';
-import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
 import { PlaceWeekDrawer } from './PlaceWeekDrawer';
@@ -80,6 +79,7 @@ import {
   curriculumModuleToCatalogue,
   duplicateModuleStructure,
   duplicateWeekInModule,
+  cloneComponentToWeek,
   isUnbookedCopiedLiveSession,
   flattenKsbEntries,
   getDefaultStructure,
@@ -155,6 +155,7 @@ import {
   MEDIA_SOURCE_TYPES,
   PODCAST_SOURCE_TYPES,
   READING_SOURCE_TYPES,
+  componentTypeDescription,
   firstValidationMessage,
   normaliseVideoSourceType,
   providerForVideoSourceType,
@@ -241,7 +242,11 @@ const LIVE_SYNC_MIN_INTERVAL_MS = 8_000;
 
 const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
-const FILTER_SELECT_CLASS = 'h-10 min-w-40 rounded-lg border border-background-200 bg-background-100 px-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50';
+const WEIGHT_CLASS_OPTIONS: SelectOption[] = [
+  { value: 'hard', label: 'Hard' },
+  { value: 'soft', label: 'Soft' },
+  { value: 'possible', label: 'Possible' },
+];
 
 type Selection =
   | { kind: 'week'; weekId: string }
@@ -413,10 +418,6 @@ export default function ModuleBuilder() {
   const [sessionResultsOpen, setSessionResultsOpen] = useState(false);
   const [aiMaterialOpen, setAiMaterialOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
-  // Which list the catalogue is showing. Nothing is read until the archive is
-  // opened; see useCurriculumArchive, which Cohorts and Groups share.
-  const [showArchived, setShowArchived] = useState(() => searchParams.get('view') === 'archive');
-  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
@@ -1614,6 +1615,29 @@ export default function ModuleBuilder() {
     setSelection({ kind: 'week', weekId: copyId });
   }, [updateWorkingModule]);
 
+  // The clone button's "copy to another week" option: the twin lands at the
+  // end of the target week, carrying the source in full except a live
+  // session's Teams meeting and date (`copyComponentToWeek` says why). Client
+  // state only, same as `duplicateWeek` -- the normal module save writes the
+  // whole week structure.
+  const copyComponentToAnotherWeek = useCallback((component: ModuleComponent, targetWeekId: string) => {
+    let copyId = '';
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => {
+        if (week.id !== targetWeekId) return week;
+        const copy = cloneComponentToWeek(component, targetWeekId, module.id);
+        copyId = copy.id;
+        return { ...week, components: [...week.components, copy] };
+      }),
+    }));
+    if (!copyId) return;
+    // Open the target week and select the copy -- the point of a clone is the
+    // edit you make to it, and here that edit happens on a different week.
+    setExpandedWeekIds(prev => new Set(prev).add(targetWeekId));
+    setSelection({ kind: 'component', weekId: targetWeekId, componentId: copyId });
+  }, [updateWorkingModule]);
+
   const confirmDeleteWeek = async (weekId: string) => {
     if (!workingModule) return;
     const week = workingModule.weekStructure.find(item => item.id === weekId);
@@ -1949,45 +1973,13 @@ export default function ModuleBuilder() {
     }
   };
 
-  // Read only once the archive is opened, and re-read after every restore or
-  // permanent delete: the list has to lose the row that was just dealt with.
-  const archive = useCurriculumArchive(fetchArchivedCurriculumModules, showArchived);
-
-  const restoreArchivedModule = async (module: CurriculumArchivedModule) => {
-    if (archiveBusyId) return;
-    setArchiveBusyId(module.id);
-    try {
-      await restoreModuleWithConfirm(module, async () => {
-        archive.reload();
-        // The module is back in the catalogue, so the catalogue behind this
-        // view has to hear about it too.
-        await reload({ silent: true });
-      });
-    } finally {
-      setArchiveBusyId(null);
-    }
-  };
-
-  const deleteArchivedModule = async (module: CurriculumArchivedModule) => {
-    if (archiveBusyId) return;
-    setArchiveBusyId(module.id);
-    try {
-      await permanentlyDeleteModuleWithConfirm(module, async () => {
-        archive.reload();
-        await reload({ silent: true });
-      });
-    } finally {
-      setArchiveBusyId(null);
-    }
-  };
-
   const confirmDeleteModule = async (module: ModuleCatalogueItem) => {
     if (deletingModuleId) return;
     const weekCount = module.weekStructure.length || module.weeks || 0;
     const componentCount = module.lessonCount || module.weekStructure.reduce((total, week) => total + week.components.length, 0);
     await showCurriculumConfirm({
       title: 'Archive this module?',
-      text: `${module.title} leaves the catalogue with its ${weekCount} weeks, ${componentCount} components, KSB mappings, completion criteria and advanced details. Nothing is deleted - it can be brought back from View archive.`,
+      text: `${module.title} leaves the catalogue with its ${weekCount} weeks, ${componentCount} components, KSB mappings, completion criteria and advanced details. Nothing is deleted - it can be brought back from Curriculum > Archive.`,
       icon: 'warning',
       confirmButtonText: 'Yes, archive module',
       cancelButtonText: 'Cancel',
@@ -2196,7 +2188,7 @@ export default function ModuleBuilder() {
     const current = workingModule;
     // Nothing open: the catalogue behind this is the live surface.
     if (!current) {
-      reload();
+      reload({ silent: true });
       return;
     }
     const structureId = moduleStructureIdentifier(current);
@@ -2222,7 +2214,7 @@ export default function ModuleBuilder() {
       // A failed read leaves the workspace exactly as it was. The next write in
       // the estate, or the reader coming back to the tab, asks again.
       await adoptStoredModule().catch(() => undefined);
-      reload();
+      reload({ silent: true });
       return;
     }
     await noteRemoteRevision(structureId);
@@ -2621,6 +2613,13 @@ export default function ModuleBuilder() {
                 ...module,
                 weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components } : week)),
               }))}
+              onCopyComponentToWeek={copyComponentToAnotherWeek}
+              onWeekHolidayNoteChange={(weekId, next) => updateWorkingModule(module => ({
+                ...module,
+                weekStructure: module.weekStructure.map(week => (week.id === weekId
+                  ? { ...week, holidayNoteEnabled: next.enabled, holidayNote: next.message }
+                  : week)),
+              }))}
               pointsByType={componentPointsByType}
               plannedSessions={workingModuleSessionPlan?.sessions}
               plannedSlots={workingModuleSessionPlan?.slots}
@@ -2902,15 +2901,6 @@ export default function ModuleBuilder() {
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              {/* Count only once the archive has been read: until then there is
-                  nothing to count, and a badge claiming 0 would be a number the
-                  page has not checked. */}
-              <ArchiveToggleButton
-                active={showArchived}
-                count={archive.loaded ? archive.records.length : null}
-                onToggle={() => setShowArchived(current => !current)}
-                label="View archive"
-              />
               <button onClick={() => setCreateOpen(true)} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70">
                 <AppIcon className="ri-add-line"></AppIcon>
                 New module
@@ -2959,16 +2949,6 @@ export default function ModuleBuilder() {
           </div>
         )}
 
-        {showArchived ? (
-          <ArchivedModulesPanel
-            records={archive.records}
-            loading={archive.loading}
-            error={archive.error}
-            busyId={archiveBusyId}
-            onRestore={module => { void restoreArchivedModule(module); }}
-            onDelete={module => { void deleteArchivedModule(module); }}
-          />
-        ) : (
         <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0">
@@ -2983,53 +2963,56 @@ export default function ModuleBuilder() {
                 <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                 <input type="text" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search modules, tutors, cohorts..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
               </div>
-              <select
-                aria-label="Programme"
+              <SelectMenu
+                ariaLabel="Programme"
                 value={programmeFilter}
-                onChange={event => changeFilter(() => {
-                  setProgrammeFilter(event.target.value);
+                onChange={value => changeFilter(() => {
+                  setProgrammeFilter(value);
                   setCohortFilter('');
                   setGroupFilter('');
                 })}
-                className={FILTER_SELECT_CLASS}
-              >
-                {programmeOptions.map(option => <option key={option} value={option}>{option === 'All' ? 'All programmes' : option}</option>)}
-              </select>
+                options={programmeOptions.map(option => ({ value: option, label: option === 'All' ? 'All programmes' : option }))}
+                size="sm"
+                className="min-w-64"
+              />
               {/* Empty here now means the records genuinely do not exist, not
                   that no module reaches them, so the labels can say so plainly. */}
-              <select
-                aria-label="Cohort"
+              <SelectMenu
+                ariaLabel="Cohort"
                 value={cohortFilter}
-                onChange={event => changeFilter(() => { setCohortFilter(event.target.value); setGroupFilter(''); })}
+                onChange={value => changeFilter(() => { setCohortFilter(value); setGroupFilter(''); })}
                 disabled={programmeFilter === 'All'}
-                className={FILTER_SELECT_CLASS}
-              >
-                <option value="">{cohortFilterOptions.length
+                options={cohortFilterOptions}
+                placeholder={cohortFilterOptions.length
                   ? 'All cohorts'
-                  : programmeFilter === 'All' ? 'Choose programme first' : 'No cohorts in this programme'}</option>
-                {cohortFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-              <select
-                aria-label="Group"
+                  : programmeFilter === 'All' ? 'Choose programme first' : 'No cohorts in this programme'}
+                clearable
+                size="sm"
+                className="min-w-64"
+              />
+              <SelectMenu
+                ariaLabel="Group"
                 value={groupFilter}
-                onChange={event => changeFilter(() => setGroupFilter(event.target.value))}
+                onChange={value => changeFilter(() => setGroupFilter(value))}
                 disabled={programmeFilter === 'All' || !cohortFilter}
-                className={FILTER_SELECT_CLASS}
-              >
-                <option value="">{groupFilterOptions.length
+                options={groupFilterOptions}
+                placeholder={groupFilterOptions.length
                   ? 'All groups'
-                  : !cohortFilter ? 'Choose cohort first' : 'No groups in this cohort'}</option>
-                {groupFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-              <select
-                aria-label="Tutor"
+                  : !cohortFilter ? 'Choose cohort first' : 'No groups in this cohort'}
+                clearable
+                size="sm"
+                className="min-w-64"
+              />
+              <SelectMenu
+                ariaLabel="Tutor"
                 value={tutorFilter}
-                onChange={event => changeFilter(() => setTutorFilter(event.target.value))}
-                className={FILTER_SELECT_CLASS}
-              >
-                <option value="">All tutors</option>
-                {tutorNames.map(name => <option key={name} value={name}>{name}</option>)}
-              </select>
+                onChange={value => changeFilter(() => setTutorFilter(value))}
+                options={tutorNames.map(name => ({ value: name, label: name }))}
+                placeholder="All tutors"
+                clearable
+                size="sm"
+                className="min-w-64"
+              />
               <button
                 type="button"
                 disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive}
@@ -3047,8 +3030,14 @@ export default function ModuleBuilder() {
               </button>
             </div>
           </div>
-          <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
-            {loading ? (
+          <div className="module-catalogue-scroll max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
+            {/* The skeleton stands in for a catalogue that has never been read.
+                Once rows are on screen a re-read keeps them there: somebody
+                else's save moves the shared epoch while this reader is part-way
+                through their own work, and replacing what they are reading with
+                grey bars loses their scroll position and their place for no
+                reason. The subtitle already says a read is in flight. */}
+            {loading && !modules.length ? (
               <ModuleListSkeleton />
             ) : filtered.length > 0 ? (
               <div className="space-y-3">
@@ -3113,7 +3102,6 @@ export default function ModuleBuilder() {
             )}
           </div>
         </div>
-        )}
         <ModuleFormDrawer
           open={createOpen}
           defaults={{
@@ -3307,23 +3295,38 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
       </div>
 
       <div className="grid gap-2 border-t border-background-200 bg-background-100/30 px-4 py-2.5 sm:grid-cols-2 lg:max-w-[760px] lg:px-5">
-          <label className="block min-w-0">
+          <div className="block min-w-0">
             <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Programme</span>
-            <select value={module.programmeName} disabled={programmeLocked} onChange={event => onProgrammeChange(event.target.value)} className={`h-8 w-full rounded-lg border border-background-200 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50 ${programmeLocked ? 'cursor-not-allowed bg-background-100 text-foreground-500' : 'bg-background-50'}`}>
-              {programmeOptions.map(option => <option key={option}>{option}</option>)}
-              {!programmeOptions.includes(module.programmeName) && <option>{module.programmeName}</option>}
-            </select>
+            <SelectMenu
+              ariaLabel="Programme"
+              value={module.programmeName}
+              disabled={programmeLocked}
+              onChange={onProgrammeChange}
+              options={[
+                ...programmeOptions.map(option => ({ value: option, label: option })),
+                ...(!programmeOptions.includes(module.programmeName) ? [{ value: module.programmeName, label: module.programmeName }] : []),
+              ]}
+              size="sm"
+            />
             {programmeLocked && <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked from programme delivery scope</span>}
-          </label>
-          <label className="block min-w-0">
+          </div>
+          <div className="block min-w-0">
             <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">KSB source</span>
-            <select value={ksbProfileValue} disabled={programmeLocked} onChange={event => onKsbProfileChange(event.target.value)} className={`h-8 w-full rounded-lg border border-background-200 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50 ${programmeLocked ? 'cursor-not-allowed bg-background-100 text-foreground-500' : 'bg-background-50'}`}>
-              <option value="">{standardsLoading ? 'Loading standards...' : 'No source selected'}</option>
-              {ksbProfileOptions.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
-              {ksbProfileValue && !ksbProfileOptions.some(option => option.id === ksbProfileValue) && <option value={ksbProfileValue}>{lockedKsbLabel}</option>}
-            </select>
+            <SelectMenu
+              ariaLabel="KSB source"
+              value={ksbProfileValue}
+              disabled={programmeLocked}
+              onChange={onKsbProfileChange}
+              options={[
+                ...ksbProfileOptions.map(option => ({ value: option.id, label: option.label })),
+                ...(ksbProfileValue && !ksbProfileOptions.some(option => option.id === ksbProfileValue) ? [{ value: ksbProfileValue, label: lockedKsbLabel }] : []),
+              ]}
+              placeholder={standardsLoading ? 'Loading standards...' : 'No source selected'}
+              clearable
+              size="sm"
+            />
             {programmeLocked && <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked to programme KSB source</span>}
-          </label>
+          </div>
           <div className="block min-w-0">
             <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Cohort</span>
             {hierarchy?.cohort ? (
@@ -3452,7 +3455,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onReuseComponents, onCreateTeamsMeeting, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -3465,6 +3468,14 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onDuplicateWeek: (weekId: string) => void;
   onDropReorder: (targetWeekId: string) => void;
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
+  // The clone button's "copy to another week" option, one component at a time.
+  onCopyComponentToWeek: (component: ModuleComponent, targetWeekId: string) => void;
+  /**
+   * The curriculum author's hint for a week a holiday lands on, and whether
+   * learners see it. Only this rail passes an editor to `WeekHolidayNotice`,
+   * so the control exists only where the module is authored.
+   */
+  onWeekHolidayNoteChange: (weekId: string, next: { enabled: boolean; message: string }) => void;
   onReuseComponents: (weekId: string) => void;
   /**
    * Opens this module's Teams create dialog here, over the rail that lists the
@@ -3893,8 +3904,21 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   background: this week is completely ordinary and its live
                   session runs as authored. Whether it becomes a reading week,
                   keeps its session or something else is the author's call. */}
-              {weekHolidayNotices.map(slot => (
-                <WeekHolidayNotice key={`holiday-${slot.date}`} slot={slot} weekDate={week.sessionDate} compact />
+              {/* The note belongs to the WEEK, so it is offered once even when
+                  a Mon+Fri week has two closed days: two editors over one value
+                  would be two controls writing the same note. */}
+              {weekHolidayNotices.map((slot, slotIndex) => (
+                <WeekHolidayNotice
+                  key={`holiday-${slot.date}`}
+                  slot={slot}
+                  weekDate={week.sessionDate}
+                  compact
+                  note={slotIndex === 0 ? {
+                    enabled: Boolean(week.holidayNoteEnabled),
+                    message: week.holidayNote || '',
+                    onChange: next => onWeekHolidayNoteChange(week.id, next),
+                  } : undefined}
+                />
               ))}
               {unbookedCopiedSessions > 0 && <CopiedLiveSessionNotice count={unbookedCopiedSessions} />}
               {expanded && (
@@ -3917,6 +3941,10 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     holidayDates={weekHolidayNotices.map(slot => slot.date)}
                     dateDriftByComponentId={dateDriftByComponentId}
                     onReuseComponents={() => onReuseComponents(week.id)}
+                    otherWeeks={module.weekStructure
+                      .filter(other => other.id !== week.id)
+                      .map(other => ({ id: other.id, label: other.title || `Week ${other.weekNumber}` }))}
+                    onCopyComponentToWeek={onCopyComponentToWeek}
                   />
                 </div>
               )}
@@ -4401,14 +4429,25 @@ function WeekAssignedGroupsSection({ week, module, groupOptions }: {
         </div>
       </div>
       <div className="mt-3 grid gap-2 md:grid-cols-2">
-        <select aria-label="Week assigned groups programme" value={programmeFilter} onChange={event => { setProgrammeFilter(event.target.value); setCohortFilter(''); }} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300">
-          <option value="">All programmes</option>
-          {programmes.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
-        </select>
-        <select aria-label="Week assigned groups cohort" value={cohortFilter} onChange={event => setCohortFilter(event.target.value)} disabled={!programmeFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
-          <option value="">{programmeFilter ? 'All cohorts' : 'Choose programme first'}</option>
-          {cohorts.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
-        </select>
+        <SelectMenu
+          ariaLabel="Week assigned groups programme"
+          value={programmeFilter}
+          onChange={value => { setProgrammeFilter(value); setCohortFilter(''); }}
+          options={programmes.map(option => ({ value: option.id, label: option.name }))}
+          placeholder="All programmes"
+          clearable
+          size="sm"
+        />
+        <SelectMenu
+          ariaLabel="Week assigned groups cohort"
+          value={cohortFilter}
+          onChange={setCohortFilter}
+          disabled={!programmeFilter}
+          options={cohorts.map(option => ({ value: option.id, label: option.name }))}
+          placeholder={programmeFilter ? 'All cohorts' : 'Choose programme first'}
+          clearable
+          size="sm"
+        />
       </div>
       {!programmeFilter ? <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-3 text-center text-[11px] font-semibold text-foreground-500">Choose a programme, then a cohort, to view delivery groups.</p>
         : !cohortFilter ? <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-3 text-center text-[11px] font-semibold text-foreground-500">Choose a cohort to view delivery groups.</p>
@@ -4673,18 +4712,35 @@ function TypeSpecificFields({
           {groupOptions.length ? (
             <>
               <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
-                <select aria-label="Assigned groups programme" value={groupProgrammeFilter} onChange={event => { setGroupProgrammeFilter(event.target.value); setGroupCohortFilter(''); setGroupFilter(''); }} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300">
-                  <option value="">Select a programme</option>
-                  {programmeOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-                <select aria-label="Assigned groups cohort" value={groupCohortFilter} onChange={event => { setGroupCohortFilter(event.target.value); setGroupFilter(''); }} disabled={!groupProgrammeFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
-                  <option value="">{groupProgrammeFilter ? 'Select a cohort' : 'Choose programme first'}</option>
-                  {cohortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-                <select aria-label="Assigned groups group" value={groupFilter} onChange={event => setGroupFilter(event.target.value)} disabled={!groupCohortFilter} className="h-9 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 disabled:opacity-50">
-                  <option value="">{groupCohortFilter ? 'All groups in cohort' : 'Choose cohort first'}</option>
-                  {groupOptions.filter(option => (!groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter) && (!groupCohortFilter || option.cohortId === groupCohortFilter || option.cohort === groupCohortFilter)).map(option => <option key={option.key} value={option.key}>{option.group}</option>)}
-                </select>
+                <SelectMenu
+                  ariaLabel="Assigned groups programme"
+                  value={groupProgrammeFilter}
+                  onChange={value => { setGroupProgrammeFilter(value); setGroupCohortFilter(''); setGroupFilter(''); }}
+                  options={programmeOptions}
+                  placeholder="Select a programme"
+                  clearable
+                  size="sm"
+                />
+                <SelectMenu
+                  ariaLabel="Assigned groups cohort"
+                  value={groupCohortFilter}
+                  onChange={value => { setGroupCohortFilter(value); setGroupFilter(''); }}
+                  disabled={!groupProgrammeFilter}
+                  options={cohortOptions}
+                  placeholder={groupProgrammeFilter ? 'Select a cohort' : 'Choose programme first'}
+                  clearable
+                  size="sm"
+                />
+                <SelectMenu
+                  ariaLabel="Assigned groups group"
+                  value={groupFilter}
+                  onChange={setGroupFilter}
+                  disabled={!groupCohortFilter}
+                  options={groupOptions.filter(option => (!groupProgrammeFilter || option.programmeId === groupProgrammeFilter || option.programme === groupProgrammeFilter) && (!groupCohortFilter || option.cohortId === groupCohortFilter || option.cohort === groupCohortFilter)).map(option => ({ value: option.key, label: option.group }))}
+                  placeholder={groupCohortFilter ? 'All groups in cohort' : 'Choose cohort first'}
+                  clearable
+                  size="sm"
+                />
               </div>
               {!groupProgrammeFilter || !groupCohortFilter ? (
                 <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">Choose a programme, then a cohort, to view delivery groups.</p>
@@ -4803,7 +4859,10 @@ function TypeSpecificFields({
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
           <SelectInput label="Source type" value={sourceType} options={MEDIA_SOURCE_TYPES} onChange={updateSourceType} />
           {sourceType === 'Embed' ? (
-            <TextArea label="Embed iframe content" value={getString('embedCode')} onChange={value => onSettingChange('embedCode', value)} rows={4} error={fieldError('settings.embedCode')} />
+            <div>
+              <TextArea label="Embed iframe content" value={getString('embedCode')} onChange={value => onSettingChange('embedCode', value)} rows={4} error={fieldError('settings.embedCode')} />
+              <EmbedFramingNotice value={getString('embedCode')} />
+            </div>
           ) : (
             <TextInput label={sourceType === 'HTML (MP4)' ? 'MP4 file URL' : 'Video URL'} value={getString('videoUrl')} onChange={value => onSettingChange('videoUrl', value)} error={fieldError('settings.videoUrl')} />
           )}
@@ -4826,7 +4885,10 @@ function TypeSpecificFields({
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
           <SelectInput label="Source type" value={sourceType} options={PODCAST_SOURCE_TYPES} onChange={value => onSettingChange('podcastSource', value)} />
           {sourceType === 'Embed' ? (
-            <TextArea label="Embed code" value={getString('embedCode')} onChange={value => onSettingChange('embedCode', value)} rows={4} error={fieldError('settings.embedCode')} />
+            <div>
+              <TextArea label="Embed code" value={getString('embedCode')} onChange={value => onSettingChange('embedCode', value)} rows={4} error={fieldError('settings.embedCode')} />
+              <EmbedFramingNotice value={getString('embedCode')} />
+            </div>
           ) : sourceType === 'Shortcode' ? (
             <TextInput label="Shortcode" value={getString('shortcode')} onChange={value => onSettingChange('shortcode', value)} />
           ) : (
@@ -6188,18 +6250,18 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                     </div>
                   </div>
                   <div className="grid shrink-0 grid-cols-2 gap-2 sm:w-56">
-                    <label className="block">
+                    <div className="block">
                       <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight class</span>
-                      <select
-                        value={weightClassForOption(option)}
-                        onChange={event => updateOptionWeightClass(option, event.target.value)}
-                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300"
-                      >
-                        <option value="hard">Hard</option>
-                        <option value="soft">Soft</option>
-                        <option value="possible">Possible</option>
-                      </select>
-                    </label>
+                      <div className="mt-1">
+                        <SelectMenu
+                          ariaLabel="Weight class"
+                          value={weightClassForOption(option)}
+                          onChange={value => updateOptionWeightClass(option, value)}
+                          options={WEIGHT_CLASS_OPTIONS}
+                          size="sm"
+                        />
+                      </div>
+                    </div>
                     <label className="block">
                       <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight</span>
                       <input
@@ -6752,18 +6814,18 @@ function KsbCard({ mapping, sourceLabels = {}, onRemove, onWeightChange, onWeigh
           {(onWeightChange || onWeightClassChange) && (
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[112px_88px]">
               {onWeightClassChange && (
-                <label className="text-[10px] font-semibold uppercase text-foreground-400">
+                <div className="text-[10px] font-semibold uppercase text-foreground-400">
                   Weight class
-                  <select
-                    value={weightClass}
-                    onChange={event => onWeightClassChange(normaliseKsbWeightClass(event.target.value))}
-                    className="mt-1 h-7 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300"
-                  >
-                    <option value="hard">Hard</option>
-                    <option value="soft">Soft</option>
-                    <option value="possible">Possible</option>
-                  </select>
-                </label>
+                  <div className="mt-1">
+                    <SelectMenu
+                      ariaLabel="Weight class"
+                      value={weightClass}
+                      onChange={value => onWeightClassChange(normaliseKsbWeightClass(value))}
+                      options={WEIGHT_CLASS_OPTIONS}
+                      size="sm"
+                    />
+                  </div>
+                </div>
               )}
               {onWeightChange && (
                 <label className="text-[10px] font-semibold uppercase text-foreground-400">
@@ -6894,6 +6956,26 @@ function EditorBlock({ title, children }: { title: string; children: React.React
   );
 }
 
+/**
+ * Warns while authoring that a pasted embed will not play for a learner.
+ *
+ * SharePoint and Stream allow framing only by Microsoft's own surfaces, so the
+ * learner gets "refused to connect" in place of the video. The snippet is still
+ * saved as authored — this reports the problem where it can be fixed rather
+ * than deciding for the author what the component should be.
+ */
+function EmbedFramingNotice({ value }: { value: string }) {
+  const host = framingRefusedHost(value);
+  if (!host) return null;
+  return (
+    <p role="status" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
+      {host} does not allow its pages to be shown inside another site, so learners will see
+      “refused to connect” instead of this video. Use the Teams session recording, upload the
+      file to the component, or host it somewhere that permits embedding (such as YouTube).
+    </p>
+  );
+}
+
 function ComponentResourceUpload({
   label,
   accept,
@@ -6992,182 +7074,6 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
-/**
- * The module archive: where "Archive module" puts a module, and the way back.
- *
- * Restore and Delete permanently are deliberately not the matched pair they
- * look like. One is reversible and the other is the only permanent delete in
- * Curriculum Studio that destroys authored content, so they are worded and
- * coloured apart, and the notice above says so once for the whole list.
- */
-function ArchivedModulesPanel({ records, loading, error, busyId, onRestore, onDelete }: {
-  records: CurriculumArchivedModule[];
-  loading: boolean;
-  error: string | null;
-  /** The module a restore or a delete is currently running for. */
-  busyId: string | null;
-  onRestore: (module: CurriculumArchivedModule) => void;
-  onDelete: (module: CurriculumArchivedModule) => void;
-}) {
-  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get('archiveModule') || '');
-  const [programmeFilter, setProgrammeFilter] = useState('All');
-
-  const programmeOptions = useMemo(() => {
-    const names = new Set<string>();
-    records.forEach(module => { if (module.programme) names.add(module.programme); });
-    return ['All', ...Array.from(names).sort((a, b) => a.localeCompare(b))];
-  }, [records]);
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return records.filter(module => {
-      if (programmeFilter !== 'All' && module.programme !== programmeFilter) return false;
-      if (!needle) return true;
-      return [module.title, module.programme, module.cohort, module.group]
-        .some(value => (value || '').toLowerCase().includes(needle));
-    });
-  }, [records, query, programmeFilter]);
-
-  const filtersActive = Boolean(query) || programmeFilter !== 'All';
-
-  return (
-    <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-[13px] font-bold text-foreground-950">Archived modules</p>
-            <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
-              {filtered.length} of {records.length} archived
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-0 grow sm:w-64 sm:grow-0">
-              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-              <input
-                type="text"
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                placeholder="Search archived modules..."
-                className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50"
-              />
-            </div>
-            <select
-              aria-label="Programme"
-              value={programmeFilter}
-              onChange={event => setProgrammeFilter(event.target.value)}
-              className={FILTER_SELECT_CLASS}
-            >
-              {programmeOptions.map(option => <option key={option} value={option}>{option === 'All' ? 'All programmes' : option}</option>)}
-            </select>
-            <button
-              type="button"
-              disabled={!filtersActive}
-              onClick={() => { setQuery(''); setProgrammeFilter('All'); }}
-              className="h-10 rounded-lg border border-background-200 bg-background-100 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-        <ArchiveNotice>
-          Restoring brings a module back into the catalogue with the weeks and components archived
-          with it. Deleting permanently removes those from the database for good - it is the one
-          delete in Curriculum Studio that destroys authored content. Learner accounts and progress
-          are never touched by either.
-        </ArchiveNotice>
-      </div>
-      <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
-        {loading && !records.length ? (
-          <ModuleListSkeleton />
-        ) : error ? (
-          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
-            {error}
-          </div>
-        ) : filtered.length ? (
-          <div className="space-y-3">
-            {filtered.map(module => {
-              const busy = busyId === module.id;
-              // Archived because its programme was, rather than on its own: the
-              // programme is what has to come back, and it brings this with it.
-              const viaProgramme = Boolean(module.archivedViaParent) || module.programmeArchived;
-              return (
-                <div key={module.id} className="rounded-xl border border-background-200 bg-background-50 px-4 py-3 shadow-sm">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="min-w-0">
-                      <p className="truncate text-[13px] font-bold text-foreground-900">{module.title || module.id}</p>
-                      <p className="mt-1 truncate text-[11px] text-foreground-500">
-                        {[module.programme, module.cohort, module.group].filter(Boolean).join(' / ') || 'No delivery scope'}
-                      </p>
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                        <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
-                          {module.weeks} week{module.weeks === 1 ? '' : 's'}
-                        </span>
-                        <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
-                          {module.components} component{module.components === 1 ? '' : 's'}
-                        </span>
-                        {module.archivedAt && (
-                          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800">
-                            Archived {formatDateLabel(module.archivedAt)}
-                          </span>
-                        )}
-                      </div>
-                      {viaProgramme && (
-                        <p className="mt-2 text-[11px] font-semibold text-amber-800">
-                          Archived with its programme. Restore the programme and this module comes back with it.
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onRestore(module)}
-                        disabled={busy || module.programmeArchived}
-                        title={module.programmeArchived
-                          ? `${module.programme || 'Its programme'} is archived too - restore the programme and this module comes back with it`
-                          : 'Put this module back in the catalogue, with the weeks and components archived with it'}
-                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:border-background-200 disabled:bg-background-100 disabled:text-foreground-300"
-                      >
-                        <AppIcon className={busy ? 'ri-loader-4-line animate-spin' : 'ri-arrow-go-back-line'}></AppIcon>
-                        Restore module
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDelete(module)}
-                        disabled={busy}
-                        title="Remove this module, its weeks and its components from the database for good"
-                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <AppIcon className="ri-delete-bin-line"></AppIcon>
-                        Delete permanently
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
-            <span className="grid h-14 w-14 place-items-center rounded-full bg-primary-50 text-primary-500">
-              <AppIcon className="ri-archive-line text-2xl"></AppIcon>
-            </span>
-            <div>
-              <p className="text-[13px] font-semibold text-foreground-700">
-                {records.length ? 'No archived modules match your search' : 'Nothing archived'}
-              </p>
-              <p className="mt-1 max-w-xs text-[12px] text-foreground-400">
-                {records.length
-                  ? 'Try a different search or clear the programme filter.'
-                  : 'Archiving a module from the catalogue puts it here, where it can be restored or removed for good.'}
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function ModuleCatalogueCard({
   module,
   teamsSummary,
@@ -7213,27 +7119,34 @@ function ModuleCatalogueCard({
   // weekCount = module.weekStructure.length || module.weeks || 0
 
   return (
-    <article className="group rounded-xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm transition-smooth hover:border-primary-200/80 hover:shadow-md">
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+    <article className={`group relative overflow-hidden rounded-2xl border bg-background-50 shadow-sm transition-smooth hover:shadow-md ${hasContent ? 'border-foreground-200/70 hover:border-primary-200/80' : 'border-amber-200/70 hover:border-amber-300'}`}>
+      <span className={`absolute inset-y-0 left-0 w-1 ${hasContent ? 'bg-primary-400' : 'bg-amber-400'}`} aria-hidden="true"></span>
+      <div className="grid gap-4 p-4 pl-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
         <div className="min-w-0">
           <div className="flex flex-wrap items-start gap-3">
-            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
-              <AppIcon className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></AppIcon>
+            <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
+              <AppIcon className={hasContent ? 'ri-layout-4-line text-lg' : 'ri-draft-line text-lg'}></AppIcon>
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <h3 className="truncate text-[14px] font-heading font-bold text-foreground-950">{module.title}</h3>
+                <h3 className="truncate text-[15px] font-heading font-bold text-foreground-950">{module.title}</h3>
+                {!hasContent && (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-100">
+                    <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
+                    No components
+                  </span>
+                )}
               </div>
-              {subLabel && <p className="mt-1 text-[11px] text-foreground-500">{subLabel}</p>}
-              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              {subLabel && <p className="mt-1 text-[11px] font-medium text-foreground-500">{subLabel}</p>}
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
                 <ModuleFactPill
                   icon="ri-graduation-cap-line"
                   label="Programme"
                   value={cleanModuleMeta(module.programmeName) || 'Not set'}
-                  tone={cleanModuleMeta(module.programmeName) ? 'default' : 'muted'}
+                  tone={cleanModuleMeta(module.programmeName) ? 'accent' : 'muted'}
                 />
-                <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} weeks`} />
-                <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} components`} tone={hasContent ? 'default' : 'muted'} />
+                <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} ${weekCount === 1 ? 'week' : 'weeks'}`} />
+                <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} ${componentCount === 1 ? 'component' : 'components'}`} tone={hasContent ? 'default' : 'muted'} />
                 <ModuleMetricPill icon="ri-time-line" label={`${formatHoursMinutes(componentOtjh)} OTJH`} tone={componentOtjh ? 'default' : 'muted'} />
               </div>
               <ModuleDeliveryRows module={module} teamsSummary={teamsSummary} expectedSessions={module.sessionsNumber || weekCount} />
@@ -7241,7 +7154,7 @@ function ModuleCatalogueCard({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+        <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
           <button
             type="button"
             onClick={async () => {
@@ -7280,10 +7193,11 @@ function ModuleCatalogueCard({
             <AppIcon name={ksbMapLoading ? 'ri-loader-4-line' : 'ri-node-tree'} className={ksbMapLoading ? 'animate-spin' : ''} size={15}></AppIcon>
             {ksbMapLoading ? 'Loading module KSBs...' : 'Review module KSBs'}
           </button>
-          <button onClick={onBuild} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700">
+          <button onClick={onBuild} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 hover:shadow">
             <AppIcon name="ri-hammer-line" size={15}></AppIcon>
             Edit components
           </button>
+          <span className="mx-0.5 hidden h-6 w-px shrink-0 bg-background-200 xl:block" aria-hidden="true"></span>
           <ModuleCardActionButton label="Edit module" icon="ri-edit-line" onClick={onSettings} />
           <ModuleCardActionButton label="Duplicate module" icon="ri-file-copy-line" onClick={onDuplicate} />
           <ModuleCardActionButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
@@ -7838,33 +7752,52 @@ function KsbCoverageMetric({ label, value, compact = false }: { label: string; v
  * string to anyone who did not author the module, so the card names the field
  * rather than leaving the reader to infer it from position.
  */
-function ModuleFactPill({ icon, label, value, tone = 'default' }: { icon: string; label: string; value: string; tone?: 'default' | 'muted' }) {
-  const valueClass = tone === 'muted' ? 'text-foreground-400' : 'text-foreground-700';
+function ModuleFactPill({ icon, label, value, tone = 'default' }: { icon: string; label: string; value: string; tone?: 'default' | 'accent' | 'muted' }) {
+  const classes = tone === 'accent'
+    ? 'border-primary-100 bg-primary-50 text-primary-700'
+    : tone === 'muted'
+      ? 'border-background-200 bg-background-100 text-foreground-400'
+      : 'border-background-200 bg-background-100 text-foreground-700';
+  const iconClass = tone === 'accent' ? 'text-primary-600' : tone === 'muted' ? 'text-foreground-400' : 'text-primary-600';
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-[10px]"
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] ${classes}`}
       title={`${label}: ${value}`}
     >
-      <AppIcon className={`${icon} text-[11px] text-primary-600`}></AppIcon>
-      <span className="font-bold uppercase tracking-wide text-foreground-400">{label}</span>
-      <span className={`font-semibold ${valueClass}`}>{value}</span>
+      <AppIcon className={`${icon} text-[11px] ${iconClass}`}></AppIcon>
+      <span className="font-bold uppercase tracking-wide opacity-70">{label}</span>
+      <span className="font-semibold">{value}</span>
     </span>
   );
 }
 
-/** The same labelled fact, unboxed, for the delivery rows under the card. */
-function ModuleFact({ icon, label, value, valueClass = 'font-semibold text-foreground-600', title }: {
+type FactTone = 'default' | 'accent' | 'muted' | 'warning' | 'positive' | 'info';
+
+const FACT_TONE_CLASSES: Record<FactTone, string> = {
+  default: 'border-background-200 bg-background-50 text-foreground-700',
+  accent: 'border-primary-100 bg-primary-50 text-primary-800',
+  muted: 'border-background-200 bg-background-100 text-foreground-400',
+  warning: 'border-amber-200 bg-amber-50 text-amber-700',
+  positive: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  info: 'border-sky-200 bg-sky-50 text-sky-700',
+};
+
+/** The same labelled fact as a badge, for the delivery rows under the card. */
+function ModuleFact({ icon, label, value, tone = 'default', title }: {
   icon: string;
   label: string;
   value: string;
-  valueClass?: string;
+  tone?: FactTone;
   title?: string;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-[11px]" title={title || `${label}: ${value}`}>
-      <AppIcon className={`${icon} text-[12px] text-foreground-400`}></AppIcon>
-      <span className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</span>
-      <span className={valueClass}>{value}</span>
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${FACT_TONE_CLASSES[tone]}`}
+      title={title || `${label}: ${value}`}
+    >
+      <AppIcon className={`${icon} text-[12px] opacity-70`}></AppIcon>
+      <span className="text-[9px] font-bold uppercase tracking-wide opacity-70">{label}</span>
+      <span className="font-bold">{value}</span>
     </span>
   );
 }
@@ -7916,9 +7849,9 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
     );
   }
   const teams = teamsMeetingLabel(teamsSummary);
-  const rowClasses = 'flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2';
+  const rowClasses = 'flex flex-wrap items-center gap-2 py-1.5';
   return (
-    <div className="mt-3 divide-y divide-background-200 overflow-hidden rounded-lg border border-background-200 bg-background-50">
+    <div className="mt-3 divide-y divide-background-200/70">
       {usages.map(usage => {
         const sessions = usage.sessions || 0;
         const facts = (
@@ -7927,7 +7860,7 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
               icon="ri-group-line"
               label="Cohort / group"
               value={formatDeliveryUsage(usage)}
-              valueClass="font-bold text-foreground-900"
+              tone="accent"
             />
             <ModuleFact
               icon="ri-calendar-event-line"
@@ -7939,7 +7872,7 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
                 icon="ri-calendar-2-line"
                 label="Sessions"
                 value={String(sessions)}
-                valueClass="font-semibold text-amber-700"
+                tone="warning"
                 title={`Sessions: ${sessions} in this delivery, which differs from the module plan`}
               />
             )}
@@ -7947,7 +7880,7 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
               icon="ri-vidicon-line"
               label="Teams"
               value={teams.text}
-              valueClass={`font-semibold ${teams.tone}`}
+              tone={teams.tone}
             />
           </>
         );
@@ -8079,12 +8012,12 @@ function deliveryFilterMatches(filter: string, id?: string, name?: string) {
   return [id, name].map(normaliseDeepLinkValue).filter(Boolean).includes(key);
 }
 
-function teamsMeetingLabel(summary?: CurriculumTeamsMeetingSummary) {
+function teamsMeetingLabel(summary?: CurriculumTeamsMeetingSummary): { text: string; tone: FactTone } {
   // The row prints the field name, so the value says only what the state is.
-  if (!summary) return { text: 'Not created', tone: 'text-foreground-400' };
-  if (summary.upcomingCount > 0) return { text: `${summary.upcomingCount} upcoming`, tone: 'text-emerald-700' };
-  if (summary.occurrenceCount > 0) return { text: `${summary.occurrenceCount} held`, tone: 'text-foreground-600' };
-  return { text: 'Scheduled', tone: 'text-sky-700' };
+  if (!summary) return { text: 'Not created', tone: 'muted' };
+  if (summary.upcomingCount > 0) return { text: `${summary.upcomingCount} upcoming`, tone: 'positive' };
+  if (summary.occurrenceCount > 0) return { text: `${summary.occurrenceCount} held`, tone: 'default' };
+  return { text: 'Scheduled', tone: 'info' };
 }
 
 function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
@@ -9046,25 +8979,6 @@ function createNamedComponent(week: ModuleWeek, type: ModuleComponentType, index
 
 function createNamedComponents(week: ModuleWeek, types: ModuleComponentType[]) {
   return types.map((type, index) => createNamedComponent(week, type, week.components.length + index + 1));
-}
-
-function componentTypeDescription(type: ModuleComponentType) {
-  const descriptions: Record<ModuleComponentType, string> = {
-    'live-session': 'Tutor-led session via Teams',
-    video: 'Upload or link a video',
-    podcast: 'Upload audio or podcast link',
-    reading: 'PDF, Word, or typed text',
-    powerpoint: 'Slide deck for the week',
-    quiz: 'Short weekly check',
-    assignment: 'Monthly submission task',
-    reflection: 'Learner written reflection',
-    checkpoint: 'End-of-month KSB check',
-    'monthly-ksb-quiz': 'Tracks KSB progression',
-    'coaching-preparation': 'Monthly coaching meeting prep',
-    'recording-placeholder': 'Teams recording placeholder',
-    'workplace-evidence': 'Workplace evidence upload',
-  };
-  return descriptions[type] || 'Add a component';
 }
 
 function nextModuleNumber(modules: ModuleCatalogueItem[]) {

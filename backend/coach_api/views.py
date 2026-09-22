@@ -12671,6 +12671,121 @@ def coach_review_instance_detail(request, instance_id):
 
 
 @coach_access_required
+def coach_review_instance_previous(request, instance_id):
+    """Return the immediately preceding occurrence for this coach's Review.
+
+    This is deliberately a stored-only, read-only context endpoint.  It uses
+    the Curriculum identity (template + learner + occurrence number), so an
+    MCM #3 can only resolve to that learner's MCM #2 and a Progress Review #2
+    can only resolve to that learner's Progress Review #1.  It never contacts
+    Microsoft Graph or an AI provider while loading the form.
+    """
+    if request.method != "GET":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    instance_row, error = _authorized_review_instance(request, instance_id)
+    if error:
+        return error
+
+    current_occurrence = instance_row.get("occurrence_number")
+    try:
+        current_occurrence = int(current_occurrence)
+    except (TypeError, ValueError):
+        current_occurrence = None
+
+    unavailable = {
+        "available": False,
+        "reason": "There is no previous occurrence for this Review.",
+        "instance": None,
+        "review": None,
+        "summaryText": "",
+        "transcriptText": "",
+        "transcriptAvailable": False,
+        "transcriptTruncated": False,
+    }
+    if current_occurrence is None or current_occurrence <= 1:
+        return JsonResponse(unavailable)
+
+    previous = curriculum_review_instances.find_review_instance(
+        instance_row.get("review_template_id"),
+        instance_row.get("learner_id"),
+        current_occurrence - 1,
+    )
+    if not previous:
+        unavailable["reason"] = "The previous occurrence has not been created yet."
+        return JsonResponse(unavailable)
+
+    # A coach may read the prior occurrence only when it belongs to the same
+    # assigned coach.  The identity lookup above prevents cross-template or
+    # cross-learner leakage; this ownership check also protects coach changes
+    # and historical rows with a different owner.
+    if clean_email(previous.get("coach_email")) != clean_email(instance_row.get("coach_email")):
+        unavailable["reason"] = "The previous occurrence is not assigned to this coach."
+        return JsonResponse(unavailable)
+    if previous.get("status") in {
+        curriculum_review_instances.STATUS_NOT_SCHEDULED,
+        curriculum_review_instances.STATUS_SCHEDULED,
+    }:
+        unavailable["reason"] = "The previous occurrence has not started yet."
+        return JsonResponse(unavailable)
+
+    previous_definition = curriculum_review_instances.review_instance_form_definition(previous)
+    record = _review_instance_calendar_record(previous)
+
+    summary_text = ""
+    # The formal mapped Meeting Summary answer is the source of truth.  This
+    # lets an MCM show a coach-edited summary rather than only the generated
+    # artifact.
+    summary_field = curriculum_review_instances.meeting_summary_field(previous_definition)
+    if not summary_text and summary_field:
+        value = summary_field.get("answer")
+        if isinstance(value, str):
+            summary_text = value.strip()
+
+    # Older instances may have a stored AI artifact but no formal answer yet;
+    # use it as a read-only fallback in that case.
+    if not summary_text and record:
+        stored_summary = stored_coach_meeting_summary(record)
+        if stored_summary and clean_text(stored_summary.get("status")) in {"ready", "edited"}:
+            summary_text = meeting_summary_plain_text(stored_summary.get("summary") or {})
+
+    transcript_text = ""
+    if record:
+        stored_transcript = stored_coach_meeting_transcript_for_summary(record)
+        if stored_transcript:
+            transcript_text = clean_text(stored_transcript.get("text"))
+    transcript_truncated = len(transcript_text) > COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS
+    if transcript_truncated:
+        transcript_text = transcript_text[:COACH_MEETING_SUMMARY_TRANSCRIPT_CHARS]
+
+    def iso_value(value):
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        return clean_text(value) or None
+
+    return JsonResponse({
+        "available": True,
+        "reason": "",
+        "instance": {
+            "id": previous.get("id"),
+            "occurrenceNumber": previous.get("occurrence_number"),
+            "targetDate": iso_value(previous.get("target_date")) or "",
+            "completedAt": iso_value(previous.get("completed_at")),
+            "status": previous.get("status"),
+        },
+        "review": {
+            "name": previous_definition.get("template", {}).get("name") or "Review",
+            "reviewTypeCode": previous_definition.get("template", {}).get("reviewTypeCode"),
+            "reviewTemplateId": previous.get("review_template_id"),
+        },
+        "summaryText": summary_text,
+        "transcriptText": transcript_text,
+        "transcriptAvailable": bool(transcript_text),
+        "transcriptTruncated": transcript_truncated,
+    })
+
+
+@coach_access_required
 def coach_review_instance_answers(request, instance_id):
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)

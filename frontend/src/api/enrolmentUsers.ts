@@ -98,6 +98,27 @@ export interface CreateEnrolmentUserInput extends AptemUserFields {
   lineManager?: string;
   phone?: string;
   dob?: string;
+  /**
+   * The first session, booked with the case owner as the learner is created.
+   * Date is YYYY-MM-DD and time HH:MM, both UK business time. Create only, and
+   * skipped server-side for learners imported from Aptem — they already have a
+   * start date. Supplying one sets the learner's start date to that day.
+   */
+  firstSessionDate?: string;
+  firstSessionTime?: string;
+}
+
+/** What became of the first-session booking, reported alongside the new row. */
+export interface FirstSessionResult {
+  /** True only when the booking itself was reserved. */
+  booked: boolean;
+  /** 'aptem' when the learner was skipped as an Aptem import. */
+  skipped?: string;
+  /** The booking exists but Microsoft has not confirmed the meeting yet. */
+  warning?: string;
+  error?: string;
+  scheduledDate?: string;
+  scheduledTime?: string;
 }
 
 /**
@@ -223,4 +244,65 @@ export async function finishEnrolment(id: string): Promise<EnrolmentBoard> {
   invalidateWizardCacheById(id);
   invalidateLearnerDetailCache();
   return board;
+}
+
+/** One hour of the college day, and whether the case owner is free for it. */
+export interface CaseOwnerSlot {
+  /** 24-hour UK wall clock, "HH:MM" — exactly what the booking is made at. */
+  time: string;
+  available: boolean;
+}
+
+/**
+ * The college's whole working day, each hour marked free or taken.
+ *
+ * The first session booked at enrolment is a real meeting on a real person's
+ * calendar, so availability is what Microsoft says — their Outlook working
+ * hours, minus what is already in the diary and minus sessions the LMS has
+ * itself booked. This is the same `free_slots` calculation behind the MCM
+ * picker (AssignmentCoachingBooking); it differs only in naming the case owner
+ * directly, because at enrolment there is no learner record yet to resolve a
+ * coach from.
+ *
+ * Every hour is returned rather than only the free ones, so the form can show
+ * a taken hour as taken. An hour missing from the list entirely reads as the
+ * college not working then, which is a different and wrong message.
+ *
+ * Offset is pinned to Europe/London rather than the browser's own zone: the
+ * backend reads the chosen time as UK wall clock, so staff working from another
+ * country must still be offered — and book — the college's hours.
+ */
+export async function fetchCaseOwnerAvailability(
+  caseOwner: string,
+  date: string,
+  signal?: AbortSignal,
+): Promise<CaseOwnerSlot[]> {
+  const offset =
+    (12 -
+      Number(
+        new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Europe/London',
+          hour: '2-digit',
+          hourCycle: 'h23',
+        }).format(new Date(`${date}T12:00:00Z`)),
+      )) *
+    60;
+  const query = new URLSearchParams({
+    caseOwner,
+    date,
+    timezoneOffsetMinutes: String(offset),
+  });
+  const response = await fetch(
+    `/learner_api/calendar/case-owner-availability/?${query}`,
+    { credentials: 'include', signal },
+  );
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || 'Could not check the case owner’s calendar.');
+  }
+  // `slots` carries the whole day; `times` is the older free-only shape, kept
+  // as a fallback so a frontend deployed ahead of the backend still works
+  // rather than showing an empty picker.
+  if (Array.isArray(result.slots)) return result.slots as CaseOwnerSlot[];
+  return ((result.times as string[]) || []).map((time) => ({ time, available: true }));
 }
