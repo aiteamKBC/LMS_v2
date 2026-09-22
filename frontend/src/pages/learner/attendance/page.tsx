@@ -26,6 +26,7 @@ import AttendanceModePanel from './components/AttendanceModePanel';
 import AttendanceLectureList, { type AttendanceFilter } from './components/AttendanceLectureList';
 import FeaturedLecture from './components/FeaturedLecture';
 import CatchupBooking from './components/CatchupBooking';
+import RecoveryPlansDialog from './components/RecoveryPlansDialog';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { featuredLecture, useLectureClock } from './liveLecture';
 import styles from './attendance.module.css';
@@ -51,6 +52,7 @@ export default function AttendancePage() {
   const [moduleId, setModuleId] = useState('all');
   const [filter, setFilter] = useState<AttendanceFilter>('all');
   const [report, setReport] = useState<AttendanceLecture | 'choose' | null>(null);
+  const [showRecoveryPlans, setShowRecoveryPlans] = useState(false);
   const [showAllActivity, setShowAllActivity] = useState(false);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState('');
@@ -134,7 +136,10 @@ export default function AttendancePage() {
     userName={data?.summary?.learnerName || 'Learner'} userRole="Learner">
     <PageContainer className={styles.page}>
       <SectionHeader title="Attendance" description="Your scheduled lectures, attendance status and learning resources." icon="ri-calendar-check-line"
-        actions={data ? <RowAction label="Report absence" icon="ri-calendar-close-line" emphasis="primary" onClick={() => setReport('choose')} /> : undefined} />
+        actions={data ? <div className="flex flex-wrap items-center gap-2">
+          <RowAction label="My recovery plans" icon="ri-calendar-todo-line" onClick={() => setShowRecoveryPlans(true)} />
+          <RowAction label="Report absence" icon="ri-calendar-close-line" emphasis="primary" onClick={() => setReport('choose')} />
+        </div> : undefined} />
       {read.error && data && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
         Lectures could not refresh. Showing the last loaded record. <button onClick={read.refresh} className="font-semibold underline">Retry</button>
       </div>}
@@ -196,7 +201,10 @@ export default function AttendancePage() {
     {report && <AbsenceReportDialog onClose={() => setReport(null)}>
       <AbsenceReportForm key={typeof report === 'string' ? report : report.id}
         preselectMatch={typeof report === 'string' ? null : { id: report.id, dateIso: report.date, title: report.title }}
-        onSubmitted={() => read.refresh()} onCancel={() => setReport(null)} showGuidance={false} showHistory={false} compact />
+        onSubmitted={() => read.refresh()} onCancel={() => setReport(null)} showGuidance={false} showHistory compact />
+    </AbsenceReportDialog>}
+    {showRecoveryPlans && <AbsenceReportDialog title="My recovery plans" onClose={() => setShowRecoveryPlans(false)}>
+      <RecoveryPlansDialog />
     </AbsenceReportDialog>}
     {catchup && <AbsenceReportDialog title="Book Catchup Session" onClose={() => { setCatchup(null); read.refresh(); }}>
       <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>

@@ -24,7 +24,7 @@ export default function AbsenceReportDialog({ children, onClose, title = 'Report
     onCancel={event => { event.preventDefault(); onClose(); }}>
     <div className={styles.dialogHeading}>
       <h2 id={titleId}><AppIcon className="ri-calendar-event-line" />{title}</h2>
-      <button type="button" aria-label={title === 'Report Absence' ? 'Close absence report' : 'Close catch-up booking'} onClick={onClose}><AppIcon className="ri-close-line" /></button>
+      <button type="button" aria-label={title === 'Report Absence' ? 'Close absence report' : title === 'Book Catchup Session' ? 'Close catch-up booking' : `Close ${title.toLowerCase()}`} onClick={onClose}><AppIcon className="ri-close-line" /></button>
     </div>
     {children}
   </dialog>, document.body);

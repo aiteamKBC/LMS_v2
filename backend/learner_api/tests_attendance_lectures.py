@@ -342,26 +342,43 @@ class AttendanceLectureTests(SimpleTestCase):
 class AttendanceAbsenceTests(SimpleTestCase):
     def test_reason_only_report_saves_without_optional_evidence(self):
         request = RequestFactory().post('/', {'sessionId': 'teams:future', 'sessionTitle': 'Lecture',
-                                             'sessionDate': '2026-10-01', 'reasonCategory': 'illness', 'recoveryMethod': 'recorded'})
+                                             'sessionDate': '2026-10-01', 'reasonCategory': 'illness',
+                                             'recoveryMethod': 'recorded', 'recordingDate': '2026-10-02',
+                                             'recordingTime': '18:00', 'recordingDurationMinutes': '60'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
              patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=None), \
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.absence_reports._recording_recovery_event') as calendar_event, \
+             patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
              patch('learner_api.absence_reports._serialize', return_value={'id': 1}):
             manager.filter.return_value.exists.return_value = False
             manager.filter.return_value.count.return_value = 0
+            manager.create.return_value = SimpleNamespace(
+                id=1, owner_email='med.maher@kbc.ac.uk', owner_name='Med Maher',
+                learner_name='Learner', learner_email='learner@example.test',
+                session_title='Lecture', recovery_method='recorded',
+            )
             response = inspect.unwrap(learner_absence_reports)(request, 'apprenticeship', 12)
         self.assertEqual(response.status_code, 201)
         self.assertFalse(manager.create.call_args.kwargs['evidence_provided'])
         self.assertEqual(manager.create.call_args.kwargs['evidence_kind'], 'none')
+        self.assertEqual(manager.create.call_args.kwargs['status'], 'approved')
         self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'recorded')
         self.assertIsNone(manager.create.call_args.kwargs['catchup_event_key'])
+        calendar_event.assert_called_once()
+        send_mail.assert_called_once()
+        self.assertIn('Watch the recording', send_mail.call_args.kwargs['text_body'])
+        self.assertNotIn('Catch-up session', send_mail.call_args.kwargs['text_body'])
+        self.assertNotIn('Alternative group session', send_mail.call_args.kwargs['text_body'])
 
     def test_duplicate_report_is_rejected_before_writing(self):
         request = RequestFactory().post('/', {'sessionId': 'same', 'sessionTitle': 'Lecture',
-                                             'sessionDate': '2026-09-01', 'reasonCategory': 'illness', 'recoveryMethod': 'recorded'})
+                                             'sessionDate': '2026-09-01', 'reasonCategory': 'illness',
+                                             'recoveryMethod': 'recorded', 'recordingDate': '2026-10-02',
+                                             'recordingTime': '18:00'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
              patch('learner_api.absence_reports._resolve_absent_attendance', return_value=123), \
@@ -376,7 +393,8 @@ class AttendanceAbsenceTests(SimpleTestCase):
         read.return_value = [register_row(), register_row(source='microsoft-teams', session_id='upcoming', attendance_status='upcoming'),
                              register_row(session_id='present', attendance_status='present'), register_row(attendance_status='pending')]
         source = SimpleNamespace(id=12)
-        result = _fetch_missed_sessions(source, 12)
+        with patch('learner_api.absence_reports.eligible_alternative_occurrences', return_value=[]):
+            result = _fetch_missed_sessions(source, 12)
         self.assertEqual(len(result), 2)
         self.assertEqual(result[1]['sessionId'], 'teams:upcoming')
         self.assertIsNotNone(_resolve_absent_attendance(source, 12, 'teams:upcoming', 'Business introduction', date(2026, 9, 1), None))

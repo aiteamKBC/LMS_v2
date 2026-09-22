@@ -7,6 +7,7 @@ than one active series, this module deliberately returns no alternative: the
 repository has no stronger authored-component relationship to choose safely.
 """
 from collections import defaultdict
+from datetime import timezone as datetime_timezone
 
 from django.db.models import Q
 from django.utils import timezone
@@ -95,6 +96,24 @@ def _matching_alternative_series(original_session, original_module, modules, ses
 
 def _local(value):
     return timezone.localtime(value) if value and timezone.is_aware(value) else value
+
+
+def _future_instant(value, now=None) -> bool:
+    """Compare native UTC timestamps with Django's aware clock safely."""
+    if not value:
+        return False
+    instant = (
+        timezone.make_aware(value, datetime_timezone.utc)
+        if timezone.is_naive(value)
+        else value
+    )
+    reference = now or timezone.now()
+    reference = (
+        timezone.make_aware(reference, datetime_timezone.utc)
+        if timezone.is_naive(reference)
+        else reference
+    )
+    return instant > reference
 
 
 def _cohort_context(original_occurrence_id: str, database: str):
@@ -256,8 +275,7 @@ def alternative_target_details(
         "cohort": module.cohort_name or "",
         "status": occurrence.status,
     }
-    now = timezone.now()
-    if include_join_url and _active(occurrence.status) and occurrence.scheduled_end > now:
+    if include_join_url and _active(occurrence.status) and _future_instant(occurrence.scheduled_end):
         data["joinUrl"] = occurrence.join_url or session.join_url or ""
     return data
 

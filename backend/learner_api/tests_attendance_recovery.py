@@ -10,7 +10,14 @@ from unittest.mock import patch
 from django.test import RequestFactory, SimpleTestCase
 from django.utils import timezone
 
-from .absence_reports import RecoveryPlanError, _catchup_booking, _fetch_missed_sessions, learner_absence_reports
+from .absence_reports import (
+    RecoveryPlanError,
+    _catchup_booking,
+    _fetch_missed_sessions,
+    _recording_recovery_event,
+    learner_absence_reports,
+)
+from .alternative_recovery import _future_instant
 from .attendance_lectures import build_lectures, read_native_occurrences
 from .tests_attendance_lectures import register_row
 
@@ -44,6 +51,12 @@ class RecoveryBookingTests(SimpleTestCase):
         event = booked_event()
         self.assertIs(self.resolve(event, lock=True), event)
 
+    def test_native_utc_occurrence_can_be_compared_with_aware_clock(self):
+        now = datetime(2026, 9, 21, 10, tzinfo=dt_timezone.utc)
+
+        self.assertTrue(_future_instant(datetime(2026, 9, 25, 8), now))
+        self.assertFalse(_future_instant(datetime(2026, 9, 20, 8), now))
+
     def test_another_learners_email_cannot_be_overridden_by_an_id_collision(self):
         event = booked_event()
         event.learner_email = 'someone-else@example.test'
@@ -61,6 +74,24 @@ class RecoveryBookingTests(SimpleTestCase):
                     self.resolve(event)
         with self.assertRaises(RecoveryPlanError):
             self.resolve(None)
+
+    def test_recording_plan_creates_a_confirmed_local_calendar_task(self):
+        report = SimpleNamespace(
+            id=7, owner_email='coach@example.test', owner_name='Coach',
+            learner_name='Learner', learner_email='learner@example.test',
+            session_title='Lecture',
+        )
+        with patch('learner_api.absence_reports.CoachCalendarEvent.objects') as manager:
+            _recording_recovery_event(
+                report, SOURCE, MIRROR, date(2026, 10, 6), time(18), 90,
+            )
+        saved = manager.create.call_args.kwargs
+        self.assertEqual(saved['event_key'], 'absence-recording:7')
+        self.assertEqual(saved['learner_id'], MIRROR.id)
+        self.assertEqual(saved['event_type'], 'recorded-recovery')
+        self.assertEqual(saved['status'], 'scheduled')
+        self.assertEqual(saved['sync_state'], 'synced')
+        self.assertEqual(saved['duration_minutes'], 90)
 
 
 class RecoverySubmissionTests(SimpleTestCase):
@@ -84,25 +115,63 @@ class RecoverySubmissionTests(SimpleTestCase):
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports._catchup_booking', side_effect=validation) as validate, \
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
              patch('learner_api.absence_reports._serialize', return_value={'id': 1}):
             manager.filter.return_value.exists.return_value = False
             manager.filter.return_value.count.return_value = 0
+            manager.create.return_value = SimpleNamespace(
+                id=1, owner_email='coach@example.test', owner_name='Coach',
+                learner_name='Learner', learner_email='learner@example.test',
+                session_title='Lecture', recovery_method='catch-up',
+            )
             response = inspect.unwrap(learner_absence_reports)(self.request(recoveryMethod='catch-up', catchupEventKey='catch-up:99:1'), 'apprenticeship', 12)
-            return response, manager, validate
+            return response, manager, validate, send_mail
 
     def test_catchup_choice_and_verified_event_key_are_saved(self):
-        response, manager, validate = self.submit([booked_event(), booked_event()])
+        response, manager, validate, send_mail = self.submit([booked_event(), booked_event()])
         self.assertEqual(response.status_code, 201)
+        self.assertEqual(manager.create.call_args.kwargs['status'], 'approved')
         self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'catch-up')
         self.assertEqual(manager.create.call_args.kwargs['catchup_event_key'], 'catch-up:99:1')
         self.assertEqual(validate.call_count, 2)
         self.assertTrue(validate.call_args.kwargs['lock'])
+        self.assertIn('Catch-up session', send_mail.call_args.kwargs['text_body'])
+        self.assertNotIn('Watch the recording', send_mail.call_args.kwargs['text_body'])
 
     def test_cancellation_between_validation_and_save_prevents_submission(self):
-        response, manager, _ = self.submit([booked_event(), RecoveryPlanError('Booking cancelled.')])
+        response, manager, _, send_mail = self.submit([booked_event(), RecoveryPlanError('Booking cancelled.')])
         self.assertEqual(response.status_code, 409)
         self.assertEqual(json.loads(response.content)['error'], 'Booking cancelled.')
         manager.create.assert_not_called()
+        send_mail.assert_not_called()
+
+    def test_alternative_session_is_approved_without_coach_review(self):
+        with patch('learner_api.absence_reports._source_learner', return_value=SOURCE), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports.learner_profile_for_source', return_value=MIRROR), \
+             patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
+             patch('learner_api.absence_reports.validate_alternative_occurrence', return_value={'id': 'target-occurrence'}) as validate, \
+             patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
+             patch('learner_api.absence_reports._serialize', return_value={'id': 1, 'status': 'approved'}):
+            manager.filter.return_value.exists.return_value = False
+            manager.filter.return_value.count.return_value = 0
+            manager.create.return_value = SimpleNamespace(
+                id=1, owner_email='coach@example.test', owner_name='Coach',
+                learner_name='Learner', learner_email='learner@example.test',
+                session_title='Lecture', recovery_method='alternative',
+            )
+            response = inspect.unwrap(learner_absence_reports)(self.request(
+                recoveryMethod='alternative', targetOccurrenceId='target-occurrence'),
+                'apprenticeship', 12)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(manager.create.call_args.kwargs['status'], 'approved')
+        self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'alternative')
+        self.assertEqual(manager.create.call_args.kwargs['catchup_event_key'], 'alternative:target-occurrence')
+        self.assertEqual(validate.call_count, 2)
+        self.assertIn('Alternative group session', send_mail.call_args.kwargs['text_body'])
+        self.assertNotIn('Catch-up session', send_mail.call_args.kwargs['text_body'])
 
     def test_in_progress_lectures_can_be_reported(self):
         with patch('learner_api.absence_reports.lecture_register', return_value=[register_row(attendance_status='in_progress')]):
@@ -116,6 +185,28 @@ class RecoverySubmissionTests(SimpleTestCase):
 
 
 class LiveLecturePayloadTests(SimpleTestCase):
+    def test_approved_alternative_is_exposed_as_a_joinable_calendar_event(self):
+        from . import calendar as calendar_module
+
+        report = SimpleNamespace(
+            id=9, catchup_event_key='alternative:target', session_title='Lecture',
+            owner_email='coach@example.test',
+        )
+        with patch('coach_api.models.CoachAbsenceReport.objects.filter', return_value=[report]), \
+             patch('learner_api.alternative_recovery.alternative_target_details', return_value={
+                 'title': 'Equivalent Lecture', 'dateIso': '2026-10-07',
+                 'startTime': '09:00', 'endTime': '11:00', 'group': 'Wednesday Group',
+                 'cohort': 'Final Cohort', 'joinUrl': 'https://teams.microsoft.com/l/meetup-join/target',
+             }):
+            events = calendar_module.alternative_recovery_events_for_learner(12)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['eventKey'], 'absence-alternative:9')
+        self.assertEqual(events[0]['scheduledDate'], '2026-10-07')
+        self.assertEqual(events[0]['durationMinutes'], 120)
+        self.assertEqual(events[0]['meetingLink'], 'https://teams.microsoft.com/l/meetup-join/target')
+        self.assertEqual(events[0]['status'], 'scheduled')
+
     def test_native_payload_keeps_absolute_timestamps_and_the_lecture_link(self):
         row = register_row(source='microsoft-teams', session_id='occurrence', module_catalogue_id=3,
             attendance_status='upcoming', scheduled_start=datetime(2026, 10, 1, 9, tzinfo=dt_timezone.utc),
