@@ -116,7 +116,9 @@ export function moduleVisualEnd(module: { end: string; detail?: { effectiveEndDa
 export type CurriculumRow =
   | { kind: 'session'; slotNumber: number; date: string; sessionNumber: number;
       title: string; start: string | null; minutes: number | null; attended: boolean | null; joinUrl: string | null;
-      holidays: PlanSlotHoliday[]; weekId?: string; weekTitle?: string; learningOutcomes?: string[] }
+      holidays: PlanSlotHoliday[]; weekId?: string; weekTitle?: string; learningOutcomes?: string[];
+      /** The curriculum team's published hint for this holiday week, if there is one. */
+      holidayNote?: string }
   /** Kept for a payload from an older, genuinely closing scheduler; today's spine never emits one. */
   | { kind: 'reading-week'; slotNumber: number; date: string; holidays: PlanSlotHoliday[] };
 
@@ -165,6 +167,9 @@ export function buildCurriculumTimeline(
       weekId: slot.weekId,
       weekTitle: slot.weekTitle,
       learningOutcomes: slot.learningOutcomes || [],
+      // Carried through exactly as served: the week it belongs to is the week
+      // this row is, so it can never surface against another one.
+      holidayNote: slot.holidayNote,
     };
   });
 }
@@ -239,4 +244,24 @@ export function timelineMonthKeys(year: number, startMonth = 0) {
 
 export function timelinePeriodYear(month: string, startMonth = 0) {
   return Number(month.slice(0, 4)) - (Number(month.slice(5, 7)) - 1 < startMonth ? 1 : 0);
+}
+
+/**
+ * The curriculum team's published holiday hints for one module, by week id.
+ *
+ * `holidayNote` reaches a learner only on a slot whose week the author both
+ * clashed with a holiday and published a note for — the server decides both,
+ * so every entry here is already a hint this learner is meant to read. Keyed
+ * by `weekId` so a screen that lists weeks rather than delivery dates (My
+ * Learning, the week rail beside an activity) can show it against the one
+ * week it was written for.
+ */
+export function weekHolidayNotes(slots?: PlanCurriculumSlot[] | null): Map<string, string> {
+  const notes = new Map<string, string>();
+  for (const slot of slots || []) {
+    const note = (slot.holidayNote || '').trim();
+    const weekId = (slot.weekId || '').trim();
+    if (note && weekId && !notes.has(weekId)) notes.set(weekId, note);
+  }
+  return notes;
 }

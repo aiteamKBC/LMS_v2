@@ -117,6 +117,17 @@ export interface ModuleWeek {
   sessionDay?: string;
   sessionStartTime?: string;
   sessionDurationMinutes?: number;
+  /**
+   * Whether this week's holiday hint is published to its learners.
+   *
+   * Separate from the text on purpose: turning the hint off must not throw away
+   * what was written, and an unpublished note is nobody's to read. The learner
+   * side additionally requires the week to still clash with a holiday, so a
+   * note left behind on a week whose dates moved shows nothing.
+   */
+  holidayNoteEnabled?: boolean;
+  /** The hint itself. Authored here; only the curriculum team can write it. */
+  holidayNote?: string;
 }
 
 export interface ModuleMonthGroup {
@@ -1309,6 +1320,10 @@ export async function duplicateModuleStructure(
         sessionDate: keepDates ? week.sessionDate : '',
         sessionDay: keepDates ? week.sessionDay : '',
         learningOutcomes: [...(week.learningOutcomes || [])],
+        // The text travels with the week it was written on; whether it is shown
+        // does not. A copy runs on its own dates, so whether it clashes at all
+        // is a fresh question -- unless this copy IS the source's dates.
+        holidayNoteEnabled: keepDates ? week.holidayNoteEnabled : false,
         ksbMappings: cloneMappings(week.ksbMappings, `week-${weekIndex + 1}`),
         components: week.components.map((component, componentIndex) => ({
           ...component,
@@ -1567,6 +1582,9 @@ export function copyWeekToModule(
     sessionDay: '',
     sessionStartTime: '',
     sessionDurationMinutes: undefined,
+    // Undated, so whether this copy clashes with anything is a fresh question.
+    // The text comes across; publishing it is the new module's own decision.
+    holidayNoteEnabled: false,
     summary: source.summary || '',
     learningOutcomes: [...(source.learningOutcomes || [])],
     ksbMappings: (source.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
@@ -1627,6 +1645,7 @@ export function duplicateWeekInModule(module: ModuleCatalogueItem, weekId: strin
     title: weekAuthoredTitle(source) ? `${String(source.title).trim()} copy` : source.title,
     sessionDate: '',
     sessionDay: '',
+    holidayNoteEnabled: false,
     summary: source.summary || '',
     learningOutcomes: [...(source.learningOutcomes || [])],
     ksbMappings: (source.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
@@ -1656,6 +1675,33 @@ export function duplicateWeekInModule(module: ModuleCatalogueItem, weekId: strin
   // to fill in -- the twin's own live session is one more authored session, and
   // the reloaded plan dates it from the module's own start date.
   return { ...module, weekStructure };
+}
+
+/**
+ * Copy one component from its week into a different week of the SAME module —
+ * the clone button's "copy to another week" option. Every id is regenerated so
+ * the copy is independent of its source, exactly like `duplicateWeekInModule`
+ * treats each of the components it carries into a cloned week. A live
+ * session's settings drop the Teams meeting identity and its own date via
+ * `independentCopySettings`: sharing a booking across two weeks would point
+ * both at the same meeting, and the target week's date is the twin's to take,
+ * not the source's to keep. `copiedFromId` is what `isUnbookedCopiedLiveSession`
+ * reads to print the "not booked yet" notice on it, same as a copied week.
+ *
+ * Named apart from `copyComponentToWeek` below, which serves a different
+ * placement flow (into another group's module entirely) and does not carry
+ * this same-module Teams-safety.
+ */
+export function cloneComponentToWeek(component: ModuleComponent, targetWeekId: string, targetModuleId: string): ModuleComponent {
+  return {
+    ...component,
+    id: makeAuthoringId('COMP'),
+    copiedFromId: component.id,
+    moduleId: targetModuleId,
+    weekId: targetWeekId,
+    ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('KSB') })),
+    settings: independentCopySettings(structuredClone(component.settings || {})),
+  };
 }
 
 /**

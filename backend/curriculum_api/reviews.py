@@ -88,6 +88,15 @@ MEETING_SUMMARY_SEMANTIC_KEY = 'meeting_summary'
 
 PARTICIPANT_ROLES = ('advisor', 'employer', 'participant', 'referrer')
 
+# Non-advisor roles a Field's own configuration may opt into answering it.
+# The advisor (coach) can always answer every field regardless of this list --
+# it only ever widens who *else* may write an answer, never who may read one
+# (see visible_advisor/visible_employer/visible_participant on the template).
+# Stored in the field's existing JSON `configuration`, like semanticKey and
+# placeholder, rather than a new column -- see the module docstring for why
+# Review schema changes are avoided when the JSON configuration already fits.
+FIELD_RESPONDENT_ROLES = ('participant', 'employer')
+
 # Every Review carries a Review Type -- its classification, chosen in the
 # General tab next to the Review's name. The catalogue of types lives in
 # review_types.py; this module only stores which one a template points at.
@@ -591,6 +600,20 @@ def validate_field_payload(field, path, errors, *, depth=0):
     required = bool(field.get('required')) if field_type not in DISPLAY_ONLY_FIELD_TYPES else False
     configuration = field.get('configuration') if isinstance(field.get('configuration'), dict) else {}
     configuration = _validate_field_configuration(field_type, configuration, path, errors)
+
+    # Who besides the advisor (coach) may answer this field, e.g. so a
+    # Learner or Employer can complete their own part of the meeting record.
+    # A display-only block (title_description/action_button) never collects
+    # an answer, so it never carries a respondent list.
+    if field_type in DISPLAY_ONLY_FIELD_TYPES:
+        configuration = {k: v for k, v in configuration.items() if k != 'respondentRoles'}
+    else:
+        posted_roles = configuration.get('respondentRoles')
+        respondent_roles = sorted({
+            role for role in (posted_roles if isinstance(posted_roles, list) else [])
+            if role in FIELD_RESPONDENT_ROLES
+        })
+        configuration = {**configuration, 'respondentRoles': respondent_roles}
 
     cleaned = {
         'id': curriculum_views.clean_str(field.get('id')),
