@@ -4,6 +4,7 @@ import { RouteLoadingSkeleton } from './RouteLoadingSkeleton';
 import { homeRouteFor, mayAccessRoute } from '@/lib/routeAccess';
 import { OldOtjhGate } from '@/features/old-otjh/hooks';
 import { LearnerProgrammeGate } from './LearnerProgrammeGate';
+import { FirstSessionGate } from './FirstSessionGate';
 
 /**
  * The router-level gate. Everything that is not explicitly public in
@@ -71,7 +72,10 @@ export function RequireAuth() {
     return <NoAccess />;
   }
 
-  return <OldOtjhGate><LearnerProgrammeGate><Outlet /></LearnerProgrammeGate></OldOtjhGate>;
+  // FirstSessionGate is innermost of the three: a learner who has not yet had
+  // their first session has nothing to render behind it, and the two outer
+  // gates answer questions that come first (legacy record, then connection).
+  return <OldOtjhGate><LearnerProgrammeGate><FirstSessionGate><Outlet /></FirstSessionGate></LearnerProgrammeGate></OldOtjhGate>;
 }
 
 function NoAccess() {
