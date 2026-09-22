@@ -4114,6 +4114,30 @@ export function injectFreeCourseIntoGroup(programmeId: string, input: ConvertFre
   return postJson<ConvertFreeCourseResult>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/convert/`, input);
 }
 
+export interface ImportModuleInput {
+  moduleCatalogueId: string;
+  /** 'clone' keeps the module in its programme; 'move' also archives it. */
+  mode: 'clone' | 'move';
+}
+
+export interface ImportModuleResult {
+  mode: 'clone' | 'move';
+  freeCourseId: string;
+  courseName: string;
+  moduleCatalogueId: string;
+  /** The full, updated free-course module list, so the caller can refresh. */
+  modules: FreeProgrammeModule[];
+}
+
+/**
+ * Convert an existing programme module into a NEW free course (appended to the
+ * catalogue). `clone` leaves the module live in its programme; `move` also
+ * archives the source module. Returns the updated free-course module list.
+ */
+export function importModuleToFreeCourses(programmeId: string, input: ImportModuleInput) {
+  return postJson<ImportModuleResult>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/import-module/`, input);
+}
+
 export function createGroupModule(groupId: string, input: CurriculumModuleAttachmentInput) {
   return postJson(`/curriculum/groups/${encodeURIComponent(groupId)}/modules/`, input);
 }
