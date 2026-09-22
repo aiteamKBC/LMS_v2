@@ -29,6 +29,13 @@
   border-radius:999px; padding:2px 8px; background:var(--learner-warning); color:var(--kbc-surface); }
 .holiday { font-size:11px; color:var(--kbc-text); margin-top:4px !important; line-height:1.5; overflow-wrap:anywhere; }
 .holiday strong { font-weight:750; }
+
+/* The curriculum team's own hint for a holiday week. Set apart from the
+   holiday lines above it because those state a fact from the calendar, while
+   this is somebody telling the learner what to do about it. */
+.holidayNote { font-size:11px; color:var(--kbc-text); margin-top:6px !important; line-height:1.5; overflow-wrap:anywhere;
+  border-left:2px solid var(--learner-warning); padding-left:9px; }
+.holidayNote strong { font-weight:750; }
 .noSession { font-size:11px; font-weight:650; color:var(--kbc-muted); margin-top:3px !important; }
 .more { font-size:11px; color:var(--kbc-muted); margin-top:9px !important; }
 

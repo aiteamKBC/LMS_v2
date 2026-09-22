@@ -1564,7 +1564,7 @@ def provision_history_tables():
                     action varchar(16) not null,
                     module_catalogue_id varchar(128) not null default '',
                     parent_id varchar(128) not null default '',
-                    title varchar(500) not null default '',
+                    title text not null default '',
                     version_label varchar(32) not null default '',
                     content_status varchar(64) not null default '',
                     snapshot {json_type} not null,

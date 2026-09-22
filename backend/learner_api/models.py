@@ -290,6 +290,18 @@ class EnrolmentUser(models.Model):
     line_manager = models.TextField(db_column="Line_manager", null=True, blank=True)
     learner_start_date = models.TextField(db_column="Learner_start_date", null=True, blank=True)
     learner_end_date = models.TextField(db_column="Learner_end_date", null=True, blank=True)
+    # NOTE: "First_session_booked" and "First_session_booked_at" exist on this
+    # table (see sql/2026-09-17_first_session_booking_on_created_users.sql) but
+    # are deliberately NOT mapped here, exactly like the "Learner_signature"
+    # columns above them.
+    #
+    # Mapping a column makes Django SELECT it in *every* query against this
+    # table -- including the one login runs for each request -- so a mapped
+    # column that the database does not have yet takes the whole platform down,
+    # not just the feature that uses it. These two are written and read by
+    # learner_api.first_session through raw SQL that checks for them first, so a
+    # database without them degrades to "not recorded" instead of "nobody can
+    # sign in".
     start_date = models.TextField(db_column="Start_date", null=True, blank=True)
     end_date = models.TextField(db_column="End_date", null=True, blank=True)
     practical_period_end_date = models.TextField(db_column="Practical_period_end_date", null=True, blank=True)

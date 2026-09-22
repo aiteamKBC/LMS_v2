@@ -20,6 +20,7 @@ from openpyxl.utils import get_column_letter
 
 from login.models import LoginAccount
 from login.permissions import staff_only
+from .first_session import parse_slot, validate_slot
 from .mappers import ValidationError, write_fields
 from .models import Employer, EnrolmentUser, LearnerProfile, StaffUser
 
@@ -40,8 +41,23 @@ COLUMNS = (
     ("Referrer", "referrer"), ("Referrer address", "referrerAddress"),
     ("Referrer contact", "referrerContact"), ("Employer address", "employerAddress"),
     ("Extended break", "extendedBreak"),
+    # The first session is booked as part of enrolment, with the case owner, so
+    # an imported learner arrives with one exactly as a form-created learner
+    # does. Date is YYYY-MM-DD and time is HH:MM, both UK wall clock.
+    ("First session date", "firstSessionDate"),
+    ("First session time", "firstSessionTime"),
 )
-REQUIRED = {"firstName", "surname", "email"}
+#: Case owner and the session date joined these when the first session became
+#: part of enrolment: the case owner is who the session is booked with, and the
+#: date is the learner's programme start.
+#:
+#: The *time* is deliberately not required. A spreadsheet is filled in ahead of
+#: the slots being agreed, so a row may know the day without knowing the hour;
+#: that row records the start date and leaves the session to be booked from the
+#: learner's calendar, rather than inventing an hour nobody chose.
+REQUIRED = {
+    "firstName", "surname", "email", "caseOwner", "firstSessionDate",
+}
 LABELS = {key: label for label, key in COLUMNS}
 
 
@@ -281,6 +297,38 @@ def validate_students(students, references):
                 errors.append(_issue(row_number, "Unknown or ambiguous case owner. Use the Case owners sheet.", "caseOwner"))
             else:
                 payload["caseOwner"] = owners[0]["username"]
+        # The first session is booked for real when the row is imported, so the
+        # date is checked against the same working-day rules the learner and
+        # coach calendars use -- and checked now, with every other error, rather
+        # than failing halfway through writing the workbook.
+        #
+        # A row may give the day without the hour. That is a real state, not a
+        # mistake: the start date is recorded and no meeting is booked, so the
+        # session can be arranged from the learner's calendar once the time is
+        # agreed. Only a time *without* a date is contradictory.
+        session_date, session_time = None, None
+        raw_date = _text(payload.get("firstSessionDate"))
+        raw_time = _text(payload.get("firstSessionTime"))
+        if raw_time and not raw_date:
+            errors.append(_issue(row_number, "A first session time needs a date as well.", "firstSessionDate"))
+        elif raw_date:
+            parsed_date, parsed_time, slot_error = parse_slot(
+                {"firstSessionDate": raw_date, "firstSessionTime": raw_time or "00:00"}
+            )
+            if slot_error:
+                errors.append(_issue(row_number, slot_error, "firstSessionDate"))
+            else:
+                slot_problem = validate_slot(parsed_date, parsed_time)
+                if slot_problem:
+                    errors.append(_issue(row_number, slot_problem, "firstSessionDate"))
+                else:
+                    session_date = parsed_date
+                    # No time supplied -> the date is recorded, nothing is booked.
+                    session_time = parsed_time if raw_time else None
+        # Not learner columns: the start date is written by the booking code and
+        # these two would reach EnrolmentUser.objects.create as unknown kwargs.
+        payload.pop("firstSessionDate", None)
+        payload.pop("firstSessionTime", None)
         payload.update(username=" ".join(filter(None, [payload.get("firstName"), payload.get("surname")])),
                        email=email, learnerType="commercial", type="User", status="FullUser")
         payload.setdefault("country", "United Kingdom")
@@ -288,7 +336,9 @@ def validate_students(students, references):
         preview.append({"row": row_number, "name": payload["username"], "email": email,
                         **{field: payload.get(field, "") for field in ("programme", "cohort", "group")}})
         try:
-            prepared.append((row_number, write_fields(payload, require_create=True)))
+            prepared.append(
+                (row_number, write_fields(payload, require_create=True), session_date, session_time)
+            )
         except ValidationError as exc:
             # Required cells already have precise column errors above.
             if REQUIRED <= {key for key, value in payload.items() if value}:
@@ -402,8 +452,11 @@ def import_students(request):
             with transaction.atomic(using="enrolment"):
                 # Every commit revalidates the upload. A login uniqueness race
                 # also fails account provisioning and rolls the entire batch back.
-                for current_row, fields in prepared:
-                    results.append(_create_enrolment_user(request, fields, require_account=True))
+                for current_row, fields, session_date, session_time in prepared:
+                    results.append(_create_enrolment_user(
+                        request, fields, require_account=True,
+                        session_date=session_date, session_time=session_time,
+                    ))
         except ValidationError as exc:
             return _error(str(exc), errors=[_issue(current_row, str(exc))], count=len(students), preview=preview)
         return JsonResponse(_body(len(students), preview, results=results), status=201)

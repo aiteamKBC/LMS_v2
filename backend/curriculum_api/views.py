@@ -1200,7 +1200,7 @@ def provision_live_sessions_table():
                 id varchar(128) primary key,
                 module_catalogue_id varchar(128),
                 module_draft_id varchar(255) not null default '',
-                module_title varchar(500) not null default '',
+                module_title text not null default '',
                 provider varchar(64) not null default 'Microsoft Teams',
                 graph_event_id varchar(512),
                 join_url text not null default '',
@@ -12329,9 +12329,12 @@ LIBRARY_COLUMN_DDL = (
     ('library_state', "varchar(16) not null default ''"),
     ('detached_at', 'timestamp with time zone'),
     ('origin_module_catalogue_id', 'varchar(128)'),
-    ('origin_module_title', 'varchar(500)'),
+    # text, not varchar(n): a component or week label is authored prose (a whole
+    # KSB statement, routinely), and a copy that outgrows the column fails the
+    # save outright. See 2026-09-22_widen_curriculum_titles.sql.
+    ('origin_module_title', 'text'),
     ('origin_week_id', 'varchar(128)'),
-    ('origin_week_label', 'varchar(500)'),
+    ('origin_week_label', 'text'),
     ('copied_from_id', 'varchar(128)'),
 )
 
@@ -12389,7 +12392,7 @@ def provision_module_authoring_tables():
                 group_name varchar(255),
                 tutor_name varchar(255),
                 tutor_email varchar(320),
-                title varchar(500) not null,
+                title text not null,
                 description text,
                 color varchar(32),
                 cover_image_url text,
@@ -12476,7 +12479,7 @@ def provision_module_authoring_tables():
                 id varchar(128) primary key,
                 module_catalogue_id varchar(128) not null,
                 week_number integer not null default 1,
-                title varchar(500) not null default '',
+                title text not null default '',
                 summary text,
                 learning_outcomes {json_type},
                 display_order integer not null default 0,
@@ -12487,11 +12490,19 @@ def provision_module_authoring_tables():
         ''')
         if connection.vendor == 'postgresql':
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column if not exists is_programme_deleted boolean not null default false')
+            # The author's holiday hint. Mirrors sql/2026-09-22_week_holiday_note.sql,
+            # where Neon is the source of truth.
+            cursor.execute(f"alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column if not exists holiday_note_enabled boolean not null default false")
+            cursor.execute(f"alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column if not exists holiday_note text not null default ''")
         else:
             cursor.execute(f'pragma table_info({quote_ident(AUTHORING_WEEKS_TABLE)})')
             columns = {row[1] for row in cursor.fetchall()}
             if 'is_programme_deleted' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column is_programme_deleted boolean not null default false')
+            if 'holiday_note_enabled' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column holiday_note_enabled boolean not null default false')
+            if 'holiday_note' not in columns:
+                cursor.execute(f"alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column holiday_note text not null default ''")
         provision_library_columns(cursor, AUTHORING_WEEKS_TABLE)
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (
@@ -12499,7 +12510,7 @@ def provision_module_authoring_tables():
                 week_id varchar(128) not null,
                 module_catalogue_id varchar(128) not null,
                 type varchar(64) not null,
-                title varchar(500) not null default '',
+                title text not null default '',
                 description text,
                 expected_otjh numeric(8,2) not null default 2,
                 points integer not null default 0,
@@ -12962,7 +12973,7 @@ def provision_free_programme_tables():
         cursor.execute(f'''
             create table if not exists {authoring_table_name(FREE_COURSES_TABLE)} (
                 id varchar(128) primary key,
-                course_name varchar(500) not null default '',
+                course_name text not null default '',
                 description text,
                 cover_image_url text,
                 week_builder_week_ids {json_type} not null default '[]',
@@ -12979,11 +12990,11 @@ def provision_free_programme_tables():
                 id varchar(128) primary key,
                 course_id varchar(128) not null,
                 week_id varchar(128),
-                course_name varchar(500) not null,
+                course_name text not null,
                 description text,
                 cover_image_url text,
                 week_number integer not null default 1,
-                week_title varchar(500) not null default '',
+                week_title text not null default '',
                 display_order integer not null default 0,
                 component_count integer not null default 0,
                 total_otjh numeric(8,2) not null default 0,
@@ -12998,7 +13009,7 @@ def provision_free_programme_tables():
                 week_id varchar(128),
                 programme_id varchar(255) not null,
                 type varchar(64) not null,
-                title varchar(500) not null default '',
+                title text not null default '',
                 description text,
                 expected_otjh numeric(8,2) not null default 2,
                 points integer not null default 0,
@@ -13014,7 +13025,7 @@ def provision_free_programme_tables():
         if connection.vendor == 'postgresql':
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
-                add column if not exists course_name varchar(500) not null default ''
+                add column if not exists course_name text not null default ''
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
@@ -13054,7 +13065,7 @@ def provision_free_programme_tables():
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
-                add column if not exists course_name varchar(500) not null default ''
+                add column if not exists course_name text not null default ''
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
@@ -13062,7 +13073,7 @@ def provision_free_programme_tables():
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
-                add column if not exists week_title varchar(500) not null default ''
+                add column if not exists week_title text not null default ''
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
@@ -13106,7 +13117,7 @@ def provision_free_programme_tables():
             cursor.execute(f'pragma table_info({quote_ident(FREE_COURSES_TABLE)})')
             course_columns = {row[1] for row in cursor.fetchall()}
             if 'course_name' not in course_columns:
-                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_name varchar(500) not null default ""')
+                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_name text not null default ""')
             if 'description' not in course_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column description text')
             if 'cover_image_url' not in course_columns:
@@ -13126,11 +13137,11 @@ def provision_free_programme_tables():
             if 'week_id' not in module_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_id varchar(128)')
             if 'course_name' not in module_columns:
-                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column course_name varchar(500) not null default ""')
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column course_name text not null default ""')
             if 'week_number' not in module_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_number integer not null default 1')
             if 'week_title' not in module_columns:
-                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_title varchar(500) not null default ""')
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_title text not null default ""')
             if 'cover_image_url' not in module_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column cover_image_url text')
             if 'week_id' not in columns:
@@ -17209,6 +17220,8 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
             'summary': row.get('summary') or '',
             'learningOutcomes': as_json_value(row.get('learning_outcomes'), []),
             'copiedFromId': clean_str(row.get('copied_from_id')),
+            'holidayNoteEnabled': bool(row.get('holiday_note_enabled')),
+            'holidayNote': clean_str(row.get('holiday_note')),
             'components': components_by_week.get(week_id, []),
             'ksbMappings': mappings_by_week.get(week_id, []),
         })
@@ -17442,6 +17455,8 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
                 'summary': row.get('summary') or '',
                 'learningOutcomes': as_json_value(row.get('learning_outcomes'), []),
                 'copiedFromId': clean_str(row.get('copied_from_id')),
+                'holidayNoteEnabled': bool(row.get('holiday_note_enabled')),
+                'holidayNote': clean_str(row.get('holiday_note')),
                 'components': components_by_week.get(week_id, []),
                 'ksbMappings': mappings_by_week.get(week_id, []),
             })
@@ -18769,6 +18784,12 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                 'summary': week.get('summary') or '',
                 'learning_outcomes': json_db_value(week.get('learningOutcomes') or []),
                 'copied_from_id': clean_str(week.get('copiedFromId') or week.get('copied_from_id')) or None,
+                # The hint the author wrote for a holiday week, and whether it is
+                # published. The switch is what a learner read depends on, so an
+                # absent key is OFF rather than "leave it as it was": this save
+                # replaces the week row outright and there is nothing to leave.
+                'holiday_note_enabled': bool_payload(week.get('holidayNoteEnabled') or week.get('holiday_note_enabled')),
+                'holiday_note': clean_str(week.get('holidayNote') or week.get('holiday_note')),
                 'display_order': week_index,
                 # Attached to this module, so never a detached library item.
                 'library_state': '',
@@ -28631,7 +28652,7 @@ def provision_week_template_tables():
         cursor.execute(f'''
             create table if not exists {authoring_table_name(WEEK_TEMPLATES_TABLE)} (
                 id varchar(128) primary key,
-                title varchar(500) not null default '',
+                title text not null default '',
                 summary text,
                 learning_outcomes {json_type},
                 course_type varchar(16) not null default 'paid',
@@ -28655,7 +28676,7 @@ def provision_week_template_tables():
                 id varchar(128) primary key,
                 week_template_id varchar(128) not null,
                 type varchar(64) not null,
-                title varchar(500) not null default '',
+                title text not null default '',
                 description text,
                 expected_otjh numeric(8,2) not null default 2,
                 points integer not null default 0,

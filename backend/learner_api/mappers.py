@@ -108,6 +108,10 @@ def to_list_row(u):
         # The cohort too, so the directory can offer a programme -> cohort ->
         # group filter cascade. Absent on staff/employer rows, like programme.
         "cohort": _s(u.cohort),
+        # Who owns this learner's case. The directory's Case owner filter builds
+        # its list from the values actually present here rather than a fixed
+        # roster, so an owner who leaves or joins needs no code change.
+        "caseOwner": _s(getattr(u, "case_owner", "")),
         "notesCount": 0,
         # Same reasoning as learningPlan above.
         "hasTasks": True,
@@ -1080,6 +1084,17 @@ def to_learner_detail(source, learner_profile):
         "programmeStatus": programme_status(source) or DEFAULT_PROGRAMME_STATUS,
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "programmeStartDate": _s(programme_start),
+        # The learner's own recorded start, straight from
+        # Created_users.Learner_start_date. programmeStartDate above resolves
+        # through the cohort when the learner has no date of their own, so it
+        # answers "when does this delivery run"; this answers "when does this
+        # learner start", which is what the dashboard header states.
+        "learnerStartDate": _s(getattr(source, "learner_start_date", None)),
+        # The learner's own recorded end, mirroring learnerStartDate above.
+        # programmeEndDate resolves through the delivery, so it answers "when
+        # does this delivery finish"; this answers "when does this learner
+        # finish", which is what the dashboard header states.
+        "learnerEndDate": _s(getattr(source, "learner_end_date", None)),
         "programmeEndDate": _s(programme_end),
         "cohort": _s(source.cohort),
         "group": _s(source.group),

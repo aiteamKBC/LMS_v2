@@ -90,6 +90,13 @@ export function CurriculumTimeline({
                 {holiday.type ? ` · ${holiday.type}` : ''}
                 {holiday.notes ? ` · ${holiday.notes}` : ''}
               </p>)}
+              {/* Only this week's own note, and only one the curriculum team
+                  published: the server sends nothing for a week whose hint is
+                  off, so there is no hidden text here to leak. */}
+              {row.holidays.length > 0 && row.holidayNote
+                && <p className={layout.holidayNote} data-testid="learner-holiday-note">
+                  <strong>From your curriculum team:</strong> {row.holidayNote}
+                </p>}
             </div>
           </li>)}
       </ol>

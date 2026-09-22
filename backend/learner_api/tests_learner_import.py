@@ -1,5 +1,5 @@
 """Excel validation and all-or-nothing import orchestration; no database access."""
-from datetime import date
+from datetime import date, timedelta
 from io import BytesIO
 import json
 from types import SimpleNamespace
@@ -9,9 +9,12 @@ from zipfile import ZipFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase
+from django.utils import timezone
 from openpyxl import Workbook, load_workbook
 
 from . import learner_import as imports, views
+from .booking_calendar import booking_date_restriction
+from .first_session import uk_today
 from .mappers import ValidationError
 from .models import EnrolmentUser
 
@@ -28,8 +31,24 @@ def references():
     }
 
 
+def bookable_day():
+    """The next working day the booking calendar accepts, in UK time.
+
+    Computed rather than hardcoded: a fixed date would start failing the moment
+    it fell into the past, on a weekend, or on a bank holiday.
+    """
+    day = uk_today() + timedelta(days=1)
+    while booking_date_restriction(day, today=uk_today()) is not None:
+        day += timedelta(days=1)
+    return day.isoformat()
+
+
 def student(**overrides):
-    return {"firstName": "Test", "surname": "Learner", "email": "student@example.test", **overrides}
+    # Case owner and the session date are required: the case owner is who the
+    # session is booked with, and the date is the learner's programme start. The
+    # time is optional, so it is not supplied by default.
+    return {"firstName": "Test", "surname": "Learner", "email": "student@example.test",
+            "caseOwner": "Test Coach", "firstSessionDate": bookable_day(), **overrides}
 
 
 def upload(rows=None, headers=None, sheet_name="Students"):
@@ -172,6 +191,48 @@ class StudentValidationTests(SimpleTestCase):
     def validate(self, rows, *, existing=None, refs=None):
         with patch.object(imports, "existing_emails", return_value=existing or set()):
             return imports.validate_students(rows, refs or references())
+
+    def test_a_row_without_a_time_records_the_date_and_books_nothing(self):
+        # The spreadsheet was filled in before the slots were agreed. The learner
+        # still starts on that day; the meeting is arranged later.
+        prepared, _, errors = self.validate([(2, student())])
+
+        self.assertFalse(errors)
+        _row, _fields, session_date, session_time = prepared[0]
+        self.assertEqual(session_date.isoformat(), bookable_day())
+        self.assertIsNone(session_time)
+
+    def test_a_row_with_a_time_is_booked_at_that_time(self):
+        prepared, _, errors = self.validate([(2, student(firstSessionTime="14:30"))])
+
+        self.assertFalse(errors)
+        _row, _fields, session_date, session_time = prepared[0]
+        self.assertEqual(session_date.isoformat(), bookable_day())
+        self.assertEqual(session_time.isoformat(), "14:30:00")
+
+    def test_a_time_without_a_date_is_refused(self):
+        _prepared, _, errors = self.validate(
+            [(2, student(firstSessionDate="", firstSessionTime="14:30"))]
+        )
+
+        self.assertTrue(any("needs a date" in issue["message"] for issue in errors))
+
+    def test_a_missing_case_owner_is_refused(self):
+        _prepared, _, errors = self.validate([(2, student(caseOwner=""))])
+
+        # _issue reports the column's human label, not the payload key.
+        self.assertTrue(any(issue.get("field") == "Case owner" for issue in errors))
+
+    def test_a_weekend_session_date_is_refused(self):
+        saturday = date.fromisoformat(bookable_day())
+        while saturday.weekday() != 5:
+            saturday += timedelta(days=1)
+
+        _prepared, _, errors = self.validate(
+            [(2, student(firstSessionDate=saturday.isoformat()))]
+        )
+
+        self.assertTrue(any("Saturdays" in issue["message"] for issue in errors))
 
     def test_optional_placement_and_same_defaults_as_add_user(self):
         prepared, preview, errors = self.validate([(2, student(email="  STUDENT@EXAMPLE.TEST  "))])
