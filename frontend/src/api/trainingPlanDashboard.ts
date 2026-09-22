@@ -25,7 +25,15 @@ export type PlanSlotHoliday = { id?: string; label: string; startDate: string; e
 export type PlanCurriculumSlot = { slotNumber: number; date: string; day: string;
   type: 'live-session' | 'reading-week'; cause?: string; sessionNumber: number | null; holidays: PlanSlotHoliday[];
   /** The authored week's own id/title/outcomes (curriculum.weeks), matched by sessionNumber. Absent when no week was authored at that number. */
-  weekId?: string; weekTitle?: string; learningOutcomes?: string[] };
+  weekId?: string; weekTitle?: string; learningOutcomes?: string[];
+  /**
+   * The curriculum team's hint for this holiday week, when they published one.
+   *
+   * Served only for a slot a holiday actually lands on, and only when the
+   * author turned the hint on -- an unpublished note never leaves the server,
+   * so there is nothing here for a learner screen to decide about.
+   */
+  holidayNote?: string };
 export type PlanModule = { id: string; title: string; description: string; start_date: string | null; end_date: string | null; tutor_name: string; coach_name: string;
   programme_name?: string; cohort_name?: string; group_name?: string; total_otjh?: number | null;
   weeks_number?: number | null; sessions_number?: number | null;

@@ -81,6 +81,7 @@ import {
   curriculumModuleToCatalogue,
   duplicateModuleStructure,
   duplicateWeekInModule,
+  cloneComponentToWeek,
   isUnbookedCopiedLiveSession,
   flattenKsbEntries,
   getDefaultStructure,
@@ -1615,6 +1616,29 @@ export default function ModuleBuilder() {
     setSelection({ kind: 'week', weekId: copyId });
   }, [updateWorkingModule]);
 
+  // The clone button's "copy to another week" option: the twin lands at the
+  // end of the target week, carrying the source in full except a live
+  // session's Teams meeting and date (`copyComponentToWeek` says why). Client
+  // state only, same as `duplicateWeek` -- the normal module save writes the
+  // whole week structure.
+  const copyComponentToAnotherWeek = useCallback((component: ModuleComponent, targetWeekId: string) => {
+    let copyId = '';
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => {
+        if (week.id !== targetWeekId) return week;
+        const copy = cloneComponentToWeek(component, targetWeekId, module.id);
+        copyId = copy.id;
+        return { ...week, components: [...week.components, copy] };
+      }),
+    }));
+    if (!copyId) return;
+    // Open the target week and select the copy -- the point of a clone is the
+    // edit you make to it, and here that edit happens on a different week.
+    setExpandedWeekIds(prev => new Set(prev).add(targetWeekId));
+    setSelection({ kind: 'component', weekId: targetWeekId, componentId: copyId });
+  }, [updateWorkingModule]);
+
   const confirmDeleteWeek = async (weekId: string) => {
     if (!workingModule) return;
     const week = workingModule.weekStructure.find(item => item.id === weekId);
@@ -2197,7 +2221,7 @@ export default function ModuleBuilder() {
     const current = workingModule;
     // Nothing open: the catalogue behind this is the live surface.
     if (!current) {
-      reload();
+      reload({ silent: true });
       return;
     }
     const structureId = moduleStructureIdentifier(current);
@@ -2223,7 +2247,7 @@ export default function ModuleBuilder() {
       // A failed read leaves the workspace exactly as it was. The next write in
       // the estate, or the reader coming back to the tab, asks again.
       await adoptStoredModule().catch(() => undefined);
-      reload();
+      reload({ silent: true });
       return;
     }
     await noteRemoteRevision(structureId);
@@ -2621,6 +2645,13 @@ export default function ModuleBuilder() {
               onComponentsChange={(weekId, components) => updateWorkingModule(module => ({
                 ...module,
                 weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components } : week)),
+              }))}
+              onCopyComponentToWeek={copyComponentToAnotherWeek}
+              onWeekHolidayNoteChange={(weekId, next) => updateWorkingModule(module => ({
+                ...module,
+                weekStructure: module.weekStructure.map(week => (week.id === weekId
+                  ? { ...week, holidayNoteEnabled: next.enabled, holidayNote: next.message }
+                  : week)),
               }))}
               pointsByType={componentPointsByType}
               plannedSessions={workingModuleSessionPlan?.sessions}
@@ -3049,7 +3080,13 @@ export default function ModuleBuilder() {
             </div>
           </div>
           <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
-            {loading ? (
+            {/* The skeleton stands in for a catalogue that has never been read.
+                Once rows are on screen a re-read keeps them there: somebody
+                else's save moves the shared epoch while this reader is part-way
+                through their own work, and replacing what they are reading with
+                grey bars loses their scroll position and their place for no
+                reason. The subtitle already says a read is in flight. */}
+            {loading && !modules.length ? (
               <ModuleListSkeleton />
             ) : filtered.length > 0 ? (
               <div className="space-y-3">
@@ -3453,7 +3490,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onReuseComponents, onCreateTeamsMeeting, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -3466,6 +3503,14 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onDuplicateWeek: (weekId: string) => void;
   onDropReorder: (targetWeekId: string) => void;
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
+  // The clone button's "copy to another week" option, one component at a time.
+  onCopyComponentToWeek: (component: ModuleComponent, targetWeekId: string) => void;
+  /**
+   * The curriculum author's hint for a week a holiday lands on, and whether
+   * learners see it. Only this rail passes an editor to `WeekHolidayNotice`,
+   * so the control exists only where the module is authored.
+   */
+  onWeekHolidayNoteChange: (weekId: string, next: { enabled: boolean; message: string }) => void;
   onReuseComponents: (weekId: string) => void;
   /**
    * Opens this module's Teams create dialog here, over the rail that lists the
@@ -3894,8 +3939,21 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   background: this week is completely ordinary and its live
                   session runs as authored. Whether it becomes a reading week,
                   keeps its session or something else is the author's call. */}
-              {weekHolidayNotices.map(slot => (
-                <WeekHolidayNotice key={`holiday-${slot.date}`} slot={slot} weekDate={week.sessionDate} compact />
+              {/* The note belongs to the WEEK, so it is offered once even when
+                  a Mon+Fri week has two closed days: two editors over one value
+                  would be two controls writing the same note. */}
+              {weekHolidayNotices.map((slot, slotIndex) => (
+                <WeekHolidayNotice
+                  key={`holiday-${slot.date}`}
+                  slot={slot}
+                  weekDate={week.sessionDate}
+                  compact
+                  note={slotIndex === 0 ? {
+                    enabled: Boolean(week.holidayNoteEnabled),
+                    message: week.holidayNote || '',
+                    onChange: next => onWeekHolidayNoteChange(week.id, next),
+                  } : undefined}
+                />
               ))}
               {unbookedCopiedSessions > 0 && <CopiedLiveSessionNotice count={unbookedCopiedSessions} />}
               {expanded && (
@@ -3918,6 +3976,10 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     holidayDates={weekHolidayNotices.map(slot => slot.date)}
                     dateDriftByComponentId={dateDriftByComponentId}
                     onReuseComponents={() => onReuseComponents(week.id)}
+                    otherWeeks={module.weekStructure
+                      .filter(other => other.id !== week.id)
+                      .map(other => ({ id: other.id, label: other.title || `Week ${other.weekNumber}` }))}
+                    onCopyComponentToWeek={onCopyComponentToWeek}
                   />
                 </div>
               )}

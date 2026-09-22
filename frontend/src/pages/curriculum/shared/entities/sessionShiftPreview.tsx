@@ -1,3 +1,4 @@
+import { useId, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cleanText, formatDateLabel } from './model';
@@ -77,6 +78,7 @@ export function WeekHolidayNotice({
   slot,
   weekDate,
   compact = false,
+  note,
 }: {
   slot: HolidayReadingWeekSlot;
   /**
@@ -90,6 +92,15 @@ export function WeekHolidayNotice({
   weekDate?: string;
   /** Tighter type and spacing, for the narrow Course structure rail. */
   compact?: boolean;
+  /**
+   * The author's hint for this week, when the reader is allowed to write one.
+   *
+   * Omitted everywhere else, which is what makes this curriculum-only: a screen
+   * that merely reads the notice never passes it, so it renders the warning and
+   * nothing else. The control appears only inside this notice, so it exists only
+   * for a week a holiday actually lands on.
+   */
+  note?: WeekHolidayNoteEditor;
 }) {
   const holidays = (slot.holidays || []).filter(holiday => cleanText(holiday.label) || cleanText(holiday.startDate));
   const slotDate = cleanText(slot.date);
@@ -133,6 +144,109 @@ export function WeekHolidayNotice({
           {cleanText(holiday.notes) && ` · ${cleanText(holiday.notes)}`}
         </p>
       ))}
+      {note && <WeekHolidayNoteControl note={note} compact={compact} />}
+    </div>
+  );
+}
+
+/**
+ * The hint a curriculum author writes on a week a holiday falls on, and the
+ * switch that publishes it.
+ *
+ * Two values rather than one, because "written" and "shown" are different
+ * decisions: an author drafting a note has not published it, and one turning
+ * the hint off for a week that ended up running normally should not have to
+ * delete what they wrote to do it. The learner side reads the switch, so text
+ * alone reaches nobody.
+ *
+ * Empty text cannot be published -- the switch is disabled until something is
+ * written -- so "shown" never means an empty hint on a learner's week.
+ */
+export interface WeekHolidayNoteEditor {
+  enabled: boolean;
+  message: string;
+  onChange: (next: { enabled: boolean; message: string }) => void;
+}
+
+/** How much a hint can say. Long enough for instructions, short enough to read on a week card. */
+export const WEEK_HOLIDAY_NOTE_MAX_LENGTH = 400;
+
+function WeekHolidayNoteControl({ note, compact }: { note: WeekHolidayNoteEditor; compact: boolean }) {
+  const [open, setOpen] = useState(false);
+  const fieldId = useId();
+  const message = String(note.message || '');
+  const written = Boolean(message.trim());
+  // Text with the switch off is a draft, and a draft is not a hint anybody has.
+  const published = written && note.enabled;
+  const textSize = compact ? 'text-[10px]' : 'text-[11px]';
+
+  if (!open) {
+    return (
+      <div className={`mt-1 flex flex-wrap items-center gap-1.5 ${textSize}`} data-testid="week-holiday-note-summary">
+        {written ? (
+          <>
+            <span className={`rounded-full border px-1.5 py-px font-bold ${
+              published
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                : 'border-foreground-200 bg-background-100 text-foreground-500'
+            }`}>
+              {published ? 'Shown to learners' : 'Hidden from learners'}
+            </span>
+            <span className="min-w-0 flex-1 truncate font-medium text-amber-900" title={message}>{message}</span>
+          </>
+        ) : (
+          <span className="font-medium text-foreground-500">No note for learners</span>
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="rounded-md border border-amber-300 bg-white px-1.5 py-px font-bold text-amber-800 transition-smooth hover:bg-amber-100"
+        >
+          {written ? 'Edit note for learners' : 'Add note for learners'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`mt-1.5 rounded-lg border border-amber-300 bg-white p-2 ${textSize}`} data-testid="week-holiday-note-editor">
+      <label className="block font-bold text-amber-900" htmlFor={fieldId}>Note for learners in this week</label>
+      <textarea
+        id={fieldId}
+        value={message}
+        maxLength={WEEK_HOLIDAY_NOTE_MAX_LENGTH}
+        rows={compact ? 3 : 4}
+        placeholder="What should learners do about this holiday week?"
+        // Clearing the text un-publishes with it: an empty hint on a learner's
+        // week is not a hint, and leaving the switch on would put one there.
+        onChange={event => note.onChange({
+          enabled: note.enabled && Boolean(event.target.value.trim()),
+          message: event.target.value,
+        })}
+        className={`mt-1 w-full rounded-md border border-background-300 px-2 py-1.5 text-foreground-800 outline-none focus:border-amber-400 ${textSize}`}
+      />
+      <label className={`mt-1.5 flex items-start gap-1.5 font-semibold ${written ? 'text-foreground-700' : 'text-foreground-400'}`}>
+        <input
+          type="checkbox"
+          checked={published}
+          disabled={!written}
+          onChange={event => note.onChange({ enabled: event.target.checked, message })}
+          className="mt-px"
+        />
+        <span>Show this note to learners in this week</span>
+      </label>
+      {!written && (
+        <p className="mt-1 font-medium text-foreground-400">Write the note first, then choose whether learners see it.</p>
+      )}
+      <div className="mt-1.5 flex justify-end">
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded-md border border-amber-300 bg-amber-50 px-2 py-px font-bold text-amber-800 transition-smooth hover:bg-amber-100"
+        >
+          Done
+        </button>
+      </div>
     </div>
   );
 }

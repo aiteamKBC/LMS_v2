@@ -676,6 +676,76 @@ export function validateModuleAuthoringStructure(module: ModuleValidationTarget)
   return issues;
 }
 
+/**
+ * What an author has to have supplied for a component to count as authored.
+ *
+ * Everything here is a field `createEmptyComponent` seeds, so "unedited" means
+ * exactly one thing: nothing on this component differs from what adding it
+ * produced. Deliberately structural rather than a stored `touched` flag --
+ * components authored before any flag existed, imported from a week template or
+ * copied from another module would all read as untouched forever, and a hint
+ * that lies about old content is worse than no hint.
+ */
+export type ComponentAuthoringSnapshot = {
+  type: ModuleComponentType;
+  title?: string;
+  description?: string;
+  expectedOtjh?: number;
+  /** Accepted and deliberately not read -- see `componentLooksUnedited`. */
+  points?: number;
+  reflectionRequired?: boolean;
+  reflectionQuestion?: string;
+  workplaceEvidenceRequired?: boolean;
+  tutorValidationRequired?: boolean;
+  ksbMappings?: Array<unknown>;
+  settings?: ComponentSettings;
+};
+
+function settingValueEmpty(value: unknown) {
+  if (value === undefined || value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === 'string') return value.trim() === '';
+  return false;
+}
+
+function settingValuesMatch(left: unknown, right: unknown) {
+  if (Array.isArray(left) || Array.isArray(right)) return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+  if (typeof left === 'number' || typeof right === 'number') return Number(left) === Number(right);
+  if (typeof left === 'boolean' || typeof right === 'boolean') return Boolean(left) === Boolean(right);
+  return String(left ?? '') === String(right ?? '');
+}
+
+/**
+ * True when the component still carries only the values adding it produced: the
+ * auto-generated title ("Video 3"), no description, no KSBs, and no setting that
+ * differs from its type's default. `points` is not read -- it is stamped from the
+ * programme's points rules at creation, so a component nobody has opened can
+ * already hold a number the definition does not.
+ */
+export function componentLooksUnedited(component: ComponentAuthoringSnapshot): boolean {
+  const definition = getComponentDefinition(component.type);
+  const title = String(component.title || '').trim();
+  const autoTitle = new RegExp(`^${definition.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s+\\d+)?$`, 'i');
+  if (title && !autoTitle.test(title)) return false;
+  if (String(component.description || '').trim()) return false;
+  if ((component.ksbMappings || []).length > 0) return false;
+  if (component.expectedOtjh !== undefined && Number(component.expectedOtjh) !== definition.defaultOtjh) return false;
+  if (component.reflectionRequired !== undefined && component.reflectionRequired !== definition.reflectionDefault) return false;
+  if (component.workplaceEvidenceRequired !== undefined && component.workplaceEvidenceRequired !== definition.workplaceEvidenceDefault) return false;
+  if (component.tutorValidationRequired !== undefined && component.tutorValidationRequired !== definition.tutorValidationDefault) return false;
+  const defaults = definition.defaultSettings;
+  const reflectionQuestion = String(component.reflectionQuestion || '').trim();
+  if (reflectionQuestion && reflectionQuestion !== String(defaults.reflectionPrompt || '').trim()) return false;
+  const settings = component.settings || {};
+  return !Object.keys(settings).some(key => {
+    const value = settings[key];
+    // An empty value is nothing an author typed, whether or not the type
+    // declares the key: a blank `videoUrl` and a missing one say the same thing.
+    if (settingValueEmpty(value)) return false;
+    return !settingValuesMatch(value, defaults[key]);
+  });
+}
+
 export function firstValidationMessage(issues: ValidationIssue[]) {
   if (!issues.length) return '';
   if (issues.length === 1) return issues[0].message;
