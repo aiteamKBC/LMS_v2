@@ -198,7 +198,7 @@ export function signReviewAsEmployer(
 ): Promise<unknown> {
   return request(
     `${BASE}/${employerId}/learner/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`,
-    { method: 'POST', body: JSON.stringify({ party: 'employer', ...input }) },
+    { method: 'POST', body: JSON.stringify(input) },
   );
 }
 
