@@ -92,7 +92,7 @@ function otjhReason(learner: Learner, delta: number | null): AttentionReason | n
       ? `OTJH ${formatHours(behind)} behind target`
       : 'Off-the-job hours behind target',
     detail: learner.overallProgressAvailable
-      ? `${formatHours(learner.otjhCompleted)} recorded of ${formatHours(learner.otjhTargetToDate)} expected by now`
+      ? `${formatHours(learner.otjhCompleted)} recorded of ${formatHours(learner.otjhTarget)} expected by now`
       : undefined,
     severity: statusKey === 'at-risk' ? 'critical' : 'warning',
     metric: 'otjh',
@@ -261,7 +261,7 @@ export function buildLearnerInsight(learner: Learner, today: Date): LearnerInsig
   const otjhDeltaHours = reportedDelta !== null
     ? reportedDelta
     : learner.overallProgressAvailable
-      ? learner.otjhCompleted - learner.otjhTargetToDate!
+      ? learner.otjhCompleted - learner.otjhTarget
       : null;
 
   const programStatus = getProgramStatusKey(learner.rawProgramStatus);

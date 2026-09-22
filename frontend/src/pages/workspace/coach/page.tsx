@@ -24,6 +24,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Panel } from '@/components/ui/Panel';
 import { FilterChip } from '@/components/ui/FilterToolbar';
 import type { ImportedReview } from '@/api/reviewHistory';
+import type { EmbeddedCaseloadLearner } from '@/pages/coach/caseload/types';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import {
   type CoachCalendarEvent,
@@ -98,7 +99,7 @@ interface CoachLearner {
   /** enrolment."Created_users".id -- a different, disjoint pk space from `id`
    *  above. /learner-detail/ needs this one, not the LearnerProfile id. */
   enrolmentId?: string | null;
-  /** Which module/week the cumulative target-to-date currently falls in. */
+  /** Which module/week otjhTarget's cumulative-to-date figure currently falls in. */
   currentModule?: string | null;
   currentWeek?: string | null;
   componentsTargetToDate?: number | null;
@@ -116,11 +117,7 @@ interface CoachLearner {
   attendanceLastSession?: string | null;
   attendanceLastSessionDate?: string | null;
   otjhCompleted: number;
-  otjhTargetToDate?: number | null;
-  /** Deprecated target-to-date alias retained by the backend for compatibility. */
-  otjhTarget?: number | null;
-  /** Full programme planned OTJH hours. */
-  otjhPlanned?: number | null;
+  otjhTarget: number;
   otjhVariance?: number | null;
   otjhStatus?: string | null;
   ksbProgress: number;
@@ -149,9 +146,9 @@ interface CoachLearner {
   reviews: ImportedReview[];
 }
 
-interface CaseloadApiLearner extends Partial<CoachLearner> {
+type CaseloadApiLearner = EmbeddedCaseloadLearner & Partial<CoachLearner> & {
   cohortName?: string | null;
-}
+};
 
 interface CaseloadApiResponse {
   owner?: {
@@ -236,12 +233,6 @@ function toNumber(value?: number | string | null): number {
   return 0;
 }
 
-function toOptionalNumber(value?: number | string | null): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function normalizeMonthlyRisk(points?: MonthlyRiskPoint[] | null): MonthlyRiskPoint[] | null {
   if (!Array.isArray(points)) return null;
   return points.slice(-6).map(point => ({
@@ -269,7 +260,7 @@ function isVisibleRiskFlag(value?: string | null) {
 }
 
 function canonicalOtjhStatus(learner: CoachLearner): OtjhStatusKey {
-  const status = getOtjhGapStatus(learner.otjhCompleted, learner.otjhTargetToDate).status;
+  const status = getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status;
   return status === 'unavailable' ? 'unknown' : status;
 }
 
@@ -372,9 +363,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     attendanceLastSession: learner.attendanceLastSession ?? null,
     attendanceLastSessionDate: learner.attendanceLastSessionDate ?? null,
     otjhCompleted: toNumber(learner.otjhCompleted),
-    otjhTargetToDate: toOptionalNumber(learner.otjhTargetToDate),
-    otjhTarget: toOptionalNumber(learner.otjhTarget),
-    otjhPlanned: toOptionalNumber(learner.otjhPlanned),
+    otjhTarget: Math.max(toNumber(learner.otjhTarget), 0),
     otjhVariance: learner.otjhVariance ?? null,
     otjhStatus: displayValue(learner.otjhStatus),
     ksbProgress: clampPercent(learner.ksbProgress),
@@ -823,19 +812,16 @@ interface OverdueSignal {
 }
 
 function otjhPercentFor(learner: CoachLearner): number | null {
-  return learner.otjhTargetToDate !== null && learner.otjhTargetToDate !== undefined && learner.otjhTargetToDate > 0
-    ? clampPercent((learner.otjhCompleted / learner.otjhTargetToDate) * 100)
-    : null;
+  return learner.otjhTarget > 0 ? clampPercent((learner.otjhCompleted / learner.otjhTarget) * 100) : null;
 }
 
 function otjhVarianceLabel(learner: CoachLearner): string {
-  if (learner.otjhTargetToDate === null || learner.otjhTargetToDate === undefined) return EMPTY_VALUE;
+  if (learner.otjhTarget <= 0) return EMPTY_VALUE;
   if (learner.otjhVariance !== undefined && learner.otjhVariance !== null) {
     const variance = Math.round(learner.otjhVariance * 10) / 10;
     return `${variance > 0 ? '+' : ''}${variance}h`;
   }
-  if (learner.otjhTargetToDate <= 0) return EMPTY_VALUE;
-  const variance = Math.round(((learner.otjhCompleted - learner.otjhTargetToDate) / learner.otjhTargetToDate) * 100);
+  const variance = Math.round(((learner.otjhCompleted - learner.otjhTarget) / learner.otjhTarget) * 100);
   return `${variance > 0 ? '+' : ''}${variance}%`;
 }
 
@@ -1830,9 +1816,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
               {modalLearners.map(learner => {
                 const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
                 const attendance = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
-                const otjh = learner.otjhTargetToDate !== null && learner.otjhTargetToDate !== undefined
-                  ? `${learner.otjhCompleted}/${learner.otjhTargetToDate}`
-                  : EMPTY_VALUE;
+                const otjh = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
                 return (
                   <button
                     key={learner.id}

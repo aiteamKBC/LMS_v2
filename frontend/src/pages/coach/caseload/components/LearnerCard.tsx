@@ -76,7 +76,7 @@ export const LearnerCard = memo(function LearnerCard({
   const attendance = attendanceNote(learner);
   const otjh = otjhNote(insight);
   const otjhProgress = learner.overallProgressAvailable ? learner.overallProgress : null;
-  const otjhProgrammeTarget = learner.otjhPlanned ?? learner.otjhMinimum;
+  const otjhProgrammeTarget = learner.otjhPlanned || learner.otjhMinimum || learner.otjhTarget;
   const componentsTargetProgress = learner.componentsTargetToDate && learner.componentsTargetToDate > 0
     ? clampPercent(((learner.componentsCompleted ?? 0) / learner.componentsTargetToDate) * 100)
     : null;
@@ -147,7 +147,7 @@ export const LearnerCard = memo(function LearnerCard({
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <SectionLabel>OTJH target progress</SectionLabel>
             <span className="text-[12px] font-bold tabular-nums text-foreground-900">
-              {otjhProgress === null ? EMPTY_VALUE : `${otjhProgress}% - ${formatHoursRatio(learner.otjhCompleted, learner.otjhTargetToDate)}`}
+              {otjhProgress === null ? EMPTY_VALUE : `${otjhProgress}% - ${formatHoursRatio(learner.otjhCompleted, learner.otjhTarget)}`}
             </span>
           </div>
           <ProgressBar percent={otjhProgress} />

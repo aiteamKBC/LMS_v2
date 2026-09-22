@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
@@ -31,7 +31,7 @@ const learner = {
   id: '42', name: 'Final Learner', initials: 'FL', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', group: 'G1',
   status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 78, overallProgressAvailable: true,
   attendanceRate: 80, attendanceRateAvailable: true, componentsCompleted: 8, componentsPlanned: 10,
-  otjhCompleted: 70, otjhTargetToDate: 90, otjhTarget: 90, otjhPlanned: 576, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
+  otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
   evidenceCount: 2, nextCoaching: '--', nextReview: '--', lastContact: '--', lastAttendanceDate: '--',
   lastActivity: '19 Sep 2026', lastActivityDate: '2026-09-19T12:30:00Z', lastActivityLabel: 'Latest quiz',
   lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--', lastSubmittedEvidence: '--', recentFlag: null,
@@ -43,43 +43,32 @@ describe('Coach caseload loading', () => {
     fetchCoachCalendarEvents.mockResolvedValue({ events: [] });
   });
 
-  it('keeps the skeleton visible until caseload, attendance and review data are all ready', async () => {
-    let finishAttendance!: (response: Response) => void;
-    const attendanceResponse = new Promise<Response>((resolve) => { finishAttendance = resolve; });
-
-    coachFetch.mockImplementation((url: string) => {
-      if (url.includes('/attendance')) return attendanceResponse;
-      return Promise.resolve(new Response(JSON.stringify({ owner: { name: 'Coach Example' }, learners: [learner] })));
-    });
-
-    render(<MemoryRouter><CoachCaseloadContent /></MemoryRouter>);
-
-    expect(await screen.findByText('Loading learners')).toBeInTheDocument();
-    expect(screen.queryByText('Final Learner')).not.toBeInTheDocument();
-
-    await act(async () => {
-      finishAttendance(new Response(JSON.stringify({
-        learners: [{ id: '42', learner: 'Final Learner', attendance: 92, sessions: 10, hasAttendance: true }],
-      })));
-    });
+  it('uses embedded learners as the authoritative caseload without fetching again', async () => {
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[learner]} /></MemoryRouter>);
 
     expect(await screen.findByText('Final Learner')).toBeInTheDocument();
     expect(screen.getByText('19 Sep 2026')).toBeInTheDocument();
     expect(screen.queryByText('Loading learners')).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'My Learners' })).toBeVisible();
+    expect(coachFetch).not.toHaveBeenCalled();
+    expect(fetchCoachCalendarEvents).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'All Learners' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Status' }));
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
+      'Status', 'On track', 'Need attention', 'At risk',
+    ]);
+    expect(screen.queryByRole('button', { name: 'More filters' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+ shown/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Most urgent first')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Sort direction:/ })).not.toBeInTheDocument();
   });
 
   it('uses the API performance status when filtering the caseload', async () => {
     const atRiskLearner = { ...learner, id: '43', name: 'At Risk Learner', initials: 'AR', status: 'at-risk' } satisfies CaseloadApiLearner;
-    coachFetch.mockImplementation((url: string) => (
-      url.includes('/attendance')
-        ? Promise.resolve(new Response(JSON.stringify({ learners: [] })))
-        : Promise.resolve(new Response(JSON.stringify({ owner: { name: 'Coach Example' }, learners: [learner, atRiskLearner] })))
-    ));
-
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[learner, atRiskLearner]} /></MemoryRouter>);
 
     expect(await screen.findByText('At Risk Learner')).toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Status' }));
     fireEvent.click(screen.getByRole('option', { name: 'At risk' }));
 

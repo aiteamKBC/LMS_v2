@@ -15,7 +15,7 @@ const learner = {
   id: '42', name: 'Emma Carter', initials: 'EC', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', group: 'G1',
   status: 'on-track', enrollmentStatus: 'active', riskFlags: [], otjhStatus: 'on-track', overallProgress: 78, overallProgressAvailable: true,
   attendanceRate: 80, attendanceRateAvailable: true, attendanceSessions: 10, attendancePresent: 9, attendanceAbsent: 1, componentsCompleted: 8, componentsPlanned: 10,
-  otjhCompleted: 70, otjhTargetToDate: 90, otjhTarget: 90, otjhPlanned: 576, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
+  otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
   evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, nextCoaching: '20 Sep 2026', nextReview: '--',
   lastContact: '--', lastAttendanceDate: '--', lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--',
   lastActivity: '19 Sep 2026', lastActivityDate: '2026-09-19T12:30:00Z', lastActivityLabel: 'Latest quiz',
@@ -86,15 +86,9 @@ describe('My Learners table design', () => {
     [120, 'OTJH: 58%', 'critical'],
     [100, 'OTJH: 70%', 'warning'],
     [90, 'OTJH: 78%', 'positive'],
-  ] as const)('uses target-to-date %s to colour OTJH canonically', (otjhTargetToDate, label, tone) => {
-    render(<LearnerTable learners={[{ ...learner, otjhTargetToDate }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+  ] as const)('uses the canonical gap for target %s to colour OTJH', (otjhTarget, label, tone) => {
+    render(<LearnerTable learners={[{ ...learner, otjhTarget }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
       sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
     expect(screen.getByLabelText(label)).toHaveAttribute('data-tone', tone);
-  });
-
-  it('keeps OTJH unavailable instead of classifying against the full programme plan', () => {
-    render(<LearnerTable learners={[{ ...learner, otjhTargetToDate: null, otjhPlanned: 576 }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
-    expect(screen.getByLabelText('OTJH: not available')).toHaveAttribute('data-tone', 'neutral');
   });
 });

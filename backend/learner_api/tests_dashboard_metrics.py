@@ -62,12 +62,13 @@ class DashboardMetricsTests(SimpleTestCase):
         result = ksb_totals(native, [{'componentId': 'a', 'kind': 'component'}])
         self.assertEqual((result['completed'], result['total'], result['percent']), (2, 3, 66.67))
 
-    def test_unmapped_historical_activity_does_not_poison_mapped_ksb_denominator(self):
+    def test_unmapped_historical_activity_makes_ksb_unavailable(self):
         result = ksb_totals([{'id': 'a', 'ksb_mappings': ['K1']}], [],
                             [{'group_id': 1, 'activity_id': 2, 'ksb_mappings': None}])
-        self.assertEqual(result['status'], 'ready')
-        self.assertEqual((result['completed'], result['total'], result['percent']), (0, 1, 0.0))
+        self.assertEqual((result['status'], result['reason']), ('unavailable', 'activity_points_missing'))
+        self.assertEqual((result['completed'], result['total'], result['percent']), (None, None, None))
         self.assertEqual(result['unmappedActivities'], 1)
+        self.assertEqual(result['mappedCompleted'], 0)
         self.assertEqual(result['mappedTotal'], 1)
 
     def test_historical_and_new_ksb_points_union_with_saved_attempts(self):
@@ -197,7 +198,15 @@ class DashboardMetricsTests(SimpleTestCase):
                      patch('learner_api.dashboard_metrics.read_accepted_ksb_rows', return_value=[]):
                     cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
                     cursor.fetchone.side_effect = [(source.email,), (1171.34, [])]
-                    cursor.fetchall.side_effect = [saved_attempts, [(2, '10', 'imported')]]
+                    cursor.fetchall.side_effect = [
+                        [
+                            (2, 10, 'Module one', 'Imported activity', date(2026, 1, 1)),
+                            (2, 11, 'Module one', 'Historical activity 11', date(2026, 1, 2)),
+                            (2, 12, 'Module one', 'Historical activity 12', date(2026, 1, 3)),
+                        ],
+                        saved_attempts,
+                        [(2, '10', 'imported')],
+                    ]
                     result = read_metrics(source, 'commercial')
                     self.assertEqual(tuple(result[metric][key] for metric in ('programme', 'ksb')
                                            for key in ('completed', 'total', 'percent')), expected)

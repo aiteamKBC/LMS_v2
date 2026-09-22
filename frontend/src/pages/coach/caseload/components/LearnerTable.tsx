@@ -52,7 +52,7 @@ function DateMetric({ value, emptyLabel, detail }: { value?: string | null; empt
 }
 
 function otjhTone(learner: Learner) {
-  const statusKey = getOtjhGapStatus(learner.otjhCompleted, learner.otjhTargetToDate).status;
+  const statusKey = getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status;
   if (statusKey === 'at-risk') return 'critical';
   if (statusKey === 'need-attention') return 'warning';
   if (statusKey === 'on-track') return 'positive';
@@ -111,7 +111,7 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
         return <tr key={learner.id}>
           {selectionMode ? <td><input type="checkbox" aria-label={`Select ${learner.name}`} checked={selectedLearnerIds.has(learner.id)} onChange={() => onToggleSelect(learner.id)} /></td> : null}
           <td><div className={styles.learner}><span className={styles.avatar}>{learner.initials}</span><span><strong>{learner.name}</strong><small>{displayValue(learner.programmeName || learner.cohortName)}</small></span></div></td>
-          <td className={styles.progressCell}><Progress label="OTJH" metric="otjh" tone={otjhTone(learner)} value={getOtjhGapStatus(learner.otjhCompleted, learner.otjhTargetToDate).available && learner.otjhTargetToDate! > 0 ? percent(((learner.otjhCompleted / learner.otjhTargetToDate!) * 100)) : null} detail={ratio(learner.otjhCompleted, learner.otjhTargetToDate, 'h')} /></td>
+          <td className={styles.progressCell}><Progress label="OTJH" metric="otjh" tone={otjhTone(learner)} value={getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).available ? percent(((learner.otjhCompleted / learner.otjhTarget) * 100)) : null} detail={ratio(learner.otjhCompleted, learner.otjhTarget, 'h')} /></td>
           <td className={styles.progressCell}><Progress label="KSBs" metric="ksbs" value={percent(learner.ksbProgress, learner.ksbProgressAvailable)} detail={ratio(learner.ksbCompleted, learner.ksbTarget)} /></td>
           <td className={styles.progressCell}><Progress label="Activities" metric="activities" value={componentPercent(learner)} detail={ratio(learner.componentsCompleted, learner.componentsPlanned)} /></td>
           <td className={styles.progressCell}><Progress label="Attendance" metric="attendance" value={percent(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable)} detail={attendanceRatio(learner)} /></td>

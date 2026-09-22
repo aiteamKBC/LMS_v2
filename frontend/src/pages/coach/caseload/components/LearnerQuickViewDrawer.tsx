@@ -138,7 +138,7 @@ function OverviewTab({ learner, insight }: { learner: Learner; insight: LearnerI
           />
           <DataRow
             label="Off-the-job hours"
-            value={learner.overallProgressAvailable ? formatHoursRatio(learner.otjhCompleted, learner.otjhTargetToDate) : EMPTY_VALUE}
+            value={learner.overallProgressAvailable ? formatHoursRatio(learner.otjhCompleted, learner.otjhTarget) : EMPTY_VALUE}
           />
           <DataRow label="Components" value={formatRatio(learner.componentsCompleted, learner.componentsPlanned)} />
           <DataRow label="KSBs" value={formatRatio(learner.ksbCompleted, learner.ksbTarget)} />
@@ -281,7 +281,7 @@ function OtjhTab({ learner, insight }: { learner: Learner; insight: LearnerInsig
         <SectionLabel>Hours against the current-week target</SectionLabel>
         <div className="mt-1.5 flex items-end gap-3">
           <span className="text-2xl font-bold tabular-nums text-foreground-900">
-            {formatHoursRatio(learner.otjhCompleted, learner.otjhTargetToDate)}
+            {formatHoursRatio(learner.otjhCompleted, learner.otjhTarget)}
           </span>
           {delta !== null ? (
             <span className={`pb-1 text-[12px] font-semibold ${delta < -0.5 ? 'text-red-700' : delta > 0.5 ? 'text-emerald-700' : 'text-foreground-500'}`}>
@@ -305,7 +305,7 @@ function OtjhTab({ learner, insight }: { learner: Learner; insight: LearnerInsig
         <SectionLabel>Breakdown</SectionLabel>
         <div className="mt-1">
           <DataRow label="Hours recorded" value={formatHours(learner.otjhCompleted)} />
-          <DataRow label="Expected by now" value={formatHours(learner.otjhTargetToDate)} />
+          <DataRow label="Expected by now" value={formatHours(learner.otjhTarget)} />
           {learner.otjhPlanned ? <DataRow label="Planned for programme" value={formatHours(learner.otjhPlanned)} /> : null}
           {learner.otjhMinimum ? <DataRow label="Minimum required" value={formatHours(learner.otjhMinimum)} /> : null}
           {delta !== null ? (

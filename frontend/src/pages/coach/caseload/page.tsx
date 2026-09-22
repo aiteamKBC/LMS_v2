@@ -45,6 +45,7 @@ import type {
   AttendanceApiResponse,
   CaseloadApiLearner,
   CaseloadApiResponse,
+  EmbeddedCaseloadLearner,
   FilterOption,
   Learner,
   QuickViewTab,
@@ -130,7 +131,7 @@ function hasAuthoritativePerformanceStatus(value?: string | null): boolean {
   return ['at-risk', 'on-track', 'high', 'new-starter'].includes(normalizedPerformanceStatus(value));
 }
 
-export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { embedded?: boolean; embeddedLearners?: Partial<CaseloadApiLearner>[] }) {
+export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { embedded?: boolean; embeddedLearners?: EmbeddedCaseloadLearner[] }) {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
   // Whose caseload this is: the signed-in coach, or the coach an administrator

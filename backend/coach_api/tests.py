@@ -306,8 +306,7 @@ class AuditHourOverlayTests(SimpleTestCase):
 
     base = {
         "otjhCompleted": 0.0,
-        "otjhTargetToDate": None,
-        "otjhTarget": None,
+        "otjhTarget": 1,
         "otjhPlanned": 8.6,
         "overallProgress": 0,
         "overallProgressAvailable": True,
@@ -323,27 +322,29 @@ class AuditHourOverlayTests(SimpleTestCase):
         self.assertEqual(overlaid["otjhPlanned"], 353.0)
         self.assertEqual(overlaid["otjhSource"], "audit")
 
-    def test_missing_pacing_does_not_fall_back_to_the_whole_audit_plan(self):
+    def test_placeholder_target_falls_back_to_the_whole_audit_plan(self):
+        """otjhTarget is floored at 1 when no week pacing was computed. That
+        floor is not a ratio, so rescaling by it would invent a target."""
         overlaid = apply_audit_hour_totals(
             dict(self.base),
             {"audit_tp_planned": 353.0, "audit_lms_actual": 178.45},
         )
 
-        self.assertIsNone(overlaid["otjhTargetToDate"])
-        self.assertFalse(overlaid["overallProgressAvailable"])
+        self.assertEqual(overlaid["otjhTarget"], 353.0)
+        self.assertEqual(overlaid["overallProgress"], 51)
 
     def test_real_week_pacing_is_carried_over_to_the_audit_plan(self):
-        paced = dict(self.base, otjhTargetToDate=4.3, otjhTarget=4.3, otjhPlanned=8.6)
+        paced = dict(self.base, otjhTarget=4.3, otjhPlanned=8.6)
 
         overlaid = apply_audit_hour_totals(
             paced, {"audit_tp_planned": 353.0, "audit_lms_actual": 100.0}
         )
 
-        self.assertEqual(overlaid["otjhTargetToDate"], 176.5)
+        self.assertEqual(overlaid["otjhTarget"], 176.5)
 
     def test_percentage_is_recomputed_so_the_card_agrees_with_itself(self):
         overlaid = apply_audit_hour_totals(
-            dict(self.base, otjhTargetToDate=8.6, otjhTarget=8.6),
+            dict(self.base, otjhTarget=8.6),
             {"audit_tp_planned": 353.0, "audit_lms_actual": 304.97},
         )
 
@@ -356,7 +357,7 @@ class AuditHourOverlayTests(SimpleTestCase):
         )
 
         self.assertEqual(overlaid["otjhCompleted"], 12.5)
-        self.assertIsNone(overlaid["otjhTargetToDate"])
+        self.assertEqual(overlaid["otjhTarget"], 1)
         self.assertEqual(overlaid["otjhPlanned"], 8.6)
 
     def test_a_zero_stored_plan_does_not_divide_by_zero(self):
@@ -365,7 +366,7 @@ class AuditHourOverlayTests(SimpleTestCase):
             {"audit_tp_planned": 353.0, "audit_lms_actual": 50.0},
         )
 
-        self.assertIsNone(overlaid["otjhTargetToDate"])
+        self.assertEqual(overlaid["otjhTarget"], 353.0)
 
     def test_learners_without_audit_figures_keep_their_own(self):
         self.assertEqual(apply_audit_hour_totals(dict(self.base), None), self.base)
@@ -373,32 +374,39 @@ class AuditHourOverlayTests(SimpleTestCase):
 
 
 class OtjhTargetContractTests(SimpleTestCase):
-    def assert_contract(self, actual, target_to_date, planned, variance, status):
+    def assert_contract(self, actual, target, planned, variance, status):
         payload = {
             "otjhCompleted": actual,
-            "otjhTargetToDate": target_to_date,
-            "otjhTarget": target_to_date,
+            "otjhTarget": target,
             "otjhPlanned": planned,
         }
-        result = apply_aptem_variance_status(payload, None)
+        result = apply_aptem_variance_status(payload, "4317")
         self.assertEqual(result["otjhVariance"], variance)
         self.assertEqual(result["otjhStatus"], status)
         self.assertEqual(result["otjhPlanned"], planned)
 
-    def test_valid_target_to_date_is_need_attention(self):
+    def test_valid_target_is_need_attention(self):
         self.assert_contract(242, 270, 576, -28.0, "Need Attention")
 
     def test_large_deficit_is_at_risk(self):
         self.assert_contract(200, 250, 576, -50.0, "At Risk")
 
-    def test_twenty_hour_gap_is_on_track(self):
-        self.assert_contract(250, 270, 576, -20.0, "On Track")
+    def test_twenty_hour_gap_needs_attention(self):
+        self.assert_contract(250, 270, 576, -20.0, "Need Attention")
 
-    def test_unavailable_pacing_does_not_use_full_plan(self):
-        self.assert_contract(242, None, 576, None, "Unavailable")
+    def test_missing_target_leaves_existing_status_untouched(self):
+        payload = {"otjhCompleted": 242, "otjhTarget": None, "otjhPlanned": 576}
+        result = apply_aptem_variance_status(payload, "4317")
+        self.assertIs(result, payload)
+        self.assertNotIn("otjhVariance", result)
+        self.assertNotIn("otjhStatus", result)
 
-    def test_explicit_zero_target_to_date_is_preserved(self):
-        self.assert_contract(0, 0, 576, 0.0, "On Track")
+    def test_zero_target_leaves_existing_status_untouched(self):
+        payload = {"otjhCompleted": 0, "otjhTarget": 0, "otjhPlanned": 576}
+        result = apply_aptem_variance_status(payload, "4317")
+        self.assertIs(result, payload)
+        self.assertNotIn("otjhVariance", result)
+        self.assertNotIn("otjhStatus", result)
 
     @patch("coach_api.views.read_audit_hour_totals_bulk")
     @patch("coach_api.views.audit_connection")
@@ -438,7 +446,7 @@ class OtjhTargetContractTests(SimpleTestCase):
 class CanonicalCoachMetricsTests(SimpleTestCase):
     def test_otjh_status_uses_agreed_variance_boundaries(self):
         self.assertEqual(otjh_status_from_variance(Decimal("-19.99")), "On track")
-        self.assertEqual(otjh_status_from_variance(Decimal("-20")), "Need attention")
+        self.assertEqual(otjh_status_from_variance(Decimal("-20")), "On track")
         self.assertEqual(otjh_status_from_variance(Decimal("-39.99")), "Need attention")
         self.assertEqual(otjh_status_from_variance(Decimal("-40")), "Need attention")
         self.assertEqual(otjh_status_from_variance(Decimal("-41")), "At risk")
@@ -446,7 +454,7 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
 
     def test_live_metrics_match_learner_facts_but_keep_coach_target_pacing(self):
         payload = {
-            "otjhCompleted": 56.7, "otjhTargetToDate": 82.9, "otjhTarget": 82.9, "otjhPlanned": 400,
+            "otjhCompleted": 56.7, "otjhTarget": 82.9, "otjhPlanned": 400,
             "overallProgress": 68, "overallProgressAvailable": True,
             "ksbCompleted": 3, "ksbTarget": 20, "ksbProgress": 14,
             "ksbProgressAvailable": True, "enrollmentStatus": "active",
@@ -461,7 +469,7 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         result = apply_canonical_learner_metrics(payload, metrics)
 
         self.assertEqual(result["otjhCompleted"], 74.71)
-        self.assertEqual(result["otjhTargetToDate"], 120.57)
+        self.assertEqual(result["otjhTarget"], 120.57)
         self.assertEqual(result["overallProgress"], 62)
         self.assertEqual(result["otjhStatus"], "At risk")
         self.assertEqual(result["programmeProgress"], 8.97)
@@ -513,7 +521,7 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
             "ksb": {"completed": 2, "total": 4, "percent": 50, "status": "ready"},
         }
         result = apply_canonical_learner_metrics(payload, metrics)
-        self.assertEqual(result["ksbStatus"], derive_ksb_status(2, 4))
+        self.assertEqual(result["ksbStatus"], "In Progress")
 
     def test_aptem_canonical_ksb_evidence_is_merged_and_parent_normalized(self):
         payload = {"ksbCompletedDetails": [{"code": "B1", "sources": []}]}

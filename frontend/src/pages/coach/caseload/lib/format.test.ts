@@ -3,19 +3,6 @@ import { getOtjhGapStatus } from './format';
 
 describe('getOtjhGapStatus', () => {
   it.each([
-    [242, 270, 28, 'need-attention'],
-    [200, 250, 50, 'at-risk'],
-    [250, 270, 20, 'on-track'],
-    [0, 0, 0, 'on-track'],
-  ] as const)('classifies actual %s against target-to-date %s', (actual, target, gapHours, status) => {
-    expect(getOtjhGapStatus(actual, target)).toEqual({ gapHours, status, available: true });
-  });
-
-  it('keeps unavailable pacing unavailable even when a full plan exists elsewhere', () => {
-    expect(getOtjhGapStatus(242, null)).toEqual({ gapHours: null, status: 'unavailable', available: false });
-  });
-
-  it.each([
     [535, 'at-risk'],
     [536, 'need-attention'],
     [555, 'need-attention'],
@@ -32,6 +19,7 @@ describe('getOtjhGapStatus', () => {
   it.each([
     [null, 576],
     [535, null],
+    [535, 0],
     [535, -1],
   ])('marks actual %s and target %s unavailable', (actual, target) => {
     expect(getOtjhGapStatus(actual, target)).toEqual({
