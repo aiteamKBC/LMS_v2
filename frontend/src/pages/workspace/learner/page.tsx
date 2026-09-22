@@ -127,7 +127,12 @@ export default function LearnerOverview() {
   // because it reads back a cohort date for a learner whose own date differs.
   const startDateDisplay = formatProgrammeStartDate(real?.learnerStartDate
     || real?.learningAccess?.startDate || real?.programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
-  const plannedEndDisplay = formatProgrammeStartDate(real?.programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
+  // Same reasoning as the start date above: the learner's own recorded end
+  // (Created_users.Learner_end_date) wins. programmeEndDate resolves through
+  // the delivery's end columns, which are empty for a learner whose end date
+  // is recorded only against themselves -- that read back as "--".
+  const plannedEndDisplay = formatProgrammeStartDate(real?.learnerEndDate
+    || real?.programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
     new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }));
   const planPlaceholder = scheduleRead.loading ? 'Loading...' : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;

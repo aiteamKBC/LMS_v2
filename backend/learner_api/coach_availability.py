@@ -89,9 +89,32 @@ def coach_available_slots(request, kind, pk):
     learner = model.all_learners.filter(pk=pk).first()
     if learner is None:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
-    profile = learner_profile_for_source(learner, pk, active_only=True)
-    if not profile or not profile.coach_email:
-        return JsonResponse({'error': 'No coach has been assigned to you yet.'}, status=400)
+    # Whose calendar to check depends on which meeting is being booked, and it
+    # has to be the same mailbox the booking itself will use -- otherwise the
+    # slots offered describe one person's day and the invitation lands in
+    # another's.
+    #
+    # ``collegeDay`` is the first session, which ``learner_calendar_book``
+    # creates on the *case owner's* mailbox: it happens before the learner is
+    # Active and before any coach exists, so requiring a coach here would be
+    # circular -- the learner cannot become Active until the session it gates
+    # has happened. Everything else is a session within a running programme,
+    # held with the assigned coach.
+    college_day = request.GET.get('collegeDay') in ('1', 'true')
+    if college_day:
+        from .calendar import _case_owner_contact
+        owner_email = (_case_owner_contact(learner)[0] or '').strip()
+        if not owner_email:
+            return JsonResponse(
+                {'error': 'No case owner has been assigned to you yet. '
+                          'Please contact your programme team.'},
+                status=400,
+            )
+    else:
+        profile = learner_profile_for_source(learner, pk, active_only=True)
+        if not profile or not profile.coach_email:
+            return JsonResponse({'error': 'No coach has been assigned to you yet.'}, status=400)
+        owner_email = profile.coach_email.strip()
     try:
         day = date.fromisoformat(request.GET.get('date', ''))
         offset = int(request.GET.get('timezoneOffsetMinutes', '0'))
@@ -99,11 +122,55 @@ def coach_available_slots(request, kind, pk):
             raise ValueError()
     except ValueError:
         return JsonResponse({'error': 'Choose a valid date and timezone.'}, status=400)
+    unconfirmed = ''
     try:
-        slots = free_slots(profile.coach_email.strip(), day, offset)
+        free = free_slots(owner_email, day, offset)
     except AvailabilityUnavailable as exc:
-        return JsonResponse({'error': str(exc)}, status=503)
-    response = JsonResponse({'date': day.isoformat(), 'times': slots, 'durationMinutes': 60})
+        # A first session must stay bookable when Microsoft cannot be reached.
+        #
+        # For the MCM picker an outage is a hard stop: the learner already has
+        # a programme and can try again later. The first session is the meeting
+        # that *opens* the programme, so the same answer would leave a learner
+        # shut out of everything for as long as Graph is unwell, with nothing
+        # to do about it -- and the case owner's calendar not being linked at
+        # all is not a temporary outage, it is a permanent one.
+        #
+        # So the college day is offered unchecked, and said to be unchecked.
+        # The booking still goes through the same Graph call, which either
+        # succeeds or returns its own warning; this only decides whether the
+        # learner is allowed to try. Double-booking an hour is a smaller harm
+        # than a learner who cannot start at all, and it is one a case owner
+        # can see and move.
+        if not college_day:
+            return JsonResponse({'error': str(exc)}, status=503)
+        free = college_day_hours()
+        unconfirmed = str(exc)
+    # ``collegeDay`` asks for the first-session shape: the college's own
+    # 09:00-16:00 working day, on the hour, every hour reported with a flag.
+    # Without it the answer stays the 15-minute grid of the coach's own hours,
+    # which is what the MCM picker wants -- a learner rearranging a monthly
+    # meeting around their job is well served by 10:15, and their coach's
+    # working day is the one that meeting happens in.
+    #
+    # A first session is a different thing: it is the meeting that starts the
+    # programme, held in Kent, and it is offered as a short list of hours the
+    # college works so a learner picks a slot rather than composes a time.
+    if college_day:
+        slots = college_day_availability(free)
+        payload = {
+            'date': day.isoformat(),
+            'slots': slots,
+            'times': [slot['time'] for slot in slots if slot['available']],
+            'durationMinutes': 60,
+        }
+        # Named so the form can say the hours are not confirmed. Not an
+        # `error`: the learner can still book, and calling it an error would
+        # tell them to stop when the one thing they must do is carry on.
+        if unconfirmed:
+            payload['unconfirmed'] = unconfirmed
+    else:
+        payload = {'date': day.isoformat(), 'times': free, 'durationMinutes': 60}
+    response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'
     return response
 
@@ -216,6 +283,10 @@ def case_owner_available_slots(request):
             raise ValueError()
     except ValueError:
         return JsonResponse({'error': 'Choose a valid date and timezone.'}, status=400)
+    # An outage is a hard stop here, unlike the learner's own first-session
+    # picker: this form is being filled in by staff, who can chase an unlinked
+    # calendar or simply come back -- and who would otherwise be booking a real
+    # meeting into hours nobody has checked.
     try:
         free = free_slots(owner_email, day, offset)
     except AvailabilityUnavailable as exc:

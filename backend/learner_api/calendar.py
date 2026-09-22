@@ -41,6 +41,7 @@ from .booking_calendar import booking_calendar_payload, booking_date_restriction
 # The first session's own vocabulary: its event type, and the college's today.
 # Imported rather than restated so the gate, the booking and the calendar
 # cannot disagree about either.
+from .aptem_status import programme_status
 from .first_session import (
     SESSION_TYPE as FIRST_SESSION_TYPE,
     imported_from_aptem as first_session_imported_from_aptem,
@@ -1885,6 +1886,27 @@ def learner_onboarding_reviews(request, kind, pk):
     })
 
 
+def _already_started(learner):
+    """Whether this learner's programme is already running.
+
+    Active is the whole test. Being Active *is* the statement that the
+    programme is under way, so there is no first session left to arrange --
+    whether or not a start date was ever written, and whether or not the
+    session was booked through this flow at all.
+
+    A start date is deliberately not also required. Active learners who have
+    none are real (a learner activated before their session was arranged, or
+    one carried in from an older route), and requiring the date sent exactly
+    those learners to the booking screen, which is the lockout this branch
+    exists to prevent.
+
+    The one thing this must not swallow is the waiting state: a learner with a
+    session booked for a future day is *not* Active yet, so they still get the
+    holding screen and the day still has to arrive.
+    """
+    return programme_status(learner).casefold() == "active"
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_first_session(request, kind, pk):
     """Whether this learner has booked their first session, and when.
@@ -1905,7 +1927,9 @@ def learner_first_session(request, kind, pk):
     * ``book``    -- nothing booked yet; the learner books it.
     * ``waiting`` -- booked, but the day has not arrived.
     * ``open``    -- the session day has come (or passed), so the programme runs
-      normally from here.
+      normally from here. Also any Active learner, whose programme is running
+      whether or not a session was ever booked through here
+      (``_already_started``).
 
     Computed on every request rather than stored, so nothing has to run
     overnight to let a learner in, and moving the session takes effect at once.
@@ -1939,6 +1963,13 @@ def learner_first_session(request, kind, pk):
         # and book_first_session skips them entirely -- so they will never have
         # one of these. Holding them out until a session that is never going to
         # be booked would lock them out of their own programme for good.
+        access = "open"
+    elif _already_started(learner):
+        # An Active learner's programme is already running, so there is no
+        # first session left to arrange. Asking them to book one would hold a
+        # learner out of a programme they are part-way through -- the same
+        # permanent lockout the Aptem case above avoids, reached by a different
+        # route (activated outside this booking flow, or before it existed).
         access = "open"
     elif starts_on is None:
         access = "book"

@@ -41,8 +41,12 @@ def booking(scheduled_date, *, status="scheduled"):
 
 
 class FirstSessionAccessTests(SimpleTestCase):
-    def call(self, *, record=None, aptem_id=None, owner=("ann@kbc.test", "Ann Coach")):
-        learner = SimpleNamespace(pk=7, aptem_id=aptem_id)
+    def call(self, *, record=None, aptem_id=None, owner=("ann@kbc.test", "Ann Coach"),
+             programme_status="Fresh user", learner_start_date=None):
+        learner = SimpleNamespace(
+            pk=7, aptem_id=aptem_id,
+            programme_status=programme_status, learner_start_date=learner_start_date,
+        )
         model = SimpleNamespace(
             all_learners=SimpleNamespace(
                 filter=lambda **kw: SimpleNamespace(first=lambda: learner)
@@ -100,6 +104,43 @@ class FirstSessionAccessTests(SimpleTestCase):
 
         self.assertEqual(payload["access"], "open")
         self.assertFalse(payload["booked"])
+
+    def test_an_active_learner_is_never_asked_to_book(self):
+        """Their programme is already running. Sending them to the booking
+        screen would hold a part-way learner out of their own programme."""
+        payload = body(self.call(
+            record=None, programme_status="Active", learner_start_date="2025-10-15",
+        ))
+
+        self.assertEqual(payload["access"], "open")
+
+    def test_active_without_a_start_date_is_still_let_in(self):
+        """A learner activated before their session was arranged has no start
+        date, and is exactly who the old start-date requirement locked out."""
+        payload = body(self.call(
+            record=None, programme_status="Active", learner_start_date=None,
+        ))
+
+        self.assertEqual(payload["access"], "open")
+
+    def test_a_start_date_alone_does_not_open_the_programme(self):
+        """A booked session writes the start date ahead of the day. The learner
+        is not Active yet, so they wait for the day like anybody else."""
+        ahead = learner_calendar.first_session_uk_today() + timedelta(days=3)
+
+        payload = body(self.call(
+            record=booking(ahead), programme_status="Fresh user",
+            learner_start_date=ahead.isoformat(),
+        ))
+
+        self.assertEqual(payload["access"], "waiting")
+
+    def test_a_learner_who_is_not_active_yet_still_books(self):
+        """Being not-yet-Active with nothing booked is the booking screen's
+        whole purpose; opening up here would retire the feature."""
+        payload = body(self.call(record=None, programme_status="Fresh user"))
+
+        self.assertEqual(payload["access"], "book")
 
     def test_a_learner_with_no_case_owner_is_reported_rather_than_guessed(self):
         payload = body(self.call(record=None, owner=("", "")))

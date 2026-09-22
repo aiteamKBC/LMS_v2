@@ -41,6 +41,7 @@ export function SessionSlotPicker({
   disabled = false,
   loading = false,
   error = '',
+  unconfirmed = '',
   emptyMessage = 'Your case owner has no free hours on that day. Please choose another.',
 }: {
   slots: SessionSlot[];
@@ -50,6 +51,9 @@ export function SessionSlotPicker({
   disabled?: boolean;
   loading?: boolean;
   error?: string;
+  /** Set when the case owner's calendar could not be read, so these are the
+   *  college's hours offered unchecked rather than their real free time. */
+  unconfirmed?: string;
   emptyMessage?: string;
 }) {
   if (loading) {
@@ -121,6 +125,15 @@ export function SessionSlotPicker({
       {!free && (
         <p role="status" className="text-[12px] text-foreground-500">
           {emptyMessage}
+        </p>
+      )}
+      {unconfirmed && (
+        // Said plainly, and not as an error: the learner can and should still
+        // book. What they must not do is believe the hour was checked.
+        <p role="status" className="text-[12px] text-amber-700">
+          We could not check your case owner{'’'}s calendar, so these are the
+          college{'’'}s usual hours. Book the time that suits you — your case
+          owner will confirm it, or get in touch to move it.
         </p>
       )}
     </div>

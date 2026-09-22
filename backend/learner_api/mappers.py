@@ -1060,6 +1060,11 @@ def to_learner_detail(source, learner_profile):
         # answers "when does this delivery run"; this answers "when does this
         # learner start", which is what the dashboard header states.
         "learnerStartDate": _s(getattr(source, "learner_start_date", None)),
+        # The learner's own recorded end, mirroring learnerStartDate above.
+        # programmeEndDate resolves through the delivery, so it answers "when
+        # does this delivery finish"; this answers "when does this learner
+        # finish", which is what the dashboard header states.
+        "learnerEndDate": _s(getattr(source, "learner_end_date", None)),
         "programmeEndDate": _s(programme_end),
         "cohort": _s(source.cohort),
         "group": _s(source.group),

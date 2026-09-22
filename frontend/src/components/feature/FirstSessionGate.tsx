@@ -3,12 +3,15 @@ import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import {
   bookLearnerCalendarSession,
+  fetchFirstSessionSlots,
   fetchLearnerFirstSession,
   rescheduleLearnerCalendarSession,
+  ukOffsetForDate,
   type LearnerFirstSession,
+  type SessionSlot,
 } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { SessionTimeColumns, slotLabel } from './SessionTimeColumns';
+import { SessionSlotPicker, slotLabel } from './SessionSlotPicker';
 import { RouteLoadingSkeleton } from './RouteLoadingSkeleton';
 
 // ============================================================================
@@ -49,17 +52,6 @@ function earliestBookable(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(day);
-}
-
-/** The UK offset for a given day, in JavaScript's own sign convention
- *  (UTC minus local), which is what the backend reads.
- *
- *  Pinned to Europe/London rather than the browser's zone: the session happens
- *  in Kent whatever the learner's own clock says. */
-function ukOffsetFor(date: string): number {
-  return (12 - Number(new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/London', hour: '2-digit', hourCycle: 'h23',
-  }).format(new Date(`${date}T12:00:00Z`)))) * 60;
 }
 
 function longDate(date: string): string {
@@ -221,6 +213,67 @@ function Waiting({ state, kind, learnerId, onChanged }: {
   );
 }
 
+/** The case owner's free hours for a chosen day.
+ *
+ *  Reloaded whenever the date changes, because availability is a property of
+ *  the day, not of the form. A time already picked is cleared when the new
+ *  day does not offer it — otherwise changing the date could silently keep a
+ *  selection the case owner is busy for.
+ */
+function useSessionSlots(
+  kind: LearnerKind,
+  learnerId: string,
+  date: string,
+  onUnavailable: () => void,
+) {
+  const [slots, setSlots] = useState<SessionSlot[]>([]);
+  const [unconfirmed, setUnconfirmed] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!date) {
+      setSlots([]);
+      setUnconfirmed('');
+      setError('');
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    setError('');
+    fetchFirstSessionSlots(kind, learnerId, date, controller.signal)
+      .then(result => {
+        if (controller.signal.aborted) return;
+        setSlots(result.slots);
+        setUnconfirmed(result.unconfirmed);
+        onUnavailable();
+      })
+      .catch((err: Error) => {
+        if (controller.signal.aborted) return;
+        setSlots([]);
+        setUnconfirmed('');
+        setError(err.message || 'Could not check your case owner’s calendar.');
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+    // `onUnavailable` is a stable callback from the caller; re-running on a new
+    // identity would refetch the same day on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, learnerId, date]);
+
+  return { slots, unconfirmed, loading, error };
+}
+
+/** True when the picked time is one the case owner is actually free for.
+ *
+ *  Checked before booking as well as in the picker: the slots were read when
+ *  the date was chosen, and somebody else may have taken the hour since. The
+ *  backend checks again too — this only keeps the button honest. */
+function bookable(slots: SessionSlot[], time: string): boolean {
+  return slots.some(slot => slot.time === time && slot.available);
+}
+
 /** Move a session the learner has already booked.
  *
  *  The same endpoint the enrolment officer uses from the learner's record, so
@@ -234,16 +287,24 @@ function Reschedule({ state, kind, learnerId, onDone, onCancel }: {
   onCancel: () => void;
 }) {
   const [date, setDate] = useState(state.startsOn || '');
-  const [time, setTime] = useState((state.event?.scheduledTime || '').slice(0, 5) || '09:00');
+  const [time, setTime] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // A time is not carried over from the existing booking: the hours offered
+  // are the ones free *now*, and the session's own hour is among them only
+  // because it is excluded from its own clash check. Making the learner pick
+  // is also what stops "Move my session" being pressable before they have.
+  const { slots, unconfirmed, loading, error: slotsError } = useSessionSlots(
+    kind, learnerId, date, () => setTime(''),
+  );
 
   const eventKey = state.event?.eventKey || '';
   const unchanged = date === state.startsOn
     && time === (state.event?.scheduledTime || '').slice(0, 5);
 
   const move = async () => {
-    if (saving || !date || !time || unchanged || !eventKey) return;
+    if (saving || !date || unchanged || !eventKey || !bookable(slots, time)) return;
     setSaving(true);
     setError('');
     try {
@@ -252,7 +313,7 @@ function Reschedule({ state, kind, learnerId, onDone, onCancel }: {
         scheduledDate: date,
         scheduledTime: time,
         durationMinutes: state.event?.durationMinutes || 60,
-        timezoneOffsetMinutes: ukOffsetFor(date),
+        timezoneOffsetMinutes: ukOffsetForDate(date),
       });
       onDone();
     } catch (err) {
@@ -289,17 +350,26 @@ function Reschedule({ state, kind, learnerId, onDone, onCancel }: {
             Weekdays only — not weekends or UK bank holidays.
           </span>
         </label>
-        <div className="flex flex-col gap-1.5">
-          <span id="reschedule-time-label" className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500">
-            Time (UK)
-          </span>
-          <SessionTimeColumns
+      </div>
+
+      <div className="mt-4 flex flex-col gap-1.5">
+        <span id="reschedule-time-label" className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500">
+          Time (UK)
+        </span>
+        {date ? (
+          <SessionSlotPicker
+            slots={slots}
             value={time}
             onChange={next => { setTime(next); setError(''); }}
             labelledBy="reschedule-time-label"
             disabled={saving}
+            loading={loading}
+            error={slotsError}
+            unconfirmed={unconfirmed}
           />
-        </div>
+        ) : (
+          <p className="text-[13px] text-foreground-500">Choose a date to see the times available.</p>
+        )}
       </div>
 
       {time && (
@@ -312,7 +382,7 @@ function Reschedule({ state, kind, learnerId, onDone, onCancel }: {
         <button
           type="button"
           onClick={() => void move()}
-          disabled={saving || unchanged || !date || !time}
+          disabled={saving || unchanged || !date || !bookable(slots, time)}
           className="inline-flex items-center gap-2 rounded-xl bg-primary-500 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed"
         >
           <i className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} aria-hidden="true" />
@@ -344,6 +414,13 @@ function Booking({ state, kind, learnerId, onBooked }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Changing the day drops the hour: the new day has its own free hours, and
+  // keeping a selection made against the old one would book a time the case
+  // owner may well be busy for.
+  const { slots, unconfirmed, loading, error: slotsError } = useSessionSlots(
+    kind, learnerId, date, () => setTime(''),
+  );
+
   const owner = state.caseOwner;
 
   // Without a case owner there is nobody to meet. The learner cannot fix that
@@ -363,7 +440,7 @@ function Booking({ state, kind, learnerId, onBooked }: {
   }
 
   const book = async () => {
-    if (saving || !date || !time) return;
+    if (saving || !date || !bookable(slots, time)) return;
     setSaving(true);
     setError('');
     try {
@@ -372,7 +449,7 @@ function Booking({ state, kind, learnerId, onBooked }: {
         scheduledDate: date,
         scheduledTime: time,
         durationMinutes: 60,
-        timezoneOffsetMinutes: ukOffsetFor(date),
+        timezoneOffsetMinutes: ukOffsetForDate(date),
       });
       onBooked();
     } catch (err) {
@@ -412,17 +489,28 @@ function Booking({ state, kind, learnerId, onBooked }: {
             Weekdays only — not weekends or UK bank holidays.
           </span>
         </label>
-        <div className="flex flex-col gap-1.5">
-          <span id="first-session-time-label" className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500">
-            Time (UK)
-          </span>
-          <SessionTimeColumns
+      </div>
+
+      <div className="mt-4 flex flex-col gap-1.5">
+        <span id="first-session-time-label" className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500">
+          Time (UK)
+        </span>
+        {date ? (
+          <SessionSlotPicker
+            slots={slots}
             value={time}
             onChange={next => { setTime(next); setError(''); }}
             labelledBy="first-session-time-label"
             disabled={saving}
+            loading={loading}
+            error={slotsError}
+            unconfirmed={unconfirmed}
           />
-        </div>
+        ) : (
+          <p className="text-[13px] text-foreground-500">
+            Choose a date to see the times {owner.name} is free.
+          </p>
+        )}
       </div>
 
       {time && (
@@ -434,7 +522,7 @@ function Booking({ state, kind, learnerId, onBooked }: {
       <button
         type="button"
         onClick={() => void book()}
-        disabled={saving || !date || !time}
+        disabled={saving || !date || !bookable(slots, time)}
         className="mt-5 inline-flex items-center gap-2 rounded-xl bg-primary-500 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed"
       >
         <i className={saving ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} aria-hidden="true" />
