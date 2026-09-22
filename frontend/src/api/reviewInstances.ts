@@ -133,6 +133,29 @@ export interface ReviewMeetingSummarySource {
   message?: string;
 }
 
+/** Stored context from the immediately preceding occurrence of this Review.
+ * The endpoint is read-only and never fetches a live Teams artifact. */
+export interface PreviousReviewSession {
+  available: boolean;
+  reason?: string;
+  instance?: {
+    id: string;
+    occurrenceNumber: number | null;
+    targetDate: string;
+    completedAt: string | null;
+    status: string;
+  } | null;
+  review?: {
+    name: string;
+    reviewTypeCode?: string | null;
+    reviewTemplateId?: string | null;
+  } | null;
+  summaryText: string;
+  transcriptText: string;
+  transcriptAvailable: boolean;
+  transcriptTruncated: boolean;
+}
+
 export interface ReviewInstanceFormDefinition {
   pdf?: { available: boolean; reason: string } | null;
   /** Progress Review only, and null until a coach calculates it. */
@@ -227,6 +250,11 @@ export async function openReviewInstanceForEvent(eventKey: string) {
 export async function fetchReviewInstanceForm(instanceId: string, signal?: AbortSignal) {
   const response = await coachFetch(instanceUrl(instanceId), { signal });
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function fetchPreviousReviewSession(instanceId: string, signal?: AbortSignal) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/previous`, { signal });
+  return readJsonResponse<PreviousReviewSession>(response);
 }
 
 export async function saveReviewInstanceAnswers(instanceId: string, answers: Record<string, unknown>) {

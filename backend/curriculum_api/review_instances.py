@@ -1798,6 +1798,41 @@ def _refresh_locked_editable_definition_snapshot(instance_row, *, actor):
     return refreshed
 
 
+def writable_field_ids_for_role(sections, role):
+    """Field ids in this frozen definition whose configuration opts a
+    non-advisor ``role`` ('participant' or 'employer') into answering them.
+
+    The advisor (coach) is never checked against this list -- coach_api's
+    answer endpoint always allows every field. This is only for the Learner
+    and Employer surfaces, which share the same ReviewFormRenderer but must
+    stay read-only outside whatever the Curriculum template opted them into.
+    """
+    return {
+        field.get('id')
+        for field in _flatten_snapshot_fields(sections)
+        if role in ((field.get('configuration') or {}).get('respondentRoles') or [])
+    }
+
+
+def save_review_instance_answers_for_role(instance_row, answers, role, *, actor='system'):
+    """Like ``save_review_instance_answers``, restricted to the fields this
+    respondent role (participant/employer) is allowed to answer.
+
+    Fails closed: posting even one field id outside the role's allowed set
+    raises rather than silently dropping it, so a stale or tampered payload
+    is rejected instead of partially applied.
+    """
+    definition = review_instance_form_definition(instance_row)
+    allowed_ids = writable_field_ids_for_role(definition.get('sections', []), role)
+    posted_ids = set((answers or {}).keys())
+    disallowed = posted_ids - allowed_ids
+    if disallowed:
+        raise PermissionError(
+            f"Not authorised to answer: {', '.join(sorted(disallowed))}."
+        )
+    return save_review_instance_answers(instance_row, answers, actor=actor)
+
+
 def save_review_instance_answers(instance_row, answers, *, actor='system'):
     """Draft save -- merges posted {fieldId: value} into whatever is already
     stored. A conditional field hidden by its parent's current answer is

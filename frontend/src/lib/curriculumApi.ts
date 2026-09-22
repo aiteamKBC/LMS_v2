@@ -4387,7 +4387,19 @@ export type ReviewParticipantRole = 'advisor' | 'employer' | 'participant' | 're
 
 export type ReviewConditionValue = 'yes' | 'no';
 
-export interface ListItemConfiguration {
+/** Non-advisor roles a Field's own configuration may opt into answering it.
+ * The advisor (coach) can always answer every field regardless of this list --
+ * see reviews.FIELD_RESPONDENT_ROLES on the backend. */
+export type ReviewFieldRespondentRole = 'participant' | 'employer';
+
+/** Carried by every answerable field's configuration alongside its
+ * type-specific shape (options, description, ...) -- never present on a
+ * display-only field (title_description/action_button). */
+export interface RespondentRolesConfiguration {
+  respondentRoles?: ReviewFieldRespondentRole[];
+}
+
+export interface ListItemConfiguration extends RespondentRolesConfiguration {
   options: string[];
   /** Marks this question as the one carrying a defined business meaning, so
    * readers find it by the template's own stable marker instead of matching a
@@ -4403,7 +4415,7 @@ export interface TitleDescriptionConfiguration {
 /** Discriminated by fieldType at the call site; falls back to a generic bag for
  * types (text, boolean, numeric, date, email, phone, postcode_address, ...)
  * that carry no field-specific configuration today. */
-export type ReviewFieldConfiguration = ListItemConfiguration | TitleDescriptionConfiguration | Record<string, unknown>;
+export type ReviewFieldConfiguration = ListItemConfiguration | TitleDescriptionConfiguration | (RespondentRolesConfiguration & Record<string, unknown>);
 
 export interface ReviewField {
   id: string;
