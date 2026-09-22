@@ -1361,7 +1361,11 @@ function LearnerCalendarBody() {
                   {([
                     { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
                     { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
-                    { value: 'first-session' as BookableSessionType, label: 'First Session', icon: 'ri-hand-heart-line', desc: 'Your first session with your coach' },
+                    // No First Session tile: it is booked with the case owner
+                    // when the learner is enrolled, before they can sign in, so
+                    // there is nothing here for a learner to request. Existing
+                    // first sessions still display, reschedule and cancel — only
+                    // the way to ask for a new one has moved.
                     { value: 'progress-review' as BookableSessionType, label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
                     { value: 'mcr' as BookableSessionType, label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
                     { value: 'gateway' as BookableSessionType, label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },

@@ -63,8 +63,10 @@ from .constants import (
     POSITION_CHOICES,
     LEARNER_TYPE_CHOICES,
 )
+from .first_session import book_first_session, parse_slot, record_start_date_only, validate_slot
 from .mappers import (
     ValidationError,
+    _s,
     restrict_to_self_writable,
     to_board,
     to_commercial_row,
@@ -746,6 +748,28 @@ def enrolment_users(request):
             row = _create_enrolment_user(request, fields)
         except ValidationError as exc:
             return _error(str(exc), 400)
+
+        # The first session is arranged while the learner is created, so both
+        # the slot and the case owner who will host it are checked *before*
+        # anything is written. Enrolling somebody and only then discovering the
+        # date was a bank holiday would leave a learner with no session and no
+        # obvious way to tell.
+        session_date, session_time, slot_error = parse_slot(payload)
+        if slot_error:
+            return _error(slot_error, 400)
+        if session_date is not None:
+            slot_problem = validate_slot(session_date, session_time)
+            if slot_problem:
+                return _error(slot_problem, 400)
+            if not _s(fields.get("case_owner")):
+                return _error(
+                    "A case owner is required to book the learner's first session.", 400
+                )
+
+        try:
+            row = _create_enrolment_user(
+                request, fields, session_date=session_date, session_time=session_time,
+            )
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(row, status=201)
@@ -753,11 +777,17 @@ def enrolment_users(request):
     return _error("Method not allowed.", 405)
 
 
-def _create_enrolment_user(request, fields, *, require_account=False):
+def _create_enrolment_user(request, fields, *, require_account=False,
+                           session_date=None, session_time=None):
     """Shared single/bulk creation, including placement and account setup.
 
     Bulk callers hold an enrolment transaction and require account failures
     to abort that transaction rather than leave a partially imported file.
+
+    ``session_date``/``session_time`` book the learner's first session with their
+    case owner. Both callers validate the slot before reaching here, so this only
+    performs the booking; a learner imported from Aptem is skipped inside
+    ``book_first_session``.
     """
     fields = dict(fields)
 
@@ -823,6 +853,23 @@ def _create_enrolment_user(request, fields, *, require_account=False):
     # and review progression.
     advance_learner(user)
     row = to_list_row(user)
+    # Book the first session with the case owner resolved above. Reported on the
+    # row like the invitation is, and for the same reason: it can partly fail
+    # (the booking is durable, the Teams meeting may not have been created yet)
+    # and the console has to be able to say so rather than imply success.
+    if session_date is not None and session_time is not None:
+        row["firstSession"] = book_first_session(
+            user,
+            scheduled_date=session_date,
+            scheduled_time=session_time,
+            owner_name=_s(fields.get("coach_name")) or _s(fields.get("case_owner")),
+            owner_email=_s(fields.get("coach_email")),
+        )
+    elif session_date is not None:
+        # A date with no time: an imported row that knows the day but not the
+        # hour. The programme start is still that day, so it is recorded -- but
+        # nothing is booked, and the row says so rather than implying a meeting.
+        row["firstSession"] = record_start_date_only(user, session_date)
     # Provision the platform account without emailing. Enrolling somebody
     # gives them an account; an administrator sends the invitation from the
     # Accounts page when the record has been checked. Reported alongside the

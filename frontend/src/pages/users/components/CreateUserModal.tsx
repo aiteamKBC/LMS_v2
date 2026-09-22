@@ -180,7 +180,9 @@ const SECTIONS: SectionDef[] = [
     title: 'Delivery & employer',
     icon: 'ri-building-line',
     fields: [
-      { name: 'caseOwner', label: 'Case owner', type: 'select', lookup: 'caseOwner' },
+      // Required: the first session below is booked with this person, and a
+      // learner cannot be enrolled without someone to hold it.
+      { name: 'caseOwner', label: 'Case owner', type: 'select', lookup: 'caseOwner', required: true },
       { name: 'learningProvider', label: 'Learning provider', type: 'select', options: PROVIDER_OPTIONS },
       // Picked from enrolment."Employers" — choosing one auto-fills the
       // organisation below it from that employer's Employer Group.
@@ -479,7 +481,13 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
       // One table, one endpoint: the learner-type switch is just a field now, so
       // both kinds take the same path and the response already carries the row's
       // learnerType/source.
-      const row = await createEnrolmentUser({ ...shared, learnerType: kind });
+      // The first session is sent on create only: the server books it with the
+      // case owner and sets the learner's start date from it. An existing
+      // learner's session is changed from their calendar, not from this form.
+      const row = await createEnrolmentUser({
+        ...shared,
+        learnerType: kind,
+      });
       const label = kind === 'commercial' ? 'Commercial learner' : 'Apprenticeship learner';
 
       // Every learner is invited now, so the invitation's fate is always worth

@@ -368,3 +368,117 @@ export function fetchPersonalCalendarAvailability(kind: LearnerKind, id: string,
   const query = new URLSearchParams({ start, end });
   return calendarConnectionRequest(`/learner_api/calendar-connections/${kind}/${id}/availability/?${query}`);
 }
+
+/** One hour of the college day, and whether the case owner is free for it. */
+export interface SessionSlot {
+  /** 24-hour UK wall clock, "HH:MM" — exactly what the booking is made at. */
+  time: string;
+  available: boolean;
+}
+
+/** The UK offset for a day, in JavaScript's own sign convention (UTC minus
+ *  local), which is what the backend reads.
+ *
+ *  Pinned to Europe/London rather than the browser's zone: the session happens
+ *  in Kent whatever the learner's own clock says, and a learner signing in
+ *  from abroad must still be offered — and book — the college's hours. */
+export function ukOffsetForDate(date: string): number {
+  return (
+    (12 -
+      Number(
+        new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Europe/London',
+          hour: '2-digit',
+          hourCycle: 'h23',
+        }).format(new Date(`${date}T12:00:00Z`)),
+      )) *
+    60
+  );
+}
+
+/** The bookable day, and whether the case owner's calendar was actually read. */
+export interface FirstSessionSlots {
+  slots: SessionSlot[];
+  /** Set when the calendar could not be reached — or is not linked at all.
+   *
+   *  The hours are then the college's own, offered unchecked: a learner must
+   *  not be locked out of starting their programme because Microsoft is
+   *  unwell. The form says so rather than implying the hours are confirmed. */
+  unconfirmed: string;
+}
+
+/**
+ * The college's working day for the learner's case owner, each hour flagged.
+ *
+ * `collegeDay` asks the shared availability endpoint for the first-session
+ * shape — 09:00 to 16:00, on the hour — rather than the 15-minute grid of the
+ * coach's own Outlook hours that the MCM picker uses. A first session is the
+ * meeting that starts the programme: the learner picks from the hours the
+ * college works, not from a clock.
+ *
+ * Every hour comes back rather than only the free ones, so a taken hour can be
+ * shown as taken. An hour missing from the list entirely would read as the
+ * college not working then, which is a different and wrong message.
+ */
+export async function fetchFirstSessionSlots(
+  kind: LearnerKind,
+  id: string,
+  date: string,
+  signal?: AbortSignal,
+): Promise<FirstSessionSlots> {
+  const query = new URLSearchParams({
+    date,
+    timezoneOffsetMinutes: String(ukOffsetForDate(date)),
+    collegeDay: '1',
+  });
+  const response = await fetch(
+    `${BASE}/${kind}/${id}/coach-availability/?${query}`,
+    { credentials: 'include', signal },
+  );
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || 'Could not check your case owner’s calendar.');
+  }
+  // `slots` carries the whole day; `times` is the older free-only shape, kept
+  // as a fallback so a frontend deployed ahead of the backend still offers
+  // times rather than an empty picker.
+  const slots = Array.isArray(result.slots)
+    ? (result.slots as SessionSlot[])
+    : ((result.times as string[]) || []).map((time) => ({ time, available: true }));
+  return { slots, unconfirmed: (result.unconfirmed as string) || '' };
+}
+
+/** Where a learner stands on their first session — and whether their
+ *  programme is open to them yet. */
+export interface LearnerFirstSession {
+  caseOwner: { name: string; email: string } | null;
+  booked: boolean;
+  event: LearnerCalendarEvent | null;
+  /** The session date, "YYYY-MM-DD", or null when nothing is booked. */
+  startsOn: string | null;
+  /** 'book' — nothing booked yet. 'waiting' — booked, day not arrived.
+   *  'open' — the session day has come, so the programme runs normally. */
+  access: 'book' | 'waiting' | 'open';
+}
+
+/**
+ * The learner's first-session state.
+ *
+ * `access` is decided by the server, not here: a learner must not be able to
+ * reach their programme early by changing the clock on their own machine.
+ */
+export async function fetchLearnerFirstSession(
+  kind: LearnerKind,
+  id: string,
+  signal?: AbortSignal,
+): Promise<LearnerFirstSession> {
+  const response = await fetch(`${BASE}/${kind}/${id}/first-session/`, {
+    credentials: 'include',
+    signal,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || 'Could not check your first session.');
+  }
+  return result as LearnerFirstSession;
+}
