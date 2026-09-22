@@ -195,9 +195,12 @@ export function auditEventHref(event: CurriculumAuditEvent): string {
   const componentId = String(event.entity === 'component' ? event.entityId || '' : '').trim();
   const moduleId = String(event.moduleCatalogueId || (event.entity === 'module' ? event.entityId : '') || '').trim();
   const archived = event.action === 'archived' || String(event.contentStatus || '').toLowerCase() === 'archived';
+  // An archived module is not in the catalogue to open, and the Module Builder
+  // no longer carries an archive of its own: the Curriculum archive is where
+  // every archived record is read, so the link names the module it means there.
   if (archived && moduleId) {
-    const params = new URLSearchParams({ view: 'archive', archiveModule: moduleId });
-    return `/curriculum/module-builder?${params.toString()}`;
+    const params = new URLSearchParams({ type: 'module', q: moduleId });
+    return `/curriculum/archive?${params.toString()}`;
   }
   const weekId = String(event.parentId || '').trim();
   if (!componentId || !moduleId) return event.href;

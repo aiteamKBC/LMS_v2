@@ -226,6 +226,9 @@ export interface CurriculumProgramme {
   // Off-the-job hours a learner must complete for the whole programme. null means no
   // target has been set, which is different from a target of zero.
   requiredOtjh?: number | null;
+  // Where this card sits in the hand-picked order. 0 means it has never been
+  // placed, and those read alphabetically ahead of the placed ones.
+  displayOrder?: number;
 }
 
 export interface CurriculumWeeklySession {
@@ -3704,6 +3707,14 @@ export type FreeProgrammeModuleInput = {
 
 export function createCurriculumProgramme(input: CurriculumProgrammeInput) {
   return postJson<{ created: boolean; programme: CurriculumProgramme }>('/curriculum/programmes/', input);
+}
+
+/**
+ * Save the order the programme cards were dragged into. `order` is the ids top-left
+ * first; the server renumbers exactly those programmes from 1 upward.
+ */
+export function saveCurriculumProgrammeOrder(order: string[]) {
+  return postJson<{ saved: boolean; order: string[] }>('/curriculum/programmes/reorder/', { order });
 }
 
 export function updateCurriculumProgramme(id: string, input: CurriculumProgrammeInput) {

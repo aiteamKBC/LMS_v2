@@ -91,10 +91,9 @@ export async function archiveGroupWithConfirm(
  * answer to "how do I delete a module", so the confirm says it outright rather
  * than leaving the reader to discover it after the click.
  *
- * It also says what cannot be undone from here. A programme has a Restore in
- * the archive; a module has no restore endpoint at all, so an archived module
- * only comes back through the database. Saying so before the click is the whole
- * difference between a reversible action and a lost one.
+ * Where it can be brought back from is named because it is no longer the page
+ * the reader is standing on: the Curriculum archive is the one place archived
+ * records are read, so the confirm says which page that is.
  */
 export async function archiveModuleWithConfirm(
   module: { id: string; name: string },
@@ -106,7 +105,7 @@ export async function archiveModuleWithConfirm(
     : ' Anything authored under it is kept.';
   return showCurriculumConfirm({
     title: 'Archive module?',
-    text: `${module.name} leaves active planning and this programme's module list.${content} Nothing is deleted from the database, and it can be brought back from View archive on the module catalogue.`,
+    text: `${module.name} leaves active planning and this programme's module list.${content} Nothing is deleted from the database, and it can be brought back from Curriculum > Archive.`,
     icon: 'warning',
     confirmButtonText: 'Archive module',
     onConfirm: async () => {
@@ -316,11 +315,11 @@ export async function permanentlyDeleteGroupWithConfirm(
 // the Archive page offers all four side by side, so the wording belongs here
 // with them rather than being written a second time next to the table.
 //
-// The Programmes page keeps its own copies of these two on purpose: the cards
-// there drive optimistic list state (`markProgrammeRestored`, `removeProgramme`)
-// and read the dependency report a refused delete carries, so that flow needs
-// the result object rather than a yes/no. What both sides must agree on is what
-// the action does, which is the sentence -- held once, below.
+// The Programmes page used to keep its own copies of these two. It no longer
+// lists an archived programme at all, so these are called from one place, and
+// the duplication they were guarding against cannot happen. What that page
+// kept is the plain archive, which needs the result object rather than a
+// yes/no to read the dependency report a refused archive carries.
 // ----------------------------------------------------------------------------
 
 /** Said by the programme restore: a programme's archive cascades, so its undo does too. */
