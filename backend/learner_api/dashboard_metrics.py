@@ -394,27 +394,32 @@ def read_metrics(source, kind, preloaded=None):
                 # separate from the core historical inputs above so a retired or
                 # partially migrated metadata column cannot take metrics down.
                 if history_ready and historical:
-                    try:
-                        cursor.execute('''SELECT ga.group_id,ga.activity_id,g.group_name,
-                                a.title,a.activity_date
-                            FROM "Last_audit".learners l
-                            JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
-                            JOIN "Last_audit".groups g ON g.group_id=gl.group_id
-                            JOIN "Last_audit".group_activities ga ON ga.group_id=gl.group_id
-                            JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
-                            WHERE l.aptem_id=%s''', [aptem_id])
-                        metadata = {
-                            (str(group_id), str(activity_id)): {
-                                'module_title': module_title,
-                                'activity_title': title,
-                                'activity_date': activity_date,
-                            }
-                            for group_id, activity_id, module_title, title, activity_date in cursor.fetchall()
-                        }
+                    if preloaded is not None and 'historical_metadata' in preloaded:
+                        metadata = preloaded['historical_metadata']
                         for item in historical:
                             item.update(metadata.get((str(item.get('group_id')), str(item.get('activity_id'))), {}))
-                    except (DatabaseError, psycopg.Error, StopIteration):
-                        log.warning('Optional historical evidence metadata unavailable for %s', aptem_id, exc_info=True)
+                    else:
+                        try:
+                            cursor.execute('''SELECT ga.group_id,ga.activity_id,g.group_name,
+                                    a.title,a.activity_date
+                                FROM "Last_audit".learners l
+                                JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
+                                JOIN "Last_audit".groups g ON g.group_id=gl.group_id
+                                JOIN "Last_audit".group_activities ga ON ga.group_id=gl.group_id
+                                JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
+                                WHERE l.aptem_id=%s''', [aptem_id])
+                            metadata = {
+                                (str(group_id), str(activity_id)): {
+                                    'module_title': module_title,
+                                    'activity_title': title,
+                                    'activity_date': activity_date,
+                                }
+                                for group_id, activity_id, module_title, title, activity_date in cursor.fetchall()
+                            }
+                            for item in historical:
+                                item.update(metadata.get((str(item.get('group_id')), str(item.get('activity_id'))), {}))
+                        except (DatabaseError, psycopg.Error, StopIteration):
+                            log.warning('Optional historical evidence metadata unavailable for %s', aptem_id, exc_info=True)
                 if preloaded is not None and 'subject_attempts' in preloaded:
                     attempts = preloaded['subject_attempts']
                 else:
@@ -627,6 +632,35 @@ def load_planned_hours_documents_bulk(keys):
         pair = (int(document['learner_id']), str(document['learner_kind']))
         if pair in result and result[pair] is None:
             result[pair] = {'otjh': document['otjh']}
+    return result
+
+
+def load_historical_metadata_bulk(aptem_ids):
+    """Load human-readable group/activity labels keyed by (group_id, activity_id).
+
+    These titles/dates are cosmetic (coach case-file evidence labels), not
+    learner-specific, so one bulk query replaces the per-learner lookup
+    ``read_metrics`` used to run for every caseload member.
+    """
+    ids = list(dict.fromkeys(int(value) for value in (aptem_ids or []) if value not in (None, '')))
+    result = {}
+    if not ids:
+        return result
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute('''SELECT DISTINCT ga.group_id,ga.activity_id,g.group_name,
+                a.title,a.activity_date
+            FROM "Last_audit".learners l
+            JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
+            JOIN "Last_audit".groups g ON g.group_id=gl.group_id
+            JOIN "Last_audit".group_activities ga ON ga.group_id=gl.group_id
+            JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
+            WHERE l.aptem_id=ANY(%s)''', [ids])
+        for group_id, activity_id, module_title, title, activity_date in cursor.fetchall():
+            result[(str(group_id), str(activity_id))] = {
+                'module_title': module_title,
+                'activity_title': title,
+                'activity_date': activity_date,
+            }
     return result
 
 

@@ -77,7 +77,7 @@ from learner_api.dashboard_metrics import (read_metrics, load_subject_attempts_b
                                             load_manual_hours_bulk, load_reflection_submissions_bulk,
                                             load_audit_inputs_bulk, load_native_progress_bulk,
                                             load_native_components_bulk, load_planned_hours_documents_bulk)
-from learner_api.dashboard_metrics import load_export_links_bulk
+from learner_api.dashboard_metrics import load_export_links_bulk, load_historical_metadata_bulk
 from learner_api.learning_plan import _effective_plan_ids
 from learner_api.student_activity import load_direct_progress_records_bulk
 from learner_api.ksb_codes import extract_ksb_codes, normalize_ksb_parent_code
@@ -2296,6 +2296,7 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     reflection_keys = [(kind, int(source.pk)) for _, source, kind in work]
     reflection_submissions = load_reflection_submissions_bulk(reflection_keys)
     audit_inputs = load_audit_inputs_bulk([aptem for _, aptem in attempt_keys])
+    historical_metadata = load_historical_metadata_bulk([aptem for _, aptem in attempt_keys])
     native_progress = load_native_progress_bulk(enrolment_ids)
     plan_ids_by_enrolment = {
         int(source.pk): _effective_plan_ids(source, {})
@@ -2335,6 +2336,7 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
                         'manual_hours': manual_hours.get(int(source.aptem_id)),
                         'reflection_submissions': reflection_submissions.get((kind, str(source.pk)), []),
                         'audit_inputs': audit_inputs.get(int(source.aptem_id)),
+                        'historical_metadata': historical_metadata,
                         'native_progress': native_progress.get(int(source.pk), []),
                         'effective_plan_ids': plan_ids_by_enrolment.get(int(source.pk), []),
                         'native_components': [
