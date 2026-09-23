@@ -11,6 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import learner_self_or_admin, learner_self_or_staff
 from .assignment_attempts import HISTORY_KEY, preserve_attempts, submission_attempts
+from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +364,7 @@ def _submit_reflection(request):
                     reviewed_by = CASE WHEN excluded.activity_type = 'assignment' THEN NULL ELSE learning_reflection_submissions.reviewed_by END,
                     reviewed_at = CASE WHEN excluded.activity_type = 'assignment' THEN NULL ELSE learning_reflection_submissions.reviewed_at END,
                     submitted_at = now()
-                returning id
+                returning """ + SUBMISSION_AUDIT_SQL + """
                 """,
                     [
                     str(submission_id),
@@ -406,7 +407,11 @@ def _submit_reflection(request):
                     lineage.get("week_ref") or None,
                     ],
                 )
-                stored_id = cur.fetchone()[0]
+                stored = cur.fetchone()
+                # `id` is the first audited column, so this read is unchanged
+                # by widening the clause.
+                stored_id = stored[0]
+                record_submission_row(stored)
     except DatabaseError:
         logger.exception("Could not save learner reflection submission.")
         return _error("Could not save the reflection for tutor review.", 502)

@@ -24,6 +24,7 @@ import re
 
 from django.db import connections
 
+from .audit_trail import PLAN_EVENT_COLUMNS, PLAN_EVENT_SQL, record
 from .common import CONN, db_is_read_only
 
 
@@ -261,6 +262,7 @@ def log_plan_event(cur, entity_type, entity_id, action, *, old=None, new=None, a
         insert into "Manual_audit".plan_events
             (entity_type, entity_id, action, old_value, new_value, actor)
         values (%s, %s, %s, %s, %s, %s)
+        returning ''' + PLAN_EVENT_SQL + '''
         ''',
         [
             entity_type,
@@ -271,6 +273,10 @@ def log_plan_event(cur, entity_type, entity_id, action, *, old=None, new=None, a
             actor,
         ],
     )
+    # One hook for all ten callers. The plan already logs itself properly here,
+    # so the trail surfaces that log rather than re-deriving the same events
+    # from the tables it describes.
+    record('plan_events', PLAN_EVENT_COLUMNS, cur.fetchone())
 
 
 _NAME_KEY_STRIP = re.compile(r"[^a-z0-9]+")

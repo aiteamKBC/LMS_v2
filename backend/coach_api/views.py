@@ -68,6 +68,13 @@ from learner_api.models import (
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
+# The one audited shape for the submissions table, shared with the two learner
+# write paths so all three record the same columns. See submission_audit.
+from learner_api.submission_audit import (
+    SUBMISSION_AUDIT_COLUMNS,
+    SUBMISSION_AUDIT_SQL,
+    record_submission_row,
+)
 from learner_api.active_users import components_target_to_date, completed_hours_value_from_progress, current_curriculum_ksb_items_for_learner, current_week_label, dedupe_otjh_progress_records, hydrate_training_plan, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
@@ -12046,7 +12053,7 @@ def coach_marking_queue(request, submission_id=None):
                     update "Learner"."learning_reflection_submissions"
                     set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
                     where id = %s and learner_id = any(%s)
-                    returning id, status, reviewed_at, learner_kind, learner_id
+                    returning """ + SUBMISSION_AUDIT_SQL + """
                     """,
                     [decision, feedback, reviewed_by, timezone.now(), str(submission_id), allowed_learner_ids],
                 )
@@ -12062,18 +12069,27 @@ def coach_marking_queue(request, submission_id=None):
         if not updated:
             return JsonResponse({"detail": "Submission not found."}, status=404)
 
+        # Recorded here rather than by a signal: this is a raw UPDATE on the
+        # `enrolment` connection, so no `post_save` fires and the Audit Trail
+        # would otherwise show a coach's marking decisions as never having
+        # happened. Best-effort by construction -- the helper swallows its own
+        # failures -- because a decision that was saved must not be rolled back
+        # by a history write that was not.
+        record_submission_row(updated)
+        row = dict(zip(SUBMISSION_AUDIT_COLUMNS, updated))
+
         # The learner's accepted/rejected counts are recomputed from the
         # submissions, so they always agree with what a coach has actually
         # decided -- including after a decision is changed. Best-effort: a
         # counter that could not be written must not fail a saved decision.
         from learner_api.marking_tally import refresh_tally_for_submission
 
-        refresh_tally_for_submission(updated[3], updated[4])
+        refresh_tally_for_submission(row["learner_kind"], row["learner_id"])
 
         return JsonResponse({
-            "id": str(updated[0]),
-            "status": updated[1],
-            "reviewedAt": updated[2].isoformat() if updated[2] else None,
+            "id": str(row["id"]),
+            "status": row["status"],
+            "reviewedAt": row["reviewed_at"].isoformat() if row["reviewed_at"] else None,
         })
 
     if request.method != "GET":

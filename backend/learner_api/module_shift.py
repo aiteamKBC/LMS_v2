@@ -74,6 +74,7 @@ from .learning_plan import (
 )
 from .mappers import _s
 from .models import EnrolmentUser, LearnerProgressEntry, LearnerProgressKsb
+from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row
 
 logger = logging.getLogger(__name__)
 
@@ -598,6 +599,7 @@ def _move_review(learner, source_id, target_id, context):
                     cohort_ref = coalesce(nullif(%s, ''), cohort_ref),
                     programme_ref = coalesce(nullif(%s, ''), programme_ref)
                 WHERE id = %s
+                RETURNING {SUBMISSION_AUDIT_SQL}
                 """,
                 [
                     target_id, target_id,
@@ -609,6 +611,11 @@ def _move_review(learner, source_id, target_id, context):
                     row_id,
                 ],
             )
+            # A shift re-points a learner's submitted work at a different
+            # component. The work itself is untouched, but where it sits is
+            # not, and "why does this submission belong to another module now"
+            # is precisely a question for the trail.
+            record_submission_row(cursor.fetchone())
             moved += 1
     return moved, kept
 
