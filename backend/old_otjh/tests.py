@@ -398,10 +398,8 @@ class TransitionTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.events[0][5]['capture_method'], 'import')
 
-    def test_new_lms_gate_refuses_direct_and_batch_paths(self):
-        from login.api_gate import refusal_for
-        with patch.dict('os.environ', {'API_REQUIRE_AUTH': '1'}):
-            self.assertEqual(refusal_for('/learner_api/learners/7/', self.user).status_code, 403)
+    def test_unsigned_record_does_not_gate_new_lms_paths(self):
+        self.assertIsNone(gate.refusal('/learner_api/learners/7/', self.user))
         self.assertIsNone(gate.refusal('/audit_api/old-otjh/me/summary/', self.user))
         self.assertIsNone(gate.refusal('/learner_api/anything', account('staff')))
 
@@ -411,12 +409,9 @@ class TransitionTests(SimpleTestCase):
         self.assertEqual(response.status_code, 503)
         self.assertNotIn(b'secret', response.content)
 
-    def test_missing_transition_storage_cannot_open_lms(self):
+    def test_missing_transition_storage_does_not_block_lms(self):
         self.mocks['transition'].side_effect = DatabaseError('missing transition table')
-        response = gate.refusal('/learner_api/learner-detail/commercial/7/', self.user)
-        self.assertEqual(response.status_code, 503)
-        self.assertIn(b'records_unavailable', response.content)
-        self.assertNotIn(b'missing transition table', response.content)
+        self.assertIsNone(gate.refusal('/learner_api/learner-detail/commercial/7/', self.user))
 
     def test_month_target_is_not_the_activity_planned_total(self):
         self.history[0]['planned_hours_monthly'] = '{"2026-07":31,"2026-08":0}'

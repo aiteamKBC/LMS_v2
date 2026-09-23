@@ -4,7 +4,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { openReviewInstanceForEvent } from '@/api/reviewInstances';
-import { fetchCoachImportedReviews, importedReviewEvents, isImportedReviewEvent } from '@/api/coachImportedReviews';
+import { isImportedReviewEvent } from '@/api/coachImportedReviews';
 import { monthlyCoachingAgenda } from '@/pages/workspace/coach/monthlyCoachingAgenda';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterSelect, SearchInput } from '@/components/ui/FilterToolbar';
@@ -177,20 +177,14 @@ export default function CoachMonthlyCoaching() {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    Promise.all([
-      fetchCoachCalendarEvents(controller.signal, {
+    fetchCoachCalendarEvents(controller.signal, {
         start: isoDate(startOfMonth(selectedMonth)),
         end: isoDate(endOfMonth(selectedMonth)),
         includeLiveSessions: false,
         includeSchedulerQueues: false,
-      }),
-      fetchCoachImportedReviews(controller.signal).catch(() => []),
-    ])
-      .then(([data, imported]) => {
-        setEvents(sortEvents([
-          ...(data.events || []).filter(event => event.source === 'mcr'),
-          ...importedReviewEvents(imported, 'mcm'),
-        ]));
+      })
+      .then((data) => {
+        setEvents(sortEvents((data.events || []).filter(event => event.source === 'mcr')));
         setOwnerName(data.owner?.name || coach.name);
       })
       .catch((err) => {

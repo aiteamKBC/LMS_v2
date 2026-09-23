@@ -44,7 +44,9 @@ const REVIEW: CoachCalendarEvent = {
   status: 'in-progress',
   learner: 'Aya Aya Test',
   programme: 'Final Test',
-  learnerId: '101',
+  // Deliberately different values: learnerId is the profile id, enrolmentId is what
+  // the slides API keys on. Equal ids here would hide a wrong-learner regression.
+  learnerId: '683',
   enrolmentId: '101',
   learnerType: 'commercial',
   sequence: 1,
@@ -85,6 +87,16 @@ beforeEach(() => {
 });
 
 describe('ProgressReviewPptxModal', () => {
+  it('asks for the enrolment id, never the profile id', async () => {
+    render(<ProgressReviewPptxModal open review={REVIEW} onClose={vi.fn()} />);
+
+    await waitFor(() => expect(fetchReviewPack).toHaveBeenCalled());
+    expect(fetchReviewPack).toHaveBeenCalledWith('101', '2026-10-26');
+    expect(fetchLatestRun).toHaveBeenCalledWith('101', '2026-10-26');
+    expect(fetchReviewPack).not.toHaveBeenCalledWith('683', expect.anything());
+    expect(fetchLatestRun).not.toHaveBeenCalledWith('683', expect.anything());
+  });
+
   it('takes its context entirely from the review card — no learner or period picker', async () => {
     render(<ProgressReviewPptxModal open review={REVIEW} onClose={vi.fn()} />);
 

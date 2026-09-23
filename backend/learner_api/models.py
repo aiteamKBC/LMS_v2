@@ -549,6 +549,12 @@ class LearnerProfile(models.Model):
     # for profiles whose enrolment record has since been deleted.
     enrolment_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
+    # Legacy profile fallback for the external Aptem identity.  Newer records
+    # carry the same value on enrolment."Created_users"; readers must prefer
+    # that stable enrolment bridge and only use this column when the enrolment
+    # value is absent.
+    aptem_id = models.BigIntegerField(null=True, blank=True)
+
     lifecycle_status = models.CharField(max_length=50, db_index=True)
 
     # 'apprenticeship' or 'commercial', copied from the enrolment record rather

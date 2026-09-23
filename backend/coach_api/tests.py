@@ -46,6 +46,7 @@ from coach_api.views import (
     caseload_latest_learning_activities,
     canonical_attendance_detail_rows,
     dashboard_attendance_rows,
+    dashboard_monthly_risk_history,
     dashboard_review_history,
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
@@ -927,7 +928,7 @@ class CoachDashboardViewTests(SimpleTestCase):
         payload = json.loads(response.content)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(payload["learners"], [{"id": "2"}])
+        self.assertEqual(payload["learners"], [{"id": "2", "lastPr": None, "lastMcm": None}])
         self.assertEqual(payload["monthlyRisk"], [{"month": "2026-08", "label": "Aug", "count": 1}])
         # Attendance is overlaid directly onto each learner (see
         # CoachDashboardAttendanceOverlayTests) rather than shipped as a
@@ -1073,6 +1074,26 @@ class CoachDashboardViewTests(SimpleTestCase):
 
 
 class MonthlyRiskHistoryTests(SimpleTestCase):
+    @patch("coach_api.views.LearnerProgressEntry.objects")
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={})
+    @patch("coach_api.views.monthly_target_training_plan", return_value=[])
+    def test_dashboard_reuses_each_hydrated_plan_in_history_builder(
+        self, training_plan, expected_otjh, progress_entries
+    ):
+        queryset = MagicMock()
+        progress_entries.filter.return_value = queryset
+        queryset.only.return_value = queryset
+        queryset.order_by.return_value = []
+        learners = [
+            SimpleNamespace(id=7, status="active", programme_status="active", start_date=None),
+            SimpleNamespace(id=8, status="active", programme_status="active", start_date=None),
+        ]
+
+        history = dashboard_monthly_risk_history(learners, today=date(2026, 9, 18))
+
+        self.assertEqual(training_plan.call_count, 2)
+        self.assertEqual(len(history), 6)
+
     def test_counts_month_end_otjh_status_and_uses_current_snapshot_for_open_month(self):
         training_plan = [{
             "moduleTitle": "Module 1",
@@ -1252,8 +1273,17 @@ class CoachTimetableWindowTests(SimpleTestCase):
 
     @patch("coach_api.views.fetch_calendar_event_records", return_value={})
     @patch("coach_api.views.fetch_standalone_event_records", return_value=[])
-    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
+    @patch("coach_api.views.resolve_coach_review_events", return_value={
+        "events": [], "reviewGenerationIssues": [], "aptemProfileIds": set(),
+        "sourceCounts": {
+            "progressReviewRows": 0, "mcrRows": 0, "reviewRows": 0,
+            "learnersWithDates": 0, "reviewAnchorSkipped": 0,
+            "reviewAnchorSkipReasons": {}, "aptemReviewRows": 0,
+            "curriculumReviewRows": 0, "aptemLearners": 0, "curriculumLearners": 0,
+        },
+    })
     @patch("coach_api.views.build_learner_profile_map", return_value={})
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
     @patch("coach_api.views.fetch_owner_active_learner_profiles", return_value=[])
     @patch("coach_api.views.coach_staff_display_name", return_value="")
     @patch("coach_api.views.collect_live_session_events", side_effect=RuntimeError("legacy staff profile schema"))
@@ -1262,8 +1292,9 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events,
         coach_staff_display_name,
         fetch_owner_active_learner_profiles,
+        fetch_caseload_dashboard_profiles,
         build_learner_profile_map,
-        fetch_source_schedule_rows,
+        resolve_coach_review_events,
         fetch_standalone_event_records,
         fetch_calendar_event_records,
     ):
@@ -1274,10 +1305,13 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events.assert_called_once()
         coach_staff_display_name.assert_called_once_with("coach@example.com")
         fetch_owner_active_learner_profiles.assert_called_once_with("coach@example.com")
+        fetch_caseload_dashboard_profiles.assert_called_once_with("coach@example.com")
         build_learner_profile_map.assert_called_once_with([])
-        fetch_source_schedule_rows.assert_called_once_with([])
+        resolve_coach_review_events.assert_called_once_with(
+            "coach@example.com", "Med Maher", [], start_date=None, end_date=None,
+        )
         fetch_standalone_event_records.assert_called_once_with("coach@example.com")
-        fetch_calendar_event_records.assert_called_once_with("coach@example.com", [])
+        fetch_calendar_event_records.assert_not_called()
 
 
 class CoachTimetableBookingConflictTests(SimpleTestCase):

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import Swal from 'sweetalert2';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { type EvidenceRecord } from '@/api/evidence';
-import { fetchCoachImportedReviews, importedReviewEvents, isImportedReviewEvent } from '@/api/coachImportedReviews';
+import { isImportedReviewEvent } from '@/api/coachImportedReviews';
 import { type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -138,8 +138,10 @@ function cleanOptionalText(value?: string | number | null) {
   return String(value).trim();
 }
 
+// Only enrolmentId counts: the slides API keys on the enrolment record, and falling
+// back to the profile id would silently resolve to a different learner.
 function reviewHasLearnerReference(review: CoachCalendarEvent) {
-  return Boolean(cleanOptionalText(review.enrolmentId) || cleanOptionalText(review.learnerId));
+  return Boolean(cleanOptionalText(review.enrolmentId));
 }
 
 function matchesReviewSearch(review: CoachCalendarEvent, searchTerm: string) {
@@ -1014,14 +1016,8 @@ export default function CoachProgressReviews() {
       setLoading(true);
       setError(null);
       try {
-        const [data, imported] = await Promise.all([
-          fetchCoachCalendarEvents(controller.signal),
-          fetchCoachImportedReviews(controller.signal).catch(() => []),
-        ]);
-        const reviews = sortEvents([
-          ...(data.events || []).filter(event => event.source === 'progress-review'),
-          ...importedReviewEvents(imported, 'reviews'),
-        ]);
+        const data = await fetchCoachCalendarEvents(controller.signal);
+        const reviews = sortEvents((data.events || []).filter(event => event.source === 'progress-review'));
         setEvents(reviews);
         setOwnerName(data.owner?.name || coach.name);
       } catch (err) {
@@ -1082,7 +1078,7 @@ export default function CoachProgressReviews() {
     const candidates = paginatedReviews.filter((review) => !isImportedReviewEvent(review) && reviewHasLearnerReference(review) && eventTargetDate(review));
 
     Promise.all(candidates.map(async (review) => {
-      const learnerId = review.learnerId || review.enrolmentId || '';
+      const learnerId = review.enrolmentId || '';
       try {
         const result = await fetchLatestRun(learnerId, eventTargetDate(review));
         return result.exists && result.generationStatus === 'completed' ? eventIdentity(review) : null;
