@@ -121,7 +121,7 @@ function ProgrammeOverview({ summary }: { summary: Summary }) {
     <div className={styles.statusBar}>
       <div><AppIcon className={allSigned ? 'ri-checkbox-circle-fill' : 'ri-time-line'} /><span><strong>{allSigned ? 'All months signed' : 'Signatures pending'}</strong><small>{allSigned ? 'Your learner signature is saved for every required month.' : 'Review your months and add any missing learner signatures.'}</small></span></div>
       <div><AppIcon className={reviewIcon} /><span><strong>{summary.can_access_lms ? 'Review complete' : 'Review in progress'}</strong><small>{summary.can_access_lms ? 'Your learning record has been reviewed.' : 'Your learning record is still being reviewed.'}</small></span></div>
-      <div><AppIcon className={reviewIcon} /><span><strong>{summary.can_access_lms ? 'LMS access available' : 'LMS access pending'}</strong><small>{summary.can_access_lms ? 'You can continue to access your learning plan.' : 'Complete your signatures to unlock access.'}</small></span></div>
+      <div><AppIcon className="ri-checkbox-circle-fill" /><span><strong>LMS access available</strong><small>You can continue to access your learning plan.</small></span></div>
     </div>
   </section>;
 }
@@ -131,32 +131,16 @@ function Portal() {
   const navigate = useNavigate();
   const location = useLocation();
   const [dialogOpen, setDialogOpen] = useState(Boolean((location.state as { contactCoach?: boolean } | null)?.contactCoach));
-  const [checkError, setCheckError] = useState('');
-  const [checking, setChecking] = useState(false);
   if (query.data && !query.error && !query.data.is_legacy) return <Navigate to="/workspace/learner" replace />;
-  const enterLms = async () => {
-    setChecking(true);
-    setCheckError('');
-    try {
-      const result = await query.refetch();
-      if (result.error) throw result.error;
-      const fresh = result.data;
-      if (!fresh) throw new Error('The record could not be loaded.');
-      if (fresh.can_access_lms) navigate('/learner/home');
-      else setDialogOpen(true);
-    } catch (error) { setCheckError(error instanceof Error ? error.message : 'The record could not be loaded.'); setDialogOpen(true); }
-    finally { setChecking(false); }
-  };
+  // Signing the previous record is optional; it never gates LMS entry.
+  const enterLms = () => navigate('/learner/home');
   return <><Welcome summary={query.data} />
     <div className={styles.portalGrid}>
       <section className={`${styles.card} ${styles.lift} ${styles.portalCard} ${styles.lmsCard}`}>
         <div className={styles.cardTop}><span className={`${styles.iconTile} ${styles.iconSolid}`}><AppIcon className="ri-graduation-cap-line" /></span>
-          <RecordBadge tone={query.data?.can_access_lms && !query.error ? 'positive' : query.data && !query.error ? 'pending' : 'neutral'}>
-            <AppIcon className={query.data?.can_access_lms && !query.error ? 'ri-checkbox-circle-line' : 'ri-lock-line'} />
-            {query.error ? 'Check unavailable' : !query.data ? 'Checking access' : query.data.can_access_lms ? 'Access available' : 'Access pending'}
-          </RecordBadge></div>
+          <RecordBadge tone="positive"><AppIcon className="ri-checkbox-circle-line" />Access available</RecordBadge></div>
         <h2 className="mt-1 text-lg font-heading font-semibold">Open your LMS</h2><p className="text-[13px] text-foreground-500">Continue to your learning plan, activities and progress.</p>
-        <button ref={lmsButton} className={`${btnPrimary} mt-2`} disabled={checking || query.isPending || query.starting} onClick={() => void enterLms()}>{checking ? 'Checking…' : 'Open LMS'}<AppIcon className="ri-arrow-right-line" /></button>
+        <button ref={lmsButton} className={`${btnPrimary} mt-2`} onClick={enterLms}>Open LMS<AppIcon className="ri-arrow-right-line" /></button>
       </section>
       <section className={`${styles.card} ${styles.lift} ${styles.portalCard} ${styles.recordsCard}`}>
         <div className={styles.cardTop}><span className={styles.iconTile}><AppIcon className="ri-book-open-line" /></span>
@@ -169,8 +153,8 @@ function Portal() {
         </div>
       </section>
     </div>
-    {dialogOpen && (query.data || checkError || query.error) && <TransitionDialog returnFocusRef={lmsButton} summary={query.data}
-      error={checkError || query.error?.message} checking={checking} onClose={() => setDialogOpen(false)} onRetry={() => void enterLms()}
+    {dialogOpen && (query.data || query.error) && <TransitionDialog returnFocusRef={lmsButton} summary={query.data}
+      error={query.error?.message} checking={query.isFetching} onClose={() => setDialogOpen(false)} onRetry={() => void query.refetch()}
       onReview={() => { const next = nextOutstanding(query.data!); setDialogOpen(false); navigate(next ? `/old-otjh/months/${next}` : '/old-otjh/months'); }} />}
     {query.isPending ? <Panel><p role="status" className="text-sm text-foreground-500">Loading your previous record…</p></Panel>
       : query.error ? <ErrorState error={query.error} retry={query.retryStart} />
@@ -283,7 +267,7 @@ function MonthList({ aptemId }: { aptemId?: number }) {
         <Link className={styles.monthReviewLink} to={recordHref(`${base}/${month.month}`)}>Review month<AppIcon className="ri-arrow-right-line" /></Link></div>
     </section>)}</div>}
     </section>)}</div>
-    {query.data.can_access_lms && aptemId === undefined && <Link className={btnPrimary} to="/learner/home">Continue to new LMS</Link>}
+    {aptemId === undefined && <Link className={btnPrimary} to="/learner/home">Continue to new LMS</Link>}
     {auth.account?.access === 'super-admin' && aptemId !== undefined && <Panel className="space-y-3">
       <h2 className="font-semibold">Review months</h2><p className="text-sm text-foreground-500">New source months: {query.data.additional_source_months?.join(', ') || 'None'}</p>
       <input className={inputClass} aria-label="Reason for updating review months" value={reason} onChange={e => setReason(e.target.value)} placeholder="Reason for updating the required months" />
