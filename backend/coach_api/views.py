@@ -2126,7 +2126,9 @@ def caseload_latest_learning_activities(rows) -> dict[int, dict]:
         .filter(learner_id__in=learner_ids)
         .only(
             "learner_id", "kind", "component_title", "module_title", "week_title",
-            "submitted_at", "started_at",
+            "component_ref", "quiz_ref", "attempt", "expected_otjh", "reported_time",
+            "submitted_at", "started_at", "claimed_seconds", "verified_seconds",
+            "time_tracking_source",
         )
         .order_by("learner_id", "-submitted_at", "-started_at", "-id")
     )
