@@ -290,6 +290,92 @@ class LiveSessionAttendance(models.Model):
         managed = False
 
 
+class LiveSessionLearnerAttendance(models.Model):
+    """Final per-learner register derived from module assignments and Teams evidence."""
+
+    STATUS_PRESENT = 'present'
+    STATUS_ABSENT = 'absent'
+    STATUS_CHOICES = [
+        (STATUS_PRESENT, 'Present'),
+        (STATUS_ABSENT, 'Absent'),
+    ]
+    RECOVERY_NONE = 'none'
+    RECOVERY_REQUESTED = 'requested'
+    RECOVERY_CATCHUP_BOOKED = 'catchup_booked'
+    RECOVERY_CHOICES = [
+        (RECOVERY_NONE, 'Not requested'),
+        (RECOVERY_REQUESTED, 'Recovery requested'),
+        (RECOVERY_CATCHUP_BOOKED, 'Catch-up booked'),
+    ]
+
+    occurrence_id = models.CharField(max_length=128, db_index=True)
+    live_session_id = models.CharField(max_length=128, db_index=True)
+    module_catalogue_id = models.CharField(max_length=128, db_index=True)
+    learner_profile_id = models.BigIntegerField(db_index=True)
+    learner_email = models.EmailField(max_length=320, blank=True, default='')
+    learner_name = models.CharField(max_length=500, blank=True, default='')
+    attendance_status = models.CharField(max_length=16, choices=STATUS_CHOICES)
+    recovery_status = models.CharField(max_length=24, choices=RECOVERY_CHOICES, default=RECOVERY_NONE)
+    attended_seconds = models.PositiveIntegerField(default=0)
+    attendance_report_id = models.TextField(blank=True, default='')
+    first_join_at = models.DateTimeField(blank=True, null=True)
+    last_leave_at = models.DateTimeField(blank=True, null=True)
+    calculated_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."live_session_learner_attendance'
+        managed = False
+        constraints = [
+            models.UniqueConstraint(
+                fields=['occurrence_id', 'learner_profile_id'],
+                name='curriculum_live_learner_attendance_uniq',
+            ),
+        ]
+
+
+class LiveSessionAbsence(models.Model):
+    """One learner's reported absence and recovery choice for one live session.
+
+    Teams attendance evidence remains in ``live_session_attendance``.  This
+    table records the complementary fact that an assigned learner reported an
+    absence, without putting learner state on the shared occurrence row.
+    """
+
+    RECOVERY_NONE = 'none'
+    RECOVERY_REQUESTED = 'requested'
+    RECOVERY_CATCHUP_BOOKED = 'catchup_booked'
+    RECOVERY_CHOICES = [
+        (RECOVERY_NONE, 'No recovery requested'),
+        (RECOVERY_REQUESTED, 'Recovery requested'),
+        (RECOVERY_CATCHUP_BOOKED, 'Catch-up booked'),
+    ]
+
+    occurrence_id = models.CharField(max_length=128, db_index=True)
+    learner_profile_id = models.BigIntegerField(db_index=True)
+    source_kind = models.CharField(max_length=32, blank=True, default='')
+    source_learner_id = models.IntegerField(blank=True, null=True)
+    learner_email = models.EmailField(max_length=320, blank=True, default='')
+    learner_name = models.CharField(max_length=500, blank=True, default='')
+    recovery_status = models.CharField(max_length=24, choices=RECOVERY_CHOICES, default=RECOVERY_NONE)
+    recovery_method = models.CharField(max_length=16, blank=True, default='')
+    recovery_reference = models.CharField(max_length=255, blank=True, default='')
+    reported_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."live_session_absences'
+        managed = False
+        constraints = [
+            models.UniqueConstraint(
+                fields=['occurrence_id', 'learner_profile_id'],
+                name='curriculum_live_absence_learner_occurrence_uniq',
+            ),
+        ]
+
+
 class LiveSessionArtifact(models.Model):
     id = models.CharField(max_length=128, primary_key=True)
     occurrence_id = models.CharField(max_length=128, db_index=True)

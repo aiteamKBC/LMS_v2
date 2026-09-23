@@ -349,7 +349,8 @@ class AttendanceAbsenceTests(SimpleTestCase):
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
              patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
-             patch('learner_api.absence_reports.learner_profile_for_source', return_value=None), \
+             patch('learner_api.absence_reports.learner_profile_for_source', return_value=SimpleNamespace(id=99)), \
+             patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
              patch('learner_api.absence_reports._recording_recovery_event') as calendar_event, \
              patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
@@ -369,6 +370,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
         self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'recorded')
         self.assertIsNone(manager.create.call_args.kwargs['catchup_event_key'])
         calendar_event.assert_called_once()
+        record_absence.assert_called_once()
         send_mail.assert_called_once()
         self.assertIn('Watch the recording', send_mail.call_args.kwargs['text_body'])
         self.assertNotIn('Catch-up session', send_mail.call_args.kwargs['text_body'])

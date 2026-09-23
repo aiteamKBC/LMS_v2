@@ -10,7 +10,7 @@ from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 from login.permissions import require_role, learner_self_or_staff
 
-from .session_results_policy import session_roster, attendance_csv, instant, session_runs, evidence_seconds
+from .session_results_policy import session_roster, attendance_csv, instant, session_runs
 from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
 from .session_sync_runtime import start_requested_sync
 from .session_transfer_progress import summarize_transfers
@@ -73,6 +73,10 @@ def result_rows(series, *, session_number=None, email=None):
     if not ids:
         return []
     records = read('SELECT * FROM curriculum.live_session_attendance WHERE occurrence_id=ANY(%s)', [ids])
+    register_rows = read('''SELECT occurrence_id,learner_profile_id,learner_email,learner_name,
+        attendance_status,recovery_status,attended_seconds,attendance_report_id,first_join_at,last_leave_at
+        FROM curriculum.live_session_learner_attendance
+        WHERE occurrence_id=ANY(%s) ORDER BY learner_name,learner_profile_id''', [ids])
     archive_ready = True
     try:
         artifacts = read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,a.end_datetime,
@@ -90,10 +94,12 @@ def result_rows(series, *, session_number=None, email=None):
             NULL AS archive_status,NULL AS transcript_text,NULL AS archived_at
             FROM curriculum.live_session_artifacts WHERE occurrence_id=ANY(%s)
             ORDER BY created_datetime,id''', [ids])
-    attendance_by_id, artifacts_by_id = defaultdict(list), defaultdict(list)
+    attendance_by_id, register_by_id, artifacts_by_id = defaultdict(list), defaultdict(list), defaultdict(list)
     for record in records:
         record['intervals'] = json_value(record.get('intervals'), [])
         attendance_by_id[record['occurrence_id']].append(record)
+    for register_row in register_rows:
+        register_by_id[register_row['occurrence_id']].append(register_row)
     hidden = set()
     for occurrence_id in ids:
         hidden.update(hidden_artifact_ids([row for row in artifacts if row['occurrence_id'] == occurrence_id]))
@@ -110,12 +116,36 @@ def result_rows(series, *, session_number=None, email=None):
                 if row['occurrence_id'] == artifact['occurrence_id'] and (email is None or row['id'] not in hidden)])
                 if artifact['artifact_type'] == 'recording' else [],
         })
-    expected = set(json_value(series.get('attendees'), []))
-    _by_series, launches = launch_expectations([series['id']])
     results = []
     for item in occurrences:
         complete = bool(item.get('attendance_report_id') and item.get('actual_end'))
-        roster = session_roster(expected | launches[item['id']], attendance_by_id[item['id']], complete=complete)
+        saved_register = register_by_id[item['id']]
+        learner_by_email = {
+            str(row.get('learner_email') or '').strip().casefold(): row
+            for row in saved_register if str(row.get('learner_email') or '').strip()
+        }
+        expected = set(learner_by_email)
+        learner_records = [
+            row for row in attendance_by_id[item['id']]
+            if str(row.get('email') or '').strip().casefold() in expected
+        ]
+        roster = session_roster(expected, learner_records, complete=complete)
+        for person in roster:
+            saved = learner_by_email.get(person['email'])
+            if not saved:
+                continue
+            status = saved.get('attendance_status')
+            person.update(
+                name=saved.get('learner_name') or person['name'],
+                seconds=max(0, int(saved.get('attended_seconds') or 0)),
+                status=status,
+                attendance=1 if status == 'present' else 0,
+                rawStatus=status,
+                rawAttendance=1 if status == 'present' else 0,
+                effectiveStatus=status,
+                effectiveAttendance=1 if status == 'present' else 0,
+                finalOutcome=status,
+            )
         runs = session_runs(item, attendance_by_id[item['id']])
         results.append({'id': item['id'], 'seriesId': series['id'], 'sessionNumber': item['session_number'],
                         'title': series.get('module_title') or '',
@@ -134,49 +164,21 @@ def result_rows(series, *, session_number=None, email=None):
 
 
 def apply_recovery(results):
-    """Layer recovery over raw Teams evidence using exact learner/occurrence identity.
+    """Add reported recovery details without changing original attendance."""
 
-    ``status`` and ``attendance`` remain the result of the original meeting.
-    Recovery only changes the explicitly named effective fields.
-    """
-    from learner_api.absence_reports import _kbc_attendance_report_id
-    from learner_api.alternative_recovery import alternative_occurrence_id
+    occurrence_ids = [str(item.get('id') or '') for item in results if item.get('id')]
     emails = list({person['email'] for item in results for person in item['attendance'] if person['email']})
-    if not emails:
+    if not emails or not occurrence_ids:
         return
-    profiles = read('SELECT enrolment_id,lower(btrim(email)) AS email FROM "Learner".learners WHERE lower(btrim(email))=ANY(%s)', [emails])
-    email_ids = defaultdict(set)
-    for profile in profiles:
-        if profile['enrolment_id']:
-            email_ids[profile['email']].add(profile['enrolment_id'])
-    report_keys = {_kbc_attendance_report_id(f"{next(iter(email_ids[p['email']]))}:teams:{item['id']}")
-                   for item in results for p in item['attendance'] if len(email_ids[p['email']]) == 1}
-    if not report_keys:
-        return
-    reports = read('''SELECT r.attendance_id,r.status,r.recovery_method,r.catchup_event_key,r.learner_id,
-        e.status AS catchup_status,e.learner_email,e.event_type
-        FROM "Coach".coach_absence_report r
-        LEFT JOIN "Coach".coach_calendar_event e ON e.event_key=r.catchup_event_key
-        WHERE r.attendance_id=ANY(%s) ORDER BY r.updated_at,r.id''', [list(report_keys)])
-    target_ids = sorted({
-        alternative_occurrence_id(report.get('catchup_event_key'))
+    reports = read('''SELECT occurrence_id,lower(btrim(learner_email)) AS learner_email,
+        recovery_status,recovery_method,recovery_reference
+        FROM curriculum.live_session_absences
+        WHERE occurrence_id=ANY(%s) AND lower(btrim(learner_email))=ANY(%s)
+        ORDER BY updated_at,id''', [occurrence_ids, emails])
+    reports = {
+        (str(report.get('occurrence_id') or ''), str(report.get('learner_email') or '').strip().casefold()): report
         for report in reports
-        if report.get('recovery_method') == 'alternative'
-    } - {''})
-    alternative_evidence = defaultdict(list)
-    target_states = {}
-    if target_ids:
-        for record in read('''SELECT occurrence_id,email,total_attendance_seconds,intervals
-            FROM curriculum.live_session_attendance WHERE occurrence_id=ANY(%s)''', [target_ids]):
-            email = str(record.get('email') or '').strip().casefold()
-            if email:
-                record['intervals'] = json_value(record.get('intervals'), [])
-                alternative_evidence[(record['occurrence_id'], email)].append(record)
-        target_states = {
-            row['id']: row for row in read('''SELECT id,status,actual_end,attendance_report_id,scheduled_end
-                FROM curriculum.live_session_occurrences WHERE id=ANY(%s)''', [target_ids])
-        }
-    reports = {str(report['attendance_id']): report for report in reports}
+    }
     for item in results:
         for person in item['attendance']:
             raw_status = person.get('rawStatus', person.get('status'))
@@ -184,52 +186,19 @@ def apply_recovery(results):
             person.update(rawStatus=raw_status, rawAttendance=raw_attendance,
                           excuseStatus='none', recoveryStatus='none',
                           recoveryType='none',
+                          recoveryReference='', absenceReported=False,
                           effectiveStatus=raw_status, effectiveAttendance=raw_attendance,
                           finalOutcome=raw_status)
-            ids = email_ids[person['email']]
-            if len(ids) != 1:
+            if raw_status != 'absent':
                 continue
-            learner_id = next(iter(ids))
-            report = reports.get(str(_kbc_attendance_report_id(f"{learner_id}:teams:{item['id']}")))
-            if not report or report['learner_id'] != learner_id:
-                continue
-            person['excuseStatus'] = report['status'] or 'none'
-            person['excused'] = report['status'] == 'approved'
-            recovery_method = report.get('recovery_method') or 'none'
-            person['recoveryType'] = recovery_method
-            coach_completed = bool(person['excused'] and report['catchup_status'] == 'completed'
-                and report['event_type'] == 'catch-up'
-                and str(report['learner_email'] or '').strip().casefold() == person['email'])
-            target_id = alternative_occurrence_id(report.get('catchup_event_key'))
-            alternative_seconds = evidence_seconds(alternative_evidence[(target_id, person['email'])]) if target_id else 0
-            alternative_completed = bool(
-                person['excused']
-                and recovery_method == 'alternative'
-                and alternative_seconds > 180
-            )
-            person['catchupCompleted'] = bool(coach_completed or alternative_completed)
-            if person['catchupCompleted'] and raw_status == 'absent':
-                person.update(recoveryStatus='completed', effectiveStatus='made_up',
-                              effectiveAttendance=1, finalOutcome='made_up')
-            elif person['excused'] and raw_status == 'absent':
-                if recovery_method == 'alternative' and target_id:
-                    target = target_states.get(target_id) or {}
-                    target_complete = bool(target.get('actual_end') and target.get('attendance_report_id'))
-                    target_status = str(target.get('status') or '').strip().casefold()
-                    recovery_status = (
-                        'cancelled'
-                        if target_status in {'cancelled', 'canceled', 'deleted', 'failed', 'superseded'}
-                        else 'missed' if target_complete else 'scheduled'
-                    )
-                elif report['event_type'] == 'catch-up':
-                    recovery_status = report['catchup_status']
-                elif recovery_method == 'recorded':
-                    recovery_status = 'recording_only'
-                else:
-                    recovery_status = 'none'
-                person.update(recoveryStatus=recovery_status or 'none',
-                              effectiveStatus='absent_excused', effectiveAttendance=0,
-                              finalOutcome='absent_excused')
+            report = reports.get((str(item.get('id') or ''), person['email'].strip().casefold()))
+            if report:
+                person.update(
+                    absenceReported=True,
+                    recoveryStatus=report.get('recovery_status') or 'none',
+                    recoveryType=report.get('recovery_method') or 'none',
+                    recoveryReference=report.get('recovery_reference') or '',
+                )
 
 
 def unavailable():

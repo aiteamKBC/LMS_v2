@@ -39,7 +39,7 @@ def build_attendance_pdf(session):
     story.append(Spacer(1, 14))
     labels = {'present': 'Present', 'absent': 'Absent', 'pending': 'Awaiting report', 'review': 'Identity needs review',
               'absent_excused': 'Absent, excused', 'made_up': 'Made up - catch-up completed'}
-    rows = [[paragraph(text, table_heading) for text in ('Participant', 'Joined', 'Left', 'Duration', 'Raw status', 'Effective outcome')]]
+    rows = [[paragraph(text, table_heading) for text in ('Learner', 'Joined', 'Left', 'Duration', 'Attendance', 'Recovery')]]
     for person in session.get('attendance') or []:
         duration = f"{int(person['seconds']) // 60}m {int(person['seconds']) % 60}s"
         visits = person.get('intervals') or [None]
@@ -49,7 +49,12 @@ def build_attendance_pdf(session):
                          paragraph(report_time(visit['leftAt']) if visit else 'Not recorded'),
                          paragraph(duration if index == 0 else 'Included above'),
                          paragraph(labels.get(person.get('rawStatus', person['status']), person.get('rawStatus', person['status']))),
-                         paragraph(labels.get(person.get('finalOutcome', person['status']), person.get('finalOutcome', person['status'])))])
+                         paragraph(
+                             'Catch-up booked' if person.get('recoveryStatus') == 'catchup_booked'
+                             else 'Recovery requested' if person.get('recoveryStatus') == 'requested'
+                             else 'Not requested' if person.get('rawStatus', person['status']) == 'absent'
+                             else '-'
+                         )])
     if len(rows) == 1:
         story.append(paragraph('No participants have been saved for this session.'))
     else:

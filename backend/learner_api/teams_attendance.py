@@ -4,7 +4,6 @@ from datetime import datetime, timezone as datetime_timezone
 
 from django.db import connections, router, transaction
 from django.db.models import Q
-from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -14,22 +13,45 @@ from curriculum_api.models import (
     LiveSessionOccurrence,
     ModuleAuthoringModule,
 )
+from curriculum_api.live_session_register import upsert_live_session_register
 
-from .models import LearnerProfile
+from .models import LearnerProfile, LearnerTrainingPlanModule
 
 
 def _email(value) -> str:
     return str(value or "").strip().casefold()
 
 
-def _session_expected_emails(session: LiveSession) -> set[str]:
-    """Invitation snapshot; authenticated LMS launches extend individual occurrences."""
+def _assigned_learner_emails_by_module(database: str, module_refs) -> dict[str, set[str]]:
+    """Return the authored learner-plan roster for each delivery module.
 
-    # Lazily imported: curriculum_api.views imports this module's sync entry
-    # point, so a module-level import here would close the loop.
-    from curriculum_api.views import teams_series_email_list
+    Teams invitations and attendance reports also contain organizers,
+    presenters and other guests.  They are evidence of meeting participation,
+    not evidence that the person is a learner assigned to this module.
+    """
 
-    return set(teams_series_email_list(session.attendees))
+    wanted = {str(value or "").strip() for value in module_refs}
+    wanted.discard("")
+    result: dict[str, set[str]] = defaultdict(set)
+    if not wanted:
+        return result
+    rows = (
+        LearnerTrainingPlanModule.objects.using(database)
+        .filter(module_ref__in=wanted)
+        .values_list("module_ref", "learner__email")
+    )
+    for module_ref, email in rows:
+        email_key = _email(email)
+        if email_key:
+            result[str(module_ref or "").strip()].add(email_key)
+    return result
+
+
+def _module_expected_emails(session, assigned_by_module, identity_emails=None) -> set[str]:
+    expected = set(assigned_by_module.get(str(session.module_catalogue_id or "").strip(), set()))
+    if identity_emails is not None:
+        expected &= set(identity_emails)
+    return expected
 
 
 def _local_datetime(value):
@@ -67,33 +89,6 @@ def _attendance_interval_bounds(intervals) -> tuple[datetime | None, datetime | 
     return first_join, last_leave
 
 
-def _reported_participant_emails(database, session_ids, learner_emails):
-    """Read identified participants of completed reports, scoped to each occurrence."""
-    by_series, by_occurrence = defaultdict(set), defaultdict(set)
-    occurrences = dict(
-        LiveSessionOccurrence.objects.using(database)
-        .filter(live_session_id__in=session_ids, actual_end__isnull=False)
-        .exclude(Q(attendance_report_id__isnull=True) | Q(attendance_report_id__exact=""))
-        .values_list("id", "live_session_id")
-    )
-    if not occurrences:
-        return by_series, by_occurrence
-
-    participants = (
-        LiveSessionAttendance.objects.using(database)
-        .filter(occurrence_id__in=list(occurrences))
-        .annotate(normalized_email=Lower(Trim("email")))
-    )
-    if learner_emails is not None:
-        participants = participants.filter(normalized_email__in=list(learner_emails))
-    for occurrence_id, email in participants.values_list("occurrence_id", "normalized_email"):
-        email = _email(email)
-        if email:
-            by_series[occurrences[occurrence_id]].add(email)
-            by_occurrence[occurrence_id].add(email)
-    return by_series, by_occurrence
-
-
 def fetch_verified_teams_attendance_rows(
     learner_ids: list[int] | None = None,
     learner_emails: list[str] | None = None,
@@ -106,11 +101,15 @@ def fetch_verified_teams_attendance_rows(
 ) -> list[dict]:
     """Build real attendance from completed Microsoft Teams reports.
 
-    Expected learners come from the invitation snapshot or an authenticated
-    Join launch for that exact occurrence. A launch never establishes presence.
-    Coach attendance can also display identified report participants without
-    changing the expected roster used by synchronization and other consumers.
+    Expected learners come from the module's learner training plans. Microsoft
+    organizers, presenters and unrelated guests are never learner attendance
+    rows merely because they were invited or joined the meeting. Approved
+    alternative-session recovery guests extend only their selected occurrence.
     """
+
+    # Retained for API compatibility with coach callers. Report participants
+    # are now always narrowed to the authoritative module learner roster.
+    del include_reported_participants
 
     ids = sorted({int(value) for value in (learner_ids or []) if value})
     emails = sorted({_email(value) for value in (learner_emails or []) if _email(value)})
@@ -149,24 +148,18 @@ def fetch_verified_teams_attendance_rows(
     if not sessions:
         return []
 
-    from curriculum_api.session_results import launch_expectations
-    launched_series, launched_occurrences = launch_expectations(
-        [session.id for session in sessions],
-        identity_learners_by_email.keys() if identity_learners_by_email is not None else None,
+    assigned_by_module = _assigned_learner_emails_by_module(
+        database,
+        [session.module_catalogue_id for session in sessions],
     )
-    reported_series, reported_occurrences = defaultdict(set), defaultdict(set)
-    if include_reported_participants:
-        reported_series, reported_occurrences = _reported_participant_emails(
-            database,
-            [session.id for session in sessions],
-            identity_learners_by_email.keys() if identity_learners_by_email is not None else None,
-        )
     expected_emails_by_session: dict[str, set[str]] = {}
     all_expected_emails: set[str] = set()
     for session in sessions:
-        session_emails = _session_expected_emails(session) | launched_series[session.id] | reported_series[session.id]
-        if identity_learners_by_email is not None:
-            session_emails &= identity_learners_by_email.keys()
+        session_emails = _module_expected_emails(
+            session,
+            assigned_by_module,
+            identity_learners_by_email.keys() if identity_learners_by_email is not None else None,
+        )
         if not session_emails:
             continue
         expected_emails_by_session[session.id] = session_emails
@@ -263,11 +256,9 @@ def fetch_verified_teams_attendance_rows(
             "intervals",
         )
     )
-    unidentified_occurrences = set()
     for record in attendance_records:
         email_key = _email(record.email)
         if not email_key:
-            unidentified_occurrences.add(record.occurrence_id)
             continue
         first_join, last_leave = _attendance_interval_bounds(record.intervals)
         existing = attendance_by_occurrence[record.occurrence_id].get(email_key)
@@ -315,20 +306,18 @@ def fetch_verified_teams_attendance_rows(
         module = modules_by_id.get(module_ref)
 
         occurrence_expected = (
-            _session_expected_emails(session)
-            | launched_occurrences[occurrence.id]
+            _module_expected_emails(
+                session,
+                assigned_by_module,
+                identity_learners_by_email.keys() if identity_learners_by_email is not None else None,
+            )
             | approved_guests[occurrence.id]
         )
-        occurrence_emails = occurrence_expected | reported_occurrences[occurrence.id]
-        for email in occurrence_emails & expected_emails_by_session.get(session.id, set()):
+        for email in occurrence_expected & expected_emails_by_session.get(session.id, set()):
             learner = learners_by_email.get(email)
             if learner is None:
                 continue
             attendance = attendance_by_occurrence[occurrence.id].get(email)
-            if attendance is None and (email not in occurrence_expected or occurrence.id in unidentified_occurrences):
-                # A report-only participant needs evidence in this read too;
-                # a concurrent refresh must not turn removed evidence into absence.
-                continue
             rows.append(
                 {
                     "learner_id": learner.id,
@@ -362,9 +351,7 @@ def fetch_verified_teams_attendance_rows(
                     "is_expected": email in occurrence_expected,
                     "eligibility_reason": (
                         "approved_recovery_guest" if email in approved_guests[occurrence.id]
-                        else "teams_invite_list" if email in _session_expected_emails(session)
-                        else "assigned_lms_join" if email in launched_occurrences[occurrence.id]
-                        else "verified_teams_participant"
+                        else "module_assignment"
                     ),
                     "scheduled_start": occurrence.scheduled_start,
                     "scheduled_end": occurrence.scheduled_end,
@@ -658,14 +645,14 @@ def sync_verified_teams_attendance_reporting(
             check.execute(f"SELECT attended_seconds, occurrence_id, is_expected, catchup_completed FROM {ATTENDANCE_REPORTING_TABLE} LIMIT 0")
         with connections[database].cursor() as cursor:
             # Retain stale rows for audit/absence-report foreign keys, but hide
-            # them from the read view until this roster rebuild marks them
-            # expected again in the upsert below.
+            # them from the read view until this module-roster rebuild marks
+            # them expected again in the upsert below.
             if all_learners:
                 cursor.execute(
                     f"""
                     UPDATE {ATTENDANCE_REPORTING_TABLE}
                     SET is_expected = false,
-                        eligibility_reason = 'not_in_current_teams_invite_list',
+                        eligibility_reason = 'not_in_current_module_roster',
                         calculated_at = CURRENT_TIMESTAMP
                     WHERE source = 'microsoft_teams'
                     """
@@ -675,7 +662,7 @@ def sync_verified_teams_attendance_reporting(
                     f"""
                     UPDATE {ATTENDANCE_REPORTING_TABLE}
                     SET is_expected = false,
-                        eligibility_reason = 'not_in_current_teams_invite_list',
+                        eligibility_reason = 'not_in_current_module_roster',
                         calculated_at = CURRENT_TIMESTAMP
                     WHERE source = 'microsoft_teams'
                       AND (
@@ -687,7 +674,7 @@ def sync_verified_teams_attendance_reporting(
                 )
             if params:
                 cursor.executemany(query, params)
-
+            upsert_live_session_register(cursor, rows)
     _award_attendance_points(rows)
     return len(rows)
 

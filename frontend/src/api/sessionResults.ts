@@ -10,7 +10,10 @@ export interface SessionPerson {
   rawStatus?: 'present' | 'absent' | 'pending' | 'review';
   rawAttendance?: 0 | 1 | null;
   excuseStatus?: 'none' | 'pending' | 'approved' | 'declined';
-  recoveryStatus?: string;
+  absenceReported?: boolean;
+  recoveryStatus?: 'none' | 'requested' | 'catchup_booked';
+  recoveryType?: 'none' | 'recorded' | 'alternative' | 'catch-up';
+  recoveryReference?: string;
   effectiveStatus?: 'present' | 'absent' | 'pending' | 'review' | 'absent_excused' | 'made_up';
   effectiveAttendance?: 0 | 1 | null;
   finalOutcome?: 'present' | 'absent' | 'pending' | 'review' | 'absent_excused' | 'made_up';

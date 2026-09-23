@@ -6,12 +6,14 @@ from html import escape
 from uuid import uuid4
 
 from django.conf import settings
-from django.db import DatabaseError, IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, router, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+from curriculum_api.live_session_absences import record_reported_absence
+from curriculum_api.models import LiveSessionAbsence
 from login import email_azure
 from login.permissions import learner_self_or_admin
 
@@ -398,6 +400,8 @@ def learner_absence_reports(request, kind, learner_id):
 
     active = learner_profile_for_source(learner, learner_id, active_only=True)
     original_occurrence_id = session_id[len('teams:'):] if session_id.startswith('teams:') else ''
+    if original_occurrence_id and active is None:
+        return _error('This live-session absence could not be linked to your learner profile.', 409)
     if recovery_method == ALTERNATIVE_METHOD:
         try:
             alternative = validate_alternative_occurrence(
@@ -484,6 +488,18 @@ def learner_absence_reports(request, kind, learner_id):
                 evidence_text=evidence_text,
                 previous_absences=previous_absences,
             )
+            if original_occurrence_id:
+                record_reported_absence(
+                    database=router.db_for_write(LiveSessionAbsence) or 'default',
+                    occurrence_id=original_occurrence_id,
+                    learner_profile_id=active.id,
+                    source_kind=kind,
+                    source_learner_id=learner_id,
+                    learner_email=learner_email,
+                    learner_name=learner_name,
+                    recovery_method=recovery_method,
+                    recovery_reference=catchup_event_key or '',
+                )
             if recovery_method == 'recorded':
                 _recording_recovery_event(
                     report, learner, active, recording_date, recording_time, recording_duration,

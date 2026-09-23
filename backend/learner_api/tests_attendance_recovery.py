@@ -114,6 +114,7 @@ class RecoverySubmissionTests(SimpleTestCase):
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=MIRROR), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports._catchup_booking', side_effect=validation) as validate, \
+             patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
              patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
              patch('learner_api.absence_reports._serialize', return_value={'id': 1}):
@@ -125,10 +126,10 @@ class RecoverySubmissionTests(SimpleTestCase):
                 session_title='Lecture', recovery_method='catch-up',
             )
             response = inspect.unwrap(learner_absence_reports)(self.request(recoveryMethod='catch-up', catchupEventKey='catch-up:99:1'), 'apprenticeship', 12)
-            return response, manager, validate, send_mail
+            return response, manager, validate, send_mail, record_absence
 
     def test_catchup_choice_and_verified_event_key_are_saved(self):
-        response, manager, validate, send_mail = self.submit([booked_event(), booked_event()])
+        response, manager, validate, send_mail, record_absence = self.submit([booked_event(), booked_event()])
         self.assertEqual(response.status_code, 201)
         self.assertEqual(manager.create.call_args.kwargs['status'], 'approved')
         self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'catch-up')
@@ -137,12 +138,16 @@ class RecoverySubmissionTests(SimpleTestCase):
         self.assertTrue(validate.call_args.kwargs['lock'])
         self.assertIn('Catch-up session', send_mail.call_args.kwargs['text_body'])
         self.assertNotIn('Watch the recording', send_mail.call_args.kwargs['text_body'])
+        self.assertEqual(record_absence.call_args.kwargs['occurrence_id'], 'lecture')
+        self.assertEqual(record_absence.call_args.kwargs['learner_profile_id'], MIRROR.id)
+        self.assertEqual(record_absence.call_args.kwargs['recovery_method'], 'catch-up')
 
     def test_cancellation_between_validation_and_save_prevents_submission(self):
-        response, manager, _, send_mail = self.submit([booked_event(), RecoveryPlanError('Booking cancelled.')])
+        response, manager, _, send_mail, record_absence = self.submit([booked_event(), RecoveryPlanError('Booking cancelled.')])
         self.assertEqual(response.status_code, 409)
         self.assertEqual(json.loads(response.content)['error'], 'Booking cancelled.')
         manager.create.assert_not_called()
+        record_absence.assert_not_called()
         send_mail.assert_not_called()
 
     def test_alternative_session_is_approved_without_coach_review(self):
@@ -151,6 +156,7 @@ class RecoverySubmissionTests(SimpleTestCase):
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=MIRROR), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports.validate_alternative_occurrence', return_value={'id': 'target-occurrence'}) as validate, \
+             patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
              patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
              patch('learner_api.absence_reports._serialize', return_value={'id': 1, 'status': 'approved'}):
@@ -170,6 +176,8 @@ class RecoverySubmissionTests(SimpleTestCase):
         self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'alternative')
         self.assertEqual(manager.create.call_args.kwargs['catchup_event_key'], 'alternative:target-occurrence')
         self.assertEqual(validate.call_count, 2)
+        self.assertEqual(record_absence.call_args.kwargs['recovery_method'], 'alternative')
+        self.assertEqual(record_absence.call_args.kwargs['recovery_reference'], 'alternative:target-occurrence')
         self.assertIn('Alternative group session', send_mail.call_args.kwargs['text_body'])
         self.assertNotIn('Catch-up session', send_mail.call_args.kwargs['text_body'])
 

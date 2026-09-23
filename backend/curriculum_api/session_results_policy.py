@@ -141,7 +141,8 @@ def attendance_csv(rows):
     output = io.StringIO(newline='')
     writer = csv.writer(output)
     writer.writerow(['Name', 'Email', 'Raw attendance', 'Raw status', 'Effective attendance',
-                     'Final outcome', 'Seconds', 'Excused', 'Catch-up completed'])
+                     'Final outcome', 'Seconds', 'Excused', 'Catch-up completed',
+                     'Absence reported', 'Recovery status', 'Recovery method'])
     def cell(value):
         value = str(value)
         return "'" + value if value.lstrip().startswith(('=', '+', '-', '@')) else value
@@ -151,5 +152,7 @@ def attendance_csv(rows):
                          row.get('rawStatus', row.get('status', '')),
                          '' if row.get('effectiveAttendance', row.get('attendance')) is None else row.get('effectiveAttendance', row.get('attendance')),
                          row.get('finalOutcome', row.get('status', '')), row['seconds'],
-                         'Yes' if row.get('excused') else 'No', 'Yes' if row.get('catchupCompleted') else 'No'])
+                         'Yes' if row.get('excused') else 'No', 'Yes' if row.get('catchupCompleted') else 'No',
+                         'Yes' if row.get('absenceReported') else 'No',
+                         row.get('recoveryStatus', 'none'), row.get('recoveryType', 'none')])
     return '\ufeff' + output.getvalue()
