@@ -15,7 +15,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 
-const adminNav = roleNavMap.admin;
+
 
 export interface HeroStat {
   label: string;
@@ -27,8 +27,9 @@ export interface HeroStat {
  * banner; pass figures that come from the response, not constants.
  */
 export function AdminPage({
-  title, subtitle, icon, heroTitle, heroBlurb, stats, actions, children,
+  title, subtitle, icon, heroTitle, heroBlurb, stats, actions, children, workspaceRole = "admin",
 }: {
+  workspaceRole?: "admin" | "compliance" | "curriculum";
   title: string;
   subtitle: string;
   icon: string;
@@ -39,16 +40,17 @@ export function AdminPage({
   children: ReactNode;
 }) {
   const { auth } = useAuth();
+  const adminNav = roleNavMap[workspaceRole];
   return (
     <WorkspaceShell
-      role="admin"
+      role={workspaceRole}
       roleLabel={adminNav.label}
       navItems={adminNav.items}
       workspaceLabel={adminNav.workspaceLabel}
       pageTitle={title}
       pageSubtitle={subtitle}
       userName={auth.account?.displayName || auth.user?.fullName || 'Platform Admin'}
-      userRole="Super Administrator"
+      userRole={workspaceRole === "admin" ? "Super Administrator" : adminNav.label}
     >
       <div className="admin-console-page min-w-0 space-y-4 p-3 md:space-y-5 md:p-6 [&_table_th]:!bg-primary-50/60 [&_table_th]:!font-semibold [&_table_th]:!text-primary-700 [&_tbody_tr:hover]:!bg-primary-50/40">
         <AdminPageHeader title={heroTitle} description={heroBlurb} icon={icon} stats={stats} actions={actions} />

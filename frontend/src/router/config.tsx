@@ -885,6 +885,14 @@ const routes: RouteObject[] = [
     element: <CoachDirectoryPage />,
   },
   {
+    path: "/users/coach-directory",
+    element: <CoachDirectoryPage workspaceRole="compliance" />,
+  },
+  {
+    path: "/curriculum/coach-directory",
+    element: <CoachDirectoryPage workspaceRole="curriculum" />,
+  },
+  {
     path: "/coach-booking/:slug",
     element: <CoachBookingPage />,
   },

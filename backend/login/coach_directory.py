@@ -1,4 +1,4 @@
-"""Public booking cards, with all directory mutations restricted to super admins."""
+"""Public booking cards, with directory management restricted to authorised staff."""
 import json
 from urllib.parse import urlsplit
 
@@ -7,7 +7,7 @@ from django.http import JsonResponse
 from django.utils.text import slugify
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
-from .permissions import require_role
+from .permissions import require_access
 
 LINK_FIELDS = ('first_session', 'support_session', 'coaching_session', 'progress_review')
 TABLE = 'login.coach_directory'
@@ -62,7 +62,7 @@ def public_coach(request, slug):
 
 
 @csrf_exempt
-@require_role('admin')
+@require_access('enrolment', 'curriculum')
 def directory(request, pk=None):
     if request.method not in ('GET', 'POST', 'PUT', 'DELETE'):
         return JsonResponse({'error': 'Method not allowed.'}, status=405)
