@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import Swal from 'sweetalert2';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { type EvidenceRecord } from '@/api/evidence';
-import { fetchCoachImportedReviews, importedReviewEvents, isImportedReviewEvent } from '@/api/coachImportedReviews';
+import { isImportedReviewEvent } from '@/api/coachImportedReviews';
 import { type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -1014,14 +1014,8 @@ export default function CoachProgressReviews() {
       setLoading(true);
       setError(null);
       try {
-        const [data, imported] = await Promise.all([
-          fetchCoachCalendarEvents(controller.signal),
-          fetchCoachImportedReviews(controller.signal).catch(() => []),
-        ]);
-        const reviews = sortEvents([
-          ...(data.events || []).filter(event => event.source === 'progress-review'),
-          ...importedReviewEvents(imported, 'reviews'),
-        ]);
+        const data = await fetchCoachCalendarEvents(controller.signal);
+        const reviews = sortEvents((data.events || []).filter(event => event.source === 'progress-review'));
         setEvents(reviews);
         setOwnerName(data.owner?.name || coach.name);
       } catch (err) {

@@ -928,7 +928,7 @@ class CoachDashboardViewTests(SimpleTestCase):
         payload = json.loads(response.content)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(payload["learners"], [{"id": "2"}])
+        self.assertEqual(payload["learners"], [{"id": "2", "lastPr": None, "lastMcm": None}])
         self.assertEqual(payload["monthlyRisk"], [{"month": "2026-08", "label": "Aug", "count": 1}])
         # Attendance is overlaid directly onto each learner (see
         # CoachDashboardAttendanceOverlayTests) rather than shipped as a
@@ -1273,8 +1273,17 @@ class CoachTimetableWindowTests(SimpleTestCase):
 
     @patch("coach_api.views.fetch_calendar_event_records", return_value={})
     @patch("coach_api.views.fetch_standalone_event_records", return_value=[])
-    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
+    @patch("coach_api.views.resolve_coach_review_events", return_value={
+        "events": [], "reviewGenerationIssues": [], "aptemProfileIds": set(),
+        "sourceCounts": {
+            "progressReviewRows": 0, "mcrRows": 0, "reviewRows": 0,
+            "learnersWithDates": 0, "reviewAnchorSkipped": 0,
+            "reviewAnchorSkipReasons": {}, "aptemReviewRows": 0,
+            "curriculumReviewRows": 0, "aptemLearners": 0, "curriculumLearners": 0,
+        },
+    })
     @patch("coach_api.views.build_learner_profile_map", return_value={})
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
     @patch("coach_api.views.fetch_owner_active_learner_profiles", return_value=[])
     @patch("coach_api.views.coach_staff_display_name", return_value="")
     @patch("coach_api.views.collect_live_session_events", side_effect=RuntimeError("legacy staff profile schema"))
@@ -1283,8 +1292,9 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events,
         coach_staff_display_name,
         fetch_owner_active_learner_profiles,
+        fetch_caseload_dashboard_profiles,
         build_learner_profile_map,
-        fetch_source_schedule_rows,
+        resolve_coach_review_events,
         fetch_standalone_event_records,
         fetch_calendar_event_records,
     ):
@@ -1295,10 +1305,13 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events.assert_called_once()
         coach_staff_display_name.assert_called_once_with("coach@example.com")
         fetch_owner_active_learner_profiles.assert_called_once_with("coach@example.com")
+        fetch_caseload_dashboard_profiles.assert_called_once_with("coach@example.com")
         build_learner_profile_map.assert_called_once_with([])
-        fetch_source_schedule_rows.assert_called_once_with([])
+        resolve_coach_review_events.assert_called_once_with(
+            "coach@example.com", "Med Maher", [], start_date=None, end_date=None,
+        )
         fetch_standalone_event_records.assert_called_once_with("coach@example.com")
-        fetch_calendar_event_records.assert_called_once_with("coach@example.com", [])
+        fetch_calendar_event_records.assert_not_called()
 
 
 class CoachTimetableBookingConflictTests(SimpleTestCase):

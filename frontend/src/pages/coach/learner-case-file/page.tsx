@@ -52,6 +52,7 @@ const CASE_FILE_TABS = [
   { id: 'progress', label: 'OTJH & KSB Progress', icon: 'ri-line-chart-line' },
   { id: 'attendance', label: 'Attendance', icon: 'ri-calendar-check-line' },
   { id: 'support', label: 'Learning Plan', icon: 'ri-route-line' },
+  { id: 'reviews', label: 'Reviews', icon: 'ri-file-list-3-line' },
   { id: 'otjh', label: 'OTJH', icon: 'ri-time-line' },
   { id: 'ksbs', label: 'KSBs', icon: 'ri-award-line' },
   { id: 'evidence', label: 'Evidence', icon: 'ri-folder-upload-line' },
@@ -216,9 +217,6 @@ export default function LearnerCaseFile() {
         return <ReferenceReviewsContent
           data={data}
           onOpen={handleOpenReviewMeeting}
-          onChanged={refresh}
-          onOpenNotes={() => setActiveTab('coach-notes')}
-          onOpenMonthlyLogs={() => data.detail?.id && navigate(`/coach/monthly-logs/${data.detail.id}`)}
         />;
       case 'coach-notes':
         return <DocumentsTab data={data} />;
@@ -1042,31 +1040,38 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
 function ReferenceReviewsContent({
   data,
   onOpen,
-  onChanged,
-  onOpenNotes,
-  onOpenMonthlyLogs,
 }: {
   data: CoachLearnerCaseFileData;
   onOpen: (item: CaseFileReviewMeeting) => void;
-  onChanged: () => void;
-  onOpenNotes: () => void;
-  onOpenMonthlyLogs: () => void;
 }) {
-  const [addOpen, setAddOpen] = useState(false);
+  type ReviewFilter = 'all' | 'progress-review' | 'mcr' | 'completed' | 'upcoming';
+  const [filter, setFilter] = useState<ReviewFilter>('all');
   const reviewsLoading = data.reviewsLoading && data.reviewGroups.length === 0;
   const reviewItems = data.reviewGroups.flatMap(group => group.items);
-  const timeline = [
-    { label: 'Progress Review', description: 'Formal progress review against programme goals and targets.', icon: 'ri-clipboard-line', match: (item: CaseFileReviewMeeting) => item.source === 'progress-review' },
-    { label: 'Monthly Coaching Meeting', description: 'Regular coaching meeting to discuss progress, support needs and next steps.', icon: 'ri-group-line', match: (item: CaseFileReviewMeeting) => item.source === 'mcr' },
-    { label: 'Catch-up', description: 'Additional meeting to address specific topics or concerns.', icon: 'ri-file-list-3-line', match: (item: CaseFileReviewMeeting) => item.source === 'catch-up' },
-  ].map(entry => ({ ...entry, item: reviewItems.find(entry.match) }));
+  const isUpcoming = (item: CaseFileReviewMeeting) => !['completed', 'cancelled'].includes(item.status);
+  const visibleItems = reviewItems.filter(item => {
+    if (filter === 'all') return true;
+    if (filter === 'completed') return item.status === 'completed';
+    if (filter === 'upcoming') return isUpcoming(item);
+    return item.source === filter;
+  });
+  const summaries = [
+    ['Total Reviews', reviewItems.length],
+    ['Progress Reviews', reviewItems.filter(item => item.source === 'progress-review').length],
+    ['Monthly Coaching Meetings', reviewItems.filter(item => item.source === 'mcr').length],
+    ['Completed', reviewItems.filter(item => item.status === 'completed').length],
+    ['Upcoming', reviewItems.filter(isUpcoming).length],
+  ] as const;
+  const filters: Array<{ id: ReviewFilter; label: string }> = [
+    { id: 'all', label: 'All' },
+    { id: 'progress-review', label: 'Progress Review' },
+    { id: 'mcr', label: 'Monthly Coaching Meeting' },
+    { id: 'completed', label: 'Completed' },
+    { id: 'upcoming', label: 'Upcoming' },
+  ];
 
   return (
     <div className={styles.stack}>
-      <ReferencePanel title="Reviews & Meetings" subtitle="Manage learner-specific reviews and coaching meetings from this case file." icon="ri-group-line" tone="primary"
-        actions={<button type="button" onClick={() => setAddOpen(true)} className={styles.solidButton}><AppIcon className="ri-add-line" />Add Review</button>}>
-        <span className="sr-only">Review and meeting controls</span>
-      </ReferencePanel>
       {data.reviewGenerationIssues.map(issue => (
         <div key={issue.code} className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900" role="status">
           <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-[18px]"></AppIcon>
@@ -1076,38 +1081,41 @@ function ReferenceReviewsContent({
           </div>
         </div>
       ))}
-      <div className={styles.reviewsGrid}>
-        <ReferencePanel title="Review Timeline" subtitle="Key reviews and meetings for this learner" icon="ri-calendar-line" tone="primary">
-          {reviewsLoading ? <RowsSkeleton rows={3} avatar={false} /> : <div className={styles.timeline}>
-            {timeline.map(entry => <div key={entry.label} className={styles.timelineItem}>
-              <span className={styles.timelineIcon}><AppIcon className={entry.icon} /></span>
-              <div><strong>{entry.label}</strong><p>{entry.description}</p></div>
-              <button type="button" disabled={!entry.item} className={styles.timelineStatus} onClick={() => entry.item && onOpen(entry.item)}>
-                {entry.item?.statusLabel || 'Not scheduled'}
-              </button>
-            </div>)}
-          </div>}
-        </ReferencePanel>
-        <ReferencePanel title="Quick Actions" subtitle="Common tasks for reviews and meetings" icon="ri-flashlight-line" tone="primary">
-          <div className={styles.quickActions}>
-            <button type="button" className={styles.quickAction} onClick={() => setAddOpen(true)}><AppIcon className="ri-calendar-line" /><span><strong>Schedule Review</strong><span>Add a progress review for this learner</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
-            <button type="button" className={styles.quickAction} onClick={onOpenNotes}><AppIcon className="ri-file-list-3-line" /><span><strong>Add Meeting Note</strong><span>Record notes from a coaching meeting</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
-            <button type="button" className={styles.quickAction} onClick={onOpenMonthlyLogs}><AppIcon className="ri-file-text-line" /><span><strong>View Monthly Logs</strong><span>See all monthly coaching logs</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
-          </div>
-        </ReferencePanel>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5" aria-label="Review summary">
+        {summaries.map(([label, value]) => <div key={label} className="rounded-xl border border-foreground-200/70 bg-white p-4 shadow-sm">
+          <strong className="block text-2xl text-foreground-950">{value}</strong>
+          <span className="mt-1 block text-xs font-semibold text-foreground-500">{label}</span>
+        </div>)}
       </div>
-      <ReferencePanel title="Session History" subtitle="All reviews and coaching meetings for this learner" icon="ri-file-list-3-line" tone="primary">
-        {reviewsLoading ? <RowsSkeleton rows={3} avatar={false} /> : reviewItems.length
-          ? <ReviewMeetingList items={reviewItems} itemLabel="review" onOpen={onOpen} />
-          : <div className={styles.empty}><div><AppIcon className="ri-file-list-3-line text-lg" /><p className="mt-2">No review or coaching meeting records are available yet.</p><button type="button" className={cn(styles.solidButton, 'mt-3')} onClick={() => setAddOpen(true)}>Create first review</button></div></div>}
+      <ReferencePanel title="Review History" subtitle="Progress reviews and monthly coaching meetings for this learner" icon="ri-file-list-3-line" tone="primary">
+        <div className="mb-4 flex flex-wrap gap-2" aria-label="Review filters">
+          {filters.map(option => <button key={option.id} type="button" aria-pressed={filter === option.id} onClick={() => setFilter(option.id)}
+            className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition', filter === option.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-300')}>
+            {option.label}
+          </button>)}
+        </div>
+        {reviewsLoading ? <div aria-label="Loading reviews"><RowsSkeleton rows={5} avatar={false} /></div> : reviewItems.length === 0
+          ? <div className={styles.empty}><p>No reviews found for this learner.</p></div>
+          : visibleItems.length === 0 ? <div className={styles.empty}><p>No reviews match this filter.</p></div>
+          : <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-xs">
+            <thead><tr className="border-b border-foreground-200 text-foreground-500">
+              {['Review Type', 'Planned Date', 'Completed Date', 'Status', 'Reviewer', 'Actions'].map(label => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
+            </tr></thead>
+            <tbody>{visibleItems.map(item => <tr key={item.id} className="border-b border-foreground-100 last:border-0">
+              <td className="px-3 py-3 font-semibold text-foreground-900">{item.reviewTypeName}</td>
+              <td className="px-3 py-3 text-foreground-700">{item.plannedDate}</td>
+              <td className="px-3 py-3 text-foreground-700">{item.completedDate}</td>
+              <td className="px-3 py-3"><StatusBadge status={item.status} label={item.statusLabel} size="sm" /></td>
+              <td className="px-3 py-3 text-foreground-700">{item.reviewer}</td>
+              <td className="px-3 py-3"><div className="flex flex-wrap gap-2">
+                <button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={() => onOpen(item)}>View</button>
+                {item.hasForm ? <button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={() => onOpen(item)}>View Form</button> : null}
+                {item.hasTranscript ? <button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={() => onOpen(item)}>View Transcript</button> : null}
+                {item.hasAttendance ? <button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={() => onOpen(item)}>View Attendance</button> : null}
+              </div></td>
+            </tr>)}</tbody>
+          </table></div>}
       </ReferencePanel>
-      {addOpen ? (
-        <AddLearnerReviewModal
-          data={data}
-          onClose={() => setAddOpen(false)}
-          onChanged={onChanged}
-        />
-      ) : null}
     </div>
   );
 }

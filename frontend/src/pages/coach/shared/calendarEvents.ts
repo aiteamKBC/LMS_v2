@@ -80,6 +80,11 @@ export interface CoachCalendarEvent {
   syncAttemptCount?: number;
   reviewResponses?: Record<string, string>;
   reviewCompletedAt?: string | null;
+  reviewSource?: 'aptem' | 'curriculum' | string;
+  reviewerName?: string | null;
+  hasReviewForm?: boolean;
+  hasTranscript?: boolean;
+  hasAttendance?: boolean;
   managerSignedAt?: string | null;
   managerSignedBy?: string;
   /** The Curriculum review_templates.id this occurrence was generated from. */
@@ -441,7 +446,7 @@ export function startOfDay(value = new Date()) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
 }
 
-export function currentWeekRange(referenceDate = new Date()) {
+export function getCurrentWorkWeekRange(referenceDate = new Date()) {
   const today = startOfDay(referenceDate);
   const day = today.getDay();
   const mondayOffset = day === 0 ? -6 : 1 - day;
@@ -450,8 +455,24 @@ export function currentWeekRange(referenceDate = new Date()) {
 
   const end = new Date(start);
   end.setDate(start.getDate() + 4);
+  end.setHours(23, 59, 59, 999);
   return { start, end };
 }
+
+export function getNextWorkWeekRange(referenceDate = new Date()) {
+  const { start: currentMonday } = getCurrentWorkWeekRange(referenceDate);
+  const start = new Date(currentMonday);
+  start.setDate(currentMonday.getDate() + 7);
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 4);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+// Retained for existing calendar consumers; a dashboard work week is the same
+// established Monday-to-Friday range.
+export const currentWeekRange = getCurrentWorkWeekRange;
 
 export function eventDisplayDate(event: CoachCalendarEvent) {
   return event.scheduledDate || event.date || event.targetDate || '';
@@ -587,6 +608,48 @@ export function isUrgentEvent(event: CoachCalendarEvent) {
 
 export function isCompletedEvent(event: CoachCalendarEvent) {
   return event.status === 'completed';
+}
+
+export function reviewScheduleAvailable(
+  summary?: {
+    progressReviewRows?: number | null;
+    mcrRows?: number | null;
+    learnersWithDates?: number | null;
+  },
+  events: CoachCalendarEvent[] = [],
+  issues: readonly unknown[] = [],
+) {
+  const hasResolvedReviews = events.some(event => (
+    event.source === 'progress-review' || event.source === 'mcr'
+  ));
+  const hasResolvedSummary = (
+    (summary?.progressReviewRows ?? 0) > 0
+    || (summary?.mcrRows ?? 0) > 0
+    || (summary?.learnersWithDates ?? 0) > 0
+  );
+
+  return hasResolvedReviews || hasResolvedSummary || issues.length === 0;
+}
+
+export function latestCompletedReviewDate(
+  events: CoachCalendarEvent[],
+  learnerId: string,
+  source: 'mcr' | 'progress-review',
+) {
+  const latest = events
+    .filter(event => (
+      isCompletedEvent(event)
+      && event.source === source
+      && String(event.learnerId || '') === String(learnerId)
+    ))
+    .map(event => ({
+      value: event.reviewCompletedAt,
+      date: parseLocalDate(event.reviewCompletedAt),
+    }))
+    .filter((entry): entry is { value: string; date: Date } => Boolean(entry.value && entry.date))
+    .sort((left, right) => right.date.getTime() - left.date.getTime())[0];
+
+  return latest?.value ?? null;
 }
 
 export function canJoinMeeting(event: CoachCalendarEvent, referenceDate = new Date()) {

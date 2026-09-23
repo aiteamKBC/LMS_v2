@@ -136,8 +136,8 @@ it('returns immediately to skeletons when the selected coach changes', async () 
 it('shows serialized latest completed MCM and PR and ignores future or cancelled sessions', async () => {
   vi.useRealTimers();
   mocks.calendar.mockResolvedValue({ events: [
-    { ...meeting, id: 'completed-coaching', status: 'completed', scheduledDate: '2026-09-12' },
-    { ...meeting, id: 'completed-review', source: 'progress-review', type: 'review', status: 'completed', scheduledDate: '2026-09-15' },
+    { ...meeting, id: 'completed-coaching', status: 'completed', scheduledDate: '2026-09-20', reviewCompletedAt: '2026-09-01T09:00:00Z' },
+    { ...meeting, id: 'completed-review', source: 'progress-review', type: 'review', status: 'completed', scheduledDate: '2026-09-22', reviewCompletedAt: '2026-09-02T10:00:00Z' },
     { ...meeting, id: 'completed-live', source: 'live-session', status: 'completed', scheduledDate: '2026-09-16' },
     { ...meeting, id: 'future-live', source: 'live-session', status: 'scheduled', scheduledDate: '2026-09-21' },
     { ...meeting, id: 'cancelled-live', source: 'live-session', status: 'cancelled', scheduledDate: '2026-09-17' },
@@ -167,7 +167,18 @@ it('shows serialized latest completed MCM and PR and ignores future or cancelled
   expect(within(riskTable).queryByText('17 Sept 2026')).not.toBeInTheDocument();
 });
 
+it('shows the requested empty Last PR and Last MCM labels when no completed review exists', async () => {
+  vi.useRealTimers();
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const riskTable = await screen.findByRole('region', { name: 'Coach learner caseload' });
+  const row = (await within(riskTable).findByText('Example Learner')).closest('tr');
+  expect(row).not.toBeNull();
+  expect(within(row!).getByText('No PR yet').parentElement).toHaveTextContent('--No PR yet');
+  expect(within(row!).getByText('No MCM yet').parentElement).toHaveTextContent('--No MCM yet');
+});
+
 it('keeps the live session calendar link while showing the new actions only on coaching meetings', async () => {
+  useDashboardDate();
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   expect(await screen.findByRole('button', { name: 'Send Reminder' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Generate Presentation' })).toBeVisible();
@@ -271,6 +282,125 @@ it('shows the six requested workload cards using the current week and marking qu
   expect(within(metrics).queryByText('PR 12-week')).not.toBeInTheDocument();
   expect(within(metrics).queryByText('Referred closure')).not.toBeInTheDocument();
   expect(within(metrics).queryByText('MCM 4-week')).not.toBeInTheDocument();
+});
+
+it('uses the current work week for KPI cards and only the next work week for upcoming meetings', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-09-23T10:00:00Z'));
+  const event = (id: string, source: string, scheduledDate: string): CoachCalendarEvent => ({
+    ...meeting,
+    id,
+    eventKey: id,
+    title: id,
+    learner: '',
+    source,
+    scheduledDate,
+  });
+  const dashboardEvents = [
+    event('Current Monday PR', 'progress-review', '2026-09-21'),
+    event('Current Tuesday MCM', 'mcr', '2026-09-22'),
+    event('Current Friday Catch-up', 'catch-up', '2026-09-25'),
+    event('Next Monday PR', 'progress-review', '2026-09-28'),
+    event('Next Tuesday MCM', 'mcr', '2026-09-29'),
+    event('Next Wednesday Catch-up', 'catch-up', '2026-09-30'),
+    event('Next Thursday Support', 'student-support', '2026-10-01'),
+    event('Next Friday Live Session', 'live-session', '2026-10-02'),
+    event('Next Saturday PR', 'progress-review', '2026-10-03'),
+    event('After Next Friday MCM', 'mcr', '2026-10-05'),
+  ];
+  mocks.load.mockImplementation((url: string) => Promise.resolve(
+    url.includes('/marking-queue')
+      ? { summary: { pendingItems: 0 } }
+      : {
+          owner: { name: 'Example Coach' },
+          learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' }],
+          timetable: { events: dashboardEvents },
+        },
+  ));
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+
+  const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  for (const label of ['PR this week', 'MCM this week', 'Catch-ups this week']) {
+    const card = within(metrics).getByRole('button', { name: `Open ${label} details` });
+    expect(card.querySelector('[class*="metricValue"]')).toHaveTextContent('1');
+    expect(card).toHaveTextContent('21 Sep');
+    expect(card).toHaveTextContent('25 Sep');
+  }
+
+  expect(screen.getByText(/next work week \(28 Sep .* 02 Oct\)/)).toBeVisible();
+  const upcoming = screen.getByRole('region', { name: 'Upcoming meetings and live sessions' });
+  for (const title of ['Next Monday PR', 'Next Tuesday MCM', 'Next Wednesday Catch-up', 'Next Thursday Support', 'Next Friday Live Session']) {
+    expect(within(upcoming).getAllByText(title)[0]).toBeVisible();
+  }
+  for (const title of ['Current Friday Catch-up', 'Next Saturday PR', 'After Next Friday MCM']) {
+    expect(within(upcoming).queryAllByText(title)).toHaveLength(0);
+  }
+  expect(upcoming.querySelector('time[datetime="2026-09-28"]')).not.toBeNull();
+  expect(upcoming.querySelector('time[datetime="2026-10-02"]')).not.toBeNull();
+});
+
+it('shows resolved Aptem weekly counts when the 119-event payload also has a generation issue', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-09-23T10:00:00Z'));
+  const progressReviews = Array.from({ length: 26 }, (_, index): CoachCalendarEvent => ({
+    ...meeting,
+    id: `pr-${index}`,
+    eventKey: `pr-${index}`,
+    source: 'progress-review',
+    type: 'review',
+    scheduledDate: index < 3 ? `2026-09-${21 + index}` : '2026-10-01',
+  }));
+  const monthlyCoaching = Array.from({ length: 93 }, (_, index): CoachCalendarEvent => ({
+    ...meeting,
+    id: `mcm-${index}`,
+    eventKey: `mcm-${index}`,
+    scheduledDate: index < 14 ? `2026-09-${21 + (index % 5)}` : '2026-10-01',
+  }));
+  mocks.load.mockImplementation((url: string) => Promise.resolve(
+    url.includes('/marking-queue')
+      ? { summary: { pendingItems: 0 } }
+      : {
+          owner: { name: 'Example Coach' },
+          learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' }],
+          timetable: {
+            events: [...progressReviews, ...monthlyCoaching],
+            summary: { totalEvents: 119, progressReviewRows: 26, mcrRows: 93, learnersWithDates: 31, aptemReviewRows: 119, aptemLearners: 32, curriculumLearners: 0 },
+            reviewGenerationIssues: [{ learnerId: 'unrelated-native-learner', code: 'review_schedule_unavailable' }],
+          },
+        },
+  ));
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  const prCard = within(metrics).getByRole('button', { name: 'Open PR this week details' });
+  const mcmCard = within(metrics).getByRole('button', { name: 'Open MCM this week details' });
+  expect(prCard.querySelector('[class*="metricValue"]')).toHaveTextContent('3');
+  expect(mcmCard.querySelector('[class*="metricValue"]')).toHaveTextContent('14');
+  expect(within(metrics).queryByText('Review schedule data unavailable')).not.toBeInTheDocument();
+});
+
+it('shows review cards as unavailable when generation failed without usable review data', async () => {
+  useDashboardDate();
+  mocks.load.mockImplementation((url: string) => Promise.resolve(
+    url.includes('/marking-queue')
+      ? { summary: { pendingItems: 0 } }
+      : {
+          owner: { name: 'Example Coach' },
+          learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' }],
+          timetable: {
+            events: [],
+            summary: { progressReviewRows: 0, mcrRows: 0, learnersWithDates: 0 },
+            reviewGenerationIssues: [{ learnerId: '1', code: 'review_schedule_unavailable' }],
+          },
+        },
+  ));
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  expect(within(metrics).getAllByText('Review schedule data unavailable')).toHaveLength(2);
+  expect(within(metrics).getByRole('button', { name: 'Open PR this week details' })).toHaveTextContent('--');
+  expect(within(metrics).getByRole('button', { name: 'Open MCM this week details' })).toHaveTextContent('--');
 });
 
 it('counts delivery learners with active learners on the coach dashboard', async () => {
