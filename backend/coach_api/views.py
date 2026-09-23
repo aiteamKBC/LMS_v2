@@ -83,7 +83,8 @@ from learner_api.learner_detail import otjh_status_from_variance, refresh_learne
 from learner_api.dashboard_metrics import (read_metrics, load_subject_attempts_bulk,
                                             load_manual_hours_bulk, load_reflection_submissions_bulk,
                                             load_audit_inputs_bulk, load_native_progress_bulk,
-                                            load_native_components_bulk, load_planned_hours_documents_bulk)
+                                            load_native_components_bulk, load_planned_hours_documents_bulk,
+                                            load_contracts_bulk, load_accepted_ksb_rows_bulk)
 from learner_api.dashboard_metrics import load_export_links_bulk
 from learner_api.learning_plan import _effective_plan_ids
 from learner_api.student_activity import load_direct_progress_records_bulk
@@ -2306,8 +2307,9 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     reflection_submissions = load_reflection_submissions_bulk(reflection_keys)
     audit_inputs = load_audit_inputs_bulk([aptem for _, aptem in attempt_keys])
     native_progress = load_native_progress_bulk(enrolment_ids)
+    preset_cache = {}
     plan_ids_by_enrolment = {
-        int(source.pk): _effective_plan_ids(source, {})
+        int(source.pk): _effective_plan_ids(source, preset_cache)
         for _, source, _ in work
     }
     component_by_module = load_native_components_bulk(
@@ -2315,6 +2317,12 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     )
     planned_documents = load_planned_hours_documents_bulk([
         (int(source.pk), kind) for _, source, kind in work
+    ])
+    contracts = load_contracts_bulk([aptem for _, aptem in attempt_keys])
+    accepted_ksb_rows = load_accepted_ksb_rows_bulk([
+        (int(source.pk), int(source.aptem_id), kind)
+        for _, source, kind in work
+        if getattr(source, 'aptem_id', None) not in (None, '')
     ])
     audit_groups = {
         int(item['group_id'])
@@ -2344,6 +2352,7 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
                         'manual_hours': manual_hours.get(int(source.aptem_id)),
                         'reflection_submissions': reflection_submissions.get((kind, str(source.pk)), []),
                         'audit_inputs': audit_inputs.get(int(source.aptem_id)),
+                        'historical_metadata_loaded': True,
                         'native_progress': native_progress.get(int(source.pk), []),
                         'effective_plan_ids': plan_ids_by_enrolment.get(int(source.pk), []),
                         'native_components': [
@@ -2351,6 +2360,9 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
                             for item in component_by_module.get(str(module_id), [])
                         ],
                         'planned_hours_document': planned_documents.get((int(source.pk), kind)),
+                        'planned_hours_contract': contracts.get(int(source.aptem_id)),
+                        'aptem_planned_total': (audit_inputs.get(int(source.aptem_id)) or {}).get('aptem_planned_total'),
+                        'accepted_ksb_rows': accepted_ksb_rows.get(int(source.pk), []),
                         'export_links': [
                             row
                             for group_id in {
@@ -3380,6 +3392,7 @@ def build_monthly_risk_history(
     expected_by_id: dict[str, float],
     *,
     today: date,
+    hydrated_plans_by_learner: dict[int, object] | None = None,
 ) -> list[dict]:
     """Count active caseload learners whose OTJH variance was at risk.
 
@@ -3392,8 +3405,14 @@ def build_monthly_risk_history(
         row for row in rows
         if normalize_program_status(get_lms_row_program_status(row)) == "active"
     ]
+    hydrated_plans_by_learner = hydrated_plans_by_learner or {}
     learner_context = {
-        int(row.id): (monthly_target_start_date(row), monthly_target_training_plan(row))
+        int(row.id): (
+            monthly_target_start_date(row),
+            hydrated_plans_by_learner[int(row.id)]
+            if int(row.id) in hydrated_plans_by_learner
+            else monthly_target_training_plan(row),
+        )
         for row in active_rows
     }
     points = []
@@ -3458,10 +3477,13 @@ def dashboard_monthly_risk_history(
         return build_monthly_risk_history([], {}, {}, today=today)
 
     try:
-        plans = [monthly_target_training_plan(row) for row in active_rows]
+        plans_by_learner = {
+            int(row.id): monthly_target_training_plan(row)
+            for row in active_rows
+        }
         component_ids = [
             component_id
-            for plan in plans
+            for plan in plans_by_learner.values()
             for week in curriculum_monthly_target_hours_weeks(plan)
             for component_id in week
         ]
@@ -3485,6 +3507,7 @@ def dashboard_monthly_risk_history(
             progress_by_learner,
             expected_by_id,
             today=today,
+            hydrated_plans_by_learner=plans_by_learner,
         )
     except DatabaseError:
         logger.exception("coach_dashboard_monthly_risk_history_failed")
