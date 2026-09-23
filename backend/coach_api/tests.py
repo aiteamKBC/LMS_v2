@@ -46,6 +46,7 @@ from coach_api.views import (
     caseload_latest_learning_activities,
     canonical_attendance_detail_rows,
     dashboard_attendance_rows,
+    dashboard_monthly_risk_history,
     dashboard_review_history,
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
@@ -1073,6 +1074,26 @@ class CoachDashboardViewTests(SimpleTestCase):
 
 
 class MonthlyRiskHistoryTests(SimpleTestCase):
+    @patch("coach_api.views.LearnerProgressEntry.objects")
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={})
+    @patch("coach_api.views.monthly_target_training_plan", return_value=[])
+    def test_dashboard_reuses_each_hydrated_plan_in_history_builder(
+        self, training_plan, expected_otjh, progress_entries
+    ):
+        queryset = MagicMock()
+        progress_entries.filter.return_value = queryset
+        queryset.only.return_value = queryset
+        queryset.order_by.return_value = []
+        learners = [
+            SimpleNamespace(id=7, status="active", programme_status="active", start_date=None),
+            SimpleNamespace(id=8, status="active", programme_status="active", start_date=None),
+        ]
+
+        history = dashboard_monthly_risk_history(learners, today=date(2026, 9, 18))
+
+        self.assertEqual(training_plan.call_count, 2)
+        self.assertEqual(len(history), 6)
+
     def test_counts_month_end_otjh_status_and_uses_current_snapshot_for_open_month(self):
         training_plan = [{
             "moduleTitle": "Module 1",
