@@ -138,8 +138,10 @@ function cleanOptionalText(value?: string | number | null) {
   return String(value).trim();
 }
 
+// Only enrolmentId counts: the slides API keys on the enrolment record, and falling
+// back to the profile id would silently resolve to a different learner.
 function reviewHasLearnerReference(review: CoachCalendarEvent) {
-  return Boolean(cleanOptionalText(review.enrolmentId) || cleanOptionalText(review.learnerId));
+  return Boolean(cleanOptionalText(review.enrolmentId));
 }
 
 function matchesReviewSearch(review: CoachCalendarEvent, searchTerm: string) {
@@ -1076,7 +1078,7 @@ export default function CoachProgressReviews() {
     const candidates = paginatedReviews.filter((review) => !isImportedReviewEvent(review) && reviewHasLearnerReference(review) && eventTargetDate(review));
 
     Promise.all(candidates.map(async (review) => {
-      const learnerId = review.learnerId || review.enrolmentId || '';
+      const learnerId = review.enrolmentId || '';
       try {
         const result = await fetchLatestRun(learnerId, eventTargetDate(review));
         return result.exists && result.generationStatus === 'completed' ? eventIdentity(review) : null;

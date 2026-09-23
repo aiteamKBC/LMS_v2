@@ -50,7 +50,10 @@ export default function ProgressReviewPptxModal({
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
 
-  const learnerId = review?.learnerId || review?.enrolmentId || '';
+  // enrolmentId, never learnerId: this API keys on the enrolment record, while an
+  // event's learnerId is the profile id — the two id sequences overlap, so the wrong
+  // one silently reads a different learner's record.
+  const learnerId = review?.enrolmentId || '';
   const reviewDate = review ? eventTargetDate(review) : '';
 
   useEffect(() => {
