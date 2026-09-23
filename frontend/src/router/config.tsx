@@ -24,6 +24,8 @@ const AdminNotificationsPage = lazyRoute(() => import("../pages/admin/notificati
 const AdminPermissionsPage = lazyRoute(() => import("../pages/admin/permissions/page"));
 const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
 const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/page"));
+const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
+const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
 const AdminUsersPage = lazyRoute(() => import("../pages/admin/users/page"));
 const PlatformReportPage = lazyRoute(() => import("../pages/admin/platform-report/page"));
 const AttendancePage = lazyRoute(() => import("../pages/learner/attendance/page"));
@@ -878,6 +880,14 @@ const routes: RouteObject[] = [
     element: <SystemAuditTrailPersonPage />,
   },
   {
+    path: "/admin/coach_directory",
+    element: <CoachDirectoryPage />,
+  },
+  {
+    path: "/coach-booking/:slug",
+    element: <CoachBookingPage />,
+  },
+  {
     path: "/admin/system",
     element: <AdminSystemSettingsPage />,
   },
@@ -1606,6 +1616,7 @@ const routes: RouteObject[] = [
  * with no session at all.
  */
 const PUBLIC_PATHS = new Set([
+  "/coach-booking/:slug",
   "/",
   "/login",
   "/access-required",

@@ -45,6 +45,10 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
   const [checks, setChecks] = useState<AssignmentQualityCheck[]>([]);
   const [outsideConfirmed, setOutsideConfirmed] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [failedSnapshot, setFailedSnapshot] = useState('');
+  const [savedVersion, setSavedVersion] = useState(0);
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const requestRunning = useRef(false);
   const locked = ['accepted', 'submitted_for_tutor_review'].includes(status);
@@ -74,7 +78,7 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
     const warn = (event: BeforeUnloadEvent) => { if (dirty && !locked) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, [dirty, locked]);
-  const changed = () => { setChecks([]); setDirty(true); setNotice(''); };
+  const changed = () => { setChecks([]); setDirty(true); setNotice(''); setSaveState('idle'); };
   const generation = useLearningStatements(answers.assignmentAnswer, learnerId, kind, activityId, step === 0 && !disabled,
     { whatYouLearned: answers.whatYouLearned, understood: monthly.understood, gainedSkills: monthly.gainedSkills }, result => {
       changed(); setAnswers(value => ({ ...value, whatYouLearned: result.whatYouLearned ?? value.whatYouLearned }));
@@ -93,6 +97,12 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
   });
   const snapshot = JSON.stringify(payload('draft'));
   const latest = useRef(snapshot); latest.current = snapshot;
+  const saveRef = useRef<() => Promise<boolean>>(async () => false);
+  useEffect(() => {
+    if (!dirty || disabled || savingDraft || snapshot === failedSnapshot) return;
+    const timer = window.setTimeout(() => { void saveRef.current(); }, 900);
+    return () => window.clearTimeout(timer);
+  }, [snapshot, dirty, disabled, savingDraft, failedSnapshot]);
   async function runChecks() {
     const checked = latest.current;
     setChecks([]); setError('');
@@ -103,30 +113,46 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
   }
   async function save(mode: 'draft' | 'submit') {
     if (requestRunning.current || disabled) return false;
-    requestRunning.current = true; setBusy(true); setError('');
+    requestRunning.current = true;
+    const savingSnapshot = latest.current;
+    if (mode === 'draft') { setSavingDraft(true); setSaveState('saving'); }
+    else setBusy(true);
+    setError('');
     try {
       if (mode === 'submit' && !await runChecks()) return false;
       const result = await saveLearningReflectionSubmission(payload(mode));
-      setStatus(result.status); setAttempts(result.submissionAttempts || attempts); setDirty(false);
-      setNotice(mode === 'submit' ? "Extra activity submitted. It now appears in this month's full-month reflection, awaiting coach review." : 'Draft saved. You can find it in Extra activities below.');
+      setStatus(result.status); setAttempts(result.submissionAttempts || attempts);
+      if (savingSnapshot === latest.current) { setDirty(false); setSaveState('saved'); }
+      else setSaveState('idle');
+      setFailedSnapshot('');
+      setSavedVersion(value => value + 1);
+      if (mode === 'submit') setNotice("Extra activity submitted. It now appears in this month's full-month reflection, awaiting coach review.");
       return true;
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save extra activity.'); return false; }
-    finally { requestRunning.current = false; setBusy(false); }
+    } catch (reason) {
+      if (mode === 'draft') { setFailedSnapshot(savingSnapshot); setSaveState('error'); }
+      setError(reason instanceof Error ? reason.message : 'Could not save extra activity.'); return false;
+    }
+    finally { requestRunning.current = false; setBusy(false); setSavingDraft(false); }
   }
+  saveRef.current = () => save('draft');
   const nav = roleNavMap.learner;
   return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle="Extra activity" pageSubtitle="Record additional learning and supporting evidence" userName={real?.name || 'Learner'} userRole="Learner">
-    <main className="page-container space-y-5">
+    <main className={`page-container ${styles.extraPage}`}>
       <Link to={`/learner/monthly-submission/${kind}/${learnerId}`} onClick={event => { if (dirty && !window.confirm('Leave without saving your changes?')) event.preventDefault(); }}>Back to monthly submission</Link>
-      <h1 className="text-2xl font-bold">Extra activity</h1>
-      <p>The submission month is set from the actual submission date (UK time). Save a draft before leaving this page.</p>
+      <header className={styles.extraHeader}><div><p className={styles.eyebrow}>Monthly learning</p><h1>Extra activity</h1>
+      <p>Record your learning, add evidence and claim your KSBs and hours.</p><p>Your submission month is based on the date you submit (UK time).</p></div>
+      <div className={styles.extraSave}><span role="status" data-state={saveState}>{locked ? 'Submitted work' : savingDraft ? 'Saving draft...' : saveState === 'error' ? 'Draft not saved — please retry' : dirty ? 'Unsaved changes' : saveState === 'saved' ? 'Draft saved' : 'Changes save automatically'}</span>
+        <button type="button" className={styles.secondary} disabled={disabled || savingDraft} onClick={() => void save('draft')}>{saveState === 'error' ? 'Retry save' : 'Save draft'}</button></div></header>
       {loading && <p role="status">Loading extra activity...</p>}
       {notice && <p role="status" className="rounded-xl bg-green-50 p-4 text-green-900">{notice}</p>}
       {error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-red-800">{error}</p>}
       {locked && <p>This activity is {status === 'accepted' ? 'accepted' : 'awaiting coach review'}. Your submitted work is read-only.</p>}
       <AssignmentAttemptHistory attempts={attempts} />
-      <div className="flex flex-wrap gap-2">{steps.map((label, index) => <button key={label} type="button" className={index === step ? styles.primary : styles.secondary} onClick={() => setStep(index)}>{index + 1}. {label}</button>)}
-        <button type="button" className={styles.secondary} disabled={disabled} onClick={() => void save('draft')}>Save draft</button>
-      </div>
+      <section className={styles.extraForm} aria-label="Extra activity form">
+      <div className={styles.extraSteps}><div className={styles.extraStepHeading}><strong>Step {step + 1} of 4</strong><span>{steps[step]}</span></div>
+      <div className={styles.extraProgress} aria-hidden="true"><span style={{ width: `${(step + 1) * 25}%` }} /></div>
+      <nav aria-label="Extra activity steps">{steps.map((label, index) => <button key={label} type="button" aria-current={index === step ? 'step' : undefined} className={index === step ? styles.primary : styles.secondary} onClick={() => setStep(index)}>{index + 1}. {label}</button>)}</nav></div>
+      <div className={styles.extraContent}>
       <AssignmentAiCheckContext.Provider value={{ learnerId, learnerKind: kind, enabled: !disabled }}>
         {step === 0 && <section className="space-y-5">
           <label className="block">Activity title<input className="mt-2 block w-full rounded-xl border p-3" value={title} disabled={disabled} onChange={event => { changed(); setTitle(event.target.value); }} /></label>
@@ -139,13 +165,15 @@ export function ExtraActivityForm({ kind, learnerId, savedId }: { kind: LearnerK
           kind={kind} learnerId={learnerId} title={title} plannedOtjh={null} mappings={[]} evidenceFiles={files} evidenceUploader={<AssignmentEvidence kind={kind} learnerId={learnerId} componentId={activityId} trainingPlanDetails={{}} onUploaded={() => { changed(); setEvidenceVersion(value => value + 1); }} readOnly={disabled} />} timeControl={null} disabled={disabled} payload={() => payload('draft')} checks={checks} checking={busy} onCheck={runChecks} onSave={() => save('draft')} activityId={activityId} />}
         {step === 2 && !monthly.paidHours && <label className="flex gap-2"><input type="checkbox" checked={outsideConfirmed} disabled={disabled} onChange={event => { changed(); setOutsideConfirmed(event.target.checked); }} />I confirm this learning took place outside my working hours.</label>}
       </AssignmentAiCheckContext.Provider>
-      {step === 3 && <section className="space-y-3"><h2>Quality checks</h2><p>Check your activity answer, evidence, KSBs and claimed hours before submitting.</p>
+      {step === 3 && <section className={styles.extraChecks}><h2>Ready to submit?</h2><p>Run the checks, then select any result to review or correct that part of your activity.</p>
         <button type="button" className={styles.secondary} disabled={disabled} onClick={() => { setBusy(true); void runChecks().catch(reason => setError(reason.message)).finally(() => setBusy(false)); }}>Run quality checks</button>
-        {checks.map(check => <button type="button" key={check.key} className={`block w-full rounded-xl border p-3 text-left ${check.passed ? 'bg-green-50 text-green-900' : 'bg-amber-50 text-amber-900'}`} onClick={() => setStep(['title', 'answer', 'learning'].includes(check.key) ? 0 : check.key === 'evidence' ? 1 : 2)}>{check.passed ? 'Passed: ' : 'Needs attention: '}{check.label}</button>)}
-        <button type="button" className={styles.primary} disabled={disabled || checks.length !== 8 || checks.some(check => !check.passed)} onClick={() => void save('submit')}>Submit extra activity</button>
+        {!checks.length && <p className={styles.extraCheckEmpty}>Checks have not been run for your latest changes.</p>}
+        {checks.map(check => <button type="button" key={check.key} aria-label={`${check.passed ? 'Passed' : 'Needs attention'}: ${check.label}`} className={styles.extraCheck} data-passed={check.passed} onClick={() => setStep(['title', 'answer', 'learning'].includes(check.key) ? 0 : check.key === 'evidence' ? 1 : 2)}><span><strong>{check.passed ? 'Passed' : 'Needs attention'}</strong><span>{check.label}</span></span><span aria-hidden="true">→</span></button>)}
       </section>}
-      <div className="flex gap-3"><button className={styles.secondary} disabled={step === 0} onClick={() => setStep(value => value - 1)}>Back</button><button className={styles.secondary} disabled={step === 3} onClick={() => setStep(value => value + 1)}>Next</button></div>
-      <ExtraActivities key={`${status}:${notice}`} kind={kind} learnerId={learnerId} />
+      </div><footer className={styles.extraFooter}><button type="button" className={styles.secondary} disabled={step === 0} onClick={() => setStep(value => value - 1)}>Back</button>
+        {step === 3 ? <button type="button" className={styles.primary} disabled={disabled || savingDraft || checks.length !== 8 || checks.some(check => !check.passed)} onClick={() => void save('submit')}>Submit extra activity</button>
+          : <button type="button" className={styles.primary} onClick={() => setStep(value => value + 1)}>Next</button>}</footer></section>
+      <section className={styles.extraHistory}><ExtraActivities key={savedVersion} kind={kind} learnerId={learnerId} /></section>
     </main>
   </WorkspaceShell>;
 }

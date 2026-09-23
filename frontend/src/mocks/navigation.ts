@@ -563,6 +563,7 @@ export const leadershipNavItems: SidebarNavItem[] = [
 export const adminNavItems: SidebarNavItem[] = [
   // Dashboard
   { id: 'admin-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/admin' },
+  { id: 'admin-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/admin/coach_directory' },
 
   // User & Access Control — login."Login_accounts" and the four real roles
   {
