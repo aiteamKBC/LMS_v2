@@ -7,7 +7,7 @@ import { bookingTypes, coachPagePath, deleteCoach, emptyLinks, listCoaches, save
 
 const button = styles.button;
 const primary = `${styles.button} ${styles.primary}`;
-export default function CoachDirectoryPage() {
+export default function CoachDirectoryPage({ workspaceRole = "admin" }: { workspaceRole?: "admin" | "compliance" | "curriculum" }) {
   const [coaches, setCoaches] = useState<DirectoryCoach[]>([]);
   const [version, setVersion] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -48,8 +48,8 @@ export default function CoachDirectoryPage() {
     try { await navigator.clipboard.writeText(new URL(coachPagePath(slug), window.location.origin).href); setNotice('Public booking page link copied.'); }
     catch { setError('Could not copy the link. Open the booking page and copy its address.'); }
   }
-  return <AdminPage title="Coach directory" subtitle="Manage coach booking pages" icon="ri-team-line" heroTitle="Coach directory"
-    heroBlurb="Manage public booking links for each coach. Only super admins can add, edit or remove coaches."
+  return <AdminPage workspaceRole={workspaceRole} title="Coach directory" subtitle="Manage coach booking pages" icon="ri-team-line" heroTitle="Coach directory"
+    heroBlurb="Manage public booking links for each coach. Super admins, enrolment and curriculum staff can add, edit or remove coaches."
     stats={[{ label: 'Coaches', value: coaches.length }]}
     actions={<button className={primary} disabled={Boolean(editing) || busy} onClick={() => setEditing({ name: '', links: emptyLinks() })}><Plus size={18} aria-hidden="true" />Add coach</button>}>
     <div className={styles.directory}>

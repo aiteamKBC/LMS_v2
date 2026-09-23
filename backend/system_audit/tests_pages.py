@@ -108,6 +108,11 @@ def _fill_remaining(template):
 
 
 class ExcludedTests(SimpleTestCase):
+    def test_public_booking_is_excluded_but_coach_administration_is_recorded(self):
+        self.assertTrue(pages.excluded('/coach-booking/example-coach?session=support#booking'))
+        self.assertFalse(pages.excluded('/admin/coach_directory'))
+        self.assertFalse(pages.excluded('/coach/caseload'))
+
     def test_the_signed_out_pages_are_not_recorded(self):
         for path in ('/login', '/forgot-password', '/reset-password/tok', '/set-password/tok',
                      '/verify-certificate/abc', '/verify-personal-certificate/abc'):
