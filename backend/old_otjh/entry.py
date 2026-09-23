@@ -22,21 +22,11 @@ def entry_state(account):
         raise service.ServiceError('We could not verify your learner profile. Please try again.',
                                    'profile_unavailable', 503)
     existing = bool(str(record['aptem_id'] or '').strip())
-    enabled = service.enabled()
-    state = {'classification': 'existing' if existing else 'new',
-             'enabled': enabled, 'required': False, 'canAccess': True,
-             'reviewHref': '/old-otjh/months', 'supportHref': '/messages'}
-    if existing and enabled:
-        learner = service.resolve_authenticated_learner(account)
-        summary = service.summary(learner)
-        allowed = summary['can_access_lms'] is True
-        state.update(required=not allowed, canAccess=allowed,
-                     completedMonths=summary.get('completed_months', 0),
-                     totalMonths=summary.get('total_months', 0),
-                     document={'title': 'Previous learning record', 'version': repo.VERSION,
-                               'through': f'{repo.CUTOFF}-31'},
-                     completedAt=summary.get('completed_at'))
-    return state
+    # Signing the previous record is optional: it no longer gates LMS entry,
+    # so existing learners open the LMS whatever their signature status.
+    return {'classification': 'existing' if existing else 'new',
+            'enabled': service.enabled(), 'required': False, 'canAccess': True,
+            'reviewHref': '/old-otjh/months', 'supportHref': '/messages'}
 
 
 @login_required
