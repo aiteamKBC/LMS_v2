@@ -31,6 +31,7 @@ import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import {
   type CoachCalendarEvent,
   fetchCoachCalendarEvents,
+  reviewScheduleAvailable,
   eventDisplayDate,
   eventTargetDate,
   eventPeriodLabel,
@@ -38,7 +39,8 @@ import {
   formatTimeLabel,
   formatTimeRangeLabel,
   isAtRiskEvent,
-  currentWeekRange,
+  getCurrentWorkWeekRange,
+  getNextWorkWeekRange,
   isCompletedEvent,
   isEventThisWeek,
   needsScheduling,
@@ -57,7 +59,7 @@ type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
 
 const EMPTY_VALUE = '--';
 const AT_RISK_SCROLL_THRESHOLD = 8;
-const COACHING_CALENDAR_WINDOW_DAYS = 7;
+const UPCOMING_MEETING_SOURCES = new Set(['progress-review', 'mcr', 'catch-up', 'support', 'student-support', 'live-session']);
 
 function coachDashboardEndpoint() {
   return '/coach_api/coach/dashboard';
@@ -418,7 +420,7 @@ function latestCompletedSessionDate(
   return latest?.value;
 }
 
-function formatCompletedSessionDate(value?: string) {
+function formatCompletedSessionDate(value?: string | null) {
   const date = parseLocalDate(value);
   return date
     ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date)
@@ -436,8 +438,6 @@ function mergeAttendanceRates(
     const hasAttendance = Boolean(learner.attendanceRateAvailable);
     const attendanceDate = hasAttendance ? parseLocalDate(learner.attendanceLastSessionDate) : undefined;
     const completedEventDate = latestCompletedSessionDate(learner, events);
-    const lastMcmDate = latestCompletedSessionDate(learner, events, event => event.source === 'mcr');
-    const lastPrDate = latestCompletedSessionDate(learner, events, event => event.source === 'progress-review');
     const parsedCompletedEventDate = parseLocalDate(completedEventDate);
     const learningActivityDate = parseLocalDate(learner.lastActivityDate);
     const latestAttendanceDate = parsedCompletedEventDate
@@ -466,8 +466,11 @@ function mergeAttendanceRates(
         ? (parsedCompletedEventDate && latestAttendanceDate === parsedCompletedEventDate ? completedEventDate : learner.attendanceLastSessionDate || null)
         : learner.lastActivityDate,
       lastActivityLabel: attendanceIsLatestActivity ? 'Attendance' : learner.lastActivityLabel,
-      lastMcm: formatCompletedSessionDate(lastMcmDate),
-      lastPr: formatCompletedSessionDate(lastPrDate),
+      // The calendar payload is intentionally windowed for performance. The
+      // backend learner fields come from the unbounded shared resolved Review
+      // history and therefore remain authoritative for these two columns.
+      lastMcm: formatCompletedSessionDate(learner.lastMcm),
+      lastPr: formatCompletedSessionDate(learner.lastPr),
     };
   });
 }
@@ -694,8 +697,11 @@ function isFutureCalendarEvent(event: CoachCalendarEvent) {
   return date.getTime() >= start.getTime();
 }
 
-function isWithinCalendarPreviewWindow(event: CoachCalendarEvent) {
-  return isWithinNextDays(event, COACHING_CALENDAR_WINDOW_DAYS - 1);
+function isWithinNextWorkWeek(event: CoachCalendarEvent) {
+  const date = parseLocalDate(eventDisplayDate(event));
+  if (!date || isCompletedEvent(event)) return false;
+  const { start, end } = getNextWorkWeekRange();
+  return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
 }
 
 function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
@@ -993,19 +999,18 @@ const KPI_FILTER_LABEL: Record<DashboardKpi, string> = {
 };
 
 function formatWeekRangeLabel() {
-  const { start, end } = currentWeekRange();
+  const { start, end } = getCurrentWorkWeekRange();
   return formatDateRangeLabel(start, end);
 }
 
 function formatDateRangeLabel(start: Date, end: Date) {
   const format = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' });
-  return `${format.format(start)} – ${format.format(end)}`;
+  const compact = (value: Date) => format.format(value).replace('Sept', 'Sep');
+  return `${compact(start)} – ${compact(end)}`;
 }
 
 function formatUpcomingRangeLabel() {
-  const start = startOfDay(new Date());
-  const end = new Date(start);
-  end.setDate(start.getDate() + COACHING_CALENDAR_WINDOW_DAYS - 1);
+  const { start, end } = getNextWorkWeekRange();
   return formatDateRangeLabel(start, end);
 }
 
@@ -1095,7 +1100,7 @@ function LearnerTableSkeleton() {
 function MeetingsSkeleton() {
   return <Panel className={styles.panel}>
     <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
-      description={`Your scheduled meetings and live sessions · next ${COACHING_CALENDAR_WINDOW_DAYS} days (${formatUpcomingRangeLabel()})`}
+      description={`Your scheduled meetings and live sessions · next work week (${formatUpcomingRangeLabel()})`}
       actions={<>
         <LoadingBlock className="h-11 w-11" />
         <LoadingBlock className="h-11 w-[118px]" />
@@ -1198,7 +1203,7 @@ export default function CoachDashboard() {
   const updateDashboardMeeting = (updated: CoachCalendarEvent) => {
     const replace = (events: CoachCalendarEvent[]) => events.map(event => (event.eventKey || event.id) === (updated.eventKey || updated.id) ? updated : event);
     setCalendarEvents(replace);
-    setCalendarPreviewEvents(events => replace(events).filter(isWithinCalendarPreviewWindow));
+    setCalendarPreviewEvents(events => replace(events).filter(isWithinNextWorkWeek));
   };
   const handleDirectoryLoaded = useCallback((nextCoaches: DirectoryCoach[]) => {
     setDirectoryCoaches(nextCoaches);
@@ -1302,10 +1307,16 @@ export default function CoachDashboard() {
             : toNumber(markingQueue.summary.pendingItems),
         );
         const reviewSummary = dashboard.timetable?.summary;
-        const reviewIssues = dashboard.timetable?.reviewGenerationIssues || [];
-        setReviewGenerationAvailable(!reviewIssues.length && (reviewSummary?.learnersWithDates ?? 0) > 0);
+        // Review-source failures are per learner. A native learner with an
+        // unavailable Curriculum schedule must not hide valid Aptem reviews
+        // belonging to the rest of the caseload.
+        setReviewGenerationAvailable(reviewScheduleAvailable(
+          reviewSummary,
+          nonLiveEvents,
+          dashboard.timetable?.reviewGenerationIssues || [],
+        ));
         setCalendarEvents(nonLiveEvents);
-        setCalendarPreviewEvents(nonLiveEvents.filter(isWithinCalendarPreviewWindow));
+        setCalendarPreviewEvents(nonLiveEvents.filter(isWithinNextWorkWeek));
         setLiveSessionEvents(events.filter(event => event.source === 'live-session'));
         setCalendarError(dashboard.errors?.timetable || null);
         setLiveSessionsError(dashboard.errors?.timetable || null);
@@ -1394,14 +1405,14 @@ export default function CoachDashboard() {
       .filter(event => !['completed', 'cancelled'].includes(event.status) && isFutureCalendarEvent(event)),
   ), [liveSessionEvents]);
   const coachingCalendarLiveSessions = useMemo(
-    () => upcomingLiveSessions.filter(isWithinCalendarPreviewWindow),
+    () => upcomingLiveSessions.filter(isWithinNextWorkWeek),
     [upcomingLiveSessions],
   );
 
   /* ── Upcoming Schedule: live sessions + coaching + reviews, one list ── */
   const upcomingScheduleEvents = useMemo(
     () => sortEvents([
-      ...visibleCalendarSourceEvents.filter(isFutureCalendarEvent),
+      ...visibleCalendarSourceEvents.filter(event => UPCOMING_MEETING_SOURCES.has(event.source)),
       ...coachingCalendarLiveSessions,
     ]),
     [coachingCalendarLiveSessions, visibleCalendarSourceEvents],
@@ -1552,7 +1563,7 @@ export default function CoachDashboard() {
 
         <Panel className={styles.panel}>
           <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
-            description={`Your scheduled meetings and live sessions · next ${COACHING_CALENDAR_WINDOW_DAYS} days (${formatUpcomingRangeLabel()})`}
+            description={`Your scheduled meetings and live sessions · next work week (${formatUpcomingRangeLabel()})`}
             actions={<>
               <button type="button" className={styles.iconButton} onClick={() => setScheduleExpanded(current => !current)}
                 aria-expanded={scheduleExpanded} aria-controls="coach-schedule-content" aria-label={`${scheduleExpanded ? 'Collapse' : 'Expand'} upcoming schedule`}>
@@ -1568,7 +1579,7 @@ export default function CoachDashboard() {
               {!schedulePanelLoading && upcomingScheduleGroups.length > 0 && (
                 <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Upcoming meetings and live sessions">
                   <table className={`${styles.table} ${styles.meetingsTable}`}>
-                    <caption className="sr-only">Meetings and live sessions in the next seven days</caption>
+                    <caption className="sr-only">Meetings and live sessions in the next work week</caption>
                     <thead className="sr-only"><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Learner / session</th><th scope="col">Meeting type</th><th scope="col">Status</th><th scope="col">Reschedule</th><th scope="col">Send Reminder</th><th scope="col">Generate Presentation</th><th scope="col">View Form</th></tr></thead>
                     <tbody>{upcomingScheduleGroups.flatMap(group => group.events.map((event, eventIndex) => (
                       <Fragment key={event.eventKey || event.id}>
@@ -1590,7 +1601,7 @@ export default function CoachDashboard() {
                 </div>
               )}
               {!schedulePanelLoading && !upcomingScheduleGroups.length && (
-                <EmptyState size="sm" icon="ri-calendar-check-line" title="No learner meetings scheduled" description={calendarError || `No learner meetings scheduled in the next ${COACHING_CALENDAR_WINDOW_DAYS} days.`} />
+                <EmptyState size="sm" icon="ri-calendar-check-line" title="No learner meetings scheduled" description={calendarError || 'No learner meetings scheduled in the next work week.'} />
               )}
             </div>
           )}
@@ -1759,8 +1770,8 @@ function AttentionLearnerRow({ learner, onOpen }: {
       </div></td>
       <td><span className={styles.groupName}>{learner.group !== EMPTY_VALUE ? learner.group : learner.programme}</span></td>
       <td>{varianceLabel === EMPTY_VALUE ? <span className={styles.subtle}>{EMPTY_VALUE}</span> : <StatusBadge tone={status.tone} label={varianceLabel} size="lg" className={styles.varianceBadge} />}</td>
-      <td><span className={styles.lastContact}>{displayValue(learner.lastMcm)}</span>{displayValue(learner.lastMcm) === EMPTY_VALUE && <span className={styles.subtle}>No MCM recorded</span>}</td>
-      <td><span className={styles.lastContact}>{displayValue(learner.lastPr)}</span>{displayValue(learner.lastPr) === EMPTY_VALUE && <span className={styles.subtle}>No PR recorded</span>}</td>
+      <td><span className={styles.lastContact}>{displayValue(learner.lastMcm)}</span>{displayValue(learner.lastMcm) === EMPTY_VALUE && <span className={styles.subtle}>No MCM yet</span>}</td>
+      <td><span className={styles.lastContact}>{displayValue(learner.lastPr)}</span>{displayValue(learner.lastPr) === EMPTY_VALUE && <span className={styles.subtle}>No PR yet</span>}</td>
       <td><button type="button" className={styles.textButton} onClick={onOpen} aria-label={`View learner ${learner.name}`}><AppIcon name="ri-user-line" aria-hidden="true" />View Profile</button></td>
     </tr>
   );
