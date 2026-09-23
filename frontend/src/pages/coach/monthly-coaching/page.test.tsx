@@ -164,6 +164,22 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
   });
 
+  it('restores Schedule and Reschedule popups for imported Aptem meetings', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled' }),
+      meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00' }),
+    ] });
+    mount('/coach/monthly-coaching?filter=all');
+    await screen.findByText('Imported Scheduled');
+
+    fireEvent.click(within(screen.getByText('Imported Unscheduled').closest('tr')!).getByRole('button', { name: 'Schedule' }));
+    expect(screen.getByRole('dialog', { name: 'Schedule meeting' })).toBeVisible();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(within(screen.getByText('Imported Scheduled').closest('tr')!).getByRole('button', { name: 'Reschedule' }));
+    expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByLabelText('Date')).toHaveValue('2026-09-23');
+  });
+
   it('renders the requested table columns and coaching actions', async () => {
     mount();
     await screen.findByText('Scheduled Learner');

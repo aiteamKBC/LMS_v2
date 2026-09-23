@@ -590,6 +590,10 @@ export function isScheduledEvent(event: CoachCalendarEvent) {
   return event.status === 'scheduled';
 }
 
+export function hasScheduledSlot(event: CoachCalendarEvent) {
+  return isScheduledEvent(event) || Boolean(event.scheduledDate && event.scheduledTime);
+}
+
 export function isInProgressEvent(event: CoachCalendarEvent) {
   return event.status === 'in-progress';
 }
