@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
@@ -43,29 +43,14 @@ describe('Coach caseload loading', () => {
     fetchCoachCalendarEvents.mockResolvedValue({ events: [] });
   });
 
-  it('keeps the skeleton visible until caseload, attendance and review data are all ready', async () => {
-    let finishAttendance!: (response: Response) => void;
-    const attendanceResponse = new Promise<Response>((resolve) => { finishAttendance = resolve; });
-
-    coachFetch.mockImplementation((url: string) => {
-      if (url.includes('/attendance')) return attendanceResponse;
-      return Promise.resolve(new Response(JSON.stringify({ owner: { name: 'Coach Example' }, learners: [learner] })));
-    });
-
-    render(<MemoryRouter><CoachCaseloadContent embedded /></MemoryRouter>);
-
-    expect(await screen.findByText('Loading learners')).toBeInTheDocument();
-    expect(screen.queryByText('Final Learner')).not.toBeInTheDocument();
-
-    await act(async () => {
-      finishAttendance(new Response(JSON.stringify({
-        learners: [{ id: '42', learner: 'Final Learner', attendance: 92, sessions: 10, hasAttendance: true }],
-      })));
-    });
+  it('uses embedded learners as the authoritative caseload without fetching again', async () => {
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[learner]} /></MemoryRouter>);
 
     expect(await screen.findByText('Final Learner')).toBeInTheDocument();
     expect(screen.getByText('19 Sep 2026')).toBeInTheDocument();
     expect(screen.queryByText('Loading learners')).not.toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
+    expect(fetchCoachCalendarEvents).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { name: 'All Learners' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Status' }));
@@ -80,15 +65,10 @@ describe('Coach caseload loading', () => {
 
   it('uses the API performance status when filtering the caseload', async () => {
     const atRiskLearner = { ...learner, id: '43', name: 'At Risk Learner', initials: 'AR', status: 'at-risk' } satisfies CaseloadApiLearner;
-    coachFetch.mockImplementation((url: string) => (
-      url.includes('/attendance')
-        ? Promise.resolve(new Response(JSON.stringify({ learners: [] })))
-        : Promise.resolve(new Response(JSON.stringify({ owner: { name: 'Coach Example' }, learners: [learner, atRiskLearner] })))
-    ));
-
-    render(<MemoryRouter><CoachCaseloadContent embedded /></MemoryRouter>);
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[learner, atRiskLearner]} /></MemoryRouter>);
 
     expect(await screen.findByText('At Risk Learner')).toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Status' }));
     fireEvent.click(screen.getByRole('option', { name: 'At risk' }));
 

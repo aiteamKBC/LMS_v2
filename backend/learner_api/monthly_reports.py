@@ -53,6 +53,41 @@ SELECT_COLUMNS = """
 """
 
 
+def _record_monthly_report(row):
+    """Record a submitted monthly report in the Audit Trail. Never raises.
+
+    ``row`` is what ``returning SELECT_COLUMNS`` produced. Three of its columns
+    are deliberately not carried into the history:
+
+    * ``signature`` -- a PNG data URL. ``signed_name`` and ``signed_at`` say who
+      signed and when, which is what a signing trail is for.
+    * ``activity_snapshot`` -- the month's activity, frozen into the report at
+      submission. It is large, it never changes afterwards, and the activity it
+      copies is already recorded where it happened.
+    * ``attachments`` -- file pointers, on the rule this codebase applies to
+      evidence links: a digest of one is useless and the link itself is a way in.
+    """
+    if not row:
+        return
+    try:
+        from system_audit.writes import record_table_rows
+
+        record_table_rows(
+            'learner_monthly_reports',
+            [{
+                'id': row[0], 'learner_kind': row[1], 'learner_id': row[2],
+                'learner_name': row[3], 'programme_name': row[4],
+                'month_key': row[5], 'month_label': row[6], 'status': row[7],
+                'summary_metrics': row[9], 'learned_summary': row[11],
+                'submitted_at': row[12], 'selected_ksbs': row[14],
+                'signed_name': row[16], 'signed_at': row[17],
+            }],
+            using='enrolment',
+        )
+    except Exception:
+        logger.warning('Could not record a monthly report submission.', exc_info=True)
+
+
 def _error(message, status=400):
     return JsonResponse({"error": message}, status=status)
 
@@ -312,6 +347,7 @@ def _submit_monthly_report(request, kind, pk):
                     ],
                 )
                 row = cur.fetchone()
+                _record_monthly_report(row)
 
                 # Keep the signature on the learner's own record when they ask,
                 # so the next document they sign can offer it back. Best-effort:

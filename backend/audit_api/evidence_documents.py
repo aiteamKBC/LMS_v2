@@ -12,6 +12,7 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from .audit_trail import EVIDENCE_OVERRIDE_COLUMNS, EVIDENCE_OVERRIDE_SQL, record_audit_rows
 from .db_source import resolve
 from .learner_exclusions import is_excluded_learner
 from .views import _azure_service_client, _has_audit_permission
@@ -203,11 +204,15 @@ def upload_evidence(request):
                         component_name, evidence_kind, evidence_status, evidence_date,
                         azure_container, azure_blob_name, uploaded_by
                     ) values (%s, %s, true, %s, %s, 'File', 'Uploaded', %s, %s, %s, %s)
+                    returning ''' + EVIDENCE_OVERRIDE_SQL + '''
                     ''',
                     [
                         evidence_id, learner_id, document_name, component_name,
                         evidence_date, container, blob_name, uploaded_by,
                     ],
+                )
+                record_audit_rows(
+                    'learner_evidence_overrides', EVIDENCE_OVERRIDE_COLUMNS, cursor.fetchone(),
                 )
     except (KeyError, DatabaseError):
         try:
@@ -306,12 +311,16 @@ def select_activity_evidence(request):
                         source_activity_category, uploaded_by
                     ) values (%s, %s, true, %s, %s, 'Activity', 'Selected', %s,
                               %s, %s, %s, %s)
+                    returning ''' + EVIDENCE_OVERRIDE_SQL + '''
                     ''',
                     [
                         evidence_id, learner_id, document_name, component_name,
                         evidence_date, manual_activity_id, activity[2], activity[3],
                         selected_by,
                     ],
+                )
+                record_audit_rows(
+                    'learner_evidence_overrides', EVIDENCE_OVERRIDE_COLUMNS, cursor.fetchone(),
                 )
     except (KeyError, DatabaseError):
         return _error("Could not save the selected activity as evidence.", 503)
@@ -350,12 +359,19 @@ def update_evidence_date(request, evidence_id):
                     update "Audit".learner_evidence_overrides
                     set evidence_date = %s, updated_at = now()
                     where evidence_id = %s and learner_id = %s and is_uploaded = true
-                    returning evidence_id
+                    returning ''' + EVIDENCE_OVERRIDE_SQL + '''
                     ''',
                     [evidence_date, evidence_id, learner_id],
                 )
-                if not cursor.fetchone():
+                moved = cursor.fetchone()
+                if not moved:
                     return _error("Uploaded evidence was not found.", 404)
+                # Moving an evidence date moves which month its hours count in,
+                # and this statement records no actor of its own -- only
+                # `updated_at`. The trail is where the name comes from.
+                record_audit_rows(
+                    'learner_evidence_overrides', EVIDENCE_OVERRIDE_COLUMNS, moved,
+                )
             else:
                 try:
                     source_evidence_id = int(evidence_id)
@@ -386,8 +402,12 @@ def update_evidence_date(request, evidence_id):
                         source_evidence_id = excluded.source_evidence_id,
                         evidence_date = excluded.evidence_date,
                         updated_at = now()
+                    returning ''' + EVIDENCE_OVERRIDE_SQL + '''
                     ''',
                     [str(source_evidence_id), learner_id, source_evidence_id, evidence_date],
+                )
+                record_audit_rows(
+                    'learner_evidence_overrides', EVIDENCE_OVERRIDE_COLUMNS, cursor.fetchone(),
                 )
     except (KeyError, DatabaseError):
         return _error("Could not update the evidence date.", 503)

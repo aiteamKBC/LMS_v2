@@ -76,5 +76,55 @@ class FreeCourseWeekStructureTests(unittest.TestCase):
         self.assertEqual(weeks[0]['components'][0]['settings'], {})
 
 
+class ModuleFreeCourseWeekTests(unittest.TestCase):
+    """The reverse map: a module's weekStructure -> free-course week entries."""
+
+    def setUp(self):
+        self.ns = {'parse_int': _parse_int, 'clean_str': _clean_str}
+        load_function('build_module_free_course_weeks', self.ns)
+        self.build = self.ns['build_module_free_course_weeks']
+
+    def test_weeks_share_course_id_and_copy_settings_without_ids(self):
+        structure = {
+            'title': 'HR Fundamentals', 'description': 'Intro', 'coverImage': 'http://c',
+            'weekStructure': [
+                {'weekNumber': 1, 'title': 'Week 1', 'components': [
+                    {'id': 'COMP-1', 'type': 'video', 'title': 'Intro', 'expectedOtjh': 2, 'points': 0,
+                     'settings': {'videoUrl': 'http://v'}}]},
+                {'weekNumber': 2, 'title': 'Week 2', 'components': [
+                    {'id': 'COMP-2', 'type': 'quiz', 'title': 'Quiz', 'expectedOtjh': 1,
+                     'reflectionRequired': True, 'tutorValidationRequired': True,
+                     'settings': {'linkedQuizId': '103', 'manualUnlock': True}}]},
+            ],
+        }
+        weeks = self.build(structure, 'FREECOURSE-XYZ')
+
+        # Every week entry shares the one course id + course metadata.
+        self.assertEqual([w['courseId'] for w in weeks], ['FREECOURSE-XYZ', 'FREECOURSE-XYZ'])
+        self.assertEqual([w['courseName'] for w in weeks], ['HR Fundamentals', 'HR Fundamentals'])
+        self.assertEqual(weeks[0]['description'], 'Intro')
+        self.assertEqual(weeks[0]['coverImageUrl'], 'http://c')
+        self.assertEqual([w['weekTitle'] for w in weeks], ['Week 1', 'Week 2'])
+        # No week or component ids leak (fresh FREEWEEK-/FREECOMP- mint on save).
+        self.assertNotIn('id', weeks[0])
+        quiz = weeks[1]['components'][0]
+        self.assertNotIn('id', quiz)
+        # Settings copied verbatim — linked quiz + manualUnlock survive.
+        self.assertEqual(quiz['settings'], {'linkedQuizId': '103', 'manualUnlock': True})
+        # No KSB mappings carried on either the week or the component.
+        self.assertNotIn('ksbMappings', quiz)
+        self.assertNotIn('ksbMappings', weeks[0])
+
+    def test_missing_title_and_week_number_fall_back(self):
+        weeks = self.build({'weekStructure': [{'components': []}]}, 'FREECOURSE-A')
+        self.assertEqual(weeks[0]['courseName'], 'Untitled course')  # from empty title
+        self.assertEqual(weeks[0]['weekNumber'], 1)
+        self.assertEqual(weeks[0]['weekTitle'], 'Week 1')
+        self.assertEqual(weeks[0]['components'], [])
+
+    def test_no_weeks_returns_empty(self):
+        self.assertEqual(self.build({'title': 'X', 'weekStructure': []}, 'FREECOURSE-A'), [])
+
+
 if __name__ == '__main__':
     unittest.main()

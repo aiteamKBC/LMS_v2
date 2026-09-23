@@ -8,6 +8,7 @@ from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from .audit_trail import PROFILE_OVERRIDE_COLUMNS, PROFILE_OVERRIDE_SQL, record_audit_rows
 from .db_source import resolve
 from .learner_exclusions import is_excluded_learner
 from .views import _has_audit_permission
@@ -222,11 +223,15 @@ def update_profile_overrides(request):
                     "values" = "Audit".learner_profile_overrides."values" || excluded."values",
                     updated_by = excluded.updated_by,
                     updated_at = now()
-                returning "values"
+                returning ''' + PROFILE_OVERRIDE_SQL + '''
                 ''',
                 [learner_id, json.dumps(fields), updated_by],
             )
-            saved = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            # The upsert merges the new fields into the stored document, so the
+            # values it replaced exist nowhere else once this returns.
+            record_audit_rows('learner_profile_overrides', PROFILE_OVERRIDE_COLUMNS, row)
+            saved = dict(zip(PROFILE_OVERRIDE_COLUMNS, row))['values']
     except (KeyError, DatabaseError):
         return _error("Could not update the learner profile.", 503)
 

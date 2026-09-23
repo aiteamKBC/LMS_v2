@@ -24,6 +24,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Panel } from '@/components/ui/Panel';
 import { FilterChip } from '@/components/ui/FilterToolbar';
 import type { ImportedReview } from '@/api/reviewHistory';
+import type { EmbeddedCaseloadLearner } from '@/pages/coach/caseload/types';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import {
   type CoachCalendarEvent,
@@ -145,9 +146,9 @@ interface CoachLearner {
   reviews: ImportedReview[];
 }
 
-interface CaseloadApiLearner extends Partial<CoachLearner> {
+type CaseloadApiLearner = EmbeddedCaseloadLearner & Partial<CoachLearner> & {
   cohortName?: string | null;
-}
+};
 
 interface CaseloadApiResponse {
   owner?: {
@@ -1088,6 +1089,7 @@ export default function CoachDashboard() {
   const [reviewGenerationAvailable, setReviewGenerationAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
+  const [loadedCoachEmail, setLoadedCoachEmail] = useState<string | null>(null);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [liveSessionsLoading, setLiveSessionsLoading] = useState(true);
@@ -1152,6 +1154,7 @@ export default function CoachDashboard() {
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
+        setLoadedCoachEmail(authenticatedCoachEmail);
         return;
       }
 
@@ -1181,7 +1184,6 @@ export default function CoachDashboard() {
         );
         const normalizedLearners = (dashboard.learners || []).map(normalizeLearner);
         setEmbeddedLearners((dashboard.learners || []) as CaseloadApiLearner[]);
-        const attendanceLearners = dashboard.attendance?.learners || [];
         const reviewHistoryLearners = dashboard.reviewHistory?.learners || [];
         const events = sortEvents(dashboard.timetable?.events || []);
         const completedHistoryEvents = completedSessionHistory.events || [];
@@ -1213,6 +1215,7 @@ export default function CoachDashboard() {
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
+        setLoadedCoachEmail(authenticatedCoachEmail);
       } catch (error) {
         if (controller.signal.aborted) return;
         setLearners([]);
@@ -1227,6 +1230,7 @@ export default function CoachDashboard() {
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
+        setLoadedCoachEmail(authenticatedCoachEmail);
       }
     }
 
@@ -1378,6 +1382,7 @@ export default function CoachDashboard() {
   const attentionHasOverflow = attentionRows.length > AT_RISK_SCROLL_THRESHOLD;
 
   const schedulePanelLoading = (calendarLoading || liveSessionsLoading) && !upcomingScheduleEvents.length;
+  const dashboardLoading = loading || loadedCoachEmail !== authenticatedCoachEmail;
 
   const scrollToSection = (id: string) => {
     window.requestAnimationFrame(() => {
@@ -1426,11 +1431,14 @@ export default function CoachDashboard() {
       userName={ownerName} userRole="Progress Coach"
     >
       <div className={styles.dashboard}>
-        {(loading || loadWarning) && (
-          <div className={styles.notice} role={loadWarning ? 'alert' : 'status'}>
-            {loading ? 'Loading live coach dashboard data...' : loadWarning}
-          </div>
-        )}
+        {dashboardLoading ? (
+          <DashboardLoadingSkeleton />
+        ) : loadWarning ? (
+          <Panel className={styles.panel}>
+            <EmptyState icon="ri-error-warning-line" title="Unable to load coach dashboard" description={loadWarning} />
+          </Panel>
+        ) : (
+          <>
 
         <section className={styles.metrics} aria-label="Coach dashboard metrics">
           <DashboardMetric label="Total learners" value={loading || loadWarning ? undefined : totalCaseload} icon="ri-group-line" onClick={() => setSelectedKpi('caseload')} />
@@ -1509,6 +1517,9 @@ export default function CoachDashboard() {
           </Panel>
         </section>
 
+          </>
+        )}
+
       </div>
 
       {selectedKpi && (
@@ -1531,9 +1542,36 @@ export default function CoachDashboard() {
   );
 }
 
+function DashboardLoadingSkeleton() {
+  return (
+    <div aria-label="Loading coach dashboard" role="status" className="space-y-5">
+      <span className="sr-only">Loading coach dashboard data</span>
+      <section className={styles.metrics} aria-hidden="true">
+        {Array.from({ length: 6 }, (_, index) => (
+          <LoadingBlock key={`metric-loading-${index}`} className="h-32" />
+        ))}
+      </section>
+      <Panel className={styles.panel}>
+        <LoadingBlock className="h-8 w-48" />
+        <div className="mt-5 space-y-3">
+          {Array.from({ length: 5 }, (_, index) => <LoadingBlock key={`learner-loading-${index}`} className="h-16 w-full" />)}
+        </div>
+      </Panel>
+      <Panel className={styles.panel}>
+        <LoadingBlock className="h-8 w-56" />
+        <div className="mt-5"><ScheduleSkeleton /></div>
+      </Panel>
+      <section className={styles.charts} aria-hidden="true">
+        <Panel className={styles.panel}><LoadingBlock className="h-64 w-full" /></Panel>
+        <Panel className={styles.panel}><LoadingBlock className="h-64 w-full" /></Panel>
+      </section>
+    </div>
+  );
+}
+
 function DashboardMetric({ label, value, note, icon, tone, onClick }: {
   label: string;
-  value?: number;
+  value?: number | string;
   note?: string;
   icon: string;
   tone?: StatusTone;

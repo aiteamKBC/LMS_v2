@@ -297,7 +297,16 @@ export const engagementNavItems: SidebarNavItem[] = [
       { id: 'engagement-clubs', label: 'Learner Clubs', icon: 'ri-team-line', href: '/engagement/clubs' },
     ],
   },
-  { id: 'engagement-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/engagement/reports' },
+  {
+    id: 'engagement-group-reports',
+    label: 'Reports',
+    icon: 'ri-bar-chart-box-line',
+    href: '',
+    children: [
+      { id: 'engagement-reports', label: 'Reports', icon: 'ri-file-chart-line', href: '/engagement/reports' },
+      { id: 'engagement-feedbacks', label: 'Feedbacks', icon: 'ri-chat-quote-line', href: '/engagement/feedbacks' },
+    ],
+  },
 ];
 
 // ============================================================================

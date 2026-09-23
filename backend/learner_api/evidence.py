@@ -91,6 +91,41 @@ def _evidence_type_allowed(uploaded):
 MAX_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
+#: What an evidence write returns so it can be recorded. `container` and
+#: `blob_name` are not here: together they locate the file in Azure, which is a
+#: way to fetch it rather than a fact about it -- the same rule this codebase
+#: applies to meeting join links.
+EVIDENCE_AUDIT_COLUMNS = (
+    'id', 'learner_kind', 'learner_id', 'section_ref', 'component_ref',
+    'progress_entry_id', 'original_filename', 'content_type', 'size_bytes',
+    'status', 'scan_result', 'uploaded_by', 'uploaded_at', 'reviewed_at',
+)
+EVIDENCE_AUDIT_SQL = ', '.join(f'"{column}"' for column in EVIDENCE_AUDIT_COLUMNS)
+
+
+def _record_evidence_file(row, *, deleted=False):
+    """Record an evidence upload or deletion in the Audit Trail. Never raises.
+
+    Evidence is what an audit of off-the-job hours ultimately rests on, so who
+    uploaded a file, whether the scan accepted it, and who later removed it are
+    exactly the questions this exists to answer.
+    """
+    if not row:
+        return
+    try:
+        from system_audit.writes import record_table_rows
+
+        record_table_rows(
+            'evidence_files',
+            [dict(zip(EVIDENCE_AUDIT_COLUMNS, row))],
+            reason='deleted' if deleted else '',
+            deleted=deleted,
+            using='enrolment',
+        )
+    except Exception:
+        logger.warning('Could not record an evidence file write.', exc_info=True)
+
+
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
@@ -261,9 +296,16 @@ def upload_evidence(request, kind, pk):
             cur.execute(
                 'update "Learner"."evidence_files" '
                 "set container = %s, status = %s, scan_result = %s, reviewed_at = %s "
-                "where id = %s",
+                "where id = %s "
+                "returning " + EVIDENCE_AUDIT_SQL,
                 [dest, status, verdict, timezone.now(), str(file_id)],
             )
+            # Recorded here rather than at the insert above. The insert writes a
+            # `pending` row that this statement settles moments later in the
+            # same request, so recording both would report one upload as two
+            # edits -- and the second is the one that says whether the file was
+            # accepted at all.
+            _record_evidence_file(cur.fetchone())
             if status == "approved":
                 _record_approved_evidence(cur, blob_name, f.name, blob_url(approved, blob_name))
     except DatabaseError as exc:
@@ -500,9 +542,14 @@ def delete_evidence(request, kind, pk, file_id):
         with _conn().cursor() as cur:
             cur.execute(
                 'delete from "Learner"."evidence_files" '
-                "where id = %s and learner_kind = %s and learner_id = %s",
+                "where id = %s and learner_kind = %s and learner_id = %s "
+                "returning " + EVIDENCE_AUDIT_SQL,
                 [str(file_id), kind, str(pk)],
             )
+            # Read from what the delete returned: that is the only moment the
+            # row still exists, and a trail entry for a deletion that cannot say
+            # what was deleted is the one entry that most needed to.
+            _record_evidence_file(cur.fetchone(), deleted=True)
             # Approved uploads are also indexed in "Learner"."Evidence" by blob
             # name (see _record_approved_evidence); drop that entry too rather
             # than leave it pointing at a blob that no longer exists.

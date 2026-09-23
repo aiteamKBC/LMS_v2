@@ -1,4 +1,4 @@
-const BASE = '/api/progress-reviews';
+const BASE = '/progress_reviews_api';
 
 export interface ProgressReviewActiveLearner {
   learnerId: number;
