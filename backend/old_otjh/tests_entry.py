@@ -23,20 +23,14 @@ class LearnerEntryTests(SimpleTestCase):
         request.login_account = self.user
         return entry.entry_status(request)
 
-    def test_existing_unsigned_learner_uses_current_record_version(self):
+    def test_existing_unsigned_learner_opens_the_lms_without_signing(self):
+        # Signing the previous record is optional; it does not gate entry.
         body = json.loads(self.response().content)
         self.assertEqual(body['classification'], 'existing')
-        self.assertTrue(body['required'])
-        self.assertFalse(body['canAccess'])
-        self.assertEqual(body['document']['version'], 'old-otjh-transition-v1')
-        self.assertEqual(body['reviewHref'], '/old-otjh/months')
-
-    def test_completed_record_reuses_persisted_signature_status(self):
-        self.summary.return_value = {'can_access_lms': True, 'completed_at': '2026-09-13T10:00:00Z'}
-        body = json.loads(self.response().content)
-        self.assertTrue(body['canAccess'])
         self.assertFalse(body['required'])
-        self.assertEqual(body['completedAt'], '2026-09-13T10:00:00Z')
+        self.assertTrue(body['canAccess'])
+        self.assertEqual(body['reviewHref'], '/old-otjh/months')
+        self.summary.assert_not_called()
 
     def test_empty_aptem_conventions_do_not_invoke_signing(self):
         for value in (None, '', ' ', '\t\r\n'):
@@ -59,11 +53,10 @@ class LearnerEntryTests(SimpleTestCase):
         self.assertNotIn(b'private database', response.content)
         self.assertEqual(response['Retry-After'], '5')
 
-    def test_browser_assertions_cannot_select_identity_or_unlock(self):
+    def test_browser_assertions_cannot_select_identity(self):
         body = json.loads(self.response('?learner_id=8&aptem_id=&signed=true&version=new').content)
         self.student.assert_called_once_with(7)
-        self.resolve.assert_called_once_with(self.user)
-        self.assertFalse(body['canAccess'])
+        self.assertEqual(body['classification'], 'existing')
 
     def test_learner_profile_edits_cannot_clear_aptem_id(self):
         from learner_api.mappers import restrict_to_self_writable
@@ -80,24 +73,22 @@ class LearnerEntryTests(SimpleTestCase):
         self.assertEqual(params, ['42', 'otjh-transition:7', 'old-otjh-transition-v1'])
 
     @patch.dict('os.environ', {'API_REQUIRE_AUTH': '1'})
-    def test_learning_apis_fail_closed_for_direct_and_batch_dispatch(self):
-        from login.api_gate import refusal_for
+    def test_unsigned_record_does_not_block_learning_apis(self):
         from old_otjh.gate import refusal
         for path in ('/learner_api/learner-summary/apprenticeship/7/',
                      '/learner_api/monthly-logs/7/', '/learner_api/metrics/apprenticeship/7/',
                      '/learner_api/student-activity/', '/curriculum_api/curriculum/uploads/test.pdf',
                      '/engagement_api/rewards/'):
             with self.subTest(path=path):
-                user = account()
-                self.assertEqual(refusal_for(path, user).status_code, 403)
-                self.assertEqual(refusal(path, user).status_code, 403)
+                self.assertIsNone(refusal(path, account()))
+        self.summary.assert_not_called()
         for path in ('/login_api/logout/', '/login_api/learner-entry/', '/api/chat/conversations/',
                      '/audit_api/old-otjh/me/summary/'):
             self.assertIsNone(refusal(path, account()))
 
-    def test_signature_service_failure_never_returns_access(self):
+    def test_signature_service_failure_does_not_block_entry(self):
         self.summary.side_effect = DatabaseError('unreachable signature database')
-        self.assertEqual(self.response().status_code, 503)
+        self.assertTrue(json.loads(self.response().content)['canAccess'])
 
     def test_staff_and_admin_do_not_query_learner_records(self):
         for role in ('staff', 'admin'):

@@ -156,7 +156,7 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
           <div><p className="text-[13px] font-semibold">This month has been reviewed, signed and completed.</p><p className="mt-1 text-[12px]">Saved signatures are read-only. The coach can still add their signature. You can view activities and documents.</p></div></div>
           : <><p role="status" className="text-[13px] text-foreground-600">{completionHint}</p>
             {student && data.can_complete && <button className={btnPrimary} disabled={busy} onClick={() => setConfirming(true)}>Complete month<AppIcon className="ri-check-line" /></button>}</>}
-        {student && summary.data.can_access_lms && (nextMonth || !data.student_signature) && <Link className={btnPrimary} to="/workspace/learner">Open LMS<AppIcon className="ri-arrow-right-line" /></Link>}
+        {student && (nextMonth || !data.student_signature) && <Link className={btnPrimary} to="/workspace/learner">Open LMS<AppIcon className="ri-arrow-right-line" /></Link>}
         {mutationError && <p role="alert" className="text-[13px] text-red-600">{mutationError.message}</p>}
       </div>
     </section>

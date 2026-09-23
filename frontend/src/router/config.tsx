@@ -17,6 +17,7 @@ const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/p
 const SystemAuditTrailPage = lazyRoute(() => import("../pages/admin/audit-trail/page"));
 const SystemAuditTrailPersonPage = lazyRoute(() => import("../pages/admin/audit-trail/person/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
+const EmployerWorkspacePage = lazyRoute(() => import("../pages/workspace/admin/employers/page"));
 const AdminCertificatesPage = lazyRoute(() => import("../pages/admin/certificates/page"));
 const AdminDocumentsPage = lazyRoute(() => import("../pages/admin/documents/page"));
 const AdminEvidencePage = lazyRoute(() => import("../pages/admin/evidence/page"));
@@ -380,6 +381,11 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/admin",
     element: <AdminDashboard />,
+  },
+  {
+    // Every employer as a card; each opens /employers/:employerId.
+    path: "/workspace/admin/employers",
+    element: <EmployerWorkspacePage />,
   },
   {
     path: "/workspace/admin/certificates",
