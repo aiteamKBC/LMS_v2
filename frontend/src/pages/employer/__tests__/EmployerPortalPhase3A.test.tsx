@@ -5,10 +5,10 @@ import type { ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import EmployerPortalPage from '../EmployerPortalPage';
 import EmployerLearnerPage from '../EmployerLearnerPage';
-import { fetchEmployerLearner, fetchEmployerLearnerPlan, fetchEmployerLearnerSummary, fetchEmployerPortal, fetchEmployerReviewInstance, signReviewAsEmployer, type EmployerLearnerDetail, type EmployerLearnerSummary, type EmployerPortal } from '@/api/employerPortal';
+import { downloadEmployerReviewPdf, fetchEmployerLearner, fetchEmployerLearnerPlan, fetchEmployerLearnerSummary, fetchEmployerPortal, fetchEmployerReviewInstance, signReviewAsEmployer, type EmployerLearnerDetail, type EmployerLearnerSummary, type EmployerPortal } from '@/api/employerPortal';
 import type { LearnerReviewDefinition } from '@/api/learnerCalendar';
 
-vi.mock('@/api/employerPortal', () => ({ fetchEmployerPortal: vi.fn(), fetchEmployerLearner: vi.fn(), fetchEmployerLearnerPlan: vi.fn(), fetchEmployerLearnerSummary: vi.fn(), fetchEmployerReviewInstance: vi.fn(), signReviewAsEmployer: vi.fn() }));
+vi.mock('@/api/employerPortal', () => ({ downloadEmployerReviewPdf: vi.fn(), fetchEmployerPortal: vi.fn(), fetchEmployerLearner: vi.fn(), fetchEmployerLearnerPlan: vi.fn(), fetchEmployerLearnerSummary: vi.fn(), fetchEmployerReviewInstance: vi.fn(), signReviewAsEmployer: vi.fn() }));
 vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: 'employer', displayName: 'Test Employer' } } }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
@@ -115,7 +115,95 @@ describe('Employer Phase 3A', () => {
     expect(within(otj).getByText('61h')).toBeInTheDocument();
     expect(within(otj).getByText('6h')).toBeInTheDocument();
     expect(within(otj).getByText('278h')).toBeInTheDocument();
-    expect(screen.queryByText(/planned.to.date|behind|ahead|variance/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/behind plan|ahead of plan/i)).not.toBeInTheDocument();
+  });
+  it('shows planned-to-date hours and a behind-plan variance once they are known', async () => {
+    const data = summary();
+    data.otj = { ...data.otj, actualHours: 61, plannedToDateHours: 90, varianceToDateHours: -29, plannedToDateAvailable: true, behindPlan: true };
+    vi.mocked(fetchEmployerLearnerSummary).mockResolvedValue(data);
+    // The OTJ detail section is gated on the learner-plan request, so resolve it
+    // before opening rather than leaving the section on its loading state.
+    vi.mocked(fetchEmployerLearnerPlan).mockResolvedValue({ activityFeed: [] } as unknown as Awaited<ReturnType<typeof fetchEmployerLearnerPlan>>);
+    open();
+    // Let the learner load before switching tabs — the OTJ section's own fetch
+    // is gated on it, and clicking earlier leaves the section on its spinner.
+    await screen.findByRole('region', { name: 'Programme Details' });
+    fireEvent.click(screen.getByRole('button', { name: 'Attendance & OTJ' }));
+    // Re-query each poll: React swaps the section's subtree when the gating
+    // learner-plan request settles, so a reference taken earlier goes stale.
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const otj = screen.getByRole('region', { name: 'Off-the-job Hours' });
+    expect(within(otj).getAllByText('90h').length).toBeGreaterThan(0);
+    expect(within(otj).getByText('29h behind plan')).toBeInTheDocument();
+  });
+  it('reports being ahead of plan without flagging it as a concern', async () => {
+    const data = summary();
+    data.otj = { ...data.otj, actualHours: 120, plannedToDateHours: 90, varianceToDateHours: 30, plannedToDateAvailable: true, behindPlan: false };
+    vi.mocked(fetchEmployerLearnerSummary).mockResolvedValue(data);
+    // The OTJ detail section is gated on the learner-plan request, so resolve it
+    // before opening rather than leaving the section on its loading state.
+    vi.mocked(fetchEmployerLearnerPlan).mockResolvedValue({ activityFeed: [] } as unknown as Awaited<ReturnType<typeof fetchEmployerLearnerPlan>>);
+    open();
+    // Let the learner load before switching tabs — the OTJ section's own fetch
+    // is gated on it, and clicking earlier leaves the section on its spinner.
+    await screen.findByRole('region', { name: 'Programme Details' });
+    fireEvent.click(screen.getByRole('button', { name: 'Attendance & OTJ' }));
+    // Flush the gating learner-plan promise, then re-query: React swaps the
+    // section's subtree once it settles.
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const otj = screen.getByRole('region', { name: 'Off-the-job Hours' });
+    expect(within(otj).getByText('30h ahead of plan')).toBeInTheDocument();
+    expect(within(otj).queryByText(/behind plan/i)).not.toBeInTheDocument();
+  });
+  it('keeps planned-to-date unavailable when the programme dates are missing', async () => {
+    const data = summary();
+    data.otj = { ...data.otj, plannedToDateHours: null, varianceToDateHours: null, plannedToDateAvailable: false, behindPlan: null };
+    vi.mocked(fetchEmployerLearnerSummary).mockResolvedValue(data);
+    // The OTJ detail section is gated on the learner-plan request, so resolve it
+    // before opening rather than leaving the section on its loading state.
+    vi.mocked(fetchEmployerLearnerPlan).mockResolvedValue({ activityFeed: [] } as unknown as Awaited<ReturnType<typeof fetchEmployerLearnerPlan>>);
+    open();
+    // Let the learner load before switching tabs — the OTJ section's own fetch
+    // is gated on it, and clicking earlier leaves the section on its spinner.
+    await screen.findByRole('region', { name: 'Programme Details' });
+    fireEvent.click(screen.getByRole('button', { name: 'Attendance & OTJ' }));
+    // Flush the gating learner-plan promise, then re-query: React swaps the
+    // section's subtree once it settles.
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const otj = screen.getByRole('region', { name: 'Off-the-job Hours' });
+    expect(within(otj).getByText(/needs the programme start and end dates/)).toBeInTheDocument();
+    expect(within(otj).queryByText(/behind plan|ahead of plan/i)).not.toBeInTheDocument();
+  });
+  it('rounds stored four-decimal hours for display without inventing precision', async () => {
+    const data = summary();
+    data.otj = { ...data.otj, actualHours: 18.5114 };
+    vi.mocked(fetchEmployerLearnerSummary).mockResolvedValue(data);
+    // The OTJ detail section is gated on the learner-plan request, so resolve it
+    // before opening rather than leaving the section on its loading state.
+    vi.mocked(fetchEmployerLearnerPlan).mockResolvedValue({ activityFeed: [] } as unknown as Awaited<ReturnType<typeof fetchEmployerLearnerPlan>>);
+    open();
+    // Let the learner load before switching tabs — the OTJ section's own fetch
+    // is gated on it, and clicking earlier leaves the section on its spinner.
+    await screen.findByRole('region', { name: 'Programme Details' });
+    fireEvent.click(screen.getByRole('button', { name: 'Attendance & OTJ' }));
+    // Flush the gating learner-plan promise, then re-query: React swaps the
+    // section's subtree once it settles.
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const otj = screen.getByRole('region', { name: 'Off-the-job Hours' });
+    expect(within(otj).getAllByText('18.5h').length).toBeGreaterThan(0);
+    expect(within(otj).queryByText('18.5114h')).not.toBeInTheDocument();
+  });
+  it('shows the module week and percentage the learning plan reports', async () => {
+    const data = summary();
+    // 60% rather than 75%, which the fixture's KSB coverage also reports.
+    data.currentLearning.modules = [{ ...data.currentLearning.modules[0], progressPercent: 60, completedActivities: 3, totalActivities: 5, currentWeek: 2, totalWeeks: 8 }];
+    vi.mocked(fetchEmployerLearnerSummary).mockResolvedValue(data);
+    open('/employers/7');
+    // Every learner card reads the same mocked summary, so assert within one.
+    const card = (await screen.findAllByRole('article'))[0];
+    expect(within(card).getByText('60%')).toBeInTheDocument();
+    expect(within(card).getByText(/Week 2 of 8/)).toBeInTheDocument();
+    expect(within(card).getByText(/3 of 5 activities completed/)).toBeInTheDocument();
   });
   it('excludes MCM and legacy reviews from canonical Progress Review actions', async () => {
     const data = detail(); data.reviews = [{ ...data.reviews[0], reviewType: 'mcm', label: 'Monthly Coaching Meeting' }, { ...data.reviews[0], reviewInstanceId: undefined, label: 'Legacy review' }];
@@ -198,30 +286,39 @@ describe('Employer Phase 3A', () => {
     expect(fetchEmployerLearner).toHaveBeenLastCalledWith('7', 'apprenticeship', '999');
     expect(screen.queryByText('API Module')).not.toBeInTheDocument();
   });
-  it('builds Actions from real reviews, documents and attendance — no fake write controls', async () => {
-    vi.mocked(fetchEmployerReviewInstance).mockResolvedValue({ instance: { id: '45' }, template: { name: 'Read-only canonical review', reviewTypeCode: 'progress_review', visibleTo: { employer: true } }, sections: [], signatures: {} } as unknown as LearnerReviewDefinition);
-    open(); await screen.findByRole('region', { name: 'Programme Details' });
-    fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
-    // One pending Progress Review signature (from the mocked review) and one
-    // attendance concern (the mocked summary is 86% / amber) — both derived
-    // from data already fetched for other tabs, not invented for this one.
-    expect(await screen.findByText('Canonical Progress Review')).toBeInTheDocument();
-    expect(screen.getByText('Attendance concern')).toBeInTheDocument();
-    // The action navigates to the canonical review. Its backend-derived
-    // definition decides whether an employer signature is available.
-    expect(screen.queryByRole('button', { name: /^sign$/i })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'View Review' }));
-    expect(await screen.findByText('Read-only canonical review')).toBeInTheDocument();
+  it('has no Actions tab, and an old ?tab=actions link lands on Overview', async () => {
+    open('/employers/7/learner/commercial/125?tab=actions');
+    expect(await screen.findByRole('region', { name: 'Programme Details' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Actions' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Attendance concern')).not.toBeInTheDocument();
   });
-  it('shows an up-to-date Actions tab when nothing needs employer attention', async () => {
-    const data = detail(); data.reviews = [];
-    const metrics = summary(); metrics.attendance.classification = 'green';
+  it('downloads the signed Progress Review PDF through the ownership-scoped endpoint', async () => {
+    vi.mocked(downloadEmployerReviewPdf).mockResolvedValue();
+    vi.mocked(fetchEmployerReviewInstance).mockResolvedValue({ instance: { id: '45', status: 'completed' }, template: { name: 'Signed Progress Review', reviewTypeCode: 'progress_review', visibleTo: { employer: true } }, sections: [], signatures: {}, pdf: { available: true, reason: '' } } as unknown as LearnerReviewDefinition);
+    open('/employers/7/learner/commercial/125?tab=reviews');
+    fireEvent.click(await screen.findByRole('button', { name: 'View Review' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Download signed PDF' }));
+    await waitFor(() => expect(downloadEmployerReviewPdf).toHaveBeenCalledWith('7', 'commercial', '125', 'review:45'));
+  });
+  it('opens the Progress Review details directly under the review that was clicked', async () => {
+    const data = detail();
+    data.reviews = [data.reviews[0], { ...data.reviews[0], eventKey: 'review:46', reviewInstanceId: '46', label: 'Second Progress Review' }];
     vi.mocked(fetchEmployerLearner).mockResolvedValue(data);
-    vi.mocked(fetchEmployerLearnerSummary).mockResolvedValue(metrics);
-    vi.mocked(fetchEmployerReviewInstance).mockResolvedValue({ instance: { id: '45' }, template: { name: 'Read-only canonical review', reviewTypeCode: 'progress_review', visibleTo: { employer: true } }, sections: [], signatures: {} } as unknown as LearnerReviewDefinition);
-    open(); await screen.findByRole('region', { name: 'Programme Details' });
-    fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
-    expect(await screen.findByText("You're up to date")).toBeInTheDocument();
+    vi.mocked(fetchEmployerReviewInstance).mockResolvedValue({ instance: { id: '45' }, template: { name: 'First review details', reviewTypeCode: 'progress_review', visibleTo: { employer: true } }, sections: [], signatures: {} } as unknown as LearnerReviewDefinition);
+    open('/employers/7/learner/commercial/125?tab=reviews');
+    fireEvent.click((await screen.findAllByRole('button', { name: 'View Review' }))[0]);
+    const details = await screen.findByRole('region', { name: 'Progress Review details' });
+    expect(fetchEmployerReviewInstance).toHaveBeenCalledWith('7', 'commercial', '125', 'review:45');
+    // DOM order: the first review's details sit before the second review, not after the list.
+    expect(details.compareDocumentPosition(screen.getByText('Second Progress Review')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  it('keeps the PDF download disabled with the server reason until every party has signed', async () => {
+    vi.mocked(fetchEmployerReviewInstance).mockResolvedValue({ instance: { id: '45', status: 'in-progress' }, template: { name: 'Unsigned Progress Review', reviewTypeCode: 'progress_review', visibleTo: { employer: true } }, sections: [], signatures: {}, pdf: { available: false, reason: 'The PDF is available after the learner and all required parties have signed.' } } as unknown as LearnerReviewDefinition);
+    open('/employers/7/learner/commercial/125?tab=reviews');
+    fireEvent.click(await screen.findByRole('button', { name: 'View Review' }));
+    expect(await screen.findByRole('button', { name: 'Download signed PDF' })).toBeDisabled();
+    expect(screen.getByText(/available after the learner and all required parties have signed/)).toBeInTheDocument();
+    expect(downloadEmployerReviewPdf).not.toHaveBeenCalled();
   });
   it('keeps deferred tabs empty of mock data or write controls', async () => {
     open(); await screen.findByRole('region', { name: 'Programme Details' });

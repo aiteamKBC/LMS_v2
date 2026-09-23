@@ -6,7 +6,10 @@ import { formatSystemTimestamp } from '@/lib/format';
 
 export function textValue(value: string | number | null | undefined) { return value == null || value === '' ? 'Unavailable' : String(value); }
 export function percent(value: number | null | undefined) { return value == null ? 'Unavailable' : `${value}%`; }
-export function hours(value: number | null | undefined) { return value == null ? 'Unavailable' : `${value}h`; }
+// Hours are stored to four decimal places; an employer reads them as a
+// quantity, not a precise measurement, so show at most one decimal and drop a
+// trailing ".0". Rounding is display-only — the underlying value is untouched.
+export function hours(value: number | null | undefined) { return value == null ? 'Unavailable' : `${Number(value.toFixed(1))}h`; }
 export function date(value: string | null | undefined) { return value ? formatSystemTimestamp(value, { day: '2-digit', month: 'short', year: 'numeric' }) || 'Unavailable' : 'Unavailable'; }
 export function initials(value: string) { return value.split(/\s+/).filter(Boolean).map(p => p[0]).slice(0, 2).join('').toUpperCase(); }
 export const secondaryButton = 'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border border-background-300 px-3 py-1.5 text-sm font-medium text-foreground-700 transition-colors hover:bg-background-100';

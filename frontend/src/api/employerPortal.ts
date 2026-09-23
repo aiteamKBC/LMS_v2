@@ -12,6 +12,7 @@
 // ============================================================================
 
 import type { LearnerDetail } from '@/api/learnerDetail';
+import type { LearnerReviewDefinition } from '@/api/learnerCalendar';
 
 const BASE = '/learner_api/employer-portal';
 
@@ -80,6 +81,112 @@ export interface EmployerDocumentRow {
 }
 
 export type SignableItem = EmployerReviewRow | EmployerDocumentRow;
+
+/**
+ * A module the learner is on right now (or, when none is live, the nearest one
+ * either side of today — `selectionState` says which).
+ *
+ * `available` is false when the learning plan has no matching subject, in which
+ * case the counts stay null rather than collapsing to a misleading zero.
+ */
+export interface EmployerSummaryModule {
+  moduleId: string | null;
+  moduleName: string | null;
+  progressPercent: number | null;
+  completedActivities: number | null;
+  totalActivities: number | null;
+  currentWeek: number | null;
+  totalWeeks: number | null;
+  available: boolean;
+  source: string;
+}
+
+/**
+ * The employer's read-only progress summary for one of their learners.
+ *
+ * Every section carries its own `available` flag because "we could not read
+ * this" and "this is genuinely zero" mean different things to an employer.
+ * Nulls are preserved end to end; the UI renders them as "Unavailable".
+ */
+export interface EmployerLearnerSummary {
+  learner: {
+    id: string;
+    kind: 'apprenticeship' | 'commercial';
+    name: string;
+    email: string;
+  };
+  programme: {
+    name: string;
+    status: string;
+    cohort: string;
+    group: string;
+    startDate: string | null;
+    plannedEndDate: string | null;
+  };
+  coach: { id: string | null; name: string | null; email: string | null };
+  trainingPlan: { available: boolean; plannedOtjTotalHours: number | null };
+  currentLearning: {
+    /** Which module(s) the list represents relative to today. */
+    selectionState: 'current' | 'multiple' | 'next' | 'last' | 'unavailable';
+    modules: EmployerSummaryModule[];
+  };
+  attendance: {
+    available: boolean;
+    ratePercent: number | null;
+    sessionsHeld: number | null;
+    sessionsAttended: number | null;
+    absences: number | null;
+    /** RAG banding derived from ratePercent, or 'unavailable' when unreadable. */
+    classification: 'green' | 'amber' | 'red' | 'unavailable';
+    lastSessionDate: string | null;
+    lastAttendanceStatus: string | null;
+  };
+  otj: {
+    actualHours: number | null;
+    submittedPendingHours: number | null;
+    /** The whole-programme target, not a planned-to-date figure. */
+    plannedTotalHours: number | null;
+    /** Pro-rated across the programme dates; null when those are missing. */
+    plannedToDateHours: number | null;
+    /** actual − plannedToDate. Negative means behind. Null if either is missing. */
+    varianceToDateHours: number | null;
+    plannedToDateAvailable: boolean;
+    /** True only when the variance is known and negative. */
+    behindPlan?: boolean | null;
+  };
+  ksb: {
+    available: boolean;
+    metric: string;
+    achieved: number | null;
+    total: number | null;
+    percentage: number | null;
+    unit?: string;
+    knowledge?: EmployerKsbCategory | null;
+    skills?: EmployerKsbCategory | null;
+    behaviours?: EmployerKsbCategory | null;
+    /** Why the KSB figures are unavailable, when they are. */
+    reason?: string | null;
+  };
+  activity: {
+    lastLmsActivityAt: string | null;
+    lastSubmissionAt: string | null;
+    lastLiveSessionAt: string | null;
+  };
+  reviews: {
+    lastReviewDate: string | null;
+    nextReviewDate: string | null;
+    pendingEmployerSignatureCount: number | null;
+    available: boolean;
+  };
+  /** Which backend projection each section came from; diagnostic only. */
+  sources?: Record<string, string>;
+}
+
+export interface EmployerKsbCategory {
+  achieved: number | null;
+  total: number | null;
+  percentage: number | null;
+}
 
 export interface EmployerPortal {
   employer: {
@@ -159,6 +266,21 @@ export function fetchEmployerLearner(
 }
 
 /**
+ * The employer's read-only progress summary for one learner.
+ *
+ * A narrower projection than the learner plan above: attendance, off-the-job
+ * hours, KSB coverage and review dates, each flagged available/unavailable so
+ * an unreadable section never reads as a zero.
+ */
+export function fetchEmployerLearnerSummary(
+  employerId: string,
+  kind: string,
+  learnerId: string,
+): Promise<EmployerLearnerSummary> {
+  return request<EmployerLearnerSummary>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/summary/`);
+}
+
+/**
  * The learner's own training plan, hours and KSBs.
  *
  * Deliberately the same payload the learner's workspace reads (LearnerDetail),
@@ -183,10 +305,24 @@ export function fetchEmployerReviewInstance(
   kind: string,
   learnerId: string,
   eventKey: string,
-): Promise<unknown> {
-  return request(
+): Promise<LearnerReviewDefinition> {
+  return request<LearnerReviewDefinition>(
     `${BASE}/${employerId}/learner/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`,
   );
+}
+
+/** Download the signed Progress Review PDF — gated server-side on every required signature. */
+export async function downloadEmployerReviewPdf(
+  employerId: string,
+  kind: string,
+  learnerId: string,
+  eventKey: string,
+): Promise<void> {
+  const { saveReviewPdfResponse } = await import('./reviewPdf');
+  await saveReviewPdfResponse(await fetch(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/pdf/`,
+    { credentials: 'include' },
+  ));
 }
 
 export function signReviewAsEmployer(

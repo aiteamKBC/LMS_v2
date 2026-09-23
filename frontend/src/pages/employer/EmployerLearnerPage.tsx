@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { fetchEmployerLearner, fetchEmployerLearnerPlan, fetchEmployerLearnerSummary, fetchEmployerReviewInstance, signReviewAsEmployer, type EmployerLearnerDetail, type EmployerLearnerSummary } from '@/api/employerPortal';
+import { downloadEmployerReviewPdf, fetchEmployerLearner, fetchEmployerLearnerPlan, fetchEmployerLearnerSummary, fetchEmployerReviewInstance, signReviewAsEmployer, type EmployerLearnerDetail, type EmployerLearnerSummary } from '@/api/employerPortal';
 import type { LearnerReviewDefinition } from '@/api/learnerCalendar';
 import { flattenReviewFields } from '@/api/reviewInstances';
 import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { EmployerDocuments } from './EmployerDocuments';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
@@ -14,12 +15,12 @@ import LoadingState from './components/LoadingState';
 import { Badge, ErrorState, Metric, Panel, ProgressBar, Row, Tabs, date, hours, percent, secondaryButton, textValue } from './components/Presentation';
 import './styles/employer-readdy.css';
 
-const tabs = ['Overview', 'Progress Reviews', 'Learning Plan', 'Attendance & OTJ', 'Documents', 'Actions'] as const;
+const tabs = ['Overview', 'Progress Reviews', 'Learning Plan', 'Attendance & OTJ', 'Documents'] as const;
 // Short query tokens a deep link (e.g. the dashboard's Action Centre) can use
 // to land directly on a tab — matches Readdy's own `?tab=` scheme.
 const TAB_BY_QUERY: Record<string, typeof tabs[number]> = {
   overview: 'Overview', reviews: 'Progress Reviews', plan: 'Learning Plan',
-  attendance: 'Attendance & OTJ', documents: 'Documents', actions: 'Actions',
+  attendance: 'Attendance & OTJ', documents: 'Documents',
 };
 
 // Readdy AttendanceOtjTab.Stat / OtjBar composition.
@@ -37,7 +38,7 @@ function OtjBar({ label, value, max, tone }: { label: string; value: number | nu
   return <div className="flex items-center gap-3">
     <span className="w-24 shrink-0 text-sm text-foreground-600">{label}</span>
     <div className="h-2 flex-1 overflow-hidden rounded-full bg-background-200"><div className={`h-full rounded-full ${barClass}`} style={{ width: `${width}%` }} /></div>
-    <span className="w-16 shrink-0 text-right text-sm font-medium text-foreground-900">{value}h</span>
+    <span className="w-16 shrink-0 text-right text-sm font-medium text-foreground-900">{hours(value)}</span>
   </div>;
 }
 
@@ -114,6 +115,7 @@ function ReviewView({ employerId, kind, learnerId, eventKey, onClose, onUpdated 
       <h3 className="text-sm font-semibold text-foreground-950">{definition.template.name}</h3>
       <ReviewFormRenderer sections={definition.sections} answers={answers} onAnswerChange={() => undefined} readOnly openSectionId={openSection} onOpenSectionChange={setOpenSection} />
       <ReviewSignatures signatures={definition.signatures} />
+      <ReviewPdfDownload availability={definition.pdf} onDownload={() => downloadEmployerReviewPdf(employerId, kind, learnerId, eventKey)} />
       {canEmployerSign && !signing && <button type="button" className="rounded-md bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700" onClick={() => setSigning(true)}>Sign as Employer</button>}
       {signing && <EmployerReviewSignature
         employerId={employerId} kind={kind} learnerId={learnerId} eventKey={eventKey}
@@ -124,6 +126,12 @@ function ReviewView({ employerId, kind, learnerId, eventKey, onClose, onUpdated 
   </Panel>;
 }
 
+/**
+ * The page itself: the learner, read-only, behind the five employer tabs.
+ *
+ * Routed via the default export below, which reads the ids off the URL and
+ * remounts this on a learner change so no state crosses between learners.
+ */
 function LearnerPage({ employerId, kind, learnerId }: { employerId: string; kind: string; learnerId: string }) {
   const { auth } = useAuth();
   const [data, setData] = useState<EmployerLearnerDetail | null>(null);
@@ -139,6 +147,12 @@ function LearnerPage({ employerId, kind, learnerId }: { employerId: string; kind
   const [reviewKey, setReviewKey] = useState<string | null>(null);
   const [plan, setPlan] = useState<import('@/api/learnerDetail').LearnerDetail | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
+  // Guards the learner-plan fetch below against firing twice. Deliberately a
+  // ref, not state: `planLoading` as a dependency re-ran that effect the moment
+  // it was set, and the cleanup flipped `active` to false on the in-flight
+  // request, so every handler — the one clearing the spinner included — was
+  // skipped when it resolved and the section stayed on "Loading OTJ detail…".
+  const planRequested = useRef(false);
   const [planError, setPlanError] = useState('');
   useEffect(() => {
     let active = true;
@@ -151,6 +165,8 @@ function LearnerPage({ employerId, kind, learnerId }: { employerId: string; kind
     setReviewKey(null);
     setPlan(null);
     setPlanError('');
+    // Reloading the learner discards the plan, so allow it to be requested again.
+    planRequested.current = false;
     // Every request uses the employer-scoped API; the backend resolves ownership and learner kind.
     fetchEmployerLearner(employerId, kind, learnerId).then(result => { if (active) setData(result); })
       .catch((reason: Error) => { if (active) setError(reason.message); }).finally(() => { if (active) setLoading(false); });
@@ -159,8 +175,9 @@ function LearnerPage({ employerId, kind, learnerId }: { employerId: string; kind
     return () => { active = false; };
   }, [employerId, kind, learnerId, revision]);
   useEffect(() => {
-    if ((tab !== 'Learning Plan' && tab !== 'Attendance & OTJ') || plan || planLoading || planError || !data) return;
+    if ((tab !== 'Learning Plan' && tab !== 'Attendance & OTJ') || plan || planError || !data || planRequested.current) return;
     let active = true;
+    planRequested.current = true;
     setPlanLoading(true);
     setPlanError('');
     fetchEmployerLearnerPlan(employerId, kind, learnerId)
@@ -168,12 +185,15 @@ function LearnerPage({ employerId, kind, learnerId }: { employerId: string; kind
       .catch((reason: Error) => { if (active) setPlanError(reason.message); })
       .finally(() => { if (active) setPlanLoading(false); });
     return () => { active = false; };
-  }, [tab, plan, planLoading, planError, data, employerId, kind, learnerId]);
+  }, [tab, plan, planError, data, employerId, kind, learnerId]);
   const learner = data?.learner;
   const modules = summary?.currentLearning.modules || [];
   const state = summary?.currentLearning.selectionState || 'unavailable';
   const reviews = data?.reviews.filter(review => review.reviewInstanceId && review.reviewType === 'progress_review') || [];
   const attendance = summary?.attendance.available ? summary.attendance : null;
+  const variance = summary?.otj.varianceToDateHours ?? null;
+  // One scale for all three OTJ bars, so their lengths stay comparable.
+  const otjMax = Math.max(summary?.otj.submittedPendingHours ?? 0, summary?.otj.actualHours ?? 0, summary?.otj.plannedToDateHours ?? 0, 1);
   const ksb = summary?.ksb.available ? summary.ksb : null;
 
   const breadcrumb = <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm">
@@ -193,12 +213,12 @@ function LearnerPage({ employerId, kind, learnerId }: { employerId: string; kind
         <Tabs labels={tabs} selected={tab} onSelect={(name) => { setTab(name as typeof tabs[number]); setReviewKey(null); }} label="Learner sections" />
 
         {tab === 'Learning Plan' && <section aria-label="Learning Plan">
-          <LearningPlanTab real={plan} loading={planLoading} loadError={planError || null} onRetry={() => { setPlan(null); setPlanError(''); }} />
+          <LearningPlanTab real={plan} loading={planLoading} loadError={planError || null} onRetry={() => { planRequested.current = false; setPlan(null); setPlanError(''); }} />
         </section>}
 
         {tab === 'Progress Reviews' && <section aria-label="Progress Reviews">
           <div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold text-foreground-950">Progress Reviews</h2><span className="text-sm text-foreground-600">{reviews.length} review{reviews.length === 1 ? '' : 's'}</span></div>
-          {reviews.length === 0 ? <p className="text-sm text-foreground-500">No canonical Progress Reviews available to view.</p> : <div className="space-y-3">{reviews.map(review => <div key={review.eventKey} className="rounded-lg border border-background-200 bg-background-50 p-4 md:p-5">
+          {reviews.length === 0 ? <p className="text-sm text-foreground-500">No canonical Progress Reviews available to view.</p> : <div className="space-y-3">{reviews.map(review => <div key={review.eventKey} className="space-y-3"><div className="rounded-lg border border-background-200 bg-background-50 p-4 md:p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="flex flex-wrap items-center gap-2"><h3 className="text-base font-semibold text-foreground-950">{review.label}</h3><Badge>{review.completed ? 'Completed' : 'In progress'}</Badge></div>
@@ -214,70 +234,11 @@ function LearnerPage({ employerId, kind, learnerId }: { employerId: string; kind
                 <button className={secondaryButton} onClick={() => setReviewKey(review.eventKey)}>View Review</button>
               </div>
             </div>
+          </div>
+            {/* The details open directly under the review that was clicked, not after the whole list. */}
+            {reviewKey === review.eventKey && <ReviewView key={reviewKey} employerId={employerId} kind={kind} learnerId={learnerId} eventKey={reviewKey} onClose={() => setReviewKey(null)} onUpdated={() => setRevision(value => value + 1)} />}
           </div>)}</div>}
-          {reviewKey && <ReviewView key={reviewKey} employerId={employerId} kind={kind} learnerId={learnerId} eventKey={reviewKey} onClose={() => setReviewKey(null)} onUpdated={() => setRevision(value => value + 1)} />}
         </section>}
-
-        {tab === 'Actions' && (() => {
-          const reviewActions = reviews.filter(review => review.employerSignatureRequired && !review.signed);
-          const documentActions = (data.documents || []).filter(doc => doc.signable && !doc.signed);
-          const attendanceAction = attendance && (attendance.classification === 'red' || attendance.classification === 'amber') ? attendance : null;
-          const total = reviewActions.length + documentActions.length + (attendanceAction ? 1 : 0);
-          return <div className="space-y-5">
-            <div>
-              <h2 className="text-lg font-semibold text-foreground-950">Actions</h2>
-              <p className="mt-1 text-sm text-foreground-600">Tasks and decisions requiring your attention for {learner?.name || 'this learner'}.</p>
-            </div>
-            <div className="rounded-lg border border-background-200 bg-background-100/50 px-4 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">Require Attention</p>
-              <p className="mt-1 text-2xl font-bold text-foreground-950">{total}</p>
-            </div>
-            {total === 0 ? (
-              <div className="rounded-lg border border-background-200 bg-background-50 p-8 text-center">
-                <i className="ri-checkbox-circle-line text-2xl text-emerald-600" aria-hidden="true" />
-                <p className="mt-2 text-sm font-semibold text-foreground-950">You're up to date</p>
-                <p className="mt-1 text-sm text-foreground-600">There are no actions requiring your attention for {learner?.name || 'this learner'}.</p>
-              </div>
-            ) : <ul className="space-y-3">
-              {reviewActions.map(review => <li key={review.eventKey} className="rounded-lg border border-background-200 bg-background-50 p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-100 text-accent-700"><i className="ri-quill-pen-line text-base" aria-hidden="true" /></span>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5"><p className="text-sm font-semibold text-foreground-950">{review.label}</p><span className="rounded-full bg-background-100 px-2 py-0.5 text-[11px] font-medium text-foreground-500">Progress Review</span></div>
-                      <p className="mt-0.5 text-sm text-foreground-600">Scheduled {date(review.scheduledDate)} · awaiting employer signature.</p>
-                    </div>
-                  </div>
-                  <button type="button" className="shrink-0 self-start rounded-md border border-background-300 bg-background-50 px-3.5 py-1.5 text-sm font-medium text-foreground-700 hover:bg-background-100 sm:self-center" onClick={() => { setTab('Progress Reviews'); setReviewKey(review.eventKey); }}>View Review</button>
-                </div>
-              </li>)}
-              {documentActions.map(doc => <li key={doc.id} className="rounded-lg border border-background-200 bg-background-50 p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-100 text-accent-700"><i className="ri-file-text-line text-base" aria-hidden="true" /></span>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5"><p className="text-sm font-semibold text-foreground-950">{doc.label}</p><span className="rounded-full bg-background-100 px-2 py-0.5 text-[11px] font-medium text-foreground-500">Document</span></div>
-                      <p className="mt-0.5 text-sm text-foreground-600">Awaiting your signature.</p>
-                    </div>
-                  </div>
-                  <button type="button" className={`shrink-0 self-start rounded-md bg-primary-500 px-3.5 py-1.5 text-sm font-medium text-background-50 hover:bg-primary-600 sm:self-center`} onClick={() => setTab('Documents')}>Review &amp; Sign</button>
-                </div>
-              </li>)}
-              {attendanceAction && <li className="rounded-lg border border-background-200 bg-background-50 p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-700"><i className="ri-calendar-check-line text-base" aria-hidden="true" /></span>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5"><p className="text-sm font-semibold text-foreground-950">Attendance concern</p><span className="rounded-full bg-background-100 px-2 py-0.5 text-[11px] font-medium text-foreground-500">Attendance</span></div>
-                      <p className="mt-0.5 text-sm text-foreground-600">Attendance rate {percent(attendanceAction.ratePercent)} — below the expected level.</p>
-                    </div>
-                  </div>
-                  <button type="button" className="shrink-0 self-start rounded-md border border-background-300 bg-background-50 px-3.5 py-1.5 text-sm font-medium text-foreground-700 hover:bg-background-100 sm:self-center" onClick={() => setTab('Attendance & OTJ')}>View Attendance</button>
-                </div>
-              </li>}
-            </ul>}
-          </div>;
-        })()}
 
         {tab === 'Attendance & OTJ' && <div className="space-y-6">
           <section aria-label="Attendance">
@@ -320,24 +281,24 @@ function LearnerPage({ employerId, kind, learnerId }: { employerId: string; kind
           <section aria-label="Off-the-job Hours">
             <h2 className="text-base font-semibold text-foreground-950">Off-the-job Hours</h2>
             {planLoading && <p role="status" className="mt-2 text-sm text-foreground-500">Loading OTJ detail…</p>}
-            {planError && <ErrorState message={`OTJ detail unavailable: ${planError}`} retry={() => { setPlan(null); setPlanError(''); }} />}
+            {planError && <ErrorState message={`OTJ detail unavailable: ${planError}`} retry={() => { planRequested.current = false; setPlan(null); setPlanError(''); }} />}
             {!planLoading && !planError && <>
               <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <Stat label="Actual (approved)" value={hours(summary?.otj.actualHours)} />
-                <Stat label="Planned to date" value="Unavailable" />
+                <Stat label="Planned to date" value={hours(summary?.otj.plannedToDateHours)} sub={summary?.otj.plannedToDateAvailable ? 'Pro-rata across programme dates' : undefined} />
                 <Stat label="Submitted" value={hours(summary?.otj.submittedPendingHours)} />
                 <Stat label="Programme target" value={hours(summary?.otj.plannedTotalHours)} />
               </div>
               <div className="mt-4 rounded-lg border border-background-200 bg-background-50 p-4">
-                <p className="text-xs text-foreground-500">Planned-to-date hours are not tracked by this system yet, so the planned bar and variance below are unavailable.</p>
+                <p className="text-xs text-foreground-500">{summary?.otj.plannedToDateAvailable ? 'Planned-to-date is spread evenly across the programme dates. A plan that front- or back-loads hours will sit either side of it by design.' : 'Planned-to-date needs the programme start and end dates, so the planned bar and variance below are unavailable.'}</p>
                 <div className="mt-3 space-y-3">
-                  <OtjBar label="Planned" value={null} max={Math.max(summary?.otj.submittedPendingHours ?? 0, summary?.otj.actualHours ?? 0, 1)} tone="muted" />
-                  <OtjBar label="Submitted" value={summary?.otj.submittedPendingHours ?? null} max={Math.max(summary?.otj.submittedPendingHours ?? 0, summary?.otj.actualHours ?? 0, 1)} tone="navy" />
-                  <OtjBar label="Actual" value={summary?.otj.actualHours ?? null} max={Math.max(summary?.otj.submittedPendingHours ?? 0, summary?.otj.actualHours ?? 0, 1)} tone="green" />
+                  <OtjBar label="Planned" value={summary?.otj.plannedToDateHours ?? null} max={otjMax} tone="muted" />
+                  <OtjBar label="Submitted" value={summary?.otj.submittedPendingHours ?? null} max={otjMax} tone="navy" />
+                  <OtjBar label="Actual" value={summary?.otj.actualHours ?? null} max={otjMax} tone="green" />
                 </div>
                 <div className="mt-4 flex items-center justify-between rounded-md bg-background-100/70 px-3 py-2">
                   <span className="text-sm text-foreground-600">Variance</span>
-                  <span className="text-sm font-semibold text-foreground-500">Unavailable</span>
+                  <span className={`text-sm font-semibold ${variance == null ? 'text-foreground-500' : variance < 0 ? 'text-accent-700' : 'text-emerald-700'}`}>{variance == null ? 'Unavailable' : variance < 0 ? `${hours(Math.abs(variance))} behind plan` : `${hours(variance)} ahead of plan`}</span>
                 </div>
               </div>
               <p className="mt-4 text-sm font-semibold text-foreground-800">Recorded activity history</p>
@@ -408,451 +369,11 @@ function LearnerPage({ employerId, kind, learnerId }: { employerId: string; kind
   </div>;
 }
 
-/**
- * Who has signed: one chip per party, ticked when they have.
- *
- * Mirrors the admin board's SignatureParties so both sides read the same way. A
- * party is omitted entirely when undefined rather than shown unsigned — a
- * compliance PDF only tracks the employer's signature, and rendering an empty
- * "Learner" cell there would imply a signature was expected and missing.
- */
-function PartyChips({
-  learner,
-  admin,
-  employer,
-}: {
-  learner?: boolean;
-  admin?: boolean;
-  employer?: boolean;
-}) {
-  const parties = [
-    { key: 'learner', label: 'Learner', icon: 'ri-user-line', signed: learner },
-    { key: 'admin', label: 'Provider', icon: 'ri-shield-user-line', signed: admin },
-    { key: 'employer', label: 'You', icon: 'ri-briefcase-line', signed: employer },
-  ].filter((p) => p.signed !== undefined);
-
-  return (
-    <span className="flex items-center gap-1.5">
-      {parties.map((p) => (
-        <span
-          key={p.key}
-          title={p.signed ? `${p.label} signed` : `${p.label} has not signed yet`}
-          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap ${
-            p.signed
-              ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
-              : 'bg-background-100 text-foreground-400 border-foreground-200/60'
-          }`}
-        >
-          <i className={`${p.signed ? 'ri-check-line' : p.icon} text-[11px]`} />
-          <span className="hidden sm:inline">{p.label}</span>
-        </span>
-      ))}
-    </span>
-  );
-}
-
-/** One row in the documents panel. */
-function DocumentRow({
-  item,
-  onSign,
-  onShow,
-  opening,
-}: {
-  item: SignableItem;
-  onSign: () => void;
-  onShow: () => void;
-  opening: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 px-4 py-3 flex-wrap">
-      <span className="flex items-center gap-2.5 min-w-0">
-        <i className={`${item.kind === 'review' ? 'ri-file-list-3-line' : 'ri-file-pdf-line'} text-foreground-400 shrink-0`} />
-        <span className="min-w-0">
-          <span className="text-[13px] text-foreground-800 font-medium block truncate" title={item.label}>{item.label}</span>
-          <span className="text-[11px] text-foreground-400">
-            {item.kind === 'review'
-              ? item.scheduledDate ? `Review · ${item.scheduledDate}` : 'Review'
-              : `Document · ${fmt(item.generatedAt)}`}
-            {item.signed && item.signedName ? ` · signed by ${item.signedName} on ${fmt(item.signedAt)}` : ''}
-          </span>
-        </span>
-      </span>
-      <span className="flex items-center gap-2 shrink-0">
-        {/* Every party the item needs, so the employer can see they aren't the
-            only one outstanding. Reviews report all three; a compliance PDF
-            reports the parties its own doc type asks for — the Apprenticeship
-            Agreement is learner + employer, with no provider signature. */}
-        {item.kind === 'review' ? (
-          <PartyChips
-            learner={item.learnerSigned}
-            admin={item.adminSigned}
-            employer={item.signed}
-          />
-        ) : (
-          <PartyChips
-            learner={item.parties?.includes('learner') ? Boolean(item.learnerSigned) : undefined}
-            admin={item.parties?.includes('provider') ? Boolean(item.providerSigned) : undefined}
-            employer={item.parties?.includes('employer') !== false ? item.signed : undefined}
-          />
-        )}
-        {item.signed ? (
-          <>
-            {/* Opens the saved document — the signed artefact, carrying every
-                party's signature. Not the sign dialog: this row is done, and
-                re-opening the pad here invited an accidental re-sign. */}
-            <button
-              onClick={onShow}
-              disabled={opening}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap disabled:opacity-60"
-            >
-              {opening
-                ? <><i className="ri-loader-4-line animate-spin" />Opening…</>
-                : <><i className="ri-file-text-line text-[13px]" />Show document</>}
-            </button>
-          </>
-        ) : item.signable ? (
-          <button
-            onClick={onSign}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-primary-700 transition-smooth cursor-pointer"
-          >
-            <i className="ri-pen-nib-line" />Sign
-          </button>
-        ) : (
-          // A review whose questionnaire isn't finished can't be signed by
-          // anyone yet — saying so beats an inert button.
-          <span className="text-[11px] text-foreground-400 italic">Awaiting completion by the learner</span>
-        )}
-      </span>
-    </div>
-  );
-}
-
-/**
- * The page is one learner seen four ways. Overview is the employer's own
- * business — details and the signing queue; the other three are the learner's
- * workspace shown read-only, so employer and apprentice discuss the same plan,
- * the same hours and the same KSBs rather than two different pictures of them.
- */
-type TabKey = 'overview' | 'plan' | 'otjh' | 'ksbs';
-
-const TABS: { key: TabKey; label: string; icon: string }[] = [
-  { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
-  { key: 'plan', label: 'Learning plan', icon: 'ri-calendar-check-line' },
-  { key: 'otjh', label: 'Off-the-job hours', icon: 'ri-time-line' },
-  { key: 'ksbs', label: 'KSB progress', icon: 'ri-award-line' },
-];
 
 export default function EmployerLearnerPage() {
-  const { employerId = '', kind: kindParam = 'apprenticeship', learnerId = '' } = useParams();
-  // The URL segment is a plain string; the document APIs want the narrowed union.
-  const kind: LearnerKind = kindParam === 'commercial' ? 'commercial' : 'apprenticeship';
-  const navigate = useNavigate();
-  const { success, error: toastError } = useToast();
-  const [data, setData] = useState<EmployerLearnerDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [signing, setSigning] = useState<SignableItem | null>(null);
-  const [reviewDefinition, setReviewDefinition] = useState<any>(null);
-  const [tab, setTab] = useState<TabKey>('overview');
-  // The learner's own workspace payload, behind the three progress tabs. Fetched
-  // once, on first use: an employer who only came to sign a document never pays
-  // for it, and all three tabs read the same object afterwards.
-  const [plan, setPlan] = useState<LearnerDetail | null>(null);
-  const [planLoading, setPlanLoading] = useState(false);
-  const [planError, setPlanError] = useState<string | null>(null);
-  // Which row is mid-open, so its button can show progress. Reviews are keyed by
-  // event key and documents by id — they never collide.
-  const [opening, setOpening] = useState<string | null>(null);
-
-  const load = () => {
-    setLoading(true);
-    setError(null);
-    fetchEmployerLearner(employerId, kind, learnerId)
-      .then(setData)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, [employerId, kind, learnerId]);
-
-  useEffect(() => {
-    if (!signing || signing.kind !== 'review' || !signing.reviewInstanceId) {
-      setReviewDefinition(null);
-      return;
-    }
-    let active = true;
-    fetchEmployerReviewInstance(employerId, kind, learnerId, signing.eventKey)
-      .then(value => { if (active) setReviewDefinition(value); })
-      .catch(() => { if (active) setReviewDefinition(null); });
-    return () => { active = false; };
-  }, [employerId, kind, learnerId, signing]);
-
-  const loadPlan = () => {
-    setPlanLoading(true);
-    setPlanError(null);
-    fetchEmployerLearnerPlan(employerId, kind, learnerId)
-      .then(setPlan)
-      .catch((e: Error) => setPlanError(e.message))
-      .finally(() => setPlanLoading(false));
-  };
-
-  // Only when a progress tab is actually opened, and only once per learner.
-  useEffect(() => {
-    if (tab === 'overview' || plan || planLoading || planError) return;
-    loadPlan();
-  }, [tab, plan, planLoading, planError]);
-
-  // A different learner invalidates whatever plan is held.
-  useEffect(() => {
-    setPlan(null);
-    setPlanError(null);
-    setTab('overview');
-  }, [employerId, kind, learnerId]);
-
-  const handleSign = async (name: string, signature: string) => {
-    if (!signing) return;
-    if (signing.kind === 'review') {
-      await signReviewAsEmployer(employerId, kind, learnerId, signing.eventKey, { name, signature });
-    } else if (signing.kind === 'written-agreement') {
-      await signWrittenAgreementAsEmployer(learnerId, { name, signature });
-    } else if (signing.kind === 'training-plan') {
-      await signTrainingPlanAsEmployer(learnerId, { name, signature });
-    } else if (signing.kind === 'agreement') {
-      // Its own table, its own endpoint — see apprenticeship_agreement.py.
-      await signAgreementAsEmployer(learnerId, { name, signature });
-    } else {
-      await signDocumentAsEmployer(kind, learnerId, signing.id, { name, signature });
-    }
-    // No reusable copy is kept: the employer's name always produces the same
-    // mark, so there is nothing to save and nothing to go stale.
-    success(signature ? 'Signed' : 'Signature removed', signing.label);
-    load();
-  };
-
-  /**
-   * Open the saved document itself — the signed artefact, not the sign dialog.
-   *
-   * A review is rendered client-side into the same PDF the admin board exports
-   * (so it carries the Declaration block with every signature on it), while a
-   * compliance PDF already exists in blob storage and just needs a download URL.
-   */
-  const openDocument = async (item: SignableItem) => {
-    setOpening(item.kind === 'review' ? item.eventKey : item.id);
-    try {
-      if (item.kind === 'review') {
-        const review = await fetchReviewForm(kind, learnerId, item.eventKey);
-        downloadReviewPdf(review, REVIEW_QUESTION_LABELS);
-      } else {
-        const url = await getEnrolmentDocumentUrl(kind, learnerId, item.id);
-        window.open(url, '_blank', 'noopener,noreferrer');
-      }
-    } catch (e) {
-      toastError('Could not open the document', e instanceof Error ? e.message : 'Unexpected error');
-    } finally {
-      setOpening(null);
-    }
-  };
-
-  const learner = data?.learner;
-  const items: SignableItem[] = data ? [...data.reviews, ...data.documents] : [];
-  // Unsigned first, then signable-but-unsigned before blocked ones, so the row
-  // an employer can actually act on is always at the top.
-  const sorted = [...items].sort((a, b) => {
-    if (a.signed !== b.signed) return a.signed ? 1 : -1;
-    if (a.signable !== b.signable) return a.signable ? -1 : 1;
-    return a.label.localeCompare(b.label);
-  });
-  // The fetch is kicked off by an effect, so the first render after a tab switch
-  // has neither data nor an in-flight flag yet. Treat that frame as loading too,
-  // or the panels flash "nothing here" before the request has even started.
-  const planPending = !plan && !planError;
-  const outstanding = data?.outstandingCount ?? 0;
-  // Active learners lead with performance; anyone still being set up leads with
-  // the paperwork. Both panels always render.
-  const documentsFirst = !learner?.isActive || outstanding > 0;
-
-  const documentsPanel = (
-    <SectionPanel
-      title={outstanding > 0 ? `Documents to sign (${outstanding} outstanding)` : 'Documents'}
-      icon="ri-draft-line"
-      defaultOpen
-    >
-      {sorted.length === 0 ? (
-        <p className="text-[13px] text-foreground-400 py-2">
-          No documents need your signature yet. They appear here once the provider has prepared them.
-        </p>
-      ) : (
-        <div className="divide-y divide-foreground-100 -mx-4 -my-1">
-          {sorted.map((item) => (
-            <DocumentRow
-              key={item.kind === 'review' ? `r-${item.eventKey}` : `d-${item.id}`}
-              item={item}
-              onSign={() => setSigning(item)}
-              onShow={() => openDocument(item)}
-              opening={opening === (item.kind === 'review' ? item.eventKey : item.id)}
-            />
-          ))}
-        </div>
-      )}
-    </SectionPanel>
-  );
-
-  const performancePanel = (
-    <>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger-children">
-        <StatCard icon="ri-question-answer-line" label="Quizzes taken" value={data?.performance.quizzesTaken ?? 0} tint="primary" />
-        <StatCard icon="ri-check-double-line" label="Quizzes passed" value={data?.performance.quizzesPassed ?? 0} tint="emerald" />
-        <StatCard
-          icon="ri-percent-line"
-          label="Average score"
-          value={data?.performance.averageScore != null ? `${data.performance.averageScore}%` : '—'}
-          tint="accent"
-        />
-        <StatCard icon="ri-award-line" label="KSBs evidenced" value={data?.performance.ksbsEvidenced ?? 0} tint="secondary" />
-      </div>
-
-      <SectionPanel title="Learner details" icon="ri-user-3-line" defaultOpen>
-        <FieldRow readonly label="Email" value={learner?.email || '—'} />
-        <FieldRow readonly label="Phone" value={learner?.phone || '—'} />
-        <FieldRow readonly label="Programme" value={learner?.programme || '—'} />
-        <FieldRow readonly label="Cohort" value={learner?.cohort || '—'} />
-        <FieldRow readonly label="Programme status" value={learner?.programmeStatus || '—'} />
-        <FieldRow readonly label="Start date" value={learner?.startDate || '—'} />
-        <FieldRow readonly label="End date" value={learner?.endDate || '—'} />
-      </SectionPanel>
-
-      <SectionPanel title="Progress" icon="ri-line-chart-line" defaultOpen>
-        <FieldRow readonly label="Components completed" value={String(data?.performance.componentsCompleted ?? 0)} />
-        <FieldRow readonly label="Off-the-job hours logged" value={data?.performance.completedHours || '—'} />
-        <FieldRow readonly label="Last activity" value={fmt(data?.performance.lastActivityAt)} />
-      </SectionPanel>
-    </>
-  );
-
-  return (
-    <WorkspaceShell
-      role="compliance"
-      roleLabel={employerNav.label}
-      navItems={employerNav.items}
-      workspaceLabel={employerNav.workspaceLabel}
-      pageTitle="Learner"
-      pageSubtitle={learner?.name ?? 'Learner'}
-      userName="Enrolment Officer"
-      userRole="Enrolment Officer"
-    >
-      {/* The progress tabs render the learner's own multi-column layouts, which
-          need more room than the signing queue does. */}
-      <div className={`p-6 mx-auto space-y-6 ${tab === 'overview' ? 'max-w-5xl' : 'max-w-7xl'}`}>
-        <div className="animate-fade-in-up">
-          <Hero
-            icon="ri-user-3-line"
-            title={learner?.name || 'Learner'}
-            subtitle={
-              learner
-                ? <>
-                    {learner.programme || 'No programme'}
-                    {learner.cohort ? ` · ${learner.cohort}` : ''}
-                    {` · ${learner.programmeStatus || 'Status not set'}`}
-                  </>
-                : undefined
-            }
-            right={
-              <button
-                onClick={() => navigate(-1)}
-                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white/15 backdrop-blur-sm border border-white/25 text-white rounded-xl text-[13px] font-semibold hover:bg-white/25 transition-smooth cursor-pointer"
-              >
-                <i className="ri-arrow-left-line" />All learners
-              </button>
-            }
-          />
-        </div>
-
-        {loading && (
-          <p className="py-16 text-center text-[13px] text-foreground-400">
-            <i className="ri-loader-4-line animate-spin mr-2" />Loading learner…
-          </p>
-        )}
-
-        {!loading && error && (
-          <div className="py-16 text-center">
-            <p className="text-red-600 text-[13px] mb-3"><i className="ri-error-warning-line mr-1.5" />{error}</p>
-            <button className={btnSecondary} onClick={load}><i className="ri-refresh-line" />Retry</button>
-          </div>
-        )}
-
-        {!loading && !error && data && (
-          <div className="space-y-4">
-            {outstanding > 0 && (
-              <div className="rounded-xl border border-amber-300/70 bg-amber-50/70 px-4 py-3 flex items-center gap-2.5">
-                <i className="ri-error-warning-line text-amber-600 shrink-0" />
-                <p className="text-[13px] text-amber-900">
-                  <strong>{outstanding} document{outstanding === 1 ? '' : 's'}</strong> need your signature.
-                </p>
-              </div>
-            )}
-
-            <nav className="flex flex-wrap items-center gap-1.5 border-b border-foreground-100 pb-2" aria-label="Learner sections">
-              {TABS.map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => setTab(t.key)}
-                  aria-current={tab === t.key ? 'page' : undefined}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-semibold transition-smooth cursor-pointer ${
-                    tab === t.key
-                      ? 'bg-primary-600 text-white'
-                      : 'text-foreground-500 hover:bg-background-100 hover:text-foreground-700'
-                  }`}
-                >
-                  <i className={`${t.icon} text-[14px]`} />{t.label}
-                </button>
-              ))}
-            </nav>
-
-            {tab === 'overview' && (documentsFirst
-              ? <>{documentsPanel}{performancePanel}</>
-              : <>{performancePanel}{documentsPanel}</>)}
-
-            {tab !== 'overview' && planError && (
-              <div className="py-16 text-center">
-                <p className="text-red-600 text-[13px] mb-3"><i className="ri-error-warning-line mr-1.5" />{planError}</p>
-                <button className={btnSecondary} onClick={loadPlan}><i className="ri-refresh-line" />Retry</button>
-              </div>
-            )}
-
-            {/* No kind/learnerId is passed on purpose: every start/open/upload
-                action in the learner's plan is gated on them, so the employer
-                gets the plan and its recorded outcomes but none of the actions. */}
-            {tab === 'plan' && !planError && (
-              <LearnerPlanBody
-                real={plan}
-                loading={planPending}
-                loadError={null}
-                pageLabel="Learning plan"
-                showHero={false}
-                note={`${learner?.name || 'This learner'}'s training plan as they see it — modules, weeks and every component, with recorded quiz results.`}
-              />
-            )}
-
-            {tab === 'otjh' && !planError && (
-              <OtjhBody real={plan} loading={planPending} showHero={false} audience="observer" />
-            )}
-
-            {tab === 'ksbs' && !planError && (
-              <KsbProgressBody real={plan} loading={planPending} showHero={false} audience="observer" />
-            )}
-          </div>
-        )}
-      </div>
-
-      {signing && data && (
-        <SignModal
-          item={signing}
-          employerName={data.employer.name}
-          reviewDefinition={reviewDefinition}
-          onClose={() => setSigning(null)}
-          onSign={handleSign}
-        />
-      )}
-    </WorkspaceShell>
-  );
+  const { employerId = '', kind = 'apprenticeship', learnerId = '' } = useParams();
+  // Keyed on the learner: navigating between two learners must not leave the
+  // previous one's summary, reviews or open modal on screen while the new one
+  // loads. A remount clears all of it in one step.
+  return <LearnerPage key={`${employerId}:${kind}:${learnerId}`} employerId={employerId} kind={kind} learnerId={learnerId} />;
 }

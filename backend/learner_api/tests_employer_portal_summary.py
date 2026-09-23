@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -210,11 +211,63 @@ class EmployerPortalSummaryTests(SimpleTestCase):
         self.assertEqual(payload["ksb"]["reason"], "activity_points_missing")
 
     def test_otj_planned_total_is_not_exposed_as_planned_to_date(self):
+        """The programme total must never be passed off as the to-date figure.
+
+        Planned-to-date is now derived (pro-rata across the programme dates), so
+        it is no longer null — but it must still be a smaller, separately
+        computed number, never a copy of the 278-hour programme total.
+        """
         with self._patch_summary():
             payload, _error, _status = summary.build_employer_learner_summary(self.employer, "apprenticeship", 101)
         self.assertEqual(payload["otj"]["plannedTotalHours"], 278)
-        self.assertIsNone(payload["otj"]["plannedToDateHours"])
+        self.assertNotEqual(payload["otj"]["plannedToDateHours"], 278)
+        self.assertLess(payload["otj"]["plannedToDateHours"], 278)
+
+    def test_planned_to_date_is_pro_rated_across_the_programme_dates(self):
+        """Half-way through the programme, half of the planned hours are due."""
+        self.assertEqual(
+            summary._planned_to_date(278, "2026-01-01", "2026-12-31", today=date(2026, 7, 1)),
+            round(278 * ((date(2026, 7, 1) - date(2026, 1, 1)).days / (date(2026, 12, 31) - date(2026, 1, 1)).days), 2),
+        )
+
+    def test_planned_to_date_is_unavailable_without_programme_dates(self):
+        """A missing date yields no figure rather than one pro-rated from a guess."""
+        self.assertIsNone(summary._planned_to_date(278, "", "2026-12-31"))
+        self.assertIsNone(summary._planned_to_date(278, "2026-01-01", ""))
+        self.assertIsNone(summary._planned_to_date(None, "2026-01-01", "2026-12-31"))
+
+    def test_planned_to_date_is_clamped_to_the_programme_window(self):
+        """Nothing is due before the start, and the whole total after the end."""
+        self.assertEqual(summary._planned_to_date(278, "2026-01-01", "2026-12-31", today=date(2025, 6, 1)), 0.0)
+        self.assertEqual(summary._planned_to_date(278, "2026-01-01", "2026-12-31", today=date(2027, 6, 1)), 278.0)
+
+    def test_variance_is_unavailable_when_actual_hours_are_missing(self):
+        """A missing actual must not read as a full shortfall against the plan."""
+        metrics = {"otjh": {"actual": None, "planned": 278}, "ksb": {"status": "unavailable"}}
+        with self._patch_summary(metrics=metrics):
+            payload, _error, _status = summary.build_employer_learner_summary(self.employer, "apprenticeship", 101)
         self.assertIsNone(payload["otj"]["varianceToDateHours"])
+        self.assertIsNone(payload["otj"]["behindPlan"])
+
+    def test_module_percent_is_derived_from_the_plan_activity_counts(self):
+        """The learning plan reports counts but no percentage; 3 of 4 is 75%."""
+        self.assertEqual(summary._module_percent(3, 4), 75.0)
+
+    def test_module_with_no_planned_activities_is_unavailable_not_zero(self):
+        """Nothing planned is not the same as nothing done."""
+        self.assertIsNone(summary._module_percent(0, 0))
+        self.assertIsNone(summary._module_percent(None, 4))
+
+    def test_current_week_counts_from_the_module_start_and_clamps_to_its_length(self):
+        module = {"start_date": "2026-09-01", "weeks_number": 4}
+        self.assertEqual(summary._current_week(module, today=date(2026, 9, 1)), 1)
+        self.assertEqual(summary._current_week(module, today=date(2026, 9, 8)), 2)
+        # A module running past its end reports its final week, not week 6.
+        self.assertEqual(summary._current_week(module, today=date(2026, 10, 10)), 4)
+        # Before it starts, and without dates or a length, there is no week.
+        self.assertIsNone(summary._current_week(module, today=date(2026, 8, 1)))
+        self.assertIsNone(summary._current_week({"weeks_number": 4}))
+        self.assertIsNone(summary._current_week({"start_date": "2026-09-01"}))
 
     def test_mcm_is_not_counted_as_pending_employer_progress_review_signing(self):
         with self._patch_summary():

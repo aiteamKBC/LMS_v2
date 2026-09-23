@@ -20,6 +20,7 @@ enrolment_api/documents.py.
 CSRF is exempted for the same reason as the rest of learner_api: an internal
 same-origin dev API behind the Vite proxy.
 """
+import json
 import logging
 
 from django.db import DatabaseError
@@ -32,6 +33,7 @@ from login.permissions import employer_or_staff
 
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
+from .employer_portal_summary import build_employer_learner_summary
 from .mappers import _s, to_employer_row
 from .models import Employer, EnrolmentReview
 from .review_form import (
@@ -537,6 +539,38 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key):
 
 @csrf_exempt
 @employer_or_staff()
+def employer_review_instance_pdf(request, employer_id, kind, learner_id, event_key):
+    """Download the signed Progress Review PDF for one of this employer's learners.
+
+    Resolves the review through employer_review_instance, so the ownership and
+    employer-visibility checks are that view's own, then hands the definition to
+    the same signature-gated export the coach and learner download.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    response = employer_review_instance(request, employer_id, kind, learner_id, event_key)
+    if getattr(response, "status_code", 500) != 200:
+        return response
+    try:
+        definition = json.loads(response.content.decode("utf-8"))
+    except (AttributeError, UnicodeDecodeError, ValueError):
+        return _error("Review definition could not be read.", 502)
+
+    from curriculum_api.review_pdf import (
+        REVIEW_TYPE_PROGRESS_REVIEW, learner_information, mcm_pdf_response, pdf_availability, review_type_code,
+    )
+
+    # The employer portal only exposes Progress Reviews; nothing else is exported here.
+    if review_type_code(definition) != REVIEW_TYPE_PROGRESS_REVIEW:
+        return _error("This review has no employer PDF export.", 404)
+    if not (pdf_availability(definition) or {}).get("available"):
+        return mcm_pdf_response(definition, {})
+    learner = SOURCE_MODELS[kind].all_learners.filter(pk=learner_id).first()
+    return mcm_pdf_response(definition, learner_information(learner))
+
+
+@csrf_exempt
+@employer_or_staff()
 def employer_portal_learner_plan(request, employer_id, kind, learner_id):
     """The learner's own training plan, hours and KSBs — for their employer.
 
@@ -575,6 +609,38 @@ def employer_portal_learner_plan(request, employer_id, kind, learner_id):
         return JsonResponse(build_learner_detail(learner, learner.pk))
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_learner_summary(request, employer_id, kind, learner_id):
+    """The employer's read-only progress summary for one of their learners.
+
+    Narrower than employer_portal_learner_plan: attendance, off-the-job hours,
+    KSB coverage, current module progress and review dates, each carrying its own
+    availability flag so an unreadable section is reported as unavailable rather
+    than as a zero.
+
+    Read-only by construction — GET only, and the projection never provisions
+    tables or repairs profiles on the way past. Ownership is enforced inside
+    build_employer_learner_summary, which returns the same 403/404 the sibling
+    endpoints do; staff read the identical payload without signing rights.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return err
+
+    try:
+        payload, error, status = build_employer_learner_summary(employer, kind, learner_id)
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+    if payload is None:
+        return _error(error, status)
+    return JsonResponse(payload)
 
 
 def _performance(kind, learner):

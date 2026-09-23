@@ -98,6 +98,45 @@ def _subject_for_module(plan_subjects, module_id):
     return None
 
 
+def _module_percent(completed, total):
+    """Completion for one module, from the counts the learning plan reports.
+
+    `summarise_plan` reports `completed`/`total` but no percentage, so the ratio
+    is derived here rather than by changing that shared projection, which the
+    learner's own workspace also reads.
+
+    A module with no activities yet is `None`, not 0%: nothing has been planned
+    to complete, so a zero would read as "done nothing" instead of "nothing set".
+    """
+    if completed is None or not total:
+        return None
+    return round(completed / total * 100, 2)
+
+
+def _current_week(module, *, today=None):
+    """Which week of the module today falls in, 1-based.
+
+    Weeks are counted from the module's own start date and clamped to its length,
+    so a module running late reports its final week rather than one past the end.
+    Returns None when the dates or length are missing — the employer sees
+    "Unavailable" rather than a week number derived from a guess.
+    """
+    start = _date_key(module.get("start_date"))
+    total_weeks = module.get("weeks_number")
+    if not start or not total_weeks:
+        return None
+    today_date = today or _today()
+    try:
+        start_date = date.fromisoformat(start)
+        total_weeks = int(total_weeks)
+    except (TypeError, ValueError):
+        return None
+    if total_weeks <= 0 or today_date < start_date:
+        return None
+    week = (today_date - start_date).days // 7 + 1
+    return min(week, total_weeks)
+
+
 def _current_learning(learning, week, learner):
     modules = learning.get("modules") or []
     state, selected = select_learning_modules(modules, learner)
@@ -110,10 +149,10 @@ def _current_learning(learning, week, learner):
         out.append({
             "moduleId": _s(module.get("id")) or None,
             "moduleName": _s(module.get("title")) or None,
-            "progressPercent": subject.get("percent") if subject else None,
+            "progressPercent": _module_percent(completed, total) if subject else None,
             "completedActivities": completed,
             "totalActivities": total,
-            "currentWeek": None,
+            "currentWeek": _current_week(module),
             "totalWeeks": module.get("weeks_number"),
             "available": subject is not None,
             "source": "learner_learning_plan",
@@ -162,16 +201,55 @@ def _attendance(source, kind):
     }
 
 
-def _otj(metrics, week):
+def _planned_to_date(planned_total, start, end, *, today=None):
+    """How much off-the-job time the programme expects by today.
+
+    Pro-rated across the programme's own start and end dates: the schedule is not
+    recorded week by week, so elapsed calendar time is the available proxy. It is
+    an even spread, not a reading of the training plan — a learner whose hours are
+    deliberately front- or back-loaded will sit either side of it for good reason.
+
+    Returns None unless the programme total and both dates are present, so the
+    employer sees "Unavailable" rather than a figure pro-rated from a guess.
+    """
+    if planned_total is None or not start or not end:
+        return None
+    try:
+        start_date = date.fromisoformat(_date_key(start))
+        end_date = date.fromisoformat(_date_key(end))
+        planned_total = float(planned_total)
+    except (TypeError, ValueError):
+        return None
+    span = (end_date - start_date).days
+    if span <= 0:
+        return None
+    elapsed = ((today or _today()) - start_date).days
+    # Before the start nothing is due yet; after the end the whole programme is.
+    fraction = min(max(elapsed / span, 0.0), 1.0)
+    return round(planned_total * fraction, 2)
+
+
+def _otj(metrics, week, programme=None):
     metric_otj = metrics.get("otjh") or {}
     home_otj = (week.get("homeProgress") or {}).get("otjh") or {}
+    planned_total = metric_otj.get("planned")
+    actual = metric_otj.get("actual")
+    programme = programme or {}
+    planned_to_date = _planned_to_date(
+        planned_total, programme.get("startDate"), programme.get("plannedEndDate"),
+    )
+    # Variance is only meaningful when both sides are real numbers; a missing
+    # actual must not read as a full shortfall against the plan.
+    variance = round(_number(actual) - planned_to_date, 2) if planned_to_date is not None and _number(actual) is not None else None
     return {
-        "actualHours": metric_otj.get("actual"),
+        "actualHours": actual,
         "submittedPendingHours": home_otj.get("submitted"),
-        "plannedTotalHours": metric_otj.get("planned"),
-        "plannedToDateHours": None,
-        "varianceToDateHours": None,
-        "plannedToDateAvailable": False,
+        "plannedTotalHours": planned_total,
+        "plannedToDateHours": planned_to_date,
+        "varianceToDateHours": variance,
+        "plannedToDateAvailable": planned_to_date is not None,
+        # Negative variance only; being ahead of plan is not a concern to flag.
+        "behindPlan": variance < 0 if variance is not None else None,
     }
 
 
@@ -275,6 +353,14 @@ def build_employer_learner_summary(employer, kind, learner_id):
     week = read_week(learner, home_kind=kind, dashboard_kind=kind)
     metrics = week.get("metrics") or read_metrics(learner, kind)
     coach = current_coach(learner, profile, None)
+    payload_programme = {
+        "name": _s(getattr(learner, "programme", "")) or _s(getattr(profile, "programme", "")),
+        "status": _s(getattr(learner, "programme_status", "")) or _s(getattr(profile, "programme_status", "")),
+        "cohort": _s(getattr(learner, "cohort", "")) or _s(getattr(profile, "cohort", "")),
+        "group": _s(getattr(learner, "group", "")) or _s(getattr(profile, "group_name", "")),
+        "startDate": _date(getattr(learner, "start_date", None) or getattr(profile, "start_date", None)),
+        "plannedEndDate": _date(getattr(learner, "end_date", None) or getattr(profile, "end_date", None)),
+    }
     payload = {
         "learner": {
             "id": str(learner.pk),
@@ -282,19 +368,12 @@ def build_employer_learner_summary(employer, kind, learner_id):
             "name": _s(getattr(learner, "username", "")),
             "email": _s(getattr(learner, "email", "")),
         },
-        "programme": {
-            "name": _s(getattr(learner, "programme", "")) or _s(getattr(profile, "programme", "")),
-            "status": _s(getattr(learner, "programme_status", "")) or _s(getattr(profile, "programme_status", "")),
-            "cohort": _s(getattr(learner, "cohort", "")) or _s(getattr(profile, "cohort", "")),
-            "group": _s(getattr(learner, "group", "")) or _s(getattr(profile, "group_name", "")),
-            "startDate": _date(getattr(learner, "start_date", None) or getattr(profile, "start_date", None)),
-            "plannedEndDate": _date(getattr(learner, "end_date", None) or getattr(profile, "end_date", None)),
-        },
+        "programme": payload_programme,
         "coach": {"id": None, "name": coach.get("coach_name") or None, "email": coach.get("coach_email") or None},
         "trainingPlan": {"available": bool(learning.get("modules")), "plannedOtjTotalHours": (metrics.get("otjh") or {}).get("planned")},
         "currentLearning": _current_learning(learning, week, learner),
         "attendance": _attendance(learner, kind),
-        "otj": _otj(metrics, week),
+        "otj": _otj(metrics, week, payload_programme),
         "ksb": _ksb(metrics),
         "activity": _activity(learner, kind, week),
         "reviews": _reviews(profile),

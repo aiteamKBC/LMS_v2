@@ -63,7 +63,7 @@ function LearnerCard({ learner, state, employerId }: { learner: EmployerLearnerC
     <div className="mt-3 grid grid-cols-2 gap-2">
       <MetricBlock label="Attendance" value={percent(attendance?.ratePercent)} valueClassName={attendanceConcern ? 'text-accent-700' : 'text-foreground-950'} sub={attendance ? `${attendance.sessionsAttended ?? 'Unavailable'} / ${attendance.sessionsHeld ?? 'Unavailable'} sessions` : undefined} />
       <MetricBlock label="Absences" value={attendance?.absences == null ? 'Unavailable' : String(attendance.absences)} sub={attendance ? (attendance.absences ? `Last: ${date(attendance.lastSessionDate)}` : 'No absences recorded') : undefined} />
-      <MetricBlock label="Off-the-job" value={`${hours(summary?.otj.actualHours)} / Unavailable`} sub="Planned-to-date not tracked" />
+      <MetricBlock label="Off-the-job" value={`${hours(summary?.otj.actualHours)} / ${hours(summary?.otj.plannedToDateHours)}`} sub={summary?.otj.plannedToDateAvailable ? summary.otj.behindPlan ? `${hours(Math.abs(summary.otj.varianceToDateHours ?? 0))} behind plan` : 'On or ahead of plan' : 'Planned-to-date needs programme dates'} subClassName={summary?.otj.behindPlan ? 'text-accent-700' : 'text-foreground-500'} />
       <MetricBlock label="KSB Coverage" value={ksb?.achieved != null && ksb.total != null ? `${ksb.achieved} / ${ksb.total}` : 'Unavailable'} sub={ksb ? percent(ksb.percentage) : undefined} />
     </div>
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-background-200 pt-3"><ReviewStatusBadge pending={pending} lastReviewDate={summary?.reviews.lastReviewDate} available={!!summary?.reviews.available} /><span className="text-xs text-foreground-500">Next review: {date(summary?.reviews.nextReviewDate)}</span></div>
@@ -262,10 +262,12 @@ function Dashboard({ employerId }: { employerId: string }) {
   ];
   const actionsAvailable = ready.length === learners.length && readyDetails.length === learners.length;
   // The backend never computes a "planned to date" OTJ figure (Phase 2 leaves
-  // plannedToDateAvailable false for every learner), so there is no real count
-  // of learners behind plan to show here — showing 0 would misreport an
-  // unknown as "on track". Kept visually identical to Readdy otherwise.
-  const otjBehindPlan = 'Unavailable';
+  // Planned-to-date OTJ is pro-rated from each learner's programme dates, so a
+  // learner is only counted once that figure is known. As with attendance, one
+  // learner whose dates are missing makes the whole count unavailable rather
+  // than understating it — showing a partial count would read as "on track".
+  const allOtj = ready.length === learners.length && ready.every(s => s.otj.plannedToDateAvailable && s.otj.behindPlan != null);
+  const otjBehindPlan = allOtj ? ready.filter(s => s.otj.behindPlan).length : 'Unavailable';
   const retry = () => setRevision(n => n + 1);
   return <div className="employer-readdy min-h-screen bg-background-100">
     <EmployerHeader employer={{ name: portal?.employer.name || auth.account?.displayName || 'Employer', organisationName: portal?.employer.employerGroupNames.join(', ') || '' }} title="Employer Performance Dashboard" subtitle={portal ? `Employer: ${portal.employer.name} · Organisation: ${portal.employer.employerGroupNames.join(', ') || 'Unavailable'}` : undefined} nav={<Tabs labels={['Dashboard', 'Progress Reviews']} selected={tab} onSelect={setTab} label="Employer portal sections" />} />
@@ -277,7 +279,7 @@ function Dashboard({ employerId }: { employerId: string }) {
             <Metric label="Learners" value={learners.length} icon="ri-team-line" detail="Assigned to your organisation" />
             <Metric label="Reviews Requiring Action" value={pending} icon="ri-quill-pen-line" iconClassName="bg-accent-100 text-accent-700" tone="attention" detail="Awaiting your sign-off" />
             <Metric label="Attendance Concerns" value={attendanceConcerns} icon="ri-alert-line" iconClassName="bg-accent-100 text-accent-800" tone={typeof attendanceConcerns === 'number' && attendanceConcerns > 0 ? 'attention' : 'neutral'} detail="Learners flagged for attention" />
-            <Metric label="OTJ Behind Plan" value={otjBehindPlan} icon="ri-time-line" iconClassName="bg-accent-100 text-accent-800" tone="neutral" detail="Planned-to-date OTJ is not tracked yet" />
+            <Metric label="OTJ Behind Plan" value={otjBehindPlan} icon="ri-time-line" iconClassName="bg-accent-100 text-accent-800" tone={typeof otjBehindPlan === 'number' && otjBehindPlan > 0 ? 'attention' : 'neutral'} detail={allOtj ? 'Behind their pro-rata planned hours' : 'Planned-to-date needs programme dates'} />
           </section>
           <section><div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold text-foreground-950">Team Overview</h2><span className="text-sm text-foreground-600">{learners.length} learner{learners.length === 1 ? '' : 's'}</span></div>
             {Object.values(summaries).some(s => s.status === 'error') && <button className={`mb-4 ${secondaryButton}`} onClick={retry}>Retry unavailable summaries</button>}
