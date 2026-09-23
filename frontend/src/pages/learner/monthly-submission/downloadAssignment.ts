@@ -1,12 +1,13 @@
 import { fetchEvidence, getEvidenceDownloadUrl } from '@/api/evidence';
 import { loadLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import type { LearnerKind } from '@/api/learnerDetail';
+import { formatSystemTimestamp } from '@/lib/format';
 import { monthName, statusLabels } from './model';
 
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
 const safeName = (name: string) => name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/^\.+/, '_').trim() || 'assignment';
 
-export function assignmentReport(submission: StoredLearningReflectionSubmission): string {
+export function assignmentReport(submission: StoredLearningReflectionSubmission, attempt?: number): string {
   const monthly = submission.monthlyAssignment;
   const yesNo = (value: boolean | undefined) => value == null ? '' : value ? 'Yes' : 'No';
   const table = (headers: string[], rows: unknown[][]) => rows.length ? `<table><thead><tr>${headers.map(value => `<th>${escape(value)}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(value => `<td>${escape(value)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '<p>No entries recorded.</p>';
@@ -16,6 +17,8 @@ export function assignmentReport(submission: StoredLearningReflectionSubmission)
   };
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Assignment and feedback</title><style>body{font:16px/1.6 system-ui,sans-serif;max-width:900px;margin:40px auto;padding:24px;color:#172b4d}h1,h2{color:#163e68}h2{border-bottom:1px solid #ccd7e2;padding-bottom:8px}h3{text-transform:capitalize;margin-bottom:4px}p{white-space:pre-wrap;overflow-wrap:anywhere}section{padding-left:16px;border-left:2px solid #e1e8ef}@media print{body{margin:0}}</style></head><body>
     <h1>${escape(submission.activityTitle || 'Assignment')}</h1>
+    ${attempt === undefined ? '' : section('Submission', attempt)}
+    ${section('Submitted at (UK time)', submission.submittedAt ? formatSystemTimestamp(submission.submittedAt, { dateStyle: 'medium', timeStyle: 'short' }) : '')}
     ${section('Learner', submission.learnerName)}${section('Programme', submission.programmeName)}${section('Assignment month', monthly?.month ? monthName(monthly.month) : '')}
     <h2>1. Assignment answer</h2>
     ${section('Assignment answer', submission.assignmentAnswer)}
@@ -33,16 +36,19 @@ export function assignmentReport(submission: StoredLearningReflectionSubmission)
     ${section('Business impact', submission.businessImpact || submission.benefitExplanation)}${section('Career impact', monthly?.careerImpact)}${section('Job impact', monthly?.jobImpact)}${section('Employer impact', monthly?.employerImpact)}${section('Employer benefit confirmed', yesNo(monthly?.employerBenefit))}
     <h2>5. Action plan & EPA</h2>
     ${section('Action plan', monthly?.actionPlan)}${section('EPA preparedness', monthly?.epaPreparedness)}
-    <h2>6. Coach assessment & feedback</h2>${section('Result', statusLabels[submission.status] || submission.status)}${section('Reviewed by', submission.reviewedBy)}${section('Reviewed at', submission.reviewedAt)}${section('Coach feedback', submission.coachFeedback || 'No written feedback was added to this result.')}
+    <h2>6. Coach assessment & feedback</h2>${section('Result', statusLabels[submission.status] || submission.status)}${section('Reviewed by', submission.reviewedBy)}${section('Reviewed at', submission.reviewedAt)}${section('Coach feedback', submission.coachFeedback || (submission.status === 'submitted_for_tutor_review' ? 'Awaiting coach review.' : 'No written feedback was added to this result.'))}
     </body></html>`;
 }
 
-export async function buildAssignmentReport(kind: LearnerKind, learnerId: string, activityId: string, fallbackMonth = ''): Promise<{ blob: Blob; filename: string }> {
-  const submission = await loadLearningReflectionSubmission({ learnerKind: kind, learnerId, activityType: 'assignment', activityId });
+export async function buildAssignmentReport(kind: LearnerKind, learnerId: string, activityId: string, fallbackMonth = '', attempt?: number): Promise<{ blob: Blob; filename: string }> {
+  const submission = await loadLearningReflectionSubmission({ learnerKind: kind, learnerId, activityType: 'assignment', activityId, ...(attempt === undefined ? {} : { attempt: String(attempt) }) });
   if (!submission) throw new Error('No saved submission was found for this assignment.');
   const { createAssignmentPdf } = await import('./assignmentPdf');
-  const report = await createAssignmentPdf(assignmentReport(submission));
+  const report = await createAssignmentPdf(assignmentReport(submission, attempt));
   const documents = submission.legacyAssignment?.documents;
+  const savedFiles = [...new Map([...(submission.monthlyAssignment?.evidence || []),
+    ...(submission.monthlyAssignment?.uploadedPresentation ? [submission.monthlyAssignment.uploadedPresentation] : []),
+  ].filter(file => !file.id.startsWith('link:')).map(file => [file.id, file])).values()];
   const files = documents?.length
     ? documents.map(doc => ({ name: doc.name, resolve: async () => {
       const params = new URLSearchParams({ learnerKind: kind, learnerId, activityId, part: doc.part });
@@ -52,6 +58,7 @@ export async function buildAssignmentReport(kind: LearnerKind, learnerId: string
       if (!data.url) throw new Error(`No download is available for ${doc.name}.`);
       return data.url as string;
     } }))
+    : attempt !== undefined ? savedFiles.map(file => ({ name: file.name, resolve: () => getEvidenceDownloadUrl(kind, learnerId, file.id) }))
     : (await fetchEvidence(kind, learnerId, { sectionRef: activityId })).map(file => ({ name: file.filename, resolve: () => getEvidenceDownloadUrl(kind, learnerId, file.id) }));
   // Stop on a failed file rather than silently deliver an incomplete assignment.
   for (const file of files) {
@@ -61,5 +68,5 @@ export async function buildAssignmentReport(kind: LearnerKind, learnerId: string
   }
   const month = [submission.monthlyAssignment?.month, fallbackMonth, submission.submittedAt?.slice(0, 7)]
     .find(value => value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value));
-  return { blob: report.finish(), filename: `${safeName(submission.activityTitle || 'Assignment')} - ${month ? monthName(month) : 'Undated'}.pdf` };
+  return { blob: report.finish(), filename: `${safeName(submission.activityTitle || 'Assignment')}${attempt === undefined ? '' : ` - Submission ${attempt}`} - ${month ? monthName(month) : 'Undated'}.pdf` };
 }

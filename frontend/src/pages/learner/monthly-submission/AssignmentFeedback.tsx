@@ -9,7 +9,6 @@ export function AssignmentFeedback({ marking, status }: { marking?: ComponentMar
   const result = marking?.status || status;
   const reviewed = ['accepted', 'partial', 'referred', 'returned', 'rejected'].includes(result);
   const pending = ['submitted_for_tutor_review', 'escalated'].includes(result);
-  const needsChanges = ['partial', 'referred', 'returned', 'rejected'].includes(result);
   const reviewedDate = marking?.reviewedAt ? new Date(marking.reviewedAt) : null;
   const dateLabel = reviewedDate && Number.isFinite(reviewedDate.getTime())
     ? reviewedDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
@@ -42,7 +41,7 @@ export function AssignmentFeedback({ marking, status }: { marking?: ComponentMar
   return <section className={styles.feedback} aria-label="Assignment marking result">
     <div className={styles.feedbackHeading}>
       <h4><ClipboardCheck size={17} aria-hidden="true" />Marking result</h4>
-      <span className={`${styles.status} ${result === 'accepted' ? styles.positive : needsChanges ? styles.changesRequested : ''}`}>
+      <span className={styles.status} data-status={result}>
         {result === 'accepted' && <CheckCircle2 size={14} aria-hidden="true" />}{label}
       </span>
     </div>

@@ -237,6 +237,10 @@ export function AssignmentSubmissionWizard({
     assignmentTimeSource: detailedSeconds !== null ? 'input' : timeSource,
   });
   latestDraftRef.current = payload('draft');
+  const qualitySnapshot = JSON.stringify({ ...payload('draft'), monthlyAssignment: { ...monthly, step: 0 } });
+  const qualitySnapshotRef = useRef(qualitySnapshot);
+  qualitySnapshotRef.current = qualitySnapshot;
+  useEffect(() => { setChecks([]); }, [qualitySnapshot]);
   const stepCheck = useAssignmentStepCheck(JSON.stringify(payload('draft')), step, !locked && !loading && !loadFailed);
 
   useEffect(() => {
@@ -257,6 +261,7 @@ export function AssignmentSubmissionWizard({
     loadedRef.current = false;
     setLoadFailed(false);
     setLoading(true);
+    setChecks([]);
     loadLearningReflectionSubmission({
       learnerKind: kind,
       learnerId,
@@ -361,9 +366,11 @@ export function AssignmentSubmissionWizard({
   }, [locked, draftSaved, savingDraft]);
 
   const runChecks = async (): Promise<boolean> => {
+    const checkedSnapshot = qualitySnapshotRef.current;
     setChecking(true); setChecks([]); setSaveError('');
     try {
       const result = await checkMonthlyAssignment(payload('draft'));
+      if (!mountedRef.current || checkedSnapshot !== qualitySnapshotRef.current) return false;
       if (!Array.isArray(result) || result.length !== 13 || result.some(check => !check || typeof check.passed !== 'boolean')) {
         throw new Error('Could not verify all submission requirements. Please run the checks again.');
       }
@@ -576,6 +583,7 @@ export function AssignmentSubmissionWizard({
               evidenceFiles={evidenceFiles} timeControl={timeControl} disabled={readOnly || submittingRef.current} historical={historicalReadOnly}
               evidenceUploader={historicalReadOnly ? <button type="button" className="text-sm font-semibold text-primary-700" onClick={() => setPreviewOpen(true)}>View original files and assessment reports in Preview</button> : <AssignmentEvidence kind={kind} learnerId={learnerId} componentId={componentId} trainingPlanDetails={evidenceDetails} onUploaded={onEvidenceChanged} readOnly={readOnly} />}
               payload={() => payload('draft')} checks={checks} checking={checking} onCheck={runChecks} onSave={saveDraft}
+              revisingRejected={status === 'rejected' || (status === 'draft' && submissionAttempts.at(-1)?.status === 'rejected')}
               onNavigateToCheck={(nextStep, target) => { setQualityTarget(target); setStep(nextStep); }}
             />}
           </div>}
