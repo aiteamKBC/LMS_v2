@@ -1896,9 +1896,9 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
             below is the flex child that scrolls, and this stays put. */}
         <header className={cn(
           'relative z-10 shrink-0 overflow-hidden border-b border-foreground-100/80 px-5 py-5 sm:px-7 sm:py-6',
-          type === 'mcm-week' ? 'bg-background-50' : 'bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60',
+          type === 'mcm-week' || type === 'pr-week' ? 'bg-background-50' : 'bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60',
         )}>
-          {type !== 'mcm-week' && <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-primary-200/25 blur-3xl"></div>}
+          {type !== 'mcm-week' && type !== 'pr-week' && <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-primary-200/25 blur-3xl"></div>}
           <div className="relative flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-center gap-4">
               <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm ring-1 ring-white/80 sm:h-14 sm:w-14 ${current.iconStyle}`}><AppIcon className={`${current.icon} text-xl`}></AppIcon></span>
@@ -1916,10 +1916,14 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
 
         <div className={cn(
           'min-h-0 flex-1 overflow-y-auto p-4 sm:p-6',
-          type === 'mcm-week' ? 'bg-background-50' : 'bg-gradient-to-b from-background-50 to-background-100/50',
+          type === 'mcm-week' || type === 'pr-week' ? 'bg-background-50' : 'bg-gradient-to-b from-background-50 to-background-100/50',
         )}>
-          {type === 'mcm-week' && (
-            <MonthlyCoachingWeeklyDetails events={weeklyDetails} />
+          {(type === 'mcm-week' || type === 'pr-week') && (
+            <CompactWeeklyMeetingDetails
+              events={weeklyDetails}
+              summaryLabel={type === 'mcm-week' ? 'Monthly coaching' : 'Progress review'}
+              emptyIcon={current.icon}
+            />
           )}
           {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'completed' || type === 'epa') && (
             <div className="space-y-3.5">
@@ -2010,7 +2014,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
             </div>
           )}
 
-          {weeklyEventSource && type !== 'mcm-week' && (
+          {weeklyEventSource && type !== 'mcm-week' && type !== 'pr-week' && (
             <div className="space-y-2">
               {weeklyDetails.map(event => {
                 const date = eventDisplayDate(event);
@@ -2075,7 +2079,15 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
   );
 }
 
-export function MonthlyCoachingWeeklyDetails({ events }: { events: CoachCalendarEvent[] }) {
+export function CompactWeeklyMeetingDetails({
+  events,
+  summaryLabel,
+  emptyIcon,
+}: {
+  events: CoachCalendarEvent[];
+  summaryLabel: string;
+  emptyIcon: string;
+}) {
   const notScheduled = events.filter(event => event.status === 'not-scheduled').length;
   const scheduled = events.length - notScheduled;
   const dayGroups = Array.from(events.reduce((groups, event) => {
@@ -2088,7 +2100,7 @@ export function MonthlyCoachingWeeklyDetails({ events }: { events: CoachCalendar
 
   return (
     <div>
-      <div className="mb-5 flex flex-wrap gap-2" aria-label="Monthly coaching summary">
+      <div className="mb-5 flex flex-wrap gap-2" aria-label={`${summaryLabel} summary`}>
         <span className="inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-semibold text-primary-800">
           <span className="h-1.5 w-1.5 rounded-full bg-primary-500" aria-hidden="true"></span>
           Scheduled <strong>{scheduled}</strong>
@@ -2126,7 +2138,7 @@ export function MonthlyCoachingWeeklyDetails({ events }: { events: CoachCalendar
           </section>
         ))}
         {!events.length && (
-          <EmptyState icon="ri-history-line" title="Nothing scheduled this week" description="There are no matching sessions in the current week." />
+          <EmptyState icon={emptyIcon} title="Nothing scheduled this week" description="There are no matching sessions in the current week." />
         )}
       </div>
     </div>

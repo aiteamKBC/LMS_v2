@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { formatDateLabel, getCurrentWorkWeekRange, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
-import CoachDashboard, { MonthlyCoachingWeeklyDetails } from '../page';
+import CoachDashboard, { CompactWeeklyMeetingDetails } from '../page';
 
 const mocks = vi.hoisted(() => ({
   load: vi.fn(), schedule: vi.fn(), calendar: vi.fn(), coachFetch: vi.fn(),
@@ -482,7 +482,7 @@ it('renders monthly coaching details as compact day groups with status summaries
     { ...meeting, id: 'mcm-mon-two', eventKey: 'mcm-mon-two', learner: 'Jamie Cole', programme: 'Customer Service', group: 'Group B', scheduledDate: mondayIso, scheduledTime: null, status: 'not-scheduled' },
     { ...meeting, id: 'mcm-tue', eventKey: 'mcm-tue', learner: 'Morgan Shah', programme: 'Team Leader', group: 'Group C', scheduledDate: tuesdayIso, scheduledTime: '14:00', status: 'confirmed' },
   ];
-  render(<MonthlyCoachingWeeklyDetails events={dashboardEvents} />);
+  render(<CompactWeeklyMeetingDetails events={dashboardEvents} summaryLabel="Monthly coaching" emptyIcon="ri-history-line" />);
   expect(screen.getByLabelText('Monthly coaching summary')).toHaveTextContent('Scheduled 2');
   expect(screen.getByLabelText('Monthly coaching summary')).toHaveTextContent('Not Scheduled 1');
   expect(screen.getByRole('region', { name: formatDateLabel(mondayIso) })).toBeVisible();
@@ -491,4 +491,22 @@ it('renders monthly coaching details as compact day groups with status summaries
   expect(screen.getByText('Business Admin · Group A')).toBeVisible();
   expect(screen.getByText('09:00 - 60 min')).toBeVisible();
   expect(screen.queryByText('Monthly Coaching')).not.toBeInTheDocument();
+});
+
+it('uses the same compact grouped layout for weekly progress reviews', () => {
+  const progressReviews: CoachCalendarEvent[] = [
+    { ...meeting, id: 'pr-one', eventKey: 'pr-one', source: 'progress-review', learner: 'Hollie Hylton', programme: 'Business Admin', group: 'Group A', scheduledDate: '2026-09-24', scheduledTime: null, status: 'scheduled', title: 'Review 1' },
+    { ...meeting, id: 'pr-two', eventKey: 'pr-two', source: 'progress-review', learner: 'Alex Reed', programme: 'Business Admin', group: 'Group B', scheduledDate: '2026-09-24', scheduledTime: '14:00', status: 'not-scheduled', title: 'Review 2' },
+  ];
+
+  render(<CompactWeeklyMeetingDetails events={progressReviews} summaryLabel="Progress review" emptyIcon="ri-focus-3-line" />);
+
+  expect(screen.getByLabelText('Progress review summary')).toHaveTextContent('Scheduled 1');
+  expect(screen.getByLabelText('Progress review summary')).toHaveTextContent('Not Scheduled 1');
+  expect(screen.getByRole('region', { name: '24 Sept 2026' })).toHaveTextContent('THU24 SEP');
+  expect(screen.getByText('Hollie Hylton')).toBeVisible();
+  expect(screen.getByText('Business Admin · Group A')).toBeVisible();
+  expect(screen.getByText('Time TBC')).toBeVisible();
+  expect(screen.queryByText('Review 1')).not.toBeInTheDocument();
+  expect(screen.queryByText('Progress Review')).not.toBeInTheDocument();
 });
