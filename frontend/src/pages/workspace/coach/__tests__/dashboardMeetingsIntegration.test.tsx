@@ -2,8 +2,8 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
-import CoachDashboard from '../page';
+import { formatDateLabel, getCurrentWorkWeekRange, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
+import CoachDashboard, { MonthlyCoachingWeeklyDetails } from '../page';
 
 const mocks = vi.hoisted(() => ({
   load: vi.fn(), schedule: vi.fn(), calendar: vi.fn(), coachFetch: vi.fn(),
@@ -463,4 +463,32 @@ it('opens a detail popup and full-page link from every workload card', async () 
     fireEvent.click(within(dialog).getByText('Close'));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   }
+});
+
+it('renders monthly coaching details as compact day groups with status summaries', async () => {
+  vi.useRealTimers();
+  const { start: monday } = getCurrentWorkWeekRange();
+  const tuesday = new Date(monday);
+  tuesday.setDate(monday.getDate() + 1);
+  const localIso = (value: Date) => [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, '0'),
+    String(value.getDate()).padStart(2, '0'),
+  ].join('-');
+  const mondayIso = localIso(monday);
+  const tuesdayIso = localIso(tuesday);
+  const dashboardEvents: CoachCalendarEvent[] = [
+    { ...meeting, id: 'mcm-mon-one', eventKey: 'mcm-mon-one', learner: 'Alex Reed', programme: 'Business Admin', group: 'Group A', scheduledDate: mondayIso, scheduledTime: '09:00', status: 'scheduled' },
+    { ...meeting, id: 'mcm-mon-two', eventKey: 'mcm-mon-two', learner: 'Jamie Cole', programme: 'Customer Service', group: 'Group B', scheduledDate: mondayIso, scheduledTime: null, status: 'not-scheduled' },
+    { ...meeting, id: 'mcm-tue', eventKey: 'mcm-tue', learner: 'Morgan Shah', programme: 'Team Leader', group: 'Group C', scheduledDate: tuesdayIso, scheduledTime: '14:00', status: 'confirmed' },
+  ];
+  render(<MonthlyCoachingWeeklyDetails events={dashboardEvents} />);
+  expect(screen.getByLabelText('Monthly coaching summary')).toHaveTextContent('Scheduled 2');
+  expect(screen.getByLabelText('Monthly coaching summary')).toHaveTextContent('Not Scheduled 1');
+  expect(screen.getByRole('region', { name: formatDateLabel(mondayIso) })).toBeVisible();
+  expect(screen.getByRole('region', { name: formatDateLabel(tuesdayIso) })).toBeVisible();
+  expect(screen.getByText('Alex Reed')).toBeVisible();
+  expect(screen.getByText('Business Admin · Group A')).toBeVisible();
+  expect(screen.getByText('09:00 - 60 min')).toBeVisible();
+  expect(screen.queryByText('Monthly Coaching')).not.toBeInTheDocument();
 });

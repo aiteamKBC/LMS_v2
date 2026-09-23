@@ -213,6 +213,66 @@ describe('Learner Case File design', () => {
     expect(screen.getByText('No reviews found for this learner.')).toBeInTheDocument();
   });
 
+  it('paginates filtered review history in ten-row pages and resets filters to page one', () => {
+    const reviews = Array.from({ length: 36 }, (_, index): CaseFileReviewMeeting => ({
+      id: `review-${index + 1}`,
+      eventKey: `review-${index + 1}`,
+      source: index < 8 ? 'progress-review' : 'mcr',
+      reviewTypeName: index < 8 ? 'Progress Review' : 'Monthly Coaching Meeting',
+      title: `Review ${index + 1}`,
+      date: `${String(index + 1).padStart(2, '0')} Sep 2026`,
+      plannedDate: `${String(index + 1).padStart(2, '0')} Sep 2026`,
+      completedDate: '--',
+      time: '09:00',
+      detail: '',
+      status: 'scheduled',
+      statusLabel: 'Scheduled',
+      isNext: false,
+      reviewer: `Reviewer ${index + 1}`,
+      hasForm: false,
+      hasTranscript: false,
+      hasAttendance: false,
+    }));
+    mocks.data = {
+      ...caseFileData,
+      reviewGroups: [
+        { key: 'all reviews', title: 'Reviews', items: reviews },
+      ],
+    };
+
+    const { rerender } = render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
+
+    const table = screen.getByRole('table');
+    const pagination = screen.getByRole('navigation', { name: 'Review pagination' });
+    expect(within(table).getAllByRole('row')).toHaveLength(11);
+    expect(pagination).toHaveTextContent('Showing 1-10 of 36 reviews');
+    expect(within(pagination).getByRole('button', { name: 'Previous' })).toBeDisabled();
+    expect(within(pagination).getByRole('button', { name: 'Next' })).toBeEnabled();
+    for (const pageNumber of [1, 2, 3, 4]) {
+      expect(within(pagination).getByRole('button', { name: `Go to page ${pageNumber}` })).toBeVisible();
+    }
+
+    fireEvent.click(within(pagination).getByRole('button', { name: 'Go to page 4' }));
+    expect(within(table).getAllByRole('row')).toHaveLength(7);
+    expect(pagination).toHaveTextContent('Showing 31-36 of 36 reviews');
+    expect(within(pagination).getByRole('button', { name: 'Previous' })).toBeEnabled();
+    expect(within(pagination).getByRole('button', { name: 'Next' })).toBeDisabled();
+
+    mocks.data = {
+      ...caseFileData,
+      reviewGroups: [{ key: 'all reviews', title: 'Reviews', items: reviews.slice(0, 12) }],
+    };
+    rerender(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
+    expect(within(table).getAllByRole('row')).toHaveLength(3);
+    expect(pagination).toHaveTextContent('Showing 11-12 of 12 reviews');
+    expect(within(pagination).getByRole('button', { name: 'Next' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Progress Review' }));
+    expect(within(table).getAllByRole('row')).toHaveLength(9);
+    expect(screen.queryByRole('navigation', { name: 'Review pagination' })).not.toBeInTheDocument();
+    expect(screen.getByText('Reviewer 1')).toBeVisible();
+  });
+
   it('uses browser evidence rather than canonical KSB status for the header metric', () => {
     mocks.data = { ...caseFileData, ksbStatus: 'unavailable', ksbProgress: null, touchedKsbCodes: ['K1'] };
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
