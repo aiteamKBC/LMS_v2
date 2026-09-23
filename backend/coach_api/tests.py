@@ -3,7 +3,7 @@ from datetime import date, time, timedelta
 from decimal import Decimal
 from inspect import unwrap
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.db import DatabaseError
 from django.db.utils import ConnectionDoesNotExist
@@ -43,6 +43,7 @@ from coach_api.views import (
     caseload_aptem_ids,
     caseload_evidenced_ksb_counts,
     caseload_kbc_attendance_rates,
+    caseload_latest_learning_activities,
     canonical_attendance_detail_rows,
     dashboard_attendance_rows,
     dashboard_review_history,
@@ -261,6 +262,34 @@ class LatestLearnerActivityTests(SimpleTestCase):
         self.assertEqual(latest["date"], "2026-09-19T12:30:00+00:00")
         self.assertEqual(latest["display"], "19 Sep 2026")
         self.assertEqual(latest["label"], "Latest quiz")
+
+    @patch("coach_api.views.LearnerProgressEntry.objects")
+    def test_bulk_query_loads_every_field_used_by_history_serializer(self, progress_entries):
+        queryset = MagicMock()
+        progress_entries.filter.return_value = queryset
+        queryset.only.return_value = queryset
+        queryset.order_by.return_value = []
+
+        self.assertEqual(caseload_latest_learning_activities([SimpleNamespace(id=7)]), {})
+
+        loaded_fields = set(queryset.only.call_args.args)
+        self.assertEqual(loaded_fields, {
+            "learner_id",
+            "kind",
+            "component_ref",
+            "quiz_ref",
+            "attempt",
+            "module_title",
+            "week_title",
+            "component_title",
+            "expected_otjh",
+            "reported_time",
+            "submitted_at",
+            "started_at",
+            "claimed_seconds",
+            "verified_seconds",
+            "time_tracking_source",
+        })
 
 
 class DashboardReviewHistoryTests(SimpleTestCase):

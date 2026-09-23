@@ -54,12 +54,32 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
+function expectStructuredSkeleton() {
+  const skeleton = screen.getByRole('status', { name: 'Loading coach dashboard' });
+  expect(skeleton).toBeVisible();
+  expect(skeleton.querySelectorAll('[data-skeleton="metric"]')).toHaveLength(6);
+  for (const heading of ['All Learners', 'Upcoming Meetings', 'Risk Distribution', 'Monthly Learners at Risk']) {
+    expect(within(skeleton).getByRole('heading', { name: heading, hidden: true })).toBeInTheDocument();
+  }
+  const learnerTable = within(skeleton).getByRole('table', { name: 'Learners are loading', hidden: true });
+  for (const column of ['Learner', 'OTJH', 'KSBs', 'Activities', 'Attendance', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
+    expect(within(learnerTable).getByRole('columnheader', { name: column, hidden: true })).toBeInTheDocument();
+  }
+  // Two header rows plus seven learner rows.
+  expect(within(learnerTable).getAllByRole('row', { hidden: true })).toHaveLength(9);
+  expect(skeleton.querySelectorAll('[data-skeleton="meeting"]')).toHaveLength(3);
+  for (const emptyState of ['No learners assigned to you yet', 'Data not available', 'History not available', 'No learner meetings scheduled']) {
+    expect(screen.queryByText(emptyState)).not.toBeInTheDocument();
+  }
+  expect(screen.queryByRole('region', { name: 'Coach dashboard metrics' })).not.toBeInTheDocument();
+}
+
 it('shows only dashboard skeletons while the initial request is pending', async () => {
   vi.useRealTimers();
   const finishLoads: Array<(value: unknown) => void> = [];
   mocks.load.mockImplementation(() => new Promise(resolve => { finishLoads.push(resolve); }));
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
-  expect(screen.getByRole('status', { name: 'Loading coach dashboard' })).toBeVisible();
+  expectStructuredSkeleton();
   expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
   expect(screen.queryByText('Data not available')).not.toBeInTheDocument();
   expect(screen.queryByText('--')).not.toBeInTheDocument();
@@ -74,6 +94,9 @@ it('shows the learner table only after a successful response', async () => {
   const riskTable = await screen.findByRole('region', { name: 'Coach learner caseload' });
   expect(await within(riskTable).findByText('Example Learner')).toBeVisible();
   expect(screen.queryByRole('status', { name: 'Loading coach dashboard' })).not.toBeInTheDocument();
+  expect(document.querySelectorAll('[data-skeleton]')).toHaveLength(0);
+  expect(screen.getByRole('region', { name: 'Coach dashboard metrics' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Learner risk insights' })).toBeVisible();
 });
 
 it('shows the learner empty state only after an empty response finishes', async () => {
@@ -103,7 +126,7 @@ it('returns immediately to skeletons when the selected coach changes', async () 
   mocks.load.mockImplementation(() => new Promise(resolve => { finishLoads.push(resolve); }));
   Object.assign(mocks.coach, { email: 'next-coach@example.invalid', name: 'Next Coach' });
   rerender(<MemoryRouter><CoachDashboard /></MemoryRouter>);
-  expect(screen.getByRole('status', { name: 'Loading coach dashboard' })).toBeVisible();
+  expectStructuredSkeleton();
   expect(screen.queryByText('Example Learner')).not.toBeInTheDocument();
   expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
   finishLoads.forEach(resolve => resolve({ owner: { name: 'Next Coach' }, learners: [], timetable: { events: [] } }));
