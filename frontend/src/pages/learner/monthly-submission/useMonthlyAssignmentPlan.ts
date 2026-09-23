@@ -8,6 +8,7 @@ import type { CoverMetadata } from '../my-learning/SubjectWorkspace';
 type PlanState = {
   identity: string; metadata: CoverMetadata | null; contract: TrainingPlanContract | null;
   statuses: Record<string, string> | null; loading: boolean; errors: string[];
+  submissionCounts: Record<string, number>;
 };
 
 export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string) {
@@ -19,12 +20,12 @@ export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string) {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 30_000);
     let active = true;
-    setState({ identity, metadata: null, contract: null, statuses: null, loading: true, errors: [] });
+    setState({ identity, metadata: null, contract: null, statuses: null, submissionCounts: {}, loading: true, errors: [] });
     const query = new URLSearchParams({ learnerKind: kind, learnerId: id });
     void Promise.allSettled([
       subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(id)}/?refs=`, { signal: controller.signal, revalidate: attempt > 0 }),
       fetchTrainingPlanContract(kind, id, controller.signal),
-      readLearnerJson<{ statuses: { activityType: string; activityId: string; status: string }[] }>(
+      readLearnerJson<{ statuses: { activityType: string; activityId: string; status: string; submissionCount?: number }[] }>(
         `/learner_api/reflection/submissions/?${query}`, { signal: controller.signal, revalidate: true }),
     ]).then(([dates, contract, submissions]) => {
       if (!active) return;
@@ -40,6 +41,9 @@ export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string) {
         contract: contract.status === 'fulfilled' ? contract.value : null,
         statuses: validStatuses ? Object.fromEntries(submissions.value.statuses
           .filter(row => row.activityType === 'assignment').map(row => [row.activityId, row.status])) : null,
+        submissionCounts: validStatuses ? Object.fromEntries(submissions.value.statuses
+          .filter(row => row.activityType === 'assignment' && Number.isInteger(row.submissionCount) && row.submissionCount! >= 0)
+          .map(row => [row.activityId, row.submissionCount!])) : {},
       });
     }).finally(() => window.clearTimeout(timer));
     return () => { active = false; controller.abort(); window.clearTimeout(timer); };
@@ -47,5 +51,6 @@ export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string) {
   const current = state?.identity === identity ? state : null;
   return { metadata: current?.metadata || null, contract: current?.contract || null,
     statuses: current?.statuses || null, loading: current?.loading ?? Boolean(kind && id),
+    submissionCounts: current?.submissionCounts || {},
     errors: current?.errors || [], retry: () => setAttempt(value => value + 1) };
 }

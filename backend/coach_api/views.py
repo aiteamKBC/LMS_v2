@@ -330,7 +330,7 @@ MARKING_FEEDBACK_MAX_LENGTH = 20000
 #: a video, reading, podcast or quiz is evidenced by the reflection written
 #: about it, which is a shorter and different judgement. Mirrored in the SPA by
 #: frontend/src/lib/markingKind.ts -- keep the two in step.
-ASSIGNMENT_ACTIVITY_TYPES = ("assignment",)
+ASSIGNMENT_ACTIVITY_TYPES = ("assignment", "extra_activity")
 
 #: The two values the queue's ``kind`` parameter accepts.
 MARKING_KINDS = ("assignment", "reflection")
@@ -11955,7 +11955,7 @@ def serialize_marking_submission(row, *, now=None):
         "submittedDisplay": submitted_at.strftime("%d/%m/%Y %H:%M") if submitted_at else "--",
         "elapsedDays": elapsed_days,
         "isOverdue": status == "pending" and elapsed_days >= MARKING_OVERDUE_DAYS,
-        "submissionAttempts": submission_attempts(row.get("full_submission"), row["status"], submitted_at, row["coach_feedback"], row["reviewed_by"], row["reviewed_at"]) if row["activity_type"] == "assignment" else [],
+        "submissionAttempts": submission_attempts(row.get("full_submission"), row["status"], submitted_at, row["coach_feedback"], row["reviewed_by"], row["reviewed_at"]) if row["activity_type"] in ("assignment", "extra_activity") else [],
     }
 
 
