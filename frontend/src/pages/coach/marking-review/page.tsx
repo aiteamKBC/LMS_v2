@@ -95,7 +95,7 @@ function fileSize(bytes: number) {
 }
 
 function isAssignment(item: Submission) {
-  return (item.activityType || '').toLowerCase() === 'assignment';
+  return ['assignment', 'extra_activity'].includes((item.activityType || '').toLowerCase());
 }
 
 export default function CoachMarkingReviewPage() {

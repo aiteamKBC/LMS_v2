@@ -4,13 +4,15 @@ import type { MonthlyAssignment } from '@/api/monthlyAssignment';
 const impactFields = ['careerImpact', 'jobImpact', 'employerImpact', 'businessImpact'] as const;
 export function useImpactStatements(enabled: boolean, learnerId: string, activityId: string, question: string,
   answer: string, learned: string, data: MonthlyAssignment, businessImpact: string,
-  onChange: Dispatch<SetStateAction<MonthlyAssignment>>, onBusinessImpact: (value: string) => void, mode: 'impact' | 'action' = 'impact') {
+  onChange: Dispatch<SetStateAction<MonthlyAssignment>>, onBusinessImpact: (value: string) => void, mode: 'impact' | 'action' = 'impact',
+  activities: { title: string; date: string; reflection: string; ksbs: string[] }[] = []) {
   const [status, setStatus] = useState('');
   const [phase, setPhase] = useState<'idle' | 'loading' | 'success' | 'info' | 'error'>('idle');
   const latest = useRef({ data, businessImpact, onChange, onBusinessImpact });
   latest.current = { data, businessImpact, onChange, onBusinessImpact };
   const key = JSON.stringify({ learnerId, mode, context: { activityId, month: data.month, question, answer,
     learned, understood: data.understood, gainedSkills: data.gainedSkills,
+    activities: activities.filter(activity => activity.date.startsWith(`${data.month}-`)),
     lmsReflection: data.lmsReflection, integratedReflection: data.integratedReflection,
     ...(mode === 'action' ? { careerImpact: data.careerImpact, jobImpact: data.jobImpact, employerImpact: data.employerImpact, businessImpact } : {}) } });
   useEffect(() => {

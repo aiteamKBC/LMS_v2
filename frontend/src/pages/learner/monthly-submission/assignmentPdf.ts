@@ -1,3 +1,4 @@
+import { formatSystemTimestamp } from '@/lib/format';
 import { jsPDF } from 'jspdf';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -22,7 +23,7 @@ export async function createAssignmentPdf(html: string) {
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 1240, 1754);
     const width = Math.min(210, 95 * logo.naturalWidth / logo.naturalHeight);
     ctx.drawImage(logo, 85, 50, width, width * logo.naturalHeight / logo.naturalWidth);
-    ctx.font = 'bold 22px Arial'; ctx.fillStyle = '#4b168f';
+    ctx.font = 'bold 22px Arial'; ctx.fillStyle = '#17324d';
     ctx.textAlign = 'right'; ctx.fillText('ASSIGNMENT & FEEDBACK', 1155, 100);
     ctx.textAlign = 'left'; ctx.fillStyle = '#dce5ef'; ctx.fillRect(85, 160, 1070, 2); ctx.fillStyle = '#c99744'; ctx.fillRect(85, 160, 210, 3);
     y = 210;
@@ -83,7 +84,7 @@ export async function createAssignmentPdf(html: string) {
       let x = 85;
       cells.forEach((lines, index) => {
         const width = widths[index];
-        ctx.fillStyle = header ? '#57209f' : '#f8f5fe'; ctx.fillRect(x, y, width, height);
+        ctx.fillStyle = header ? '#17324d' : '#f8fafc'; ctx.fillRect(x, y, width, height);
         ctx.strokeStyle = '#d4dfeb'; ctx.strokeRect(x, y, width, height);
         ctx.fillStyle = header ? '#ffffff' : '#243746'; ctx.font = `${header ? 'bold ' : ''}21px Arial`;
         lines.slice(start, start + count).forEach((line, i) => ctx.fillText(line, x + 12, y + 30 + i * 30));
@@ -110,7 +111,12 @@ export async function createAssignmentPdf(html: string) {
   const nodes = [...parsed.body.children];
   const fields = new Map<string, string>();
   nodes.filter(node => node.tagName === 'H3').forEach(node => fields.set(node.textContent || '', node.nextElementSibling?.textContent || ''));
-  const value = (label: string) => fields.get(label) || 'Not recorded';
+  const value = (label: string) => {
+    const raw = fields.get(label) || 'Not recorded';
+    return label === 'Reviewed at' && raw !== 'Not recorded'
+      ? (formatSystemTimestamp(raw, { dateStyle: 'medium', timeStyle: 'short' }) || raw) + ' (UK time)' : raw;
+  };
+  const rejected = ['rejected', 'changes requested', 'returned', 'referred'].includes(value('Result').toLowerCase());
   const wrapCard = (value: string, width: number, size = 23) => {
     ctx.font = `${size}px Arial`;
     const lines: string[] = [];
@@ -127,7 +133,7 @@ export async function createAssignmentPdf(html: string) {
     }
     return lines;
   };
-  const cardRow = (cards: Array<{ label: string; value: string; positive?: boolean }>) => {
+  const cardRow = (cards: Array<{ label: string; value: string; positive?: boolean; negative?: boolean }>) => {
     const width = (1070 - (cards.length - 1) * 22) / cards.length;
     const prepared = cards.map(card => ({ ...card, lines: wrapCard(card.value, width - 48) }));
     let offset = 0;
@@ -138,9 +144,9 @@ export async function createAssignmentPdf(html: string) {
       const height = 75 + count * 32;
       prepared.forEach((card, index) => {
         const x = 85 + index * (width + 22);
-        ctx.fillStyle = card.positive ? '#edf8f1' : '#f7f3ff'; ctx.fillRect(x, y, width, height);
-        ctx.strokeStyle = '#e7e0f0'; ctx.strokeRect(x, y, width, height);
-        ctx.fillStyle = card.positive ? '#278454' : '#6425b9'; ctx.fillRect(x, y, 5, height);
+        ctx.fillStyle = card.positive ? '#edf8f1' : card.negative ? '#fff1f2' : '#f8fafc'; ctx.fillRect(x, y, width, height);
+        ctx.strokeStyle = '#dce5ef'; ctx.strokeRect(x, y, width, height);
+        ctx.fillStyle = card.positive ? '#278454' : card.negative ? '#b42338' : '#45627e'; ctx.fillRect(x, y, 5, height);
         ctx.font = 'bold 22px Arial'; ctx.fillText(card.label + (offset ? ' (continued)' : ''), x + 24, y + 34);
         ctx.font = '23px Arial'; ctx.fillStyle = '#303443';
         card.lines.slice(offset, offset + count).forEach((line, i) => {
@@ -155,10 +161,10 @@ export async function createAssignmentPdf(html: string) {
   };
   const band = (number: string, title: string, newPage = false) => {
     if ((newPage && y > 210) || y > 1430) { flush(); begin(); }
-    ctx.fillStyle = '#f1ebfc'; ctx.fillRect(85, y, 1070, 62);
-    ctx.fillStyle = '#6024b8'; ctx.fillRect(85, y, 62, 62);
+    ctx.fillStyle = '#edf3f9'; ctx.fillRect(85, y, 1070, 62);
+    ctx.fillStyle = '#147d78'; ctx.fillRect(85, y, 62, 62);
     ctx.font = 'bold 25px Arial'; ctx.fillStyle = '#ffffff'; ctx.fillText(number, 107, y + 40);
-    ctx.fillStyle = '#4b168f'; ctx.fillText(title, 164, y + 40); y += 84;
+    ctx.fillStyle = '#17324d'; ctx.fillText(title, 164, y + 40); y += 84;
   };
   const groups = new Map<string, Element[]>();
   let current = '';
@@ -182,16 +188,16 @@ export async function createAssignmentPdf(html: string) {
   // Compact first-page overview, rather than the previous mostly empty cover.
   const titleLines = wrapCard(parsed.body.querySelector('h1')?.textContent || 'Assignment', 970, 40);
   const titleHeight = 115 + titleLines.length * 52;
-  ctx.fillStyle = '#f2ecfc'; ctx.fillRect(85, 205, 1070, titleHeight);
+  ctx.fillStyle = '#17324d'; ctx.fillRect(85, 205, 1070, titleHeight);
   ctx.fillStyle = '#c99744'; ctx.fillRect(85, 205, 7, titleHeight);
-  ctx.font = 'bold 40px Arial'; ctx.fillStyle = '#4b168f';
+  ctx.font = 'bold 40px Arial'; ctx.fillStyle = '#ffffff';
   titleLines.forEach((line, index) => ctx.fillText(line, 120, 270 + index * 52));
-  ctx.font = '23px Arial'; ctx.fillStyle = '#60758a';
+  ctx.font = '23px Arial'; ctx.fillStyle = '#d4e3ef';
   ctx.fillText(value('Assignment month'), 120, 285 + titleLines.length * 52);
   y = 235 + titleHeight;
   cardRow([
     { label: 'LEARNER & PROGRAMME', value: `${value('Learner')}\n${value('Programme')}\n${value('Assignment month')}` },
-    { label: 'ASSESSMENT RESULT', value: `${value('Result')}\nReviewed by: ${value('Reviewed by')}\n${value('Reviewed at')}`, positive: value('Result').toLowerCase() === 'accepted' },
+    { label: 'ASSESSMENT RESULT', value: `${value('Result')}\nReviewed by: ${value('Reviewed by')}\n${value('Reviewed at')}`, positive: value('Result').toLowerCase() === 'accepted', negative: rejected },
   ]);
   band('1', 'Hours, KSBs & learning status');
   const ksbNodes = groups.get('KSBs & hours claimed') || [];
@@ -226,7 +232,7 @@ export async function createAssignmentPdf(html: string) {
   renderFields('Action plan & EPA');
   cardRow([{ label: 'Submission snapshot', value: `Result: ${value('Result')}\nKSBs: ${codes.join(', ') || 'None recorded'}\nPlanned hours: ${value('Planned hours')}\nTotal hours claimed: ${value('Total hours claimed')}\nPaid working hours: ${value('Completed during paid working hours')}\nEvidence-sharing consent: ${value('Evidence-sharing consent')}` }]);
   band('7', 'Coach assessment & feedback');
-  cardRow([{ label: 'Result', value: value('Result') }, { label: 'Reviewed by', value: value('Reviewed by') }]);
+  cardRow([{ label: 'Result', value: value('Result'), positive: value('Result').toLowerCase() === 'accepted', negative: rejected }, { label: 'Reviewed by', value: value('Reviewed by') }]);
   cardRow([{ label: 'Reviewed at', value: value('Reviewed at') }]);
   cardRow([{ label: 'Coach feedback', value: value('Coach feedback') }]);
 

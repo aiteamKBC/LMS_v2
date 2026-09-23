@@ -3,7 +3,7 @@ from datetime import date, time, timedelta
 from decimal import Decimal
 from inspect import unwrap
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.db import DatabaseError
 from django.db.utils import ConnectionDoesNotExist
@@ -43,8 +43,10 @@ from coach_api.views import (
     caseload_aptem_ids,
     caseload_evidenced_ksb_counts,
     caseload_kbc_attendance_rates,
+    caseload_latest_learning_activities,
     canonical_attendance_detail_rows,
     dashboard_attendance_rows,
+    dashboard_monthly_risk_history,
     dashboard_review_history,
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
@@ -261,6 +263,34 @@ class LatestLearnerActivityTests(SimpleTestCase):
         self.assertEqual(latest["date"], "2026-09-19T12:30:00+00:00")
         self.assertEqual(latest["display"], "19 Sep 2026")
         self.assertEqual(latest["label"], "Latest quiz")
+
+    @patch("coach_api.views.LearnerProgressEntry.objects")
+    def test_bulk_query_loads_every_field_used_by_history_serializer(self, progress_entries):
+        queryset = MagicMock()
+        progress_entries.filter.return_value = queryset
+        queryset.only.return_value = queryset
+        queryset.order_by.return_value = []
+
+        self.assertEqual(caseload_latest_learning_activities([SimpleNamespace(id=7)]), {})
+
+        loaded_fields = set(queryset.only.call_args.args)
+        self.assertEqual(loaded_fields, {
+            "learner_id",
+            "kind",
+            "component_ref",
+            "quiz_ref",
+            "attempt",
+            "module_title",
+            "week_title",
+            "component_title",
+            "expected_otjh",
+            "reported_time",
+            "submitted_at",
+            "started_at",
+            "claimed_seconds",
+            "verified_seconds",
+            "time_tracking_source",
+        })
 
 
 class DashboardReviewHistoryTests(SimpleTestCase):
@@ -1044,6 +1074,26 @@ class CoachDashboardViewTests(SimpleTestCase):
 
 
 class MonthlyRiskHistoryTests(SimpleTestCase):
+    @patch("coach_api.views.LearnerProgressEntry.objects")
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={})
+    @patch("coach_api.views.monthly_target_training_plan", return_value=[])
+    def test_dashboard_reuses_each_hydrated_plan_in_history_builder(
+        self, training_plan, expected_otjh, progress_entries
+    ):
+        queryset = MagicMock()
+        progress_entries.filter.return_value = queryset
+        queryset.only.return_value = queryset
+        queryset.order_by.return_value = []
+        learners = [
+            SimpleNamespace(id=7, status="active", programme_status="active", start_date=None),
+            SimpleNamespace(id=8, status="active", programme_status="active", start_date=None),
+        ]
+
+        history = dashboard_monthly_risk_history(learners, today=date(2026, 9, 18))
+
+        self.assertEqual(training_plan.call_count, 2)
+        self.assertEqual(len(history), 6)
+
     def test_counts_month_end_otjh_status_and_uses_current_snapshot_for_open_month(self):
         training_plan = [{
             "moduleTitle": "Module 1",

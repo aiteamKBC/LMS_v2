@@ -264,3 +264,17 @@ describe('choosing between several workspaces', () => {
     }
   });
 });
+
+ describe('coach directory access grants', () => {
+  it.each(['/admin/coach_directory', '/users/coach-directory', '/curriculum/coach-directory'])('restricts %s to authorised management grants', path => {
+    for (const access of ['super-admin', 'enrolment', 'curriculum']) {
+      expect(mayAccessRoute(path, { role: 'staff', access })).toBe(true);
+    }
+    for (const access of ['', 'coach', 'record-monitor']) {
+      expect(mayAccessRoute(path, { role: 'staff', access })).toBe(false);
+    }
+    expect(mayAccessRoute(path, { role: 'learner', access: 'curriculum' })).toBe(false);
+    expect(mayAccessRoute(path, { role: 'employer', access: 'enrolment' })).toBe(false);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'coach', accessWorkspaces: [{ access: 'curriculum', home: '/workspace/curriculum' }] })).toBe(true);
+  });
+});

@@ -18,6 +18,21 @@ def timestamp(value):
     return value.isoformat() if hasattr(value, 'isoformat') else value or None
 
 
+def attempt_document(payload, number, status, submitted_at=None, feedback=None, reviewer=None, reviewed_at=None):
+    """Select an immutable attempt, never fall back to the latest draft."""
+    stored = document(payload)
+    rows = list(stored.get(HISTORY_KEY) or [])
+    if status and status != 'draft':
+        rows.append(snapshot(stored, status, submitted_at, feedback, reviewer, reviewed_at))
+    if number < 1 or number > len(rows):
+        raise ValueError('Submission attempt not found.')
+    entry = rows[number - 1]
+    return {**document(entry.get('content')), 'submissionAttemptNumber': number,
+            'status': entry.get('status'), 'submittedAt': entry.get('submittedAt'),
+            'coachFeedback': entry.get('coachFeedback', ''), 'reviewedBy': entry.get('reviewedBy', ''),
+            'reviewedAt': entry.get('reviewedAt'), 'locked': True}
+
+
 def snapshot(payload, status, submitted_at=None, feedback=None, reviewer=None, reviewed_at=None):
     content = deepcopy(document(payload))
     content.pop(HISTORY_KEY, None)
