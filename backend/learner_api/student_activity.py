@@ -25,7 +25,7 @@ from .student_activity_access import student_activity_available
 from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules, read_activity_sources
 from . import subject_store, subject_source
 import logging
-from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list)
+from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list, original_is_pdf)
 from .builder_activity_dates import read_builder_activity_dates
 
 CURRENT_SUBJECTS_SQL = '''
@@ -313,7 +313,7 @@ def _cover_url(path):
     return UPLOAD_URL_PREFIX + blob_name_for(path)
 
 
-def _definition_for(stored):
+def _definition_for(stored, group_id=None):
     try:
         schema = material_schema(stored['_source']['activity_id'])
     except ContentUnavailable:
@@ -338,7 +338,18 @@ def _definition_for(stored):
 
         path = _legacy_attachment_upload_path(reference)
         return '/curriculum_api/curriculum/uploads/' + path if path else ''
-    definition = build_material(stored, schema, attachment_resolver=archive_url)
+    definition = build_material(stored, schema, attachment_resolver=archive_url, pdf_checker=original_is_pdf)
+    if group_id is not None and quiz_id and definition.get('quiz') and not definition['quiz']['ready']:
+        from .subject_quiz import imported_quiz
+        try:
+            with _connection().cursor() as cursor:
+                recovered_quiz = imported_quiz(cursor, group_id, quiz_id)
+        except DatabaseError:
+            recovered_quiz = None
+        if recovered_quiz:
+            from .subject_content import quiz_definition
+            definition['quiz'] = quiz_definition(recovered_quiz)
+            definition['available'] = True
     if row.get('quiz_definition_ambiguous') and definition.get('quiz'):
         # The same reading is linked to different quizzes in the original LMS.
         # Show its content/history, but do not grade a newly invented selection.
@@ -358,7 +369,7 @@ def _local_pdf_urls(definition, kind, pk, group_id, activity_id):
 
 def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=None):
     row = stored['_source']
-    definition = _local_pdf_urls(_definition_for(stored), kind, pk, group_id, row['activity_id'])
+    definition = _local_pdf_urls(_definition_for(stored, group_id), kind, pk, group_id, row['activity_id'])
     try:
         saved = subject_store.state(pk, aptem_id, row['activity_id'], group_id=group_id)
     except DatabaseError:
@@ -423,7 +434,11 @@ def subject_file(request, kind, pk, group_id, activity_id, attachment_id):
         _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
         # Resolve the original attachment even if a later import adds an Azure
         # copy. Already-issued file URLs must remain valid after that import.
-        definition = build_material(stored, material_schema(activity_id))
+        try:
+            schema = material_schema(activity_id)
+        except ContentUnavailable:
+            schema = None
+        definition = build_material(stored, schema, pdf_checker=original_is_pdf)
         item = next((item for item in definition['media'] if item.get('kind') == 'pdf'
                      and str(item.get('attachment_id')) == str(attachment_id)), None)
         if item is None:
@@ -440,7 +455,7 @@ def subject_file(request, kind, pk, group_id, activity_id, attachment_id):
 def start_subject_attempt(request, kind, pk, group_id, activity_id):
     try:
         aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
-        definition = _definition_for(stored)
+        definition = _definition_for(stored, group_id)
         if definition.get('quiz') and not definition['quiz']['ready']:
             return _error(definition['quiz']['message'], 409)
         if not definition['available']:

@@ -3,13 +3,18 @@
 .pageHeader h1 { margin: 0; font-size: 28px; font-weight: 750; letter-spacing: -.7px; }
 .pageHeader p { max-width: 850px; margin: 8px 0 0; color: #62758b; font-size: 14px; line-height: 1.7; }
 .total { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 10px 14px; background: white; border: 1px solid #dce4ed; border-radius: 24px; font-size: 13px; }
-.monthSelector { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding: 24px; border: 1px solid #d7e4f3; border-radius: 16px; background: #edf5ff; }
-.monthSelector h2 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 24px; font-weight: 750; }
-.monthSelector p:not(.eyebrow) { margin: 8px 0 0; color: #526b85; font-size: 13px; }
-.monthSelectLabel { display: grid; gap: 10px; width: 360px; max-width: 100%; min-width: 0; color: #294e73; font-size: 15px; font-weight: 700; }
-.monthSelectLabel select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 58px; padding: 14px 40px 14px 18px; border: 2px solid #91accb; border-radius: 12px; background: white; color: #18304d; font-family: inherit; font-size: 18px; font-weight: 650; line-height: 1.5; cursor: pointer; box-shadow: 0 3px 10px #17324c0d; }
+/* Keep this toolbar's type scale consistent within the shared workspace shell. */
+.monthSelector { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px 32px; padding: 20px 24px; border: 1px solid #d7e4f3; border-radius: 16px; background: #edf5ff; }
+.monthSummary { flex: 1 1 240px; min-width: 0; }
+.monthSelector .eyebrow { margin: 0 0 8px; font-size: 12px !important; line-height: 1.4; letter-spacing: .8px; }
+.monthSelector h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 18px !important; line-height: 1.4; font-weight: 700; }
+.monthSelector h2 svg { width: 20px; height: 20px; flex-shrink: 0; }
+.monthSelector p:not(.eyebrow) { margin: 6px 0 0; color: #526b85; font-size: 14px !important; line-height: 1.5; overflow-wrap: anywhere; }
+.monthControls { display: flex; align-items: flex-end; gap: 12px; flex: 0 1 500px; min-width: 0; max-width: 100%; }
+.monthSelectLabel { display: grid; gap: 8px; flex: 1; min-width: 0; color: #294e73; font-size: 12px !important; line-height: 1.4; font-weight: 600; }
+.monthSelectLabel select { box-sizing: border-box; width: 100%; min-width: 0; padding: 0 36px 0 14px; border: 1px solid #b8cce2; border-radius: 10px; background: white; color: #18304d; font-family: inherit; font-weight: 600; cursor: pointer; box-shadow: 0 2px 4px #17324c06; }
 .monthSelectLabel select:hover { border-color: #315d8b; }
-.monthSelectLabel option { padding: 12px 16px; background: white; color: #18304d; font-size: 18px; font-weight: 500; }
+.monthSelectLabel option { padding: 12px 16px; background: white; color: #18304d; font-size: 15px; font-weight: 500; }
 .monthSelectLabel select:focus-visible { outline: 3px solid #5b8bc5; outline-offset: 3px; }
 .months { display: flex; gap: 12px; overflow-x: auto; padding: 3px 3px 9px; scroll-snap-type: x proximity; }
 .month { display: flex; flex-direction: column; gap: 7px; min-width: 210px; max-width: 280px; flex: 1 0 210px; text-align: left; border: 1px solid #dce4ed; background: white; border-radius: 14px; padding: 16px; scroll-snap-align: start; transition: border-color .15s, background .15s; }
@@ -94,8 +99,8 @@
 .primary, .secondary { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 46px; padding: 12px 19px; border-radius: 10px; font-size: 13px; font-weight: 650; text-decoration: none; }
 .primary { background: #183652; color: white; border: 1px solid #183652; }
 .primary:hover { background: #244f77; }
-.monthSelectLabel select, .primary.extraActivityButton { min-height: 60px; }
-.primary.extraActivityButton { box-sizing: border-box; padding: 14px 22px; border-radius: 12px; font-size: 16px; line-height: 1.5; white-space: nowrap; }
+.monthSelectLabel select, .primary.extraActivityButton { height: 48px; min-height: 48px; font-size: 15px !important; line-height: 1.4; }
+.primary.extraActivityButton { box-sizing: border-box; flex-shrink: 0; padding: 0 18px; border-radius: 10px; font-weight: 600; white-space: nowrap; }
 .primary[data-status='rejected'] { background: #b91c1c; border-color: #b91c1c; box-shadow: 0 3px 8px #b91c1c26; }
 .primary[data-status='rejected']:hover { background: #991b1b; border-color: #991b1b; }
 .primary[data-status='rejected']:focus-visible { outline: 3px solid #b91c1c; outline-offset: 3px; }
@@ -124,7 +129,8 @@
 .unscheduled { margin: 0 0 16px; color: #62758b; font-size: 13px; }
 .page button:focus-visible, .page a:focus-visible { outline: 3px solid #5b8bc5; outline-offset: 3px; }
 @media (max-width: 760px) {
-  .monthSelectLabel { width: 100%; }
+  .monthSelector { padding: 18px; gap: 18px; }
+  .monthControls { flex-basis: 100%; }
   .page { padding: 16px; gap: 20px; }
   .pageHeader { flex-direction: column; }
   .pageHeader h1 { font-size: 24px; }
@@ -135,6 +141,8 @@
   .heroFooter { padding: 20px; }
 }
 @media (max-width: 440px) {
+  .monthControls { flex-wrap: wrap; justify-content: flex-end; }
+  .monthSelectLabel { flex-basis: 100%; }
   .page { padding: 12px; }
   .heroHeading { gap: 10px; }
   .heroIcon { width: 40px; height: 40px; border-radius: 10px; }
