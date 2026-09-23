@@ -5,9 +5,8 @@ import DOMPurify from 'dompurify';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { monthName, statusLabels, type AssignmentMonth, type MonthlyAssignmentRow } from './model';
 import styles from './monthlySubmission.module.css';
-import { AssignmentFeedback } from './AssignmentFeedback';
+import { AssignmentSubmissions } from './AssignmentSubmissions';
 import { AssignmentAttachment } from './AssignmentAttachment';
-import { AssignmentDownload } from './AssignmentDownload';
 
 export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
   assignment: MonthlyAssignmentRow; group: AssignmentMonth; kind: LearnerKind; learnerId: string;
@@ -27,7 +26,7 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
         <h2 id="assignment-details-title">{group.label}</h2>
         {group.topics.length > 0 && <p className={styles.focus}>{group.topics.join(' · ')}</p>}
       </div></div>
-      <span className={`${styles.status} ${assignment.submitted ? styles.positive : ''}`}>
+      <span className={styles.status} data-status={assignment.status}>
         {assignment.submitted && <CheckCircle2 size={14} aria-hidden="true" />}{statusLabels[assignment.status] || assignment.status.replaceAll('_', ' ') || 'Status unavailable'}
       </span>
     </div>
@@ -40,15 +39,15 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
             ? 'Read the attached file for the assignment instructions, then start your submission.'
             : 'Your tutor has not added the assignment question yet. Use the support button if you need help getting started.')}</p>}
         {attachmentUrl && <AssignmentAttachment key={`${kind}:${learnerId}:${assignment.id}:${attachmentUrl}`} url={attachmentUrl} fileName={assignment.fileName} title={assignment.component} />}
-        <AssignmentFeedback key={`${kind}:${learnerId}:${assignment.id}`} marking={assignment.marking} status={assignment.status} />
-        {['accepted', 'partial', 'referred', 'returned', 'rejected', 'completed'].includes(assignment.status) &&
-          <AssignmentDownload key={`download:${kind}:${learnerId}:${assignment.id}`} kind={kind} learnerId={learnerId} activityId={assignment.id} month={group.month} />}
+        <AssignmentSubmissions key={`${kind}:${learnerId}:${assignment.id}`} kind={kind} learnerId={learnerId} activityId={assignment.id}
+          month={group.month} marking={assignment.marking} status={assignment.status} submissionCount={assignment.submissionCount} />
         {ksbs.length > 0 && <div className={styles.ksbs}><p className={styles.eyebrow}>Knowledge, skills & behaviours</p><div>
           {ksbs.map(mapping => <span key={mapping.code} title={mapping.description || undefined}>{mapping.code}</span>)}
         </div></div>}
       </div>
       <aside className={styles.facts} aria-label="Assignment information">
         <dl>
+          {assignment.submissionCount !== undefined && <div><dt>Submission history</dt><dd>{assignment.submissionCount} submission{assignment.submissionCount === 1 ? '' : 's'}</dd></div>}
           <div><dt><CalendarDays size={16} aria-hidden="true" />Training Plan month</dt><dd>{group.label}{group.month && group.label !== monthName(group.month) && <small>{monthName(group.month)}</small>}</dd></div>
           <div><dt><Clock3 size={16} aria-hidden="true" />Expected OTJ hours</dt><dd>{assignment.expectedOtjh != null ? `${assignment.expectedOtjh} hours` : 'Not specified'}</dd></div>
           <div><dt>Planned date</dt><dd>{assignment.date ? new Date(`${assignment.date}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/London' }) : 'Not scheduled'}</dd></div>
@@ -61,7 +60,7 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
       <p>Prepare your answer, supporting evidence and KSB examples. You can save a draft at any step.</p>
       <div className={styles.actions}>
         {assignment.awaitingBrief ? <button type="button" className={styles.primary} disabled>{assignment.action}</button>
-          : <Link className={styles.primary} to={href}>{assignment.action}<ArrowRight size={17} aria-hidden="true" /></Link>}
+          : <Link className={styles.primary} data-status={assignment.status} to={href}>{assignment.action}<ArrowRight size={17} aria-hidden="true" /></Link>}
         <Link className={styles.secondary} to={`/learner/calendar?${supportParams}`}><MessageCircle size={17} aria-hidden="true" />Book 1:1 coach support</Link>
       </div>
     </div>

@@ -24,6 +24,8 @@ const AdminNotificationsPage = lazyRoute(() => import("../pages/admin/notificati
 const AdminPermissionsPage = lazyRoute(() => import("../pages/admin/permissions/page"));
 const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
 const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/page"));
+const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
+const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
 const AdminUsersPage = lazyRoute(() => import("../pages/admin/users/page"));
 const PlatformReportPage = lazyRoute(() => import("../pages/admin/platform-report/page"));
 const AttendancePage = lazyRoute(() => import("../pages/learner/attendance/page"));
@@ -112,6 +114,7 @@ const EmployerSupportRequests = lazyRoute(() => import("@/pages/employer/support
 const EmployerWorkplaceConfirmations = lazyRoute(() => import("@/pages/employer/workplace-confirm/page"));
 const EngagementClubsPage = lazyRoute(() => import("../pages/engagement/clubs/page"));
 const EngagementDashboard = lazyRoute(() => import("../pages/workspace/engagement/page"));
+const EngagementFeedbacksPage = lazyRoute(() => import("../pages/engagement/feedbacks/page"));
 const EngagementReportsPage = lazyRoute(() => import("../pages/engagement/reports/page"));
 const EventDetailPage = lazyRoute(() => import("../pages/learner/clubs/events/detail/page"));
 const EventsPage = lazyRoute(() => import("../pages/engagement/events/page"));
@@ -190,6 +193,7 @@ const MisTimetablesPage = lazyRoute(() => import("../pages/mis/timetables/page")
 const MisTutorAssignmentPage = lazyRoute(() => import("../pages/mis/tutor-assignment/page"));
 const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
+const ExtraActivityPage = lazyRoute(() => import("../pages/learner/monthly-submission/ExtraActivityPage"));
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
@@ -538,6 +542,10 @@ const routes: RouteObject[] = [
     element: <AttendancePage />,
   },
   {
+    path: "/learner/attendance/:kind/:id",
+    element: <AttendancePage />,
+  },
+  {
     path: "/learner/catchup",
     element: <CatchUpPage />,
   },
@@ -568,6 +576,14 @@ const routes: RouteObject[] = [
   {
     path: "/learner/evidence/:kind/:id",
     element: <EvidencePage />,
+  },
+  {
+    path: "/learner/my-progress",
+    element: <ProgressPage />,
+  },
+  {
+    path: "/learner/my-progress/:kind/:id",
+    element: <ProgressPage />,
   },
   {
     path: "/learner/quizzes",
@@ -618,6 +634,10 @@ const routes: RouteObject[] = [
     element: <MonthlySubmissionPage />,
   },
   {
+    path: "/learner/monthly-submission/:kind/:id/extra-activities",
+    element: <ExtraActivityPage />,
+  },
+  {
     path: "/learner/monthly-submission/:kind/:id/:componentId",
     element: <VideoWatchPage />,
   },
@@ -630,9 +650,22 @@ const routes: RouteObject[] = [
     element: <MonthlyLogsPage />,
   },
   { path: "/learner/monthly-coaching", element: <MonthlyCoachingListPage /> },
+  { path: "/learner/monthly-coaching/:kind/:id", element: <MonthlyCoachingListPage /> },
   { path: "/learner/monthly-coaching/:sessionId", element: <MonthlyCoachingPage /> },
   {
     path: "/learner/progress-reviews",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/reviews",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/progress-reviews/:kind/:id",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/reviews/:kind/:id",
     element: <ProgressReviewsListPage />,
   },
   {
@@ -681,6 +714,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/calendar",
+    element: <LearnerCalendarPage />,
+  },
+  {
+    path: "/learner/calendar/:kind/:id",
     element: <LearnerCalendarPage />,
   },
   {
@@ -842,6 +879,14 @@ const routes: RouteObject[] = [
     // being pasted into a message.
     path: "/admin/audit-trail/people/:email",
     element: <SystemAuditTrailPersonPage />,
+  },
+  {
+    path: "/admin/coach_directory",
+    element: <CoachDirectoryPage />,
+  },
+  {
+    path: "/coach-booking/:slug",
+    element: <CoachBookingPage />,
   },
   {
     path: "/admin/system",
@@ -1218,6 +1263,10 @@ const routes: RouteObject[] = [
   },
   
   {
+    path: "/engagement/feedbacks",
+    element: <EngagementFeedbacksPage />,
+  },
+  {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,
   },
@@ -1572,6 +1621,7 @@ const routes: RouteObject[] = [
  * with no session at all.
  */
 const PUBLIC_PATHS = new Set([
+  "/coach-booking/:slug",
   "/",
   "/login",
   "/access-required",

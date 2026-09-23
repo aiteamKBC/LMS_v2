@@ -315,20 +315,43 @@ Audit Trail starts speaking for a workspace on the day it is wired in.
 | Workspace | Records audited | Mechanism | Status |
 |---|---|---|---|
 | Curriculum Studio | 13 entity types | raw SQL → `record_rows` | ✅ with before/after |
-| Admin (enrolment) | `learner_record`, `staff_record` | ORM signals on `enrolment` | ✅ with before/after, personal fields redacted |
-| Employer | `employer_contact`, `organisation` | ORM signals on `enrolment` | ✅ with before/after, contact details redacted |
-| Coach | `coach_meeting`, `absence_report` | ORM signals on `default` | ✅ with before/after, notes redacted |
-| Learner progress | — | 326 raw SQL statements in `learner_api` | ⬜ raw-SQL choke points outstanding |
-| Coach (raw SQL) | — | 106 statements in `coach_api` | ⬜ outstanding |
-| Engagement, Audit, Manual audit, Quiz, Chat, Old OTJH, Progress reviews | — | — | ⬜ not started |
+| Admin (enrolment records) | `learner_record`, `staff_record` | ORM signals + `AuditedQuerySet` on `enrolment` | ✅ with before/after, personal fields redacted |
+| Admin (enrolment journey) | `enrolment_review`, `eligibility_review`, `rpl_review`, `health_safety_review`, `apprenticeship_agreement`, `ilr_document`, `training_plan_document`, `written_agreement`, `learner_profile` | ORM signals + `AuditedQuerySet` on `enrolment` | ✅ with before/after; ULN and employer address redacted, signature images not collected |
+| Admin (enrolment wizard) | `extended_ilr`, `wizard_personal_details`, `wizard_skills_radar`, `wizard_ksb_assessment`, `wizard_plr`, `wizard_plr_record`, `wizard_cv_job`, `wizard_policy_ack` | ORM signals + `AuditedQuerySet` on `enrolment` | ✅ with before/after; DOB, address, phone, sex, ULN and CV text redacted; `wizard_draft` and evidence files not collected |
+| Admin (enrolment documents) | `enrolment_document` | explicit `record_table_rows` at each of the 4 raw statements in `enrolment_api/documents.py` | ✅ upload, replace and sign; signature images reduced to a boolean before recording, blob path not collected |
+| Employer | `employer_contact`, `organisation` | ORM signals + `AuditedQuerySet` on `enrolment` | ✅ with before/after, contact details redacted |
+| Coach | `coach_meeting`, `absence_report` | ORM signals + `AuditedQuerySet` on `default` | ✅ with before/after; free text recorded in full by owner decision |
+| Coach reviews | `review_instance`, `review_answer`, `review_signature`, `review_reopen`, `review_manual_override`, `learner_review_addition` | curriculum `insert_row`/`update_rows` → `record_rows` | ✅ with before/after; `definition_snapshot` and the signature image are not collected |
+| Coach marking | `assignment_submission` | one shared allowlist (`learner_api.submission_audit`) returned by all three write paths | ✅ hand-in, shift and decision; the learner's reflection text and evidence blobs are not collected |
+| Learner | `monthly_report`, `evidence_file` | explicit `record_table_rows` at each raw statement | ✅ report submission and signing; evidence upload, scan verdict and deletion |
+| Learner (not recorded, by decision) | — | 5 statements in `teams_attendance`, the reusable-signature write in `monthly_reports`, the `"Learner".reviews` mirror in `calendar` | ⬜ deliberate. Graph polling and schema backfill are machine traffic; the signature write touches only uncollected columns; the mirror duplicates a booking already recorded on `coach_meeting`. See `register_learner_records`. |
+| Coach (remaining raw SQL) | — | meeting summaries, artifacts, attendance reports | ⬜ outstanding — all three are written by Graph polling rather than by an author |
+| Audit | `activity_annotation`, `activity_override`, `profile_override`, `evidence_override` | explicit `record_audit_rows` at each raw statement | ✅ the auditor's corrections, with before/after. Refuses to record in HOURS-TEST clone mode. |
+| Audit — actual hours | — | `"Last_audit"."activity_actual_hours_revision"` | ✅ **already audited, by a stronger mechanism of its own.** Previous and proposed values, proposer and decider each with their source, a source-state snapshot, a base fingerprint that makes a stale approval impossible, and the rule version. Deliberately NOT duplicated into the generic trail. |
+| Manual audit | — | ~37 raw statements (`plan_views`, `contract_documents`, `evidence_documents`, `match_ledger_views`, `signoff_views`) | ⬜ outstanding |
+| Engagement | `reward`, `voucher_claim`, `recognition`, `engagement_event`, `event_booking`, `event_attendance`, `club`, `club_meeting`, `club_membership`, `club_meeting_attendance`, `attendance_intervention`, `points_rule`, `points_grant`, `flash_card_deck`, `flash_card` | ORM signals + `AuditedQuerySet` | ✅ with before/after; voucher delivery details redacted; `FlashCardView` excluded as high-volume machine traffic |
+| Tutor | — | — | ⬜ **nothing to record.** 10 of the 11 tutor pages make no backend call at all and render hardcoded arrays; the eleventh (`/tutor/learners`) reads `learner_api.tutor_learners`, a GET. The workspace has no write path to audit until one is built. |
+| Manual audit — the plan | `manual_plan_event` | one hook on `plan_tables.log_plan_event` | ✅ the plan already logged itself with before/after and an actor from 10 call sites; the trail surfaces that log rather than re-deriving it |
+| Manual audit — overrides | `manual_hours_override`, `manual_date_override`, `manual_signoff` | explicit recorders at each statement | ✅ with before/after. Composite keys get a synthetic single key so one learner's months are not filed as edits to each other. Signature images not collected. |
+| Manual audit — remaining | — | evidence overrides (7), contract documents (7), `activity_annotations`, `contract_signature_cache` | ⬜ outstanding; the cache is derived and would not be recorded in any case |
+| Quiz (under Curriculum) | `quiz`, `quiz_question`, `quiz_answer` | ORM signals + `AuditedQuerySet` | ✅ with before/after, including the settings that decide what a score means |
+| Chat (under Platform) | `chat_conversation`, `chat_message`, `chat_message_deletion` | ORM signals + `AuditedQuerySet` | ✅ with before/after; message body redacted (a private conversation, not a business record); read/delivery receipts excluded as telemetry |
+| Progress reviews (under Coach) | `progress_review_run` | one hook (`_record_run`) on all four state-changing writers | ✅ who generated a pack, when, and whether it succeeded; the frozen input snapshot and the generated file's storage location are not collected |
+| Old OTJH | — | — | **not applicable.** Re-inspected: it has no models and no business-record writes at all -- only image file saves (`storage.save`, `PIL.Image.save`) during evidence capture. The earlier "8 ORM writes" estimate in this document's own regex count was a false positive on those. There is nothing here to audit. |
+| Sign-in, resets, invitations | — | `login."Login_audit"` | ✅ already recorded separately, including failed attempts against addresses with no account |
 
 What "ORM signals" covers and does not: `post_save`, `post_delete` and
 `m2m_changed` see `.save()`, `objects.create()` and link changes.
 `QuerySet.update()`, `bulk_create()`, `bulk_update()` and the fast-delete path
 emit no signal at all — `system_audit.writes.AuditedQuerySet` handles those and
-is available, but is not yet attached to any model's manager, so a bulk write on
-a registered model is currently **not** recorded. That is the first thing to
-close, and it is named here rather than left to be discovered.
+is attached per workspace by `writes.attach_bulk_capture`, which the app that
+registers a model calls for itself. Switched on for the Coach and
+enrolment models; a bulk write on a registered model in any other workspace is
+still **not** recorded, and neither is one through `EnrolmentUser.objects` --
+an `ApprenticeshipManager` with a queryset class of its own, which
+`attach_bulk_capture` reports rather than re-bases.
+It is opt-in rather than automatic because it is not free: `update()` gains a
+key read and a read-back, and `delete()` materialises the rows it removes.
 
 Raw SQL in `coach_api` and `learner_api` is unaffected by signals and needs its
 choke points instrumented with `writes.record_table_rows`, app by app.

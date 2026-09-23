@@ -308,7 +308,7 @@ describe('learner loading and recovery', () => {
     else expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow', rate);
   });
 
-  it.each([0, 12])('shows %s known KSB points when some activity mappings are unavailable', async (known) => {
+  it.each([0, 12])('shows KSB progress as unavailable when activity mappings are incomplete (%s known)', async (known) => {
     vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
       if (url.includes('/metrics/')) return new Response(JSON.stringify({
@@ -321,15 +321,14 @@ describe('learner loading and recovery', () => {
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     const card = within(await screen.findByRole('link', { name: 'Open KSB Progress' }));
-    await waitFor(() => expect(card.getByText('Current').nextElementSibling).toHaveTextContent(`${known} points`));
-    expect(card.getByText(/KSB mappings missing for 3 activities/)).toBeVisible();
+    await waitFor(() => expect(card.getByText('Current').nextElementSibling).toHaveTextContent('--'));
+    expect(card.getByText('KSB progress unavailable.')).toBeVisible();
     expect(card.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
     expect(card.queryByText('Target')).not.toBeInTheDocument();
     expect(card.queryByText('100%')).not.toBeInTheDocument();
-    expect(card.queryByText('KSB point total unavailable')).not.toBeInTheDocument();
   });
 
-  it('keeps programme and KSB metrics while using the chart total for completed hours', async () => {
+  it('keeps programme and KSB metrics while using canonical metrics for completed hours', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
       if (url.includes('/overview-week/')) return new Response(JSON.stringify({
@@ -365,9 +364,9 @@ describe('learner loading and recovery', () => {
     expect(programme.getByText('307 activities')).toBeVisible();
 
     const otjh = within(screen.getByRole('link', { name: 'Open OTJ Hours' }));
-    await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('12.50 h'));
+    await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('15.00 h'));
     expect(otjh.getByText('Planned hours').nextElementSibling).toHaveTextContent('50.00 h');
-    expect(otjh.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25');
+    expect(otjh.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '30');
 
     const ksb = within(screen.getByRole('link', { name: 'Open KSB Progress' }));
     expect(ksb.getByText('Current').nextElementSibling).toHaveTextContent('43.75%');
@@ -396,7 +395,7 @@ describe('learner loading and recovery', () => {
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     const card = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
-    await waitFor(() => expect(card.getByText('Actual').nextElementSibling).toHaveTextContent(failed === 'logs' ? 'Unavailable' : '5.00 h'));
+    await waitFor(() => expect(card.getByText('Actual').nextElementSibling).toHaveTextContent('402.00 h'));
     await waitFor(() => expect(card.getByText('Planned hours').nextElementSibling).toHaveTextContent(failed === 'pdf' ? 'Unavailable' : '50.00 h'));
     if (failed === 'pdf') expect(card.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
   });
@@ -443,7 +442,7 @@ describe('learner loading and recovery', () => {
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
 
     const otjh = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
-    await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('20.50 h'));
+    await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('297.13 h'));
     expect(otjh.getByText('Planned hours').nextElementSibling).toHaveTextContent('410.00 h');
   });
 

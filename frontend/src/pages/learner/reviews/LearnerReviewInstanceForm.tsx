@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { ReviewFormRenderer, computeWritableFieldIds } from '@/components/reviews/ReviewFormRenderer';
+import {
+  ReviewFormRenderer,
+  computeMissingRequiredFieldsForRole,
+  computeVisibleRequiredFields,
+  computeVisibleWritableFieldIds,
+  computeWritableFieldIds,
+} from '@/components/reviews/ReviewFormRenderer';
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
@@ -190,6 +196,35 @@ export function LearnerReviewInstanceForm({
   // Writing follows the same lifecycle rule the backend enforces: once the
   // review reaches the signature step, its answers are frozen for everyone.
   const canWriteAnswers = Boolean(onSaveAnswers) && !submitted;
+  const visibleRespondentFieldIds = useMemo(
+    () => computeVisibleWritableFieldIds(definition.sections, answers, viewerRole),
+    [definition.sections, answers, viewerRole],
+  );
+  const respondentRequiredFieldIds = useMemo(() => {
+    const writable = visibleRespondentFieldIds;
+    return new Set(
+      [...computeVisibleRequiredFields(definition.sections, answers)].filter((fieldId) => writable.has(fieldId)),
+    );
+  }, [definition.sections, answers, visibleRespondentFieldIds]);
+  const respondentMissingFieldIds = useMemo(
+    () => computeMissingRequiredFieldsForRole(definition.sections, answers, viewerRole),
+    [definition.sections, answers, viewerRole],
+  );
+  const respondentLabel = viewerRole === 'employer' ? 'Employer' : 'Learner';
+  const firstRespondentSectionId = useMemo(
+    () => definition.sections.find(
+      (section) => computeVisibleWritableFieldIds([section], answers, viewerRole).size > 0,
+    )?.id || '',
+    [definition.sections, answers, viewerRole],
+  );
+
+  const openRespondentQuestions = () => {
+    if (!firstRespondentSectionId) return;
+    setOpenSectionId(firstRespondentSectionId);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`review-section-${firstRespondentSectionId}`)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    });
+  };
 
   const handleAnswerChange = useCallback((fieldId: string, value: unknown) => {
     if (!canWriteAnswers || !writableFieldIds.has(fieldId)) return;
@@ -278,6 +313,44 @@ export function LearnerReviewInstanceForm({
           </button>
         </div>
       )}
+      {visibleRespondentFieldIds.size > 0 && (
+        <div data-testid="respondent-question-summary" className="rounded-2xl border border-primary-200 bg-primary-50/70 px-4 py-3.5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-700">{respondentLabel} questions</p>
+              <p className="mt-1 text-sm font-semibold text-primary-950">
+                {visibleRespondentFieldIds.size} question{visibleRespondentFieldIds.size === 1 ? '' : 's'} for you
+              </p>
+              {respondentRequiredFieldIds.size > 0 ? (
+                <p className="mt-1 text-xs text-primary-800">
+                  {respondentRequiredFieldIds.size - respondentMissingFieldIds.size} of {respondentRequiredFieldIds.size} required questions completed
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-primary-800">Your responses are optional.</p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {respondentMissingFieldIds.size > 0 ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-800">
+                  <AppIcon className="ri-error-warning-line"></AppIcon>
+                  {respondentMissingFieldIds.size} required remaining
+                </span>
+              ) : respondentRequiredFieldIds.size > 0 ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800">
+                  <AppIcon className="ri-checkbox-circle-line"></AppIcon>All required answered
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={openRespondentQuestions}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary-700 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-primary-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-700"
+              >
+                <AppIcon className="ri-arrow-down-line"></AppIcon>Open my questions
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {saveAnswersError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveAnswersError}</p>}
 
       <ReviewFormRenderer
@@ -286,6 +359,7 @@ export function LearnerReviewInstanceForm({
         onAnswerChange={handleAnswerChange}
         readOnly
         fieldReadOnly={field => !canWriteAnswers || !writableFieldIds.has(field.id)}
+        respondentRole={viewerRole}
         openSectionId={openSectionId}
         onOpenSectionChange={setOpenSectionId}
       />

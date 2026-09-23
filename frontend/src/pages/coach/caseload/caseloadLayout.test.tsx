@@ -83,12 +83,12 @@ describe('My Learners table design', () => {
   });
 
   it.each([
-    ['at-risk', 'critical'],
-    ['need-attention', 'warning'],
-    ['on-track', 'positive'],
-  ] as const)('uses the OTJH status to colour OTJH: %s', (otjhStatus, tone) => {
-    render(<LearnerTable learners={[{ ...learner, otjhStatus }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+    [120, 'OTJH: 58%', 'critical'],
+    [100, 'OTJH: 70%', 'warning'],
+    [90, 'OTJH: 78%', 'positive'],
+  ] as const)('uses the canonical gap for target %s to colour OTJH', (otjhTarget, label, tone) => {
+    render(<LearnerTable learners={[{ ...learner, otjhTarget }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
       sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
-    expect(screen.getByLabelText('OTJH: 78%')).toHaveAttribute('data-tone', tone);
+    expect(screen.getByLabelText(label)).toHaveAttribute('data-tone', tone);
   });
 });

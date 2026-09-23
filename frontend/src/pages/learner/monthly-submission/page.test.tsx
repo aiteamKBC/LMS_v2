@@ -29,12 +29,12 @@ const metadata = { covers: {}, activity_dates: {
 const contract = { months: { '2026-09': { label: 'Month 4 — Martech', topics: ['Data, Insight and Analytics'], planned: 42, source: 'contract' },
   '2026-10': { label: '', topics: ['Marketing strategy'], planned: 30, source: 'contract' } }, contractStatus: 'ready' };
 
-function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract'; statuses?: Record<string, string> } = {}) {
+function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract'; statuses?: Record<string, string>; counts?: Record<string, number> } = {}) {
   const fetcher = vi.fn(async (url: string) => {
     const source = url.includes('/subject-covers/') ? 'dates' : url.includes('/training-plan-dashboard/') ? 'contract' : 'statuses';
     const data = source === 'dates' ? metadata : source === 'contract' ? contract : { statuses: [
-      { activityType: 'assignment', activityId: 'A1', status: options.statuses?.A1 || 'draft' },
-      { activityType: 'assignment', activityId: 'A2', status: options.statuses?.A2 || 'submitted_for_tutor_review' },
+      { activityType: 'assignment', activityId: 'A1', status: options.statuses?.A1 || 'draft', submissionCount: options.counts?.A1 },
+      { activityType: 'assignment', activityId: 'A2', status: options.statuses?.A2 || 'submitted_for_tutor_review', submissionCount: options.counts?.A2 },
     ] };
     return { ok: options.failed !== source, json: async () => options.failed === source ? { error: 'Unavailable' } : data };
   });
@@ -52,12 +52,59 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it('filters the selected month and keeps the displayed brief in sync with accepted or rejected results', async () => {
+  mockRequests({ statuses: { A1: 'rejected', A2: 'accepted' } });
+  mount('?month=2026-09&assignment=A1');
+  const filters = await screen.findByRole('group', { name: 'Filter assignments by status' });
+  const cards = screen.getByRole('region', { name: 'Assignments for Month 4 — Martech' });
+  fireEvent.click(within(filters).getByRole('button', { name: 'Accepted' }));
+  expect(within(cards).queryByRole('button', { name: /Data and insight/ })).toBeNull();
+  expect(within(cards).getByRole('button', { name: /Digital analytics/ })).toHaveAttribute('aria-pressed', 'true');
+  expect(await screen.findByText('Evaluate the analytics tools.')).toBeVisible();
+  expect(screen.queryByText('Explain how data informs your marketing decisions.')).toBeNull();
+  fireEvent.click(within(filters).getByRole('button', { name: 'Rejected' }));
+  expect(within(cards).queryByRole('button', { name: /Digital analytics/ })).toBeNull();
+  expect(screen.getByRole('link', { name: 'Revise assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A1?month=2026-09');
+  expect(within(cards).getByText('Changes requested')).toHaveAttribute('data-status', 'rejected');
+  fireEvent.click(within(filters).getByRole('button', { name: 'All' }));
+  expect(within(cards).getByRole('button', { name: /Digital analytics/ })).toBeVisible();
+  expect(within(cards).getByRole('button', { name: /Data and insight/ })).toBeVisible();
+});
+
+it('supports filtered links, keeps the filter across months and recovers from an empty result', async () => {
+  mockRequests({ statuses: { A1: 'accepted', A2: 'partial' } });
+  mount('?month=2026-09&status=accepted');
+  const filters = await screen.findByRole('group', { name: 'Filter assignments by status' });
+  expect(within(filters).getByRole('button', { name: 'Accepted' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByRole('button', { name: /Digital analytics/ })).toBeNull();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Choose month' }), { target: { value: '2026-10' } });
+  expect(screen.getByText('No accepted assignments for this month. Choose another filter or month.')).toBeVisible();
+  expect(screen.queryByRole('region', { name: 'Assignment marking result' })).toBeNull();
+  fireEvent.click(within(filters).getByRole('button', { name: 'All' }));
+  expect(screen.getByRole('link', { name: 'Start assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A3?month=2026-10');
+});
+
+it.each([
+  { status: 'submitted_for_tutor_review', count: 2, label: '2 submissions' },
+  { status: 'draft', count: 1, label: '1 submission' },
+  { status: 'draft', count: 0, label: '0 submissions' },
+])('shows the recorded submission count on the card and details: $status / $count', async ({ status, count, label }) => {
+  mockRequests({ statuses: { A1: status }, counts: { A1: count, A2: 3 } });
+  mount('?month=2026-09&assignment=A1');
+  expect(await screen.findAllByText(label)).toHaveLength(2);
+  const cards = screen.getByRole('region', { name: 'Assignments for Month 4 — Martech' });
+  expect(within(cards).getByRole('button', { name: /Data and insight/, pressed: true })).toHaveTextContent(label);
+  expect(within(screen.getByRole('complementary', { name: 'Assignment information' })).getByText(label)).toBeVisible();
+  expect(screen.getAllByText('3 submissions')).toHaveLength(1);
+});
+
 it('groups distinct assignments by plan month, deduplicates IDs and switches the full brief', async () => {
   mount();
-  const navigation = await screen.findByRole('navigation', { name: 'Assignment months' });
-  expect(within(navigation).getAllByRole('button')).toHaveLength(3);
-  expect(within(navigation).getAllByRole('button')[0]).toHaveTextContent('Month 4 — Martech');
-  expect(within(navigation).getAllByRole('button')[0]).toHaveTextContent('2 assignments · 1 submitted');
+  const monthSelect = await screen.findByRole('combobox', { name: 'Choose month' });
+  expect(within(monthSelect).getAllByRole('option')).toHaveLength(3);
+  expect(monthSelect).toHaveValue('2026-09');
+  expect(within(monthSelect).getAllByRole('option')[0]).toHaveTextContent('September 2026 — Month 4 — Martech');
+  expect(screen.getByRole('region', { name: 'Selected submission month' })).toHaveTextContent('2 assignments · 1 submitted');
   expect(screen.getByText('Explain how data informs your marketing decisions.')).toBeVisible();
   expect(screen.getByRole('link', { name: 'Continue assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A1?month=2026-09');
   const info = screen.getByRole('complementary', { name: 'Assignment information' });
@@ -66,9 +113,10 @@ it('groups distinct assignments by plan month, deduplicates IDs and switches the
   expect(within(info).queryByText('42 hours')).toBeNull();
   const rows = screen.getByRole('region', { name: 'Assignments for Month 4 — Martech' });
   fireEvent.click(within(rows).getByRole('button', { name: /Digital analytics/ }));
-  expect(screen.getByText('Evaluate the analytics tools.')).toBeVisible();
+  expect(await screen.findByText('Evaluate the analytics tools.')).toBeVisible();
   expect(screen.getByRole('link', { name: 'View submission' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A2?month=2026-09');
-  fireEvent.click(within(navigation).getByRole('button', { name: /October 2026/ }));
+  fireEvent.change(monthSelect, { target: { value: '2026-10' } });
+  expect(screen.getByRole('region', { name: 'Selected submission month' })).toHaveTextContent('October 2026');
   expect(screen.getByRole('link', { name: 'Start assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A3?month=2026-10');
   expect(screen.queryByRole('button', { name: /Digital analytics/ })).toBeNull();
 });
@@ -240,4 +288,12 @@ it('honours explicit links over saved selection and ignores another learner sele
   sessionStorage.setItem('monthly-assignment-selection:commercial:999', JSON.stringify({ month: '2026-09', assignment: 'A2' }));
   mount('?month=2026-09');
   expect(await screen.findByText('Explain how data informs your marketing decisions.')).toBeVisible();
+});
+
+
+it('opens the extra activity form beside the month selector for this learner', async () => {
+  mockRequests(); mount();
+  const link = await screen.findByRole('link', { name: /Extra activities/ });
+  expect(link).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/extra-activities');
+  expect(screen.getByRole('combobox', { name: 'Choose month' })).toBeInTheDocument();
 });

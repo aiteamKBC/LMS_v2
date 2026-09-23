@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { StudentActivityPanel as SubjectCardsPanel } from './SubjectWorkspace';
 export { StudentActivityPanel } from './SubjectWorkspace';
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
@@ -28,6 +28,7 @@ import { EMPTY_VALUE } from '@/lib/format';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearningHero } from './LearningCatalogue';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { useAuth } from '@/hooks/useAuth';
 import { learningSchedule } from '@/api/learnerOverview';
 import learningStyles from './SubjectWorkspace.module.css';
 
@@ -48,7 +49,24 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const location = useLocation();
   const navigate = useNavigate();
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
-  const { kind, id } = useResolvedLearner(urlKind, urlId);
+  const { auth, isInitialized } = useAuth();
+  const resolved = useResolvedLearner(urlKind, urlId);
+  // On a hard refresh the in-memory learner pin is empty until /login_api/me/
+  // settles. Use that authoritative account identity directly for learner
+  // self-view; staff/admin accounts still require an explicit URL selection.
+  const accountLearner = auth.account?.role === 'learner' && auth.account.subjectId != null
+    ? { kind: auth.account.learnerType === 'commercial' ? 'commercial' as const : 'apprenticeship' as const, id: String(auth.account.subjectId) }
+    : null;
+  const { kind, id } = accountLearner || resolved;
+  const reviewAccount = auth.account && auth.account.role !== 'learner';
+  useEffect(() => {
+    if (!isInitialized || !reviewAccount || accountLearner || urlId || !kind || !id) return;
+    const params = new URLSearchParams(location.search);
+    navigate({ pathname: `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, search: params.toString() }, { replace: true });
+  }, [accountLearner, id, isInitialized, kind, location.search, navigate, reviewAccount, urlId]);
+  const learnerNavItems = useMemo(() => learnerNav.items.map(item => item.id === 'learner-my-learning' && kind && id
+    ? { ...item, href: `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(id)}` }
+    : item), [id, kind]);
   const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id);
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
 
@@ -89,7 +107,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
     <WorkspaceShell
       role="learner"
       roleLabel={learnerNav.label}
-      navItems={learnerNav.items}
+      navItems={learnerNavItems}
       workspaceLabel={learnerNav.workspaceLabel}
       pageTitle={view === 'map' ? 'Learner’s Map' : 'My Learning'}
       pageSubtitle={subtitle}
@@ -113,7 +131,9 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
         {/* Keyed by mode so switching remounts the panel and re-runs the slide:
             Free enters from the right, My courses from the left. */}
         <div key={mode} className={view === 'catalogue' && isRealMode ? (mode === 'free' ? 'slide-from-right' : 'slide-from-left') : undefined}>
-          {!isRealMode ? (
+          {!isInitialized ? (
+            <Panel><RowsSkeleton rows={2} /></Panel>
+          ) : !isRealMode ? (
             <Panel><EmptyState size="sm" title="No learner selected" description="Open this page from a learner record." /></Panel>
           ) : mode === 'free' ? (
             <FreeCoursesTab kind={kind} id={id} />

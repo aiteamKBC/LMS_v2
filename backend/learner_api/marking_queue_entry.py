@@ -28,6 +28,8 @@ import uuid
 
 from django.db import DatabaseError, connections
 
+from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row
+
 logger = logging.getLogger(__name__)
 
 #: A coach decision that must not be undone by the learner re-completing the
@@ -119,7 +121,7 @@ def queue_for_marking(*, component_id, kind, learner_id, context):
                     component_ref = excluded.component_ref,
                     status = 'submitted_for_tutor_review',
                     submitted_at = now()
-                returning id
+                returning """ + SUBMISSION_AUDIT_SQL + """
                 """,
                 [
                     str(uuid.uuid4()),
@@ -147,6 +149,9 @@ def queue_for_marking(*, component_id, kind, learner_id, context):
                 ],
             )
             row = cur.fetchone()
+            # `id` is the first audited column, so the existing read is
+            # unchanged by widening the clause.
+            record_submission_row(row)
             return row[0] if row else None
     except DatabaseError as exc:
         logger.warning("Could not queue %s for marking: %s", component_id, exc)

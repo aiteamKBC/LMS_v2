@@ -176,7 +176,7 @@ describe('Curriculum audit trail page', () => {
     await renderChanges();
     expect(await screen.findByRole('link', { name: 'Final Knowledge Check' })).toHaveAttribute(
       'href',
-      '/curriculum/module-builder?view=archive&archiveModule=MOD-1',
+      '/curriculum/archive?type=module&q=MOD-1',
     );
   });
 

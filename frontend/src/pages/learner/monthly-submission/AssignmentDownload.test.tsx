@@ -12,13 +12,14 @@ it('previews and downloads the same PDF and releases it on unmount', async () =>
   const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
     expect(this.download).toBe('report.pdf'); expect(this.href).toBe('blob:report');
   });
-  const view = render(<AssignmentDownload kind="commercial" learnerId="12" activityId="A5" />);
+  const view = render(<AssignmentDownload kind="commercial" learnerId="12" activityId="A5" month="2026-09" attempt={1} />);
   fireEvent.click(screen.getByRole('button', { name: 'Preview report' }));
   expect(await screen.findByTitle('Assignment report PDF preview')).toHaveAttribute('data-url', 'blob:report');
   expect(screen.queryByRole('link', { name: /Download/ })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Download report (PDF)' }));
   expect(click).toHaveBeenCalledOnce();
   expect(buildAssignmentReport).toHaveBeenCalledOnce();
+  expect(buildAssignmentReport).toHaveBeenCalledWith('commercial', '12', 'A5', '2026-09', 1);
   view.unmount();
   expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:report');
 });

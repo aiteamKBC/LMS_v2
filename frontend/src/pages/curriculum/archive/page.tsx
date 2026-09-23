@@ -14,11 +14,15 @@
 // finishing the delete — are offered on the row.
 //
 // It is not a fifth implementation of them. Every confirm here is the same
-// helper the per-list toggles call (`../shared/entities/archive`), so the
+// helper the archive actions call (`../shared/entities/archive`), so the
 // wording, the cascade warnings and the API calls are shared; what this page
-// adds is only the reading of all four lists at once. The per-list toggles stay
-// where they are: they are the right view when you already know you are looking
-// at cohorts.
+// adds is only the reading of all four lists at once.
+//
+// Programmes and the Module Builder no longer carry their own "View archive"
+// toggle — they send the reader here, filtered by ?type=, because two places
+// showing the same archived record is how the two drift. The Archive action on
+// their rows stays where it is: putting a record *into* the archive belongs
+// next to the record, and only reading it back belongs here.
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -597,9 +601,13 @@ export default function CurriculumArchivePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const archive = useCurriculumArchiveIndex();
 
-  const [search, setSearch] = useState('');
-  // Both filters are in the URL for the same reason the per-list archive view
-  // is: "it is in the archive, under Groups" has to be a link.
+  // The search is in the URL alongside the filters because this page is now the
+  // only archive there is: everything that used to deep-link into a per-list
+  // archive view — the audit trail's "archived" event, a colleague pasting a
+  // link — has to be able to name the one record it means, not just its type.
+  const [search, setSearch] = useState(() => searchParams.get('q') || '');
+  // Both filters are in the URL for the same reason: "it is in the archive,
+  // under Groups" has to be a link.
   const [kindFilter, setKindFilter] = useState(() => searchParams.get('type') || '');
   const [programmeFilter, setProgrammeFilter] = useState(() => searchParams.get('programme') || '');
   // The row an action is running against, so its button shows the spinner rather
@@ -616,13 +624,15 @@ export default function CurriculumArchivePage() {
 
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
+    if (search.trim()) next.set('q', search.trim());
+    else next.delete('q');
     if (kindFilter) next.set('type', kindFilter);
     else next.delete('type');
     if (programmeFilter) next.set('programme', programmeFilter);
     else next.delete('programme');
     if (next.toString() === searchParams.toString()) return;
     setSearchParams(next, { replace: true });
-  }, [kindFilter, programmeFilter, searchParams, setSearchParams]);
+  }, [search, kindFilter, programmeFilter, searchParams, setSearchParams]);
 
   // Built from what is actually in the archive rather than from the live
   // programme list: a programme with nothing archived under it would only be an

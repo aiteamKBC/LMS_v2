@@ -38,6 +38,7 @@ from audit_api.learner_exclusions import is_excluded_learner
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
+from .audit_trail import DATE_OVERRIDE_COLUMNS, record, record_hours_override
 from .common import CONN, db_is_read_only
 from .contract_documents import ensure_contract_archive_table, ensure_contract_uploads_table
 from .evidence_documents import ensure_evidence_override_table
@@ -1453,6 +1454,12 @@ def learner_hours(request: HttpRequest) -> JsonResponse:
                         'delete from "Manual_audit".learner_hours_overrides where aptem_id = %s and period = %s',
                         [aptem_id, period],
                     )
+                    # Recorded as a deletion rather than as the empty upsert
+                    # above: the override is gone, and a trail saying it was set
+                    # to nothing would be describing a row that no longer exists.
+                    record_hours_override(row, deleted=True)
+                else:
+                    record_hours_override(row)
     except (KeyError, DatabaseError) as error:
         return JsonResponse({"error": "Could not save the learner hours override.", "details": str(error)}, status=503)
     return JsonResponse(_learner_hours_payload(row))
@@ -1587,6 +1594,13 @@ def learner_profile_dates(request: HttpRequest) -> JsonResponse:
                         'delete from "Manual_audit".learner_profile_date_overrides where aptem_id = %s',
                         [aptem_id],
                     )
+                    record('manual_learner_profile_date_overrides',
+                           DATE_OVERRIDE_COLUMNS, row, deleted=True)
+                else:
+                    # These dates decide which month a learner's evidence counts
+                    # in, so who moved them is exactly what an audit is asked.
+                    record('manual_learner_profile_date_overrides',
+                           DATE_OVERRIDE_COLUMNS, row)
     except (KeyError, DatabaseError) as error:
         return JsonResponse({"error": "Could not save the profile dates.", "details": str(error)}, status=503)
     return JsonResponse(_profile_dates_payload(row))

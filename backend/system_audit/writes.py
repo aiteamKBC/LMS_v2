@@ -370,6 +370,42 @@ def register_model(
         )
 
 
+def attach_bulk_capture(model, entity_type=''):
+    """Route this model's managers through :class:`AuditedQuerySet`.
+
+    Called by the app that registers a model, not by :func:`register_model`, so
+    that switching bulk capture on is a decision each workspace makes for
+    itself. It is not free -- ``update()`` gains a key read and a read-back, and
+    ``delete()`` materialises the rows it is about to remove -- and turning that
+    on for every registered model at once would change the cost of 74
+    ``update()`` calls in ``learner_api`` as a side effect of wiring up a
+    different workspace.
+
+    Signals see ``save()``, ``create()`` and ``delete()`` on an instance and
+    nothing else. ``QuerySet.update()`` is the hole that matters here: a coach
+    meeting moving to ``awaiting-signature`` is written as
+    ``CoachCalendarEvent.objects.filter(...).update(status=...)``, which emits
+    no signal at all -- so the status changes people most want to trace were
+    the ones the trail could not see.
+
+    Only a manager still using the plain ``QuerySet`` is swapped. A model with
+    a hand-written queryset class has behaviour of its own in these methods, and
+    silently re-basing it to gain an audit entry would be trading a working
+    feature for a log line. That case is reported rather than forced.
+    """
+    # `get_queryset` instantiates `_queryset_class` on every call, so swapping
+    # the attribute is enough and needs no cache to be cleared.
+    for manager in model._meta.local_managers:
+        if manager._queryset_class is models.QuerySet:
+            manager._queryset_class = AuditedQuerySet
+        elif not issubclass(manager._queryset_class, AuditedQuerySet):
+            logger.warning(
+                'Bulk writes of %s via %s are not recorded: it uses a custom '
+                'queryset (%s), so update()/bulk_*() bypass the audit trail.',
+                entity_type or model.__name__, manager.name, manager._queryset_class.__name__,
+            )
+
+
 # --------------------------------------------------------------- bulk writes
 
 class AuditedQuerySet(models.QuerySet):
@@ -384,9 +420,19 @@ class AuditedQuerySet(models.QuerySet):
     The rows are read back rather than assumed, because an ``update()`` can
     match rows the caller never enumerated and a database default or trigger can
     leave a row holding something the caller did not send.
+
+    Each method checks the registry *before* doing any extra reading. Both
+    ``update()`` and ``delete()`` have to read rows that the plain queryset
+    never would -- the affected keys, and the rows about to go -- and on an
+    unregistered model that read buys nothing. A model can lose its
+    registration (a failed import in ``records``) while its manager keeps this
+    class, and the query it would then add to every bulk delete is exactly the
+    kind of cost an audit trail must not impose when it is switched off.
     """
 
     def update(self, **fields):
+        if not self._config():
+            return super().update(**fields)
         affected = list(self.values_list('pk', flat=True))
         updated = super().update(**fields)
         self._record_pks(affected)
@@ -409,6 +455,8 @@ class AuditedQuerySet(models.QuerySet):
     bulk_update.alters_data = True
 
     def delete(self):
+        if not self._config():
+            return super().delete()
         # Read before the delete: afterwards there is nothing left to read, and
         # a snapshot of what went is the whole point of recording a deletion.
         doomed = list(self)

@@ -34,9 +34,15 @@ export function reviewToBook(reviews: TrainingPlanDashboard['reviews']) {
 
 export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], data: TrainingPlanDashboard) {
   return subjects.map(subject => {
-    const summary = 'activities' in subject ? null : subject;
+    const initialSummary = 'activities' in subject ? null : subject;
     const activities = 'activities' in subject ? subject.activities : [];
     const moduleId = data.moduleLinks[subject.id]?.id || (subject.id.startsWith('current:') ? subject.id.slice(8) : null);
+    // Reuse the already-loaded overview summary for current modules too. The
+    // detail panel receives these summaries, while the timeline previously
+    // only used them for legacy subjects, dropping direct recorded hours and
+    // canonical activity/KSB values for selected current modules.
+    const summary = initialSummary || data.planSubjects?.find(item =>
+      item.id === subject.id || (moduleId != null && item.moduleIds.includes(moduleId)));
     const detail = data.modules.find(module => module.id === moduleId);
     const sessions = data.sessions.filter(session => session.moduleId === moduleId).map(session => {
       const matches = activities.filter(activity => Date.parse(activity.native?.sessionDateTimeUtc || '') === Date.parse(session.start)
@@ -61,11 +67,10 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
     }, {});
     const ksbCodes = summary?.ksbCodes || [...new Set(activities.flatMap(activity =>
       (activity.native?.ksbMappings || []).map(mapping => mapping.code).filter(Boolean)))].sort();
-    const ksbProgress = summary ? summary.ksbProgress : activities.some(activity => !activity.native?.ksbMappings) ? null
-      : activities.reduce((counts, activity) => {
-        const count = new Set((activity.native?.ksbMappings || []).map(mapping => mapping.code).filter(Boolean)).size;
-        return { total: counts.total + count, completed: counts.completed + (activity.completed ? count : 0) };
-      }, { completed: 0, total: 0 });
+    // Activity-to-KSB mappings are occurrence counts, not canonical learner KSB
+    // evidence/profile progress.  No safe per-module canonical KSB source is
+    // present in this payload, so the module indicator remains unavailable.
+    const ksbProgress = summary?.ksbProgress ?? null;
     const historicalHours = actual.length ? actual.reduce((sum, row) => sum + row.hours, 0) : null;
     const recordedHours = summary?.directHours != null
       ? groupId ? data.actualAvailable ? (historicalHours || 0) + summary.directHours : null : summary.directHours

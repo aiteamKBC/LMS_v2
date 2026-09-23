@@ -28,7 +28,7 @@ import {
   fetchCurriculumProgrammeLearnerKsbImpact,
   fetchCurriculumKsbSets,
   fetchCurriculumStandards,
-  restoreCurriculumProgramme,
+  saveCurriculumProgrammeOrder,
   updateCurriculumCohort,
   updateCurriculumGroup,
   updateCurriculumKsbFramework,
@@ -178,19 +178,6 @@ function isProgrammeDependencyError(error: unknown): error is CurriculumApiError
   return isProgrammeDeleteRefusal(error) && error.data.reason === 'programme-has-dependencies';
 }
 
-const LEARNER_DELIVERY_LABELS: Record<string, string> = {
-  learner_training_plan_modules: 'learner plan modules',
-  learner_training_plan_weeks: 'learner plan weeks',
-  learner_training_plan_components: 'learner plan components',
-};
-
-function countSummary(counts: Record<string, number> | undefined, labels: Record<string, string>) {
-  const parts = Object.entries(counts || {})
-    .filter(([, value]) => Number(value) > 0)
-    .map(([key, value]) => `${value} ${labels[key] || key.replace(/_/g, ' ')}`);
-  return parts.length ? parts.join(', ') : '';
-}
-
 function programmeDependencySummary(report?: CurriculumProgrammeDependencyReport) {
   const counts = report?.counts || {};
   const parts = Object.entries(counts)
@@ -205,6 +192,127 @@ function programmeStatus(programme: CurriculumProgramme) {
 
 function programmeIsDraft(programme: CurriculumProgramme) {
   return programmeStatus(programme) === 'draft';
+}
+
+/**
+ * The id every list of programmes is keyed by. `sourceId` is what the server
+ * writes the order against, so the drag ids and the saved order cannot drift.
+ */
+function programmeKey(programme: CurriculumProgramme) {
+  return String(programme.sourceId || programme.id);
+}
+
+/** Which way a card is being sent, in the grid the reader is looking at. */
+type ArrangeDirection = 'up' | 'down' | 'left' | 'right';
+
+/**
+ * Take the card at `from` out and put it back at `to`, everything between it
+ * closing up behind it. This is the whole of what an arrow does.
+ */
+function moveInList<T>(list: T[], from: number, to: number): T[] {
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/**
+ * Where an arrow sends a card, or null when that arrow has nowhere to go.
+ *
+ * Left and right are one place along the list. Up and down are a whole row, so
+ * they need the column count the grid is actually rendering at -- at one column
+ * a "row" is a single card and up/down read the same as left/right, which is
+ * exactly right on a phone. Down out of the second-to-last row lands at the end
+ * when the last row is short, rather than off the end of the list.
+ */
+function arrangeTarget(from: number, total: number, columns: number, direction: ArrangeDirection): number | null {
+  const lastRowStart = Math.floor((total - 1) / columns) * columns;
+  if (direction === 'left') return from > 0 ? from - 1 : null;
+  if (direction === 'right') return from < total - 1 ? from + 1 : null;
+  if (direction === 'up') return from >= columns ? from - columns : null;
+  return from < lastRowStart ? Math.min(from + columns, total - 1) : null;
+}
+
+const ARRANGE_ARROWS: Array<{ direction: ArrangeDirection; icon: string; word: string; position: string }> = [
+  { direction: 'up', icon: 'ri-arrow-up-line', word: 'up a row', position: 'col-start-2 row-start-1' },
+  { direction: 'left', icon: 'ri-arrow-left-line', word: 'left', position: 'col-start-1 row-start-2' },
+  { direction: 'right', icon: 'ri-arrow-right-line', word: 'right', position: 'col-start-3 row-start-2' },
+  { direction: 'down', icon: 'ri-arrow-down-line', word: 'down a row', position: 'col-start-2 row-start-3' },
+];
+
+/**
+ * The four arrows, laid out as the compass they describe, over the card they
+ * move. Each one says where it sends this programme rather than naming its own
+ * icon, because "right" on its own is not the action -- moving this card is.
+ *
+ * `data-arrange-key` is how the page puts focus back on the same arrow after the
+ * grid has re-laid itself out, so a card can be walked several places without
+ * reaching for the mouse between each one.
+ */
+function ArrangeArrows({ id, name, position, total, columns, onMove }: {
+  id: string;
+  name: string;
+  position: number;
+  total: number;
+  columns: number;
+  onMove: (id: string, direction: ArrangeDirection) => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-foreground-950/45 backdrop-blur-[1px]">
+      <div className="rounded-2xl border border-white/30 bg-white/95 p-2.5 shadow-xl">
+        <p className="mb-1.5 text-center text-[10px] font-bold uppercase tracking-wider text-foreground-500">
+          Move &middot; {position + 1} of {total}
+        </p>
+        <div className="grid grid-cols-3 grid-rows-3 gap-1">
+          {ARRANGE_ARROWS.map(arrow => {
+            const target = arrangeTarget(position, total, columns, arrow.direction);
+            return (
+              <button
+                key={arrow.direction}
+                type="button"
+                data-arrange-key={`${id}:${arrow.direction}`}
+                disabled={target === null}
+                title={target === null ? `${name} cannot move ${arrow.word}` : `Move ${name} ${arrow.word}`}
+                aria-label={`Move ${name} ${arrow.word}`}
+                onClick={event => { event.stopPropagation(); onMove(id, arrow.direction); }}
+                className={`flex h-9 w-9 items-center justify-center rounded-lg border text-base transition-smooth ${arrow.position} ${
+                  target === null
+                    ? 'cursor-not-allowed border-background-200 bg-background-100 text-foreground-300'
+                    : 'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400'
+                }`}
+              >
+                <AppIcon className={arrow.icon}></AppIcon>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * How many cards the grid is fitting on a row right now. The grid is
+ * `grid-cols-1 md:grid-cols-2 xl:grid-cols-3`, so the arrows have to read the
+ * same breakpoints, or "up" would move a card somewhere other than the row above
+ * the one the reader is looking at.
+ */
+function useProgrammeGridColumns() {
+  const [columns, setColumns] = useState(3);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const wide = window.matchMedia('(min-width: 1280px)');
+    const medium = window.matchMedia('(min-width: 768px)');
+    const read = () => setColumns(wide.matches ? 3 : medium.matches ? 2 : 1);
+    read();
+    wide.addEventListener('change', read);
+    medium.addEventListener('change', read);
+    return () => {
+      wide.removeEventListener('change', read);
+      medium.removeEventListener('change', read);
+    };
+  }, []);
+  return columns;
 }
 
 function programmeIsArchived(programme: CurriculumProgramme) {
@@ -225,7 +333,16 @@ export default function CurriculumProgrammes() {
   // Which order the grid is in. Empty is the order the endpoint returned, which
   // is what the page has always shown.
   const [sort, setSort] = useState('');
-  const [showArchived, setShowArchived] = useState(() => searchParams.get('view') === 'archive');
+  // Hand-picked card order. Off by default: the grid is read far more often than
+  // it is arranged, and in this mode a card is a thing to move rather than a
+  // thing to open.
+  const [reordering, setReordering] = useState(false);
+  // The order as it is on screen right now, ahead of the server confirming it.
+  // Kept here rather than in the loaded programmes so a failed save can put the
+  // cards back exactly where they were.
+  const [orderOverride, setOrderOverride] = useState<string[] | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
   const [programmePage, setProgrammePage] = useState(() => Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1));
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [programmeDrawerTarget, setProgrammeDrawerTarget] = useState<CurriculumProgramme | null>(null);
@@ -249,7 +366,6 @@ export default function CurriculumProgrammes() {
   const [wizardRun, setWizardRun] = useState<{ from: StructureWizardRecordStep; programmeId?: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [deletingProgrammeId, setDeletingProgrammeId] = useState<string | null>(null);
-  const [restoringProgrammeId, setRestoringProgrammeId] = useState<string | null>(null);
   const [reviewProgramme, setReviewProgramme] = useState<CurriculumProgramme | null>(null);
   const [applyProgramme, setApplyProgramme] = useState<CurriculumProgramme | null>(null);
   const [applyingKsbSource, setApplyingKsbSource] = useState(false);
@@ -280,8 +396,10 @@ export default function CurriculumProgrammes() {
   // invalidate_curriculum_cache() server-side, so the reload has nothing stale to
   // hit. The explicit skipCache on the reload calls below is left as belt and
   // braces for the multi-worker case, where invalidation needs a shared cache.
-  const programmeVisibility = showArchived ? 'all' : 'operational';
-  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored, upsertProgramme } = useCurriculumProgrammes({ visibility: programmeVisibility, revalidate: true });
+  // Only the operational list. Archived programmes are read on the Curriculum
+  // archive page, which is the one place they are shown now, so asking for them
+  // here would only be a payload nothing renders.
+  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, upsertProgramme } = useCurriculumProgrammes({ visibility: 'operational', revalidate: true });
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
 
@@ -315,15 +433,17 @@ export default function CurriculumProgrammes() {
     () => programmes.filter(programme => !programmeIsArchived(programme)),
     [programmes],
   );
-  const archivedProgrammes = useMemo(
-    () => programmes.filter(programme => programmeIsArchived(programme)),
-    [programmes],
-  );
-  // The stat tiles stay on live programmes; only the grid switches, so the
-  // archive is a place to review and clear old programmes, not a second dashboard.
-  const listedProgrammes = showArchived ? archivedProgrammes : visibleProgrammes;
+  // What the server sent is already the saved order. The override only sits in
+  // front of it between a drop and the reload that confirms it.
+  const orderedProgrammes = useMemo(() => {
+    if (!orderOverride) return visibleProgrammes;
+    const rank = new Map(orderOverride.map((id, index) => [id, index]));
+    return [...visibleProgrammes].sort(
+      (a, b) => (rank.get(programmeKey(a)) ?? Number.MAX_SAFE_INTEGER) - (rank.get(programmeKey(b)) ?? Number.MAX_SAFE_INTEGER),
+    );
+  }, [visibleProgrammes, orderOverride]);
   const filtered = sortEntities(
-    listedProgrammes.filter(p => {
+    orderedProgrammes.filter(p => {
       const needle = search.toLowerCase();
       if (needle && !p.name.toLowerCase().includes(needle)) return false;
       return true;
@@ -336,6 +456,56 @@ export default function CurriculumProgrammes() {
     (programmePage - 1) * PROGRAMMES_PER_PAGE,
     programmePage * PROGRAMMES_PER_PAGE,
   );
+  // Arranging happens on the whole list at once. A page of six cannot be dragged
+  // past its own edge, so paging is lifted for as long as the mode is on.
+  const displayedProgrammes = reordering ? filtered : paginatedProgrammes;
+  // A search or a chosen sort is showing a subset, or an order this page did not
+  // pick. Saving from either would renumber programmes the reader cannot see, so
+  // the mode is only offered on the full list in its saved order.
+  const canReorder = !search.trim() && !sort;
+  const gridColumns = useProgrammeGridColumns();
+  // The arrow that was just pressed, so focus can follow the card it moved.
+  const arrangeFocus = useRef<string | null>(null);
+
+  const moveProgramme = useCallback((id: string, direction: ArrangeDirection) => {
+    const before = filtered.map(programmeKey);
+    const from = before.indexOf(id);
+    if (from < 0) return;
+    const to = arrangeTarget(from, before.length, gridColumns, direction);
+    if (to === null) return;
+    const next = moveInList(before, from, to);
+    setOrderOverride(next);
+    setOrderError(null);
+    setSavingOrder(true);
+    arrangeFocus.current = `${id}:${direction}`;
+    // The card moves now and the save follows. If it fails the cards go back
+    // where they were, because a card left somewhere the server never accepted
+    // is the one outcome worse than not moving it.
+    saveCurriculumProgrammeOrder(next)
+      .then(() => setSavingOrder(false))
+      .catch((err: unknown) => {
+        setOrderOverride(before);
+        setSavingOrder(false);
+        setOrderError(err instanceof Error ? err.message : 'Could not save the new order.');
+      });
+  }, [filtered, gridColumns]);
+
+  // The moved card is re-rendered in its new place, which drops the focus that
+  // was on the arrow. Put it back on the same arrow of the same card, so the
+  // same key press keeps sending it the same way.
+  useEffect(() => {
+    const key = arrangeFocus.current;
+    if (!key) return;
+    arrangeFocus.current = null;
+    const button = document.querySelector<HTMLButtonElement>(`[data-arrange-key="${key}"]`);
+    if (button && !button.disabled) button.focus();
+  }, [orderOverride]);
+
+  // Leaving the mode by searching or sorting, rather than by the button, would
+  // otherwise leave a drag surface over a list it cannot save.
+  useEffect(() => {
+    if (!canReorder) setReordering(false);
+  }, [canReorder]);
 
   // Changing what is listed sends the reader back to the first page - but only
   // when they change it. On the first render these are the values restored from
@@ -348,7 +518,7 @@ export default function CurriculumProgrammes() {
       return;
     }
     setProgrammePage(1);
-  }, [search, showArchived, sort]);
+  }, [search, sort]);
 
   useEffect(() => {
     // Not while the programmes are still in flight: `filtered` is empty until
@@ -368,11 +538,10 @@ export default function CurriculumProgrammes() {
       else next.delete(key);
     };
     carry('q', search.trim());
-    carry('view', showArchived ? 'archive' : '');
     carry('page', programmePage > 1 ? String(programmePage) : '');
     if (next.toString() === searchParams.toString()) return;
     setSearchParams(next, { replace: true });
-  }, [search, showArchived, programmePage, searchParams, setSearchParams]);
+  }, [search, programmePage, searchParams, setSearchParams]);
 
   const totalProgrammes = visibleProgrammes.length;
   const totalLearners = visibleProgrammes.reduce((a, b) => a + (b.learners || 0), 0);
@@ -421,10 +590,10 @@ export default function CurriculumProgrammes() {
   // programme holding the empty profile it was created with is the other, and
   // an empty source maps exactly as much as no source does.
   const programmesMissingKsbSource = useMemo(
-    () => (showArchived ? [] : filtered
+    () => filtered
       .map(programme => ({ programme, source: programmeKsbSources.get(programme.sourceId || programme.id) }))
-      .filter(entry => !entry.source?.value || entry.source.ksbCount < 1)),
-    [filtered, programmeKsbSources, showArchived],
+      .filter(entry => !entry.source?.value || entry.source.ksbCount < 1),
+    [filtered, programmeKsbSources],
   );
   const programmesWithEmptyKsbSource = programmesMissingKsbSource.filter(entry => Boolean(entry.source?.value));
 
@@ -475,10 +644,10 @@ export default function CurriculumProgrammes() {
     setProgrammeDrawerOpen(true);
   };
 
-  // Two different operations behind one button. A live programme is archived
-  // (reversible, nothing is removed). An archived one can be deleted for good,
-  // with every cohort, group, module, week and component beneath it - which is
-  // what the API allows only once is_archived is set.
+  // Archiving is as far as this page goes. It is reversible and removes nothing,
+  // so it belongs on the card next to the programme it acts on. Restoring one
+  // and deleting one for good are the archive's own two actions and live on the
+  // Curriculum archive page, next to the record they would act on there.
   const archiveProgramme = async (programme: CurriculumProgramme) => {
     const programmeId = programme.sourceId || programme.id;
     setActionError(null);
@@ -496,8 +665,8 @@ export default function CurriculumProgrammes() {
         try {
           const result = await deleteCurriculumProgramme(programmeId);
           outcome = result.deleted ? 'archived' : null;
-          // Flip the row to archived instead of dropping it, so it lands in the
-          // archive tab. Dropping it would hide it from both lists.
+          // Flips the row to archived, which this grid filters out - so the card
+          // leaves the list and the cached payload still knows where it went.
           markProgrammeArchived(programmeId);
         } catch (err) {
           if (isProgrammeDependencyError(err)) {
@@ -537,111 +706,8 @@ export default function CurriculumProgrammes() {
     } else if (outcome === 'archived') {
       await showProgrammeSwalToast(
         'Programme archived',
-        `${programme.name} moved to the archive. Open the archive to delete it permanently.`,
+        `${programme.name} moved to the archive. Restore it or delete it permanently from Curriculum > Archive.`,
       );
-    }
-  };
-
-  const permanentlyDeleteProgramme = async (programme: CurriculumProgramme) => {
-    const programmeId = programme.sourceId || programme.id;
-    setActionError(null);
-    let removed: Record<string, number> | null = null;
-    let alreadyGone = false;
-    let blockers: Record<string, number> | undefined;
-    const contents = countSummary(
-      { cohorts: programme.cohorts || 0, groups: programme.groups || 0, modules: programme.modules || 0 },
-      DEPENDENCY_LABELS,
-    );
-    await showCurriculumConfirm({
-      title: 'Delete permanently?',
-      text: `Delete "${programme.name}" and everything beneath it${contents ? ` (${contents})` : ''} from the database. This cannot be undone.`,
-      icon: 'warning',
-      confirmButtonText: 'Delete permanently',
-      cancelButtonText: 'Cancel',
-      onConfirm: async () => {
-        setDeletingProgrammeId(programmeId);
-        try {
-          const result = await deleteCurriculumProgramme(programmeId, { permanent: true });
-          removed = result.removed || {};
-          removeProgramme(programmeId);
-        } catch (err) {
-          if (isProgrammeDeleteRefusal(err)) {
-            blockers = err.data.blockers;
-            setActionError(err.data.error || err.data.message || 'Unable to delete programme.');
-            return;
-          }
-          if (isMissingProgrammeError(err)) {
-            alreadyGone = true;
-            removeProgramme(programmeId);
-            return;
-          }
-          setActionError(err instanceof Error ? err.message : 'Unable to delete programme.');
-          throw err;
-        } finally {
-          setDeletingProgrammeId(null);
-        }
-      },
-    });
-    if (blockers && Object.keys(blockers).length) {
-      await showProgrammeSwalToast(
-        'Learner records block this delete',
-        `${programme.name} still supplies ${countSummary(blockers, LEARNER_DELIVERY_LABELS)}. Learner plans are never deleted with a programme.`,
-      );
-    } else if (alreadyGone) {
-      await showProgrammeSwalToast(
-        'Programme already gone',
-        `${programme.name} is no longer in the database, so its card has been taken off the list.`,
-      );
-      await refreshProgrammeCards();
-    } else if (removed) {
-      // 'programmes' is the programme row itself, which the title already says.
-      const { programmes: _programmeRow, ...children } = removed as Record<string, number>;
-      const summary = countSummary(children, DEPENDENCY_LABELS);
-      await showProgrammeSwalToast(
-        'Programme deleted permanently',
-        summary ? `${programme.name}: removed ${summary}.` : `${programme.name} was removed from the database.`,
-      );
-    }
-  };
-
-  const deleteProgramme = (programme: CurriculumProgramme) => (
-    programmeIsArchived(programme) ? permanentlyDeleteProgramme(programme) : archiveProgramme(programme)
-  );
-
-  // The way back out of the archive. Everything the archive took down with the
-  // programme comes back with it, so the confirm says so before it runs.
-  const restoreProgramme = async (programme: CurriculumProgramme) => {
-    const programmeId = programme.sourceId || programme.id;
-    setActionError(null);
-    let restored = false;
-    await showCurriculumConfirm({
-      title: 'Restore programme?',
-      text: `Restore "${programme.name}" to the active list, along with the cohorts, groups and modules that were archived with it.`,
-      icon: 'question',
-      confirmButtonText: 'Restore',
-      cancelButtonText: 'Cancel',
-      onConfirm: async () => {
-        setRestoringProgrammeId(programmeId);
-        try {
-          const result = await restoreCurriculumProgramme(programmeId);
-          restored = Boolean(result.restored);
-          markProgrammeRestored(programmeId);
-        } catch (err) {
-          setActionError(err instanceof Error ? err.message : 'Unable to restore programme.');
-          throw err;
-        } finally {
-          setRestoringProgrammeId(null);
-        }
-      },
-    });
-    if (restored) {
-      await showProgrammeSwalToast(
-        'Programme restored',
-        `${programme.name} is back in the active list.`,
-      );
-      // The counts on the card come from the curriculum payload, so pull fresh
-      // numbers now that the children are no longer flagged as deleted.
-      void reload({ silent: true, skipCache: true });
     }
   };
 
@@ -989,6 +1055,22 @@ export default function CurriculumProgrammes() {
                 </button>
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => { setReordering(current => !current); setOrderError(null); }}
+              disabled={!canReorder}
+              title={canReorder
+                ? 'Move the cards into the order you want them read in.'
+                : 'Clear the search and go back to Default order to arrange the cards.'}
+              className={`inline-flex h-11 shrink-0 items-center gap-2 rounded-xl border px-3.5 text-[12px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-60 ${
+                reordering
+                  ? 'border-primary-600 bg-primary-600 text-white hover:bg-primary-700'
+                  : 'border-primary-200 bg-background-50 text-primary-700 hover:bg-primary-50'
+              }`}
+            >
+              <AppIcon className={reordering ? 'ri-check-line text-sm' : 'ri-drag-move-2-line text-sm'}></AppIcon>
+              {reordering ? 'Done arranging' : 'Arrange cards'}
+            </button>
             <label className="flex shrink-0 items-center gap-2">
               <span className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Sort</span>
               <span className="w-48">
@@ -1002,30 +1084,20 @@ export default function CurriculumProgrammes() {
                 />
               </span>
             </label>
-            <button
-              type="button"
-              onClick={() => setShowArchived(previous => !previous)}
-              aria-pressed={showArchived}
-              className={`inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border px-4 text-[12px] font-bold transition-smooth ${showArchived
-                ? 'border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200'
-                : 'border-foreground-200/70 bg-background-50 text-foreground-700 hover:bg-background-100'}`}
-            >
-              <AppIcon className={showArchived ? 'ri-inbox-unarchive-line text-base' : 'ri-archive-line text-base'}></AppIcon>
-              {showArchived ? 'Viewing archive' : 'Archive'}
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${showArchived ? 'bg-amber-200 text-amber-900' : 'bg-background-200 text-foreground-600'}`}>
-                {archivedProgrammes.length}
-              </span>
-            </button>
           </div>
+          {reordering && (
+            <p className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-primary-100/70 pt-2.5 text-[11px] font-medium text-foreground-500">
+              <AppIcon className="ri-information-line text-sm text-primary-600"></AppIcon>
+              Use a card&rsquo;s arrows to send it up, down, left or right. Every programme is on one page while you arrange, and each move is saved for everyone straight away.
+              {savingOrder && <span className="font-bold text-primary-700">Saving…</span>}
+            </p>
+          )}
+          {orderError && (
+            <p className="mt-2.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-700">
+              The cards went back to their saved order: {orderError}
+            </p>
+          )}
         </section>
-
-        {showArchived && (
-          <div className="rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800">
-            Archived programmes are hidden from planning. Restore one to put it back in the active list with everything
-            archived alongside it. Deleting one here removes it and every cohort, group, module, week and component
-            beneath it from the database - learner accounts and progress are never touched.
-          </div>
-        )}
 
         {/* Said once for the page, because it is a state to clear rather than a
             fact about one card: a programme with no KSB source is unfinished,
@@ -1104,7 +1176,7 @@ export default function CurriculumProgrammes() {
         ) : filtered.length ? (
           <>
           <div className="grid grid-cols-1 items-stretch gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {paginatedProgrammes.map(prog => {
+            {displayedProgrammes.map((prog, cardIndex) => {
               const appliedSource = programmeKsbSources.get(prog.sourceId || prog.id) || resolveProgrammeAppliedKsbSource(prog, ksbSets, standards);
               const hasAppliedKsbSource = Boolean(appliedSource.value);
               // Applied but empty is its own state: the source is chosen, so the
@@ -1119,20 +1191,13 @@ export default function CurriculumProgrammes() {
               const hasLearnerKsbDenominator = (prog.learnerKsbExpectedWeight || 0) > 0 && learnerKsbLearnerCount > 0;
               const cardColor = normaliseHex(prog.color || '#6941c6');
               const isDraftProgramme = programmeIsDraft(prog);
-              const isArchivedProgramme = programmeIsArchived(prog);
               // Clicking the card opens the programme it names. It used to start
               // the guided setup instead, which is a different promise: the card
               // shows what the programme already has, so the click that follows
               // from reading it is "show me this", not "add more to this". The
               // guided run keeps its own button in the row below.
-              //
-              // An archived programme opens too - read-only review is the whole
-              // point of the archive - but nothing is built out beneath it, so
-              // its wizard button is dropped rather than disabled.
               const openCard = () => openProgramme(prog);
-              const openWizardForCard = isArchivedProgramme
-                ? undefined
-                : () => setWizardRun({ from: 'cohort', programmeId: prog.sourceId || prog.id });
+              const openWizardForCard = () => setWizardRun({ from: 'cohort', programmeId: prog.sourceId || prog.id });
               // Deep links from the figures on the card into the tab that owns
               // each one. Stops the card click from also firing behind them.
               const openTab = (tab: ProgrammeDetailTab, view?: ProgrammeDetailView) => (event: { stopPropagation: () => void }) => {
@@ -1140,18 +1205,36 @@ export default function CurriculumProgrammes() {
                 openProgramme(prog, tab, view);
               };
               return (
+              <div key={prog.id} className="relative h-full">
+              {/* While the grid is being arranged the card is a thing to move,
+                  not a thing to open, so the arrows sit over it and its own
+                  buttons are taken out of the way behind them. */}
+              {reordering && (
+                <ArrangeArrows
+                  id={programmeKey(prog)}
+                  name={prog.name}
+                  position={cardIndex}
+                  total={displayedProgrammes.length}
+                  columns={gridColumns}
+                  onMove={moveProgramme}
+                />
+              )}
               <article
-                key={prog.id}
+                // inert, not aria-hidden: the card keeps buttons of its own, and
+                // they have to leave the tab order with it rather than stay
+                // reachable inside a subtree screen readers are told to skip.
+                inert={reordering}
                 className="programmes-card programme-color-card group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-4 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                 style={{ '--programme-card-color': cardColor } as CSSProperties}
-                onClick={openCard}
+                onClick={reordering ? undefined : openCard}
                 onKeyDown={event => {
+                  if (reordering) return;
                   if (event.target !== event.currentTarget) return;
                   if (event.key !== 'Enter' && event.key !== ' ') return;
                   event.preventDefault();
                   openCard();
                 }}
-                tabIndex={0}
+                tabIndex={reordering ? -1 : 0}
                 aria-label={`Open ${prog.name}`}
                 title={`Open ${prog.name} — its cohorts, groups, modules, sessions and KSB coverage`}
               >
@@ -1357,17 +1440,15 @@ export default function CurriculumProgrammes() {
                       <AppIcon className="ri-folder-open-line text-sm"></AppIcon>
                       Open programme
                     </button>
-                    {openWizardForCard && (
-                      <button
-                        type="button"
-                        onClick={e => { e.stopPropagation(); openWizardForCard(); }}
-                        title={`Guided setup for ${prog.name} — its next cohort, group and module in one run`}
-                        className="programme-action-button programme-action-structure inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2 py-1.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                      >
-                        <AppIcon className="ri-route-line text-sm"></AppIcon>
-                        Add structure
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); openWizardForCard(); }}
+                      title={`Guided setup for ${prog.name} — its next cohort, group and module in one run`}
+                      className="programme-action-button programme-action-structure inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2 py-1.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                    >
+                      <AppIcon className="ri-route-line text-sm"></AppIcon>
+                      Add structure
+                    </button>
                   </div>
                   <div className="flex flex-wrap items-center gap-1">
                     <button className="programme-action-button programme-action-source inline-flex items-center justify-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-1.5 py-1 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
@@ -1379,41 +1460,25 @@ export default function CurriculumProgrammes() {
                     <button className="programme-action-button programme-action-edit inline-flex items-center justify-center gap-1 rounded-lg border border-background-200 bg-background-50 px-1.5 py-1 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
                       <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
                     </button>
-                    {isArchivedProgramme && (
-                      <button
-                        className="programme-action-button programme-action-restore inline-flex items-center justify-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-1.5 py-1 text-[10px] font-bold text-amber-800 transition-smooth hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        disabled={restoringProgrammeId === (prog.sourceId || prog.id) || deletingProgrammeId === (prog.sourceId || prog.id)}
-                        onClick={e => { e.stopPropagation(); void restoreProgramme(prog); }}
-                        title="Restore this programme and the rows archived with it to the active list"
-                      >
-                        <AppIcon className={restoringProgrammeId === (prog.sourceId || prog.id)
-                          ? 'ri-loader-4-line animate-spin text-sm'
-                          : 'ri-inbox-unarchive-line text-sm'}></AppIcon>
-                        Restore
-                      </button>
-                    )}
                     <button
-                      className={`programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border px-1.5 py-1 text-[10px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-60 ${isArchivedProgramme
-                        ? 'border-red-600 bg-red-600 text-white hover:bg-red-700'
-                        : 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'}`}
-                      disabled={deletingProgrammeId === (prog.sourceId || prog.id) || restoringProgrammeId === (prog.sourceId || prog.id)}
-                      onClick={e => { e.stopPropagation(); void deleteProgramme(prog); }}
-                      title={isArchivedProgramme
-                        ? 'Delete this programme and everything beneath it permanently'
-                        : 'Archive this programme; it can be deleted permanently afterwards'}
+                      className="programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
+                      onClick={e => { e.stopPropagation(); void archiveProgramme(prog); }}
+                      title="Archive this programme; it can be restored or deleted permanently from Curriculum > Archive"
                     >
                       <AppIcon className={deletingProgrammeId === (prog.sourceId || prog.id)
                         ? 'ri-loader-4-line animate-spin text-sm'
-                        : isArchivedProgramme ? 'ri-delete-bin-6-line text-sm' : 'ri-archive-line text-sm'}></AppIcon>
-                      {isArchivedProgramme ? 'Delete forever' : 'Archive'}
+                        : 'ri-archive-line text-sm'}></AppIcon>
+                      Archive
                     </button>
                   </div>
                 </div>
               </article>
+              </div>
             );
             })}
           </div>
-          {totalProgrammePages > 1 && (
+          {!reordering && totalProgrammePages > 1 && (
             <ProgrammePagination
               currentPage={programmePage}
               totalPages={totalProgrammePages}
@@ -1424,7 +1489,6 @@ export default function CurriculumProgrammes() {
         ) : (
           <ProgrammesEmptyState
             hasSearch={Boolean(search.trim())}
-            archived={showArchived}
             onClear={() => setSearch('')}
             onCreate={() => { setProgrammeDrawerTarget(null); setProgrammeDrawerOpen(true); }}
           />
@@ -2383,29 +2447,22 @@ function ProgrammePagination({ currentPage, totalPages, onPageChange }: {
 
 function ProgrammesEmptyState({
   hasSearch,
-  archived = false,
   onClear,
   onCreate,
 }: {
   hasSearch: boolean;
-  archived?: boolean;
   onClear: () => void;
   onCreate: () => void;
 }) {
-  // "Create the first programme" is the wrong prompt for an empty archive.
-  const title = archived
-    ? hasSearch ? 'No archived programmes match your search' : 'The archive is empty'
-    : hasSearch ? 'No programmes match your search' : 'No programmes created yet';
-  const message = archived
-    ? 'Archived programmes appear here, where they can be deleted permanently with everything beneath them.'
-    : hasSearch
-      ? 'Try a different programme name or standard.'
-      : 'Create the first programme structure to add cohorts, groups, modules and weekly components.';
+  const title = hasSearch ? 'No programmes match your search' : 'No programmes created yet';
+  const message = hasSearch
+    ? 'Try a different programme name or standard.'
+    : 'Create the first programme structure to add cohorts, groups, modules and weekly components.';
 
   return (
     <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50 px-6 py-14 text-center shadow-sm">
       <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-700 ring-1 ring-primary-100">
-        <AppIcon className={`${hasSearch ? 'ri-search-line' : archived ? 'ri-archive-line' : 'ri-stack-line'} text-2xl`}></AppIcon>
+        <AppIcon className={`${hasSearch ? 'ri-search-line' : 'ri-stack-line'} text-2xl`}></AppIcon>
       </span>
       <h3 className="mt-4 text-base font-heading font-bold text-foreground-950">{title}</h3>
       <p className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-foreground-500">{message}</p>
@@ -2416,12 +2473,10 @@ function ProgrammesEmptyState({
             Clear search
           </button>
         )}
-        {!archived && (
-          <button type="button" onClick={onCreate} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-            <AppIcon className="ri-add-line"></AppIcon>
-            Create programme
-          </button>
-        )}
+        <button type="button" onClick={onCreate} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
+          <AppIcon className="ri-add-line"></AppIcon>
+          Create programme
+        </button>
       </div>
     </div>
   );

@@ -226,6 +226,9 @@ export interface CurriculumProgramme {
   // Off-the-job hours a learner must complete for the whole programme. null means no
   // target has been set, which is different from a target of zero.
   requiredOtjh?: number | null;
+  // Where this card sits in the hand-picked order. 0 means it has never been
+  // placed, and those read alphabetically ahead of the placed ones.
+  displayOrder?: number;
 }
 
 export interface CurriculumWeeklySession {
@@ -3706,6 +3709,14 @@ export function createCurriculumProgramme(input: CurriculumProgrammeInput) {
   return postJson<{ created: boolean; programme: CurriculumProgramme }>('/curriculum/programmes/', input);
 }
 
+/**
+ * Save the order the programme cards were dragged into. `order` is the ids top-left
+ * first; the server renumbers exactly those programmes from 1 upward.
+ */
+export function saveCurriculumProgrammeOrder(order: string[]) {
+  return postJson<{ saved: boolean; order: string[] }>('/curriculum/programmes/reorder/', { order });
+}
+
 export function updateCurriculumProgramme(id: string, input: CurriculumProgrammeInput) {
   return patchJson<{ updated: boolean; programme: CurriculumProgramme }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, input);
 }
@@ -4112,6 +4123,30 @@ export interface ConvertFreeCourseResult {
  */
 export function injectFreeCourseIntoGroup(programmeId: string, input: ConvertFreeCourseInput) {
   return postJson<ConvertFreeCourseResult>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/convert/`, input);
+}
+
+export interface ImportModuleInput {
+  moduleCatalogueId: string;
+  /** 'clone' keeps the module in its programme; 'move' also archives it. */
+  mode: 'clone' | 'move';
+}
+
+export interface ImportModuleResult {
+  mode: 'clone' | 'move';
+  freeCourseId: string;
+  courseName: string;
+  moduleCatalogueId: string;
+  /** The full, updated free-course module list, so the caller can refresh. */
+  modules: FreeProgrammeModule[];
+}
+
+/**
+ * Convert an existing programme module into a NEW free course (appended to the
+ * catalogue). `clone` leaves the module live in its programme; `move` also
+ * archives the source module. Returns the updated free-course module list.
+ */
+export function importModuleToFreeCourses(programmeId: string, input: ImportModuleInput) {
+  return postJson<ImportModuleResult>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/import-module/`, input);
 }
 
 export function createGroupModule(groupId: string, input: CurriculumModuleAttachmentInput) {

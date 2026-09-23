@@ -828,10 +828,13 @@ def validate_review_payload(
                     or curriculum_views.clean_str(current_review_type_id)
                 )
                 type_row = review_types.get_review_type(review_type_id) if review_type_id else None
-                if (type_row or {}).get('code') != review_types.REVIEW_TYPE_CODE_MCM:
-                    errors['sections'] = 'Only a Monthly Coaching Meeting may define a Meeting Summary field.'
+                if (type_row or {}).get('code') not in {
+                    review_types.REVIEW_TYPE_CODE_MCM,
+                    review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
+                }:
+                    errors['sections'] = 'Only a Monthly Coaching Meeting or Progress Review may define a Meeting Summary field.'
                 elif len(semantic_fields) > 1:
-                    errors['sections'] = 'A Monthly Coaching Meeting can define only one Meeting Summary field.'
+                    errors['sections'] = 'A Review can define only one Meeting Summary field.'
                 elif semantic_fields[0].get('field_type') not in ('text', 'text_multiline'):
                     errors['sections'] = 'The Meeting Summary field must be a text field.'
     cleaned['_sections'] = cleaned_sections
