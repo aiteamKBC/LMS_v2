@@ -5,7 +5,7 @@ import { buildAssignmentReport } from './downloadAssignment';
 import styles from './monthlySubmission.module.css';
 import { AssignmentPdfPreview } from './AssignmentPdfPreview';
 
-export function AssignmentDownload({ kind, learnerId, activityId, month = '' }: { kind: LearnerKind; learnerId: string; activityId: string; month?: string }) {
+export function AssignmentDownload({ kind, learnerId, activityId, month = '', attempt }: { kind: LearnerKind; learnerId: string; activityId: string; month?: string; attempt?: number }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(false);
@@ -23,7 +23,7 @@ export function AssignmentDownload({ kind, learnerId, activityId, month = '' }: 
     try {
       let current = report;
       if (!current) {
-        const result = await buildAssignmentReport(kind, learnerId, activityId, month);
+        const result = await buildAssignmentReport(kind, learnerId, activityId, month, attempt);
         if (!active.current) return;
         current = { url: URL.createObjectURL(result.blob), filename: result.filename };
         urlRef.current = current.url; setReport(current);

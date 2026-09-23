@@ -58,3 +58,20 @@ it('resolves imported documents to their actual file URL', async () => {
   await expect(buildAssignmentReport('commercial', '12', 'A5')).rejects.toThrow('Could not download Report.pdf');
   expect(fetcher.mock.calls[1][0]).toBe('/original-pdf');
 });
+
+
+it('builds the selected historical attempt with only its saved evidence and feedback', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ ...submission, status: 'rejected',
+    submittedAt: '2026-09-01T10:00:00Z', assignmentAnswer: 'Original attempt answer', coachFeedback: 'Original rejection',
+    monthlyAssignment: { ...emptyMonthlyAssignment([], '2026-09'), evidence: [{ id: 'old-file', name: 'Original.txt', points: '1' }] },
+  });
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, headers: new Headers(), arrayBuffer: async () => new ArrayBuffer(0) }));
+  const result = await buildAssignmentReport('commercial', '12', 'A5', '2026-09', 1);
+  expect(loadLearningReflectionSubmission).toHaveBeenCalledWith({ learnerKind: 'commercial', learnerId: '12', activityType: 'assignment', activityId: 'A5', attempt: '1' });
+  expect(createAssignmentPdf).toHaveBeenCalledWith(expect.stringContaining('Original attempt answer'));
+  expect(createAssignmentPdf).toHaveBeenCalledWith(expect.stringContaining('Original rejection'));
+  expect(createAssignmentPdf).toHaveBeenCalledWith(expect.stringContaining('1 Sept 2026, 11:00'));
+  expect(fetchEvidence).not.toHaveBeenCalled();
+  expect(getEvidenceDownloadUrl).toHaveBeenCalledWith('commercial', '12', 'old-file');
+  expect(result.filename).toContain('Submission 1');
+});
