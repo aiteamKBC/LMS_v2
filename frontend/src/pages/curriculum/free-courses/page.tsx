@@ -9,7 +9,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes } from '@/lib/format';
-import { fetchCurriculumModules, fetchCurriculumProgrammeDetail, fetchCurriculumProgrammes, fetchFreeProgrammeModules, importModuleToFreeCourses, injectFreeCourseIntoGroup, saveFreeProgrammeModules, type ConvertFreeCourseResult, type CurriculumModule, type CurriculumProgramme, type CurriculumProgrammeDetail, type FreeProgrammeComponentInput, type FreeProgrammeModule, type FreeProgrammeModuleInput } from '@/lib/curriculumApi';
+import { fetchCurriculumProgrammeDetail, fetchCurriculumProgrammes, fetchFreeProgrammeModules, importModuleToFreeCourses, injectFreeCourseIntoGroup, saveFreeProgrammeModules, type ConvertFreeCourseResult, type CurriculumModule, type CurriculumProgramme, type CurriculumProgrammeDetail, type FreeProgrammeComponentInput, type FreeProgrammeModule, type FreeProgrammeModuleInput } from '@/lib/curriculumApi';
 import {
   fetchWeekTemplateDetail,
   fetchWeekTemplates,
@@ -210,13 +210,38 @@ export default function FreeCoursesPage() {
   const convertGroups = convertCohorts.find(cohort => cohort.id === convertCohortId)?.groups ?? [];
   // Import a programme module -> a new free course (the reverse direction).
   const [importOpen, setImportOpen] = useState(false);
-  const [importModules, setImportModules] = useState<CurriculumModule[]>([]);
+  const [importProgrammeId, setImportProgrammeId] = useState('');
+  const [importDetail, setImportDetail] = useState<CurriculumProgrammeDetail | null>(null);
   const [importLoading, setImportLoading] = useState(false);
+  const [importCohortId, setImportCohortId] = useState('');
+  const [importGroupId, setImportGroupId] = useState('');
   const [importSearch, setImportSearch] = useState('');
   const [importSelectedId, setImportSelectedId] = useState('');
   const [importMode, setImportMode] = useState<'clone' | 'move'>('clone');
   const [importing, setImporting] = useState(false);
   const moduleKey = (module: CurriculumModule) => module.moduleCatalogueId || module.id;
+  const importCohorts = importDetail?.cohorts ?? [];
+  const importGroups = useMemo(
+    () => importDetail?.cohorts.find(cohort => cohort.id === importCohortId)?.groups ?? [],
+    [importDetail, importCohortId],
+  );
+  // Narrow to the picked group, else the picked cohort's groups, else the whole
+  // programme. A module attached to several groups is listed once.
+  const importModules = useMemo(() => {
+    if (!importDetail) return [];
+    const scoped = importGroupId
+      ? importGroups.find(group => group.id === importGroupId)?.modules ?? []
+      : importCohortId
+        ? importGroups.flatMap(group => group.modules)
+        : importDetail.flat.modules;
+    const seen = new Set<string>();
+    return scoped.filter(module => {
+      const key = moduleKey(module);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [importDetail, importGroups, importCohortId, importGroupId]);
   // Live, convertible modules only — hide programme-deleted/archived ones.
   const importOptions = useMemo(
     () => importModules.filter(module => !module.isProgrammeDeleted && (module.status || '').toLowerCase() !== 'archived'),
@@ -226,7 +251,7 @@ export default function FreeCoursesPage() {
     const term = importSearch.trim().toLowerCase();
     if (!term) return importOptions;
     return importOptions.filter(module =>
-      [module.name, module.programme, module.cohort, module.group].filter(Boolean).some(value => String(value).toLowerCase().includes(term)),
+      [module.name, module.cohort, module.group].filter(Boolean).some(value => String(value).toLowerCase().includes(term)),
     );
   }, [importOptions, importSearch]);
   const selectedComponent = course.components.find(component => component.id === selectedComponentId) || course.components[0];
@@ -271,12 +296,12 @@ export default function FreeCoursesPage() {
     return () => controller.abort();
   }, []);
 
-  // Load the programme list the first time the convert dialog is opened. The
-  // re-entry guard is the loaded result only (never the loading flag): under
+  // Load the programme list the first time the convert or import dialog opens.
+  // The re-entry guard is the loaded result only (never the loading flag): under
   // StrictMode's mount/abort/remount, gating on the flag would leave it stuck
   // true after the first run's fetch aborts, and the dropdown would never fill.
   useEffect(() => {
-    if (!convertCard || convertProgrammes.length) return;
+    if ((!convertCard && !importOpen) || convertProgrammes.length) return;
     const controller = new AbortController();
     let active = true;
     setConvertProgrammesLoading(true);
@@ -285,7 +310,7 @@ export default function FreeCoursesPage() {
       .catch(() => { if (active) setConvertProgrammes([]); })
       .finally(() => { if (active) setConvertProgrammesLoading(false); });
     return () => { active = false; controller.abort(); };
-  }, [convertCard, convertProgrammes.length]);
+  }, [convertCard, importOpen, convertProgrammes.length]);
 
   // Load the selected programme's cohorts + groups for the cascading dropdowns.
   useEffect(() => {
@@ -304,19 +329,23 @@ export default function FreeCoursesPage() {
     return () => { active = false; controller.abort(); };
   }, [convertProgrammeId]);
 
-  // Load the flat module catalogue the first time the import picker opens.
-  // Re-entry is gated on the loaded result, never the loading flag (StrictMode).
+  // Load only the picked programme's modules (with its cohorts + groups for the
+  // narrowing dropdowns) — never the whole site's module catalogue.
   useEffect(() => {
-    if (!importOpen || importModules.length) return;
+    if (!importProgrammeId) {
+      setImportDetail(null);
+      return;
+    }
     const controller = new AbortController();
     let active = true;
     setImportLoading(true);
-    fetchCurriculumModules(controller.signal, { compact: true })
-      .then(modules => { if (active) setImportModules(modules); })
-      .catch(() => { if (active) setImportModules([]); })
+    setImportDetail(null);
+    fetchCurriculumProgrammeDetail(importProgrammeId, controller.signal, { visibility: 'all', skipCache: true })
+      .then(detail => { if (active) setImportDetail(detail); })
+      .catch(() => { if (active) setImportDetail(null); })
       .finally(() => { if (active) setImportLoading(false); });
     return () => { active = false; controller.abort(); };
-  }, [importOpen, importModules.length]);
+  }, [importProgrammeId]);
 
   const totals = useMemo(() => ({
     weeks: selectedWeekIds.size,
@@ -707,6 +736,8 @@ export default function FreeCoursesPage() {
 
   const openImportPicker = () => {
     setImportOpen(true);
+    setImportCohortId('');
+    setImportGroupId('');
     setImportSearch('');
     setImportSelectedId('');
     setImportMode('clone');
@@ -744,7 +775,12 @@ export default function FreeCoursesPage() {
     } finally {
       setImporting(false);
     }
-    if (imported) setImportOpen(false);
+    if (imported) {
+      setImportOpen(false);
+      // Drop the loaded programme so the next open refetches it: a move archives
+      // the source module, and the cached list would still offer it.
+      setImportProgrammeId('');
+    }
   };
 
   return (
@@ -1317,25 +1353,73 @@ export default function FreeCoursesPage() {
                   </button>
                 </div>
 
-                <div className="border-b border-background-200 px-5 py-3">
+                <div className="space-y-3 border-b border-background-200 px-5 py-3">
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Programme</span>
+                    <select
+                      value={importProgrammeId}
+                      onChange={event => { setImportProgrammeId(event.target.value); setImportCohortId(''); setImportGroupId(''); setImportSelectedId(''); }}
+                      disabled={convertProgrammesLoading}
+                      className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+                    >
+                      <option value="">{convertProgrammesLoading ? 'Loading programmes…' : 'Select a programme'}</option>
+                      {convertProgrammeOptions.map(programme => (
+                        <option key={programme.sourceId || programme.id} value={programme.sourceId || programme.id}>{programme.name}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Cohort</span>
+                      <select
+                        value={importCohortId}
+                        onChange={event => { setImportCohortId(event.target.value); setImportGroupId(''); setImportSelectedId(''); }}
+                        disabled={!importDetail || !importCohorts.length}
+                        className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+                      >
+                        <option value="">{!importProgrammeId ? 'Select a programme first' : importLoading ? 'Loading cohorts…' : importCohorts.length ? 'All cohorts' : 'No cohorts in this programme'}</option>
+                        {importCohorts.map(cohort => (
+                          <option key={cohort.id} value={cohort.id}>{cohort.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Group</span>
+                      <select
+                        value={importGroupId}
+                        onChange={event => { setImportGroupId(event.target.value); setImportSelectedId(''); }}
+                        disabled={!importCohortId || !importGroups.length}
+                        className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+                      >
+                        <option value="">{!importCohortId ? 'Select a cohort first' : importGroups.length ? 'All groups' : 'No groups in this cohort'}</option>
+                        {importGroups.map(group => (
+                          <option key={group.id} value={group.id}>{group.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
                   <div className="flex h-10 items-center gap-2 rounded-lg border border-background-300 px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
                     <AppIcon name="ri-search-line" size={16} className="text-foreground-400" />
                     <input
                       type="text"
-                      autoFocus
                       value={importSearch}
                       onChange={event => setImportSearch(event.target.value)}
-                      placeholder="Search modules by name or programme…"
-                      className="h-full w-full bg-transparent text-sm text-foreground-900 outline-none placeholder:text-foreground-400"
+                      disabled={!importDetail}
+                      placeholder="Search modules by name…"
+                      className="h-full w-full bg-transparent text-sm text-foreground-900 outline-none placeholder:text-foreground-400 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
 
                 <div className="min-h-[180px] flex-1 overflow-y-auto px-2 py-2">
-                  {importLoading ? (
+                  {!importProgrammeId ? (
+                    <p className="px-3 py-6 text-center text-sm text-foreground-500">Select a programme to see its modules.</p>
+                  ) : importLoading ? (
                     <p className="flex items-center gap-2 px-3 py-6 text-sm text-foreground-500"><AppIcon name="ri-loader-4-line" className="animate-spin" size={16} />Loading modules…</p>
                   ) : importFiltered.length === 0 ? (
-                    <p className="px-3 py-6 text-center text-sm text-foreground-500">{importOptions.length === 0 ? 'No modules are available to import.' : 'No modules match your search.'}</p>
+                    <p className="px-3 py-6 text-center text-sm text-foreground-500">{importOptions.length === 0 ? 'No modules are available to import here.' : 'No modules match your search.'}</p>
                   ) : (
                     <ul className="space-y-1">
                       {importFiltered.map(module => {
