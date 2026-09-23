@@ -72,14 +72,14 @@ export default function MonthlySubmissionPage() {
           {plan.errors.length > 0 && <div role="alert" className={styles.error}>{plan.errors.map(error => <p key={error}>{error}</p>)}<button type="button" onClick={plan.retry}>Retry plan details</button></div>}
           {group && kind && id ? <>
             <section className={styles.monthSelector} aria-label="Selected submission month">
-              <div>
+              <div className={styles.monthSummary}>
                 <p className={styles.eyebrow}>Monthly submission</p>
                 <h2><CalendarDays size={22} aria-hidden="true" />{monthName(group.month)}</h2>
                 {group.label !== monthName(group.month) && <p>{group.label}</p>}
                 {group.topics.length > 0 && <p>{group.topics.join(' · ')}</p>}
                 <p>{group.assignments.length} assignment{group.assignments.length === 1 ? '' : 's'} · {group.submitted} submitted</p>
               </div>
-              <div className="flex flex-wrap items-end gap-3"><label className={styles.monthSelectLabel}>Choose month
+              <div className={styles.monthControls}><label className={styles.monthSelectLabel}>Choose month
                 <select value={group.month} onChange={event => select(event.target.value)}>
                   {groups.map(item => <option key={item.month} value={item.month}>
                     {monthName(item.month)}{item.label !== monthName(item.month) ? ` — ${item.label}` : ''}
