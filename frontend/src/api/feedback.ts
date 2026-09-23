@@ -1,4 +1,5 @@
 export type FeedbackFormStatus = 'draft' | 'published' | 'closed';
+export type FeedbackFormType = 'general' | 'post_lecture';
 export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date' | 'name' | 'email' | 'photo_upload';
 export interface FeedbackNameAnswer { firstName: string; lastName: string }
 export interface FeedbackPhotoAnswer { uploadId: string; filename: string }
@@ -26,6 +27,8 @@ export interface FeedbackSection {
 export interface FeedbackForm {
   id: number;
   title: string;
+  formType: FeedbackFormType;
+  curriculumScope: FeedbackCurriculumScope;
   description: string;
   instructions: string;
   status: FeedbackFormStatus;
@@ -48,6 +51,11 @@ export interface FeedbackForm {
 
 export interface FeedbackFormInput {
   title: string;
+  formType: FeedbackFormType;
+  programmeId: string;
+  cohortId: string;
+  groupId: string;
+  moduleCatalogueId: string;
   description: string;
   instructions: string;
   startDate: string | null;
@@ -56,6 +64,20 @@ export interface FeedbackFormInput {
   allowSaveContinue: boolean;
   allowEditAfterSubmission: boolean;
   sections: FeedbackSection[];
+}
+
+export interface FeedbackCurriculumScope {
+  programmeId: string; programmeName: string;
+  cohortId: string; cohortName: string;
+  groupId: string; groupName: string;
+  moduleCatalogueId: string; moduleName: string;
+}
+
+export interface FeedbackCurriculumOptions {
+  programmes: Array<{ id: string; name: string }>;
+  cohorts: Array<{ id: string; name: string; programmeId: string }>;
+  groups: Array<{ id: string; name: string; programmeId: string; cohortId: string }>;
+  modules: Array<{ id: string; name: string; programmeId: string; cohortId: string; groupId: string }>;
 }
 
 export type LearnerFeedbackStatus = 'not_started' | 'in_progress' | 'completed';
@@ -96,22 +118,33 @@ async function csrfToken(): Promise<string> {
   return csrfPromise;
 }
 
-async function request<T>(path: string, init?: globalThis.RequestInit): Promise<T> {
+async function request<T>(path: string, init?: globalThis.RequestInit, timeoutMs?: number): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
   const csrf = UNSAFE_METHODS.has(method) ? await csrfToken() : null;
-  const response = await fetch(`${BASE}${path}`, {
-    credentials: 'include', ...init,
-    headers: {
-      'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest',
-      ...(csrf ? { 'X-CSRFToken': csrf } : {}), ...(init?.headers || {}),
-    },
-  });
-  const body = await response.json().catch(() => ({})) as { error?: string };
-  if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
-  return body as T;
+  const controller = timeoutMs ? new AbortController() : null;
+  const timeout = controller ? globalThis.setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetch(`${BASE}${path}`, {
+      credentials: 'include', ...init,
+      signal: controller?.signal || init?.signal,
+      headers: {
+        'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest',
+        ...(csrf ? { 'X-CSRFToken': csrf } : {}), ...(init?.headers || {}),
+      },
+    });
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
+    return body as T;
+  } catch (error) {
+    if (controller?.signal.aborted) throw new Error('Curriculum options took too long to load. Please try again.');
+    throw error;
+  } finally {
+    if (timeout !== null) globalThis.clearTimeout(timeout);
+  }
 }
 
 export const feedbackApi = {
+  curriculumOptions: () => request<FeedbackCurriculumOptions>('/curriculum-options/', undefined, 15000),
   listForms: () => request<{ forms: FeedbackForm[]; summary: { totalForms: number; publishedForms: number; draftForms: number; totalResponses: number } }>('/forms/'),
   getForm: (id: number) => request<{ form: FeedbackForm }>(`/forms/${id}/`),
   createForm: (input: FeedbackFormInput) => request<{ form: FeedbackForm }>('/forms/', { method: 'POST', body: JSON.stringify(input) }),

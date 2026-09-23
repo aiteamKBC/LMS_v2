@@ -504,10 +504,20 @@ class FlashCardView(models.Model):
 # backend/sql/2026-09-20_feedback_forms.sql.
 class FeedbackForm(models.Model):
     STATUS_CHOICES = [('draft', 'Draft'), ('published', 'Published'), ('closed', 'Closed')]
+    TYPE_CHOICES = [('general', 'General'), ('post_lecture', 'Post-lecture')]
 
     title = models.CharField(max_length=255)
+    form_type = models.CharField(max_length=40, choices=TYPE_CHOICES, default='general')
     description = models.TextField(blank=True, default='')
     instructions = models.TextField(blank=True, default='')
+    programme_id = models.CharField(max_length=255, blank=True, default='')
+    programme_name = models.CharField(max_length=255, blank=True, default='')
+    cohort_id = models.CharField(max_length=255, blank=True, default='')
+    cohort_name = models.CharField(max_length=255, blank=True, default='')
+    group_id = models.CharField(max_length=255, blank=True, default='')
+    group_name = models.CharField(max_length=255, blank=True, default='')
+    module_catalogue_id = models.CharField(max_length=255, blank=True, default='')
+    module_name = models.CharField(max_length=255, blank=True, default='')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     start_date = models.DateTimeField(null=True, blank=True)
     due_date = models.DateTimeField(null=True, blank=True)

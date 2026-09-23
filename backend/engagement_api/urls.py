@@ -6,6 +6,7 @@ urlpatterns = [
     # Reusable feedback-form engine. Staff management and learner-owned routes
     # are separate so each view can enforce the narrowest role/ownership rule.
     path('feedback/csrf/', feedback.csrf_token, name='feedback-csrf'),
+    path('feedback/curriculum-options/', feedback.curriculum_scope_options, name='feedback-curriculum-options'),
     path('feedback/forms/', feedback.forms_collection, name='feedback-forms'),
     path('feedback/forms/<int:pk>/', feedback.form_detail, name='feedback-form-detail'),
     path('feedback/forms/<int:pk>/status/', feedback.form_status, name='feedback-form-status'),

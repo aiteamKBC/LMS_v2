@@ -5,8 +5,17 @@ CREATE SCHEMA IF NOT EXISTS "Feedback";
 CREATE TABLE IF NOT EXISTS "Feedback".feedback_forms (
     id bigserial PRIMARY KEY,
     title varchar(255) NOT NULL,
+    form_type varchar(40) NOT NULL DEFAULT 'general' CHECK (form_type IN ('general','post_lecture')),
     description text NOT NULL DEFAULT '',
     instructions text NOT NULL DEFAULT '',
+    programme_id varchar(255) NOT NULL DEFAULT '',
+    programme_name varchar(255) NOT NULL DEFAULT '',
+    cohort_id varchar(255) NOT NULL DEFAULT '',
+    cohort_name varchar(255) NOT NULL DEFAULT '',
+    group_id varchar(255) NOT NULL DEFAULT '',
+    group_name varchar(255) NOT NULL DEFAULT '',
+    module_catalogue_id varchar(255) NOT NULL DEFAULT '',
+    module_name varchar(255) NOT NULL DEFAULT '',
     status varchar(20) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published','closed')),
     start_date timestamptz NULL,
     due_date timestamptz NULL,
@@ -18,6 +27,33 @@ CREATE TABLE IF NOT EXISTS "Feedback".feedback_forms (
     updated_at timestamptz NOT NULL DEFAULT now(),
     published_at timestamptz NULL
 );
+
+-- Upgrade an existing Feedback schema. The IDs are intentionally not cross-
+-- schema foreign keys: curriculum records can be archived, while historical
+-- feedback forms and their display names must remain readable.
+ALTER TABLE "Feedback".feedback_forms
+  ADD COLUMN IF NOT EXISTS form_type varchar(40) NOT NULL DEFAULT 'general',
+  ADD COLUMN IF NOT EXISTS programme_id varchar(255) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS programme_name varchar(255) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS cohort_id varchar(255) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS cohort_name varchar(255) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS group_id varchar(255) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS group_name varchar(255) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS module_catalogue_id varchar(255) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS module_name varchar(255) NOT NULL DEFAULT '';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'feedback_form_type_check'
+      AND conrelid = '"Feedback".feedback_forms'::regclass
+  ) THEN
+    ALTER TABLE "Feedback".feedback_forms
+      ADD CONSTRAINT feedback_form_type_check
+      CHECK (form_type IN ('general','post_lecture'));
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS "Feedback".feedback_form_sections (
     id bigserial PRIMARY KEY,
@@ -117,3 +153,4 @@ CREATE INDEX IF NOT EXISTS feedback_questions_section_order ON "Feedback".feedba
 CREATE INDEX IF NOT EXISTS feedback_responses_form_status ON "Feedback".feedback_responses (form_id, status);
 CREATE INDEX IF NOT EXISTS feedback_assignments_target ON "Feedback".feedback_assignments (target_type, target_id);
 CREATE INDEX IF NOT EXISTS feedback_uploads_response ON "Feedback".feedback_uploads (response_id);
+CREATE INDEX IF NOT EXISTS feedback_forms_module ON "Feedback".feedback_forms (module_catalogue_id, form_type);

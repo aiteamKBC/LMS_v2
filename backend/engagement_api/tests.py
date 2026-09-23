@@ -21,6 +21,70 @@ from . import feedback, hooks, permissions, services, views
 
 
 class FeedbackValidationTests(SimpleTestCase):
+    def test_curriculum_scope_options_reads_only_the_linked_hierarchy(self):
+        rows = [
+            ('PROG-1', 'Data', 'COHORT-1', 'September', 'GROUP-1', 'Group A', 'MOD-1', 'Foundations'),
+            ('PROG-1', 'Data', 'COHORT-1', 'September', 'GROUP-1', 'Group A', 'MOD-2', 'Analytics'),
+        ]
+        cursor = mock.MagicMock()
+        cursor.__enter__.return_value = cursor
+        cursor.fetchall.return_value = rows
+        with mock.patch.object(feedback.connection, 'cursor', return_value=cursor):
+            options = feedback._curriculum_scope_options()
+
+        self.assertEqual(options['programmes'], [{'id': 'PROG-1', 'name': 'Data'}])
+        self.assertEqual(options['cohorts'], [{'id': 'COHORT-1', 'name': 'September', 'programmeId': 'PROG-1'}])
+        self.assertEqual(len(options['modules']), 2)
+        sql = cursor.execute.call_args.args[0].lower()
+        self.assertIn('from "curriculum"."modules"', sql)
+        self.assertNotIn('build_curriculum_payload', sql)
+
+    def test_post_lecture_scope_requires_a_valid_linked_hierarchy(self):
+        form = SimpleNamespace(
+            pk=None, form_type='general', programme_id='', programme_name='',
+            cohort_id='', cohort_name='', group_id='', group_name='',
+            module_catalogue_id='', module_name='',
+        )
+        options = {
+            'programmes': [{'id': 'PROG-1', 'name': 'Data'}],
+            'cohorts': [{'id': 'COHORT-1', 'name': 'September', 'programmeId': 'PROG-1'}],
+            'groups': [{'id': 'GROUP-1', 'name': 'Group A', 'programmeId': 'PROG-1', 'cohortId': 'COHORT-1'}],
+            'modules': [{'id': 'MOD-1', 'name': 'Foundations', 'programmeId': 'PROG-1', 'cohortId': 'COHORT-1', 'groupId': 'GROUP-1'}],
+        }
+        with mock.patch.object(feedback, '_curriculum_scope_options', return_value=options):
+            feedback._apply_curriculum_scope(form, {
+                'formType': 'post_lecture', 'programmeId': 'PROG-1',
+                'cohortId': 'COHORT-1', 'groupId': 'GROUP-1', 'moduleCatalogueId': 'MOD-1',
+            })
+        self.assertEqual(form.form_type, 'post_lecture')
+        self.assertEqual(form.module_catalogue_id, 'MOD-1')
+        self.assertEqual(form.module_name, 'Foundations')
+
+    def test_post_lecture_scope_rejects_a_module_from_another_group(self):
+        form = SimpleNamespace(pk=None, form_type='general')
+        options = {
+            'programmes': [{'id': 'PROG-1', 'name': 'Data'}],
+            'cohorts': [{'id': 'COHORT-1', 'name': 'September', 'programmeId': 'PROG-1'}],
+            'groups': [{'id': 'GROUP-1', 'name': 'Group A', 'programmeId': 'PROG-1', 'cohortId': 'COHORT-1'}],
+            'modules': [{'id': 'MOD-1', 'name': 'Foundations', 'programmeId': 'PROG-1', 'cohortId': 'COHORT-1', 'groupId': 'GROUP-2'}],
+        }
+        with mock.patch.object(feedback, '_curriculum_scope_options', return_value=options):
+            with self.assertRaisesMessage(ValueError, 'no longer valid'):
+                feedback._apply_curriculum_scope(form, {
+                    'formType': 'post_lecture', 'programmeId': 'PROG-1',
+                    'cohortId': 'COHORT-1', 'groupId': 'GROUP-1', 'moduleCatalogueId': 'MOD-1',
+                })
+
+    def test_unchanged_scope_payload_is_not_treated_as_a_retarget(self):
+        form = SimpleNamespace(
+            form_type='post_lecture', programme_id='PROG-1', cohort_id='COHORT-1',
+            group_id='GROUP-1', module_catalogue_id='MOD-1',
+        )
+        self.assertFalse(feedback._curriculum_scope_changed(form, {
+            'formType': 'post_lecture', 'programmeId': 'PROG-1',
+            'cohortId': 'COHORT-1', 'groupId': 'GROUP-1', 'moduleCatalogueId': 'MOD-1',
+        }))
+
     def test_feedback_csrf_endpoint_issues_a_token(self):
         response = feedback.csrf_token(RequestFactory().get('/engagement_api/feedback/csrf/'))
         self.assertEqual(response.status_code, 200)

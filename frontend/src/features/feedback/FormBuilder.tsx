@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
-import { feedbackApi, type FeedbackFormInput, type FeedbackQuestion, type FeedbackQuestionType, type FeedbackSection } from '@/api/feedback';
+import { feedbackApi, type FeedbackCurriculumOptions, type FeedbackFormInput, type FeedbackQuestion, type FeedbackQuestionType, type FeedbackSection } from '@/api/feedback';
 import { FeedbackFormHeader, FormRenderer } from './FormRenderer';
 
 const QUESTION_TYPES: { value: FeedbackQuestionType; label: string }[] = [
@@ -14,11 +14,21 @@ const CHOICE_TYPES = new Set<FeedbackQuestionType>(['single_choice', 'multiple_c
 const emptyQuestion = (): FeedbackQuestion => ({ type: 'long_text', text: '', required: false, helpText: '', config: {} });
 const emptySection = (number = 1): FeedbackSection => ({ title: `Section ${number}`, description: '', questions: [emptyQuestion()] });
 const field = 'w-full rounded-lg border border-foreground-200/70 bg-white px-3 py-2 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:bg-background-100';
+const emptyCurriculumOptions: FeedbackCurriculumOptions = { programmes: [], cohorts: [], groups: [], modules: [] };
+
+const emptyForm = (): FeedbackFormInput => ({
+  title: '', formType: 'post_lecture', programmeId: '', cohortId: '', groupId: '', moduleCatalogueId: '',
+  description: '', instructions: '', startDate: null, dueDate: null, anonymousResponses: false,
+  allowSaveContinue: true, allowEditAfterSubmission: false, sections: [emptySection()],
+});
 
 export function FormBuilder() {
   const { formId } = useParams();
   const navigate = useNavigate();
-  const [model, setModel] = useState<FeedbackFormInput>({ title: '', description: '', instructions: '', startDate: null, dueDate: null, anonymousResponses: false, allowSaveContinue: true, allowEditAfterSubmission: false, sections: [emptySection()] });
+  const [model, setModel] = useState<FeedbackFormInput>(emptyForm);
+  const [curriculumOptions, setCurriculumOptions] = useState<FeedbackCurriculumOptions>(emptyCurriculumOptions);
+  const [curriculumError, setCurriculumError] = useState('');
+  const [curriculumLoading, setCurriculumLoading] = useState(true);
   const [locked, setLocked] = useState(false);
   const [preview, setPreview] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -27,9 +37,34 @@ export function FormBuilder() {
     if (!formId) return;
     feedbackApi.getForm(Number(formId)).then(({ form }) => {
       setLocked(form.structureLocked);
-      setModel({ title: form.title, description: form.description, instructions: form.instructions, startDate: form.startDate, dueDate: form.dueDate, anonymousResponses: form.anonymousResponses, allowSaveContinue: form.allowSaveContinue, allowEditAfterSubmission: form.allowEditAfterSubmission, sections: form.sections || [] });
+      setModel({
+        title: form.title, formType: form.formType || 'general',
+        programmeId: form.curriculumScope?.programmeId || '', cohortId: form.curriculumScope?.cohortId || '',
+        groupId: form.curriculumScope?.groupId || '', moduleCatalogueId: form.curriculumScope?.moduleCatalogueId || '',
+        description: form.description, instructions: form.instructions, startDate: form.startDate, dueDate: form.dueDate,
+        anonymousResponses: form.anonymousResponses, allowSaveContinue: form.allowSaveContinue,
+        allowEditAfterSubmission: form.allowEditAfterSubmission, sections: form.sections || [],
+      });
     }).catch(error => void Swal.fire({ icon: 'error', title: 'Could not load form', text: error.message }));
   }, [formId]);
+
+  const loadCurriculumOptions = useCallback(async () => {
+    setCurriculumLoading(true);
+    setCurriculumError('');
+    try {
+      setCurriculumOptions(await feedbackApi.curriculumOptions());
+    } catch (error) {
+      setCurriculumError(error instanceof Error ? error.message : 'Could not load curriculum options.');
+    } finally {
+      setCurriculumLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadCurriculumOptions(); }, [loadCurriculumOptions]);
+
+  const cohorts = useMemo(() => curriculumOptions.cohorts.filter(item => sameId(item.programmeId, model.programmeId)), [curriculumOptions.cohorts, model.programmeId]);
+  const groups = useMemo(() => curriculumOptions.groups.filter(item => sameId(item.cohortId, model.cohortId)), [curriculumOptions.groups, model.cohortId]);
+  const modules = useMemo(() => curriculumOptions.modules.filter(item => sameId(item.groupId, model.groupId)), [curriculumOptions.modules, model.groupId]);
 
   const setSections = (sections: FeedbackSection[]) => setModel(current => ({ ...current, sections }));
   const updateSection = (index: number, patch: Partial<FeedbackSection>) => setSections(model.sections.map((section, i) => i === index ? { ...section, ...patch } : section));
@@ -58,6 +93,17 @@ export function FormBuilder() {
     {locked && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Questions and sections are locked because a learner has started this form. Form details and dates can still be updated.</div>}
     {preview ? <div className="mx-auto max-w-4xl rounded-2xl bg-background-100 p-5"><FeedbackFormHeader title={model.title || 'Untitled feedback form'} description={model.description} instructions={model.instructions} /><FormRenderer sections={model.sections} answers={{}} readOnly /></div> : <>
       <div className="grid gap-4 rounded-xl border border-foreground-200/60 bg-background-50 p-5 md:grid-cols-2">
+        <label className="text-xs font-semibold text-foreground-700 md:col-span-2">Form Type<select disabled={locked} className={`${field} mt-1`} value={model.formType} onChange={e => setModel(current => ({ ...current, formType: e.target.value as FeedbackFormInput['formType'], programmeId: '', cohortId: '', groupId: '', moduleCatalogueId: '' }))}><option value="post_lecture">Post-lecture feedback</option><option value="general">General feedback</option></select></label>
+        {model.formType === 'post_lecture' && <div className="rounded-xl border border-primary-100 bg-primary-50/40 p-4 md:col-span-2">
+          <div className="mb-3"><h2 className="text-sm font-semibold text-foreground-900">Lecture curriculum</h2><p className="mt-1 text-xs text-foreground-500">Choose the module now. Attendance-based delivery will be connected in a later step.</p></div>
+          {curriculumError && <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700"><span>{curriculumError}</span><button type="button" disabled={curriculumLoading} onClick={() => void loadCurriculumOptions()} className="shrink-0 rounded-md border border-red-300 bg-white px-3 py-1.5 font-semibold disabled:opacity-50">Retry</button></div>}
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <ScopeSelect label="Programme" value={model.programmeId} disabled={locked || curriculumLoading} options={curriculumOptions.programmes} placeholder={curriculumLoading ? 'Loading programmes...' : 'Choose programme'} onChange={programmeId => setModel(current => ({ ...current, programmeId, cohortId: '', groupId: '', moduleCatalogueId: '' }))} />
+            <ScopeSelect label="Cohort" value={model.cohortId} disabled={locked || !model.programmeId} options={cohorts} placeholder="Choose cohort" onChange={cohortId => setModel(current => ({ ...current, cohortId, groupId: '', moduleCatalogueId: '' }))} />
+            <ScopeSelect label="Group" value={model.groupId} disabled={locked || !model.cohortId} options={groups} placeholder="Choose group" onChange={groupId => setModel(current => ({ ...current, groupId, moduleCatalogueId: '' }))} />
+            <ScopeSelect label="Module" value={model.moduleCatalogueId} disabled={locked || !model.groupId} options={modules} placeholder="Choose module" onChange={moduleCatalogueId => setModel(current => ({ ...current, moduleCatalogueId }))} />
+          </div>
+        </div>}
         <label className="text-xs font-semibold text-foreground-700 md:col-span-2">Form Name<input className={`${field} mt-1`} value={model.title} onChange={e => setModel({ ...model, title: e.target.value })} /></label>
         <label className="text-xs font-semibold text-foreground-700">Description<textarea className={`${field} mt-1`} rows={3} value={model.description} onChange={e => setModel({ ...model, description: e.target.value })} /></label>
         <label className="text-xs font-semibold text-foreground-700">Instructions<textarea className={`${field} mt-1`} rows={3} value={model.instructions} onChange={e => setModel({ ...model, instructions: e.target.value })} /></label>
@@ -85,5 +131,7 @@ export function FormBuilder() {
 }
 
 function MoveButtons({ index, length, onMove, disabled }: { index: number; length: number; onMove: (direction: -1 | 1) => void; disabled: boolean }) { return <div className="flex shrink-0 gap-1"><button type="button" aria-label="Move up" disabled={disabled || index === 0} onClick={() => onMove(-1)} className="rounded border px-2 text-xs disabled:opacity-25">↑</button><button type="button" aria-label="Move down" disabled={disabled || index === length - 1} onClick={() => onMove(1)} className="rounded border px-2 text-xs disabled:opacity-25">↓</button></div>; }
+function ScopeSelect({ label, value, options, placeholder, disabled, onChange }: { label: string; value: string; options: Array<{ id: string; name: string }>; placeholder: string; disabled: boolean; onChange: (value: string) => void }) { return <label className="text-xs font-semibold text-foreground-700">{label}<select aria-label={label} required className={`${field} mt-1`} value={value} disabled={disabled} onChange={e => onChange(e.target.value)}><option value="">{placeholder}</option>{options.map(option => <option key={option.id} value={option.id}>{option.name || option.id}</option>)}</select></label>; }
 function OptionEditor({ options, onChange, disabled }: { options: string[]; onChange: (options: string[]) => void; disabled: boolean }) { return <div className="mt-3 space-y-2">{options.map((option, index) => <div key={index} className="flex gap-2"><input disabled={disabled} className={field} value={option} onChange={e => onChange(options.map((item, i) => i === index ? e.target.value : item))} /><MoveButtons disabled={disabled} index={index} length={options.length} onMove={direction => { const next = [...options]; const target = index + direction; [next[index], next[target]] = [next[target], next[index]]; onChange(next); }} /><button type="button" disabled={disabled || options.length <= 2} onClick={() => onChange(options.filter((_, i) => i !== index))} className="px-2 text-xs text-red-600 disabled:opacity-30">Remove</button></div>)}<button type="button" disabled={disabled} onClick={() => onChange([...options, `Option ${options.length + 1}`])} className="text-xs font-semibold text-primary-600">+ Add Option</button></div>; }
+function sameId(left: string, right: string) { return left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase(); }
 function toLocal(value: string | null) { if (!value) return ''; const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }

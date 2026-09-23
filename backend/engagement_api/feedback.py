@@ -18,7 +18,7 @@ from azure.storage.blob import ContentSettings
 from django.conf import settings
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, connection, transaction
 from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
@@ -42,8 +42,13 @@ QUESTION_TYPES = {
     'name', 'email', 'photo_upload',
 }
 CHOICE_TYPES = {'single_choice', 'multiple_choice', 'dropdown', 'likert'}
+FORM_TYPES = {'general', 'post_lecture'}
 EMPTY_ANSWERS = (None, '', [])
 logger = logging.getLogger(__name__)
+
+
+class CurriculumScopeUnavailable(RuntimeError):
+    pass
 
 
 def csrf_token(request):
@@ -96,8 +101,15 @@ def form_dict(form, *, include_structure=False):
     responses = list(form.responses.all())
     completed = sum(r.status == 'completed' for r in responses)
     data = {
-        'id': form.id, 'title': form.title, 'description': form.description,
+        'id': form.id, 'title': form.title, 'formType': form.form_type,
+        'description': form.description,
         'instructions': form.instructions, 'status': form.status,
+        'curriculumScope': {
+            'programmeId': form.programme_id, 'programmeName': form.programme_name,
+            'cohortId': form.cohort_id, 'cohortName': form.cohort_name,
+            'groupId': form.group_id, 'groupName': form.group_name,
+            'moduleCatalogueId': form.module_catalogue_id, 'moduleName': form.module_name,
+        },
         'startDate': _iso(form.start_date), 'dueDate': _iso(form.due_date),
         'anonymousResponses': form.anonymous_responses,
         'allowSaveContinue': form.allow_save_continue,
@@ -116,6 +128,145 @@ def _forms_queryset():
     return FeedbackForm.objects.prefetch_related(
         'assignments', 'responses', 'sections__questions',
     ).order_by('-updated_at')
+
+
+def _clean(value):
+    return str(value or '').strip()
+
+
+def _same_identifier(left, right):
+    return _clean(left).casefold() == _clean(right).casefold()
+
+
+def _curriculum_scope_changed(form, payload):
+    fields = {
+        'formType': form.form_type,
+        'programmeId': form.programme_id,
+        'cohortId': form.cohort_id,
+        'groupId': form.group_id,
+        'moduleCatalogueId': form.module_catalogue_id,
+    }
+    return any(key in payload and not _same_identifier(payload[key], current) for key, current in fields.items())
+
+
+def _curriculum_scope_options():
+    """Return the active curriculum hierarchy without building the full bundle.
+
+    The curriculum overview also calculates reporting, learner, KSB and session
+    data. Feedback only needs four identifiers and labels, so using that payload
+    here made this small dropdown request wait for unrelated curriculum work.
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute('''
+                select
+                    p.programme_id,
+                    p.name,
+                    c.cohort_id,
+                    c.cohort_name,
+                    g.group_id,
+                    g.group_name,
+                    m.module_catalogue_id,
+                    m.title
+                from "curriculum"."modules" m
+                inner join "curriculum"."groups" g
+                    on g.group_id = m.group_id
+                inner join "curriculum"."cohorts" c
+                    on c.cohort_id = g.cohort_id
+                inner join "curriculum"."programmes" p
+                    on p.programme_id = c.programme_id
+                where p.deleted_at is null
+                  and c.deleted_at is null
+                  and g.deleted_at is null
+                  and m.deleted_at is null
+                  and coalesce(p.is_archived, false) = false
+                  and coalesce(g.is_programme_deleted, false) = false
+                  and coalesce(m.is_programme_deleted, false) = false
+                  and lower(coalesce(p.status, 'active')) <> 'archived'
+                  and lower(coalesce(c.status, 'active')) <> 'archived'
+                order by p.name, c.cohort_name, g.group_name, m.title
+            ''')
+            rows = cursor.fetchall()
+    except DatabaseError as exc:
+        raise CurriculumScopeUnavailable from exc
+
+    options = {'programmes': [], 'cohorts': [], 'groups': [], 'modules': []}
+    seen = {key: set() for key in options}
+    for programme_id, programme_name, cohort_id, cohort_name, group_id, group_name, module_id, module_name in rows:
+        programme_id, cohort_id = _clean(programme_id), _clean(cohort_id)
+        group_id, module_id = _clean(group_id), _clean(module_id)
+        if not all((programme_id, cohort_id, group_id, module_id)):
+            continue
+        keys = {
+            'programmes': programme_id.casefold(),
+            'cohorts': cohort_id.casefold(),
+            'groups': group_id.casefold(),
+            'modules': (group_id.casefold(), module_id.casefold()),
+        }
+        values = {
+            'programmes': {'id': programme_id, 'name': _clean(programme_name)},
+            'cohorts': {'id': cohort_id, 'name': _clean(cohort_name), 'programmeId': programme_id},
+            'groups': {
+                'id': group_id, 'name': _clean(group_name),
+                'programmeId': programme_id, 'cohortId': cohort_id,
+            },
+            'modules': {
+                'id': module_id, 'name': _clean(module_name), 'programmeId': programme_id,
+                'cohortId': cohort_id, 'groupId': group_id,
+            },
+        }
+        for kind in options:
+            if keys[kind] not in seen[kind]:
+                seen[kind].add(keys[kind])
+                options[kind].append(values[kind])
+    return options
+
+
+def _apply_curriculum_scope(form, payload):
+    requested_type = _clean(payload.get('formType', form.form_type or 'general'))
+    if requested_type not in FORM_TYPES:
+        raise ValueError('Unsupported feedback form type.')
+    form.form_type = requested_type
+    if requested_type == 'general':
+        for field in (
+            'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
+            'group_id', 'group_name', 'module_catalogue_id', 'module_name',
+        ):
+            setattr(form, field, '')
+        return
+
+    scope_changed = form.pk is None or _curriculum_scope_changed(form, payload)
+    if not scope_changed:
+        return
+    selected = {
+        'programmeId': _clean(payload.get('programmeId')),
+        'cohortId': _clean(payload.get('cohortId')),
+        'groupId': _clean(payload.get('groupId')),
+        'moduleCatalogueId': _clean(payload.get('moduleCatalogueId')),
+    }
+    if not all(selected.values()):
+        raise ValueError('Choose a programme, cohort, group, and module for post-lecture feedback.')
+    options = _curriculum_scope_options()
+    programme = next((item for item in options['programmes'] if _same_identifier(item['id'], selected['programmeId'])), None)
+    cohort = next((item for item in options['cohorts'] if _same_identifier(item['id'], selected['cohortId']) and _same_identifier(item['programmeId'], selected['programmeId'])), None)
+    group = next((item for item in options['groups'] if _same_identifier(item['id'], selected['groupId']) and _same_identifier(item['cohortId'], selected['cohortId'])), None)
+    module = next((item for item in options['modules'] if _same_identifier(item['id'], selected['moduleCatalogueId']) and _same_identifier(item['groupId'], selected['groupId'])), None)
+    if not all((programme, cohort, group, module)):
+        raise ValueError('The selected curriculum hierarchy is no longer valid. Refresh the options and try again.')
+    form.programme_id, form.programme_name = programme['id'], programme['name']
+    form.cohort_id, form.cohort_name = cohort['id'], cohort['name']
+    form.group_id, form.group_name = group['id'], group['name']
+    form.module_catalogue_id, form.module_name = module['id'], module['name']
+
+
+@require_staff
+def curriculum_scope_options(request):
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    try:
+        return JsonResponse(_curriculum_scope_options())
+    except CurriculumScopeUnavailable:
+        return json_error('Curriculum options are temporarily unavailable.', status=503)
 
 
 def _validated_sections(raw_sections):
@@ -186,6 +337,7 @@ def _apply_metadata(form, payload):
     form.title = title
     form.description = str(payload.get('description', form.description) or '').strip()
     form.instructions = str(payload.get('instructions', form.instructions) or '').strip()
+    _apply_curriculum_scope(form, payload)
     if 'startDate' in payload:
         form.start_date = _dt(payload.get('startDate'))
     if 'dueDate' in payload:
@@ -228,6 +380,8 @@ def forms_collection(request):
         return JsonResponse({'form': form_dict(form, include_structure=True)}, status=201)
     except ValueError as exc:
         return json_error(str(exc))
+    except CurriculumScopeUnavailable:
+        return json_error('Curriculum options are temporarily unavailable.', status=503)
 
 
 @require_staff
@@ -250,6 +404,8 @@ def form_detail(request, pk):
         return json_error('Invalid JSON body.')
     if 'sections' in payload and form.responses.exists():
         return json_error('Form structure is locked because a learner has started responding.', status=409)
+    if _curriculum_scope_changed(form, payload) and form.responses.exists():
+        return json_error('The form type and curriculum scope are locked because a learner has started responding.', status=409)
     try:
         with transaction.atomic():
             _apply_metadata(form, payload)
@@ -260,6 +416,8 @@ def form_detail(request, pk):
         return JsonResponse({'form': form_dict(form, include_structure=True)})
     except ValueError as exc:
         return json_error(str(exc))
+    except CurriculumScopeUnavailable:
+        return json_error('Curriculum options are temporarily unavailable.', status=503)
 
 
 @require_staff
@@ -295,6 +453,9 @@ def form_duplicate(request, pk):
         return json_error('Feedback form not found.', status=404)
     payload = {
         'title': f'{source.title} (Copy)', 'description': source.description,
+        'formType': source.form_type,
+        'programmeId': source.programme_id, 'cohortId': source.cohort_id,
+        'groupId': source.group_id, 'moduleCatalogueId': source.module_catalogue_id,
         'instructions': source.instructions, 'anonymousResponses': source.anonymous_responses,
         'allowSaveContinue': source.allow_save_continue,
         'allowEditAfterSubmission': source.allow_edit_after_submission,
@@ -306,11 +467,15 @@ def form_duplicate(request, pk):
             ]} for s in source.sections.all()
         ],
     }
-    with transaction.atomic():
-        duplicate = FeedbackForm(created_by=actor_name(request) or 'Staff')
-        _apply_metadata(duplicate, payload)
-        duplicate.save()
-        _replace_structure(duplicate, payload['sections'])
+    try:
+        with transaction.atomic():
+            duplicate = FeedbackForm(created_by=actor_name(request) or 'Staff')
+            _apply_metadata(duplicate, payload)
+            duplicate.save()
+            _replace_structure(duplicate, payload['sections'])
+    except (ValueError, CurriculumScopeUnavailable) as exc:
+        message = 'Curriculum options are temporarily unavailable.' if isinstance(exc, CurriculumScopeUnavailable) else str(exc)
+        return json_error(message, status=503 if isinstance(exc, CurriculumScopeUnavailable) else 400)
     duplicate = _forms_queryset().get(pk=duplicate.pk)
     return JsonResponse({'form': form_dict(duplicate, include_structure=True)}, status=201)
 
