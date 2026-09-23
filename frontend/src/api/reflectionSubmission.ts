@@ -104,10 +104,12 @@ export async function loadLearningReflectionSubmission(input: {
   learnerId: string;
   activityType: string;
   activityId: string;
+  attempt?: string;
 }): Promise<StoredLearningReflectionSubmission | null> {
   const params = new URLSearchParams(input);
   const data = await readLearnerJson<{ submission?: StoredLearningReflectionSubmission | null }>(
     `/learner_api/reflection/submissions/?${params.toString()}`,
+    input.attempt === undefined ? undefined : { revalidate: true },
   );
   return data.submission || null;
 }

@@ -43,6 +43,11 @@ describe('activeWorkspace', () => {
     expect(activeWorkspace('/workspace/admin')?.slug).toBe('admin');
   });
 
+  it('matches the Employer workspace nested under the Super Admin route', () => {
+    // '/workspace/admin/employers' also starts with '/workspace/admin'.
+    expect(activeWorkspace('/workspace/admin/employers')?.slug).toBe('employer');
+  });
+
   it('returns null outside the listed sections', () => {
     // The switcher shows these as a neutral label rather than guessing.
     expect(activeWorkspace('/workspace/leadership')).toBeNull();
@@ -55,7 +60,7 @@ describe('activeWorkspace', () => {
 describe('the list itself', () => {
   it('is the curated set, Super Admin first', () => {
     expect(PORTAL_WORKSPACES.map((w) => w.slug)).toEqual([
-      'admin', 'coach', 'enrolment', 'engagement', 'tutor', 'curriculum', 'audit', 'learner',
+      'admin', 'coach', 'enrolment', 'engagement', 'tutor', 'curriculum', 'employer', 'audit', 'learner',
     ]);
   });
 
@@ -91,6 +96,13 @@ describe('the list itself', () => {
     const admin = PORTAL_WORKSPACES.find((w) => w.slug === 'admin');
     expect(admin).toBeDefined();
     expect(admin?.demoEmail).toBeNull();
+  });
+
+  it('keeps the employer directory off the public launcher', () => {
+    // It lists every employer contact, so it is a super-admin page, not a demo.
+    const employer = PORTAL_WORKSPACES.find((w) => w.slug === 'employer');
+    expect(employer).toBeDefined();
+    expect(employer?.demoEmail).toBeNull();
   });
 });
 

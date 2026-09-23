@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo, useCallback } from 'react';
+import { Fragment, useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -18,6 +18,8 @@ import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import { getOtjhGapStatus } from '@/pages/coach/caseload/lib/format';
 import styles from './dashboard.module.css';
 import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
+import { CaseloadLoading } from '@/pages/coach/caseload/components/CaseloadStates';
+import caseloadStyles from '@/pages/coach/caseload/caseload.module.css';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -1007,8 +1009,8 @@ function formatUpcomingRangeLabel() {
   return formatDateRangeLabel(start, end);
 }
 
-function LoadingBlock({ className = '' }: { className?: string }) {
-  return <div aria-hidden="true" className={`animate-pulse rounded-lg bg-background-100/90 ${className}`}></div>;
+function LoadingBlock({ className = '', style }: { className?: string; style?: CSSProperties }) {
+  return <div aria-hidden="true" className={`animate-pulse rounded-lg bg-background-100/90 ${className}`} style={style}></div>;
 }
 
 function AttentionSkeleton({ rows = 4 }: { rows?: number }) {
@@ -1062,6 +1064,101 @@ function ScheduleSkeleton() {
       ))}
     </>
   );
+}
+
+// The loading skeletons reuse the loaded dashboard's own layout classes, so
+// every card, table and chart keeps its real size and responsive breakpoints
+// and nothing shifts when the data arrives.
+function MetricCardSkeleton() {
+  return <div className={styles.metric} data-skeleton="metric">
+    <LoadingBlock className={styles.metricSkeletonIcon} />
+    <LoadingBlock className={styles.metricSkeletonLabel} />
+    <LoadingBlock className={styles.metricSkeletonValue} />
+    <LoadingBlock className={styles.metricSkeletonNote} />
+  </div>;
+}
+
+function LearnerTableSkeleton() {
+  return <div className={styles.fullWidthCaseload}>
+    <section className={`${caseloadStyles.page} ${caseloadStyles.embedded}`}>
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div className={caseloadStyles.title}><h1>All Learners</h1></div>
+        <LoadingBlock className="h-9 w-[104px] rounded-md" />
+      </header>
+      <section className={caseloadStyles.panel}>
+        <CaseloadLoading rows={7} />
+      </section>
+    </section>
+  </div>;
+}
+
+function MeetingsSkeleton() {
+  return <Panel className={styles.panel}>
+    <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
+      description={`Your scheduled meetings and live sessions · next ${COACHING_CALENDAR_WINDOW_DAYS} days (${formatUpcomingRangeLabel()})`}
+      actions={<>
+        <LoadingBlock className="h-11 w-11" />
+        <LoadingBlock className="h-11 w-[118px]" />
+        <LoadingBlock className="h-11 w-[172px]" />
+      </>} />
+    <div className={styles.tableScroll}>
+      <table className={`${styles.table} ${styles.meetingsTable}`}>
+        <tbody>
+          <tr><th colSpan={9}><LoadingBlock className="h-3.5 w-32" /></th></tr>
+          {Array.from({ length: 3 }, (_, index) => <tr key={index} data-skeleton="meeting">
+            <td><LoadingBlock className={styles.meetingDateSkeleton} /></td>
+            <td><LoadingBlock className="h-3.5 w-16" /></td>
+            <td><div className={styles.identity}>
+              <LoadingBlock className="h-9 w-9 shrink-0 rounded-full" />
+              <span className="flex-1"><LoadingBlock className="h-3.5 w-36" /><LoadingBlock className="mt-2 h-3 w-20" /></span>
+            </div></td>
+            <td><div className={styles.meetingType}><LoadingBlock className="h-[30px] w-[30px] shrink-0" /><LoadingBlock className="h-3.5 w-28" /></div></td>
+            <td><LoadingBlock className="h-6 w-20 rounded-full" /></td>
+            {Array.from({ length: 4 }, (_, action) => <td key={action}><LoadingBlock className="h-11 w-28" /></td>)}
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
+  </Panel>;
+}
+
+const MONTHLY_BAR_SKELETON_HEIGHTS = ['46%', '64%', '38%', '78%', '52%', '30%'];
+
+function ChartSkeleton({ variant }: { variant: 'distribution' | 'monthly' }) {
+  if (variant === 'distribution') {
+    return <Panel className={styles.panel}>
+      <SectionHeader title="Risk Distribution" icon="ri-bar-chart-line" actions={<span className={styles.chartScope}>By OTJH status</span>} />
+      <div className={styles.distribution}>
+        <div className={`${styles.donut} ${styles.donutSkeleton} animate-pulse`}><div className={styles.donutCenter} /></div>
+        <ul className={styles.legend}>
+          {Array.from({ length: 4 }, (_, index) => <li key={index}>
+            <LoadingBlock className={`${styles.legendDot} rounded-full`} />
+            <LoadingBlock className="h-3.5 w-24" />
+            <LoadingBlock className="h-3.5 w-12" />
+          </li>)}
+        </ul>
+      </div>
+    </Panel>;
+  }
+  return <Panel className={styles.panel}>
+    <SectionHeader title="Monthly Learners at Risk" icon="ri-bar-chart-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
+    <div className={styles.monthlyRisk}>
+      <div className={styles.monthlyRiskChart}>
+        <ol className={styles.monthlyBars}>
+          {MONTHLY_BAR_SKELETON_HEIGHTS.map((height, index) => <li key={index}>
+            <LoadingBlock className="h-3 w-4" />
+            <span className={styles.monthlyBarTrack}><LoadingBlock className={styles.monthlyBarSkeleton} style={{ height }} /></span>
+            <LoadingBlock className="h-2.5 w-6" />
+          </li>)}
+        </ol>
+      </div>
+      <div className={styles.currentRisk}>
+        <LoadingBlock className="h-8 w-10" />
+        <LoadingBlock className="h-3.5 w-16" />
+        <LoadingBlock className="mt-1 h-3 w-20" />
+      </div>
+    </div>
+  </Panel>;
 }
 
 export default function CoachDashboard() {
@@ -1544,27 +1641,14 @@ export default function CoachDashboard() {
 
 function DashboardLoadingSkeleton() {
   return (
-    <div aria-label="Loading coach dashboard" role="status" className="space-y-5">
+    <div aria-label="Loading coach dashboard" role="status" className="min-w-0">
       <span className="sr-only">Loading coach dashboard data</span>
-      <section className={styles.metrics} aria-hidden="true">
-        {Array.from({ length: 6 }, (_, index) => (
-          <LoadingBlock key={`metric-loading-${index}`} className="h-32" />
-        ))}
-      </section>
-      <Panel className={styles.panel}>
-        <LoadingBlock className="h-8 w-48" />
-        <div className="mt-5 space-y-3">
-          {Array.from({ length: 5 }, (_, index) => <LoadingBlock key={`learner-loading-${index}`} className="h-16 w-full" />)}
-        </div>
-      </Panel>
-      <Panel className={styles.panel}>
-        <LoadingBlock className="h-8 w-56" />
-        <div className="mt-5"><ScheduleSkeleton /></div>
-      </Panel>
-      <section className={styles.charts} aria-hidden="true">
-        <Panel className={styles.panel}><LoadingBlock className="h-64 w-full" /></Panel>
-        <Panel className={styles.panel}><LoadingBlock className="h-64 w-full" /></Panel>
-      </section>
+      <div className={styles.loadingDashboard} aria-hidden="true">
+        <section className={styles.metrics}>{Array.from({ length: 6 }, (_, index) => <MetricCardSkeleton key={index} />)}</section>
+        <LearnerTableSkeleton />
+        <MeetingsSkeleton />
+        <section className={styles.charts}><ChartSkeleton variant="distribution" /><ChartSkeleton variant="monthly" /></section>
+      </div>
     </div>
   );
 }

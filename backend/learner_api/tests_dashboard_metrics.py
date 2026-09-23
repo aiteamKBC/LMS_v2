@@ -100,6 +100,21 @@ class DashboardMetricsTests(SimpleTestCase):
             self.assertEqual(read_planned_hours(SimpleNamespace(pk=125, aptem_id=92), 'commercial', MagicMock()), 867)
             self.assertEqual(imported.call_args.args[1], 92)
 
+    def test_preloaded_contract_preserves_total_without_single_learner_query(self):
+        contract = {'training_plan_planned_hours': 867}
+        with patch('learner_api.dashboard_metrics.find_contract',
+                   side_effect=AssertionError('contract must already be loaded')):
+            self.assertEqual(
+                read_planned_hours(
+                    SimpleNamespace(pk=125, aptem_id=92),
+                    'commercial',
+                    MagicMock(),
+                    None,
+                    contract,
+                ),
+                867,
+            )
+
     def test_new_learner_never_reads_imported_contract(self):
         with patch('learner_api.dashboard_metrics.TrainingPlanDocument.objects') as manager, \
              patch('learner_api.dashboard_metrics.find_contract') as imported:

@@ -104,6 +104,21 @@ describe('LMS activity recorder', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('does not send authenticated audit requests from public coach booking pages', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401 });
+    recordPageView('/coach-booking/example-coach?session=support#booking');
+    recordAction('tab', { tab: 'Support sessions' });
+    await vi.advanceTimersByTimeAsync(5000);
+    flushActivity();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('continues recording coach directory administration', async () => {
+    recordPageView('/admin/coach_directory');
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(sentEvents(fetchMock).map(event => event.path)).toEqual(['/admin/coach_directory']);
+  });
+
   it('records nothing inside the learner content runner', async () => {
     // One row per quiz question or video would swamp the table and say less
     // than the learner's own progress records already say.
