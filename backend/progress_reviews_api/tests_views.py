@@ -162,17 +162,17 @@ class EndpointTests(SimpleTestCase):
     @patch("progress_reviews_api.views._generate_for_learner")
     def test_generate_endpoint_returns_201_on_success(self, mock_generate):
         mock_generate.return_value = {"reviewId": "run-1", "generationStatus": "completed"}
-        response = self.client.post("/api/progress-reviews/42/generate/", data={}, content_type="application/json")
+        response = self.client.post("/progress_reviews_api/42/generate/", data={}, content_type="application/json")
         self.assertEqual(response.status_code, 201)
         self.assertEqual(json.loads(response.content)["reviewId"], "run-1")
 
     @patch("progress_reviews_api.views._generate_for_learner", side_effect=GenerationError("Not active.", 409))
     def test_generate_endpoint_surfaces_generation_error_status(self, mock_generate):
-        response = self.client.post("/api/progress-reviews/42/generate/", data={}, content_type="application/json")
+        response = self.client.post("/progress_reviews_api/42/generate/", data={}, content_type="application/json")
         self.assertEqual(response.status_code, 409)
 
     def test_generate_endpoint_rejects_invalid_json(self):
-        response = self.client.post("/api/progress-reviews/42/generate/", data=b"not json", content_type="application/json")
+        response = self.client.post("/progress_reviews_api/42/generate/", data=b"not json", content_type="application/json")
         self.assertEqual(response.status_code, 400)
 
     @patch("progress_reviews_api.views.storage")
@@ -185,7 +185,7 @@ class EndpointTests(SimpleTestCase):
         mock_storage.storage_configured.return_value = True
         mock_storage.download_sas_for.return_value = "https://example.blob.core.windows.net/deck.pptx?sig=..."
 
-        response = self.client.get("/api/progress-reviews/run-1/download/")
+        response = self.client.get("/progress_reviews_api/run-1/download/")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("url", json.loads(response.content))
@@ -193,17 +193,17 @@ class EndpointTests(SimpleTestCase):
     @patch("progress_reviews_api.views.runs")
     def test_download_endpoint_404s_for_an_unknown_run(self, mock_runs):
         mock_runs.get_run.return_value = None
-        response = self.client.get("/api/progress-reviews/does-not-exist/download/")
+        response = self.client.get("/progress_reviews_api/does-not-exist/download/")
         self.assertEqual(response.status_code, 404)
 
     def test_latest_run_endpoint_requires_a_review_date(self):
-        response = self.client.get("/api/progress-reviews/42/runs/latest/")
+        response = self.client.get("/progress_reviews_api/42/runs/latest/")
         self.assertEqual(response.status_code, 400)
 
     @patch("progress_reviews_api.views.runs")
     def test_latest_run_endpoint_reports_no_existing_deck(self, mock_runs):
         mock_runs.get_latest_run_for_period.return_value = None
-        response = self.client.get("/api/progress-reviews/42/runs/latest/?review_date=2026-10-26")
+        response = self.client.get("/progress_reviews_api/42/runs/latest/?review_date=2026-10-26")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content), {"exists": False})
         mock_runs.get_latest_run_for_period.assert_called_once_with(42, date(2026, 10, 26))
@@ -214,7 +214,7 @@ class EndpointTests(SimpleTestCase):
             "id": "run-1", "generation_status": "completed",
             "generated_at": datetime(2026, 10, 26, 9, 0, tzinfo=timezone.utc), "created_at": None,
         }
-        response = self.client.get("/api/progress-reviews/42/runs/latest/?review_date=2026-10-26")
+        response = self.client.get("/progress_reviews_api/42/runs/latest/?review_date=2026-10-26")
         body = json.loads(response.content)
         self.assertEqual(body["exists"], True)
         self.assertEqual(body["reviewId"], "run-1")
@@ -225,7 +225,7 @@ class EndpointTests(SimpleTestCase):
         """Regression guard: a learner's second review must never show as
         already generated just because their first review's deck exists."""
         mock_runs.get_latest_run_for_period.return_value = None
-        self.client.get("/api/progress-reviews/42/runs/latest/?review_date=2027-01-18")
+        self.client.get("/progress_reviews_api/42/runs/latest/?review_date=2027-01-18")
         mock_runs.get_latest_run_for_period.assert_called_once_with(42, date(2027, 1, 18))
 
     @patch("progress_reviews_api.views._generate_for_learner")
@@ -237,7 +237,7 @@ class EndpointTests(SimpleTestCase):
 
         mock_generate.side_effect = side_effect
         response = self.client.post(
-            "/api/progress-reviews/bulk-generate/",
+            "/progress_reviews_api/bulk-generate/",
             data=json.dumps({"learner_ids": [1, 2, 3]}),
             content_type="application/json",
         )

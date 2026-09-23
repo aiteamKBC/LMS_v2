@@ -112,6 +112,7 @@ const EmployerSupportRequests = lazyRoute(() => import("@/pages/employer/support
 const EmployerWorkplaceConfirmations = lazyRoute(() => import("@/pages/employer/workplace-confirm/page"));
 const EngagementClubsPage = lazyRoute(() => import("../pages/engagement/clubs/page"));
 const EngagementDashboard = lazyRoute(() => import("../pages/workspace/engagement/page"));
+const EngagementFeedbacksPage = lazyRoute(() => import("../pages/engagement/feedbacks/page"));
 const EngagementReportsPage = lazyRoute(() => import("../pages/engagement/reports/page"));
 const EventDetailPage = lazyRoute(() => import("../pages/learner/clubs/events/detail/page"));
 const EventsPage = lazyRoute(() => import("../pages/engagement/events/page"));
@@ -1246,6 +1247,10 @@ const routes: RouteObject[] = [
     element: <RecognitionPage />,
   },
   
+  {
+    path: "/engagement/feedbacks",
+    element: <EngagementFeedbacksPage />,
+  },
   {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,

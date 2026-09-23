@@ -341,7 +341,7 @@ tests that create tables or fixtures require an approved isolated test runner.
 | `/coach_api/` | Coaching, bookings, reviews, and interventions |
 | `/curriculum_api/` | Programmes, modules, sessions, KSBs, and Teams management |
 | `/enrolment_api/` | Enrolment, onboarding, agreements, and documents |
-| `/api/progress-reviews/` | Progress-review workflows and supporting records |
+| `/progress_reviews_api/` | Progress-review workflows and supporting records |
 | `/quiz_api/` | Quiz configuration, delivery, attempts, and results |
 | `/engagement_api/` | Engagement, rewards, claims, and notifications |
 | `/audit_api/` | Hours, evidence, reconciliation, and reports |

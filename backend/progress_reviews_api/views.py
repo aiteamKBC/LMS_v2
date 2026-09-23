@@ -1,11 +1,11 @@
 """HTTP endpoints for Progress Review PPTX generation.
 
-    GET  /api/progress-reviews/learners/active
-    GET  /api/progress-reviews/<int:learner_id>/periods
-    GET  /api/progress-reviews/<int:learner_id>/pack?review_date=YYYY-MM-DD
-    POST /api/progress-reviews/<int:learner_id>/generate
-    GET  /api/progress-reviews/<str:review_id>/download
-    POST /api/progress-reviews/bulk-generate
+    GET  /progress_reviews_api/learners/active
+    GET  /progress_reviews_api/<int:learner_id>/periods
+    GET  /progress_reviews_api/<int:learner_id>/pack?review_date=YYYY-MM-DD
+    POST /progress_reviews_api/<int:learner_id>/generate
+    GET  /progress_reviews_api/<str:review_id>/download
+    POST /progress_reviews_api/bulk-generate
 
 This is a coach/admin workspace tool: generate/bulk-generate/download are
 staff-only (login.permissions.staff_only), the same boundary the rest of the
@@ -195,7 +195,7 @@ def _generate_for_learner(learner_id: int, *, review_date=None, generated_by="sy
         "reviewPeriodEnd": period.review_period_end.isoformat(),
         "generationStatus": "completed",
         "sourceWarnings": pack["source_warnings"],
-        "downloadUrl": f"/api/progress-reviews/{run_id}/download/",
+        "downloadUrl": f"/progress_reviews_api/{run_id}/download/",
     }
 
 

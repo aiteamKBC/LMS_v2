@@ -50,17 +50,24 @@ class MeetingSummaryTemplateValidationTests(SimpleTestCase):
         ])
         self.assertEqual(
             errors["sections"],
-            "A Monthly Coaching Meeting can define only one Meeting Summary field.",
+            "A Review can define only one Meeting Summary field.",
         )
 
-    def test_marker_is_rejected_on_progress_review(self):
+    def test_marker_is_allowed_on_progress_review(self):
         _cleaned, errors = self.validate(
             [text_field("REVF-1", semantic_key=reviews.MEETING_SUMMARY_SEMANTIC_KEY)],
             review_type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
         )
+        self.assertNotIn("sections", errors)
+
+    def test_marker_is_rejected_on_other_review_types(self):
+        _cleaned, errors = self.validate(
+            [text_field("REVF-1", semantic_key=reviews.MEETING_SUMMARY_SEMANTIC_KEY)],
+            review_type_code="gateway_review",
+        )
         self.assertEqual(
             errors["sections"],
-            "Only a Monthly Coaching Meeting may define a Meeting Summary field.",
+            "Only a Monthly Coaching Meeting or Progress Review may define a Meeting Summary field.",
         )
 
     def test_a_summary_display_label_does_not_create_a_semantic_mapping(self):

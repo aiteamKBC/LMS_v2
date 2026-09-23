@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   fetchState: vi.fn(),
   fetchSlots: vi.fn(),
   book: vi.fn(),
-  reschedule: vi.fn(),
   account: { role: 'learner', subjectId: 7, learnerType: 'commercial' } as Record<string, unknown> | null,
   logout: vi.fn(),
 }));
@@ -20,7 +19,6 @@ vi.mock('@/api/learnerCalendar', () => ({
   fetchLearnerFirstSession: mocks.fetchState,
   fetchFirstSessionSlots: mocks.fetchSlots,
   bookLearnerCalendarSession: mocks.book,
-  rescheduleLearnerCalendarSession: mocks.reschedule,
   ukOffsetForDate: () => -60,
 }));
 vi.mock('./RouteLoadingSkeleton', () => ({ RouteLoadingSkeleton: () => <p>Loading…</p> }));
@@ -80,6 +78,17 @@ describe('FirstSessionGate', () => {
     // They can still join the meeting they are waiting for.
     expect(screen.getByRole('link', { name: /Join the Teams meeting/ })).toBeTruthy();
     expect(screen.queryByText('My programme')).toBeNull();
+  });
+
+  it('does not offer to move the session', async () => {
+    mocks.fetchState.mockResolvedValue(state({
+      booked: true, access: 'waiting', startsOn: '2026-10-05',
+      event: { scheduledTime: '10:00:00', meetingLink: 'https://teams.example/join' },
+    }));
+    view();
+
+    await screen.findByText(/Your programme starts on/);
+    expect(screen.queryByRole('button', { name: /Reschedule/ })).toBeNull();
   });
 
   it('lets the learner through once the session day has come', async () => {
@@ -244,95 +253,5 @@ describe('FirstSessionGate', () => {
     fireEvent.change(screen.getByLabelText(/^Date/), { target: { value: '2026-10-05' } });
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not check the coach calendar.');
-  });
-});
-
-describe('rescheduling from the learner page', () => {
-  const waiting = () => state({
-    booked: true, access: 'waiting', startsOn: '2026-09-22',
-    event: {
-      eventKey: 'first-session:7:1:2026-09-22',
-      scheduledTime: '10:00:00',
-      durationMinutes: 60,
-      meetingLink: 'https://teams.example/join',
-    },
-  });
-
-  it('offers the learner a way to move their own session', async () => {
-    mocks.fetchState.mockResolvedValue(waiting());
-    view();
-
-    expect(await screen.findByRole('button', { name: /Reschedule/ })).toBeTruthy();
-  });
-
-  it('moves the existing meeting rather than booking a second one', async () => {
-    mocks.fetchState.mockResolvedValue(waiting());
-    mocks.reschedule.mockResolvedValue({ event: {}, warning: '' });
-    view();
-
-    fireEvent.click(await screen.findByRole('button', { name: /Reschedule/ }));
-    fireEvent.change(screen.getByLabelText(/^Date/), { target: { value: '2026-09-24' } });
-    fireEvent.click(await screen.findByRole('button', { name: '2:00 PM' }));
-    fireEvent.click(screen.getByRole('button', { name: /Move my session/ }));
-
-    await waitFor(() => expect(mocks.reschedule).toHaveBeenCalledWith('commercial', '7', expect.objectContaining({
-      eventKey: 'first-session:7:1:2026-09-22',
-      scheduledDate: '2026-09-24',
-      scheduledTime: '14:00',
-      durationMinutes: 60,
-    })));
-    // Never a second booking: that would leave two meetings and two invites.
-    expect(mocks.book).not.toHaveBeenCalled();
-    // Access is re-read, because moving the session moves the start date.
-    await waitFor(() => expect(mocks.fetchState).toHaveBeenCalledTimes(2));
-  });
-
-  it('will not submit until an hour has actually been picked', async () => {
-    mocks.fetchState.mockResolvedValue(waiting());
-    view();
-
-    fireEvent.click(await screen.findByRole('button', { name: /Reschedule/ }));
-
-    // The date is prefilled from the booking, but the hour is not: the times
-    // offered are the ones free now, so the learner chooses from those.
-    expect(screen.getByRole('button', { name: /Move my session/ })).toBeDisabled();
-    await screen.findByRole('button', { name: '9:00 AM' });
-    expect(screen.getByRole('button', { name: /Move my session/ })).toBeDisabled();
-  });
-
-  it('will not re-submit the slot the session is already on', async () => {
-    mocks.fetchState.mockResolvedValue(waiting());
-    view();
-
-    fireEvent.click(await screen.findByRole('button', { name: /Reschedule/ }));
-    // Same day, same hour as the existing booking -- nothing to move.
-    fireEvent.click(await screen.findByRole('button', { name: '10:00 AM' }));
-
-    expect(screen.getByRole('button', { name: /Move my session/ })).toBeDisabled();
-    expect(mocks.reschedule).not.toHaveBeenCalled();
-  });
-
-  it('goes back without moving anything when the learner changes their mind', async () => {
-    mocks.fetchState.mockResolvedValue(waiting());
-    view();
-
-    fireEvent.click(await screen.findByRole('button', { name: /Reschedule/ }));
-    fireEvent.click(screen.getByRole('button', { name: /Keep it as it is/ }));
-
-    expect(await screen.findByText(/Your programme starts on/)).toBeTruthy();
-    expect(mocks.reschedule).not.toHaveBeenCalled();
-  });
-
-  it('reports a refused move instead of pretending it worked', async () => {
-    mocks.fetchState.mockResolvedValue(waiting());
-    mocks.reschedule.mockRejectedValue(new Error('Sessions cannot be booked on Saturdays or Sundays.'));
-    view();
-
-    fireEvent.click(await screen.findByRole('button', { name: /Reschedule/ }));
-    fireEvent.change(screen.getByLabelText(/^Date/), { target: { value: '2026-09-26' } });
-    fireEvent.click(await screen.findByRole('button', { name: '2:00 PM' }));
-    fireEvent.click(screen.getByRole('button', { name: /Move my session/ }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Saturdays or Sundays');
   });
 });
