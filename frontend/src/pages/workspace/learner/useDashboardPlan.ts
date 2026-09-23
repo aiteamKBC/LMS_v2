@@ -24,16 +24,16 @@ export function monthlyLogOtjh(summary: LogSummary) {
   };
 }
 
-export function combinedActualOtjh(
-  metrics: { historical: number | null; actual: number | null } | undefined,
-  months: Record<string, { completed: number }> | undefined,
-  auditCutoffMonth: string | undefined,
-) {
-  if (!auditCutoffMonth || metrics?.historical == null) return metrics?.actual ?? null;
-  const laterLmsHours = Object.entries(months || {})
-    .filter(([month]) => month > auditCutoffMonth)
-    .reduce((total, [, value]) => total + value.completed, 0);
-  return Math.round((metrics.historical + laterLmsHours) * 10_000) / 10_000;
+export function monthlyLogActualOtjh(months: Record<string, { completed: number }> | undefined) {
+  if (!months) return null;
+  return Math.round(Object.values(months).reduce((total, month) => total + month.completed, 0) * 10_000) / 10_000;
+}
+
+export function contractPlannedOtjh(contract: TrainingPlanContract | undefined) {
+  if (contract?.contractStatus !== 'ready') return null;
+  const months = Object.values(contract.months);
+  if (!months.length || months.some(month => month.planned == null || !Number.isFinite(month.planned) || month.planned < 0)) return null;
+  return Math.round(months.reduce((total, month) => total + month.planned!, 0) * 10_000) / 10_000;
 }
 
 export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true) {
@@ -73,24 +73,31 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
       setAudit({ identity, data: { months: {}, cutoffMonth: undefined }, error: '' });
       return;
     }
+    // The shared reader owns the request deadline and retry. A shorter
+    // dashboard timer would discard a successful response after a cold connection.
     const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      controller.abort();
-      setAudit({ identity, data: { months: {}, cutoffMonth: undefined }, error: 'Historical Audit hours could not be loaded.' });
-    }, 30_000);
     void getLogSummary(id, controller.signal, 'learner').then(summary => {
       if (!controller.signal.aborted) setAudit({ identity, data: monthlyLogOtjh(summary), error: '' });
-    }).catch(() => {
-      if (!controller.signal.aborted) setAudit({ identity, data: { months: {}, cutoffMonth: undefined }, error: 'Historical Audit hours could not be loaded.' });
-    }).finally(() => window.clearTimeout(timer));
-    return () => { controller.abort(); window.clearTimeout(timer); };
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setAudit({ identity, data: { months: {}, cutoffMonth: undefined },
+        error: error instanceof Error ? error.message : 'Historical Audit hours could not be loaded.' });
+    });
+    return () => { controller.abort(); };
   }, [active, id, identity, attempt]);
   const refresh = () => { week.refresh(); schedule.refresh(); retryContract(); };
   const contractData = contract?.identity === identity ? contract.data : { months: {}, contractStatus: 'loading' };
   const auditData = audit?.identity === identity ? audit.data : { months: {}, cutoffMonth: undefined };
   const auditError = audit?.identity === identity ? audit.error : '';
   const requiredOtjh = week.data?.metrics?.otjh.planned ?? null;
+  const currentAudit = audit?.identity === identity ? audit : null;
+  const currentContract = contract?.identity === identity ? contract.data : undefined;
   return {
+    otjh: {
+      actual: currentAudit && !currentAudit.error ? monthlyLogActualOtjh(currentAudit.data.months) : null,
+      planned: contractPlannedOtjh(currentContract),
+      actualLoading: active && !currentAudit,
+      plannedLoading: active && !currentContract,
+    },
     data: schedule.data ? { ...schedule.data, ...contractData, monthlyOtjh: week.data?.monthlyOtjh, requiredOtjh,
       monthlyLogOtjh: auditData.months, auditOtjhCutoffMonth: auditData.cutoffMonth } : null,
     subjects: week.data?.planSubjects,

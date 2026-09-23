@@ -5,6 +5,7 @@ import type { PlanModule } from '@/api/trainingPlanDashboard';
 import { dateKey } from '@/pages/learner/training-plan-timeline/model';
 import { learningDate, learningHref, learningToday, nextLearningWeek, type LearningWeek } from './subjectLearning';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
+import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import styles from './SubjectWorkspace.module.css';
 
 export function LearningMapHero({ subject, weeks, kind, learnerId, planModule, planLabel }: { subject?: Subject; weeks: LearningWeek[]; kind?: string; learnerId?: string; planModule?: PlanModule; planLabel?: string }) {
@@ -32,7 +33,9 @@ export function LearningMapHero({ subject, weeks, kind, learnerId, planModule, p
   </header>;
 }
 
-export function SubjectTimeline({ subject, weeks, search, onOpen }: { subject: Subject; weeks: LearningWeek[]; search: string; onOpen: (week: string) => void }) {
+export function SubjectTimeline({ subject, weeks, search, onOpen, holidayNotes }: { subject: Subject; weeks: LearningWeek[]; search: string; onOpen: (week: string) => void;
+  /** The curriculum team's published holiday hints for this module, by week id. */
+  holidayNotes?: Map<string, string> }) {
   const today = learningToday();
   const next = nextLearningWeek(subject, today);
   const term = search.trim().toLowerCase();
@@ -74,6 +77,9 @@ export function SubjectTimeline({ subject, weeks, search, onOpen }: { subject: S
           <div className={styles.weekTrack} role="progressbar" aria-label={`${week.label} progress`} aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${percent}%` }} /></div>
           <div className={styles.weekAction}><ActionIcon size={18} aria-hidden="true" /><span>{complete ? 'Review week' : highlighted || done ? 'Continue week' : 'View week'}</span><ArrowRight size={17} aria-hidden="true" /></div>
         </button>
+        {/* Outside the card's button: a hint is something to read, not part of
+            the label that opens the week. */}
+        <HolidayNoteHint note={week.weekId ? holidayNotes?.get(week.weekId) : undefined} className="mt-2" />
       </li>;
     })}
     </ol>

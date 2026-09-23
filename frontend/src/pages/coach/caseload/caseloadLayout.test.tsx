@@ -14,9 +14,9 @@ const counts: CaseloadCounts = {
 const learner = {
   id: '42', name: 'Emma Carter', initials: 'EC', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', group: 'G1',
   status: 'on-track', enrollmentStatus: 'active', riskFlags: [], otjhStatus: 'on-track', overallProgress: 78, overallProgressAvailable: true,
-  attendanceRate: 80, attendanceRateAvailable: true, componentsCompleted: 8, componentsPlanned: 10,
+  attendanceRate: 80, attendanceRateAvailable: true, attendanceSessions: 10, attendancePresent: 9, attendanceAbsent: 1, componentsCompleted: 8, componentsPlanned: 10,
   otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
-  evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, attendancePresent: 9, attendanceAbsent: 1, nextCoaching: '20 Sep 2026', nextReview: '--',
+  evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, nextCoaching: '20 Sep 2026', nextReview: '--',
   lastContact: '--', lastAttendanceDate: '--', lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--',
   lastActivity: '19 Sep 2026', lastActivityDate: '2026-09-19T12:30:00Z', lastActivityLabel: 'Latest quiz',
   lastSubmittedEvidence: '--', recentFlag: null, progressVariance: '--', startDate: '--', gatewayReviewDate: '--', plannedEndDate: '--',
@@ -83,12 +83,12 @@ describe('My Learners table design', () => {
   });
 
   it.each([
-    ['at-risk', 'critical'],
-    ['need-attention', 'warning'],
-    ['on-track', 'positive'],
-  ] as const)('uses the OTJH status to colour OTJH: %s', (otjhStatus, tone) => {
-    render(<LearnerTable learners={[{ ...learner, otjhStatus }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+    [120, 'OTJH: 58%', 'critical'],
+    [100, 'OTJH: 70%', 'warning'],
+    [90, 'OTJH: 78%', 'positive'],
+  ] as const)('uses the canonical gap for target %s to colour OTJH', (otjhTarget, label, tone) => {
+    render(<LearnerTable learners={[{ ...learner, otjhTarget }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
       sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
-    expect(screen.getByLabelText('OTJH: 78%')).toHaveAttribute('data-tone', tone);
+    expect(screen.getByLabelText(label)).toHaveAttribute('data-tone', tone);
   });
 });

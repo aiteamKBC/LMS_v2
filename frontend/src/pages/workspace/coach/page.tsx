@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { Fragment, useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -15,14 +15,18 @@ import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
 import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
+import { getOtjhGapStatus } from '@/pages/coach/caseload/lib/format';
 import styles from './dashboard.module.css';
 import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
+import { CaseloadLoading } from '@/pages/coach/caseload/components/CaseloadStates';
+import caseloadStyles from '@/pages/coach/caseload/caseload.module.css';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Panel } from '@/components/ui/Panel';
 import { FilterChip } from '@/components/ui/FilterToolbar';
 import type { ImportedReview } from '@/api/reviewHistory';
+import type { EmbeddedCaseloadLearner } from '@/pages/coach/caseload/types';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import {
   type CoachCalendarEvent,
@@ -58,7 +62,6 @@ const COACHING_CALENDAR_WINDOW_DAYS = 7;
 function coachDashboardEndpoint() {
   return '/coach_api/coach/dashboard';
 }
-
 async function fetchCoachDashboardWithRetry(signal: AbortSignal, url: string) {
   try {
     return await fetchSharedJsonGet<CoachDashboardApiResponse>(url, {
@@ -113,6 +116,8 @@ interface CoachLearner {
   overallProgressAvailable?: boolean;
   attendanceRate: number;
   attendanceRateAvailable?: boolean;
+  attendanceLastSession?: string | null;
+  attendanceLastSessionDate?: string | null;
   otjhCompleted: number;
   otjhTarget: number;
   otjhVariance?: number | null;
@@ -143,9 +148,9 @@ interface CoachLearner {
   reviews: ImportedReview[];
 }
 
-interface CaseloadApiLearner extends Partial<CoachLearner> {
+type CaseloadApiLearner = EmbeddedCaseloadLearner & Partial<CoachLearner> & {
   cohortName?: string | null;
-}
+};
 
 interface CaseloadApiResponse {
   owner?: {
@@ -159,6 +164,7 @@ interface MonthlyRiskPoint {
   month: string;
   label: string;
   count: number;
+  available?: boolean;
 }
 
 interface CoachAssignedGroup {
@@ -177,30 +183,20 @@ interface CoachAssignedGroup {
 
 interface CoachDashboardApiResponse extends CaseloadApiResponse {
   monthlyRisk?: MonthlyRiskPoint[] | null;
-  attendance?: AttendanceApiResponse;
+  // Attendance is not a separate dataset: the backend overlays the one
+  // canonical figure directly onto each learners[] entry
+  // (attendanceRate/attendanceRateAvailable/attendanceLastSession*).
   reviewHistory?: {
     learners?: ReviewHistoryApiLearner[];
   };
   timetable?: {
     events?: CoachCalendarEvent[];
+    summary?: { progressReviewRows?: number; mcrRows?: number; learnersWithDates?: number; reviewAnchorSkipped?: number; reviewAnchorSkipReasons?: Record<string, number> };
+    reviewGenerationIssues?: Array<{ learnerId?: string; code?: string }>;
   };
   evidence?: MarkingQueueResponse;
   assignedGroups?: CoachAssignedGroup[];
   errors?: Record<string, string>;
-}
-
-interface AttendanceApiLearner {
-  id: string;
-  learner: string;
-  email?: string | null;
-  attendance: number | null;
-  hasAttendance?: boolean;
-  lastSession?: string | null;
-  lastSessionDate?: string | null;
-}
-
-interface AttendanceApiResponse {
-  learners?: AttendanceApiLearner[];
 }
 
 interface ReviewHistoryApiLearner {
@@ -245,6 +241,7 @@ function normalizeMonthlyRisk(points?: MonthlyRiskPoint[] | null): MonthlyRiskPo
     month: displayValue(point.month),
     label: displayValue(point.label),
     count: Math.max(0, Math.round(toNumber(point.count))),
+    available: point.available !== false,
   }));
 }
 
@@ -264,12 +261,9 @@ function isVisibleRiskFlag(value?: string | null) {
     && normalized !== 'otjh at risk';
 }
 
-function normalizeOtjhStatus(value?: string | null): OtjhStatusKey {
-  const normalized = displayValue(value).toLowerCase().replace(/[\s_-]+/g, '');
-  if (normalized === 'atrisk') return 'at-risk';
-  if (normalized === 'needattention' || normalized === 'needsattention') return 'need-attention';
-  if (normalized === 'ontrack') return 'on-track';
-  return 'unknown';
+function canonicalOtjhStatus(learner: CoachLearner): OtjhStatusKey {
+  const status = getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status;
+  return status === 'unavailable' ? 'unknown' : status;
 }
 
 interface EvidenceQueueLearner {
@@ -286,6 +280,9 @@ interface EvidenceQueueLearner {
   totalEvidence: number;
   lastSubmission: string;
   lastSubmissionIso?: string | null;
+  submittedAt?: string | null;
+  oldestPendingDate?: string | null;
+  latestPendingDate?: string | null;
   isOverdue: boolean;
 }
 
@@ -297,6 +294,9 @@ interface MarkingQueueResponse {
 }
 
 function isActiveLearner(learner: CoachLearner): boolean {
+  // This is the single dashboard risk population: active and delivery
+  // learners are both currently in service. Total Learners intentionally
+  // remains the full caseload.
   const status = normalizedProgramStatus(learner);
   return status === 'active' || status === 'delivery';
 }
@@ -358,8 +358,12 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     riskFlags,
     overallProgress: clampPercent(learner.overallProgress),
     overallProgressAvailable: learner.overallProgressAvailable,
-    attendanceRate: 0,
-    attendanceRateAvailable: false,
+    // The backend already joined this by stable learner id -- read it
+    // as-is rather than re-deriving it from a separate dataset.
+    attendanceRate: learner.attendanceRateAvailable ? clampPercent(learner.attendanceRate) : 0,
+    attendanceRateAvailable: Boolean(learner.attendanceRateAvailable),
+    attendanceLastSession: learner.attendanceLastSession ?? null,
+    attendanceLastSessionDate: learner.attendanceLastSessionDate ?? null,
     otjhCompleted: toNumber(learner.otjhCompleted),
     otjhTarget: Math.max(toNumber(learner.otjhTarget), 0),
     otjhVariance: learner.otjhVariance ?? null,
@@ -395,33 +399,9 @@ function ksbCellValue(learner: CoachLearner): string {
 }
 
 
-function findAttendanceRecord(learner: CoachLearner, attendanceLearners: AttendanceApiLearner[]) {
-  const learnerId = normalizeIdentity(learner.id);
-  const learnerEmail = normalizeIdentity(learner.email);
-  const learnerName = normalizeIdentity(learner.name);
-
-  return attendanceLearners.find((attendance) => {
-    const attendanceId = normalizeIdentity(attendance.id);
-    const attendanceEmail = normalizeIdentity(attendance.email);
-    const attendanceName = normalizeIdentity(attendance.learner);
-
-    return Boolean(
-      (learnerId && attendanceId && learnerId === attendanceId)
-      || (learnerEmail && attendanceEmail && learnerEmail === attendanceEmail)
-      || (learnerName && attendanceName && learnerName === attendanceName),
-    );
-  });
-}
-
 function eventBelongsToLearner(event: CoachCalendarEvent, learner: CoachLearner) {
   const learnerId = normalizeIdentity(learner.id);
-  const learnerEmail = normalizeIdentity(learner.email);
-  const learnerName = normalizeIdentity(learner.name);
-  return Boolean(
-    (learnerId && normalizeIdentity(event.learnerId) === learnerId)
-    || (learnerEmail && normalizeIdentity(event.email) === learnerEmail)
-    || (learnerName && normalizeIdentity(event.learner) === learnerName),
-  );
+  return Boolean(learnerId && normalizeIdentity(event.learnerId) === learnerId);
 }
 
 function latestCompletedSessionDate(
@@ -447,12 +427,14 @@ function formatCompletedSessionDate(value?: string) {
 
 function mergeAttendanceRates(
   learners: CoachLearner[],
-  attendanceLearners: AttendanceApiLearner[],
   events: CoachCalendarEvent[],
 ): CoachLearner[] {
   return learners.map((learner): CoachLearner => {
-    const attendance = findAttendanceRecord(learner, attendanceLearners);
-    const attendanceDate = parseLocalDate(attendance?.lastSessionDate);
+    // Attendance is already joined onto this learner server-side by stable
+    // id (see coach_dashboard/apply_attendance_summary) -- no client-side
+    // matching by name/email against a separate dataset.
+    const hasAttendance = Boolean(learner.attendanceRateAvailable);
+    const attendanceDate = hasAttendance ? parseLocalDate(learner.attendanceLastSessionDate) : undefined;
     const completedEventDate = latestCompletedSessionDate(learner, events);
     const lastMcmDate = latestCompletedSessionDate(learner, events, event => event.source === 'mcr');
     const lastPrDate = latestCompletedSessionDate(learner, events, event => event.source === 'progress-review');
@@ -469,27 +451,19 @@ function mergeAttendanceRates(
     const lastSession = parsedCompletedEventDate
       && (!attendanceDate || parsedCompletedEventDate.getTime() > attendanceDate.getTime())
       ? formatDateLabel(completedEventDate)
-      : displayValue(attendance?.lastSession) !== EMPTY_VALUE
-        ? displayValue(attendance?.lastSession)
-        : formatDateLabel(attendance?.lastSessionDate);
-    const hasAttendance = Boolean(
-      attendance
-      && attendance.attendance !== null
-      && attendance.attendance !== undefined
-      && attendance.hasAttendance !== false,
-    );
+      : displayValue(learner.attendanceLastSession) !== EMPTY_VALUE
+        ? displayValue(learner.attendanceLastSession)
+        : formatDateLabel(learner.attendanceLastSessionDate);
 
     return {
       ...learner,
-      attendanceRate: hasAttendance ? clampPercent(attendance?.attendance) : 0,
-      attendanceRateAvailable: hasAttendance,
       // Use the latest completed occurrence across coaching, progress reviews
       // and live sessions. Future, in-progress and cancelled events are not
       // contacts, and the caseload payload's owner name is intentionally ignored.
       lastContact: lastSession,
       lastActivity: attendanceIsLatestActivity ? lastSession : learner.lastActivity,
       lastActivityDate: attendanceIsLatestActivity
-        ? (parsedCompletedEventDate && latestAttendanceDate === parsedCompletedEventDate ? completedEventDate : attendance?.lastSessionDate || null)
+        ? (parsedCompletedEventDate && latestAttendanceDate === parsedCompletedEventDate ? completedEventDate : learner.attendanceLastSessionDate || null)
         : learner.lastActivityDate,
       lastActivityLabel: attendanceIsLatestActivity ? 'Attendance' : learner.lastActivityLabel,
       lastMcm: formatCompletedSessionDate(lastMcmDate),
@@ -519,22 +493,14 @@ function mergeReviewHistory(learners: CoachLearner[], historyLearners: ReviewHis
 
 function mergeEvidenceQueueIntoLearners(learners: CoachLearner[], queue: EvidenceQueueLearner[]): CoachLearner[] {
   const byId = new Map<string, EvidenceQueueLearner>();
-  const byEmail = new Map<string, EvidenceQueueLearner>();
-  const byName = new Map<string, EvidenceQueueLearner>();
 
   queue.forEach((item) => {
     const learnerId = normalizeIdentity(item.learnerId || item.id);
-    const learnerEmail = normalizeIdentity(item.email);
-    const learnerName = normalizeIdentity(item.learner);
     if (learnerId) byId.set(learnerId, item);
-    if (learnerEmail) byEmail.set(learnerEmail, item);
-    if (learnerName) byName.set(learnerName, item);
   });
 
   return learners.map((learner) => {
-    const match = byId.get(normalizeIdentity(learner.id))
-      || byEmail.get(normalizeIdentity(learner.email))
-      || byName.get(normalizeIdentity(learner.name));
+    const match = byId.get(normalizeIdentity(learner.id));
     if (!match) return learner;
     return {
       ...learner,
@@ -558,12 +524,14 @@ function normalizeEvidenceQueueLearner(item: Partial<EvidenceQueueLearner>, inde
     email: item.email || null,
     programme: displayValue(item.programme),
     group: displayValue(item.group),
-    pendingEvidence: toNumber(item.pendingEvidence),
+    pendingEvidence: toNumber(item.pendingEvidence) || 1,
     acceptedEvidence: toNumber(item.acceptedEvidence),
     referredEvidence: toNumber(item.referredEvidence),
     totalEvidence: toNumber(item.totalEvidence),
     lastSubmission: displayValue(item.lastSubmission),
     lastSubmissionIso: item.lastSubmissionIso || null,
+    oldestPendingDate: item.submittedAt || item.lastSubmissionIso || null,
+    latestPendingDate: item.submittedAt || item.lastSubmissionIso || null,
     isOverdue: Boolean(item.isOverdue),
   };
 }
@@ -571,30 +539,50 @@ function normalizeEvidenceQueueLearner(item: Partial<EvidenceQueueLearner>, inde
 function eventMatchesLearner(event: CoachCalendarEvent, learner: CoachLearner) {
   const eventLearnerId = displayValue(event.learnerId);
   const learnerId = displayValue(learner.id);
-  if (eventLearnerId !== EMPTY_VALUE && eventLearnerId === learnerId) return true;
+  return eventLearnerId !== EMPTY_VALUE && learnerId !== EMPTY_VALUE && eventLearnerId === learnerId;
+}
 
-  const eventEmail = displayValue(event.email).toLowerCase();
-  const learnerEmail = displayValue(learner.email).toLowerCase();
-  if (eventEmail !== EMPTY_VALUE && learnerEmail !== EMPTY_VALUE && eventEmail === learnerEmail) return true;
+async function fetchAllPendingMarking(signal: AbortSignal): Promise<MarkingQueueResponse> {
+  const items: Partial<EvidenceQueueLearner>[] = [];
+  let page = 1;
+  let summary: MarkingQueueResponse['summary'];
+  while (true) {
+    const response = await fetchSharedJsonGet<MarkingQueueResponse & { pagination?: { hasNext?: boolean } }>(
+      withCoachViewAs(`/coach_api/coach/marking-queue?status=pending&page=${page}&page_size=100`),
+      { signal, credentials: 'include' },
+    );
+    summary = response.summary;
+    items.push(...(response.items || []));
+    if (!response.pagination?.hasNext) break;
+    page += 1;
+  }
+  return { items, summary };
+}
 
-  return displayValue(event.learner).toLowerCase() === learner.name.toLowerCase();
+function groupPendingMarkingByLearner(items: EvidenceQueueLearner[]): EvidenceQueueLearner[] {
+  const grouped = new Map<string, EvidenceQueueLearner>();
+  for (const item of items) {
+    const key = normalizeIdentity(item.learnerId);
+    if (!key) continue;
+    const existing = grouped.get(key);
+    if (!existing) { grouped.set(key, { ...item, pendingEvidence: 1 }); continue; }
+    existing.pendingEvidence += 1;
+    const dates = [existing.oldestPendingDate, item.oldestPendingDate].filter(Boolean).sort();
+    existing.oldestPendingDate = dates[0] || null;
+    existing.latestPendingDate = dates[dates.length - 1] || null;
+  }
+  return Array.from(grouped.values());
 }
 
 function learnerIdentityIndex(learners: CoachLearner[]) {
   const learnerIds = new Set<string>();
-  const learnerEmails = new Set<string>();
-  const learnerNames = new Set<string>();
 
   learners.forEach((learner) => {
     const learnerId = displayValue(learner.id);
-    const learnerEmail = displayValue(learner.email).toLowerCase();
-    const learnerName = displayValue(learner.name).toLowerCase();
     if (learnerId !== EMPTY_VALUE) learnerIds.add(learnerId);
-    if (learnerEmail !== EMPTY_VALUE) learnerEmails.add(learnerEmail);
-    if (learnerName !== EMPTY_VALUE) learnerNames.add(learnerName);
   });
 
-  return { learnerIds, learnerEmails, learnerNames };
+  return { learnerIds };
 }
 
 function eventMatchesLearnerIndex(
@@ -604,11 +592,7 @@ function eventMatchesLearnerIndex(
   const eventLearnerId = displayValue(event.learnerId);
   if (eventLearnerId !== EMPTY_VALUE && index.learnerIds.has(eventLearnerId)) return true;
 
-  const eventEmail = displayValue(event.email).toLowerCase();
-  if (eventEmail !== EMPTY_VALUE && index.learnerEmails.has(eventEmail)) return true;
-
-  const learnerName = displayValue(event.learner).toLowerCase();
-  return learnerName !== EMPTY_VALUE && index.learnerNames.has(learnerName);
+  return false;
 }
 
 function scheduleDateForEvent(event: CoachCalendarEvent): { value: string; status: Exclude<ScheduleStatus, 'none'>; time: number } | null {
@@ -873,7 +857,7 @@ function buildOverdueMap(learners: CoachLearner[], events: CoachCalendarEvent[])
 
 function buildLearnerPriority(learner: CoachLearner, overdue?: OverdueSignal): LearnerPriority {
   const reasons: PriorityReason[] = [];
-  const otjhStatus = normalizeOtjhStatus(learner.otjhStatus);
+  const otjhStatus = canonicalOtjhStatus(learner);
   const otjhPercent = otjhPercentFor(learner);
 
   if (otjhStatus === 'at-risk') {
@@ -957,7 +941,7 @@ function percentTone(value?: number | null, warningThreshold = 50, successThresh
 
 /** The avatar ring colour: OTJH risk first, then programme stage. */
 function learnerAvatarTone(learner: CoachLearner): StatusTone {
-  const otjhStatus = normalizeOtjhStatus(learner.otjhStatus);
+  const otjhStatus = canonicalOtjhStatus(learner);
   if (otjhStatus === 'at-risk') return 'critical';
   if (otjhStatus === 'need-attention') return 'caution';
   const programmeStatus = normalizedProgramStatus(learner);
@@ -1025,8 +1009,8 @@ function formatUpcomingRangeLabel() {
   return formatDateRangeLabel(start, end);
 }
 
-function LoadingBlock({ className = '' }: { className?: string }) {
-  return <div aria-hidden="true" className={`animate-pulse rounded-lg bg-background-100/90 ${className}`}></div>;
+function LoadingBlock({ className = '', style }: { className?: string; style?: CSSProperties }) {
+  return <div aria-hidden="true" className={`animate-pulse rounded-lg bg-background-100/90 ${className}`} style={style}></div>;
 }
 
 function AttentionSkeleton({ rows = 4 }: { rows?: number }) {
@@ -1082,6 +1066,101 @@ function ScheduleSkeleton() {
   );
 }
 
+// The loading skeletons reuse the loaded dashboard's own layout classes, so
+// every card, table and chart keeps its real size and responsive breakpoints
+// and nothing shifts when the data arrives.
+function MetricCardSkeleton() {
+  return <div className={styles.metric} data-skeleton="metric">
+    <LoadingBlock className={styles.metricSkeletonIcon} />
+    <LoadingBlock className={styles.metricSkeletonLabel} />
+    <LoadingBlock className={styles.metricSkeletonValue} />
+    <LoadingBlock className={styles.metricSkeletonNote} />
+  </div>;
+}
+
+function LearnerTableSkeleton() {
+  return <div className={styles.fullWidthCaseload}>
+    <section className={`${caseloadStyles.page} ${caseloadStyles.embedded}`}>
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div className={caseloadStyles.title}><h1>All Learners</h1></div>
+        <LoadingBlock className="h-9 w-[104px] rounded-md" />
+      </header>
+      <section className={caseloadStyles.panel}>
+        <CaseloadLoading rows={7} />
+      </section>
+    </section>
+  </div>;
+}
+
+function MeetingsSkeleton() {
+  return <Panel className={styles.panel}>
+    <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
+      description={`Your scheduled meetings and live sessions · next ${COACHING_CALENDAR_WINDOW_DAYS} days (${formatUpcomingRangeLabel()})`}
+      actions={<>
+        <LoadingBlock className="h-11 w-11" />
+        <LoadingBlock className="h-11 w-[118px]" />
+        <LoadingBlock className="h-11 w-[172px]" />
+      </>} />
+    <div className={styles.tableScroll}>
+      <table className={`${styles.table} ${styles.meetingsTable}`}>
+        <tbody>
+          <tr><th colSpan={9}><LoadingBlock className="h-3.5 w-32" /></th></tr>
+          {Array.from({ length: 3 }, (_, index) => <tr key={index} data-skeleton="meeting">
+            <td><LoadingBlock className={styles.meetingDateSkeleton} /></td>
+            <td><LoadingBlock className="h-3.5 w-16" /></td>
+            <td><div className={styles.identity}>
+              <LoadingBlock className="h-9 w-9 shrink-0 rounded-full" />
+              <span className="flex-1"><LoadingBlock className="h-3.5 w-36" /><LoadingBlock className="mt-2 h-3 w-20" /></span>
+            </div></td>
+            <td><div className={styles.meetingType}><LoadingBlock className="h-[30px] w-[30px] shrink-0" /><LoadingBlock className="h-3.5 w-28" /></div></td>
+            <td><LoadingBlock className="h-6 w-20 rounded-full" /></td>
+            {Array.from({ length: 4 }, (_, action) => <td key={action}><LoadingBlock className="h-11 w-28" /></td>)}
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
+  </Panel>;
+}
+
+const MONTHLY_BAR_SKELETON_HEIGHTS = ['46%', '64%', '38%', '78%', '52%', '30%'];
+
+function ChartSkeleton({ variant }: { variant: 'distribution' | 'monthly' }) {
+  if (variant === 'distribution') {
+    return <Panel className={styles.panel}>
+      <SectionHeader title="Risk Distribution" icon="ri-bar-chart-line" actions={<span className={styles.chartScope}>By OTJH status</span>} />
+      <div className={styles.distribution}>
+        <div className={`${styles.donut} ${styles.donutSkeleton} animate-pulse`}><div className={styles.donutCenter} /></div>
+        <ul className={styles.legend}>
+          {Array.from({ length: 4 }, (_, index) => <li key={index}>
+            <LoadingBlock className={`${styles.legendDot} rounded-full`} />
+            <LoadingBlock className="h-3.5 w-24" />
+            <LoadingBlock className="h-3.5 w-12" />
+          </li>)}
+        </ul>
+      </div>
+    </Panel>;
+  }
+  return <Panel className={styles.panel}>
+    <SectionHeader title="Monthly Learners at Risk" icon="ri-bar-chart-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
+    <div className={styles.monthlyRisk}>
+      <div className={styles.monthlyRiskChart}>
+        <ol className={styles.monthlyBars}>
+          {MONTHLY_BAR_SKELETON_HEIGHTS.map((height, index) => <li key={index}>
+            <LoadingBlock className="h-3 w-4" />
+            <span className={styles.monthlyBarTrack}><LoadingBlock className={styles.monthlyBarSkeleton} style={{ height }} /></span>
+            <LoadingBlock className="h-2.5 w-6" />
+          </li>)}
+        </ol>
+      </div>
+      <div className={styles.currentRisk}>
+        <LoadingBlock className="h-8 w-10" />
+        <LoadingBlock className="h-3.5 w-16" />
+        <LoadingBlock className="mt-1 h-3 w-20" />
+      </div>
+    </div>
+  </Panel>;
+}
+
 export default function CoachDashboard() {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
@@ -1097,14 +1176,17 @@ export default function CoachDashboard() {
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
   const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<CoachLearner[]>([]);
+  const [embeddedLearners, setEmbeddedLearners] = useState<CaseloadApiLearner[]>([]);
   const [monthlyRisk, setMonthlyRisk] = useState<MonthlyRiskPoint[] | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
   const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>([]);
   const [liveSessionEvents, setLiveSessionEvents] = useState<CoachCalendarEvent[]>([]);
   const [evidenceQueue, setEvidenceQueue] = useState<EvidenceQueueLearner[]>([]);
   const [markingThisWeek, setMarkingThisWeek] = useState<number | undefined>();
+  const [reviewGenerationAvailable, setReviewGenerationAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
+  const [loadedCoachEmail, setLoadedCoachEmail] = useState<string | null>(null);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [liveSessionsLoading, setLiveSessionsLoading] = useState(true);
@@ -1169,6 +1251,7 @@ export default function CoachDashboard() {
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
+        setLoadedCoachEmail(authenticatedCoachEmail);
         return;
       }
 
@@ -1178,19 +1261,26 @@ export default function CoachDashboard() {
             controller.signal,
             withCoachViewAs(coachDashboardEndpoint()),
           ),
-          fetchSharedJsonGet<MarkingQueueResponse>(
-            withCoachViewAs('/coach_api/coach/marking-queue?status=pending&page_size=1'),
-            { signal: controller.signal, credentials: 'include' },
-          ).catch(() => null),
+          fetchAllPendingMarking(controller.signal).catch(() => null),
           // Use the same full calendar history as My Learners. The dashboard
           // payload is intentionally limited to today + 90 days for previews.
           fetchCoachCalendarEvents(controller.signal).catch(() => ({ events: [] })),
         ]);
         if (controller.signal.aborted) return;
 
-        const queueItems = (dashboard.evidence?.items || []).map(normalizeEvidenceQueueLearner);
+        const seenSubmissionIds = new Set<string>();
+        const queueItems = groupPendingMarkingByLearner(
+          (markingQueue?.items || [])
+            .filter(item => {
+              const id = String(item.id || '');
+              if (!id || seenSubmissionIds.has(id)) return false;
+              seenSubmissionIds.add(id);
+              return true;
+            })
+            .map(normalizeEvidenceQueueLearner),
+        );
         const normalizedLearners = (dashboard.learners || []).map(normalizeLearner);
-        const attendanceLearners = dashboard.attendance?.learners || [];
+        setEmbeddedLearners((dashboard.learners || []) as CaseloadApiLearner[]);
         const reviewHistoryLearners = dashboard.reviewHistory?.learners || [];
         const events = sortEvents(dashboard.timetable?.events || []);
         const completedHistoryEvents = completedSessionHistory.events || [];
@@ -1199,7 +1289,7 @@ export default function CoachDashboard() {
         setOwnerName(displayValue(dashboard.owner?.name) === EMPTY_VALUE ? authenticatedCoachName : String(dashboard.owner?.name));
         setLearners(mergeEvidenceQueueIntoLearners(
           mergeReviewHistory(
-            mergeAttendanceRates(normalizedLearners, attendanceLearners, completedHistoryEvents),
+            mergeAttendanceRates(normalizedLearners, completedHistoryEvents),
             reviewHistoryLearners,
           ),
           queueItems,
@@ -1211,6 +1301,9 @@ export default function CoachDashboard() {
             ? undefined
             : toNumber(markingQueue.summary.pendingItems),
         );
+        const reviewSummary = dashboard.timetable?.summary;
+        const reviewIssues = dashboard.timetable?.reviewGenerationIssues || [];
+        setReviewGenerationAvailable(!reviewIssues.length && (reviewSummary?.learnersWithDates ?? 0) > 0);
         setCalendarEvents(nonLiveEvents);
         setCalendarPreviewEvents(nonLiveEvents.filter(isWithinCalendarPreviewWindow));
         setLiveSessionEvents(events.filter(event => event.source === 'live-session'));
@@ -1219,6 +1312,7 @@ export default function CoachDashboard() {
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
+        setLoadedCoachEmail(authenticatedCoachEmail);
       } catch (error) {
         if (controller.signal.aborted) return;
         setLearners([]);
@@ -1233,6 +1327,7 @@ export default function CoachDashboard() {
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
+        setLoadedCoachEmail(authenticatedCoachEmail);
       }
     }
 
@@ -1256,15 +1351,15 @@ export default function CoachDashboard() {
   const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
   const activeLearners = useMemo(() => enrichedLearners.filter(isActiveLearner), [enrichedLearners]);
   const atRiskLearners = useMemo(
-    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk'),
+    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'at-risk'),
     [activeLearners],
   );
   const needAttentionLearners = useMemo(
-    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'need-attention'),
+    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'need-attention'),
     [activeLearners],
   );
   const onTrackLearners = useMemo(
-    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'on-track'),
+    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'on-track'),
     [activeLearners],
   );
   const evidenceLearners = useMemo(
@@ -1362,7 +1457,7 @@ export default function CoachDashboard() {
       case 'at-risk':
       case 'need-attention':
       case 'on-track':
-        return learner => isActiveLearner(learner) && normalizeOtjhStatus(learner.otjhStatus) === kpiFilter;
+        return learner => isActiveLearner(learner) && canonicalOtjhStatus(learner) === kpiFilter;
       default: return null;
     }
   }, [kpiFilter]);
@@ -1384,6 +1479,7 @@ export default function CoachDashboard() {
   const attentionHasOverflow = attentionRows.length > AT_RISK_SCROLL_THRESHOLD;
 
   const schedulePanelLoading = (calendarLoading || liveSessionsLoading) && !upcomingScheduleEvents.length;
+  const dashboardLoading = loading || loadedCoachEmail !== authenticatedCoachEmail;
 
   const scrollToSection = (id: string) => {
     window.requestAnimationFrame(() => {
@@ -1432,23 +1528,26 @@ export default function CoachDashboard() {
       userName={ownerName} userRole="Progress Coach"
     >
       <div className={styles.dashboard}>
-        {(loading || loadWarning) && (
-          <div className={styles.notice} role={loadWarning ? 'alert' : 'status'}>
-            {loading ? 'Loading live coach dashboard data...' : loadWarning}
-          </div>
-        )}
+        {dashboardLoading ? (
+          <DashboardLoadingSkeleton />
+        ) : loadWarning ? (
+          <Panel className={styles.panel}>
+            <EmptyState icon="ri-error-warning-line" title="Unable to load coach dashboard" description={loadWarning} />
+          </Panel>
+        ) : (
+          <>
 
         <section className={styles.metrics} aria-label="Coach dashboard metrics">
           <DashboardMetric label="Total learners" value={loading || loadWarning ? undefined : totalCaseload} icon="ri-group-line" onClick={() => setSelectedKpi('caseload')} />
           <DashboardMetric label="OTJH at risk" value={loading || loadWarning ? undefined : atRiskCount} note={loading || loadWarning ? undefined : `${needAttentionLearners.length} need attention`} icon="ri-alarm-warning-line" tone="critical" onClick={() => setSelectedKpi('at-risk')} />
           <DashboardMetric label="Pending marking" value={loading || loadWarning ? undefined : markingThisWeek} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => setSelectedKpi('pending-marking')} />
-          <DashboardMetric label="PR this week" value={loading || loadWarning ? undefined : progressReviewsThisWeek} note={`Progress reviews · ${formatWeekRangeLabel()}`} icon="ri-focus-3-line" tone="caution" onClick={() => setSelectedKpi('pr-week')} />
-          <DashboardMetric label="MCM this week" value={loading || loadWarning ? undefined : monthlyCoachingThisWeek} note={`Monthly coaching · ${formatWeekRangeLabel()}`} icon="ri-history-line" tone="caution" onClick={() => setSelectedKpi('mcm-week')} />
+          <DashboardMetric label="PR this week" value={loading || loadWarning ? undefined : reviewGenerationAvailable ? progressReviewsThisWeek : EMPTY_VALUE} note={reviewGenerationAvailable ? `Progress reviews · ${formatWeekRangeLabel()}` : 'Review schedule data unavailable'} icon="ri-focus-3-line" tone="caution" onClick={() => setSelectedKpi('pr-week')} />
+          <DashboardMetric label="MCM this week" value={loading || loadWarning ? undefined : reviewGenerationAvailable ? monthlyCoachingThisWeek : EMPTY_VALUE} note={reviewGenerationAvailable ? `Monthly coaching · ${formatWeekRangeLabel()}` : 'Review schedule data unavailable'} icon="ri-history-line" tone="caution" onClick={() => setSelectedKpi('mcm-week')} />
           <DashboardMetric label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note={`Catch-up sessions · ${formatWeekRangeLabel()}`} icon="ri-calendar-event-line" tone="caution" onClick={() => setSelectedKpi('catch-ups-week')} />
         </section>
 
         <div id="learner-caseload" className={styles.fullWidthCaseload}>
-          <CoachCaseloadContent embedded />
+          <CoachCaseloadContent embedded embeddedLearners={embeddedLearners} />
         </div>
 
         <Panel className={styles.panel}>
@@ -1472,7 +1571,9 @@ export default function CoachDashboard() {
                     <caption className="sr-only">Meetings and live sessions in the next seven days</caption>
                     <thead className="sr-only"><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Learner / session</th><th scope="col">Meeting type</th><th scope="col">Status</th><th scope="col">Reschedule</th><th scope="col">Send Reminder</th><th scope="col">Generate Presentation</th><th scope="col">View Form</th></tr></thead>
                     <tbody>{upcomingScheduleGroups.flatMap(group => group.events.map((event, eventIndex) => (
-                      <tr key={event.eventKey || event.id}>
+                      <Fragment key={event.eventKey || event.id}>
+                      {eventIndex === 0 && <tr><th colSpan={9} className="text-left">{event.source === 'live-session' ? 'Live Sessions' : 'Learner Meetings'}</th></tr>}
+                      <tr>
                         {eventIndex === 0 && <td className={`${styles.dateCell} ${styles.meetingDateCell}`} rowSpan={group.events.length}><time className={styles.meetingDate} dateTime={group.date}><span>{formatCalendarWeekday(group.date)}</span><strong>{formatDateLabel(group.date)}</strong></time></td>}
                         <td className={styles.dateCell}><span className={styles.meetingTime}><AppIcon name="ri-time-line" aria-hidden="true" />{scheduleEventTime(event)}</span></td>
                         <td><div className={styles.identity}>
@@ -1483,13 +1584,13 @@ export default function CoachDashboard() {
                         <td><StatusBadge status={event.status} label={statusLabel(event.status)} size="sm" /></td>
                         {event.source === 'live-session' ? <td colSpan={4}><Link to="/coach/timetable" state={buildTimetableFocusState(event)} className={styles.textButton} aria-label={`View ${scheduleEventTitle(event)} in calendar`}><AppIcon name="ri-calendar-line" /> View in calendar</Link></td>
                           : <DashboardMeetingActions event={event} onUpdated={updateDashboardMeeting} onScheduleNotice={setScheduleNotice} />}
-                      </tr>
+                      </tr></Fragment>
                     )))}</tbody>
                   </table>
                 </div>
               )}
               {!schedulePanelLoading && !upcomingScheduleGroups.length && (
-                <EmptyState size="sm" icon="ri-calendar-check-line" title="Nothing scheduled" description={calendarError || liveSessionsError || `Nothing scheduled in the next ${COACHING_CALENDAR_WINDOW_DAYS} days.`} />
+                <EmptyState size="sm" icon="ri-calendar-check-line" title="No learner meetings scheduled" description={calendarError || `No learner meetings scheduled in the next ${COACHING_CALENDAR_WINDOW_DAYS} days.`} />
               )}
             </div>
           )}
@@ -1513,6 +1614,9 @@ export default function CoachDashboard() {
           </Panel>
         </section>
 
+          </>
+        )}
+
       </div>
 
       {selectedKpi && (
@@ -1535,9 +1639,23 @@ export default function CoachDashboard() {
   );
 }
 
+function DashboardLoadingSkeleton() {
+  return (
+    <div aria-label="Loading coach dashboard" role="status" className="min-w-0">
+      <span className="sr-only">Loading coach dashboard data</span>
+      <div className={styles.loadingDashboard} aria-hidden="true">
+        <section className={styles.metrics}>{Array.from({ length: 6 }, (_, index) => <MetricCardSkeleton key={index} />)}</section>
+        <LearnerTableSkeleton />
+        <MeetingsSkeleton />
+        <section className={styles.charts}><ChartSkeleton variant="distribution" /><ChartSkeleton variant="monthly" /></section>
+      </div>
+    </div>
+  );
+}
+
 function DashboardMetric({ label, value, note, icon, tone, onClick }: {
   label: string;
-  value?: number;
+  value?: number | string;
   note?: string;
   icon: string;
   tone?: StatusTone;
@@ -1559,7 +1677,7 @@ function DashboardMetric({ label, value, note, icon, tone, onClick }: {
 }
 
 function MonthlyRiskChart({ points, unavailable }: { points: MonthlyRiskPoint[] | null; unavailable: boolean }) {
-  if (unavailable || !points?.length) {
+  if (unavailable || !points?.length || points.some(point => point.available === false)) {
     return <div className={styles.unavailableChart}>
       <AppIcon name="ri-line-chart-line" aria-hidden="true" />
       <p>History not available</p><span>Monthly risk data is not available yet.</span>
@@ -1591,12 +1709,12 @@ function OtjhDistribution({ learners, unavailable }: { learners: CoachLearner[];
     { key: 'at-risk', label: 'At Risk', color: '#e51e50' },
     { key: 'need-attention', label: 'Need Attention', color: '#e4a400' },
     { key: 'on-track', label: 'On Track', color: '#249b61' },
-    { key: 'unknown', label: 'No OTJH status', color: '#9895ab' },
+    { key: 'unknown', label: 'Unavailable', color: '#9895ab' },
   ];
   const total = learners.length;
   let cursor = 0;
   const segments = statuses.map(status => {
-    const count = learners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === status.key).length;
+    const count = learners.filter(learner => canonicalOtjhStatus(learner) === status.key).length;
     const percent = total ? count / total * 100 : 0;
     const start = cursor;
     cursor += percent;
@@ -1631,7 +1749,7 @@ function AttentionLearnerRow({ learner, onOpen }: {
   learner: CoachLearner;
   onOpen: () => void;
 }) {
-  const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
+  const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
   const varianceLabel = otjhVarianceLabel(learner);
   return (
     <tr>
@@ -1705,7 +1823,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
       : type === 'epa'
         ? learners.filter(isEpaLearner)
     : type === 'on-track' || type === 'at-risk' || type === 'need-attention'
-      ? learners.filter(learner => isActiveLearner(learner) && normalizeOtjhStatus(learner.otjhStatus) === type)
+      ? learners.filter(learner => isActiveLearner(learner) && canonicalOtjhStatus(learner) === type)
       : [];
   const reviews = sortEvents(calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)));
   const evidenceLearners = evidenceQueue;
@@ -1780,7 +1898,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
           {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'completed' || type === 'epa') && (
             <div className="space-y-3.5">
               {modalLearners.map(learner => {
-                const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
+                const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
                 const attendance = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
                 const otjh = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
                 return (
@@ -1832,7 +1950,9 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
                 return (
                 <Link
                   key={learner.id}
-                  to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
+                  to={type === 'pending-marking'
+                    ? `/coach/marking-queue?learnerId=${encodeURIComponent(learner.learnerId)}`
+                    : `/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
                   state={{
                     learnerId: learner.learnerId,
                     learnerName: learner.learner,
@@ -1847,6 +1967,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-semibold text-foreground-900">{learner.learner}</p>
                     <p className="mt-0.5 truncate text-[12px] text-foreground-400">{learner.programme} · {learner.group}</p>
+                    {type === 'pending-marking' && learner.oldestPendingDate && <p className="mt-1 text-[11px] text-foreground-500">Oldest pending: {formatCompletedSessionDate(learner.oldestPendingDate)}{learner.latestPendingDate && learner.latestPendingDate !== learner.oldestPendingDate ? ` · Latest: ${formatCompletedSessionDate(learner.latestPendingDate)}` : ''}</p>}
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-bold text-secondary-700">{learner.pendingEvidence} / {learner.totalEvidence}</p>

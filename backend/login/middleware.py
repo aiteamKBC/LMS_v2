@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from django.db import DatabaseError
+from django.db import DatabaseError, close_old_connections
 
 from .sessions import (
     RENEWED_UNTIL_ATTR,
@@ -59,11 +59,23 @@ class LoginSessionMiddleware:
             # error. See ``sessions.SESSION_UNREADABLE_ATTR``.
             mark_session_unreadable(request)
 
-        response = self.get_response(request)
-
+        response = None
         try:
-            refresh_session_cookie(request, response)
-        except Exception:  # noqa: BLE001 - a cookie refresh must not 500 a good response
-            logger.exception("Could not refresh the login session cookie")
+            response = self.get_response(request)
 
-        return response
+            try:
+                refresh_session_cookie(request, response)
+            except Exception:  # noqa: BLE001 - a cookie refresh must not 500 a good response
+                logger.exception("Could not refresh the login session cookie")
+
+            return response
+        finally:
+            # Pooled connections are request-scoped. Django normally performs
+            # this at the request-finished signal, but gate short-circuits can
+            # otherwise leave a checked-out connection attached to the worker
+            # until the next request. Streaming responses own their iterator's
+            # lifetime, so leave those connections to Django's normal cleanup.
+            # Returning it here is safe: session refresh and the view have
+            # completed, and it does not alter transaction or identity logic.
+            if response is None or not getattr(response, "streaming", False):
+                close_old_connections()

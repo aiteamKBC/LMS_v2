@@ -226,6 +226,9 @@ export interface CurriculumProgramme {
   // Off-the-job hours a learner must complete for the whole programme. null means no
   // target has been set, which is different from a target of zero.
   requiredOtjh?: number | null;
+  // Where this card sits in the hand-picked order. 0 means it has never been
+  // placed, and those read alphabetically ahead of the placed ones.
+  displayOrder?: number;
 }
 
 export interface CurriculumWeeklySession {
@@ -2509,13 +2512,23 @@ function notifyRemoteWrite(path: string): void {
 // ---------------------------------------------------------------------------
 
 const EPOCH_PATH = '/curriculum/cache-epoch/';
-// 10s rather than the 25s this shipped with. A reader watching a list
-// somebody else is editing waits half the interval on average, so this is
-// ~5s instead of ~12s. What it costs is one authenticated request per open
-// tab: two Redis GETs here, plus the single indexed LoginSession lookup
-// every request pays. The last_seen_at write is throttled to 5 minutes
-// (login/sessions.py), so polling faster adds reads, never writes.
-const EPOCH_POLL_INTERVAL_MS = 10_000;
+// 4s rather than the 10s before it (and the 25s this shipped with). A reader
+// watching a record somebody else is editing waits half the interval on
+// average, so this is ~2s instead of ~5s -- close enough to instant that a
+// second screen no longer reads as stale, which is the whole point of the
+// counter. Tabs of the same browser hear each other through BroadcastChannel
+// and do not wait for this at all.
+// What it costs is one authenticated request per open tab: the shared epoch
+// read (Redis where it is configured, otherwise the one-row counter table),
+// plus the single indexed LoginSession lookup every request pays. The
+// last_seen_at write is throttled to 5 minutes (login/sessions.py), so polling
+// faster adds reads, never writes. Below ~3s the request rate stops buying
+// perceptible freshness and starts being felt by the database, so this is the
+// floor rather than a number to keep lowering.
+// Exported so the tests can advance their fake clock by one tick of whatever
+// this is set to, rather than encoding the number and quietly meaning
+// something else the next time it moves.
+export const EPOCH_POLL_INTERVAL_MS = 4_000;
 // The endpoint ships with the backend, and the frontend can be deployed ahead of
 // it. Rather than call a missing URL every few seconds for the life of the tab,
 // give up after a few failures and leave the return-to-tab refresh to cover it.
@@ -3043,12 +3056,11 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  // Without a timeout this hangs on the browser's own default (minutes) when the
-  // backend is slow, leaving the catalogue's loading skeleton up long after a
-  // sibling request against the same server has already timed out and reported
-  // it. Matching that 30s budget lets the list fail into its own error+Retry
-  // banner instead of spinning forever.
-  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 30000 });
+  // A cold curriculum cache can need to rebuild the module catalogue and its
+  // authoring summaries. Give that read a minute, rather than reporting a
+  // misleading failure at 30 seconds, while still preventing a stuck request
+  // from leaving the catalogue loading forever.
+  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 60000 });
 }
 
 export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
@@ -3697,6 +3709,14 @@ export function createCurriculumProgramme(input: CurriculumProgrammeInput) {
   return postJson<{ created: boolean; programme: CurriculumProgramme }>('/curriculum/programmes/', input);
 }
 
+/**
+ * Save the order the programme cards were dragged into. `order` is the ids top-left
+ * first; the server renumbers exactly those programmes from 1 upward.
+ */
+export function saveCurriculumProgrammeOrder(order: string[]) {
+  return postJson<{ saved: boolean; order: string[] }>('/curriculum/programmes/reorder/', { order });
+}
+
 export function updateCurriculumProgramme(id: string, input: CurriculumProgrammeInput) {
   return patchJson<{ updated: boolean; programme: CurriculumProgramme }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, input);
 }
@@ -3927,6 +3947,82 @@ export function fetchArchivedCurriculumModules(signal?: AbortSignal): Promise<Cu
   return fetchCollection<CurriculumArchivedModule>('/curriculum/modules/archived/', { signal, revalidate: true });
 }
 
+/**
+ * A component inside an archived module's week, as the archive reads it back.
+ *
+ * Deliberately a subset of the builder's own component shape: this is a read,
+ * and everything an editor needs (settings, sources, completion rules) is not
+ * what a reader deciding whether to restore the module is looking at. The
+ * backend returns the full component either way -- narrowing it here is what
+ * stops the archive growing a second, drifting copy of the authoring model.
+ */
+export interface CurriculumArchivedModuleComponent {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  expectedOtjh: number;
+  points: number;
+  reflectionRequired: boolean;
+  workplaceEvidenceRequired: boolean;
+  tutorValidationRequired: boolean;
+  coachValidationRequired: boolean;
+  ksbMappings?: Array<{ code?: string }>;
+  settings?: Record<string, unknown>;
+}
+
+export interface CurriculumArchivedModuleWeek {
+  id: string;
+  weekNumber: number;
+  title: string;
+  summary: string;
+  /** The planned delivery date, when the module had a schedule to plan from. */
+  sessionDate?: string;
+  sessionDay?: string;
+  sessionStartTime?: string;
+  components: CurriculumArchivedModuleComponent[];
+  ksbMappings?: Array<{ code?: string }>;
+}
+
+export interface CurriculumArchivedModuleStructure {
+  catalogueId: string;
+  title: string;
+  description: string;
+  programmeName: string;
+  cohort: string;
+  group: string;
+  tutor: string;
+  status: string;
+  weeks: number;
+  sessionsNumber: number;
+  totalOtjh: number;
+  lessonCount: number;
+  quizCount: number;
+  weekStructure: CurriculumArchivedModuleWeek[];
+}
+
+/**
+ * An archived module's weeks and the components inside them.
+ *
+ * Its own endpoint rather than `/structure/`, because that one filters its
+ * children through the active-row predicates: an archived module read through it
+ * comes back with an empty week list, since the archive cascade soft-deleted
+ * every week and component under it. This one returns the set a restore would
+ * bring back. Read-only -- there is no PATCH beside it.
+ *
+ * `skipCache`: the archive is opened in order to act on it, and a module read
+ * here is one the reader is about to restore or delete.
+ */
+export function fetchArchivedModuleStructure(
+  id: string,
+  signal?: AbortSignal,
+): Promise<CurriculumArchivedModuleStructure> {
+  return fetchJson<CurriculumArchivedModuleStructure>(
+    `/curriculum/modules/${encodeURIComponent(id)}/archived-structure/`,
+    { signal, skipCache: true, timeoutMs: 30000 },
+  );
+}
+
 export type CurriculumRestoreResult = {
   restored: boolean;
   id: string;
@@ -4001,6 +4097,56 @@ export function fetchFreeProgrammeModules(programmeId: string, signal?: AbortSig
 
 export function saveFreeProgrammeModules(programmeId: string, input: { programmeName?: string; modules: FreeProgrammeModuleInput[] }) {
   return patchJson<{ saved: boolean; programmeId: string; modules: FreeProgrammeModule[] }>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/modules/`, input);
+}
+
+export interface ConvertFreeCourseInput {
+  courseId: string;
+  mode: 'clone' | 'move';
+  /** The EXISTING group the course is injected into as a new module. */
+  groupId: string;
+}
+
+export interface ConvertFreeCourseResult {
+  mode: 'clone' | 'move';
+  programmeId: string;
+  programmeName: string;
+  cohortId: string;
+  groupId: string;
+  moduleCatalogueId: string;
+}
+
+/**
+ * Inject one free course as a new module into an EXISTING programme group.
+ * `clone` leaves the free course in place; `move` also deletes it and removes it
+ * from any learner it was assigned to. Returns the ids so the caller can
+ * deep-link into the Module Builder to add KSBs/hours.
+ */
+export function injectFreeCourseIntoGroup(programmeId: string, input: ConvertFreeCourseInput) {
+  return postJson<ConvertFreeCourseResult>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/convert/`, input);
+}
+
+export interface ImportModuleInput {
+  moduleCatalogueId: string;
+  /** 'clone' keeps the module in its programme; 'move' also archives it. */
+  mode: 'clone' | 'move';
+}
+
+export interface ImportModuleResult {
+  mode: 'clone' | 'move';
+  freeCourseId: string;
+  courseName: string;
+  moduleCatalogueId: string;
+  /** The full, updated free-course module list, so the caller can refresh. */
+  modules: FreeProgrammeModule[];
+}
+
+/**
+ * Convert an existing programme module into a NEW free course (appended to the
+ * catalogue). `clone` leaves the module live in its programme; `move` also
+ * archives the source module. Returns the updated free-course module list.
+ */
+export function importModuleToFreeCourses(programmeId: string, input: ImportModuleInput) {
+  return postJson<ImportModuleResult>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/import-module/`, input);
 }
 
 export function createGroupModule(groupId: string, input: CurriculumModuleAttachmentInput) {
@@ -4276,7 +4422,19 @@ export type ReviewParticipantRole = 'advisor' | 'employer' | 'participant' | 're
 
 export type ReviewConditionValue = 'yes' | 'no';
 
-export interface ListItemConfiguration {
+/** Non-advisor roles a Field's own configuration may opt into answering it.
+ * The advisor (coach) can always answer every field regardless of this list --
+ * see reviews.FIELD_RESPONDENT_ROLES on the backend. */
+export type ReviewFieldRespondentRole = 'participant' | 'employer';
+
+/** Carried by every answerable field's configuration alongside its
+ * type-specific shape (options, description, ...) -- never present on a
+ * display-only field (title_description/action_button). */
+export interface RespondentRolesConfiguration {
+  respondentRoles?: ReviewFieldRespondentRole[];
+}
+
+export interface ListItemConfiguration extends RespondentRolesConfiguration {
   options: string[];
   /** Marks this question as the one carrying a defined business meaning, so
    * readers find it by the template's own stable marker instead of matching a
@@ -4292,7 +4450,7 @@ export interface TitleDescriptionConfiguration {
 /** Discriminated by fieldType at the call site; falls back to a generic bag for
  * types (text, boolean, numeric, date, email, phone, postcode_address, ...)
  * that carry no field-specific configuration today. */
-export type ReviewFieldConfiguration = ListItemConfiguration | TitleDescriptionConfiguration | Record<string, unknown>;
+export type ReviewFieldConfiguration = ListItemConfiguration | TitleDescriptionConfiguration | (RespondentRolesConfiguration & Record<string, unknown>);
 
 export interface ReviewField {
   id: string;

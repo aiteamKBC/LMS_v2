@@ -199,6 +199,7 @@ export const employerNavItems: SidebarNavItem[] = [
 // CURRICULUM STUDIO — Grouped sidebar
 // ============================================================================
 export const curriculumNavItems: SidebarNavItem[] = [
+  { id: 'curriculumNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/curriculum/coach-directory' },
   { id: 'curriculum-home', label: 'Home', icon: 'ri-home-5-line', href: '/workspace/curriculum' },
   {
     id: 'curriculum-programmes',
@@ -250,6 +251,17 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/version-control',
     ],
   },
+  {
+    // The archive, for the whole of Curriculum rather than per list. Every page
+    // that archives something still has its own "View archived" toggle scoped to
+    // that list; this is where the four of them are read together, and the only
+    // place a record is put back or removed for good without first knowing which
+    // list it left.
+    id: 'curriculum-archive',
+    label: 'Archive',
+    icon: 'ri-archive-line',
+    href: '/curriculum/archive',
+  },
 ];
 
 // ============================================================================
@@ -290,7 +302,16 @@ export const engagementNavItems: SidebarNavItem[] = [
       { id: 'engagement-clubs', label: 'Learner Clubs', icon: 'ri-team-line', href: '/engagement/clubs' },
     ],
   },
-  { id: 'engagement-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/engagement/reports' },
+  {
+    id: 'engagement-group-reports',
+    label: 'Reports',
+    icon: 'ri-bar-chart-box-line',
+    href: '',
+    children: [
+      { id: 'engagement-reports', label: 'Reports', icon: 'ri-file-chart-line', href: '/engagement/reports' },
+      { id: 'engagement-feedbacks', label: 'Feedbacks', icon: 'ri-chat-quote-line', href: '/engagement/feedbacks' },
+    ],
+  },
 ];
 
 // ============================================================================
@@ -307,6 +328,7 @@ export const engagementNavItems: SidebarNavItem[] = [
  * live on the learner's own page (see BoardPage's Programme panel).
  */
 export const apprenticeNavItems: SidebarNavItem[] = [
+  { id: 'apprenticeNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
@@ -315,6 +337,7 @@ export const apprenticeNavItems: SidebarNavItem[] = [
  * compliance workspace pages (ILR, evidence packs, funding risk, …) rely on.
  */
 export const enrolmentNavItems: SidebarNavItem[] = [
+  { id: 'enrolmentNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
@@ -556,6 +579,7 @@ export const leadershipNavItems: SidebarNavItem[] = [
 export const adminNavItems: SidebarNavItem[] = [
   // Dashboard
   { id: 'admin-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/admin' },
+  { id: 'admin-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/admin/coach_directory' },
 
   // User & Access Control — login."Login_accounts" and the four real roles
   {

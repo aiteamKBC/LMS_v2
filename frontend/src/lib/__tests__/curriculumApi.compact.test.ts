@@ -35,6 +35,7 @@ describe('fetchCurriculumModules compact option', () => {
 
   afterEach(() => {
     clearCurriculumGetCache();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -49,6 +50,21 @@ describe('fetchCurriculumModules compact option', () => {
     fetchMock.mockResolvedValue(collection([]));
     await fetchCurriculumModules(undefined, { compact: true });
     expect(urlsFrom(fetchMock)[0]).toContain('compact=true');
+  });
+
+  it('allows a compact catalogue read up to one minute before timing out', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    }));
+
+    const pending = fetchCurriculumModules(undefined, { compact: true });
+    const timeoutResult = expect(pending).rejects.toThrow('Curriculum API timed out for /curriculum/modules/?compact=true');
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await timeoutResult;
   });
 
   it('does not share one in-flight request between compact and full callers', async () => {

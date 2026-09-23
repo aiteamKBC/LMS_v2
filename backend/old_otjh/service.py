@@ -251,11 +251,11 @@ def digest(rows):
     return hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(',', ':'), default=str).encode()).hexdigest()
 
 
-def month_detail(learner, month):
+def month_detail(learner, month, *, demo=False):
     record = summary(learner)
     state = review_month(record, month)
-    rows = repo.month_rows(learner, month)
-    return {**state, 'rows': rows, 'profile': repo.report_profile(learner), 'snapshot_digest': digest(rows)}
+    rows = repo.month_rows(learner, month, **({'demo': True} if demo else {}))
+    return {**state, 'rows': rows, 'profile': repo.report_profile(learner), 'snapshot_digest': digest(rows), 'demo_only': demo}
 
 
 def review_month(record, month):
@@ -388,13 +388,28 @@ def _locked_scope(learner, month):
     return transition, state
 
 
+def _review_snapshot_metadata(rows):
+    provisional = [row for row in rows if row.get('provisional')]
+    metadata = {'material_check_performed': False}
+    if provisional:
+        metadata.update({
+            'provisional_snapshot': True,
+            'provisional_source': 'formula_reconstruction',
+            'provisional_row_count': len(provisional),
+            'provisional_fields': sorted({field for row in provisional
+                                          for field in (row.get('provisional_fields') or [])}),
+        })
+    return metadata
+
+
 def _finalize_signed_month(learner, month, rows, transition, account, actor_role):
     # Called under the transition lock after checking the report snapshot.
     # Signing does not depend on material availability or pending hour revisions.
     snapshot = digest(rows)
-    repo.finalize(learner, month, snapshot, len(rows), account, metadata={'material_check_performed': False})
+    metadata = _review_snapshot_metadata(rows)
+    repo.finalize(learner, month, snapshot, len(rows), account, metadata=metadata)
     repo.event(transition['id'], month, 'completed', account, actor_role,
-               {'snapshot_digest': snapshot, 'completion_method': 'automatic_after_signing', 'material_check_performed': False})
+               {'snapshot_digest': snapshot, 'completion_method': 'automatic_after_signing', **metadata})
 
 
 def sign(learner, month, account, actor_role, image_bytes, expected_digest, request_metadata):
@@ -413,10 +428,11 @@ def sign(learner, month, account, actor_role, image_bytes, expected_digest, requ
                 raise ServiceError('The record has changed. Review the latest details before signing.', 'record_changed', 409)
             file_id = storage.save(image_bytes)
             repo.save_signature(learner, month, role, account.display_name or '', file_id, current_digest)
+            snapshot_metadata = _review_snapshot_metadata(rows)
             repo.event(transition['id'], month, 'signed', account, actor_role,
                        {**request_metadata, 'file_id': file_id, 'signer_role': role,
                         'file_sha256': hashlib.sha256(image_bytes).hexdigest(), 'snapshot_digest': current_digest,
-                        'material_check_performed': False})
+                        **snapshot_metadata})
             # Admins may sign a month on behalf of its learner, but their image
             # must not replace the learner's saved profile signature.
             if role == 'learner' and account.role == 'learner':

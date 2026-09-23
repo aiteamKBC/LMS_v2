@@ -10,6 +10,7 @@ import { dateLabel, ukDate, ukTime } from './overviewSchedule';
 import { learnerHeaderPlan } from './learnerHeaderPlan';
 import { completedComponentIds, ksbTypeCode, resourceTypeMeta, type JourneyComponent } from '@/utils/learnerJourney';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
@@ -137,6 +138,9 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
                 <span className="sr-only">{stateLabel}{active ? ', selected' : ''}</span>
               </span>
             </button>
+            {/* Outside the row's button: the curriculum team's hint is there to
+                be read, not to become part of the label that selects the week. */}
+            {week.kind === 'session' && <HolidayNoteHint note={week.holidayNote} className="mt-1.5" />}
           </li>;
         })}
       </ol>
@@ -157,6 +161,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
           {selectedIndex >= 0 ? <p className="mt-1 text-sm font-medium text-foreground-500">
             {(() => { const { start, end } = weekWindow(weeks, selectedIndex); return `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`; })()}
           </p> : null}
+          {selectedWeek.kind === 'session' && <HolidayNoteHint note={selectedWeek.holidayNote} className="mt-2.5 text-xs" />}
 
             </div>
 
@@ -446,7 +451,7 @@ function activityTypeLabel(component: JourneyComponent): string {
 }
 
 function WeeklyLearningPlanSkeleton() {
-  return <section aria-busy="true" aria-label="Loading your weekly learning plan" className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+  return <section aria-busy="true" aria-label="Loading your weekly learning plan" className="col-span-full grid w-full min-w-0 grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)]">
     <Panel>
       <div className="mb-3 flex items-center gap-2 text-sm font-bold text-foreground-400"><BookOpen size={16} aria-hidden="true" />Weeks</div>
       <RowsSkeleton rows={4} avatar={false} />

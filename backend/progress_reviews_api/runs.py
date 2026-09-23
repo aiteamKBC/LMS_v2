@@ -12,6 +12,46 @@ from django.db import connections
 
 from .tables import ensure_progress_review_tables
 
+RUN_AUDIT_COLUMNS = (
+    'id', 'learner_kind', 'learner_id', 'review_number', 'review_date',
+    'review_period_start', 'review_period_end', 'action_period_start', 'action_period_end',
+    'generation_status', 'errors', 'source_warnings', 'generated_by', 'generated_at',
+)
+
+
+def _record_run(run_id):
+    """Record the run's current state in the Audit Trail. Never raises.
+
+    Read back rather than carried from the caller's own statement: four
+    different functions move a run through pending/running/completed/failed,
+    each touching only its own columns, and re-reading the whole row is what
+    lets all four report the same shape without each one collecting the
+    columns the others already wrote.
+    """
+    try:
+        with _conn().cursor() as cur:
+            cur.execute(
+                f'''select {", ".join(RUN_AUDIT_COLUMNS)}
+                     from "Learner"."progress_review_runs" where id = %s''',
+                [run_id],
+            )
+            row = cur.fetchone()
+        if not row:
+            return
+        from system_audit.writes import record_table_rows
+
+        record_table_rows(
+            'progress_review_runs',
+            [dict(zip(RUN_AUDIT_COLUMNS, row))],
+            using='enrolment',
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            'Could not record a progress review run.', exc_info=True,
+        )
+
+
 CONN = "enrolment"
 
 
@@ -40,6 +80,7 @@ def create_run(*, run_id, learner_kind, learner_id, period, generated_by):
                 period.action_period_start, period.action_period_end, generated_by,
             ],
         )
+    _record_run(run_id)
 
 
 def mark_run_completed(run_id):
@@ -50,6 +91,7 @@ def mark_run_completed(run_id):
                where id = %s''',
             [run_id],
         )
+    _record_run(run_id)
 
 
 def mark_run_failed(run_id, errors: list):
@@ -60,6 +102,7 @@ def mark_run_failed(run_id, errors: list):
                where id = %s''',
             [json.dumps(errors), run_id],
         )
+    _record_run(run_id)
 
 
 def save_warnings(run_id, warnings: list):
@@ -70,6 +113,7 @@ def save_warnings(run_id, warnings: list):
                where id = %s''',
             [json.dumps(warnings), run_id],
         )
+    _record_run(run_id)
 
 
 def insert_snapshot(run_id, pack: dict):

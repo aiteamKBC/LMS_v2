@@ -214,6 +214,28 @@ describe('monthly logs', () => {
     expect(await screen.findByText('Your signature has been saved for this month.')).toBeInTheDocument();
   });
 
+  it('signs a formula-backed snapshot like an ordinary month', async () => {
+    const provisional = {
+      ...retained,
+      status: 'awaiting_signature' as const,
+      student_signature: null,
+      coach_signature: null,
+      provisional: true,
+      snapshot_digest: 'provisional-digest',
+      rows: [{ ...retained.rows[0], provisional: true, provisional_fields: ['actual', 'ksb'] }],
+    };
+    vi.mocked(getLogMonth).mockResolvedValue(provisional);
+    vi.mocked(signLogMonth).mockResolvedValue({ ...provisional, student_signature: retained.student_signature, status: 'complete' });
+
+    page('/learner/monthly-logs/2026-08');
+    expect(await screen.findByText('August 2026')).toBeVisible();
+    expect(screen.queryByText(/Provisional reconstruction|signature will capture the exact formula-derived hours/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign as learner' }));
+    await waitFor(() => expect(signLogMonth).toHaveBeenCalledWith(
+      '7', '2026-08', 'provisional-digest', expect.any(Blob), 'draw', 'csrf', 'learner',
+    ));
+  });
+
   it('lets the coach add their own signature to a learner-signed month', async () => {
     Object.assign(account, { role: 'staff', access: 'coach' });
     vi.mocked(getLogMonth).mockResolvedValue({ ...current, student_signature: retained.student_signature, status: 'complete' });

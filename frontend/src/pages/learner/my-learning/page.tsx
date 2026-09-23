@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { StudentActivityPanel as SubjectCardsPanel } from './SubjectWorkspace';
 export { StudentActivityPanel } from './SubjectWorkspace';
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
@@ -14,8 +14,11 @@ import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { buildLinkedQuizzes, splitLinkedQuizWeek, type LinkedQuiz } from '@/utils/linkedQuizzes';
 import { gradePercent } from '@/utils/learnerJourney';
+import { BookOpen, Sparkles } from 'lucide-react';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
+import { ModeSwitch } from '@/components/ui/ModeSwitch';
+import { FreeCoursesTab } from './FreeCoursesTab';
 import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { RowAction } from '@/components/ui/ActionRow';
@@ -25,6 +28,7 @@ import { EMPTY_VALUE } from '@/lib/format';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearningHero } from './LearningCatalogue';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { useAuth } from '@/hooks/useAuth';
 import { learningSchedule } from '@/api/learnerOverview';
 import learningStyles from './SubjectWorkspace.module.css';
 
@@ -45,7 +49,24 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const location = useLocation();
   const navigate = useNavigate();
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
-  const { kind, id } = useResolvedLearner(urlKind, urlId);
+  const { auth, isInitialized } = useAuth();
+  const resolved = useResolvedLearner(urlKind, urlId);
+  // On a hard refresh the in-memory learner pin is empty until /login_api/me/
+  // settles. Use that authoritative account identity directly for learner
+  // self-view; staff/admin accounts still require an explicit URL selection.
+  const accountLearner = auth.account?.role === 'learner' && auth.account.subjectId != null
+    ? { kind: auth.account.learnerType === 'commercial' ? 'commercial' as const : 'apprenticeship' as const, id: String(auth.account.subjectId) }
+    : null;
+  const { kind, id } = accountLearner || resolved;
+  const reviewAccount = auth.account && auth.account.role !== 'learner';
+  useEffect(() => {
+    if (!isInitialized || !reviewAccount || accountLearner || urlId || !kind || !id) return;
+    const params = new URLSearchParams(location.search);
+    navigate({ pathname: `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, search: params.toString() }, { replace: true });
+  }, [accountLearner, id, isInitialized, kind, location.search, navigate, reviewAccount, urlId]);
+  const learnerNavItems = useMemo(() => learnerNav.items.map(item => item.id === 'learner-my-learning' && kind && id
+    ? { ...item, href: `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(id)}` }
+    : item), [id, kind]);
   const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id);
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
 
@@ -56,6 +77,17 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
     if (next === tab) return;
     const params = new URLSearchParams(location.search);
     params.set('tab', next);
+    navigate({ pathname: location.pathname, search: params.toString() });
+  };
+
+  // The whole page switches between the programme modules ("My courses") and the
+  // learner's assigned free courses. Map view is always the module workspace.
+  const requestedMode = new URLSearchParams(location.search).get('mode');
+  const mode = view === 'map' ? 'courses' : requestedMode === 'free' ? 'free' : 'courses';
+  const setMode = (next: string) => {
+    if (next === mode) return;
+    const params = new URLSearchParams(location.search);
+    if (next === 'free') params.set('mode', next); else params.delete('mode');
     navigate({ pathname: location.pathname, search: params.toString() });
   };
 
@@ -75,7 +107,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
     <WorkspaceShell
       role="learner"
       roleLabel={learnerNav.label}
-      navItems={learnerNav.items}
+      navItems={learnerNavItems}
       workspaceLabel={learnerNav.workspaceLabel}
       pageTitle={view === 'map' ? 'Learner’s Map' : 'My Learning'}
       pageSubtitle={subtitle}
@@ -84,17 +116,41 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
       breadcrumbCurrentLabel={view === 'map' ? 'Learner’s Map' : 'My Learning'}
     >
       <PageContainer><div className={learningStyles.learningPage}>
-        {view === 'catalogue' && <LearningHero />}
-        {view === 'catalogue' && <PageTabs items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
-
-        {!isRealMode ? (
-          <Panel><EmptyState size="sm" title="No learner selected" description="Open this page from a learner record." /></Panel>
-        ) : tab === 'modules' ? (
-          <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} view={view} onRefresh={refresh} />
-        ) : (
-          tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
-          <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} onRetry={refresh} />
+        {view === 'catalogue' && isRealMode && (
+          <ModeSwitch
+            value={mode}
+            onChange={setMode}
+            label="Switch learning view"
+            options={[
+              { value: 'courses', label: 'My courses', icon: <BookOpen size={13} aria-hidden="true" /> },
+              { value: 'free', label: 'Free courses', icon: <Sparkles size={13} aria-hidden="true" /> },
+            ]}
+          />
         )}
+
+        {/* Keyed by mode so switching remounts the panel and re-runs the slide:
+            Free enters from the right, My courses from the left. */}
+        <div key={mode} className={view === 'catalogue' && isRealMode ? (mode === 'free' ? 'slide-from-right' : 'slide-from-left') : undefined}>
+          {!isInitialized ? (
+            <Panel><RowsSkeleton rows={2} /></Panel>
+          ) : !isRealMode ? (
+            <Panel><EmptyState size="sm" title="No learner selected" description="Open this page from a learner record." /></Panel>
+          ) : mode === 'free' ? (
+            <FreeCoursesTab kind={kind} id={id} />
+          ) : (
+            <>
+              {view === 'catalogue' && <LearningHero />}
+              {view === 'catalogue' && <PageTabs items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
+
+              {tab === 'modules' ? (
+                <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} view={view} onRefresh={refresh} />
+              ) : (
+                tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
+                <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} onRetry={refresh} />
+              )}
+            </>
+          )}
+        </div>
       </div></PageContainer>
     </WorkspaceShell>
   );

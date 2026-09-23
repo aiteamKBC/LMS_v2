@@ -221,15 +221,13 @@
 .attendanceFilter select { padding: 0 12px; }
 .attendanceResults { margin: 12px 0 0; color: #77718d; font-size: 11px; }
 .attendanceTableScroll { margin-top: 10px; overflow-x: auto; border: 1px solid #e6e1ee; border-radius: 10px; }
-.attendanceTable { width: 100%; min-width: 840px; border-collapse: collapse; font-size: 12px; }
+.attendanceTable { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 12px; }
 .attendanceTable th { padding: 12px 16px; background: #f4f2fa; color: #5b5572; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-align: left; text-transform: uppercase; }
 .attendanceTable td { padding: 13px 16px; border-top: 1px solid #ebe7f1; color: #4e4861; vertical-align: middle; }
 .attendanceTable tbody tr:hover td { background: #faf9fd; }
 .attendanceTable td:first-child { min-width: 220px; color: #241e48; }
-.attendanceTable td:nth-child(3) { min-width: 145px; }
-.attendanceTable td:nth-child(3) strong,
-.attendanceTable td:nth-child(3) span { display: block; }
-.attendanceTable td:nth-child(3) span { margin-top: 3px; color: #7b748c; }
+.attendanceTable td:nth-child(2) { min-width: 125px; }
+.attendanceTable td:nth-child(3) { min-width: 115px; }
 .attendanceStatus { display: inline-flex; padding: 4px 9px; border: 1px solid; border-radius: 999px; font-size: 10px; font-weight: 750; white-space: nowrap; }
 .attendanceStatusPositive { border-color: #bce8d8; background: #effbf6; color: #0d8b65; }
 .attendanceStatusNegative { border-color: #f4caca; background: #fff4f4; color: #c73535; }

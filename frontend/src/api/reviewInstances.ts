@@ -123,6 +123,39 @@ export interface ReviewRagHistoryEntry {
   rag: string;
 }
 
+export interface ReviewMeetingSummarySource {
+  fieldId: string;
+  status: 'ready' | 'edited' | 'failed' | 'unavailable' | string;
+  summaryText: string;
+  generatedAt?: string | null;
+  editedAt?: string | null;
+  /** Always a safe coach-facing state message, never a raw backend exception. */
+  message?: string;
+}
+
+/** Stored context from the immediately preceding occurrence of this Review.
+ * The endpoint is read-only and never fetches a live Teams artifact. */
+export interface PreviousReviewSession {
+  available: boolean;
+  reason?: string;
+  instance?: {
+    id: string;
+    occurrenceNumber: number | null;
+    targetDate: string;
+    completedAt: string | null;
+    status: string;
+  } | null;
+  review?: {
+    name: string;
+    reviewTypeCode?: string | null;
+    reviewTemplateId?: string | null;
+  } | null;
+  summaryText: string;
+  transcriptText: string;
+  transcriptAvailable: boolean;
+  transcriptTruncated: boolean;
+}
+
 export interface ReviewInstanceFormDefinition {
   pdf?: { available: boolean; reason: string } | null;
   /** Progress Review only, and null until a coach calculates it. */
@@ -130,6 +163,9 @@ export interface ReviewInstanceFormDefinition {
   /** Progress Review only -- this learner's completed Progress Reviews,
    *  newest first. */
   ragHistory?: ReviewRagHistoryEntry[];
+  /** MCM coach surface only. Omitted for Progress Reviews and unmapped legacy
+   * instances. The formal answer is still attached to the field in sections. */
+  meetingSummarySource?: ReviewMeetingSummarySource;
   instance: {
     id: string;
     reviewTemplateId: string;
@@ -216,6 +252,11 @@ export async function fetchReviewInstanceForm(instanceId: string, signal?: Abort
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
 
+export async function fetchPreviousReviewSession(instanceId: string, signal?: AbortSignal) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/previous`, { signal });
+  return readJsonResponse<PreviousReviewSession>(response);
+}
+
 export async function saveReviewInstanceAnswers(instanceId: string, answers: Record<string, unknown>) {
   const response = await coachFetch(`${instanceUrl(instanceId)}/answers`, {
     method: 'POST',
@@ -233,13 +274,27 @@ export interface ReviewCompletionError {
   errors?: { status?: string[]; fields?: string[]; signatures?: ReviewParticipantRole[]; reason?: string[]; note?: string[]; startedAt?: string[] };
 }
 
-export async function completeReviewInstance(instanceId: string) {
-  const response = await coachFetch(`${instanceUrl(instanceId)}/complete`, { method: 'POST' });
+export async function completeReviewInstance(instanceId: string, answers?: Record<string, unknown>) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/complete`, {
+    method: 'POST',
+    headers: answers ? { 'Content-Type': 'application/json' } : undefined,
+    body: answers ? JSON.stringify({ answers }) : undefined,
+  });
   if (!response.ok) {
     const data = await response.json().catch(() => ({})) as ReviewCompletionError;
     throw Object.assign(new Error(data.detail || 'This review cannot be completed yet.'), { errors: data.errors });
   }
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function generateReviewMeetingSummary(instanceId: string, transcript?: File) {
+  const body = transcript ? new FormData() : undefined;
+  if (body && transcript) body.append('transcript', transcript);
+  const response = await coachFetch(`${instanceUrl(instanceId)}/meeting-summary`, {
+    method: 'POST',
+    body,
+  });
+  return readJsonResponse<{ meetingSummarySource: ReviewMeetingSummarySource }>(response);
 }
 
 export type ManualInProgressReasonCode =
@@ -273,6 +328,24 @@ export async function markReviewInstanceInProgressManually(
   if (!response.ok) {
     const data = await response.json().catch(() => ({})) as ReviewCompletionError;
     throw Object.assign(new Error(data.detail || 'This review cannot be marked in progress.'), { errors: data.errors });
+  }
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export type ReviewReopenReasonCode = 'correction-required' | 'incorrect-answer' | 'signature-error' | 'other';
+
+export async function reopenReviewInstance(
+  instanceId: string,
+  params: { reasonCode: ReviewReopenReasonCode; note?: string },
+) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/reopen`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reasonCode: params.reasonCode, note: params.note || '' }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as ReviewCompletionError;
+    throw Object.assign(new Error(data.detail || 'This review cannot be reopened.'), { errors: data.errors });
   }
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }

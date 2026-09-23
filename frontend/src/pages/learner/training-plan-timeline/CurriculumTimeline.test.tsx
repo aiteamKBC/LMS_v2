@@ -239,3 +239,40 @@ describe('the learner and curriculum slot shapes are one contract', () => {
     expect(buildCurriculumTimeline([asLearner], [])).toHaveLength(1);
   });
 });
+
+/**
+ * The curriculum team's own hint for a holiday week.
+ *
+ * It is served already filtered: the note reaches the payload only when the
+ * author published it AND the week still clashes, so what arrives here is
+ * simply shown -- on the week it was written for and nowhere else. There is no
+ * unpublished text on this side to hide.
+ */
+describe('the holiday note the curriculum team publishes', () => {
+  const noteSlots: PlanCurriculumSlot[] = SLOTS.map(item => (item.date === '2026-05-04'
+    ? { ...item, holidayNote: 'No live session -- use the time for Assignment 2.' }
+    : item));
+
+  it('shows the note on the holiday week only', () => {
+    render(<CurriculumTimeline slots={noteSlots} sessions={[]} />);
+
+    const notes = screen.getAllByTestId('learner-holiday-note');
+    expect(notes).toHaveLength(1);
+    expect(notes[0].textContent).toContain('use the time for Assignment 2');
+    expect(within(screen.getByTestId('learner-holiday-session')).getByTestId('learner-holiday-note')).toBeInTheDocument();
+  });
+
+  it('shows nothing when the team published no note', () => {
+    render(<CurriculumTimeline slots={SLOTS} sessions={[]} />);
+
+    expect(screen.queryByTestId('learner-holiday-note')).toBeNull();
+  });
+
+  it('carries the note through the timeline it was served on', () => {
+    const rows = buildCurriculumTimeline(noteSlots, []);
+    const flagged = rows.filter(row => row.kind === 'session' && row.holidayNote);
+
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0].date).toBe('2026-05-04');
+  });
+});

@@ -190,8 +190,9 @@ class MonthlyAssignmentTests(SimpleTestCase):
         self.assertEqual(month_bounds("2026-09")[1].day, 30)
         self.assertEqual(month_bounds("2026-99"), (None, None))
 
+    @patch("learner_api.monthly_assignment.resubmission_booking_satisfied", return_value=False)
     @patch("learner_api.calendar._learner_calendar_record")
-    def test_coaching_uses_real_owned_meeting_in_last_ten_days(self, get_record):
+    def test_coaching_uses_real_owned_meeting_in_last_ten_days(self, get_record, _resubmission):
         from datetime import date
         record = SimpleNamespace(event_type="mcr", scheduled_date=date(2026, 9, 21), status="scheduled")
         get_record.return_value = record

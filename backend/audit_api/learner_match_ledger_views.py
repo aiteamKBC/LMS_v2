@@ -52,6 +52,13 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
+from .audit_trail import (
+    ACTIVITY_OVERRIDE_RETURNING,
+    ACTIVITY_OVERRIDE_SQL,
+    ANNOTATION_COLUMNS,
+    record_activity_override,
+    record_audit_rows,
+)
 from .db_source import cache_scope, resolve
 from .contract_documents import ensure_contract_archive_table
 from .evidence_documents import ensure_evidence_override_table
@@ -2645,6 +2652,9 @@ def save_activity_annotation(request: HttpRequest) -> JsonResponse:
                 [component, planned_hours, mapped_ksbs, updated_by],
             )
             row = cur.fetchone()
+            # The upsert overwrites the previous annotation, so this is the only
+            # place the one it replaced can still be reconstructed from.
+            record_audit_rows('activity_annotations', ANNOTATION_COLUMNS, row)
     except (KeyError, DatabaseError) as error:
         return JsonResponse({"error": "Could not save activity annotation.", "details": str(error)}, status=503)
     return JsonResponse(_annotation_payload(row))
@@ -2921,11 +2931,13 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
                     operation = excluded.operation, payload = excluded.payload,
                     source_payload = excluded.source_payload,
                     updated_by = excluded.updated_by, updated_at = now()
-                returning updated_at
+                returning ''' + ACTIVITY_OVERRIDE_SQL + '''
                 ''',
                 [aptem_id, activity_id, operation, json.dumps(payload), json.dumps(source_payload) if source_payload else None, updated_by],
             )
-            updated_at = cur.fetchone()[0]
+            row = cur.fetchone()
+            record_activity_override(row)
+            updated_at = dict(zip(ACTIVITY_OVERRIDE_RETURNING, row))['updated_at']
     except (KeyError, DatabaseError) as error:
         return JsonResponse({"error": "Could not save activity override.", "details": str(error)}, status=503)
     return JsonResponse({

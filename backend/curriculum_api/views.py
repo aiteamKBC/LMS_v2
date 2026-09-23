@@ -1024,6 +1024,7 @@ def ensure_program_config_archive_columns():
             'status': 'varchar(32)',
             'ksb_profile_source_id': 'varchar(128)',
             'required_otjh': 'numeric(8, 2)',
+            'display_order': 'integer',
         })
     except Exception as exc:
         logger.warning('Could not inspect programme config archive columns: %s', exc)
@@ -1200,7 +1201,7 @@ def provision_live_sessions_table():
                 id varchar(128) primary key,
                 module_catalogue_id varchar(128),
                 module_draft_id varchar(255) not null default '',
-                module_title varchar(500) not null default '',
+                module_title text not null default '',
                 provider varchar(64) not null default 'Microsoft Teams',
                 graph_event_id varchar(512),
                 join_url text not null default '',
@@ -7131,10 +7132,18 @@ def get_skills_england_ksb_rows():
 
 @scoped_curriculum_read
 def get_program_config_rows_raw():
+    # The order the curator dragged the cards into comes first; name orders
+    # anything never dragged, and is the whole order on a database that predates
+    # backend/sql/2026-09-22_programme_display_order.sql.
+    try:
+        ordered_by_hand = has_column('programmes', 'display_order')
+    except Exception:
+        ordered_by_hand = False
+    ordering = 'order by coalesce(display_order, 0), name' if ordered_by_hand else 'order by name'
     return fetch_all(f'''
         select *
         from {table_name("programmes")}
-        order by name
+        {ordering}
     ''')
 
 
@@ -8067,9 +8076,18 @@ def attach_module_assignment_counts(modules):
     """Set each module row's real `assignments` count, in one bulk pass.
 
     Every card shows this eagerly, so it has to be cheap for a whole list, not
-    one query per module -- see `learner_assignments.bulk_assigned_learner_counts`.
+    one query per module.
+
+    The counting rule lives in `learner_assignments.bulk_assigned_learner_counts`
+    and is still the reference implementation; what runs here is the jsonb
+    rewrite of it, because the original reads every learner row whole -- 11 MB of
+    Learning_plan to produce a few integers, measured at 47-84 s from outside the
+    database's region, which is longer than the statement timeout, so the payload
+    build this feeds never completed and never populated its cache.
+    `manage.py compare_assignment_counts` runs both and diffs every module; it
+    reports 268/268 identical.
     """
-    from .learner_assignments import bulk_assigned_learner_counts
+    from .learner_assignment_counts_sql import bulk_assigned_learner_counts_sql as bulk_assigned_learner_counts
 
     def key_for(module):
         return clean_str(module.get('moduleCatalogueId')) or clean_str(module.get('catalogueId')) or clean_str(module.get('id'))
@@ -8400,6 +8418,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             'ksbProfileSourceId': normalise_ksb_profile_source_value((config or {}).get('ksb_profile_source_id') or ''),
             'requiredOtjh': parse_required_otjh((config or {}).get('required_otjh')),
             'freeComponents': parse_int(free_counts.get('components'), 0),
+            # The card's place in the hand-picked order. Reading it back is what
+            # lets the grid tell a saved order from the alphabetical fallback.
+            'displayOrder': parse_int((config or {}).get('display_order'), 0),
         })
     return programmes
 
@@ -12329,9 +12350,12 @@ LIBRARY_COLUMN_DDL = (
     ('library_state', "varchar(16) not null default ''"),
     ('detached_at', 'timestamp with time zone'),
     ('origin_module_catalogue_id', 'varchar(128)'),
-    ('origin_module_title', 'varchar(500)'),
+    # text, not varchar(n): a component or week label is authored prose (a whole
+    # KSB statement, routinely), and a copy that outgrows the column fails the
+    # save outright. See 2026-09-22_widen_curriculum_titles.sql.
+    ('origin_module_title', 'text'),
     ('origin_week_id', 'varchar(128)'),
-    ('origin_week_label', 'varchar(500)'),
+    ('origin_week_label', 'text'),
     ('copied_from_id', 'varchar(128)'),
 )
 
@@ -12389,7 +12413,7 @@ def provision_module_authoring_tables():
                 group_name varchar(255),
                 tutor_name varchar(255),
                 tutor_email varchar(320),
-                title varchar(500) not null,
+                title text not null,
                 description text,
                 color varchar(32),
                 cover_image_url text,
@@ -12476,7 +12500,7 @@ def provision_module_authoring_tables():
                 id varchar(128) primary key,
                 module_catalogue_id varchar(128) not null,
                 week_number integer not null default 1,
-                title varchar(500) not null default '',
+                title text not null default '',
                 summary text,
                 learning_outcomes {json_type},
                 display_order integer not null default 0,
@@ -12487,11 +12511,19 @@ def provision_module_authoring_tables():
         ''')
         if connection.vendor == 'postgresql':
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column if not exists is_programme_deleted boolean not null default false')
+            # The author's holiday hint. Mirrors sql/2026-09-22_week_holiday_note.sql,
+            # where Neon is the source of truth.
+            cursor.execute(f"alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column if not exists holiday_note_enabled boolean not null default false")
+            cursor.execute(f"alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column if not exists holiday_note text not null default ''")
         else:
             cursor.execute(f'pragma table_info({quote_ident(AUTHORING_WEEKS_TABLE)})')
             columns = {row[1] for row in cursor.fetchall()}
             if 'is_programme_deleted' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column is_programme_deleted boolean not null default false')
+            if 'holiday_note_enabled' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column holiday_note_enabled boolean not null default false')
+            if 'holiday_note' not in columns:
+                cursor.execute(f"alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column holiday_note text not null default ''")
         provision_library_columns(cursor, AUTHORING_WEEKS_TABLE)
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (
@@ -12499,7 +12531,7 @@ def provision_module_authoring_tables():
                 week_id varchar(128) not null,
                 module_catalogue_id varchar(128) not null,
                 type varchar(64) not null,
-                title varchar(500) not null default '',
+                title text not null default '',
                 description text,
                 expected_otjh numeric(8,2) not null default 2,
                 points integer not null default 0,
@@ -12962,7 +12994,7 @@ def provision_free_programme_tables():
         cursor.execute(f'''
             create table if not exists {authoring_table_name(FREE_COURSES_TABLE)} (
                 id varchar(128) primary key,
-                course_name varchar(500) not null default '',
+                course_name text not null default '',
                 description text,
                 cover_image_url text,
                 week_builder_week_ids {json_type} not null default '[]',
@@ -12979,11 +13011,11 @@ def provision_free_programme_tables():
                 id varchar(128) primary key,
                 course_id varchar(128) not null,
                 week_id varchar(128),
-                course_name varchar(500) not null,
+                course_name text not null,
                 description text,
                 cover_image_url text,
                 week_number integer not null default 1,
-                week_title varchar(500) not null default '',
+                week_title text not null default '',
                 display_order integer not null default 0,
                 component_count integer not null default 0,
                 total_otjh numeric(8,2) not null default 0,
@@ -12998,7 +13030,7 @@ def provision_free_programme_tables():
                 week_id varchar(128),
                 programme_id varchar(255) not null,
                 type varchar(64) not null,
-                title varchar(500) not null default '',
+                title text not null default '',
                 description text,
                 expected_otjh numeric(8,2) not null default 2,
                 points integer not null default 0,
@@ -13014,7 +13046,7 @@ def provision_free_programme_tables():
         if connection.vendor == 'postgresql':
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
-                add column if not exists course_name varchar(500) not null default ''
+                add column if not exists course_name text not null default ''
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_COURSES_TABLE)}
@@ -13054,7 +13086,7 @@ def provision_free_programme_tables():
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
-                add column if not exists course_name varchar(500) not null default ''
+                add column if not exists course_name text not null default ''
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
@@ -13062,7 +13094,7 @@ def provision_free_programme_tables():
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
-                add column if not exists week_title varchar(500) not null default ''
+                add column if not exists week_title text not null default ''
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
@@ -13106,7 +13138,7 @@ def provision_free_programme_tables():
             cursor.execute(f'pragma table_info({quote_ident(FREE_COURSES_TABLE)})')
             course_columns = {row[1] for row in cursor.fetchall()}
             if 'course_name' not in course_columns:
-                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_name varchar(500) not null default ""')
+                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_name text not null default ""')
             if 'description' not in course_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column description text')
             if 'cover_image_url' not in course_columns:
@@ -13126,11 +13158,11 @@ def provision_free_programme_tables():
             if 'week_id' not in module_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_id varchar(128)')
             if 'course_name' not in module_columns:
-                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column course_name varchar(500) not null default ""')
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column course_name text not null default ""')
             if 'week_number' not in module_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_number integer not null default 1')
             if 'week_title' not in module_columns:
-                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_title varchar(500) not null default ""')
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_title text not null default ""')
             if 'cover_image_url' not in module_columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column cover_image_url text')
             if 'week_id' not in columns:
@@ -15992,7 +16024,17 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     ensure_module_authoring_tables()
     ensure_live_session_tracking_tables()
     requested_id = clean_str(module_catalogue_id)
-    resolved_id = resolve_authoring_catalogue_id(requested_id) or requested_id
+    # The cheap resolver, for the same reason the module structure endpoint uses
+    # it: an identifier that already names a stored module is its own answer,
+    # and one indexed lookup settles it. `resolve_authoring_catalogue_id`
+    # summarises every module in the database to give the general answer -- and
+    # that search only means anything for an identifier that is NOT a stored
+    # module, which the Module Builder never sends here. Measured on this
+    # module, the general resolver was the whole of the dialog's stall: the
+    # request cleared the table probes in 0.57s and was still inside the
+    # resolver when the browser gave up 30s later. An alias still falls through
+    # to the general resolver inside this helper, so nothing resolves differently.
+    resolved_id = resolve_stored_module_catalogue_id(requested_id) or requested_id
     if not authoring_module_exists(resolved_id):
         return json_error('Module authoring structure not found.', status=404)
 
@@ -16049,7 +16091,25 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
             dry_run=True,
         )
 
-    payload = get_authoring_structure_payload(resolved_id)
+    # A second full structure build, on an endpoint the Module Builder calls
+    # every time its Teams dialog opens -- roughly a dozen Neon round trips for
+    # weeks, components, mappings, completion and the quality check, repeating
+    # work the Builder has just paid for to load the very module it is showing.
+    #
+    # A GET here changes nothing, so it is served from the same entry, under the
+    # same invalidation, as the module-structure endpoint -- same key, same
+    # factory, so the two can never disagree. The POST path always rebuilds: it
+    # has just rewritten the components this payload describes, and the revision
+    # stamped into it is what the Builder's next save is checked against.
+    if request.method == 'POST':
+        module_payload = stamp_revision_after_write(get_authoring_structure_payload(resolved_id), resolved_id)
+    else:
+        with curriculum_read_scope(targeted_child_reads=True):
+            module_payload = cached_curriculum_value(
+                f'module-structure:{resolved_id}',
+                lambda: structure_payload_with_revision(lambda: get_authoring_structure_payload(resolved_id), resolved_id),
+                force=request_bypasses_curriculum_cache(request),
+            )
     body = {
         'restored': request.method == 'POST',
         'verificationPending': verification_pending,
@@ -16074,7 +16134,7 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
         # back the pre-restore revision left that module permanently unsaveable:
         # every save was refused as stale, and reloading ran the same restore
         # again.
-        'module': structure_payload_with_revision(payload, resolved_id),
+        'module': module_payload,
     }
     if pending_components is not None:
         # Weeks that have no live-session component yet, so re-attaching has
@@ -16971,17 +17031,59 @@ def module_structure_revision(module_catalogue_id):
     ).hexdigest()[:32]
 
 
-def structure_payload_with_revision(payload, module_catalogue_id):
-    """Stamp a structure payload with the revision it was built from.
+# Stamped on a payload whose revision could not be read at all. It can never
+# equal a real fingerprint, so a save built on such a payload is refused rather
+# than run unchecked. '' would have meant "no revision", which the save path
+# reads as "this caller is not asking to be checked" -- the opposite.
+STRUCTURE_REVISION_UNAVAILABLE = 'unverified'
 
-    Computed alongside the payload, never after it is served, so a payload that
-    comes back from the cache carries the revision of the content in it. That is
-    what makes a stale read safe: the save it feeds sends a superseded revision
-    and is refused, instead of the cached weeks quietly replacing the stored ones.
+
+def structure_payload_with_revision(build_payload, module_catalogue_id):
+    """Build a structure payload and stamp the revision it was built from.
+
+    The revision is read BEFORE the payload, and that order is the whole point.
+    These reads run in autocommit, so each statement sees its own snapshot and
+    another writer can commit in the middle of the build. Whichever of the two
+    is read second describes the later state:
+
+    - payload first, revision second (how this used to work): pre-write weeks
+      carrying the post-write fingerprint. The caller saves its stale structure,
+      the revision matches, the guard lets it through, and the other writer's
+      work is gone with no error raised anywhere. That is precisely the silent
+      overwrite this mechanism exists to make impossible.
+    - revision first: a payload that may contain a write the revision predates.
+      The revision is then already superseded, so the save built on it is
+      refused with 409 and the caller reloads. Wrong in the harmless direction.
+
+    So the pair is never certified as a snapshot it is not. It is either exactly
+    consistent, or provably stale and fails closed.
+
+    ``build_payload`` is a callable rather than an already-built payload so that
+    the ordering cannot be quietly undone at a call site. A caller that has just
+    written the structure itself and needs the revision of its own write uses
+    ``stamp_revision_after_write``.
+    """
+    revision = module_structure_revision(module_catalogue_id) or STRUCTURE_REVISION_UNAVAILABLE
+    payload = build_payload()
+    if not payload:
+        return payload
+    return {**payload, 'structureRevision': revision}
+
+
+def stamp_revision_after_write(payload, module_catalogue_id):
+    """Stamp a payload whose content this request has just written itself.
+
+    The revision has to describe the state *after* that write, so it is read
+    afterwards. Only for a caller that provisioned or saved the structure a
+    moment ago; anything that merely reads must use
+    ``structure_payload_with_revision`` instead.
     """
     if not payload:
         return payload
-    return {**payload, 'structureRevision': module_structure_revision(module_catalogue_id)}
+    return {
+        **payload,
+        'structureRevision': module_structure_revision(module_catalogue_id) or STRUCTURE_REVISION_UNAVAILABLE,
+    }
 
 
 def lock_module_structure_row(module_catalogue_id):
@@ -17010,7 +17112,50 @@ def lock_module_structure_row(module_catalogue_id):
         cursor.fetchall()
 
 
-def get_authoring_structure_payload(module_catalogue_id):
+def module_archive_parent_markers(module_row, module_catalogue_id):
+    """Which ``deleted_via_parent`` markers belong to this module's archive.
+
+    A module archived on its own stamps its children with its own catalogue id,
+    which is what ``restore_rows_via_parent`` matches. A module that came here on
+    a programme's cascade did not stamp anything: that cascade wrote the
+    *programme* id onto the module and onto every week and component under it, so
+    matching on the catalogue id alone would report an archived programme's
+    modules as empty. Whatever marker the module itself carries is therefore
+    accepted alongside its own id.
+    """
+    markers = {clean_str(module_catalogue_id)}
+    via_parent = clean_str((module_row or {}).get('deleted_via_parent'))
+    if via_parent:
+        markers.add(via_parent)
+    return {marker for marker in markers if marker}
+
+
+def row_in_module_archive(row, markers):
+    """Would restoring this module bring this child row back?
+
+    A live row is kept -- the caller is reading an archived module, but a child
+    that was never soft-deleted is still part of it. A deleted one is kept only
+    when its ``deleted_via_parent`` marker is one of this module's, so a
+    component deleted by hand before the module was archived stays out: reading
+    an archived module must show what a restore returns, not everything the table
+    has ever held under that id.
+    """
+    if not curriculum_row_effectively_deleted(row):
+        return True
+    return clean_str(row.get('deleted_via_parent')) in markers
+
+
+def get_authoring_structure_payload(module_catalogue_id, include_archived=False):
+    """The module's authored structure.
+
+    ``include_archived`` is for reading a module that is *in* the archive. The
+    archive cascade soft-deletes every week, component and mapping under the
+    module, so the ``active_*`` filters below -- correct for every live read --
+    return the module with an empty week list. The archive view has to show what
+    is actually sitting inside it, which is the set a restore would bring back;
+    see ``row_in_module_archive``. Nothing else about the payload changes, so the
+    archive renders the same shape the builder does.
+    """
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     if not module_rows:
         return None
@@ -17019,12 +17164,32 @@ def get_authoring_structure_payload(module_catalogue_id):
     group_row = group_rows[0] if group_rows else {}
     group_coach_name = clean_str(group_row.get('coach_name'))
     is_programme_deleted = programme_deleted_row(module) or programme_deleted_row(group_row)
-    week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id'))
-    component_rows = active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, id'))
-    mapping_rows = mappings_with_inferred_sources(
-        active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'created_at, id')),
-        module_rows,
-    )
+    stored_week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id')
+    stored_component_rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, id')
+    stored_mapping_rows = authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'created_at, id')
+    if include_archived:
+        # The type and library exclusions stay: a retired component type and a
+        # detached library row are not this module's content either way, and a
+        # restore does not make them so.
+        markers = module_archive_parent_markers(module, module_catalogue_id)
+        week_rows = [
+            row for row in stored_week_rows
+            if not is_library_row(row) and row_in_module_archive(row, markers)
+        ]
+        component_rows = [
+            row for row in stored_component_rows
+            if not is_retired_component_type(row.get('type'))
+            and not is_library_row(row)
+            and row_in_module_archive(row, markers)
+        ]
+        mapping_source_rows = [
+            row for row in stored_mapping_rows if row_in_module_archive(row, markers)
+        ]
+    else:
+        week_rows = active_week_rows(stored_week_rows)
+        component_rows = active_component_rows(stored_component_rows)
+        mapping_source_rows = active_mapping_rows(stored_mapping_rows)
+    mapping_rows = mappings_with_inferred_sources(mapping_source_rows, module_rows)
     completion_rows = authoring_fetch_all(AUTHORING_COMPLETION_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     advanced_rows = authoring_fetch_all(AUTHORING_ADVANCED_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
 
@@ -17076,6 +17241,8 @@ def get_authoring_structure_payload(module_catalogue_id):
             'summary': row.get('summary') or '',
             'learningOutcomes': as_json_value(row.get('learning_outcomes'), []),
             'copiedFromId': clean_str(row.get('copied_from_id')),
+            'holidayNoteEnabled': bool(row.get('holiday_note_enabled')),
+            'holidayNote': clean_str(row.get('holiday_note')),
             'components': components_by_week.get(week_id, []),
             'ksbMappings': mappings_by_week.get(week_id, []),
         })
@@ -17309,6 +17476,8 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
                 'summary': row.get('summary') or '',
                 'learningOutcomes': as_json_value(row.get('learning_outcomes'), []),
                 'copiedFromId': clean_str(row.get('copied_from_id')),
+                'holidayNoteEnabled': bool(row.get('holiday_note_enabled')),
+                'holidayNote': clean_str(row.get('holiday_note')),
                 'components': components_by_week.get(week_id, []),
                 'ksbMappings': mappings_by_week.get(week_id, []),
             })
@@ -18636,6 +18805,12 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                 'summary': week.get('summary') or '',
                 'learning_outcomes': json_db_value(week.get('learningOutcomes') or []),
                 'copied_from_id': clean_str(week.get('copiedFromId') or week.get('copied_from_id')) or None,
+                # The hint the author wrote for a holiday week, and whether it is
+                # published. The switch is what a learner read depends on, so an
+                # absent key is OFF rather than "leave it as it was": this save
+                # replaces the week row outright and there is nothing to leave.
+                'holiday_note_enabled': bool_payload(week.get('holidayNoteEnabled') or week.get('holiday_note_enabled')),
+                'holiday_note': clean_str(week.get('holidayNote') or week.get('holiday_note')),
                 'display_order': week_index,
                 # Attached to this module, so never a detached library item.
                 'library_state': '',
@@ -19975,6 +20150,60 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility):
 
 
 @csrf_exempt
+def curriculum_programme_reorder(request):
+    """Save the order the programme cards were dragged into.
+
+    The body is the ids in the order they should read, top-left first. Only the
+    programmes named are renumbered, and they are renumbered from 1 upward in
+    the order given, so a partial list (one page of the grid) still lands in a
+    stable order relative to itself. 0 stays reserved for "never ordered", which
+    keeps untouched programmes ahead of nothing and still alphabetical among
+    themselves.
+    """
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+    raw_order = payload.get('order')
+    if not isinstance(raw_order, list):
+        return json_error('Missing required fields.', fields=['order'])
+
+    ensure_program_config_archive_columns()
+    if not has_column('programmes', 'display_order'):
+        return json_error(
+            'This database has no programme display_order column yet. Apply '
+            'backend/sql/2026-09-22_programme_display_order.sql first.',
+            status=409,
+        )
+
+    programme_ids = unique(clean_str(value) for value in raw_order if clean_str(value))
+    if not programme_ids:
+        return json_error('No programmes were given to order.')
+
+    configs = get_program_config_rows()
+    configs_by_id = {programme_config_identity(config): config for config in configs}
+    unknown = [programme_id for programme_id in programme_ids if programme_id not in configs_by_id]
+    if unknown:
+        return json_error('Unknown programmes in the order.', fields=unknown, status=404)
+
+    key_column = programme_config_key_column()
+    with transaction.atomic():
+        for position, programme_id in enumerate(programme_ids, start=1):
+            key_value = configs_by_id[programme_id].get(key_column)
+            update_rows(
+                'programmes',
+                f'{quote_ident(key_column)} = %s',
+                [key_value],
+                {'display_order': position, 'updated_at': datetime.utcnow()},
+            )
+    invalidate_curriculum_cache()
+    log_curriculum_decision('programme.reorder', outcome='saved', entity_id=','.join(programme_ids[:10]))
+    return JsonResponse({'saved': True, 'order': programme_ids})
+
+
+@csrf_exempt
 def curriculum_programme_restore(request, identifier):
     """Take a programme back out of the archive, children included."""
     if request.method != 'POST':
@@ -21132,11 +21361,16 @@ def curriculum_module_structure(request, module_catalogue_id):
                 if is_training_alias:
                     # A training-plan alias provisions on the way through, so it
                     # is never served from a cache.
-                    payload = structure_payload_with_revision(
-                        get_authoring_structure_payload(resolved_catalogue_id)
+                    payload = (
+                        structure_payload_with_revision(
+                            lambda: get_authoring_structure_payload(resolved_catalogue_id),
+                            resolved_catalogue_id,
+                        )
                         if resolved_catalogue_id != module_catalogue_id
-                        else ensure_training_module_authoring_structure(module_catalogue_id),
-                        resolved_catalogue_id,
+                        else stamp_revision_after_write(
+                            ensure_training_module_authoring_structure(module_catalogue_id),
+                            resolved_catalogue_id,
+                        )
                     )
                 elif stored_catalogue_id:
                     # Cached the way curriculum_module_structure_resolve already
@@ -21163,14 +21397,14 @@ def curriculum_module_structure(request, module_catalogue_id):
                     payload = cached_curriculum_value(
                         f'module-structure:{resolved_catalogue_id}',
                         lambda: structure_payload_with_revision(
-                            get_authoring_structure_payload(resolved_catalogue_id),
+                            lambda: get_authoring_structure_payload(resolved_catalogue_id),
                             resolved_catalogue_id,
                         ),
                         force=bypass_cache,
                     )
                 else:
                     payload = structure_payload_with_revision(
-                        get_authoring_structure_payload(resolved_catalogue_id),
+                        lambda: get_authoring_structure_payload(resolved_catalogue_id),
                         resolved_catalogue_id,
                     )
             # Outside the read scope on purpose: this is a write, and the scope
@@ -21268,7 +21502,27 @@ def curriculum_module_structure(request, module_catalogue_id):
             if expected_revision:
                 lock_module_structure_row(resolved_catalogue_id)
                 current_revision = module_structure_revision(resolved_catalogue_id)
-                if current_revision and current_revision != expected_revision:
+                if not current_revision:
+                    # Fail closed. '' here means the fingerprint could not be
+                    # read at all, never that the module is empty -- an empty
+                    # module still hashes to a real value. Carrying on would run
+                    # this save unchecked, which is the silent overwrite the
+                    # caller asked to be protected from by sending a revision in
+                    # the first place. No module travels with this refusal:
+                    # nothing was compared, so there is no other version to show.
+                    logger.warning(
+                        'Refusing a guarded structure save for %s: the current revision could not be read.',
+                        resolved_catalogue_id,
+                    )
+                    return json_error(
+                        'This module could not be checked against the saved version, so nothing was '
+                        'written. Your changes are still here - try again in a moment.',
+                        status=409,
+                        conflict=True,
+                        expectedRevision=expected_revision,
+                        currentRevision='',
+                    )
+                if current_revision != expected_revision:
                     # Deliberately NOT a merge and NOT a retry. The payload
                     # waiting here replaces every week and component in the
                     # module, so applying it would destroy whatever the other
@@ -21283,7 +21537,7 @@ def curriculum_module_structure(request, module_catalogue_id):
                         expectedRevision=expected_revision,
                         currentRevision=current_revision,
                         module=structure_payload_with_revision(
-                            get_authoring_structure_payload(resolved_catalogue_id),
+                            lambda: get_authoring_structure_payload(resolved_catalogue_id),
                             resolved_catalogue_id,
                         ),
                     )
@@ -21328,6 +21582,356 @@ def curriculum_free_programme_modules(request, programme_id):
         logger.exception('Unable to save free programme modules for %s.', programme_id)
         return json_error('Unable to save free programme modules.', status=500, detail=str(exc))
     return JsonResponse({'saved': True, 'programmeId': programme_id, 'modules': modules, 'results': modules})
+
+
+def build_free_course_week_structure(source_rows):
+    """Map one free course's week-rows into a module ``weekStructure``.
+
+    One free week -> one module week, one free component -> one normal component.
+    ``settings`` is carried verbatim so a linked quiz / media / manualUnlock
+    survives; KSB mappings start empty and hours carry the free component's own
+    value -- the author adds the apprentice-specific KSBs/hours afterwards. No
+    free ids are carried, so fresh WEEK-/COMP- ids mint and the copy is fully
+    independent of the free-course rows.
+    """
+    ordered = sorted(
+        source_rows,
+        key=lambda row: (parse_int(row.get('displayOrder'), 0), parse_int(row.get('weekNumber'), 0)),
+    )
+    week_structure = []
+    for index, week in enumerate(ordered):
+        components = []
+        for component in week.get('components') or []:
+            components.append({
+                'type': component.get('type'),
+                'title': component.get('title') or '',
+                'description': component.get('description') or '',
+                'expectedOtjh': component.get('expectedOtjh'),
+                'points': component.get('points'),
+                'reflectionRequired': component.get('reflectionRequired'),
+                'tutorValidationRequired': component.get('tutorValidationRequired'),
+                'ksbMappings': [],
+                'settings': component.get('settings') if isinstance(component.get('settings'), dict) else {},
+            })
+        week_structure.append({
+            'weekNumber': parse_int(week.get('weekNumber'), index + 1),
+            'title': clean_str(week.get('weekTitle')) or f'Week {index + 1}',
+            'summary': '',
+            'components': components,
+            'ksbMappings': [],
+        })
+    return week_structure
+
+
+def _delete_single_free_course_rows(course_id):
+    """Delete ONE free course's own rows + its authoring-week mirror.
+
+    Scoped by course_id / free_module_id, so it removes only this course and
+    never the rest of the FREE-COURSES catalogue (the programme-wide
+    ``delete_free_programme_data`` would). Mirrors the authoring-week cleanup the
+    free-course save performs (``save_free_programme_modules``).
+    """
+    course_id = clean_str(course_id)
+    if not course_id:
+        return
+    week_rows = free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id])
+    free_week_ids = [clean_str(row.get('id')) for row in week_rows if clean_str(row.get('id'))]
+    # The authoring_weeks mirror is keyed on both the free week row id and the
+    # authoring week_id it was written under, plus the course id — same predicate
+    # save_free_programme_modules deletes by, scoped to this one course.
+    mirror_ids = set(free_week_ids)
+    for row in week_rows:
+        if clean_str(row.get('week_id')):
+            mirror_ids.add(clean_str(row.get('week_id')))
+    mirror_ids.add(course_id)
+    if free_week_ids:
+        placeholders = ', '.join(['%s'] * len(free_week_ids))
+        free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE, f'free_module_id in ({placeholders})', free_week_ids)
+    mirror_list = [value for value in mirror_ids if value]
+    if mirror_list:
+        placeholders = ', '.join(['%s'] * len(mirror_list))
+        authoring_delete(
+            AUTHORING_WEEKS_TABLE,
+            f'module_catalogue_id in ({placeholders}) or id in ({placeholders})',
+            [*mirror_list, *mirror_list],
+        )
+    free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id])
+    free_programme_delete(FREE_COURSES_TABLE, 'id = %s', [course_id])
+
+
+def _scrub_free_course_learner_assignments(course_id):
+    """Remove a moved free course from every learner it was assigned to.
+
+    ``free_course_ref`` is a plain reference with no FK cascade, so deleting the
+    course would otherwise leave orphans. ``default`` and ``enrolment`` are the
+    same physical Neon database, so this raw cross-schema SQL runs on the
+    curriculum connection and stays inside the convert transaction (the ORM would
+    use the ``enrolment`` alias — a separate connection, a separate transaction).
+    """
+    course_id = clean_str(course_id)
+    if not course_id:
+        return
+    marker = json.dumps([{'freeCourseId': course_id}])
+    with connection.cursor() as cursor:
+        # Enrolment source of truth: drop the matching element from each learner's
+        # Free_courses JSONB. `is distinct from` keeps non-matching and malformed
+        # (null-key) elements rather than silently dropping them.
+        cursor.execute(
+            '''
+            update "enrolment"."Created_users"
+               set "Free_courses" = coalesce((
+                     select jsonb_agg(elem)
+                       from jsonb_array_elements("Free_courses"::jsonb) elem
+                      where elem->>'freeCourseId' is distinct from %s
+                   ), '[]'::jsonb)
+             where "Free_courses"::jsonb @> %s::jsonb
+            ''',
+            [course_id, marker],
+        )
+        # Relational mirror kept by the learner-side sync.
+        cursor.execute(
+            'delete from "Learner"."learner_free_courses" where free_course_ref = %s',
+            [course_id],
+        )
+
+
+def inject_free_course_into_group(course_id, group_id, *, free_programme_id='FREE-COURSES', mode='clone'):
+    """Inject one free course as a new module into an EXISTING programme group.
+
+    The course's weeks/components become a module appended to the group the
+    caller selected (``preserve_missing=True`` keeps the group's other modules).
+    Component ``settings`` are copied verbatim so a linked quiz/media survive;
+    KSB mappings start empty and hours carry the free component's value — the
+    author finishes those in the Module Builder. ``mode='move'`` additionally
+    deletes the source free course (its own rows only) and scrubs the
+    now-dangling learner assignments — everything inside one transaction, so any
+    failure rolls the whole injection back.
+    """
+    course_id = clean_str(course_id)
+    if not course_id:
+        raise ValueError('A free course id is required.')
+    group_id = clean_str(group_id)
+    if not group_id:
+        raise ValueError('A target group is required.')
+    mode = clean_str(mode).lower() or 'clone'
+    if mode not in {'clone', 'move'}:
+        raise ValueError('mode must be "clone" or "move".')
+
+    source_rows = [
+        row for row in get_free_programme_modules_payload(clean_str(free_programme_id) or 'FREE-COURSES')
+        if clean_str(row.get('courseId')) == course_id
+    ]
+    if not source_rows:
+        raise LookupError('Free course not found.')
+    header = source_rows[0]
+    course_title = clean_str(header.get('courseName')) or 'Untitled course'
+
+    module_payload = {
+        'moduleName': course_title,
+        'title': course_title,
+        # module_attachment_authoring_payload reads the description from `notes`
+        # and the cover from `coverImage`.
+        'notes': clean_str(header.get('description')),
+        'coverImage': clean_str(header.get('coverImageUrl')),
+        'weekStructure': build_free_course_week_structure(source_rows),
+    }
+
+    with transaction.atomic(), versioning.source('free-course-convert'):
+        group_row = resolve_group_row(group_id)
+        if not group_row:
+            raise LookupError('Target group not found.')
+        cohort_row = resolve_cohort_row(clean_str(group_row.get('cohort_id')))
+        if not cohort_row:
+            raise LookupError('The selected group has no cohort.')
+        group = curriculum_group_from_authoring_detail(serialize_group_authoring_detail(group_row))
+        cohort = curriculum_cohort_from_authoring_detail(serialize_cohort_authoring_detail(cohort_row))
+        # preserve_missing keeps every other module already in the group — this is
+        # an append, not a replace of the group's module set.
+        saved_modules, _removed = save_tree_group_modules(group, cohort, [module_payload], preserve_missing=True)
+        saved_module = saved_modules[0] if saved_modules else {}
+        module_catalogue_id = clean_str(saved_module.get('catalogueId') or saved_module.get('moduleCatalogueId'))
+        programme_id = clean_str(saved_module.get('programmeId'))
+
+        if mode == 'move':
+            _delete_single_free_course_rows(course_id)
+            _scrub_free_course_learner_assignments(course_id)
+
+        if programme_id:
+            repair_curriculum_parent_links(programme_id)
+        invalidate_curriculum_cache()
+
+    return {
+        'mode': mode,
+        'programmeId': programme_id,
+        'programmeName': clean_str(saved_module.get('programmeName')),
+        'cohortId': clean_str(saved_module.get('cohortId') or group_row.get('cohort_id')),
+        'groupId': group_id,
+        'moduleCatalogueId': module_catalogue_id,
+    }
+
+
+@csrf_exempt
+def curriculum_free_programme_convert(request, programme_id):
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+    try:
+        result = inject_free_course_into_group(
+            clean_str(payload.get('courseId') or payload.get('course_id')),
+            clean_str(payload.get('groupId') or payload.get('group_id')),
+            free_programme_id=clean_str(programme_id),
+            mode=clean_str(payload.get('mode')) or 'clone',
+        )
+    except LookupError as exc:
+        return json_error(str(exc) or 'Not found.', status=404)
+    except ValueError as exc:
+        return json_error(str(exc), status=400)
+    except Exception as exc:
+        logger.exception('Unable to convert free course %s.', clean_str(payload.get('courseId')))
+        return json_error('Unable to convert the free course.', status=500, detail=str(exc))
+    return JsonResponse(result, status=201)
+
+
+def build_module_free_course_weeks(structure, course_id):
+    """Inverse of build_free_course_week_structure: a module's authored
+    weekStructure -> free-course ``modules[]`` week entries, all sharing one
+    ``course_id`` so they group into a single free course. Component ``settings``
+    (linked quiz / media / manualUnlock) copy verbatim; KSB mappings and hours
+    are not carried (free courses have neither). No week/component ids are set,
+    so fresh FREEWEEK-/FREECOMP- ids mint on save.
+    """
+    course_id = clean_str(course_id)
+    course_title = clean_str(structure.get('title')) or 'Untitled course'
+    description = clean_str(structure.get('description'))
+    cover = clean_str(structure.get('coverImage'))
+    weeks = []
+    for index, week in enumerate(structure.get('weekStructure') or []):
+        components = []
+        for component in week.get('components') or []:
+            components.append({
+                'type': component.get('type'),
+                'title': component.get('title') or '',
+                'description': component.get('description') or '',
+                'expectedOtjh': component.get('expectedOtjh'),
+                'points': component.get('points'),
+                'reflectionRequired': component.get('reflectionRequired'),
+                'workplaceEvidenceRequired': component.get('workplaceEvidenceRequired'),
+                'tutorValidationRequired': component.get('tutorValidationRequired'),
+                'settings': component.get('settings') if isinstance(component.get('settings'), dict) else {},
+            })
+        weeks.append({
+            'courseId': course_id,
+            'courseName': course_title,
+            'description': description,
+            'coverImageUrl': cover,
+            'weekNumber': parse_int(week.get('weekNumber'), index + 1),
+            'weekTitle': clean_str(week.get('title')) or f'Week {index + 1}',
+            'components': components,
+        })
+    return weeks
+
+
+def _free_module_response_to_input(module):
+    """Map one get_free_programme_modules_payload output row back to the
+    save-input shape, so existing free courses can be re-sent unchanged through
+    the full-replace save (mirrors the frontend savedModuleInput)."""
+    course_name = module.get('courseName') or module.get('title') or ''
+    return {
+        'id': module.get('id'),
+        'courseId': module.get('courseId'),
+        'weekId': module.get('weekId'),
+        'weekNumber': module.get('weekNumber'),
+        'weekTitle': module.get('weekTitle'),
+        'courseName': course_name,
+        'title': course_name,
+        'description': module.get('description') or '',
+        'coverImageUrl': module.get('coverImageUrl') or '',
+        'components': [
+            {
+                'id': component.get('id'),
+                'weekId': component.get('weekId'),
+                'displayOrder': component.get('displayOrder'),
+                'type': component.get('type'),
+                'title': component.get('title'),
+                'description': component.get('description'),
+                'expectedOtjh': component.get('expectedOtjh'),
+                'points': component.get('points'),
+                'reflectionRequired': component.get('reflectionRequired'),
+                'workplaceEvidenceRequired': component.get('workplaceEvidenceRequired'),
+                'tutorValidationRequired': component.get('tutorValidationRequired'),
+                'settings': component.get('settings') if isinstance(component.get('settings'), dict) else {},
+            }
+            for component in module.get('components') or []
+        ],
+    }
+
+
+def convert_module_to_free_course(module_catalogue_id, *, free_programme_id='FREE-COURSES', mode='clone'):
+    """Copy one programme module into a NEW free course (appended to the existing
+    catalogue). ``mode='move'`` additionally archives the source module. Whole
+    body is one transaction so a failure rolls the copy and the archive back
+    together.
+    """
+    module_catalogue_id = clean_str(module_catalogue_id)
+    if not module_catalogue_id:
+        raise ValueError('A module id is required.')
+    mode = clean_str(mode).lower() or 'clone'
+    if mode not in {'clone', 'move'}:
+        raise ValueError('mode must be "clone" or "move".')
+
+    structure = get_authoring_structure_payload(module_catalogue_id)
+    if not structure:
+        raise LookupError('Module not found.')
+    course_title = clean_str(structure.get('title')) or 'Untitled course'
+
+    free_programme_id = clean_str(free_programme_id) or 'FREE-COURSES'
+    with transaction.atomic(), versioning.source('module-to-free-course'):
+        existing_modules = get_free_programme_modules_payload(free_programme_id)
+        existing_ids = {clean_str(row.get('courseId')) for row in existing_modules if clean_str(row.get('courseId'))}
+        course_id = unique_timestamp_prefixed_id('FREECOURSE', existing_ids)
+        new_weeks = build_module_free_course_weeks(structure, course_id)
+        if not new_weeks:
+            raise ValueError('This module has no weeks to convert.')
+        modules_input = [_free_module_response_to_input(row) for row in existing_modules] + new_weeks
+        saved = save_free_programme_modules(free_programme_id, {'programmeName': 'Free Courses', 'modules': modules_input})
+
+        if mode == 'move':
+            delete_module_authoring_structure(module_catalogue_id)
+
+        invalidate_curriculum_cache()
+
+    return {
+        'mode': mode,
+        'freeCourseId': course_id,
+        'courseName': course_title,
+        'moduleCatalogueId': module_catalogue_id,
+        'modules': saved,
+    }
+
+
+@csrf_exempt
+def curriculum_free_programme_import_module(request, programme_id):
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+    try:
+        result = convert_module_to_free_course(
+            clean_str(payload.get('moduleCatalogueId') or payload.get('module_catalogue_id') or payload.get('moduleId')),
+            free_programme_id=clean_str(programme_id),
+            mode=clean_str(payload.get('mode')) or 'clone',
+        )
+    except LookupError as exc:
+        return json_error(str(exc) or 'Module not found.', status=404)
+    except ValueError as exc:
+        return json_error(str(exc), status=400)
+    except Exception as exc:
+        logger.exception('Unable to convert module %s to a free course.', clean_str(payload.get('moduleCatalogueId')))
+        return json_error('Unable to convert the module.', status=500, detail=str(exc))
+    return JsonResponse(result, status=201)
 
 
 @csrf_exempt
@@ -26712,6 +27316,45 @@ def curriculum_archived_modules(request):
     return JsonResponse({'schema': CURRICULUM_SCHEMA, 'count': len(results), 'results': results})
 
 
+@require_GET
+def curriculum_archived_module_structure(request, module_catalogue_id):
+    """One archived module's weeks and the components inside them.
+
+    The archive is the only place an archived module can be looked at. Every
+    workspace in the app reads the curriculum overview payload, which excludes
+    archived rows, and the live structure endpoint next to this one filters its
+    children through ``active_*`` -- correct for a live read, and the reason an
+    archived module read through it comes back with an empty week list.
+
+    Read-only by design: an archived module is restored or removed, never edited,
+    so there is no PATCH here. Uncached for the same reason the archive lists are
+    revalidated -- this is opened in order to act on it, and the very next thing
+    the reader does is restore or delete the module it belongs to.
+    """
+    identifier = clean_str(module_catalogue_id)
+    catalogue_id = resolve_stored_module_catalogue_id(identifier)
+    module_row = authoring_module_exists(catalogue_id) if catalogue_id else None
+    if not module_row:
+        return json_error('Module not found.', status=404)
+    if not curriculum_row_effectively_deleted(module_row):
+        # The live endpoint is this module's door, and it is the one that can
+        # serve an editable structure. Saying so is better than quietly serving a
+        # second, read-only copy of a module that is not in the archive at all.
+        return json_error(
+            'Module is not archived.', status=409,
+            reason='module-not-archived', id=catalogue_id,
+        )
+    try:
+        with curriculum_read_scope(targeted_child_reads=True):
+            payload = get_authoring_structure_payload(catalogue_id, include_archived=True)
+    except Exception:
+        logger.exception('Unable to load archived module structure for %s.', identifier)
+        return json_error('Unable to load archived module structure.', status=500)
+    if not payload:
+        return json_error('Module authoring structure not found.', status=404)
+    return JsonResponse({**payload, **archive_stamp_fields(module_row), 'status': 'archived'})
+
+
 @csrf_exempt
 def curriculum_module_restore(request, identifier):
     """Take a module, and everything archived under it, back out of the archive."""
@@ -28224,7 +28867,7 @@ def provision_week_template_tables():
         cursor.execute(f'''
             create table if not exists {authoring_table_name(WEEK_TEMPLATES_TABLE)} (
                 id varchar(128) primary key,
-                title varchar(500) not null default '',
+                title text not null default '',
                 summary text,
                 learning_outcomes {json_type},
                 course_type varchar(16) not null default 'paid',
@@ -28248,7 +28891,7 @@ def provision_week_template_tables():
                 id varchar(128) primary key,
                 week_template_id varchar(128) not null,
                 type varchar(64) not null,
-                title varchar(500) not null default '',
+                title text not null default '',
                 description text,
                 expected_otjh numeric(8,2) not null default 2,
                 points integer not null default 0,

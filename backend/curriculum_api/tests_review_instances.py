@@ -251,6 +251,88 @@ class ReviewInstancesTestCase(TestCase):
         saved_answer = definition['sections'][0]['fields'][0]['answer']
         self.assertEqual(saved_answer, 'Draft note')
 
+    def test_respondent_role_may_answer_only_its_own_opted_in_fields(self):
+        review_id = self._create_review(
+            'PROG-A', name='Monthly Coaching Meeting', interval=1, unit='months',
+            sections=[{'title': 'General', 'fields': [
+                {'title': 'Learner note', 'fieldType': 'text', 'required': False, 'configuration': {'respondentRoles': ['participant']}},
+                {'title': 'Coach only note', 'fieldType': 'text', 'required': False},
+            ]}],
+        )
+        instance = review_instances.ensure_review_instance(
+            self._template_row(review_id), learner_id=1, learner_kind='commercial', programme_id='PROG-A',
+            occurrence_number=1, target_date=date(2026, 9, 2), coach_email='coach@example.com',
+        )
+        field_rows = reviews.get_review_field_rows(review_id)
+        learner_field_id = next(row['id'] for row in field_rows if row['title'] == 'Learner note')
+        coach_field_id = next(row['id'] for row in field_rows if row['title'] == 'Coach only note')
+
+        updated = review_instances.save_review_instance_answers_for_role(
+            instance, {learner_field_id: 'My own update'}, 'participant', actor='learner@example.com',
+        )
+        saved = {field['title']: field['answer'] for section in updated['sections'] for field in section['fields']}
+        self.assertEqual(saved['Learner note'], 'My own update')
+
+        with self.assertRaisesMessage(PermissionError, coach_field_id):
+            review_instances.save_review_instance_answers_for_role(
+                review_instances.get_review_instance(instance['id']),
+                {coach_field_id: 'Not mine to answer'}, 'participant', actor='learner@example.com',
+            )
+        with self.assertRaisesMessage(PermissionError, learner_field_id):
+            review_instances.save_review_instance_answers_for_role(
+                review_instances.get_review_instance(instance['id']),
+                {learner_field_id: 'Not mine either'}, 'employer', actor='employer@example.com',
+            )
+        # The coach is never restricted by respondentRoles -- both fields
+        # remain answerable through the ordinary unrestricted save.
+        review_instances.save_review_instance_answers(
+            review_instances.get_review_instance(instance['id']),
+            {coach_field_id: 'Coach can always answer'}, actor='coach@example.com',
+        )
+
+    def test_send_for_signatures_saves_and_freezes_the_same_final_answers(self):
+        review_id = self._create_review('PROG-A', name='Monthly Coaching Meeting', interval=1, unit='months')
+        instance = review_instances.ensure_review_instance(
+            self._template_row(review_id), learner_id=1, learner_kind='commercial', programme_id='PROG-A',
+            occurrence_number=1, target_date=date(2026, 9, 2), coach_email='coach@example.com',
+        )
+        instance = self._start(instance)
+        field_id = reviews.get_review_field_rows(review_id)[0]['id']
+        ok, errors = review_instances.complete_review_instance(
+            instance, actor='coach@example.com', answers={field_id: 'Exact final summary wording'},
+        )
+        self.assertTrue(ok, errors)
+        submitted = review_instances.review_instance_form_definition(
+            review_instances.get_review_instance(instance['id'])
+        )
+        self.assertEqual(submitted['instance']['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(submitted['sections'][0]['fields'][0]['answer'], 'Exact final summary wording')
+        with self.assertRaisesMessage(ValueError, 'Submitted review answers cannot be changed'):
+            review_instances.save_review_instance_answers(
+                instance, {field_id: 'Late stale replacement'}, actor='coach@example.com',
+            )
+
+    def test_stale_save_rechecks_locked_status_before_writing(self):
+        review_id = self._create_review('PROG-A', name='Monthly Coaching Meeting', interval=1, unit='months')
+        instance = review_instances.ensure_review_instance(
+            self._template_row(review_id), learner_id=1, learner_kind='commercial', programme_id='PROG-A',
+            occurrence_number=1, target_date=date(2026, 9, 2), coach_email='coach@example.com',
+        )
+        stale_in_progress = self._start(instance)
+        field_id = reviews.get_review_field_rows(review_id)[0]['id']
+        review_instances.force_review_instance_status_for_tests(
+            instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='concurrent-submit',
+        )
+        with self.assertRaisesMessage(ValueError, 'Submitted review answers cannot be changed'):
+            review_instances.save_review_instance_answers(
+                stale_in_progress, {field_id: 'Must not be written'}, actor='stale-request',
+            )
+        self.assertIsNone(
+            review_instances.review_instance_form_definition(
+                review_instances.get_review_instance(instance['id'])
+            )['sections'][0]['fields'][0]['answer']
+        )
+
     def test_ensure_review_instance_is_idempotent(self):
         review_id = self._create_review('PROG-A', name='Monthly Coaching Meeting', interval=1, unit='months')
         template = self._template_row(review_id)

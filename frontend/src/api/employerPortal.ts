@@ -202,6 +202,25 @@ export function signReviewAsEmployer(
   );
 }
 
+/** Save the employer's own answers to whichever fields the Curriculum
+ * template opted the Employer into answering -- every other field id is
+ * rejected server-side, so only the fields this form actually unlocked
+ * should ever be posted here. A distinct payload shape (`answers`, not
+ * `party`/`signature`) from signReviewAsEmployer above, so it never touches
+ * the sign-off flow. */
+export function saveEmployerReviewAnswers(
+  employerId: string,
+  kind: string,
+  learnerId: string,
+  eventKey: string,
+  answers: Record<string, unknown>,
+): Promise<unknown> {
+  return request(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`,
+    { method: 'POST', body: JSON.stringify({ answers }) },
+  );
+}
+
 /** Sign a generated compliance PDF. An empty signature withdraws the sign-off. */
 export function signDocumentAsEmployer(
   kind: string,
