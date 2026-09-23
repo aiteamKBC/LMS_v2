@@ -48,3 +48,29 @@ it('disables bank holidays and substitute days in the month', async () => {
 it('does not count negative or non-finite hours', () => {
   expect(assignmentTimeHours([{ topic: '', hours: '-1', date: '' }, { topic: '', hours: 'Infinity', date: '' }])).toBe(0);
 });
+
+it('adjusts hours by halves with buttons and keyboard while allowing other typed values', async () => {
+  function Form() {
+    const [entries, setEntries] = useState([{ topic: 'Research', hours: '', date: '' }]);
+    return <AssignmentTimeEntries kind="commercial" learnerId="1" month="2026-09" entries={entries} onChange={setEntries} disabled={false} />;
+  }
+  render(<Form />);
+  const input = screen.getByLabelText('Hours 1');
+  const plus = screen.getByRole('button', { name: 'Increase Hours 1 by half an hour' });
+  fireEvent.click(plus);
+  expect(input).toHaveValue(0.5);
+  fireEvent.click(plus);
+  expect(input).toHaveValue(1);
+  fireEvent.keyDown(input, { key: 'ArrowUp' });
+  expect(input).toHaveValue(1.5);
+  fireEvent.keyDown(input, { key: 'ArrowDown' });
+  expect(input).toHaveValue(1);
+  fireEvent.change(input, { target: { value: '2.25' } });
+  expect(input).toBeValid();
+  expect(screen.getByText('Total learning time: 2.25 hours')).toBeVisible();
+  fireEvent.change(input, { target: { value: '8' } });
+  expect(plus).toBeDisabled();
+  fireEvent.change(input, { target: { value: '8.5' } });
+  expect(input).toBeInvalid();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1' })).toBeEnabled());
+});
