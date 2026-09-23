@@ -131,8 +131,12 @@ export function rolesForRoute(path: string): readonly Role[] {
 }
 
 /** Whether `account` is admitted to `path`. */
-export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'access'>): boolean {
+export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'access' | 'accessWorkspaces'>): boolean {
   if (account.access === 'record-monitor') return path === '/old-otjh' || path.startsWith('/old-otjh/');
+  if (['/admin/coach_directory', '/users/coach-directory', '/curriculum/coach-directory'].includes(path)) {
+    const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
+    return STAFF.includes(account.role) && grants.some(grant => ['super-admin', 'enrolment', 'curriculum'].includes(grant ?? ''));
+  }
   if (path === '/old-otjh/monitor') return account.access === 'super-admin';
   return rolesForRoute(path).includes(account.role);
 }
