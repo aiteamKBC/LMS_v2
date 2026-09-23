@@ -518,6 +518,23 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key):
         payload = _parse_body(request)
     except (TypeError, ValueError, ValidationError):
         return _error("Invalid JSON body.", 400)
+
+    # Saving the Employer's own answers to whichever fields the Review's
+    # Curriculum template opted the Employer into answering -- a distinct
+    # shape from the signature POST below, so an existing sign-off caller
+    # (which never sends `answers`) is unaffected.
+    if isinstance(payload.get('answers'), dict):
+        try:
+            updated = review_instances.save_review_instance_answers_for_role(
+                instance, payload['answers'], 'employer',
+                actor=_s(getattr(request.login_account, 'email', '')) or 'employer',
+            )
+        except PermissionError as exc:
+            return _error(str(exc), 403)
+        except ValueError as exc:
+            return _error(str(exc), 409)
+        return JsonResponse(updated)
+
     signature = _s(payload.get('signature'))
     name = _s(payload.get('name'))
     if not signature.startswith('data:image/'):

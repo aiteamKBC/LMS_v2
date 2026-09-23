@@ -133,7 +133,7 @@ it('shows each live component title on its own date without duplicate country da
   expect(screen.queryByText(/^Session \d+$/)).not.toBeInTheDocument();
   const timeBadge = screen.getByRole('note', { name: 'Session start times in Egypt and England' });
   expect(timeBadge).toHaveTextContent('Egypt: 9:00 AM · England: 7:00 AM');
-  expect(timeBadge).toHaveTextContent('Egypt: 7:00 PM · England: 5:00 PM');
+  expect(timeBadge).not.toHaveTextContent('Egypt: 7:00 PM · England: 5:00 PM');
   expect(screen.queryByText(/Egypt:.*Sept/)).not.toBeInTheDocument();
   expect(screen.queryByText(/England:.*Sept/)).not.toBeInTheDocument();
   // Removing the country dates must remove their empty bordered row too.
@@ -232,24 +232,36 @@ it('loads the existing calendar, updates the same identity and restores its comp
   expect(screen.getByRole('combobox', { name: /Spoken language/ })).toHaveTextContent('Arabic (Egypt)');
   expect(screen.getByRole('combobox', { name: /Schedule time zone/ })).toBeDisabled();
   expect(screen.getByRole('combobox', { name: /Teams series and links/ })).toBeDisabled();
-  expect(screen.getByText('23 Oct 2026, 9:00 AM')).toBeInTheDocument();
-  expect(screen.getByText('30 Oct 2026, 9:00 AM')).toBeInTheDocument();
+  // The module's own plan, not the saved bookings. This calendar was built
+  // before the module was scheduled where it now sits, so Teams is holding
+  // 23/30 Oct while the live-session components run on 7/10 Sep. The dialog
+  // states the dates Update will send, the way the Teams Meetings detail modal
+  // does, rather than describing a calendar the module has moved away from.
+  expect(screen.getByText('7 Sept 2026, 9:00 AM')).toBeInTheDocument();
+  expect(screen.getByText('10 Sept 2026, 7:00 PM')).toBeInTheDocument();
+  expect(screen.queryByText('23 Oct 2026, 9:00 AM')).not.toBeInTheDocument();
   const timeBadge = screen.getByRole('note', { name: 'Session start times in Egypt and England' });
   expect(timeBadge).toHaveTextContent('Egypt: 9:00 AM · England: 7:00 AM');
-  expect(timeBadge.children).toHaveLength(1);
-  expect(screen.queryByText(/Egypt:.*Oct/)).not.toBeInTheDocument();
-  expect(screen.queryByText(/England:.*Oct/)).not.toBeInTheDocument();
-  expect(screen.getByText('Session 3')).toBeInTheDocument();
-  expect(screen.queryByText('Session 2')).not.toBeInTheDocument();
+  // Every row carries its component's own name, so no session is left as a bare
+  // number for the reader to match up against the Course structure themselves.
+  expect(screen.getByText('Monday session')).toBeInTheDocument();
+  expect(screen.getByText('Thursday session')).toBeInTheDocument();
+  expect(screen.queryByText(/^Session \d+$/)).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole('combobox', { name: /Recording/ }));
   await userEvent.click(screen.getByRole('option', { name: 'Record automatically' }));
   await userEvent.click(screen.getByRole('button', { name: 'Update' }));
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  // The saved identity is kept -- same series, same event, same organizer --
+  // while the schedule it holds is brought back onto the module's plan. Not a
+  // people-only update, because the dates on screen are not the booked ones.
   expect(updateTeamsMeetingSchedule).toHaveBeenCalledWith('LIVE-SAVED', expect.objectContaining({
-    eventId: 'EVENT-SAVED', organizerEmail: 'saved-organizer@example.invalid', peopleOnly: true,
+    eventId: 'EVENT-SAVED', organizerEmail: 'saved-organizer@example.invalid', peopleOnly: false,
     seriesMode: 'shared', attendees: ['learner@example.invalid'], presenters: ['presenter@example.invalid'], coOrganizers: ['co-organizer@example.invalid'],
     lobbyBypass: 'organizer', recording: 'record', spokenLanguage: 'ar-EG',
-    scheduledOccurrences: SAVED.calendar.occurrences.map(({ sessionNumber, startDateTimeUtc, durationMinutes }) => ({ sessionNumber, startDateTimeUtc, durationMinutes })),
+    scheduledOccurrences: [
+      { sessionNumber: 1, startDateTimeUtc: '2026-09-07T06:00:00.000Z', durationMinutes: 120 },
+      { sessionNumber: 2, startDateTimeUtc: '2026-09-10T16:00:00.000Z', durationMinutes: 60 },
+    ],
   }));
   expect(onRestored).toHaveBeenCalledWith(MODULE);
   expect(createTeamsMeeting).not.toHaveBeenCalled();
@@ -273,8 +285,11 @@ it('matches saved titles by calendar identity and session number across cancella
   vi.mocked(readModuleTeamsMeeting).mockResolvedValue({ ...SAVED, module: savedModule });
   render(<TeamsMeetingModal module={module} onClose={vi.fn()} onCreated={vi.fn()} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Update' })).toBeEnabled());
-  expect(screen.getByText('Current foundations workshop').closest('div')).toHaveTextContent(/23 Oct 2026, 9:00 AM\s*\(Friday\)/);
-  expect(screen.getByText('Current risk workshop').closest('div')).toHaveTextContent(/30 Oct 2026, 9:00 AM\s*\(Friday\)/);
+  // Titles come from the module open in the builder, on the module's own dates.
+  // The rail's order is the author's, so the rows still sort by date: Monday's
+  // component first even though it was dragged below Thursday's.
+  expect(screen.getByText('Current foundations workshop').closest('div')).toHaveTextContent(/7 Sept 2026, 9:00 AM\s*\(Monday\)/);
+  expect(screen.getByText('Current risk workshop').closest('div')).toHaveTextContent(/10 Sept 2026, 7:00 PM\s*\(Thursday\)/);
   expect(screen.queryByText(/^Session \d+$/)).not.toBeInTheDocument();
   expect(screen.queryByText('Another calendar workshop')).not.toBeInTheDocument();
   expect(screen.queryByText('Reading material')).not.toBeInTheDocument();
@@ -295,8 +310,8 @@ it('changes duration only when chosen and keeps saved dates and series links', a
   await userEvent.click(screen.getByRole('button', { name: 'Update' }));
   await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledWith('LIVE-SAVED', expect.objectContaining({
     peopleOnly: false, seriesMode: 'shared', scheduledOccurrences: [
-      { sessionNumber: 1, startDateTimeUtc: '2026-10-23T06:00:00Z', durationMinutes: 120 },
-      { sessionNumber: 3, startDateTimeUtc: '2026-10-30T07:00:00Z', durationMinutes: 120 },
+      { sessionNumber: 1, startDateTimeUtc: '2026-09-07T06:00:00.000Z', durationMinutes: 120 },
+      { sessionNumber: 2, startDateTimeUtc: '2026-09-10T16:00:00.000Z', durationMinutes: 120 },
     ],
   })));
 });
@@ -310,6 +325,98 @@ it('blocks creation when the saved calendar cannot be read and retries the read 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Update' })).toBeEnabled());
   expect(createTeamsMeeting).not.toHaveBeenCalled();
   expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+});
+
+it('states a slow backend once and drops it when the retry answers', async () => {
+  // The saved calendar and the Graph configuration are read together, so one
+  // slow backend aborts both and both report it in the same words. The dialog
+  // printed that sentence twice -- above the retry, and again in the error box
+  // below it -- which reads as two separate faults on one calendar. It also
+  // kept the second copy after a retry that had already succeeded.
+  vi.mocked(readModuleTeamsMeeting).mockRejectedValueOnce(new CurriculumRequestTimeout()).mockResolvedValue(SAVED);
+  vi.mocked(loadTeamsMeetingConfiguration).mockRejectedValueOnce(new CurriculumRequestTimeout());
+  render(<TeamsMeetingModal module={MODULE} onClose={vi.fn()} onCreated={vi.fn()} />);
+
+  await screen.findByRole('button', { name: 'Retry loading calendar' });
+  await waitFor(() => expect(screen.getAllByText(/The response timed out/)).toHaveLength(1));
+  // A read that never answered is not a confirmed absence, so Create stays off.
+  expect(screen.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole('button', { name: 'Retry loading calendar' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Update' })).toBeEnabled());
+  expect(screen.queryByText(/The response timed out/)).not.toBeInTheDocument();
+  expect(createTeamsMeeting).not.toHaveBeenCalled();
+});
+
+it('dates the sessions from the live plan when the group moved off the day they were stamped with', async () => {
+  // The group's delivery day changed after these components were stamped with
+  // theirs. The plan is recomputed from the group; a component is not. So the
+  // day has to come from the plan, or this dialog offers Teams the old day while
+  // the Course structure beside it already reads the new one. The pairing still
+  // follows the order the sessions run, so the 9:00 AM session keeps the earlier
+  // date and the 7:00 PM session the later.
+  vi.mocked(fetchModuleSessionPlan).mockResolvedValue({
+    sessions: [
+      { sessionNumber: 1, weekNumber: 1, date: '2026-09-09', day: 'Wednesday', skippedHolidays: [] },
+      { sessionNumber: 2, weekNumber: 1, date: '2026-09-16', day: 'Wednesday', skippedHolidays: [] },
+    ],
+    skippedHolidays: [], finalEndDate: '2026-09-16', warnings: [],
+  } as never);
+  render(<TeamsMeetingModal module={MODULE} onClose={vi.fn()} onCreated={vi.fn()} />);
+  await screen.findByRole('button', { name: 'Create' });
+  expect(screen.getByText('9 Sept 2026, 9:00 AM')).toBeInTheDocument();
+  expect(screen.getByText('16 Sept 2026, 7:00 PM')).toBeInTheDocument();
+  // The dates the components were stamped with are gone, not shown alongside.
+  expect(screen.queryByText('7 Sept 2026, 9:00 AM')).not.toBeInTheDocument();
+  expect(screen.queryByText('10 Sept 2026, 7:00 PM')).not.toBeInTheDocument();
+});
+
+it('sends people and options alone when the bookings already sit on the module plan', async () => {
+  // The dates on screen are the plan, so "nothing about the schedule changed"
+  // has to be decided by comparing them against the bookings -- and as
+  // instants, not as text: the backend stamps a stored occurrence `+00:00`
+  // while the payload is built with `toISOString()`, which writes `Z`. Spelled
+  // differently, the same moment would read as a date change and every options
+  // edit would quietly re-book the whole series.
+  const inSync: SavedModuleTeamsMeeting = { ...SAVED, calendar: { ...SAVED.calendar, occurrences: [
+    { sessionNumber: 1, startDateTimeUtc: '2026-09-07T06:00:00+00:00', durationMinutes: 120, eventId: 'OCC-1', joinUrl: 'https://teams.example/saved' },
+    { sessionNumber: 2, startDateTimeUtc: '2026-09-10T16:00:00+00:00', durationMinutes: 60, eventId: 'OCC-2', joinUrl: 'https://teams.example/saved' },
+  ] } };
+  vi.mocked(readModuleTeamsMeeting).mockResolvedValue(inSync);
+  vi.mocked(updateTeamsMeetingSchedule).mockResolvedValue({ updated: true, meeting: {} } as never);
+  vi.mocked(restoreModuleTeamsMeeting).mockResolvedValue({ restored: true, module: MODULE } as never);
+  render(<TeamsMeetingModal module={MODULE} onClose={vi.fn()} onCreated={vi.fn()} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Update' })).toBeEnabled());
+  await userEvent.click(screen.getByRole('combobox', { name: /Recording/ }));
+  await userEvent.click(screen.getByRole('option', { name: 'Record automatically' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Update' }));
+  await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledWith('LIVE-SAVED',
+    expect.objectContaining({ peopleOnly: true, recording: 'record' })));
+});
+
+it('falls back to the saved bookings for a calendar whose live sessions were deleted', async () => {
+  // A calendar outlives the structure that created it. With no live-session
+  // component left there is no plan to state, so the meetings Teams still holds
+  // are the only rows worth showing -- and they are named by the calendar
+  // identity and session number they were booked under, never by row position,
+  // so a cancelled session does not shift every name below it.
+  const contentOnly = structuredClone(MODULE as ModuleCatalogueItem);
+  contentOnly.weekStructure[0].components = [
+    { id: 'READING', type: 'reading', title: 'Reading material', settings: {} },
+  ] as never;
+  const savedModule = structuredClone(MODULE as ModuleCatalogueItem);
+  const [saved1, saved3] = savedModule.weekStructure[0].components;
+  savedModule.weekStructure[0].components = [
+    { ...saved1, id: 'SAVED-1', title: 'Saved foundations workshop', settings: { teamsLiveSessionId: 'LIVE-SAVED', teamsSessionNumber: 1 } },
+    { ...saved3, id: 'SAVED-3', title: 'Saved risk workshop', settings: { teamsLiveSessionId: 'LIVE-SAVED', teamsSessionNumber: 3 } },
+  ] as never;
+  vi.mocked(readModuleTeamsMeeting).mockResolvedValue({ ...SAVED, module: savedModule });
+  vi.mocked(fetchModuleSessionPlan).mockResolvedValue({ sessions: [], skippedHolidays: [], finalEndDate: '', warnings: [] } as never);
+  render(<TeamsMeetingModal module={contentOnly} onClose={vi.fn()} onCreated={vi.fn()} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Update' })).toBeEnabled());
+  expect(screen.getByText('Saved foundations workshop').closest('div')).toHaveTextContent(/23 Oct 2026, 9:00 AM/);
+  expect(screen.getByText('Saved risk workshop').closest('div')).toHaveTextContent(/30 Oct 2026, 9:00 AM/);
+  expect(createTeamsMeeting).not.toHaveBeenCalled();
 });
 
 it('never offers Create for a saved calendar whose verification is incomplete', async () => {

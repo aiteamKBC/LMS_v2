@@ -138,11 +138,11 @@ describe('Dashboard training plan controls', () => {
   it('renders programme modules as selectable cards with a visible progress track', () => {
     renderBoard(fixture(), summarySubjects, vi.fn(), undefined, undefined, true);
     const programme = within(screen.getByRole('region', { name: 'Programme module progress' }));
-    const marketing = programme.getByRole('button', { name: 'Marketing: 39.29% overall progress' });
+    const marketing = programme.getByRole('button', { name: 'Marketing: 42.86% overall progress' });
     const directSpans = marketing.querySelectorAll(':scope > span');
     expect(directSpans).toHaveLength(3);
-    expect(directSpans[0]).toHaveTextContent('Marketing39.29%');
-    expect(directSpans[1].firstElementChild).toHaveStyle({ width: '39.29%' });
+    expect(directSpans[0]).toHaveTextContent('Marketing42.86%');
+    expect(directSpans[1].firstElementChild).toHaveStyle({ width: '42.86%' });
     expect(directSpans[2]).toHaveTextContent('3 of 5 measures available');
     expect(marketing).toHaveAttribute('aria-pressed', 'true');
   });
@@ -292,6 +292,19 @@ describe('Dashboard training plan controls', () => {
     expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled();
   });
 
+  it('does not clamp the current month to a stale learner-detail end date when payload data is newer', () => {
+    renderBoard(fixture(), summarySubjects, vi.fn(), '2025-10-01', '2026-08-31');
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-09');
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-10');
+  });
+
+  it('preserves an explicit month supplied in the URL', () => {
+    render(<MemoryRouter initialEntries={['/plan?month=2026-08']}><TrainingPlanDetails data={fixture()} subjects={summarySubjects}
+      kind="commercial" learnerId="125" initialMonth="2026-08" onRefresh={vi.fn()} onRetryContract={vi.fn()} programmeStartDate="2025-10-01" programmeEndDate="2026-08-31" /></MemoryRouter>);
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-08');
+  });
+
   it('bounds the month input and offers Attend for a live upcoming lecture', () => {
     renderBoard();
     const month = screen.getByLabelText('Focus month');
@@ -412,6 +425,9 @@ describe('Dashboard training plan controls', () => {
     expect(chart.getByRole('button', { name: 'August 2026: target 44 hours, submitted 2 hours, completed 15 hours' })).toBeVisible();
     expect(chart.getByRole('button', { name: 'September 2026: target 18 hours, submitted 4 hours, completed 12 hours' })).toBeVisible();
     expect(chart.getByText(/35h completed.*7h submitted/)).toBeVisible();
+    const focus = within(screen.getByRole('region', { name: 'Monthly study plan' }));
+    expect(within(focus.getByRole('region', { name: 'Progress this month' }))
+      .getByText('Achieved hours').nextElementSibling).toHaveTextContent('12 hrs');
   });
 
   it('starts at the programme start month and excludes earlier monthly logs', () => {

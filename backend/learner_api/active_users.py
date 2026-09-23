@@ -25,6 +25,7 @@ from .models import (
     KsbDefinition,
     KsbProfileVersion,
     LearnerKsbAssignment,
+    LearnerFreeCourse,
     LearnerProfile,
     LearnerProgressEntry,
     LearnerProgressKsb,
@@ -606,6 +607,27 @@ def replace_training_plan(learner, plan):
                     for position, component in enumerate(week.get("components") or [], 1)
                 ]
             )
+
+
+def replace_free_courses(learner, free_courses):
+    """Rebuild the learner's free-course mirror from the enrolment-side list.
+
+    The mirror of replace_training_plan for free courses: delete this learner's
+    rows and re-insert from the assignment records
+    ([{freeCourseId, courseName, ...}]) stored on the enrolment source. No hours
+    or KSBs — a free course is a flat assignment.
+    """
+    LearnerFreeCourse.objects.filter(learner=learner).delete()
+    LearnerFreeCourse.objects.bulk_create([
+        LearnerFreeCourse(
+            learner=learner,
+            position=position,
+            free_course_ref=_s(course.get("freeCourseId")) or None,
+            free_course_title=_s(course.get("courseName")),
+        )
+        for position, course in enumerate(free_courses or [], 1)
+        if isinstance(course, dict) and _s(course.get("freeCourseId"))
+    ])
 
 
 def hydrate_training_plan(plan, *, strict=False):
@@ -1999,6 +2021,9 @@ def sync_active_user(source):
                 learner.save(update_fields=list(defaults))
             if status.lower() == ACTIVE_STATUS:
                 replace_training_plan(learner, training_plan)
+                # Free courses carry no hours/KSBs, so they mirror straight from
+                # the enrolment source with no catalogue hydration.
+                replace_free_courses(learner, getattr(source, "free_courses", None) or [])
                 refresh_learner_ksb_snapshot(learner, source, training_plan=training_plan)
         return learner if status.lower() == ACTIVE_STATUS else None
     except DatabaseError as exc:

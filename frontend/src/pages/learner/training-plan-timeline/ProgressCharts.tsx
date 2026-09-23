@@ -2,6 +2,7 @@ import { useId, useState, type CSSProperties } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { percent, type TimelineModule } from './model';
 import { moduleProgress } from './progress';
+import { monthlyHours, type MonthlyHours } from './monthlyHours';
 import styles from './ProgressCharts.module.css';
 
 type Props = {
@@ -18,6 +19,7 @@ export type ProgrammeProgressSnapshot = {
   otjhActual: number | null;
   otjhTarget: number | null;
   ksb: number | null;
+  ksbAvailable?: boolean;
   attendancePresent: number | null;
   attendanceTotal: number | null;
 };
@@ -25,52 +27,6 @@ const colors = ['#6c50a5', '#315c85', '#398171', '#a97824', '#9b5981', '#5e6f91'
 const percentage = (value: number | null) => value == null ? 'N/A' : `${value}%`;
 const hourNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
 
-type MonthlyHours = {
-  key: string; label: string; target: number | null; submitted: number | null; completed: number | null;
-};
-
-function monthRange(keys: string[], programmeStartMonth = '', programmeEndMonth = '') {
-  const isMonthKey = (key: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(key);
-  const valid = [...new Set(keys.filter(isMonthKey))].sort();
-  const start = isMonthKey(programmeStartMonth) ? programmeStartMonth : valid[0] || '';
-  const end = isMonthKey(programmeEndMonth) ? programmeEndMonth : valid.at(-1) || '';
-  if (!start || !end || start > end) return [];
-  const result: string[] = [];
-  const cursor = new Date(`${start}-01T12:00:00Z`);
-  while (cursor.toISOString().slice(0, 7) <= end) {
-    result.push(cursor.toISOString().slice(0, 7));
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-  }
-  return result;
-}
-
-function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = '', programmeEndMonth = ''): MonthlyHours[] {
-  const keys = monthRange([
-    ...Object.keys(data.months),
-    ...Object.keys(data.monthlyOtjh || {}),
-    ...Object.keys(data.monthlyLogOtjh || {}),
-    ...data.actual.map(row => row.month),
-  ], programmeStartMonth, programmeEndMonth);
-  const recordedAvailable = data.actualAvailable !== false || Object.keys(data.monthlyOtjh || {}).length > 0;
-  return keys.map(key => {
-    const useAudit = !!data.auditOtjhCutoffMonth && key <= data.auditOtjhCutoffMonth;
-    const monthlyLog = data.monthlyLogOtjh?.[key];
-    const current = data.monthlyOtjh?.[key];
-    const historical = data.actual.filter(row => row.month === key).reduce((sum, row) => sum + row.hours, 0);
-    // Assignment marking is represented in submitted; other activity types
-    // retain their existing submitted semantics. Historical actuals belong
-    // only to completed, so never add them to the light-blue series.
-    const submitted = monthlyLog ? monthlyLog.submitted : useAudit ? null : recordedAvailable ? (current?.submitted ?? 0) : null;
-    const completed = monthlyLog ? monthlyLog.completed : useAudit ? null : recordedAvailable ? historical + (current?.actual ?? 0) : null;
-    return {
-      key,
-      label: new Date(`${key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
-      target: monthlyLog ? monthlyLog.target : useAudit ? null : data.months[key]?.planned ?? current?.planned ?? null,
-      submitted,
-      completed,
-    };
-  });
-}
 
 function ratio(value: number | null, target: number | null) {
   return value == null || target == null || target <= 0 ? null : Math.round(value / target * 100);
@@ -157,7 +113,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         ? null : percent(programmeSnapshot.otjhActual, programmeSnapshot.otjhTarget),
         detail: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
           ? 'Recorded hours unavailable' : `${hourNumber.format(programmeSnapshot.otjhActual)} / ${hourNumber.format(programmeSnapshot.otjhTarget)} hours` },
-      { label: 'KSBs', value: programmeSnapshot.ksb, detail: percentage(programmeSnapshot.ksb) },
+      { label: 'KSBs', value: programmeSnapshot.ksbAvailable === false ? null : programmeSnapshot.ksb, detail: programmeSnapshot.ksbAvailable === false ? 'KSB progress unavailable' : percentage(programmeSnapshot.ksb) },
       { label: 'Reviews', value: programmeReviews.length
         ? percent(programmeReviews.filter(review => review.status === 'completed').length, programmeReviews.length) : null,
         detail: programmeReviews.length
@@ -170,7 +126,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   return <div className={styles.charts}>
     <section className={styles.card} aria-label={programmeSnapshot ? 'Whole programme progress' : 'Module progress'}>
       <header><div><p className={styles.eyebrow}>{programmeSnapshot ? 'Whole programme' : 'Selected module'}</p><h2>{programmeSnapshot ? 'Whole programme progress' : 'Module progress'}</h2><p className={styles.subtitle}>{programmeSnapshot ? 'Summary metrics for this learner across every module' : selected?.title || 'Choose a module in the timeline'}</p></div>
-        {chartProgress && <strong className={styles.total}>{percentage(chartProgress.value)}<small>{programmeSnapshot ? 'Overall' : 'Average'}</small></strong>}
+        {chartProgress && <strong className={styles.total}>{percentage(chartProgress.value)}<small>{programmeSnapshot ? 'Overall' : 'Activities'}</small></strong>}
       </header>
       {chartProgress ? <>
         <svg className={styles.chart} viewBox={`0 0 ${chartWidth} 235`} role="img" aria-labelledby={`${chartId}-title ${chartId}-description`}>
@@ -192,7 +148,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         </div>)}</dl>
         <p className={styles.note}>{programmeSnapshot
           ? 'Overall, OTJH, KSB and attendance match the case-file cards. Activities and reviews are aggregated across all learner modules.'
-          : `Equal average of ${chartProgress.available} of 5 available measures. Each measure is capped at 100%.`}</p>
+        : 'Module progress is based on completed activities out of assigned activities. Other measures are shown independently.'}</p>
       </> : <p className={styles.empty}>Select a module to see attendance, activities, hours, KSBs and reviews.</p>}
     </section>
     <section className={styles.card} aria-label="Programme module progress">
@@ -207,7 +163,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
           <span className={styles.coverage}>{progress.available} of 5 measures available</span>
         </button>;
       }) : <p className={styles.empty}>Your modules will appear here once assigned.</p>}</div>
-      <p className={styles.note}>Attendance, activities, hours, KSBs and reviews carry equal weight. Select a module to explore its details.</p>
+      <p className={styles.note}>Module progress is based on activities. Attendance, hours, KSBs and reviews are shown independently.</p>
     </section>
     <section className={`${styles.card} ${styles.monthlyCard}`} aria-label="Off-the-job hours by month">
       <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Off-The-Job Hours</h2><p className={styles.subtitle}>Target, submitted and completed hours for every month</p></div></header>

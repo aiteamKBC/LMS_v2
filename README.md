@@ -240,10 +240,38 @@ Obtain an approved `backend/.env`, verify its database and provider targets,
 then start Django:
 
 ```bash
-python manage.py runserver
+CURRICULUM_WARM=1 python manage.py runserver --noasgi
 ```
 
 The backend listens on `http://127.0.0.1:8000` by default.
+
+> [!TIP]
+> `CURRICULUM_WARM=1` is worth setting when you work far from the database's
+> region. `settings.py` defaults it to `0` under `runserver` so login is never
+> held up behind a Curriculum rebuild, which means the rebuild instead happens
+> on whichever page load asks for it first — from outside eu-west-2 that is a
+> ~15-20 s wait on `/curriculum/overview/`, repeated after every autoreload.
+> With warming on, the build runs in the background at startup and the page is
+> served from cache. Steady-state responses are ~5-30 ms either way.
+
+> [!IMPORTANT]
+> `--noasgi` is not optional locally. `daphne` is in `INSTALLED_APPS`, so a plain
+> `runserver` is Daphne's ASGI server, and every middleware in `MIDDLEWARE` is
+> sync. Each request therefore crosses sync → async → sync on the event loop
+> thread's `CurrentThreadExecutor`. Under concurrent requests — which one
+> Curriculum page load always produces — a finishing request enters
+> `ThreadSensitiveContext.__aexit__` and blocks the event loop in `join()`
+> waiting on thread-sensitive work that can only proceed on that same blocked
+> thread. That is a permanent deadlock, not slowness: the process sits at ~0%
+> CPU and stops answering *everything*, including routes that never touch the
+> database, so the browser shows endpoints pending until the client's own
+> timeouts abort them. `--noasgi` runs Django's threaded WSGI development
+> server, which has no event loop and no `ThreadSensitiveContext`, so the
+> deadlock cannot occur.
+>
+> The cost is that WebSockets do not serve under `--noasgi`. Drop the flag only
+> while working on `chat/` — the rest of the application is REST and is
+> unaffected.
 
 > [!CAUTION]
 > Do not run migrations, bootstrap commands, seeders, repairs, synchronization
@@ -313,7 +341,7 @@ tests that create tables or fixtures require an approved isolated test runner.
 | `/coach_api/` | Coaching, bookings, reviews, and interventions |
 | `/curriculum_api/` | Programmes, modules, sessions, KSBs, and Teams management |
 | `/enrolment_api/` | Enrolment, onboarding, agreements, and documents |
-| `/api/progress-reviews/` | Progress-review workflows and supporting records |
+| `/progress_reviews_api/` | Progress-review workflows and supporting records |
 | `/quiz_api/` | Quiz configuration, delivery, attempts, and results |
 | `/engagement_api/` | Engagement, rewards, claims, and notifications |
 | `/audit_api/` | Hours, evidence, reconciliation, and reports |

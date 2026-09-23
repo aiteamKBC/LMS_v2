@@ -76,6 +76,7 @@ const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-c
 const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
 const CurriculumAuditTrailPersonPage = lazyRoute(() => import("../pages/curriculum/audit-trail/person/page"));
+const CurriculumArchive = lazyRoute(() => import("../pages/curriculum/archive/page"));
 const CurriculumCohorts = lazyRoute(() => import("../pages/curriculum/cohorts/page"));
 const CurriculumCohortWorkspace = lazyRoute(() => import("../pages/curriculum/cohort-workspace/page"));
 const CurriculumGroups = lazyRoute(() => import("../pages/curriculum/groups/page"));
@@ -111,6 +112,7 @@ const EmployerSupportRequests = lazyRoute(() => import("@/pages/employer/support
 const EmployerWorkplaceConfirmations = lazyRoute(() => import("@/pages/employer/workplace-confirm/page"));
 const EngagementClubsPage = lazyRoute(() => import("../pages/engagement/clubs/page"));
 const EngagementDashboard = lazyRoute(() => import("../pages/workspace/engagement/page"));
+const EngagementFeedbacksPage = lazyRoute(() => import("../pages/engagement/feedbacks/page"));
 const EngagementReportsPage = lazyRoute(() => import("../pages/engagement/reports/page"));
 const FeedbackPage = lazyRoute(() => import("../pages/engagement/feedback/page"));
 const FeedbackEditorPage = lazyRoute(() => import("../pages/engagement/feedback/editor/page"));
@@ -582,6 +584,14 @@ const routes: RouteObject[] = [
     element: <EvidencePage />,
   },
   {
+    path: "/learner/my-progress",
+    element: <ProgressPage />,
+  },
+  {
+    path: "/learner/my-progress/:kind/:id",
+    element: <ProgressPage />,
+  },
+  {
     path: "/learner/quizzes",
     element: <QuizzesPage />,
   },
@@ -642,9 +652,22 @@ const routes: RouteObject[] = [
     element: <MonthlyLogsPage />,
   },
   { path: "/learner/monthly-coaching", element: <MonthlyCoachingListPage /> },
+  { path: "/learner/monthly-coaching/:kind/:id", element: <MonthlyCoachingListPage /> },
   { path: "/learner/monthly-coaching/:sessionId", element: <MonthlyCoachingPage /> },
   {
     path: "/learner/progress-reviews",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/reviews",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/progress-reviews/:kind/:id",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/reviews/:kind/:id",
     element: <ProgressReviewsListPage />,
   },
   {
@@ -693,6 +716,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/calendar",
+    element: <LearnerCalendarPage />,
+  },
+  {
+    path: "/learner/calendar/:kind/:id",
     element: <LearnerCalendarPage />,
   },
   {
@@ -954,6 +981,13 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/checkpoints",
     element: <CheckpointsPage />,
+  },
+  {
+    // Curriculum's archive, across all four record types. The per-list "View
+    // archived" toggles stay where they are; this is the one that answers
+    // "what did we archive" without knowing the list it came from.
+    path: "/curriculum/archive",
+    element: <CurriculumArchive />,
   },
   {
     path: "/curriculum/cohorts",
@@ -1222,6 +1256,10 @@ const routes: RouteObject[] = [
     element: <RecognitionPage />,
   },
   
+  {
+    path: "/engagement/feedbacks",
+    element: <EngagementFeedbacksPage />,
+  },
   {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,

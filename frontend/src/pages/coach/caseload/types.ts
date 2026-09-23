@@ -155,7 +155,11 @@ export interface CaseloadApiLearner extends Omit<Learner, 'enrollmentStatus' | '
   startDate?: string;
   gatewayReviewDate?: string;
   plannedEndDate?: string;
+  lastPr?: string | null;
+  lastMcm?: string | null;
 }
+
+export type EmbeddedCaseloadLearner = Partial<CaseloadApiLearner>;
 
 export interface CaseloadApiResponse {
   owner?: {

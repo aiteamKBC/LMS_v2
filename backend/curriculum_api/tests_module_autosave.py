@@ -14,6 +14,7 @@ colleague, now saves while a first tab is still holding a copy it read minutes
 ago. The revision check is what refuses that write instead of performing it.
 """
 import json
+from unittest import mock
 
 from django.core.cache import cache
 
@@ -234,6 +235,77 @@ class ModuleStructureRevisionTests(CurriculumPersistenceHarness):
         # One save, one generation -- the write helpers invalidate per written
         # row and the request scope collapses that into a single bump.
         self.assertEqual(views.read_shared_curriculum_epoch_row(), epoch_before + 1)
+
+
+    def test_a_write_that_lands_while_the_structure_is_being_read_cannot_be_saved_over(self):
+        # The inverse of the stale-read case, and the dangerous one. The GET
+        # reads the fingerprint and the payload in separate statements, so
+        # another writer can commit between them. If the revision were the later
+        # of the two reads, the reader would be handed pre-write weeks stamped
+        # with the post-write fingerprint -- and the save built from it would
+        # pass the guard and replace the other writer's work, reporting success.
+        #
+        # The revision is read first, so the pair can only ever be stale in the
+        # direction that fails closed.
+        original_read = views.get_authoring_structure_payload
+        landed = []
+
+        def read_with_a_concurrent_save(module_catalogue_id, *args, **kwargs):
+            if not landed and module_catalogue_id == self.module_id:
+                landed.append(True)
+                views.save_module_authoring_structure(self.module_id, {
+                    'title': 'Marketing',
+                    'weekStructure': [{
+                        'id': 'WEEK-REV-1',
+                        'weekNumber': 1,
+                        'title': 'Week one, renamed by the other tab',
+                        'components': [
+                            {'id': 'COMP-REV-1', 'type': 'reading', 'title': 'Opening reading', 'settings': {}},
+                        ],
+                    }],
+                })
+            return original_read(module_catalogue_id, *args, **kwargs)
+
+        with mock.patch.object(views, 'get_authoring_structure_payload', read_with_a_concurrent_save):
+            module = self.read_structure()
+        self.assertTrue(landed, 'the concurrent save never ran, so this proves nothing')
+
+        module['weekStructure'][0]['components'][0]['title'] = 'Renamed by the reader'
+        response = self.save_structure(module, expectedRevision=module['structureRevision'])
+
+        self.assertEqual(response.status_code, 409, response.content)
+        stored = views.get_authoring_structure_payload(self.module_id)
+        self.assertEqual(stored['weekStructure'][0]['title'], 'Week one, renamed by the other tab')
+
+    def test_a_save_is_refused_when_the_stored_revision_cannot_be_read(self):
+        # A fingerprint that cannot be computed is not an empty module -- an
+        # empty module hashes to a real value. Treating the blank as "no reason
+        # to refuse" would run this save with no guard at all, which is the one
+        # thing a caller that bothered to send a revision has asked against.
+        module = self.read_structure()
+        module['weekStructure'][0]['title'] = 'Written while the fingerprint was unreadable'
+
+        with mock.patch.object(views, 'module_structure_revision', return_value=''):
+            response = self.save_structure(module, expectedRevision=module['structureRevision'])
+
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertTrue(response.json()['conflict'])
+        stored = views.get_authoring_structure_payload(self.module_id)
+        self.assertEqual(stored['weekStructure'][0]['title'], 'Week one')
+
+    def test_a_payload_stamped_unverified_cannot_save_unchecked(self):
+        # The other half of the same hole: the read could not fingerprint the
+        # module either, so the payload carries the sentinel rather than ''. It
+        # can never equal a real revision, so the save is refused instead of
+        # arriving with nothing for the guard to compare.
+        module = self.read_structure()
+        module['weekStructure'][0]['title'] = 'Built on an unverified read'
+
+        response = self.save_structure(module, expectedRevision=views.STRUCTURE_REVISION_UNAVAILABLE)
+
+        self.assertEqual(response.status_code, 409, response.content)
+        stored = views.get_authoring_structure_payload(self.module_id)
+        self.assertEqual(stored['weekStructure'][0]['title'], 'Week one')
 
 
 class ModuleStructureFreshReadTests(CurriculumPersistenceHarness):

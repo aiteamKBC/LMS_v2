@@ -8,7 +8,7 @@ import {
   fetchCurriculumHolidays,
   type CurriculumHoliday,
 } from '@/lib/curriculumApi';
-import { cleanText, formatDateLabel } from '../shared/entities/model';
+import { cleanText } from '../shared/entities/model';
 import { InlineError } from '../shared/entities/ui';
 import {
   buildTeamsCalendarInput,
@@ -28,13 +28,11 @@ import {
   fetchModuleMeetingInvitees,
   fetchModuleSessionPlan,
   loadTeamsMeetingConfiguration,
-  moduleLiveSessionDateDrift,
   moduleTeamsPlannedSessions,
   restoreModuleTeamsMeeting,
   updateTeamsMeetingSchedule,
   utcIsoToCalendarParts,
   zonedNaiveToUtcIso,
-  type LiveSessionDateDrift,
   type ModuleCatalogueItem,
   type ModuleComponent,
   type ModuleTeamsPlannedSession,
@@ -142,10 +140,6 @@ export function TeamsMeetingModal({
   // the "no stored session dates" warning must wait — otherwise it flashes on
   // every open before the sessions arrive and reads as a module with no schedule.
   const [sessionsLoading, setSessionsLoading] = useState(true);
-  // Live sessions whose own date is no longer one their week delivers on. The
-  // list above is built from those stored dates, so this is the last screen
-  // before a meeting is booked on one — said here, and corrected on the rail.
-  const [drifted, setDrifted] = useState<LiveSessionDateDrift[]>([]);
 
   // The module as it stood when this dialog opened. The dialog is mounted fresh
   // each time, so this is the structure the reader pressed the button on, and
@@ -218,7 +212,6 @@ export function TeamsMeetingModal({
       .then(plan => {
         if (!active) return;
         setSessions(moduleTeamsPlannedSessions(opened, plan));
-        setDrifted(Array.from(moduleLiveSessionDateDrift(opened, plan).values()));
       })
       // A module the backend has never stored has no plan to read. Its authored
       // components still carry their own dates, so fall back to those rather
@@ -279,7 +272,24 @@ export function TeamsMeetingModal({
   const componentTitles = new Map(liveComponents.map(item => [item.id, item.title]));
   const savedLiveComponents = (existingCalendar?.module.weekStructure || []).flatMap(week => week.components || [])
     .filter(item => item.type === 'live-session');
-  const displayedSessions = existingCalendar ? existingCalendar.calendar.occurrences.map(occurrence => {
+  // The module's own plan, whether or not a calendar is already saved: the
+  // group's delivery day and clock, applied to the weeks that actually hold a
+  // live-session component. The same rows the Teams Meetings detail modal shows
+  // through `liveSessionPlan`, and for the same reason -- these are the dates
+  // Update will send, so they are the dates worth putting in front of the
+  // reader. Listing the saved bookings instead described a calendar that was
+  // built before the module's delivery day moved: a module whose first live
+  // session sits in the week of Wed 7 Oct opened claiming Thu 1 Oct, because
+  // that is the day Teams was told about first. The stored instants stay on
+  // `teamsStarts`, where the form body compares them per row and says which
+  // ones Teams is still holding on another day.
+  //
+  // A calendar can outlive the structure that created it -- every live-session
+  // component deleted leaves a meeting with no plan to describe it -- so the
+  // saved bookings remain the fallback. Without it the dialog would show an
+  // empty list for a real calendar, and refuse the invitation-only update that
+  // is the one thing still worth doing to it.
+  const savedSessions = existingCalendar ? existingCalendar.calendar.occurrences.map(occurrence => {
     const start = utcIsoToCalendarParts(occurrence.startDateTimeUtc, form.scheduleTimeZone);
     const end = utcIsoToCalendarParts(new Date(Date.parse(occurrence.startDateTimeUtc) + occurrence.durationMinutes * 60000).toISOString(), form.scheduleTimeZone);
     // Cancelled occurrences leave gaps in numbering. Match the saved identity,
@@ -291,21 +301,29 @@ export function TeamsMeetingModal({
     const linked = liveComponents.find(matchesOccurrence) || savedLiveComponents.find(matchesOccurrence);
     const componentTitle = linked ? componentTitles.get(linked.id) ?? linked.title : undefined;
     return { ...occurrence, componentTitle, date: start.date, startTime: start.time, endTime: end.time, timeZone: form.scheduleTimeZone };
-  }) : sessions.map(session => ({ ...session, componentTitle: componentTitles.get(session.componentId) }));
+  }) : [];
+  const plannedSessions = sessions.map(session => ({ ...session, componentTitle: componentTitles.get(session.componentId) }));
+  const displayedSessions = plannedSessions.length ? plannedSessions : savedSessions;
+  const showingPlan = Boolean(plannedSessions.length);
+  const plannedMinutes = minutesBetween(sessions[0]?.startTime || '', sessions[0]?.endTime || '');
+  const bookedMinutes = existingCalendar?.calendar.occurrences[0]?.durationMinutes || 0;
   const row: TeamsCalendarTarget = {
     catalogueId: cleanText(module.catalogueId),
     name: cleanText(component?.title) || cleanText(module.title) || 'Live session',
     sessions: displayedSessions,
-    plannedStarts: existingCalendar ? existingCalendar.calendar.occurrences.map(item => item.startDateTimeUtc)
-      : sessions.map(session => zonedNaiveToUtcIso(sessionNaiveLocal(session), form.scheduleTimeZone)),
+    plannedStarts: showingPlan
+      ? sessions.map(session => zonedNaiveToUtcIso(sessionNaiveLocal(session), form.scheduleTimeZone))
+      : savedSessions.map(item => item.startDateTimeUtc),
     teamsStarts: existingCalendar?.calendar.occurrences.map(item => item.startDateTimeUtc) || [],
     // The module's own length, not the form's. Duration is an override applied
     // on top of these rows, so reading it back in here made the fallback follow
     // whatever the reader had just picked and the preview could never disagree
     // with the payload -- or agree with the module.
+    // Follows whichever list is on screen, so the fallback length can never
+    // disagree with the rows it is a fallback for.
     durationMinutes: Math.max(
       15,
-      existingCalendar?.calendar.occurrences[0]?.durationMinutes || minutesBetween(sessions[0]?.startTime || '', sessions[0]?.endTime || '') || DEFAULT_DURATION_MINUTES,
+      (showingPlan ? plannedMinutes : bookedMinutes) || plannedMinutes || bookedMinutes || DEFAULT_DURATION_MINUTES,
     ),
   };
 
@@ -363,7 +381,26 @@ export function TeamsMeetingModal({
       const input = buildTeamsCalendarInput(row, form);
       if (existingCalendar) {
         const held = existingCalendar.meeting;
-        const peopleOnly = input.scheduledOccurrences?.every((item, index) => item.durationMinutes === existingCalendar.calendar.occurrences[index].durationMinutes);
+        // "Nothing about the schedule changed" -- which is what peopleOnly
+        // promises the transport, and why it replaces the payload's dates with
+        // the ones Teams already holds. Comparing only the durations was true
+        // while the rows on screen WERE the saved bookings; now they are the
+        // module's plan, and a plan that moved to another day without changing
+        // its length would have been sent as a people-only update and silently
+        // dropped every new date the reader had just been shown.
+        //
+        // Compared as instants, never as text: the backend stamps a stored
+        // occurrence `+00:00` and the payload is built with `toISOString()`,
+        // which writes `Z`. The same moment in two spellings would never be
+        // equal as a string, so every options-only update would have been sent
+        // as a date change.
+        const booked = existingCalendar.calendar.occurrences;
+        const sameInstant = (left: string, right: string) => Date.parse(left) === Date.parse(right);
+        const peopleOnly = input.scheduledOccurrences?.length === booked.length
+          && input.scheduledOccurrences.every((item, index) => (
+            item.durationMinutes === booked[index].durationMinutes
+            && sameInstant(item.startDateTimeUtc, booked[index].startDateTimeUtc)
+          ));
         const result = await updateTeamsMeetingSchedule(String(held.teamsLiveSessionId), {
           title: input.title, organizerEmail: String(held.teamsOrganizerEmail), eventId: String(held.teamsEventId || ''),
           localStartDateTime: input.localStartDateTime, startDateTimeUtc: input.startDateTimeUtc,
@@ -482,43 +519,15 @@ export function TeamsMeetingModal({
           </p>
         </div>
       )}
-      {/* The dates below are the sessions' own, which is what a meeting gets
-          booked on. Where one no longer matches the week it sits in, say so
-          here — this is the last screen before real invitations go out, and a
-          date nobody meant is not something to discover from the calendar. */}
-      {Boolean(drifted.length) && !sessionsLoading && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
-          <AppIcon className="ri-calendar-schedule-line mt-0.5 shrink-0 text-sm text-amber-700"></AppIcon>
-          <div className="text-[11px] leading-relaxed text-amber-900">
-            <p>
-              <span className="font-bold">
-                {drifted.length === 1
-                  ? 'One of these dates is a meeting Teams already has booked, on a day its week no longer runs. '
-                  : `${drifted.length} of these dates are meetings Teams already has booked, on days their weeks no longer run. `}
-              </span>
-              Every other live session followed its week automatically; {drifted.length === 1 ? 'this one was' : 'these were'} left
-              alone because real attendees were invited to the booked date.
-            </p>
-            <ul className="mt-1 space-y-0.5 tabular-nums">
-              {drifted.map(session => (
-                <li key={session.componentId}>
-                  {formatDateLabel(session.storedDate)} — its week now runs {session.weekDates.map(formatDateLabel).join(' and ')}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1">
-              Moving {drifted.length === 1 ? 'it' : 'them'} asks Microsoft and mails the attendees, so it is done from
-              the <span className="font-bold">Teams Meetings</span> page, not here.
-            </p>
-          </div>
-        </div>
-      )}
       {existingCalendar?.verificationPending && <p role="alert" className="mb-4 text-sm text-amber-800">
         This calendar exists, but verification is incomplete. <Link className="underline" to={`/curriculum/teams-meetings?module=${encodeURIComponent(row.catalogueId)}`}>Review it in Teams Meetings</Link> before updating its saved bookings.
       </p>}
       {calendarLoadError ? <div role="alert" className="space-y-2 text-sm text-red-700">
         <p>{calendarLoadError}</p>
-        <button type="button" className="font-semibold underline" onClick={() => setCalendarReadAttempt(value => value + 1)}>Retry loading calendar</button>
+        {/* The Graph configuration is read alongside the calendar, so one slow
+            backend fails both. Clearing that message here keeps a successful
+            retry from leaving the previous attempt's failure on screen. */}
+        <button type="button" className="font-semibold underline" onClick={() => { setError(''); setCalendarReadAttempt(value => value + 1); }}>Retry loading calendar</button>
       </div> : sessionsLoading || calendarLoading ? (
         <p className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-3 text-[11px] font-semibold text-foreground-500">
           <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
@@ -537,7 +546,10 @@ export function TeamsMeetingModal({
           showAlternateTimeZones={false}
         />
       )}
-      {error && <div className="mt-4"><InlineError message={error} /></div>}
+      {/* Both reads leave on the same timeout, so both report it in the same
+          words. Said once, above the retry that acts on it, rather than twice
+          in two boxes that look like two separate faults. */}
+      {error && error !== calendarLoadError && <div className="mt-4"><InlineError message={error} /></div>}
     </Modal>
   );
 }

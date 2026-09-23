@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from uuid import UUID
 
 from django.db import DatabaseError, connections
@@ -16,13 +17,14 @@ from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
-from .models import EnrolmentUser, LearnerProfile
+from .models import EnrolmentUser, LearnerProfile, LearnerProgressEntry
 from .learning_plan import _effective_plan_ids
 from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
                                     read_student_activity, read_student_material)
 from .student_activity_access import student_activity_available
 from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules, read_activity_sources
 from . import subject_store, subject_source
+import logging
 from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list)
 from .builder_activity_dates import read_builder_activity_dates
 
@@ -67,13 +69,14 @@ def _direct_progress_records(enrolment_id):
         .filter(component_link_source__in=('direct', 'quiz_ref'))
         .exclude(kind='activity_event')
         .values(
-            'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
+            'id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
             'module_title', 'week_title', 'reported_time', 'claimed_seconds',
             'verified_seconds', 'time_tracking_source', 'expected_otjh',
             'submitted_at', 'passed',
         )
     )
     records = [{
+        'sourceRef': f"progress:{row['id']}" if row.get('id') is not None else None,
         'kind': row['kind'],
         'componentId': row['component_ref'],
         'quizId': row['quiz_ref'],
@@ -114,6 +117,65 @@ def _direct_progress_records(enrolment_id):
     return records
 
 
+def load_direct_progress_records_bulk(enrolment_ids):
+    """Load direct progress for several enrolments without per-learner ORM reads."""
+    ids = [int(value) for value in dict.fromkeys(enrolment_ids or []) if value is not None]
+    if not ids:
+        return {}
+    profiles = list(
+        LearnerProfile.objects.using('enrolment')
+        .filter(enrolment_id__in=ids)
+        .only('id', 'enrolment_id')
+    )
+    result = {enrolment_id: [] for enrolment_id in ids}
+    component_pairs = []
+    entries_by_profile = {}
+    entries = LearnerProgressEntry.objects.using('enrolment').filter(
+        learner_id__in=[profile.id for profile in profiles],
+        component_link_source__in=('direct', 'quiz_ref'),
+    ).exclude(kind='activity_event').values(
+        'id', 'learner_id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
+        'module_title', 'week_title', 'reported_time', 'claimed_seconds', 'verified_seconds',
+        'time_tracking_source', 'expected_otjh', 'submitted_at', 'passed',
+    )
+    for row in entries:
+        entries_by_profile.setdefault(int(row['learner_id']), []).append(row)
+    for profile in profiles:
+        rows = entries_by_profile.get(int(profile.id), [])
+        records = [{
+            'sourceRef': f"progress:{row['id']}" if row.get('id') is not None else None,
+            'kind': row['kind'], 'componentId': row['component_ref'], 'quizId': row['quiz_ref'],
+            'componentTitle': row['component_title'], 'componentType': row['component_type'],
+            'moduleTitle': row['module_title'], 'weekTitle': row['week_title'],
+            'reportedTime': row['reported_time'], 'claimedSeconds': row['claimed_seconds'],
+            'verifiedSeconds': row['verified_seconds'], 'timeTrackingSource': row['time_tracking_source'],
+            'expectedOtjh': float(row['expected_otjh']) if row['expected_otjh'] is not None else None,
+            'submittedAt': row['submitted_at'].isoformat() if row['submitted_at'] else '',
+            'passed': row['passed'],
+        } for row in rows]
+        result[int(profile.enrolment_id)] = records
+        component_pairs.append((profile, records))
+    component_ids = sorted({str(record['componentId']) for _, records in component_pairs for record in records if record.get('componentId')})
+    if not component_ids:
+        return result
+    candidates = sorted({str(value) for profile, _ in component_pairs for value in (profile.enrolment_id, profile.id)})
+    try:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute('''SELECT DISTINCT ON (learner_id::text, activity_id) learner_id::text, activity_id, status
+                FROM "Learner"."learning_reflection_submissions"
+                WHERE learner_id::text=ANY(%s) AND activity_id=ANY(%s)
+                ORDER BY learner_id::text, activity_id, submitted_at DESC NULLS LAST''', [candidates, component_ids])
+            statuses = {(learner, str(activity)): str(status or '') for learner, activity, status in cursor.fetchall()}
+    except DatabaseError:
+        statuses = {}
+    for profile, records in component_pairs:
+        for record in records:
+            status = statuses.get((str(profile.enrolment_id), str(record.get('componentId')))) or statuses.get((str(profile.id), str(record.get('componentId'))))
+            if status is not None:
+                record['markingStatus'] = status
+    return result
+
+
 def _direct_progress_otjh(progress):
     return completed_hours_value_from_progress(progress)
 
@@ -130,8 +192,11 @@ def _error(message, status):
 
 
 def _live_subjects(source, aptem_id):
+    started = time.monotonic()
     with _connection().cursor() as cursor:
-        return subject_source.read_learner(cursor, aptem_id, getattr(source, 'email', ''))
+        result = subject_source.read_learner(cursor, aptem_id, getattr(source, 'email', ''))
+    logger.info('learner_live_source stage=live_subjects result=%s aptem_id=%s elapsed_ms=%d', 'success' if result is not None else 'historical_fallback', aptem_id, int((time.monotonic() - started) * 1000))
+    return result
 
 
 def _activity_sources(enrolment_id, group_ids):
@@ -197,7 +262,8 @@ def student_activity(request, kind, pk):
         return _error('The previous learning identity could not be verified.', 404)
     try:
         live = _live_subjects(source, aptem_id)
-    except DatabaseError:
+    except DatabaseError as exc:
+        logger.warning('learner_live_source_fallback aptem_id=%s stage=database_identity reason=database_error exception=%s', aptem_id, type(exc).__name__)
         live = None
     if material_request:
         payload = subject_source.material(live, group_id, activity_id, payload, (payload or {}).get('learner_name', ''))
@@ -509,3 +575,4 @@ def upload_subject_cover(request, subject_ref):
     # Keep a clear response for an older browser tab instead of writing a second
     # cover that would disagree with the module's own artwork.
     return _error('Manage this image in Module Builder using Upload image.', 409)
+logger = logging.getLogger(__name__)

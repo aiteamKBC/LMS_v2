@@ -155,6 +155,16 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   if (/assessment\s*-?\s*design|assessment-design/.test(key)) return ClipboardList;
   if (/delivery\s*-?\s*planning|delivery-planning/.test(key)) return CalendarDays;
   if (/quality\s*&?\s*publishing|quality.*publish/.test(key)) return ShieldCheck;
+  // Tested up here rather than with the other generic branches near the bottom:
+  // every curriculum nav id begins with 'curriculum-', so the broad
+  // programme/module/curriculum branch further down claims an archive row
+  // first and draws it as a book -- the icon three of its neighbours already
+  // wear. What the row is about is the archive, not the workspace it is in.
+  if (/archive/.test(key)) return Archive;
+  // Same collision for the Quality row: 'curriculum-quality' also starts with
+  // 'curriculum-', so without this it fell into the book branch below and sat
+  // right next to Programmes wearing the identical icon.
+  if (id === 'curriculum-quality') return ShieldCheck;
   if (/^reports?$|\breports?\b/.test(key)) return FileText;
   if (/message|communication|feedback/.test(key)) return MessageSquare;
   if (/support|ticket|knowledge-base|help/.test(key)) return LifeBuoy;
@@ -184,7 +194,6 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   if (/upload|import/.test(key)) return Upload;
   if (/link|mapping/.test(key)) return Link2;
   if (/version|branch/.test(key)) return GitBranch;
-  if (/archive/.test(key)) return Archive;
   if (/reward|recognition|achievement|trophy|award/.test(key)) return Trophy;
   if (/gift|voucher|claim|points/.test(key)) return Gift;
   if (/shopping|shop/.test(key)) return ShoppingBag;

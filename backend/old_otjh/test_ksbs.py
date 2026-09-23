@@ -1,5 +1,6 @@
 """Journal KSB source precedence, with repository I/O mocked and no database setup."""
 from copy import deepcopy
+from datetime import date
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -88,3 +89,65 @@ class JournalKsbTests(SimpleTestCase):
         evidence = [{'evidence_id': 41641, 'component_name': 'Component', 'ksb_codes': ['S2']}]
         row = self.read([self.row(source_ref='ev:41641', component_ksbs=['K1'])], evidence)[0]
         self.assertEqual(row['ksb_codes'], ['S2'])
+
+    def test_missing_marked_lms_activity_is_projected_with_pending_actual(self):
+        source = {
+            'group_id': 101477, 'activity_id': 126340, 'status': 'reading_viewed',
+            'video_started': False, 'video_completed': False, 'reading_viewed': True,
+            'quiz_attempted': False, 'quiz_passed': False, 'quiz_score': None,
+            'quiz_maximum_score': None, 'quiz_attempt_number': None, 'mapped_hours': None,
+            'activity_type': 'Reading+Quiz', 'title': 'Missing LMS reading',
+            'activity_date': date(2026, 5, 12), 'component_ksbs': [{'code': 'K1'}],
+            'group_name': 'Marketing', 'duration_minutes': None,
+        }
+        with patch.object(repo, 'source_query', return_value=[source]):
+            rows = repo.lms_activity_rows({'lms_id': 12}, '2026-05')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['source_ref'], 'la:101477:126340')
+        self.assertTrue(rows[0]['actual_pending'])
+        self.assertEqual(rows[0]['actual_hours'], 0)
+        self.assertEqual(rows[0]['ksb_codes'], ['K1'])
+
+    def test_existing_lms_activity_is_not_projected_twice(self):
+        source = {'group_id': 101477, 'activity_id': 126340, 'status': 'completed'}
+        with patch.object(repo, 'source_query', return_value=[source]):
+            rows = repo.lms_activity_rows({'lms_id': 12}, '2026-05', [
+                {'activity_id': 126340, 'group_id': 101477},
+            ])
+        self.assertEqual(rows, [])
+
+    def test_demo_preview_fills_only_missing_values(self):
+        rows = [
+            {'id': 1, 'source_ref': 'la:101477:126340', 'category': 'reading+quiz',
+             'duration_minutes': None, 'planned_hours': 0, 'actual_hours': 0,
+             'actual_pending': True, 'ksb_codes': [], 'component_ksbs': None,
+             'completion_note': None},
+            {'id': 2, 'source_ref': 'ev:41641', 'category': 'assignment',
+             'duration_minutes': None, 'planned_hours': 2, 'actual_hours': 1.5,
+             'actual_pending': False, 'ksb_codes': ['S2'], 'component_ksbs': None,
+             'completion_note': 'original'},
+        ]
+        preview = repo._demo_lms_rows(rows, {'aptem_id': 4605}, '2026-05')
+        self.assertGreater(preview[0]['planned_hours'], 0)
+        self.assertGreater(preview[0]['actual_hours'], 0)
+        self.assertFalse(preview[0]['actual_pending'])
+        self.assertEqual(len(preview[0]['ksb_codes']), 6)
+        self.assertEqual(preview[1]['planned_hours'], 2)
+        self.assertEqual(preview[1]['actual_hours'], 1.5)
+        self.assertEqual(preview[1]['ksb_codes'], ['S2'])
+        self.assertEqual(preview[1]['completion_note'], 'original')
+
+    def test_provisional_overlay_fills_only_missing_fields(self):
+        row = {'id': 1, 'source_ref': 'ev:41641', 'planned_hours': 2,
+               'actual_hours': 0, 'actual_pending': True, 'ksb_codes': [],
+               'completion_note': None}
+        record = {'source_ref': 'ev:41641',
+                  'payload': {'planned_hours': 9, 'actual_hours': 3.5, 'ksb_codes': ['K1', 'S2']},
+                  'provisional_fields': ['planned', 'actual', 'ksb'],
+                  'formula_rule': 'formula_reconstruction_v1'}
+        with patch.object(repo, 'provisional_rows', return_value=[record]):
+            result = repo._apply_provisional_rows([row], {'aptem_id': 4605}, '2026-05')
+        self.assertEqual(result[0]['planned_hours'], 2)
+        self.assertEqual(result[0]['actual_hours'], 3.5)
+        self.assertEqual(result[0]['ksb_codes'], ['K1', 'S2'])
+        self.assertEqual(result[0]['provisional_fields'], ['actual', 'ksb'])

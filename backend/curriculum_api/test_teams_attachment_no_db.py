@@ -42,7 +42,8 @@ class AttachmentTests(unittest.TestCase):
             ensure_live_session_tracking_tables=lambda: None, resolve_authoring_catalogue_id=lambda value: value,
             authoring_module_exists=lambda value: value == 'MOD-1', json_body=lambda request: {}, truthy=bool,
             get_authoring_structure_payload=lambda module_id: {'catalogueId': module_id},
-            structure_payload_with_revision=lambda payload, module_id: {**payload, 'structureRevision': 'new-revision'},
+            stamp_revision_after_write=lambda payload, module_id: {**payload, 'structureRevision': 'new-revision'},
+            structure_payload_with_revision=lambda build, module_id: {**build(), 'structureRevision': 'new-revision'},
             JsonResponse=lambda data: data, json_error=lambda message, **kwargs: {'error': message, **kwargs})
         names = {'clean_str', 'parse_int', 'parse_graph_datetime', 'utc_iso_value',
                  'live_session_row_to_component_settings', 'live_occurrence_component_settings',

@@ -56,6 +56,13 @@ def summary(learner):
     months = reporting_months(profile.get('start_date'))
     record = old.summary({**learner, '_read_only': True})
     existing = {item['month']: item for item in record['months']}
+    # The retained journal can predate the LMS activity mirror.  Project only
+    # marked LMS activities that are not already represented in the manual
+    # rows, keeping the historical signing state unchanged.
+    totals_reader = getattr(repo, 'lms_activity_month_totals', None)
+    lms_totals = totals_reader(learner) if totals_reader else {}
+    provisional_reader = getattr(repo, 'provisional_month_totals', None)
+    provisional_totals = provisional_reader(learner) if provisional_reader else {}
     target_warning = None
     try:
         targets = contract_targets(learner) if months else {}
@@ -66,21 +73,42 @@ def summary(learner):
         target_warning = (str(error) + ' Activities and actual hours remain available. '
                           'Target hours and OTJH risk cannot be assessed until the plan is available.')
     # Empty months are display-only, never added to required signing months.
-    record['months'] = [
-        {**(existing[month] if month in existing else
+    result = []
+    for month in months:
+        item = {**(existing[month] if month in existing else
             {**old._state(month, None, {}, None, 0), 'is_required': False,
-             'can_complete': False, 'total_actual_hours': 0}),
-         'training_plan_target': targets.get(month, {}).get('planned', 0.0) if targets is not None else None,
-         'target_warning': target_warning}
-        for month in months
-    ]
+             'can_complete': False, 'total_actual_hours': 0})}
+        extra = lms_totals.get(month, {})
+        if extra:
+            item['row_count'] = int(item.get('row_count') or 0) + extra['row_count']
+            item['actual_hours'] = float(item.get('actual_hours') or 0) + extra['actual_hours']
+            item['total_actual_hours'] = float(item.get('total_actual_hours') or 0) + extra['actual_hours']
+        provisional = provisional_totals.get(month, {})
+        if provisional:
+            item['actual_hours'] = float(item.get('actual_hours') or 0) + provisional['actual_hours']
+            item['total_actual_hours'] = float(item.get('total_actual_hours') or 0) + provisional['actual_hours']
+            item['planned_hours'] = float(item.get('planned_hours') or 0) + provisional['planned_hours']
+            item['provisional'] = True
+        result.append({**item,
+                       'training_plan_target': targets.get(month, {}).get('planned', 0.0) if targets is not None else None,
+                       'target_warning': target_warning})
+    record['months'] = result
     return record
 
 
-def detail(learner, month):
+def detail(learner, month, *, demo=False):
     state = old.review_month(summary(learner), month)
-    rows = repo.month_rows(learner, month)
+    rows = repo.month_rows(learner, month, **({'demo': True} if demo else {}))
+    # Keep the month header totals aligned with the projected rows.  This is
+    # still a read-only view; no legacy journal row is inserted or rewritten.
+    state = {**state,
+             'row_count': len(rows),
+             'planned_hours': sum(float(row.get('planned_hours') or 0) for row in rows),
+             'actual_hours': sum(float(row.get('actual_hours') or 0) for row in rows if row.get('accepted')),
+             'not_accepted_hours': sum(float(row.get('actual_hours') or 0) for row in rows if not row.get('accepted')),
+             'total_actual_hours': sum(float(row.get('actual_hours') or 0) for row in rows)}
     return {**state, 'rows': rows, 'profile': repo.report_profile(learner),
+            'demo_only': demo, 'provisional': any(row.get('provisional') for row in rows),
             'snapshot_digest': old.digest(rows)}
 
 

@@ -252,18 +252,18 @@ def summary_data(learner, *, include_open=False):
             'read_only': learner['_view_as']}
 
 
-def detail_data(learner, month, *, include_open=False):
+def detail_data(learner, month, *, include_open=False, demo=False):
     valid_month(month)
     if learner.get('aptem_id') and month <= old_repo.CUTOFF:
         if history.enabled(learner):
-            detail = public_detail(learner, history.detail(learner, month))
+            detail = public_detail(learner, history.detail(learner, month, demo=demo))
         else:
             detail = public_detail(learner, old.month_detail({**learner, '_read_only': True}, month))
         targets = signed_training_plan_targets(learner)
         if month in targets:
             detail['training_plan_target'] = targets[month]
             detail['training_plan_target_source'] = 'signed_training_plan'
-        return {**detail, 'source': 'legacy'}
+        return {**detail, 'source': 'legacy', 'demo_only': demo}
     if not include_open:
         require_closed_month(month)
     signs = signatures(learner)
@@ -289,7 +289,7 @@ def summary(request, learner_id):
 @endpoint('GET')
 def detail(request, learner_id, month):
     learner, _ = scope(request, learner_id)
-    return JsonResponse(detail_data(learner, month, include_open=True))
+    return JsonResponse(detail_data(learner, month, include_open=True, demo=request.GET.get('demo') == '1'))
 
 
 @endpoint('GET')
@@ -306,6 +306,14 @@ def content(request, learner_id, month, row_id):
         if original is None:
             raise old.ServiceError('Activity not found.', 'not_found', 404)
         return JsonResponse({'id': row_id, 'parts': old_repo.activity_parts(learner, original)})
+    if str(row.get('source_ref') or '').startswith('la:'):
+        # LMS rows projected into the historical journal have no manual-row
+        # database id.  Resolve their read-only material by the stable
+        # group/activity source reference instead.
+        from old_otjh.content import resolve
+        resolved = resolve(learner, [row], companions=True).get(row_id)
+        if resolved is not None:
+            return JsonResponse({'id': row_id, 'parts': resolved['parts']})
     return JsonResponse(sources.activity_content(learner, row))
 
 

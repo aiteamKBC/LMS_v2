@@ -43,7 +43,9 @@ import {
 import type {
   AttendanceApiLearner,
   AttendanceApiResponse,
+  CaseloadApiLearner,
   CaseloadApiResponse,
+  EmbeddedCaseloadLearner,
   FilterOption,
   Learner,
   QuickViewTab,
@@ -129,7 +131,7 @@ function hasAuthoritativePerformanceStatus(value?: string | null): boolean {
   return ['at-risk', 'on-track', 'high', 'new-starter'].includes(normalizedPerformanceStatus(value));
 }
 
-export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean }) {
+export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { embedded?: boolean; embeddedLearners?: EmbeddedCaseloadLearner[] }) {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
   // Whose caseload this is: the signed-in coach, or the coach an administrator
@@ -168,6 +170,28 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean 
     async function loadCaseload() {
       setLoading(true);
       setError(null);
+
+      if (embedded) {
+        setOwnerName(authenticatedCoachName);
+        setLearners((embeddedLearners || []).map(source => normalizeLearner({
+          ...source,
+          // Dashboard uses compact names for these already-computed review dates.
+          lastProgressReview: (source as CaseloadApiLearner & { lastProgressReview?: string }).lastProgressReview || source.lastPr,
+          lastReview: (source as CaseloadApiLearner & { lastReview?: string }).lastReview || source.lastMcm,
+        } as CaseloadApiLearner, source.attendanceRateAvailable ? {
+          id: source.id,
+          learner: source.name || '',
+          attendance: source.attendanceRate,
+          hasAttendance: source.attendanceRateAvailable,
+          sessions: source.attendanceSessions,
+          present: source.attendancePresent,
+          absent: source.attendanceAbsent,
+          lastSession: source.attendanceLastSession,
+          lastSessionDate: source.attendanceLastSessionDate,
+        } : null)));
+        setLoading(false);
+        return;
+      }
 
       if (!authenticatedCoachEmail) {
         setOwnerName(authenticatedCoachName);
@@ -216,7 +240,7 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean 
 
     loadCaseload();
     return () => controller.abort();
-  }, [auth.account, authenticatedCoachEmail, authenticatedCoachName, isInitialized, reloadToken]);
+  }, [auth.account, authenticatedCoachEmail, authenticatedCoachName, embedded, embeddedLearners, isInitialized, reloadToken]);
 
   // --- derived data ---------------------------------------------------------
 

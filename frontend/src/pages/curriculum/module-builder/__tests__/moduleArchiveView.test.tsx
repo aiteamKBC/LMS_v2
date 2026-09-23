@@ -1,28 +1,36 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumArchivedModule, CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 
 /**
- * The module archive, from the catalogue.
+ * Archiving a module, from the catalogue.
  *
  * Deleting a module has always been an archive on the server -- the row keeps
- * its weeks, components and KSB mappings and is stamped `deleted_at` -- and the
- * restore endpoint has been there the whole time. What went missing in a merge
- * was the only way to reach it: the "View archive" button, the archived list and
- * its Restore. A module archived by accident was then unrecoverable from the
- * product, which is what this test exists to catch.
+ * its weeks, components and KSB mappings and is stamped `deleted_at` -- so the
+ * row action has to say so, which is the first case below.
  *
- * So the three things asserted here are the three that disappeared: the row
- * action says archive rather than delete, the archive is reachable and lists
- * what is in it, and Restore actually calls the restore endpoint.
+ * Reading that archive back is no longer this page's job. The catalogue used to
+ * carry its own "View archive" toggle over the same records the Curriculum
+ * archive shows, and two views of one archive is how the two drift; the toggle
+ * was removed and the archive page is the only one. The second case holds that
+ * line: the catalogue offers no archive view and reads no archive payload. That
+ * the archive is still reachable, and that Restore still works, is asserted
+ * where it now lives -- `pages/curriculum/archive/__tests__/archivePage.test.tsx`.
  */
 
 const reload = vi.fn(async () => null);
 const fetchArchivedCurriculumModules = vi.fn(async (): Promise<CurriculumArchivedModule[]> => archived);
+// Still wired into the module mock so an accidental restore from this page
+// would be a visible call rather than a network error swallowed by the test.
 const restoreCurriculumModule = vi.fn(async () => ({ restored: true, id: 'MOD-ARCHIVED' }));
+
+// The workspace reads the signed-in account. Without this the page throws on
+// its first line and every case below fails before it asserts anything.
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
+}));
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -128,11 +136,11 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   restoreCurriculumModule: (...args: unknown[]) => restoreCurriculumModule(...(args as [])),
 }));
 
-async function renderCatalogue() {
-  window.history.replaceState({}, '', '/curriculum/module-builder');
+async function renderCatalogue(route = '/curriculum/module-builder') {
+  window.history.replaceState({}, '', route);
   const { default: ModuleBuilder } = await import('../page');
   const result = render(
-    <MemoryRouter initialEntries={['/curriculum/module-builder']}>
+    <MemoryRouter initialEntries={[route]}>
       <ModuleBuilder />
     </MemoryRouter>,
   );
@@ -154,31 +162,25 @@ describe('Module Builder archive', { timeout: 15000 }, () => {
     expect(card.queryByRole('button', { name: /delete module/i })).not.toBeInTheDocument();
   });
 
-  it('reads nothing until the archive is opened, then lists what is in it', async () => {
+  it('shows no archive of its own, and never reads one', async () => {
     await renderCatalogue();
+
+    expect(screen.queryByRole('button', { name: /view archive/i })).not.toBeInTheDocument();
+    // The archived module in the fixture is real and still archived. Nothing on
+    // this page may list it, and nothing here may fetch it: the Curriculum
+    // archive is where it is read, and a second reader is a second view to drift.
+    expect(screen.queryByText('Project Management Professional')).not.toBeInTheDocument();
     expect(fetchArchivedCurriculumModules).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole('button', { name: /view archive/i }));
-
-    expect(await screen.findByText('Project Management Professional')).toBeInTheDocument();
-    // What a restore would bring back, said before the click rather than after.
-    expect(screen.getByText('34 weeks')).toBeInTheDocument();
-    expect(screen.getByText('601 components')).toBeInTheDocument();
-    expect(fetchArchivedCurriculumModules).toHaveBeenCalledTimes(1);
   });
 
-  it('restores the archived module and refreshes the catalogue behind it', async () => {
-    await renderCatalogue();
-    await userEvent.click(screen.getByRole('button', { name: /view archive/i }));
-    await screen.findByText('Project Management Professional');
-    reload.mockClear();
+  // `?view=archive` was the catalogue's own archive deep link. The audit trail
+  // built it for an archived module and now points at the Curriculum archive
+  // instead; an old bookmark must land on the plain catalogue, not a blank page.
+  it('ignores the archive query the catalogue used to answer', async () => {
+    await renderCatalogue('/curriculum/module-builder?view=archive&archiveModule=MOD-ARCHIVED');
 
-    await userEvent.click(screen.getByRole('button', { name: /restore module/i }));
-
-    await waitFor(() => expect(restoreCurriculumModule).toHaveBeenCalledWith('MOD-ARCHIVED'));
-    // The module is back in the catalogue, so the list behind the archive has
-    // to be re-read as well as the archive itself.
-    await waitFor(() => expect(reload).toHaveBeenCalled());
-    expect(fetchArchivedCurriculumModules).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText('Data Foundations')).toBeInTheDocument();
+    expect(screen.queryByText('Project Management Professional')).not.toBeInTheDocument();
+    expect(fetchArchivedCurriculumModules).not.toHaveBeenCalled();
   });
 });

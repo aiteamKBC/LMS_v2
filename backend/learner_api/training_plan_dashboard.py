@@ -91,7 +91,9 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
     module, because every module of a cohort shares that cohort's holidays.
 
     ``weeks_by_number`` maps ``(module_id, week_number)`` to that authored
-    week's ``id``/``title``/``learningOutcomes`` (see ``curriculum.weeks``).
+    week's ``id``/``title``/``learningOutcomes``/``holidayNote`` (see
+    ``curriculum.weeks``). ``holidayNote`` is already blank unless the author
+    published it, and it is attached only to a slot a holiday lands on.
     A taught slot's ``sessionNumber`` is the same content-week numbering, so a
     live-session slot picks up its week's own title and outcomes here rather
     than the module-wide aggregate. Omitted entirely when the caller has none
@@ -135,6 +137,12 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
                 slot['weekId'] = week['id']
                 slot['weekTitle'] = week['title']
                 slot['learningOutcomes'] = week['learningOutcomes']
+                # The author's holiday hint, and only on a slot a holiday
+                # actually lands on. The note is written against a clash, so a
+                # week whose dates have since moved off the holiday carries
+                # nothing -- the same test the author's own notice is drawn from.
+                if week.get('holidayNote') and slot.get('holidays'):
+                    slot['holidayNote'] = week['holidayNote']
         # The effective delivery end is the scheduler's own -- the last
         # DELIVERED session, holiday shifts included. Deliberately separate from
         # the stored `end_date` the module row carries, which a human may have
@@ -219,13 +227,22 @@ def read_dashboard(source, section=None):
                 GROUP BY month,group_id ORDER BY month,group_id''', [aptem_id])
             actual = [{'month': row['month'], 'groupId': str(row['group_id']) if row['group_id'] is not None else None,
                        'hours': number(row['hours']) or 0, 'count': row['activity_count']} for row in rows(cur)]
-        refs = [f'current:{module_id}' for module_id in _effective_plan_ids(source, {})]
+        # Effective current assignments are authoritative for the schedule.
+        # Builder metadata enriches those assignments (and supplies legacy
+        # links), but a missing builder row must not hide an assigned module.
+        current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, {})))
+        refs = [f'current:{module_id}' for module_id in current_module_ids]
         if aptem_id and historical:
             cur.execute('''SELECT gl.group_id FROM "Last_audit".group_learners gl
                 JOIN "Last_audit".learners l ON l.learner_id=gl.learner_id WHERE l.aptem_id=%s''', [aptem_id])
             refs.extend(f'legacy:{row[0]}' for row in cur.fetchall())
         _, links = _builder_subject_metadata(cur, refs)
-        ids = sorted({item['id'] for item in links.values()})
+        builder_ids = {
+            item['id'] for item in links.values() if item.get('id')
+        }
+        has_valid_aptem_id = aptem_id is not None and aptem_id > 0
+        authoritative_ids = set() if has_valid_aptem_id else set(current_module_ids)
+        ids = sorted(builder_ids | authoritative_ids)
         if ids:
             # cohort_id is read so the curriculum scheduler can resolve this
             # module's cohort holidays -- including the ones a delivery team
@@ -244,7 +261,8 @@ def read_dashboard(source, section=None):
             by_id = {module['id']: module for module in modules}
             week_counts = defaultdict(int)
             weeks_by_number = {}
-            cur.execute('''SELECT id,module_catalogue_id,week_number,title,learning_outcomes FROM curriculum.weeks
+            cur.execute('''SELECT id,module_catalogue_id,week_number,title,learning_outcomes,
+                holiday_note_enabled,holiday_note FROM curriculum.weeks
                 WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')
                 ORDER BY display_order,week_number,id''', [ids])
             for row in rows(cur):
@@ -259,7 +277,12 @@ def read_dashboard(source, section=None):
                 # display order the module-level aggregate above already reads in.
                 key = (row['module_catalogue_id'], row['week_number'])
                 if key not in weeks_by_number:
-                    weeks_by_number[key] = {'id': row['id'], 'title': clean_text(row['title']), 'learningOutcomes': outcomes}
+                    weeks_by_number[key] = {
+                        'id': row['id'], 'title': clean_text(row['title']), 'learningOutcomes': outcomes,
+                        # Published only when the author turned the switch on.
+                        # Text alone is a draft, and a draft is nobody's to read.
+                        'holidayNote': clean_text(row['holiday_note']) if row['holiday_note_enabled'] else '',
+                    }
             attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number)
             if section != 'learning':
                 cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,

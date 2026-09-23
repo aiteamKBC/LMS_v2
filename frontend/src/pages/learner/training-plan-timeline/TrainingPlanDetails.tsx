@@ -55,7 +55,19 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
   const thisMonth = today.slice(0, 7);
   const programmeStart = dateKey(programmeStartDate) || modules.map(module => dateKey(module.start)).filter(Boolean).sort()[0] || '';
-  const programmeEnd = dateKey(programmeEndDate) || modules.map(module => dateKey(moduleVisualEnd(module))).filter(Boolean).sort().at(-1) || '';
+  // The learner-detail bound can lag behind the current contract/activity
+  // projection.  Keep it as a lower-priority bound when the payload already
+  // contains a later valid month, so an absent URL month defaults to the real
+  // current month instead of being clamped into stale history.
+  const payloadEndMonths = [
+    ...Object.keys(data.months),
+    ...data.actual.map(row => row.month),
+    ...data.reviews.map(review => reviewDate(review).slice(0, 7)),
+  ].filter(month => /^\d{4}-(0[1-9]|1[0-2])$/.test(month));
+  const payloadEnd = payloadEndMonths.sort().at(-1);
+  const moduleEnd = modules.map(module => dateKey(moduleVisualEnd(module))).filter(Boolean).sort().at(-1);
+  const programmeEnd = [dateKey(programmeEndDate), moduleEnd, payloadEnd ? `${payloadEnd}-28` : '']
+    .filter(Boolean).sort().at(-1) || '';
   const minMonth = programmeStart.slice(0, 7);
   const maxMonth = programmeEnd.slice(0, 7);
   const clampMonth = (month: string) => {
@@ -63,7 +75,11 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
     if (maxMonth && month > maxMonth) return maxMonth;
     return month;
   };
-  const initialSelectedMonth = clampMonth(/^\d{4}-(0[1-9]|1[0-2])$/.test(initialMonth) ? initialMonth : thisMonth);
+  const explicitMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(initialMonth) ? initialMonth : '';
+  // An explicit URL month represents deliberate navigation. Bounds apply to
+  // the implicit current-month default and to subsequent month controls, not
+  // to a month the user requested directly.
+  const initialSelectedMonth = explicitMonth || clampMonth(thisMonth);
   const [selectedMonth, setSelectedMonth] = useState(initialSelectedMonth);
   const [selectedId, setSelectedId] = useState(initialSubjectId);
   const [bookingReview, setBookingReview] = useState<PlanReview | null>(null);

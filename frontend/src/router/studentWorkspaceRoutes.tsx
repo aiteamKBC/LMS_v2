@@ -11,5 +11,6 @@ export const studentWorkspaceRoutes: RouteObject[] = [
   { path: '/learner/home', element: <StudentHome /> },
   { path: '/workspace/learner/:kind/:id', element: <StudentHome /> },
   { path: '/workspace/learner/dashboard', element: <LearnerDashboard /> },
+  { path: '/workspace/learner/dashboard/:kind/:id', element: <LearnerDashboard /> },
   { path: '/workspace/learner/:kind/:id/dashboard', element: <LearnerDashboard /> },
 ];

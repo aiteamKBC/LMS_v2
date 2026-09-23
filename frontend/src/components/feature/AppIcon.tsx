@@ -231,7 +231,7 @@ function resolveIcon(name: string): LucideIcon {
   if (/^italic$/.test(key)) return Italic;
   if (/underline/.test(key)) return Underline;
   if (/strikethrough|strike-through/.test(key)) return Strikethrough;
-  if (/font-color|text-color/.test(key)) return Palette;
+  if (/palette|font-color|text-color/.test(key)) return Palette;
   if (/mark-pen|highlight/.test(key)) return Highlighter;
   if (/image/.test(key)) return ImageIcon;
   if (/separator|divider/.test(key)) return SeparatorHorizontal;

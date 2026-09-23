@@ -219,7 +219,7 @@ def rows(request):
     learner, _ = scope(request)
     if 'activity_id' in request.GET:
         return JsonResponse(service.activity_content(learner, request.GET.get('month'), request.GET['activity_id']))
-    data = service.month_detail(learner, request.GET.get('month'))
+    data = service.month_detail(learner, request.GET.get('month'), demo=request.GET.get('demo') == '1')
     return JsonResponse(public_detail(learner, data))
 
 

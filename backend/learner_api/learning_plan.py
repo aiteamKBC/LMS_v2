@@ -44,7 +44,7 @@ from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .learner_progression import advance_learner
-from .mappers import _s, get_training_plan, stored_training_plan, training_plan_field
+from .mappers import _normalize_free_courses, _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser
 
 logger = logging.getLogger(__name__)
@@ -241,28 +241,137 @@ def _programmes(modules):
     ]
 
 
-def _group_module_ids(programme, group):
-    """The module ids preset on the learner's group."""
-    if not group:
-        return []
-    rows = _rows(
-        """
-        SELECT module_ids
-        FROM curriculum.groups
-        WHERE group_name = %s AND (programme_name = %s OR programme_id = %s)
-        LIMIT 1
-        """,
+#: The relation the preset lookup reads. Parameterised only so its tiebreak can
+#: be tested against a literal VALUES list -- the ordering below is the whole
+#: point of the query, and it is not observable from a mocked call.
+GROUP_PRESET_SOURCE = 'curriculum.groups'
+
+GROUP_PRESET_SQL = """
+SELECT module_ids
+FROM {source}
+WHERE group_name = %s AND (programme_name = %s OR programme_id = %s)
+  AND deleted_at IS NULL
+  AND COALESCE(is_programme_deleted, FALSE) = FALSE
+ORDER BY
+    -- jsonb_array_length() errors on a scalar, and this column is not
+    -- guaranteed to hold an array -- the parsing in _group_module_ids allows
+    -- for a string too. Anything that is not an array sorts as empty.
+    jsonb_array_length(
+        CASE WHEN jsonb_typeof(module_ids) = 'array'
+             THEN module_ids ELSE '[]'::jsonb END
+    ) DESC,
+    updated_at DESC NULLS LAST,
+    created_at DESC NULLS LAST,
+    group_id
+LIMIT 1
+"""
+
+
+#: The same choice, made for many (programme, group) pairs in one round trip.
+#: DISTINCT ON keeps the first row per pair under an ORDER BY that repeats
+#: GROUP_PRESET_SQL's tiebreak exactly, so a pair resolves here to the row it
+#: would resolve to on its own. Only worth writing because that tiebreak is now
+#: defined: against the old bare LIMIT 1 a batched query would have made a
+#: different arbitrary choice from the per-pair one.
+GROUP_PRESET_BULK_SQL = """
+SELECT DISTINCT ON (p.programme, p.grp)
+       p.programme, p.grp, g.module_ids
+FROM unnest(%s::text[], %s::text[]) AS p(programme, grp)
+JOIN {source} g
+  ON g.group_name = p.grp
+ AND (g.programme_name = p.programme OR g.programme_id = p.programme)
+ AND g.deleted_at IS NULL
+ AND COALESCE(g.is_programme_deleted, FALSE) = FALSE
+ORDER BY
+    p.programme, p.grp,
+    jsonb_array_length(
+        CASE WHEN jsonb_typeof(g.module_ids) = 'array'
+             THEN g.module_ids ELSE '[]'::jsonb END
+    ) DESC,
+    g.updated_at DESC NULLS LAST,
+    g.created_at DESC NULLS LAST,
+    g.group_id
+"""
+
+
+def _group_preset_rows(programme, group, source=None):
+    """The one group row the preset comes from, or nothing."""
+    return _rows(
+        GROUP_PRESET_SQL.format(source=source or GROUP_PRESET_SOURCE),
         [group, programme, programme],
     )
-    if not rows:
-        return []
-    ids = rows[0].get("module_ids")
+
+
+def _module_ids_from_column(ids):
+    """The module_ids column as a list of trimmed strings."""
     if isinstance(ids, str):
         try:
             ids = json.loads(ids)
         except ValueError:
             return []
     return [_s(i) for i in ids] if isinstance(ids, list) else []
+
+
+def group_module_ids_bulk(pairs, source=None):
+    """`_group_module_ids` for many (programme, group) pairs, in one query.
+
+    Every pair asked for is present in the result, mapping to [] when no live
+    group matches -- the caller can seed a cache with it and never ask again.
+
+    One round trip instead of one per pair. On the curriculum payload build that
+    was 46 sequential lookups of a 155-row table, ~3.2 s of latency for ~70 ms of
+    work, because the learner counts need a preset per distinct group.
+    """
+    wanted = [(_s(programme), _s(group)) for programme, group in pairs]
+    askable = sorted({pair for pair in wanted if pair[1]})
+    found = {}
+    if askable:
+        rows = _rows(
+            GROUP_PRESET_BULK_SQL.format(source=source or GROUP_PRESET_SOURCE),
+            [[pair[0] for pair in askable], [pair[1] for pair in askable]],
+        )
+        found = {
+            (_s(row.get('programme')), _s(row.get('grp'))): _module_ids_from_column(row.get('module_ids'))
+            for row in rows
+        }
+    return {pair: found.get(pair, []) for pair in wanted}
+
+
+def _group_module_ids(programme, group, source=None):
+    """The module ids preset on the learner's group.
+
+    A group is identified here by name and programme, but that pair is not
+    unique: the same group name recurs in every cohort of a programme, so
+    "G1" on Project Controls L6 matches three rows teaching 9, 1 and 0 modules.
+    The learner's cohort would settle it, and this function is never given one —
+    all five call sites pass (programme, group) only.
+
+    That left a bare LIMIT 1 with no ORDER BY, which is not a tiebreak but the
+    absence of one: Postgres returns whichever row it reaches first, and the
+    same learner could inherit nine modules on one request and none on the next.
+
+    So the choice is made explicitly instead:
+
+    * Soft-deleted groups are excluded outright. They were matching, and a
+      deleted group has no curriculum to lend anybody.
+    * A group that carries modules wins over one that carries none. Neither is
+      more "correct" without a cohort, but they fail very differently — an empty
+      row reads as "this group teaches nothing" and silently strips every module
+      the learner inherits, while a populated one at worst offers a sibling
+      cohort's list, which the learner's own saved plan overrides anyway.
+    * Then the most recently updated row, then group_id, so the answer is
+      stable across requests and across replicas.
+
+    Cohort-blindness itself is unfixed; this only stops it being random.
+    """
+    if not group:
+        return []
+    rows = _group_preset_rows(programme, group, source)
+    if not rows:
+        return []
+    # Shared with group_module_ids_bulk so the two cannot read the same column
+    # differently.
+    return _module_ids_from_column(rows[0].get("module_ids"))
 
 
 def _saved_modules(learner):
@@ -447,7 +556,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
     not turn a successful staff edit into an error. A lagging mirror is
     recoverable -- ``manage.py sync_learning_plans`` rebuilds it from the plan.
     """
-    from .active_users import replace_training_plan
+    from .active_users import replace_free_courses, replace_training_plan
     from .mappers import get_training_plan
     from .models import LearnerProfile
 
@@ -470,6 +579,10 @@ def sync_learning_plan_mirror(source, *, strict=False):
         profile = mirrors.first()
         if profile is not None:
             replace_training_plan(profile, plan)
+            # Free courses ride the same mirror: the enrolment source holds them
+            # on Created_users."Free_courses", and the coach/learner side reads
+            # the relational learner_free_courses table (no hours/KSBs).
+            replace_free_courses(profile, getattr(source, "free_courses", None) or [])
         EnrolmentUser.all_learners.filter(pk=source.pk).update(
             modules=modules_csv,
             weeks=weeks_csv,
@@ -589,6 +702,11 @@ def _serialize(learner):
             "programmeStatus": _s(learner.programme_status),
         },
         "plan": plan,
+        # Free courses assigned to this learner. A pure list of assignment
+        # records ([{freeCourseId, courseName, addedAt}]) held in its own column,
+        # deliberately outside `plan`/`preset`/`totals` so they never touch hours
+        # or KSBs — see EnrolmentUser.free_courses.
+        "freeCourses": learner.free_courses if isinstance(learner.free_courses, list) else [],
         "preset": preset,
         # Anything in the catalogue not already on the plan, whichever programme
         # it belongs to. The picker defaults to the learner's own programme and
@@ -643,6 +761,13 @@ def learning_plan(request, pk):
     modules = payload.get("modules")
     if not isinstance(modules, list):
         return _error("modules must be a list.", 400)
+
+    # Free courses are optional and independent of the module list: a pure
+    # assignment record with no hours/KSBs, stored in their own column. Absent
+    # key = leave them untouched; present must be a list.
+    has_free_courses = "freeCourses" in payload
+    if has_free_courses and not isinstance(payload.get("freeCourses"), list):
+        return _error("freeCourses must be a list.", 400)
 
     programme = _s(learner.programme)
     try:
@@ -713,8 +838,12 @@ def learning_plan(request, pk):
 
     field = training_plan_field(learner)
     setattr(learner, field, resolved)
+    update_fields = [field]
+    if has_free_courses:
+        learner.free_courses = _normalize_free_courses(payload.get("freeCourses"))
+        update_fields.append("free_courses")
     try:
-        learner.save(update_fields=[field])
+        learner.save(update_fields=update_fields)
     except DatabaseError as exc:
         logger.exception("learning_plan: save failed")
         return _error(f"Database error: {exc}", 502)

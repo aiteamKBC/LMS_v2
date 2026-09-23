@@ -8,7 +8,9 @@ import { learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
 import { dateKey, weekKey } from '@/pages/learner/training-plan-timeline/model';
 import { hasComponentContent } from '@/utils/learnerJourney';
 
-export type LearningWeek = { id: string; label: string; title: string; start: string | null; end: string | null; activities: SubjectEntry[] };
+export type LearningWeek = { id: string; label: string; title: string; start: string | null; end: string | null; activities: SubjectEntry[];
+  /** The authored curriculum week (curriculum.weeks.id) this card stands for, when it has one. */
+  weekId?: string };
 export const learningToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
 export const learningDate = (date: string) => new Date(`${date.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 export const subjectPercent = (subject: Subject) => subject.activities.length ? Math.round(subject.activities.filter(a => a.completed).length / subject.activities.length * 10000) / 100 : 0;
@@ -69,6 +71,9 @@ export function subjectWeeks(subject: Subject): LearningWeek[] {
     const group = groups.get(key) || { id: key, label: special === 'introduction' ? 'Introduction' : special === 'extra' ? 'Extra activities' : '',
       title: label, start: special ? null : start, end: special ? null : end, activities: [] };
     group.activities.push(entry);
+    // A calendar week can hold activities from more than one authored week; the
+    // first one named owns the card, matching the title it already carries.
+    if (!group.weekId && entry.native?.weekId) group.weekId = entry.native.weekId;
     if (!special && end && (!group.end || end > group.end)) group.end = end;
     groups.set(key, group);
   }
@@ -98,7 +103,7 @@ export function subjectMapWeeks(subject: Subject, real?: LearnerDetail | null, m
       || week.title === planned.week || week.label.toLowerCase() === planned.week.toLowerCase());
     if (represented) continue;
     const id = planned.weekId || planned.week;
-    if (!weeks.some(week => week.id === id)) weeks.push({ id, label: planned.week, title: planned.week, start: null, end: null, activities: [] });
+    if (!weeks.some(week => week.id === id)) weeks.push({ id, label: planned.week, title: planned.week, start: null, end: null, activities: [], weekId: planned.weekId || undefined });
   }
   return weeks;
 }

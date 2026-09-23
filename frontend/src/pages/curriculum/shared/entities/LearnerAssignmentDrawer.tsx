@@ -9,10 +9,15 @@ import { EntityDrawer } from './ui';
 
 const inputClass = 'w-full rounded-lg border border-foreground-200 bg-background-50 px-3 py-2 text-[12px] text-foreground-900 focus:border-primary-500';
 
+/** What the caller needs to repaint its own count without refetching the list. */
+export interface LearnerAssignmentOutcome extends LearnerAssignmentResult {
+  learnerCount: number;
+}
+
 export function LearnerAssignmentDrawer({ target, onClose, onAssigned }: {
   target: LearnerAssignmentTarget | null;
   onClose: () => void;
-  onAssigned: (result: LearnerAssignmentResult) => void;
+  onAssigned: (result: LearnerAssignmentOutcome) => void;
 }) {
   // Remount on scope changes so no learner selection can leak to another target.
   return target ? <AssignmentForm key={`${target.scope}:${target.id}`} target={target} onClose={onClose} onAssigned={onAssigned} /> : null;
@@ -21,7 +26,7 @@ export function LearnerAssignmentDrawer({ target, onClose, onAssigned }: {
 function AssignmentForm({ target, onClose, onAssigned }: {
   target: LearnerAssignmentTarget;
   onClose: () => void;
-  onAssigned: (result: LearnerAssignmentResult) => void;
+  onAssigned: (result: LearnerAssignmentOutcome) => void;
 }) {
   const [data, setData] = useState<LearnerAssignmentDirectory | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,9 +101,23 @@ function AssignmentForm({ target, onClose, onAssigned }: {
     setError(null);
     try {
       let result: LearnerAssignmentResult | null = null;
-      if (selected.size) result = await assignCurriculumLearners(target, [...selected]);
-      if (toRemove.size) result = await unassignCurriculumLearners(target, [...toRemove]);
-      if (result) onAssigned(result);
+      let added = 0;
+      let removed = 0;
+      if (selected.size) {
+        result = await assignCurriculumLearners(target, [...selected]);
+        added = result.changedCount;
+      }
+      if (toRemove.size) {
+        result = await unassignCurriculumLearners(target, [...toRemove]);
+        removed = result.changedCount;
+      }
+      if (result) {
+        // changedCount is only the learners the server actually moved, so this
+        // lands on the same figure a list reload would show -- without waiting
+        // for one, which is the slow read that leaves the badge stale.
+        const assignedBefore = data.learners.filter(learner => learner.assigned).length;
+        onAssigned({ ...result, learnerCount: Math.max(0, assignedBefore + added - removed) });
+      }
       onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to update learner assignments. Please try again.');
