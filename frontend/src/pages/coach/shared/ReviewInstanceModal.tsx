@@ -316,6 +316,7 @@ export function ReviewInstanceModal({
     [definition, answers],
   );
   const answeredCount = requiredCount - missingFieldIds.size;
+  const isImportedReadOnly = Boolean(definition?.readOnly);
   const isSignatureStage = definition ? ['awaiting-signature', 'completed'].includes(definition.instance.status) : false;
   const advisorSignature = definition?.signatures.advisor;
   const advisorSignaturePending = Boolean(
@@ -333,7 +334,7 @@ export function ReviewInstanceModal({
     && !advisorSignaturePending
     && !allRequiredSignaturesSaved,
   );
-  const formReadOnly = isSignatureStage;
+  const formReadOnly = isImportedReadOnly || isSignatureStage;
 
   useEffect(() => {
     if (expandedSummaryFieldId || !restoreExpandFocusRef.current) return;
@@ -581,7 +582,12 @@ export function ReviewInstanceModal({
 
         {!loading && definition ? (
           <>
-            {isSignatureStage ? (
+            {isImportedReadOnly ? (
+              <section className="rounded-2xl border border-primary-200 bg-primary-50 p-4" aria-label="Imported review">
+                <p className="text-sm font-bold text-primary-950">Historical Aptem review</p>
+                <p className="mt-1 text-xs leading-5 text-primary-900">This imported review is read-only. Its sections and answers are shown exactly as stored.</p>
+              </section>
+            ) : isSignatureStage ? (
               <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4" aria-label="Edit completed review">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -613,7 +619,9 @@ export function ReviewInstanceModal({
             ) : null}
             <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/80 px-4 py-3 text-[13px] leading-5 text-primary-800 shadow-sm">
               <AppIcon className="ri-information-line mt-0.5 shrink-0 text-primary-600"></AppIcon>
-              <span>These answers are saved to this {definition.template.name} and follow the sections/questions configured in Curriculum.</span>
+              <span>{isImportedReadOnly
+                ? 'These historical answers are displayed from the imported Aptem review and cannot be changed here.'
+                : `These answers are saved to this ${definition.template.name} and follow the sections/questions configured in Curriculum.`}</span>
             </div>
 
             <div className="grid gap-3 rounded-2xl border border-background-200 bg-white p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
@@ -921,7 +929,7 @@ export function ReviewInstanceModal({
 
       <footer className={pageMode ? 'sticky bottom-0 z-10 flex shrink-0 flex-col-reverse gap-3 rounded-b-3xl border-t border-background-200 bg-white/95 px-5 py-4 shadow-[0_-8px_24px_rgba(31,24,51,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-8' : 'flex shrink-0 flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7'}>
         <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">{pageMode ? 'Back' : 'Cancel'}</button>
-        {!isSignatureStage ? <div className="flex gap-2">
+        {!formReadOnly ? <div className="flex gap-2">
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>Save draft
           </button>

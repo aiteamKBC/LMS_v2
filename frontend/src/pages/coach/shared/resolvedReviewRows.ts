@@ -44,13 +44,11 @@ export function normalizeResolvedReviews(events: CoachCalendarEvent[]) {
 
 export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatrix {
   const status = normalizedReviewStatus(event);
-  const aptemFormAvailable = event.reviewSource === 'aptem' && Boolean(event.hasReviewForm && event.aptemReviewId);
-  const curriculumFormAvailable = event.reviewSource !== 'aptem'
-    && Boolean(event.reviewInstanceId || event.reviewTemplateId);
+  const formAvailable = Boolean(event.hasReviewForm || event.reviewInstanceId || event.reviewTemplateId);
   return {
     schedule: status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
     view: true,
-    viewForm: aptemFormAvailable || curriculumFormAvailable,
+    viewForm: formAvailable,
     presentation: Boolean(event.enrolmentId),
     join: canJoinMeeting({ ...event, status }),
   };

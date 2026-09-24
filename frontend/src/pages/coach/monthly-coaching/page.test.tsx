@@ -6,10 +6,11 @@ import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachMonthlyCoaching from './page';
 import CoachMeetingDetail from '../meeting-detail/page';
 
-const { fetchEvents, scheduleEvent, savePptx, coach } = vi.hoisted(() => ({
+const { fetchEvents, scheduleEvent, savePptx, openReview, coach } = vi.hoisted(() => ({
   fetchEvents: vi.fn(),
   scheduleEvent: vi.fn(),
   savePptx: vi.fn(),
+  openReview: vi.fn(),
   coach: { email: 'coach@example.com', name: 'Coach Example', isInitialized: true, isViewingAsCoach: false },
 }));
 
@@ -26,6 +27,7 @@ vi.mock('../shared/calendarEvents', async importOriginal => ({
 vi.mock('../shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => null }));
 vi.mock('../shared/ReviewInstanceModal', () => ({ ReviewInstanceModal: () => null }));
 vi.mock('../progress-reviews/lib/progressReviewPptx', () => ({ saveProgressReviewPptx: savePptx }));
+vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview }));
 
 function meeting(index: number, overrides: Partial<CoachCalendarEvent> = {}): CoachCalendarEvent {
   return {
@@ -75,8 +77,10 @@ beforeEach(() => {
   fetchEvents.mockReset();
   scheduleEvent.mockReset();
   savePptx.mockReset();
+  openReview.mockReset();
   scheduleEvent.mockResolvedValue({ event: meetings[0] });
   savePptx.mockResolvedValue(undefined);
+  openReview.mockResolvedValue({ instanceId: 'REVI-APTEM' });
   fetchEvents.mockResolvedValue({ owner: { name: 'Coach Example' }, events: meetings });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -191,13 +195,23 @@ describe('restored monthly coaching list', () => {
 
   it('opens an imported Aptem View Form directly instead of the learner profile', async () => {
     fetchEvents.mockResolvedValue({ events: [
-      meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
+      meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Completed', status: 'completed', scheduledDate: '2026-09-23', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
     ] });
     mount('/coach/monthly-coaching?filter=all');
-    const row = within((await screen.findByText('Imported Scheduled')).closest('tr')!);
+    const row = within((await screen.findByText('Imported Completed')).closest('tr')!);
     fireEvent.click(row.getByRole('button', { name: 'View Form' }));
-    expect(screen.getByTestId('route')).toHaveTextContent('/coach/imported-review-forms/apprenticeship/ENR-21/21');
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
     expect(screen.getByTestId('route')).not.toHaveTextContent('/coach/learner-case-file');
+  });
+
+  it('opens Curriculum questions for a non-terminal imported Aptem meeting', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(22, { id: 'imported-review:22', eventKey: 'imported-review:22', learner: 'Imported Draft', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '22', hasReviewForm: true, reviewTemplateId: undefined }),
+    ] });
+    mount('/coach/monthly-coaching?filter=all');
+    fireEvent.click(within((await screen.findByText('Imported Draft')).closest('tr')!).getByRole('button', { name: 'View Form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A22');
+    expect(openReview).not.toHaveBeenCalled();
   });
 
   it('renders the requested table columns and coaching actions', async () => {
@@ -296,7 +310,7 @@ describe('restored monthly coaching list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
     expect(visibleLearners()).toHaveLength(2);
     const returnTo = screen.getByTestId('route').textContent;
-    fireEvent.click(screen.getAllByRole('button', { name: 'View Form' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'View' })[0]);
     const back = await screen.findByRole('link', { name: 'Back to Coaching Meetings' });
     expect(back).toHaveAttribute('href', returnTo);
     fireEvent.click(back);

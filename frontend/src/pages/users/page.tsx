@@ -6,6 +6,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { AdminPageHeader } from '@/pages/admin/_shared/AdminPage';
 import { useAuth } from '@/hooks/useAuth';
+import { useListQueryState } from '@/hooks/useListQueryState';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentUsers, STATUS_OPTIONS, TYPE_OPTIONS, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchStaffUsers, type StaffUserRow } from '@/api/staffUsers';
@@ -187,6 +188,12 @@ const EMPTY_FILTER: UsersFilter = {
   userName: '', groups: [], email: '', statuses: [], type: 'all', programme: '', cohort: '',
   programmeStatus: '', niNumber: '', caseOwner: 'any', referenceNumber: '', page: 1, pageSize: PAGE_SIZE,
 };
+const DIRECTORY_QUERY_DEFAULTS = {
+  search: '', summary: 'all', page: 1, name: '', email: '', groups: '', statuses: '',
+  type: 'all', programme: '', cohort: '', programmeStatus: '', caseOwner: 'any', reference: '',
+};
+const encodeFilterList = (values?: string[]) => (values || []).join('~');
+const decodeFilterList = (value: string) => value ? value.split('~').filter(Boolean) : [];
 
 function initials(name: string) {
   return name.split(' ').filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -332,11 +339,19 @@ export function matches(row: DirectoryRow, f: UsersFilter): boolean {
 export default function UsersListPage() {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
-  const [draft, setDraft] = useState<UsersFilter>(EMPTY_FILTER);
-  const [applied, setApplied] = useState<UsersFilter>(EMPTY_FILTER);
-  const [quickSearch, setQuickSearch] = useState('');
+  const { state: query, setValues: setQueryValues, reset: resetQuery } = useListQueryState(DIRECTORY_QUERY_DEFAULTS);
+  const applied = useMemo<UsersFilter>(() => ({
+    ...EMPTY_FILTER,
+    userName: String(query.name), email: String(query.email),
+    groups: decodeFilterList(String(query.groups)), statuses: decodeFilterList(String(query.statuses)),
+    type: String(query.type) as UsersFilter['type'], programme: String(query.programme),
+    cohort: String(query.cohort), programmeStatus: String(query.programmeStatus),
+    caseOwner: String(query.caseOwner), referenceNumber: String(query.reference),
+  }), [query.caseOwner, query.cohort, query.email, query.groups, query.name, query.programme, query.programmeStatus, query.reference, query.statuses, query.type]);
+  const [draft, setDraft] = useState<UsersFilter>(applied);
+  const quickSearch = String(query.search);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [page, setPage] = useState(1);
+  const page = Number(query.page);
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -351,7 +366,7 @@ export default function UsersListPage() {
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const [rows, setRows] = useState<DirectoryRow[]>([]);
-  const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>('all');
+  const summaryFilter = String(query.summary) as SummaryFilter;
   // The curriculum lookups behind the programme -> cohort -> group filters. They
   // come from curriculum.cohort_authoring_details, the same source the create
   // form picks from, so a filter can only offer combinations that really exist.
@@ -406,6 +421,8 @@ export default function UsersListPage() {
   };
 
   useEffect(load, []);
+
+  useEffect(() => setDraft(applied), [applied]);
 
   // A failed lookup isn't worth an error banner over the whole directory: the
   // dropdown falls back to the programmes/cohorts the loaded rows already carry.
@@ -547,10 +564,15 @@ export default function UsersListPage() {
       ...('cohort' in patch ? { groups: [] } : {}),
       ...patch,
     }));
-  const search = () => { setApplied(draft); setPage(1); };
-  const updateQuickSearch = (value: string) => { setQuickSearch(value); setPage(1); };
-  const reset = () => { setDraft(EMPTY_FILTER); setApplied(EMPTY_FILTER); setQuickSearch(''); setSummaryFilter('all'); setPage(1); };
-  const selectSummary = (next: SummaryFilter) => { setSummaryFilter(next); setPage(1); };
+  const search = () => setQueryValues({
+    name: draft.userName || '', email: draft.email || '', groups: encodeFilterList(draft.groups),
+    statuses: encodeFilterList(draft.statuses), type: draft.type || 'all', programme: draft.programme || '',
+    cohort: draft.cohort || '', programmeStatus: draft.programmeStatus || '',
+    caseOwner: draft.caseOwner || 'any', reference: draft.referenceNumber || '',
+  }, { resetPage: true });
+  const updateQuickSearch = (value: string) => setQueryValues({ search: value }, { resetPage: true });
+  const reset = () => { setDraft(EMPTY_FILTER); resetQuery(); };
+  const selectSummary = (next: SummaryFilter) => setQueryValues({ summary: next }, { resetPage: true });
   // Commercial and apprenticeship ids come from different tables and overlap,
   // so every row action carries the row's source.
   const q = (row: UserListRow) => (row.source === 'commercial' ? '?source=commercial' : '');
@@ -599,7 +621,7 @@ export default function UsersListPage() {
   const applyLearnerImport = (imported: UserListRow[]) => {
     // Keep the saved rows in local state while refreshing server-derived fields.
     setRows(previous => mergeDirectoryRows([...imported, ...previous]));
-    setPage(1);
+    setQueryValues({ page: 1 });
     load();
   };
 
@@ -941,7 +963,7 @@ export default function UsersListPage() {
           </div>
           <div className="flex flex-col items-center justify-between gap-3 border-t border-foreground-100 px-5 py-2.5 sm:flex-row">
             <p className="text-[11px] text-foreground-500">Showing {showingStart} to {showingEnd} of {filtered.length} users</p>
-            <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            <Pagination page={page} totalPages={totalPages} onChange={nextPage => setQueryValues({ page: nextPage }, { replace: false })} />
             <label className="hidden items-center gap-2 text-[11px] text-foreground-500 sm:flex">
               Rows per page
               <select className="rounded-lg border border-foreground-200 bg-background-50 px-2 py-1 text-[11px] text-foreground-700" value={PAGE_SIZE} aria-label="Rows per page" onChange={() => undefined}>
