@@ -89,6 +89,15 @@ describe('monthly logs', () => {
     expect(screen.getByText(/Signing opens after the month ends/)).toBeVisible();
   });
 
+  it('shows a friendly scheduled state instead of requesting a future monthly log', async () => {
+    page('/learner/monthly-logs/commercial/7/2999-01?source=attendance%3Aocc-8');
+    expect(await screen.findByText('January 2999 has not started yet')).toBeVisible();
+    expect(screen.getByText(/monthly log will become available when the month begins/i)).toBeVisible();
+    expect(screen.getByRole('link', { name: /Back to Attendance/ })).toHaveAttribute('href', '/learner/attendance');
+    expect(screen.getByRole('link', { name: /View available months/ })).toHaveAttribute('href', '/learner/monthly-logs');
+    expect(getLogMonth).not.toHaveBeenCalled();
+  });
+
   it('filters the year and unsigned learner months while keeping historical reports reachable', async () => {
     const earlier = { ...retained, month: '2025-05', coach_signature: null };
     vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [current, retained, earlier] });

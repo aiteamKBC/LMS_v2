@@ -176,6 +176,28 @@ describe('Attendance lecture workspace', () => {
     expect(destination.searchParams.get('source')).toBe(expected);
   });
 
+  it('opens an upcoming lecture in its exact My Learning component', async () => {
+    payload.lectures = [lecture({ status: 'upcoming', date: '2027-01-10', source: 'microsoft-teams',
+      sessionId: 'teams:occ-8', componentHref: '/learner/component/apprenticeship/12/live-session-9' })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'First lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Open Activities' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/component/apprenticeship/12/live-session-9');
+    expect(screen.getByTestId('location')).not.toHaveTextContent('/monthly-logs/');
+  });
+
+  it('keeps an unmapped upcoming lecture in its My Learning module instead of Monthly Logs', async () => {
+    payload.lectures = [lecture({ status: 'upcoming', date: '2027-01-10', source: 'microsoft-teams',
+      sessionId: 'teams:unmapped', moduleId: 'native:test-teams' })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'First lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Open Activities' }));
+    const destination = new URL(screen.getByTestId('location').textContent!, 'http://localhost');
+    expect(destination.pathname).toBe('/learner/my-learning/apprenticeship/12');
+    expect(destination.searchParams.get('subject')).toBe('current:test-teams');
+    expect(destination.pathname).not.toContain('/monthly-logs/');
+  });
+
   it('requests manager approval and keeps Live Sessions effective while pending', async () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Lazy Mode' }));
