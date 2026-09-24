@@ -146,6 +146,7 @@ it('keeps an administrator in the selected coach workspace', () => {
   expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
   expect(within(rail).getByRole('link', { name: 'Marking' })).toHaveAttribute('href', '/coach/marking-queue');
   expect(within(rail).getByRole('link', { name: 'Marking' }).querySelector('svg')).not.toBeNull();
+  expect(within(sidebar).queryByRole('button', { name: 'Open account settings' })).toBeNull();
 });
 
 it.each([

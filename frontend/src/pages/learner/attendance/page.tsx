@@ -92,6 +92,17 @@ export default function AttendancePage() {
     finally { setModeBusy(false); }
   };
   const openActivities = (row: AttendanceLecture) => {
+    if (row.status === 'upcoming') {
+      const activityHref = row.componentHref ?? row.activities.find(activity => activity.href)?.href;
+      if (activityHref) {
+        navigate(activityHref);
+        return;
+      }
+      const moduleRef = row.moduleId.replace(/^native:/, '');
+      const search = new URLSearchParams({ subject: `current:${moduleRef}` });
+      navigate(`/learner/my-learning/${learner.kind}/${learner.id}?${search}`);
+      return;
+    }
     const log = row.monthlyLog ?? {
       month: row.date.slice(0, 7),
       sourceRef: row.source === 'kbc-attendance' ? `att:${row.sessionId}` : `attendance:${row.sessionId.replace(/^teams:/, '')}`,

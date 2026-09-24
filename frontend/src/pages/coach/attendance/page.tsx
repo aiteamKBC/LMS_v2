@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { useListQueryState } from '@/hooks/useListQueryState';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import styles from './attendanceOverview.module.css';
+import lastFourStyles from './attendanceLastFour.module.css';
 
 const coachNav = roleNavMap.coach;
 const ENDPOINT = '/coach_api/coach/attendance';
 const PAGE_SIZE = 10;
+const QUERY_DEFAULTS = { group: '', programme: '', status: 'all', page: 1 };
 type AttendanceStatus = 'present' | 'absent';
 interface RecordRow { learnerId: string; sessionId: string; sessionDate: string | null; status: string }
 interface Learner { id: string; learner: string; email?: string | null; programme: string; programmeId?: string | null; group: string; groupName?: string | null; groupId?: string | null; programStatus?: string }
@@ -23,20 +26,20 @@ const shortDate = (value: string | null) => value ? `${value.slice(5, 7)}-${valu
 export default function CoachAttendance() {
   const coach = useCoachIdentity();
   const navigate = useNavigate();
-  const restored = (useLocation().state as { groupId?: string; programmeId?: string; programStatus?: string } | null) || {};
+  const { state: query, setValues: setQueryValues } = useListQueryState(QUERY_DEFAULTS);
   const [learners, setLearners] = useState<Learner[]>([]);
   const [records, setRecords] = useState<RecordRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [groupId, setGroupId] = useState(restored.groupId || '');
-  const [programmeId, setProgrammeId] = useState(restored.programmeId || '');
-  const [loaded, setLoaded] = useState<{ groupId: string; programmeId: string } | null>(null);
-  const [programStatus, setProgramStatus] = useState(restored.programStatus || 'all');
+  const [groupId, setGroupId] = useState(String(query.group));
+  const [programmeId, setProgrammeId] = useState(String(query.programme));
+  const loaded = useMemo(() => query.group ? { groupId: String(query.group), programmeId: String(query.programme) } : null, [query.group, query.programme]);
+  const programStatus = String(query.status);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [draftDate, setDraftDate] = useState('');
   const [draftStatus, setDraftStatus] = useState<AttendanceStatus>('present');
   const [days, setDays] = useState<DayDraft[]>([]);
-  const [page, setPage] = useState(1);
+  const page = Number(query.page);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,6 +56,11 @@ export default function CoachAttendance() {
     return () => controller.abort();
   }, [coach.email, coach.isInitialized]);
 
+  useEffect(() => {
+    setGroupId(String(query.group));
+    setProgrammeId(String(query.programme));
+  }, [query.group, query.programme]);
+
   const groups = useMemo(() => [...new Map(learners.filter(row => row.groupId).map(row => [String(row.groupId), display(row.groupName || row.group)])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [learners]);
   const programmes = useMemo(() => [...new Map(learners.filter(row => String(row.groupId) === groupId && row.programmeId).map(row => [String(row.programmeId), row.programme])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [groupId, learners]);
   const statuses = useMemo(() => [...new Set(learners.map(row => display(row.programStatus)).filter(value => value !== '--'))].sort(), [learners]);
@@ -60,8 +68,8 @@ export default function CoachAttendance() {
   const visible = useMemo(() => loadedLearners.filter(row => programStatus === 'all' || (programStatus === 'active' ? display(row.programStatus).toLowerCase() === 'active' : display(row.programStatus) === programStatus)), [loadedLearners, programStatus]);
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const pageRows = visible.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const recent = (id: string) => records.filter(row => row.learnerId === id && ['present', 'absent'].includes(row.status)).sort((a, b) => (b.sessionDate || '').localeCompare(a.sessionDate || '')).slice(0, 3);
-  const loadStudents = () => { setLoaded({ groupId, programmeId }); setSelected(new Set()); setPage(1); setNotice(null); };
+  const recent = (id: string) => records.filter(row => row.learnerId === id && ['present', 'absent'].includes(row.status)).sort((a, b) => (b.sessionDate || '').localeCompare(a.sessionDate || '')).slice(0, 4);
+  const loadStudents = () => { setQueryValues({ group: groupId, programme: programmeId, page: 1 }); setSelected(new Set()); setNotice(null); };
   const addDay = () => { if (!draftDate) return; setDays(current => current.some(row => row.date === draftDate) ? current : [...current, { id: Date.now(), date: draftDate, status: draftStatus }]); setDraftDate(''); };
 
   return <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Attendance" pageSubtitle="Bulk and individual attendance" userName={coach.name} userRole="Progress Coach"><main className={styles.page}>
@@ -73,11 +81,11 @@ export default function CoachAttendance() {
       {days.length > 0 && <div className={styles.dayList}>{days.map(day => <span key={day.id}>{day.date} · {day.status}<button type="button" aria-label={`Remove ${day.date}`} onClick={() => setDays(current => current.filter(row => row.id !== day.id))}>×</button></span>)}</div>}
       <div className={styles.editFooter}><div><strong>Selected students: {selected.size}</strong><strong>Days: {days.length}</strong></div><div><button className={styles.primary} type="button" disabled={!selected.size || !days.length} onClick={() => setNotice('Not saved: the canonical attendance service does not support coach-created or absent records. Existing records remain unchanged.')}>Apply bulk update</button><button className={styles.danger} type="button" disabled={!days.length} onClick={() => setDays([])}>Delete selected days</button></div></div>{notice && <p className={styles.notice} role="status">{notice}</p>}
     </section>
-    <section className={styles.card} aria-labelledby="students-title"><header className={styles.studentsHeader}><CardHeading id="students-title" icon="ri-user-3-line" title={`Students (${visible.length})`} copy="Learners loaded from stable group and programme assignments." /><Field label="Programme status"><select aria-label="Programme status" value={programStatus} onChange={event => { setProgramStatus(event.target.value); setPage(1); }}><option value="all">All statuses</option><option value="active">Active</option>{statuses.filter(value => value.toLowerCase() !== 'active').map(value => <option key={value} value={value}>{value}</option>)}</select></Field></header>
+    <section className={styles.card} aria-labelledby="students-title"><header className={styles.studentsHeader}><CardHeading id="students-title" icon="ri-user-3-line" title={`Students (${visible.length})`} copy="Learners loaded from stable group and programme assignments." /><Field label="Programme status"><select aria-label="Programme status" value={programStatus} onChange={event => setQueryValues({ status: event.target.value, page: 1 })}><option value="all">All statuses</option><option value="active">Active</option>{statuses.filter(value => value.toLowerCase() !== 'active').map(value => <option key={value} value={value}>{value}</option>)}</select></Field></header>
       <div className={styles.selectActions}><button type="button" disabled={!visible.length} onClick={() => setSelected(new Set(visible.map(row => row.id)))}>Select all</button><button type="button" disabled={!selected.size} onClick={() => setSelected(new Set())}>Clear</button></div>
-      <div className={styles.tableScroll}><table><thead><tr><th>Select</th><th>Learner</th><th>Email</th><th>Programme status</th><th>Last attendance</th><th>Details</th></tr></thead><tbody>
-        {loading ? <tr><td colSpan={6}><RowsSkeleton rows={5} /></td></tr> : error ? <tr><td colSpan={6}><EmptyState variant="error" size="sm" title="Unable to load attendance" description={error} /></td></tr> : !loaded ? <tr><td colSpan={6}><EmptyState size="sm" title="Choose a group" description="Select a group, then load its learners." /></td></tr> : !pageRows.length ? <tr><td colSpan={6}><EmptyState size="sm" title="No learners found for this group." /></td></tr> : pageRows.map(learner => <tr key={learner.id}><td><input aria-label={`Select ${learner.learner}`} type="checkbox" checked={selected.has(learner.id)} onChange={() => setSelected(current => { const next = new Set(current); next.has(learner.id) ? next.delete(learner.id) : next.add(learner.id); return next; })} /></td><td><strong>{learner.learner}</strong></td><td>{display(learner.email)}</td><td><span className={styles.programStatus}>{display(learner.programStatus)}</span></td><td><div className={styles.chips}>{recent(learner.id).map(row => <span key={`${row.sessionId}-${row.sessionDate}`} data-status={row.status}>{row.status === 'present' ? 'P' : 'A'} {shortDate(row.sessionDate)}</span>)}{!recent(learner.id).length && '--'}</div></td><td><button className={styles.linkButton} type="button" onClick={() => navigate(`/coach/attendance/${learner.id}`, { state: { groupId: loaded.groupId, programmeId: loaded.programmeId, programStatus } })}>View details</button></td></tr>)}
-      </tbody></table></div>{pageCount > 1 && <nav className={styles.pagination} aria-label="Students pagination"><button disabled={page === 1} onClick={() => setPage(value => value - 1)}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setPage(value => value + 1)}>Next</button></nav>}
+      <div className={styles.tableScroll}><table><thead><tr><th>Select</th><th>Learner</th><th>Email</th><th>Programme status</th><th>Last 4</th><th>Details</th></tr></thead><tbody>
+        {loading ? <tr><td colSpan={6}><RowsSkeleton rows={5} /></td></tr> : error ? <tr><td colSpan={6}><EmptyState variant="error" size="sm" title="Unable to load attendance" description={error} /></td></tr> : !loaded ? <tr><td colSpan={6}><EmptyState size="sm" title="Choose a group" description="Select a group, then load its learners." /></td></tr> : !pageRows.length ? <tr><td colSpan={6}><EmptyState size="sm" title="No learners found for this group." /></td></tr> : pageRows.map(learner => <tr key={learner.id}><td><input aria-label={`Select ${learner.learner}`} type="checkbox" checked={selected.has(learner.id)} onChange={() => setSelected(current => { const next = new Set(current); next.has(learner.id) ? next.delete(learner.id) : next.add(learner.id); return next; })} /></td><td><strong>{learner.learner}</strong></td><td>{display(learner.email)}</td><td><span className={styles.programStatus}>{display(learner.programStatus)}</span></td><td>{display(learner.programStatus).toLowerCase() === 'paused' ? <span className={lastFourStyles.paused}>Attendance paused</span> : <div className={`${styles.chips} ${lastFourStyles.chips}`}>{recent(learner.id).map(row => <span key={`${row.sessionId}-${row.sessionDate}`} data-status={row.status}>{row.status === 'present' ? 'P' : 'A'} {shortDate(row.sessionDate)}</span>)}{!recent(learner.id).length && '--'}</div>}</td><td><button className={styles.linkButton} type="button" onClick={() => navigate(`/coach/attendance/${learner.id}`, { state: { groupId: loaded.groupId, programmeId: loaded.programmeId, programStatus } })}>View details</button></td></tr>)}
+      </tbody></table></div>{pageCount > 1 && <nav className={styles.pagination} aria-label="Students pagination"><button disabled={page === 1} onClick={() => setQueryValues({ page: page - 1 }, { replace: false })}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setQueryValues({ page: page + 1 }, { replace: false })}>Next</button></nav>}
     </section>
   </main></WorkspaceShell>;
 }

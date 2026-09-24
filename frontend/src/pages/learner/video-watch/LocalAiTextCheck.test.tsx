@@ -19,6 +19,14 @@ it('highlights flagged passages and invalidates the result after edits', async (
   expect(container.querySelector('mark')).toBeNull();
 });
 
+it('shows only the heading when no signal is found', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(reply({ csrfToken: 'csrf' })).mockResolvedValueOnce(reply({ advisoryOnly: true, status: 'no_signal', message: 'Advisory explanation.', segments: [{ start: 0, end: 6, flagged: false }] })));
+  render(view('Answer'));
+  fireEvent.click(screen.getByRole('button'));
+  expect((await screen.findByRole('status')).textContent).toBe('No AI-writing signal found');
+  expect(screen.queryByText('Advisory explanation.')).toBeNull();
+});
+
 it('reports unavailable service without a clean result', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(reply({ csrfToken: 'csrf' })).mockResolvedValueOnce(reply({ error: 'Model is not installed.' }, false)));
   render(view('Answer'));

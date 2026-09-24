@@ -16,7 +16,7 @@ interface CoachSidebarProps {
   onCollapsedChange: (collapsed: boolean) => void;
 }
 
-export function CoachSidebar({ navItems, userName, userRole, mobileOpen, onCloseMobile, onOpenAccount, collapsed, onCollapsedChange }: CoachSidebarProps) {
+export function CoachSidebar({ navItems, mobileOpen, onCloseMobile, collapsed, onCollapsedChange }: CoachSidebarProps) {
   const { canSeeNavItem } = useAuth();
   const location = useLocation();
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -53,7 +53,6 @@ export function CoachSidebar({ navItems, userName, userRole, mobileOpen, onClose
     return () => { document.removeEventListener('keydown', handleKey); opener?.focus(); };
   }, [mobileOpen, onCloseMobile]);
 
-  const initials = userName.trim().split(/\s+/).filter(Boolean).map(word => word[0]).slice(0, 2).join('').toUpperCase();
   const panel = (mobile: boolean) => {
     const compact = !mobile && collapsed;
     return <>
@@ -82,11 +81,6 @@ export function CoachSidebar({ navItems, userName, userRole, mobileOpen, onClose
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span className={styles.label}>{item.label}</span>
       </Link>)}
     </nav>
-    <div className={styles.footer}>
-      <button type="button" className={styles.account} onClick={() => { onCloseMobile(); onOpenAccount(); }} aria-label="Open account settings">
-        <span className={styles.avatar}>{initials || 'C'}</span><span className={styles.identity}><strong>{userName}</strong><small>{userRole}</small></span><ChevronDown className={styles.accountChevron} size={14} />
-      </button>
-    </div>
   </>;
   };
 

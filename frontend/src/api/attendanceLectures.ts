@@ -12,6 +12,7 @@ export interface AttendanceLecture {
   moduleId: string; module: string; source: 'kbc-attendance' | 'microsoft-teams';
   startTime: string; endTime: string; durationMinutes: number | null;
   startsAt?: string | null; endsAt?: string | null; joinUrl?: string;
+  componentHref?: string;
   tutor?: string; coach?: string; attendanceConfirmed?: boolean; creditedMinutes?: number | null;
   contentSummary: string; ksbs: string[]; activities: LectureActivity[];
   ksbScope?: 'lecture' | 'activities' | 'module' | null;

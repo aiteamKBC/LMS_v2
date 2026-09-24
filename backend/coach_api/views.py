@@ -98,7 +98,7 @@ from learner_api.attendance import (
     combined_attendance_rows,
     fetch_kbc_attendance_rates,
 )
-from learner_api.review_history import REVIEW_TYPES, _serialize_review
+from learner_api.review_history import REVIEW_TYPES, _sections_by_review, _serialize_review
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
     slugify as curriculum_slugify,
@@ -5691,6 +5691,10 @@ def event_note_lines(base_event: dict, record: CoachCalendarEvent | None) -> lis
 
 def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None) -> dict:
     event = dict(base_event)
+    # Aptem owns the review lifecycle.  An LMS calendar row is only a booking
+    # overlay for those imported reviews; its absence (or booking status) must
+    # not erase the status imported from Aptem.
+    aptem_review = clean_text(base_event.get("reviewSource")).casefold() == "aptem"
     target_date = parse_date_value(base_event.get("targetDate"))
     if isinstance(target_date, datetime):
         target_date = target_date.date()
@@ -5702,7 +5706,9 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
     else:
         display_date = target_date
 
-    start_time = record.scheduled_time if record and record.scheduled_time else None
+    start_time = record.scheduled_time if record and record.scheduled_time else (
+        parse_time_value(base_event.get("scheduledTime")) if aptem_review else None
+    )
     duration_minutes = record.duration_minutes if record and record.duration_minutes else TIMETABLE_DEFAULT_DURATION_MINUTES
     start_hour = 9
     end_hour = 10
@@ -5714,7 +5720,10 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
         time_label = f"{start_time.strftime('%H:%M')} - {duration_minutes} min"
         is_time_estimated = False
 
-    status = record.status if record else CoachCalendarEvent.STATUS_NOT_SCHEDULED
+    if aptem_review:
+        status = clean_text(base_event.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
+    else:
+        status = record.status if record else CoachCalendarEvent.STATUS_NOT_SCHEDULED
     meeting_link = clean_text(record.meeting_link) if record else ""
     graph_web_link = clean_text(record.graph_web_link) if record else ""
     meeting_provider = clean_text(record.meeting_provider) if record else ""
@@ -5734,9 +5743,15 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "isTimeEstimated": is_time_estimated,
             "status": status,
             "sourceStatus": schedule_status_label(status),
-            "rawStatus": schedule_status_label(status),
-            "scheduledDate": record.scheduled_date.isoformat() if record and record.scheduled_date else None,
-            "scheduledTime": format_time_value(record.scheduled_time) if record else None,
+            "rawStatus": base_event.get("rawStatus") if aptem_review else schedule_status_label(status),
+            "scheduledDate": (
+                record.scheduled_date.isoformat() if record and record.scheduled_date
+                else base_event.get("scheduledDate") if aptem_review else None
+            ),
+            "scheduledTime": (
+                format_time_value(record.scheduled_time) if record and record.scheduled_time
+                else base_event.get("scheduledTime") if aptem_review else None
+            ),
             "meetingProvider": meeting_provider,
             "meetingLink": meeting_link,
             "graphWebLink": graph_web_link,
@@ -5744,7 +5759,10 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "location": "Online" if meeting_link else "--",
             "notes": " ".join(event_note_lines(base_event, record)),
             "reviewResponses": record.review_responses if record and isinstance(record.review_responses, dict) else {},
-            "reviewCompletedAt": record.review_completed_at.isoformat() if record and record.review_completed_at else None,
+            "reviewCompletedAt": (
+                base_event.get("reviewCompletedAt") if aptem_review
+                else record.review_completed_at.isoformat() if record and record.review_completed_at else None
+            ),
             # Set once this occurrence is first scheduled (see
             # ensure_review_instance_for_calendar_record) -- the frontend uses
             # its presence to route "open review" to the dynamic
@@ -8959,6 +8977,11 @@ def fetch_aptem_review_events(
                lr.review_type, lr.reviewer_name, lr.learner_name,
                lr.planned_scheduled_date, lr.completed_date, lr.status,
                lr.review_data, lr.extraction_status, lr.last_error,
+               EXISTS (
+                   SELECT 1
+                   FROM "Learner".review_sections section
+                   WHERE section.review_id = lr.id
+               ) AS has_review_sections,
                source.learner_id AS source_learner_id
         FROM "Learner".reviews lr
         LEFT JOIN kbc_coaching_reporting.reviews source
@@ -9025,6 +9048,11 @@ def fetch_aptem_review_events(
             status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
         event_key = f"imported-review:{aptem_review_id}"
         target_date = planned_date or completed_date
+        planned_time = clean_text(review.get("plannedTime"))
+        start_hour = 9
+        if planned_time and re.match(r"^\d{2}:\d{2}$", planned_time):
+            hour, minute = (int(part) for part in planned_time.split(":"))
+            start_hour = hour + (minute / 60)
         events.append({
             "eventKey": event_key,
             "id": event_key,
@@ -9042,7 +9070,7 @@ def fetch_aptem_review_events(
             "aptemReviewId": aptem_review_id,
             "reviewerName": clean_text(review.get("reviewerName")) or None,
             "reviewCompletedAt": completed_date.isoformat() if completed_date else None,
-            "hasReviewForm": bool(row.get("review_data")),
+            "hasReviewForm": bool(row.get("review_data")) or bool(row.get("has_review_sections")),
             "sequence": 1,
             "title": clean_text(review.get("name")) or review_type or EVENT_TYPE_FALLBACK_TITLES.get(event_type, "Review"),
             "type": "coaching" if event_type == "mcr" else "review",
@@ -9052,19 +9080,19 @@ def fetch_aptem_review_events(
             "month": display_date.month - 1,
             "dayOfMonth": display_date.day,
             "dayOfWeek": display_date.weekday(),
-            "startHour": 9,
-            "endHour": 10,
+            "startHour": start_hour,
+            "endHour": start_hour + 1,
             "durationMinutes": 60,
-            "timeLabel": "Time TBC",
-            "isTimeEstimated": True,
+            "timeLabel": f"{planned_time} - 60 min" if planned_time else "Time TBC",
+            "isTimeEstimated": not bool(planned_time),
             "priority": generated_event_priority(status, target_date, display_date),
             "status": status,
             "sourceStatus": schedule_status_label(status),
             "rawPlanned": planned_date.isoformat() if planned_date else None,
             "rawStatus": clean_text(row.get("status")),
             "notes": f"Reviewer: {clean_text(review.get('reviewerName'))}" if clean_text(review.get("reviewerName")) else "",
-            "scheduledDate": display_date.isoformat(),
-            "scheduledTime": None,
+            "scheduledDate": planned_date.isoformat() if planned_date else None,
+            "scheduledTime": planned_time or None,
             "meetingProvider": "",
             "meetingLink": "",
             "graphWebLink": "",
@@ -9082,7 +9110,11 @@ def resolve_coach_review_events(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> dict:
-    """Resolve each learner to exactly one review source by effective Aptem id."""
+    """Resolve each learner to exactly one review source by effective Aptem id.
+
+    The one exception: an Aptem-linked learner with no imported Aptem MCM gets
+    Curriculum MCM occurrences (never Curriculum Progress Reviews).
+    """
     aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners)
     aptem_events, aptem_contributors = fetch_aptem_review_events(
         learners,
@@ -9096,6 +9128,25 @@ def resolve_coach_review_events(
     native_learners = [
         learner for learner in learners
         if int(learner.id) not in aptem_by_profile and int(learner.id) not in identity_conflicts
+    ]
+    # An Aptem-linked learner with no imported Aptem MCM still has monthly
+    # coaching due, so their MCMs come from Curriculum like a native learner's.
+    # Progress Reviews stay Aptem-only. Decided on the unbounded Aptem history,
+    # so a date-windowed timetable never disagrees with the booking lookup.
+    aptem_mcm_events = aptem_events
+    if aptem_by_profile and (start_date or end_date):
+        aptem_mcm_events, _contributors = fetch_aptem_review_events(
+            learners,
+            aptem_by_profile,
+            owner_email=owner_email,
+            owner_name=owner_name,
+        )
+    aptem_mcm_profiles = {
+        int(event["learnerId"]) for event in aptem_mcm_events if event.get("source") == "mcr"
+    }
+    mcm_fallback_learners = [
+        learner for learner in learners
+        if int(learner.id) in aptem_by_profile and int(learner.id) not in aptem_mcm_profiles
     ]
     events: list[dict] = list(aptem_events)
     issues: list[dict[str, str]] = [
@@ -9113,20 +9164,29 @@ def resolve_coach_review_events(
         "curriculumReviewRows": 0,
         "aptemLearners": len(aptem_by_profile),
         "curriculumLearners": len(native_learners),
+        "curriculumMcmFallbackLearners": len(mcm_fallback_learners),
     }
     review_template_cache: dict[str, list[dict]] = {}
 
-    for learner in native_learners:
+    for learner in [*native_learners, *mcm_fallback_learners]:
+        mcm_only = int(learner.id) in aptem_by_profile
         programme_id = resolve_curriculum_programme_id(getattr(learner, "programme_id", None) or getattr(learner, "programme", None))
         template_identifiers = curriculum_review_instances.programme_review_template_identifiers(
             programme_id, template_cache=review_template_cache,
         )
-        if not programme_id:
+        if mcm_only:
+            # Aptem stays this learner's primary source: a missing Curriculum
+            # schedule means no fallback, not a review generation issue.
+            if not programme_id or not template_identifiers:
+                continue
+        elif not programme_id:
             issues.append({"learnerId": str(learner.id), "code": "missing_curriculum_programme"})
         elif not template_identifiers:
             issues.append({"learnerId": str(learner.id), "code": "no_enabled_review_templates"})
 
         review_anchor, anchor_reason = resolve_review_anchor_date(learner.id, commercial_rows, enrolment_rows)
+        if review_anchor is None and mcm_only:
+            continue
         if review_anchor is None:
             log_review_anchor_skip(learner, anchor_reason, programme_id=programme_id, template_cache=review_template_cache)
             counts["reviewAnchorSkipped"] += 1
@@ -9144,14 +9204,16 @@ def resolve_coach_review_events(
             learner.id, commercial_rows, enrolment_rows, learner,
         )
         if not learner_start_date or not learner_end_date or learner_end_date <= learner_start_date:
-            issues.append({"learnerId": str(learner.id), "code": "review_schedule_unavailable"})
+            if not mcm_only:
+                issues.append({"learnerId": str(learner.id), "code": "review_schedule_unavailable"})
             continue
 
         source_row = resolve_caseload_source_row(
             learner, commercial_rows=commercial_rows, enrolment_rows=enrolment_rows,
         )
         employer_attendee = learner_employer_attendee(learner, source_row)
-        counts["learnersWithDates"] += 1
+        if not mcm_only:
+            counts["learnersWithDates"] += 1
         learner_status = clean_text(getattr(learner, "programme_status", None) or getattr(learner, "status", None))
         window_start = start_date or learner_start_date
         window_end = end_date or learner_end_date
@@ -9171,6 +9233,8 @@ def resolve_coach_review_events(
             },
         ):
             event_type = review_event_type_for_type_code(occurrence.get("reviewTypeCode"))
+            if mcm_only and event_type != "mcr":
+                continue
             event = build_generated_calendar_event(
                 learner=learner,
                 owner_email=owner_email,
@@ -9321,8 +9385,10 @@ def collect_generated_timetable(
     curriculum_keys = [event["eventKey"] for event in curriculum_events]
     if curriculum_keys:
         record_map.update(fetch_calendar_event_records(owner_email, curriculum_keys))
+    aptem_keys = [event["eventKey"] for event in aptem_events]
+    aptem_record_map = fetch_calendar_event_records(owner_email, aptem_keys) if aptem_keys else {}
     events = [overlay_calendar_record(event, record_map.get(event["eventKey"])) for event in curriculum_events]
-    events.extend(aptem_events)
+    events.extend(overlay_calendar_record(event, aptem_record_map.get(event["eventKey"])) for event in aptem_events)
     events.extend(persisted_standalone_events)
     events.extend(live_session_events)
 
@@ -10989,8 +11055,11 @@ def serialize_attendance_learner(
         "componentsTargetToDate": learner.get("componentsTargetToDate"),
         "email": learner.get("email"),
         "programme": learner.get("programmeName") or learner["cohortName"],
+        "programmeId": learner.get("programmeId"),
         "cohort": learner["cohortName"],
         "group": learner["group"],
+        "groupName": learner.get("groupName") or learner["group"],
+        "groupId": learner.get("groupId"),
         "programStatus": learner["rawProgramStatus"],
         "enrollmentStatus": learner["enrollmentStatus"],
         "isOnBreak": learner["enrollmentStatus"] == "break",
@@ -13056,6 +13125,170 @@ def _coach_review_instance_definition(instance_row):
     return definition
 
 
+def _imported_review_field(field, *, section_id, index):
+    label = clean_text(field.get("label")) or f"Imported field {index + 1}"
+    configuration = {"imported": True}
+    description = clean_text(field.get("description"))
+    if description:
+        configuration["description"] = description
+    return {
+        "id": f"aptem-field:{section_id}:{index}",
+        "title": label,
+        "fieldType": "text_multiline",
+        "required": False,
+        "displayOrder": index,
+        "configuration": configuration,
+        "parentFieldId": None,
+        "conditionValue": None,
+        "answer": field.get("value"),
+        "answeredBy": None,
+        "answeredAt": None,
+        "yesFields": [],
+        "noFields": [],
+    }
+
+
+def _imported_review_definition(owner_email: str, event_key: str) -> dict | None:
+    """Adapt one owned Aptem review to the native form-definition contract.
+
+    The source remains read-only and is never copied into Curriculum tables.
+    ``event_key`` is the same stable identity used by the timetable row.
+    """
+    prefix = "imported-review:"
+    if not event_key.startswith(prefix):
+        return None
+    aptem_review_id = clean_text(event_key[len(prefix):])
+    if not aptem_review_id:
+        return None
+
+    learners = fetch_caseload_dashboard_profiles(owner_email)
+    aptem_by_profile, conflicts = resolve_effective_aptem_ids(learners)
+    eligible_ids = sorted(
+        profile_id for profile_id in aptem_by_profile
+        if profile_id not in conflicts
+    )
+    if not eligible_ids:
+        return None
+
+    query = '''
+        SELECT id, learner_id, aptem_review_id, review_name, review_type,
+               reviewer_name, learner_name, planned_scheduled_date,
+               completed_date, status, review_data, extraction_status, last_error
+        FROM "Learner".reviews
+        WHERE learner_id = ANY(%s) AND aptem_review_id = %s
+        ORDER BY id
+        LIMIT 2
+    '''
+    connection = connections[get_learner_db_alias()]
+    with connection.cursor() as cursor:
+        cursor.execute(query, [eligible_ids, aptem_review_id])
+        columns = [column[0] for column in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        profile_id = int(row["learner_id"])
+        if profile_id not in aptem_by_profile:
+            return None
+        sections = _sections_by_review(cursor, [row["id"]])
+
+    review = _serialize_review(row, sections)
+    if not review.get("detailsAvailable"):
+        return None
+    learner = next((item for item in learners if int(item.id) == profile_id), None)
+    if learner is None:
+        return None
+
+    adapted_sections = []
+    for section_index, section in enumerate(review.get("sections") or []):
+        section_id = str(section.get("id") or f"{row['id']}:{section_index}")
+        fields = [
+            _imported_review_field(field, section_id=section_id, index=index)
+            for index, field in enumerate(section.get("fields") or [])
+            if isinstance(field, dict)
+        ]
+        display_index = len(fields)
+        for table_index, table in enumerate(section.get("tables") or []):
+            table_payload = table if isinstance(table, dict) else {"rows": table}
+            fields.append({
+                "id": f"aptem-table:{section_id}:{table_index}",
+                "title": clean_text(table_payload.get("title")) or "Imported table",
+                "fieldType": "title_description",
+                "required": False,
+                "displayOrder": display_index + table_index,
+                "configuration": {
+                    "imported": True,
+                    "description": json.dumps(table_payload.get("rows") or table, ensure_ascii=False, default=str),
+                },
+                "parentFieldId": None,
+                "conditionValue": None,
+                "yesFields": [],
+                "noFields": [],
+            })
+        raw_text = clean_text(section.get("rawText"))
+        if raw_text:
+            fields.append({
+                "id": f"aptem-text:{section_id}",
+                "title": "Imported text",
+                "fieldType": "title_description",
+                "required": False,
+                "displayOrder": len(fields),
+                "configuration": {"imported": True, "description": raw_text},
+                "parentFieldId": None,
+                "conditionValue": None,
+                "yesFields": [],
+                "noFields": [],
+            })
+        adapted_sections.append({
+            "id": f"aptem-section:{section_id}",
+            "title": clean_text(section.get("name")) or "Review section",
+            "estimatedMinutes": 0,
+            "displayOrder": section.get("order") if section.get("order") is not None else section_index,
+            "enabled": True,
+            "fields": fields,
+        })
+
+    target_date = review.get("plannedDate") or review.get("completedDate") or ""
+    review_type = clean_text(review.get("type"))
+    monthly_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
+    review_type_code = "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review"
+    signatures = {
+        role: {"required": False, "signed": False, "signedBy": None, "signedName": None, "signedAt": None, "signature": None}
+        for role in curriculum_review_instances.SIGNATURE_ROLES
+    }
+    return {
+        "readOnly": True,
+        "source": "aptem",
+        "instance": {
+            "id": event_key,
+            "reviewTemplateId": "",
+            "learnerId": profile_id,
+            "programmeId": clean_text(getattr(learner, "programme_id", None)),
+            "occurrenceNumber": 1,
+            "targetDate": target_date,
+            "status": clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+            "startedAt": None,
+            "completedAt": review.get("completedDate"),
+        },
+        "template": {
+            "id": "",
+            "name": clean_text(review.get("name")) or review_type or "Imported review",
+            "reviewTypeCode": review_type_code,
+            "signatures": {role: False for role in curriculum_review_instances.SIGNATURE_ROLES},
+            "visibleTo": {role: role == "advisor" for role in curriculum_review_instances.SIGNATURE_ROLES},
+            "recurrence": {"interval": 0, "unit": "none"},
+            "notifications": {},
+            "allowEditingPriorDays": 0,
+        },
+        "sections": adapted_sections,
+        "signatures": signatures,
+        "manualOverride": None,
+        "progressSnapshot": None,
+        "ragHistory": [],
+        "pdf": {"available": False, "reason": "Imported Aptem reviews do not have a Curriculum PDF."},
+    }
+
+
 @coach_access_required
 def coach_review_instance_for_event(request):
     """Open the Curriculum Review form for a calendar event.
@@ -13180,6 +13413,11 @@ def coach_review_instance_for_event(request):
 def coach_review_instance_detail(request, instance_id):
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    if instance_id.startswith("imported-review:"):
+        definition = _imported_review_definition(authenticated_coach_email(request), instance_id)
+        if not definition:
+            return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        return JsonResponse(definition)
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
