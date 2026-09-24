@@ -189,6 +189,17 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/meetings/imported-review%3A21');
   });
 
+  it('opens an imported Aptem View Form directly instead of the learner profile', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
+    ] });
+    mount('/coach/monthly-coaching?filter=all');
+    const row = within((await screen.findByText('Imported Scheduled')).closest('tr')!);
+    fireEvent.click(row.getByRole('button', { name: 'View Form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/imported-review-forms/apprenticeship/ENR-21/21');
+    expect(screen.getByTestId('route')).not.toHaveTextContent('/coach/learner-case-file');
+  });
+
   it('renders the requested table columns and coaching actions', async () => {
     mount();
     await screen.findByText('Scheduled Learner');

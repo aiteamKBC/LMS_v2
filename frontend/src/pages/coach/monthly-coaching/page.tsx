@@ -19,6 +19,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { LearnerAvatar } from '../shared/LearnerIdentity';
 import { saveProgressReviewPptx } from '../progress-reviews/lib/progressReviewPptx';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
+import { importedReviewFormPath } from '../shared/importedReviewNavigation';
 import {
   type CoachCalendarEvent,
   eventDisplayDate,
@@ -313,27 +314,14 @@ export default function CoachMonthlyCoaching() {
     }
     try {
       const { instanceId } = await openReviewInstanceForEvent(eventIdentity(event));
-      navigate(reviewInstancePath(instanceId), { state: reviewInstanceRouteState({ ...event, reviewInstanceId: instanceId }, listUrl()) });
+      navigate(reviewInstancePath(instanceId), { state: reviewInstanceRouteState(event, listUrl()) });
     } catch {
       openDetails(event);
     }
   };
 
   const openLearnerReviews = (event: CoachCalendarEvent) => {
-    const params = new URLSearchParams({ tab: 'reviews' });
-    if (event.aptemReviewId) params.set('reviewId', event.aptemReviewId);
-    if (event.learnerId) params.set('id', event.learnerId);
-    if (event.learnerType) params.set('kind', event.learnerType);
-    if (event.enrolmentId) params.set('enrolmentId', event.enrolmentId);
-    navigate(`/coach/learner-case-file?${params.toString()}`, {
-      state: {
-        learnerId: event.learnerId,
-        learnerName: event.learner,
-        kind: event.learnerType,
-        enrolmentId: event.enrolmentId,
-        tab: 'reviews',
-      },
-    });
+    navigate(importedReviewFormPath(event), { state: { returnTo: listUrl(), learnerName: event.learner } });
   };
 
   const openMeeting = (event: CoachCalendarEvent) => {

@@ -14,7 +14,7 @@ const ENDPOINT = '/coach_api/coach/attendance';
 const PAGE_SIZE = 10;
 type AttendanceStatus = 'present' | 'absent';
 interface RecordRow { learnerId: string; sessionId: string; sessionDate: string | null; status: string }
-interface Learner { id: string; learner: string; email?: string | null; programme: string; programmeId?: string | null; group: string; groupId?: string | null; programStatus?: string }
+interface Learner { id: string; learner: string; email?: string | null; programme: string; programmeId?: string | null; group: string; groupName?: string | null; groupId?: string | null; programStatus?: string }
 interface Payload { learners?: Learner[]; attendanceRecords?: RecordRow[] }
 interface DayDraft { id: number; date: string; status: AttendanceStatus }
 const display = (value?: string | null) => value?.trim() || '--';
@@ -53,7 +53,7 @@ export default function CoachAttendance() {
     return () => controller.abort();
   }, [coach.email, coach.isInitialized]);
 
-  const groups = useMemo(() => [...new Map(learners.filter(row => row.groupId).map(row => [String(row.groupId), row.group])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [learners]);
+  const groups = useMemo(() => [...new Map(learners.filter(row => row.groupId).map(row => [String(row.groupId), display(row.groupName || row.group)])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [learners]);
   const programmes = useMemo(() => [...new Map(learners.filter(row => String(row.groupId) === groupId && row.programmeId).map(row => [String(row.programmeId), row.programme])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [groupId, learners]);
   const statuses = useMemo(() => [...new Set(learners.map(row => display(row.programStatus)).filter(value => value !== '--'))].sort(), [learners]);
   const loadedLearners = useMemo(() => loaded ? learners.filter(row => String(row.groupId) === loaded.groupId && (!loaded.programmeId || String(row.programmeId) === loaded.programmeId)) : [], [learners, loaded]);

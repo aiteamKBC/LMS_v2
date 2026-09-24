@@ -8,8 +8,8 @@ vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ isInitia
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 const learners = [
-  { id: '42', learner: 'Aya Khater', email: 'same@example.com', group: 'Cairo A', groupId: 'group-1', programme: 'Data', programmeId: 'programme-1', programStatus: 'Active' },
-  { id: '7', learner: 'Ayman Learner', email: 'same@example.com', group: 'Cairo A', groupId: 'group-1', programme: 'Cyber', programmeId: 'programme-2', programStatus: 'Paused' },
+  { id: '42', learner: 'Aya Khater', email: 'same@example.com', group: '--', groupName: 'Cairo A', groupId: 'group-1', programme: 'Data', programmeId: 'programme-1', programStatus: 'Active' },
+  { id: '7', learner: 'Ayman Learner', email: 'same@example.com', group: '--', groupName: 'Cairo A', groupId: 'group-1', programme: 'Cyber', programmeId: 'programme-2', programStatus: 'Paused' },
   { id: '9', learner: 'Mona Test', email: 'mona@example.com', group: 'Cairo B', groupId: 'group-2', programme: 'Data', programmeId: 'programme-1', programStatus: 'Active' },
 ];
 const attendanceRecords = [
@@ -22,6 +22,7 @@ describe('coach attendance overview', () => {
   it('filters by stable ids and shows recent status chips', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    expect(within(screen.getByRole('combobox', { name: 'Group' })).getByRole('option', { name: 'Cairo A' })).toHaveValue('group-1');
     const programme = screen.getByRole('combobox', { name: 'Programme' });
     expect(within(programme).getByRole('option', { name: 'Data' })).toHaveValue('programme-1');
     fireEvent.change(programme, { target: { value: 'programme-1' } });

@@ -1787,9 +1787,11 @@ def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
             "full_name",
             "email",
             "programme",
+            "programme_id",
             "programme_status",
             "cohort",
             "group_name",
+            "group_id",
             "completed_hours",
             "target_hours",
             "minimum_hours",
@@ -2974,7 +2976,7 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         component_available=False,
     )
     cohort_name = clean_text(getattr(row, "cohort", None)) or "--"
-    group_name = clean_text(getattr(row, "group", None)) or "--"
+    group_name = clean_text(getattr(row, "group_name", None)) or "--"
     programme_name = clean_text(getattr(row, "programme", None)) or cohort_name
     cohort_id = re.sub(r"[^a-z0-9]+", "-", cohort_name.lower()).strip("-") or "unassigned"
     learner_type = "commercial" if clean_text(getattr(row, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
@@ -3061,7 +3063,7 @@ def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
     hours_progress = percentage(row.completed_hours, target_hours_value) if target_hours_value else 0
     programme_name = clean_text(getattr(row, "programme", None)) or "--"
     cohort_name = clean_text(getattr(row, "cohort", None)) or "--"
-    group_name = clean_text(getattr(row, "group", None)) or "--"
+    group_name = clean_text(getattr(row, "group_name", None)) or "--"
     program_status = get_lms_row_program_status(row)
     learner_type = "commercial" if clean_text(getattr(row, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
     enrolment_id = str(row.enrolment_id) if getattr(row, "enrolment_id", None) else None
@@ -3083,6 +3085,7 @@ def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
         "programmeId": clean_text(getattr(row, "programme_id", None)) or None,
         "cohortName": cohort_name,
         "group": group_name,
+        "groupName": group_name,
         "groupId": clean_text(getattr(row, "group_id", None)) or None,
         "enrollmentStatus": normalize_program_status(program_status),
         "overallProgress": hours_progress,

@@ -23,6 +23,7 @@ import { LearnerAvatar } from '../shared/LearnerIdentity';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
+import { importedReviewFormPath } from '../shared/importedReviewNavigation';
 import {
   type CoachCalendarEvent,
   type ScheduleFormState,
@@ -1168,12 +1169,7 @@ export default function CoachProgressReviews() {
   };
 
   const openImportedReviewForm = (event: CoachCalendarEvent) => {
-    const params = new URLSearchParams({ tab: 'reviews' });
-    if (event.aptemReviewId) params.set('reviewId', event.aptemReviewId);
-    if (event.learnerId) params.set('id', event.learnerId);
-    if (event.learnerType) params.set('kind', event.learnerType);
-    if (event.enrolmentId) params.set('enrolmentId', event.enrolmentId);
-    navigate(`/coach/learner-case-file?${params.toString()}`, { state: { learnerId: event.learnerId, learnerName: event.learner, kind: event.learnerType, enrolmentId: event.enrolmentId, tab: 'reviews' } });
+    navigate(importedReviewFormPath(event), { state: { returnTo: listUrl(), learnerName: event.learner } });
   };
 
   const handleSchedule = async (event: CoachCalendarEvent) => {
