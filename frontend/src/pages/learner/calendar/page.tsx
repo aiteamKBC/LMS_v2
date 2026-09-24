@@ -1,8 +1,8 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { CalendarFilterScrollRow } from '@/components/feature/CalendarFilterScrollRow';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
@@ -105,50 +105,6 @@ function CalendarMoreMenu({
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function CalendarFilterScrollRow({ ariaLabel, children }: { ariaLabel: string; children: ReactNode }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [edges, setEdges] = useState({ left: false, right: false });
-
-  const updateEdges = useCallback(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    const maxScroll = element.scrollWidth - element.clientWidth;
-    setEdges({ left: element.scrollLeft > 1, right: maxScroll - element.scrollLeft > 1 });
-  }, []);
-
-  useEffect(() => {
-    const element = scrollRef.current;
-    const content = contentRef.current;
-    if (!element) return;
-    updateEdges();
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateEdges);
-    observer?.observe(element);
-    if (content) observer?.observe(content);
-    window.addEventListener('resize', updateEdges);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', updateEdges);
-    };
-  }, [updateEdges]);
-
-  return (
-    <div className="calendar-filter-scroll-shell">
-      <div ref={scrollRef} role="group" aria-label={ariaLabel} className="calendar-filter-row" onScroll={updateEdges}
-        onWheel={event => {
-          if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
-            event.currentTarget.scrollLeft += event.deltaY;
-            event.preventDefault();
-          }
-        }}>
-        <div ref={contentRef} className="calendar-filter-row-content">{children}</div>
-      </div>
-      <span aria-hidden="true" className={`calendar-filter-fade calendar-filter-fade-left${edges.left ? ' is-visible' : ''}`} />
-      <span aria-hidden="true" className={`calendar-filter-fade calendar-filter-fade-right${edges.right ? ' is-visible' : ''}`} />
     </div>
   );
 }

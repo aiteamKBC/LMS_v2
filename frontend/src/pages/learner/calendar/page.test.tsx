@@ -66,6 +66,17 @@ describe('calendar event previews', () => {
     expect(scheduled).toHaveAttribute('aria-pressed', 'false');
   });
 
+  it('renders a visible scrollbar when the status filters overflow', async () => {
+    setup();
+    await screen.findAllByRole('button', { name: /Catch-up with your coach/ });
+    const statusFilters = screen.getByRole('group', { name: 'Calendar status filters' });
+    Object.defineProperty(statusFilters, 'clientWidth', { configurable: true, value: 300 });
+    Object.defineProperty(statusFilters, 'scrollWidth', { configurable: true, value: 900 });
+    fireEvent.resize(window);
+
+    expect(screen.getByRole('scrollbar', { name: 'Calendar status filters scrollbar' })).toHaveAttribute('aria-valuemax', '600');
+  });
+
   it('shows a written, colour-coded status on month cards', async () => {
     setup();
     const statusBadges = await screen.findAllByLabelText('Scheduled status');
