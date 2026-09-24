@@ -23,7 +23,6 @@ import { LearnerAvatar } from '../shared/LearnerIdentity';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
-import { importedReviewFormPath } from '../shared/importedReviewNavigation';
 import {
   type CoachCalendarEvent,
   type ScheduleFormState,
@@ -1168,10 +1167,6 @@ export default function CoachProgressReviews() {
     navigate(`/coach/progress-reviews/${encodeURIComponent(eventIdentity(event))}`, { state: { returnTo: listUrl() } });
   };
 
-  const openImportedReviewForm = (event: CoachCalendarEvent) => {
-    navigate(importedReviewFormPath(event), { state: { returnTo: listUrl(), learnerName: event.learner } });
-  };
-
   const handleSchedule = async (event: CoachCalendarEvent) => {
     setBusyEventId(eventIdentity(event));
     setActionError(null);
@@ -1195,6 +1190,12 @@ export default function CoachProgressReviews() {
 
   const openCompletionForm = async (event: CoachCalendarEvent) => {
     setActionError(null);
+    if (event.hasReviewForm && event.aptemReviewId && !event.reviewInstanceId) {
+      navigate(reviewInstancePath(eventIdentity(event)), {
+        state: reviewInstanceRouteState(event, listUrl()),
+      });
+      return;
+    }
     if (event.reviewTemplateId) {
       setBusyEventId(eventIdentity(event));
       try {
@@ -1370,7 +1371,7 @@ export default function CoachProgressReviews() {
                           <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>
                             <div className="flex justify-end gap-1.5">
                               <button type="button" onClick={() => openDetails(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>
-                              {actions.viewForm ? <button type="button" onClick={() => { if (review.reviewSource === 'aptem') openImportedReviewForm(review); else void openCompletionForm(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-file-edit-line" />View Form</button> : null}
+                              {actions.viewForm ? <button type="button" onClick={() => { void openCompletionForm(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-file-edit-line" />View Form</button> : null}
                               {actions.presentation ? <button type="button" onClick={() => { handleCreateSlides(review); }} disabled={!reviewHasLearnerReference(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={hasSlides ? 'ri-slideshow-2-line' : 'ri-file-ppt-line'} />{hasSlides ? 'View Slides' : 'Create Slides'}</button> : null}
                               {actions.join ? <button type="button" onClick={() => { handleJoin(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-video-on-line" />Join</button> : null}
                             </div>

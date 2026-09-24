@@ -2,9 +2,9 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import Swal from 'sweetalert2';
 import 'sweetalert2/dist/sweetalert2.min.css';
-import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
+import { CalendarFilterScrollRow } from '@/components/feature/CalendarFilterScrollRow';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Panel } from '@/components/ui/Panel';
@@ -63,59 +63,6 @@ const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/timetable';
 const SCHEDULE_ENDPOINT = '/coach_api/coach/timetable/events/schedule';
 const ACTION_ENDPOINT = '/coach_api/coach/timetable/events/action';
-
-function CalendarFilterScrollRow({ ariaLabel, children }: { ariaLabel: string; children: ReactNode }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [edges, setEdges] = useState({ left: false, right: false });
-
-  const updateEdges = useCallback(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    const maxScroll = element.scrollWidth - element.clientWidth;
-    setEdges({
-      left: element.scrollLeft > 1,
-      right: maxScroll - element.scrollLeft > 1,
-    });
-  }, []);
-
-  useEffect(() => {
-    const element = scrollRef.current;
-    const content = contentRef.current;
-    if (!element) return;
-    updateEdges();
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateEdges);
-    observer?.observe(element);
-    if (content) observer?.observe(content);
-    window.addEventListener('resize', updateEdges);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', updateEdges);
-    };
-  }, [updateEdges]);
-
-  return (
-    <div className="calendar-filter-scroll-shell">
-      <div
-        ref={scrollRef}
-        role="group"
-        aria-label={ariaLabel}
-        className="calendar-filter-row"
-        onScroll={updateEdges}
-        onWheel={event => {
-          if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
-            event.currentTarget.scrollLeft += event.deltaY;
-            event.preventDefault();
-          }
-        }}
-      >
-        <div ref={contentRef} className="calendar-filter-row-content">{children}</div>
-      </div>
-      <span aria-hidden="true" className={`calendar-filter-fade calendar-filter-fade-left${edges.left ? ' is-visible' : ''}`} />
-      <span aria-hidden="true" className={`calendar-filter-fade calendar-filter-fade-right${edges.right ? ' is-visible' : ''}`} />
-    </div>
-  );
-}
 
 function isReviewDetailEvent(event: TimetableEvent) {
   return event.type === 'review'
@@ -2188,7 +2135,7 @@ export default function CoachTimetablePage() {
                 className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border-0 bg-[#F1ECF8] px-2.5 text-[11px] font-bold text-[#4F2D7F] shadow-sm transition hover:bg-[#E8DDF3] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/25"
               >
                 <AppIcon className="ri-palette-fill text-[13px]" />
-                Customize colors
+                Customise colours
               </button>
             </div>
           </div>

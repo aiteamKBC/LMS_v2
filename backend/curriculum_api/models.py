@@ -236,7 +236,7 @@ class LiveSession(models.Model):
     duration_minutes = models.IntegerField(default=60)
     repeat_pattern = models.CharField(max_length=32, default='none')
     repeat_occurrences = models.IntegerField(default=1)
-    lobby_bypass = models.CharField(max_length=64, default='invited')
+    lobby_bypass = models.CharField(max_length=64, default='everyone')
     recording = models.CharField(max_length=64, default='none')
     spoken_language = models.CharField(max_length=32, default='en-GB')
     meeting_type = models.CharField(max_length=64, default='live-session')

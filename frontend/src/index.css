@@ -3497,6 +3497,51 @@ table tbody td:last-child {
   touch-action: pan-x pan-y;
 }
 
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-row {
+  scrollbar-width: none;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-row::-webkit-scrollbar {
+  display: none;
+  height: 0;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-scrollbar {
+  position: relative;
+  height: 10px;
+  margin: 0.25rem 0.875rem 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #F1ECF8;
+  cursor: pointer;
+  touch-action: none;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-scrollbar:focus-visible {
+  outline: 2px solid #6B4A8F;
+  outline-offset: 2px;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+  border-radius: 999px;
+  background: #9B83B5;
+  cursor: grab;
+  touch-action: none;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-scrollbar-thumb:hover {
+  background: #6B4A8F;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-scrollbar-thumb:active {
+  cursor: grabbing;
+  background: #6B4A8F;
+}
+
 .calendar-filter-row-content {
   display: flex;
   flex-wrap: nowrap;
@@ -3523,6 +3568,10 @@ table tbody td:last-child {
   pointer-events: none;
   opacity: 0;
   transition: opacity 150ms ease;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-fade {
+  bottom: 1.25rem;
 }
 
 .calendar-filter-fade.is-visible {

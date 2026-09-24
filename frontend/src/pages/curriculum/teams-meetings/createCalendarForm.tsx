@@ -477,7 +477,7 @@ export function emptyTeamsCalendarForm(): TeamsCalendarForm {
     details: '',
     durationMinutes: '',
     seriesMode: 'auto',
-    lobbyBypass: 'invited',
+    lobbyBypass: 'everyone',
     recording: 'record-transcribe',
     spokenLanguage: 'en-GB',
     meetingType: 'live-session',

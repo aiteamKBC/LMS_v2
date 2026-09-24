@@ -448,3 +448,77 @@ class AssignedModuleLiveSessionTests(SimpleTestCase):
                 '', '', require_coach_access=False, include_past=True,
                 learner_module_ids=[],
             ), [])
+
+    def test_content_only_week_does_not_consume_the_next_teams_occurrence(self):
+        from coach_api import views
+        weeks = [
+            # Archived/library copies of an earlier week must not shift the
+            # current week-to-occurrence mapping.
+            {'id': 'W1-ARCHIVED', 'module_catalogue_id': 'MOD-1', 'week_number': 1,
+             'title': 'Old Week 1', 'deleted_at': '2026-09-01T00:00:00Z'},
+            *[
+                {'id': f'W{i}', 'module_catalogue_id': 'MOD-1', 'week_number': i,
+                 'title': f'Week {i}'}
+                for i in range(1, 5)
+            ],
+        ]
+        components = [
+            {'type': 'live_session', 'module_catalogue_id': 'MOD-1', 'week_id': week_id,
+             'live_sessions_link': 'https://teams.microsoft.com/meet/one'}
+            for week_id in ('W1', 'W2', 'W4')
+        ]
+        components.append({
+            'type': 'live_session', 'module_catalogue_id': 'MOD-1', 'week_id': 'W3',
+            'live_sessions_link': 'https://teams.microsoft.com/meet/old',
+            'deleted_at': '2026-09-01T00:00:00Z',
+        })
+        series = [{'id': 'LIVE-1', 'module_catalogue_id': 'MOD-1', 'status': 'active'}]
+        occurrences = [
+            {'id': f'OCC-{i}', 'live_session_id': 'LIVE-1', 'session_number': i}
+            for i in range(1, 4)
+        ]
+        plan = {'warnings': [], 'sessions': [
+            {'sessionNumber': 1, 'date': '2026-09-18', 'skippedHolidays': []},
+            {'sessionNumber': 2, 'date': '2026-09-25', 'skippedHolidays': []},
+            {'sessionNumber': 3, 'date': '2026-10-02', 'skippedHolidays': ['2026-10-02']},
+            {'sessionNumber': 4, 'date': '2026-10-09', 'skippedHolidays': []},
+        ]}
+
+        def fetch(table, *args, **kwargs):
+            return {
+                views.AUTHORING_WEEKS_TABLE: weeks,
+                views.AUTHORING_COMPONENTS_TABLE: components,
+                views.LIVE_SESSIONS_TABLE: series,
+                views.LIVE_SESSION_OCCURRENCES_TABLE: occurrences,
+            }.get(table, [])
+
+        row = {
+            'module_name': 'MarTech', 'start_date': '2026-09-18', 'sessions_number': 4,
+            'session_week_day': 'Friday',
+            '_meta': {'module_catalogue_id': 'MOD-1', 'cohort_id': 'COHORT-1'},
+        }
+        with patch.object(views, 'get_program_config_rows', return_value=[]), \
+             patch.object(views, 'authoring_fetch_all', side_effect=fetch), \
+             patch.object(views, 'authoring_modules_as_training_rows', return_value=[row]), \
+             patch.object(views, 'is_operational_training_row', return_value=True), \
+             patch.object(views, 'programme_identity', return_value={'name': 'Programme', 'sourceId': 'P'}), \
+             patch.object(views, 'actual_cohort_identity', return_value={'name': 'Cohort', 'id': 'COHORT-1'}), \
+             patch.object(views, 'actual_group_identity', return_value={'name': 'Group', 'id': 'GROUP-1'}), \
+             patch.object(views, 'fetch_cohort_selected_holidays', return_value=[]), \
+             patch.object(views, 'delivery_days_per_week', return_value=1), \
+             patch.object(views, 'build_module_session_plan', return_value=plan), \
+             patch.object(views, 'build_live_session_calendar_event', side_effect=lambda _row, session, **kwargs: {
+                 'date': session['date'],
+                 'sessionNumber': session['sessionNumber'],
+                 'occurrenceId': (kwargs.get('tracked_occurrence') or {}).get('id'),
+             }):
+            events = views.collect_live_session_events(
+                '', '', require_coach_access=False, include_past=True,
+                learner_module_ids=['MOD-1'],
+            )
+
+        self.assertEqual(events, [
+            {'date': '2026-09-18', 'sessionNumber': 1, 'occurrenceId': 'OCC-1'},
+            {'date': '2026-09-25', 'sessionNumber': 2, 'occurrenceId': 'OCC-2'},
+            {'date': '2026-10-09', 'sessionNumber': 3, 'occurrenceId': 'OCC-3'},
+        ])

@@ -2723,7 +2723,7 @@ export async function createTeamsMeeting(input: TeamsMeetingInput) {
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean }) {
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; notifyAttendees?: boolean }) {
   const reviewed = JSON.parse(JSON.stringify(input)) as typeof input;
   const { series: rawSeries, occurrences } = await loadTeamsMeetingArtifacts(liveSessionId);
   const series = calendarSeriesForReview(rawSeries);
@@ -2738,13 +2738,14 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
     reviewed.startDateTimeUtc = reviewed.scheduledOccurrences[0].startDateTimeUtc;
     reviewed.durationMinutes = reviewed.scheduledOccurrences[0].durationMinutes;
   }
-  await reviewCalendar({ ...reviewed, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+  const notificationDecision = await reviewCalendar({ ...reviewed, organizerEmail: series.organizer_email, joinUrl: series.join_url,
     attendees: reviewed.attendees ?? series.attendees, presenters: reviewed.presenters ?? series.presenters,
     coOrganizers: reviewed.coOrganizers ?? series.co_organizers,
     recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
     calendarSeries: series.calendar_series, previousOccurrences: occurrences,
     seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
   }, series.timeZoneIana || getCalendarTimeZone());
+  reviewed.notifyAttendees = notificationDecision === 'notify';
   return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify(reviewed),
@@ -2778,17 +2779,18 @@ export async function rescheduleTeamsOccurrence(
   sessionNumber: number,
   input: { startDateTimeUtc: string; durationMinutes?: number },
 ) {
-  const reviewed = { ...input };
+  const reviewed: typeof input & { notifyAttendees?: boolean } = { ...input };
   const detail = await loadTeamsMeetingArtifacts(liveSessionId);
   const series = calendarSeriesForReview(detail.series);
   const occurrence = detail.occurrences.find(item => item.session_number === sessionNumber);
   if (!occurrence) throw new Error('Load this session before reviewing a time change.');
   const duration = reviewed.durationMinutes ?? (parseUtcInstant(occurrence.scheduled_end).getTime() - parseUtcInstant(occurrence.scheduled_start).getTime()) / 60000;
-  await reviewCalendar({ title: series.module_title, organizerEmail: series.organizer_email,
+  const notificationDecision = await reviewCalendar({ title: series.module_title, organizerEmail: series.organizer_email,
     joinUrl: occurrence.join_url || series.join_url, attendees: series.attendees,
     presenters: series.presenters, coOrganizers: series.co_organizers, previousOccurrences: [occurrence], seriesMode: 'shared',
     scheduledOccurrences: [{ sessionNumber, startDateTimeUtc: reviewed.startDateTimeUtc, durationMinutes: duration }],
   }, getCalendarTimeZone());
+  reviewed.notifyAttendees = notificationDecision === 'notify';
   return apiJson<TeamsOccurrenceRescheduleResult>(
     `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/occurrences/${sessionNumber}/schedule/`,
     {

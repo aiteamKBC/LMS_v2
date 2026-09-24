@@ -66,6 +66,14 @@
 .noResults button { min-height: 38px; padding: 8px 12px; border-radius: 7px; background: var(--log-soft); color: var(--log-purple); font-size: 12px; font-weight: 600; }
 .skeletonRow { display: flex; align-items: center; gap: 18px; padding: 18px 20px; border-top: 1px solid var(--log-border); }
 .savedMessage { border: 1px solid var(--record-positive-border); border-radius: 10px; padding: 14px 16px; background: var(--record-positive-bg); color: var(--record-positive-ink); font-size: 13px; }
+.futureMonth { max-width: 660px; margin: clamp(40px, 10vh, 110px) auto 0; border: 1px solid #ded6eb; border-radius: 18px; background: linear-gradient(145deg, #fff 0%, #faf8fd 100%); box-shadow: 0 12px 32px rgb(49 30 79 / 8%); }
+.futureMonth :global(.ui-empty-state) { padding-block: 44px; }
+.futurePrimaryAction, .futureSecondaryAction { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; text-decoration: none; }
+.futurePrimaryAction { background: var(--log-purple); color: white; }
+.futurePrimaryAction:hover { background: #56367f; }
+.futureSecondaryAction { border: 1px solid var(--log-border); background: white; color: var(--log-ink); }
+.futureSecondaryAction:hover { border-color: #cfc4dc; background: var(--log-soft); }
+.futurePrimaryAction svg, .futureSecondaryAction svg { width: 15px; height: 15px; }
 @media (max-width: 1200px) {
   .month { grid-template-columns: minmax(160px, 1.2fr) minmax(150px, 1fr) minmax(120px, .8fr) 106px; gap: 12px 16px; padding: 16px; }
   .monthIdentity { grid-column: 1; grid-row: 1 / 3; }

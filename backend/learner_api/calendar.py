@@ -25,7 +25,7 @@ import logging
 import hashlib
 from datetime import datetime
 
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, connections
 from django.db.models import Q
 from django.http import JsonResponse
 from django.utils import timezone
@@ -81,6 +81,28 @@ EVENT_JSON_TYPES = {
     "workspace": "review",
     "training-plan": "review",
 }
+
+
+def assigned_curriculum_module_ids(learner):
+    """Return the learner's explicit curriculum-module assignment ids.
+
+    Calendar visibility follows the same assignment query as My Learning and
+    live lecture attendance.  It must not depend on the profile's current
+    group label: a learner can remain assigned to a module while a cohort/group
+    correction is being made, and hiding that module would hide its Teams link.
+    """
+    learner_id = getattr(learner, "id", None) or getattr(learner, "pk", None)
+    if learner_id in (None, ""):
+        return []
+    try:
+        from .student_activity import CURRENT_SUBJECTS_SQL
+
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute(CURRENT_SUBJECTS_SQL, [learner_id])
+            return sorted({str(row[0]).strip() for row in cursor.fetchall() if row and str(row[0]).strip()})
+    except DatabaseError:
+        logger.warning("learner_calendar: module assignment lookup failed", exc_info=True)
+        return []
 
 # What a learner can book for themselves. Monthly coaching and progress reviews
 # must be booked against a generated programme-cycle eventKey so the learner and
@@ -1126,10 +1148,23 @@ def learner_calendar(request, kind, pk):
     try:
         events = coaching_events_for_learner(learner, mirror)
 
-        # Live curriculum sessions belong to the learner's placement, not to
-        # their assigned coach. Use the same module/week/holiday planner as the
-        # coach calendar, but scope it directly to programme/cohort/group.
-        if mirror is not None and (_s(getattr(mirror, "group_id", "")) or _s(mirror.group_name)):
+        # Live curriculum sessions belong to the learner's explicit module
+        # assignment, not to a possibly stale profile group label. Fall back to
+        # placement scope only for legacy learners with no module assignment.
+        module_ids = assigned_curriculum_module_ids(learner)
+        if module_ids:
+            from coach_api.views import collect_live_session_events
+
+            live_events = collect_live_session_events(
+                "",
+                "",
+                require_coach_access=False,
+                include_past=True,
+                learner_module_ids=module_ids,
+            )
+            for event in live_events:
+                events.append(_serialize_live_session_event(event))
+        elif mirror is not None and (_s(getattr(mirror, "group_id", "")) or _s(mirror.group_name)):
             from coach_api.views import collect_live_session_events
 
             live_events = collect_live_session_events(

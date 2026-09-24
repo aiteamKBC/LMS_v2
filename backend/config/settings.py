@@ -286,6 +286,9 @@ OPENAI_REFLECTION_MODEL = os.environ.get("OPENAI_REFLECTION_MODEL", "gpt-4o-mini
 # Assignment proofreading uses the existing OpenAI API key again. Ignore any
 # leftover local-trial environment setting when starting the application.
 PROOFREAD_PROVIDER = "openai"
+# The assignment AI-writing check also uses the OpenAI API key and reflection
+# model. Set to "local" only where the offline detector is provisioned.
+AI_CHECK_PROVIDER = "openai"
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_PROOFREAD_MODEL = os.environ.get("OLLAMA_PROOFREAD_MODEL", "qwen2.5:1.5b")
 OLLAMA_PROOFREAD_TIMEOUT = int(os.environ.get("OLLAMA_PROOFREAD_TIMEOUT", "120"))
