@@ -93,6 +93,7 @@ def summary(learner):
                        'training_plan_target': targets.get(month, {}).get('planned', 0.0) if targets is not None else None,
                        'target_warning': target_warning})
     record['months'] = result
+    record['profile'] = profile
     return record
 
 

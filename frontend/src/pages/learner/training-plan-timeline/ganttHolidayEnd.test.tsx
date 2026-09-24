@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import type { PlanModule, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
@@ -176,5 +176,30 @@ describe('the module header dates stay on the stored value', () => {
 
     expect(module.end).toBe('2026-05-18');            // header / fact list / review window
     expect(moduleVisualEnd(module)).toBe('2026-05-25'); // bar only
+  });
+});
+
+describe('curriculum notes on the module timeline', () => {
+  it('marks the note date and exposes the note on focus', () => {
+    const note = 'From your curriculum team: Workshop moved to 3 October.';
+    const module = learnerModule(planModule({
+      start_date: '2026-09-07', end_date: '2026-10-12',
+      curriculumSlots: [{
+        slotNumber: 9, date: '2026-10-02', day: 'Friday', type: 'live-session',
+        sessionNumber: 9, holidays: [{ label: 'Workshop Oct', startDate: '2026-09-27', endDate: '2026-10-03' }],
+        weekId: 'week-9', weekTitle: 'Week 9', holidayNote: note,
+      }],
+    }));
+
+    renderTimeline(module);
+
+    const marker = screen.getByRole('img', { name: 'Week 9 note' });
+    expect(marker).toBeVisible();
+    fireEvent.focus(marker);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Reading Week');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Week 9');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Heads up, holiday:');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Workshop Oct');
+    expect(screen.getByRole('tooltip')).toHaveTextContent(note);
   });
 });

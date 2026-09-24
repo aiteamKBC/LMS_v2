@@ -18,11 +18,13 @@ describe('dashboard hours request lifecycle', () => {
     let resolve!: (value: LogSummary) => void;
     mocks.summary.mockReturnValue(new Promise<LogSummary>(done => { resolve = done; }));
     const { result } = renderHook(() => useDashboardPlan('commercial', '125'));
+    expect(result.current.auditLoading).toBe(true);
     await act(async () => { await vi.advanceTimersByTimeAsync(31_000); });
     expect(mocks.summary.mock.calls[0][1].aborted).toBe(false);
     await act(async () => { resolve(summary); });
     expect(result.current.otjh.actual).toBe(12);
     expect(result.current.otjh.actualLoading).toBe(false);
+    expect(result.current.auditLoading).toBe(false);
   });
 
   it('keeps the server failure reason visible without inventing hours', async () => {

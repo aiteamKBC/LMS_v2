@@ -89,4 +89,10 @@ describe('profile menu password reset', () => {
 
     expect(await screen.findByText(/mail service unavailable/i)).toBeTruthy();
   });
+
+  it('does not add a second floating sign-out shortcut to the learner sidebar', () => {
+    render(<MemoryRouter><Header role="learner" pageTitle="Workspace" onOpenSearch={() => {}} /></MemoryRouter>);
+
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument();
+  });
 });

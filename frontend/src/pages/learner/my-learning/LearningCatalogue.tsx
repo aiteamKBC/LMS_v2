@@ -23,7 +23,11 @@ export function LearningHero({ map = false }: { map?: boolean }) {
       <h1>{map ? 'Your week-by-week timeline' : 'My Learning'}</h1>
       <p>{map ? 'Explore your module, open a week and work through your learning materials.' : 'Your subjects, activities and progress. Every step brings you closer.'}</p>
     </div>
-    <div className={styles.heroJourney} aria-hidden="true"><span className={styles.heroIcon}><Map size={32} strokeWidth={1.4} /></span><p>Your learning journey<br /><strong>builds a brighter tomorrow.</strong></p><div className={styles.journeyDots}><i /><span /><i /><span /><i /></div></div>
+    <div className={styles.heroJourney}>
+      <p>Your learning journey<br /><strong>builds a brighter tomorrow.</strong></p>
+      <span className={styles.heroTag} aria-hidden="true">LEARN<br />GROW<br />ACHIEVE</span>
+      <div className={styles.journeyDots} aria-hidden="true"><i /><span /><i /><span /><i /></div>
+    </div>
   </header>;
 }
 
