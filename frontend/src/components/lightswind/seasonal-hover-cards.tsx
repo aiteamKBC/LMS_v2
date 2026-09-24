@@ -1,4 +1,3 @@
-import { useState, type FocusEvent, type KeyboardEvent, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -11,6 +10,7 @@ export interface SeasonCardProps {
   imageSrc?: string;
   imageAlt?: string;
   href?: string;
+  onClick?: () => void;
   cta?: string;
   status?: string;
   meta?: string;
@@ -22,13 +22,17 @@ export interface SeasonCardProps {
 interface SeasonalHoverCardsProps {
   cards: SeasonCardProps[];
   className?: string;
+  theme?: 'default' | 'hero';
+  layout?: 'row' | 'inline';
 }
 
 function SeasonCard({
-  title, subtitle, description, href, status, meta, icon: Icon,
-  variant = 'action', className, active, onActivate,
-}: SeasonCardProps & { active: boolean; onActivate: () => void }) {
-  const classes = cn(styles.card, styles[variant], active && styles.active, className);
+  title, subtitle, description, href, onClick, cta, status, icon: Icon,
+  variant = 'action', className,
+}: SeasonCardProps) {
+  const classes = cn(styles.card, styles[variant], className);
+  const external = !!href && /^https?:\/\//i.test(href);
+  const hasAction = Boolean(cta && (href || onClick));
   const content = <>
     <div className={styles.cardPrimary}>
       <div className={styles.topLine}>
@@ -39,41 +43,21 @@ function SeasonCard({
           <span className={styles.eyebrow}>{title}</span>
           <strong className={styles.subtitle}>{subtitle}</strong>
         </span>
-        <ArrowRight aria-hidden="true" className={styles.chevron} />
       </div>
-      {status && <span className={styles.status}><span aria-hidden="true" />{status}</span>}
-    </div>
-    <div className={styles.cardReveal}>
-      <div className={styles.details}>
-        <p className={styles.description}>{description}</p>
-        {meta && <p className={styles.meta}>{meta}</p>}
-      </div>
+      <p className={styles.description}>{description}</p>
+      {hasAction && href && (external
+        ? <a href={href} className={styles.actionButton} target="_blank" rel="noopener noreferrer">{cta}<ArrowRight aria-hidden="true" /></a>
+        : <Link to={href} className={styles.actionButton}>{cta}<ArrowRight aria-hidden="true" /></Link>)}
+      {hasAction && !href && onClick && <button type="button" className={styles.actionButton} onClick={onClick}>{cta}<ArrowRight aria-hidden="true" /></button>}
+      {!hasAction && status && <span className={styles.status}><span aria-hidden="true" />{status}</span>}
     </div>
   </>;
 
-  const onKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
-    if (event.key === ' ' && !event.defaultPrevented) onActivate();
-  };
-  // Keep the compact flex interaction: the active card gets room while the
-  // whole set remains on one row and the CTA stays in the lower panel.
-  const cardStyle = { '--card-flex': active ? 1.35 : 1 } as CSSProperties;
-
-  return href
-    ? <Link to={href} className={classes} style={cardStyle} aria-expanded={active}
-      onMouseEnter={onActivate} onFocus={onActivate} onKeyDown={onKeyDown}>{content}</Link>
-    : <div className={classes} style={cardStyle} onMouseEnter={onActivate} onFocus={onActivate}
-      tabIndex={0} role="group" aria-expanded={active}>{content}</div>;
+  return <div className={classes} role="group" aria-label={`${title}: ${subtitle}`}>{content}</div>;
 }
 
-export function SeasonalHoverCards({ cards, className }: SeasonalHoverCardsProps) {
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const clearIfFocusLeaves = (event: FocusEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setActiveIndex(null);
-  };
-
-  return <div role="region" className={cn(styles.cards, className)} onMouseLeave={() => setActiveIndex(null)}
-    onBlur={clearIfFocusLeaves} aria-label="Learner actions">
-    {cards.map((card, index) => <SeasonCard key={`${card.title}-${index}`} {...card}
-      active={activeIndex === index} onActivate={() => setActiveIndex(index)} />)}
+export function SeasonalHoverCards({ cards, className, theme = 'default', layout = 'row' }: SeasonalHoverCardsProps) {
+  return <div role="region" className={cn(styles.cards, theme === 'hero' && styles.hero, layout === 'inline' && styles.inline, className)} aria-label="Learner actions">
+    {cards.map((card, index) => <SeasonCard key={`${card.title}-${index}`} {...card} />)}
   </div>;
 }

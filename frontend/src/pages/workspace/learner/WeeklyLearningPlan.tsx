@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Target, Users, Video } from 'lucide-react';
+import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Users, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
@@ -175,24 +175,11 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
             </div>}
           </div>
 
-          {isTeachingWeek && <div className="mt-5 grid grid-cols-1 gap-4">
-            <section aria-labelledby="weekly-outcomes-heading" className="flex min-h-[136px] gap-4 rounded-xl border border-primary-100 bg-primary-50/45 p-5">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700 ring-1 ring-primary-200/70">
-                <Target size={23} aria-hidden="true" />
-              </span>
-              <div className="min-w-0">
-              <h3 id="weekly-outcomes-heading" className="text-sm font-bold text-foreground-900">Learning outcomes for this week</h3>
-              {selectedWeek.learningOutcomes?.length ? <ul className="mt-2 list-disc space-y-1.5 pl-4 text-sm leading-6 text-foreground-700 marker:text-primary-600">
-                {selectedWeek.learningOutcomes.map(outcome => <li key={outcome}>{outcome}</li>)}
-              </ul> : <p className="mt-2 text-sm leading-6 text-foreground-500">Learning outcomes for this week have not been published yet.</p>}
-              </div>
-            </section>
-
-          <section aria-labelledby="weekly-session-heading">
+          {isTeachingWeek && <section aria-labelledby="weekly-session-heading" className="mt-5">
             {selectedWeek.start ? <LiveSessionSummary week={selectedWeek} now={now} headingId="weekly-session-heading" />
               : <p id="weekly-session-heading" className="flex min-h-[136px] items-center rounded-xl border border-foreground-100 bg-background-50 p-5 text-sm text-foreground-500">No live session is scheduled for this week.</p>}
           </section>
-          </div>}
+          }
 
           {!isTeachingWeek && <section aria-labelledby="weekly-session-heading" className="mt-5">
             <ReadingWeekPanel week={selectedWeek as ReadingWeekRow} />

@@ -154,7 +154,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
 
           <section className={layout.monthBlock} aria-label="Reviews this month">
             <div className={layout.monthBlockHeader}><div><h3>Reviews this month</h3><p>Schedule and attend your reviews</p></div></div>
-            <div className={layout.compactRows}>{monthReviews.length ? monthReviews.slice(0, 2).map(review => {
+            <div className={layout.compactRows}>{monthReviews.length ? monthReviews.map(review => {
               const needsBooking = review.status === 'not-scheduled';
               const isBooked = ['scheduled', 'in-progress'].includes(review.status);
               const meetingLink = isBooked && /^https?:\/\//i.test(review.meetingLink || '') ? review.meetingLink : null;

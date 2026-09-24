@@ -178,6 +178,7 @@ export interface LearnerDetail {
   group: string;
   employer: string;
   employerId?: number | null;
+  organization?: string;
   lineManager: string;
   isActive: boolean;
   modules: string[];
@@ -214,7 +215,7 @@ export interface LearnerDetail {
 
 export type LearnerSummary = Pick<LearnerDetail,
   'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' |
-  'cohort' | 'group' | 'employer' | 'employerId' | 'learnerType' | 'isActive'
+  'cohort' | 'group' | 'employer' | 'employerId' | 'organization' | 'learnerType' | 'isActive'
 > & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'learnerStartDate' | 'learnerEndDate' | 'programmeEndDate' | 'accessGate' | 'learningAccess'>;
 
 /** Small identity response for pages that only need the learner heading. */
