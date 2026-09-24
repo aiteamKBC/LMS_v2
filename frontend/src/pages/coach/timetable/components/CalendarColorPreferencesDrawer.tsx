@@ -45,7 +45,10 @@ const COLOR_NAMES: Record<string, string> = {
   '#6B7280': 'Gray',
   '#DC2626': 'Red',
   '#D97706': 'Amber',
+  '#B45309': 'Amber (Dark)',
+  '#C2410C': 'Orange (Dark)',
   '#059669': 'Green',
+  '#047857': 'Green (Dark)',
 };
 
 function colorName(value: string) {
