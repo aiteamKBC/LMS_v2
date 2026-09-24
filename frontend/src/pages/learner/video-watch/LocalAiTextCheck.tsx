@@ -7,7 +7,7 @@ type Result = { status: string; message: string; advisoryOnly: true; segments: S
 
 export function LocalAiWritingHint() {
   const context = useContext(AssignmentAiCheckContext);
-  return context?.enabled ? <p className="mb-2 text-xs leading-5 text-slate-600">Write in your own words and acknowledge any AI assistance. This local check can make mistakes; built-in AI suggestions may also be flagged. A tutor must review any concern.</p> : null;
+  return context?.enabled ? <p className="mb-2 text-xs leading-5 text-slate-600">Write in your own words and acknowledge any AI assistance. This check can make mistakes; built-in AI suggestions may also be flagged. A tutor must review any concern.</p> : null;
 }
 
 export function LocalAiTextCheck({ text, disabled }: { text: string; disabled: boolean }) {
@@ -42,7 +42,7 @@ export function LocalAiTextCheck({ text, disabled }: { text: string; disabled: b
         body: JSON.stringify({ learnerId: context.learnerId, learnerKind: context.learnerKind, text }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'The local checker is unavailable.');
+      if (!response.ok) throw new Error(data.error || 'The AI writing check is unavailable.');
       let end = 0;
       if (!data || data.advisoryOnly !== true || typeof data.message !== 'string'
           || !['review_suggested', 'no_signal', 'insufficient_text', 'unsupported_text'].includes(data.status)
@@ -50,10 +50,10 @@ export function LocalAiTextCheck({ text, disabled }: { text: string; disabled: b
             const invalid = !s || !Number.isInteger(s.start) || !Number.isInteger(s.end) || s.start < end || s.end <= s.start || s.end > text.length || typeof s.flagged !== 'boolean';
             if (s) end = s.end;
             return invalid;
-          })) throw new Error('The local checker returned an invalid result. Please retry.');
+          })) throw new Error('The AI writing check returned an invalid result. Please retry.');
       if (current()) setResult({ text, data });
     } catch (e) {
-      if (generation.current === version) setError(controller.signal.aborted ? 'The local check timed out. You can retry; your answer is unchanged.' : e instanceof Error ? e.message : 'The local check failed.');
+      if (generation.current === version) setError(controller.signal.aborted ? 'The AI writing check timed out. You can retry; your answer is unchanged.' : e instanceof Error ? e.message : 'The AI writing check failed.');
     } finally {
       window.clearTimeout(timeout);
       if (generation.current === version) { setBusy(false); active.current = null; }
@@ -67,12 +67,12 @@ export function LocalAiTextCheck({ text, disabled }: { text: string; disabled: b
     return <span key={index}>{prefix}{segment.flagged ? <mark className="bg-amber-200 text-slate-900" title="Suspected AI writing — tutor review required">{text.slice(segment.start, segment.end)}</mark> : text.slice(segment.start, segment.end)}</span>;
   });
   return <div className="mt-3 space-y-2">
-    <button type="button" className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-40" disabled={disabled || busy || !text.trim()} onClick={() => void check()}>{busy ? 'Checking locally…' : 'Check for possible AI writing'}</button>
-    <p className="text-xs text-slate-500">English text, at least 80 words. Text stays on the LMS server. Shorter fields cannot be assessed.</p>
+    <button type="button" className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-40" disabled={disabled || busy || !text.trim()} onClick={() => void check()}>{busy ? 'Checking…' : 'Check for possible AI writing'}</button>
+    
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {data && <div role="status" className="rounded-lg border border-slate-200 p-3 text-sm">
-      <p className="font-semibold">{data.status === 'review_suggested' ? 'Suspected AI writing — ask your tutor to review' : data.status === 'no_signal' ? 'No AI-writing signal found — this does not prove authorship' : 'Not assessed'}</p>
-      <p className="mt-1">{data.message}</p>
+      <p className="font-semibold">{data.status === 'review_suggested' ? 'Suspected AI writing — ask your tutor to review' : data.status === 'no_signal' ? 'No AI-writing signal found' : 'Not assessed'}</p>
+      {data.status !== 'no_signal' && <p className="mt-1">{data.message}</p>}
       {data.status === 'review_suggested' && <div aria-label="Passages for tutor review" className="mt-3 whitespace-pre-wrap break-words">{highlights}{text.slice(offset)}</div>}
     </div>}
   </div>;

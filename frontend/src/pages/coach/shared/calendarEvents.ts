@@ -81,6 +81,7 @@ export interface CoachCalendarEvent {
   reviewResponses?: Record<string, string>;
   reviewCompletedAt?: string | null;
   reviewSource?: 'aptem' | 'curriculum' | string;
+  aptemReviewId?: string | null;
   reviewerName?: string | null;
   hasReviewForm?: boolean;
   hasTranscript?: boolean;
@@ -588,6 +589,10 @@ export function needsScheduling(event: CoachCalendarEvent) {
 
 export function isScheduledEvent(event: CoachCalendarEvent) {
   return event.status === 'scheduled';
+}
+
+export function hasScheduledSlot(event: CoachCalendarEvent) {
+  return isScheduledEvent(event) || Boolean(event.scheduledDate && event.scheduledTime);
 }
 
 export function isInProgressEvent(event: CoachCalendarEvent) {

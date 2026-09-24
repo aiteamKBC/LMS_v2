@@ -224,6 +224,18 @@ describe('what the learner sees for a session on a holiday', () => {
   });
 });
 
+describe('reading week presentation', () => {
+  it('uses a secondary-colour header labelled Reading Week', () => {
+    render(<CurriculumTimeline slots={[{
+      slotNumber: 5, date: '2026-05-11', day: 'Monday', type: 'reading-week', sessionNumber: null,
+      holidays: [{ label: 'Spring break', startDate: '2026-05-11', endDate: '2026-05-17' }],
+    }]} sessions={[]} />);
+
+    expect(screen.getByText('Reading Week')).toBeVisible();
+    expect(screen.getByTestId('learner-reading-week')).toHaveTextContent('Spring break');
+  });
+});
+
 describe('the learner and curriculum slot shapes are one contract', () => {
   it('accepts a curriculum ModuleSessionSlot wherever a PlanCurriculumSlot is expected', () => {
     // A compile-time check, not a runtime one: if either side's slot shape is

@@ -1,7 +1,28 @@
 import type { MonthlyAssignment } from '@/api/monthlyAssignment';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { fetchLearnerCalendarEvents, type BookingCalendarRules } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
+
+function HoursInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const id = useId();
+  const hours = Number(value);
+  const adjust = (direction: number) => {
+    if (direction < 0 && hours <= 0.5) return;
+    onChange(String(Number(Math.min(8, Math.max(0.5, (Number.isFinite(hours) ? hours : 0) + direction * 0.5)).toFixed(2))));
+  };
+  const button = 'h-10 w-10 shrink-0 rounded-lg border border-slate-200 bg-slate-50 text-lg font-semibold text-slate-700 disabled:opacity-40';
+  return <div className="min-w-0 text-sm">
+    <label htmlFor={id}>{label}</label>
+    <div className="mt-1 flex items-center gap-1">
+      <button type="button" className={button} aria-label={`Decrease ${label} by half an hour`} disabled={hours <= 0.5} onClick={() => adjust(-1)}>&minus;</button>
+      <input id={id} className="h-10 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 text-center disabled:bg-slate-100 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        type="number" min="0.01" max="8" step="any" value={value} onChange={event => onChange(event.target.value)}
+        onKeyDown={event => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); adjust(event.key === 'ArrowUp' ? 1 : -1); } }}
+        placeholder="e.g. 1.5" required />
+      <button type="button" className={button} aria-label={`Increase ${label} by half an hour`} disabled={hours >= 8} onClick={() => adjust(1)}>+</button>
+    </div>
+  </div>;
+}
 
 export function assignmentDateRestriction(date: string, rules: BookingCalendarRules | null) {
   const day = new Date(`${date}T12:00:00Z`).getUTCDay();
@@ -83,7 +104,7 @@ export function AssignmentTimeEntries({ month, entries, onChange, disabled, kind
     <legend className="mb-3 text-sm text-slate-600">Add each topic, the hours you spent on it and the day you worked on it.</legend>
     {rows.map((row, index) => <div key={index} className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:grid-cols-[2fr_1fr_1.5fr_auto]">
       <label className="text-sm">Topic {index + 1}<input className={input} value={row.topic} maxLength={300} onChange={e => update(index, 'topic', e.target.value)} placeholder="e.g. Research and analysis" required /></label>
-      <label className="text-sm">Hours {index + 1}<input className={input} type="number" min="0.01" max="8" step="0.01" value={row.hours} onChange={e => update(index, 'hours', e.target.value)} placeholder="e.g. 1.5" required /></label>
+      <HoursInput label={`Hours ${index + 1}`} value={row.hours} onChange={value => update(index, 'hours', value)} />
       <WorkingDatePicker month={month} value={row.date} label={`Date ${index + 1}`} rules={rules} disabled={disabled} onChange={value => update(index, 'date', value)} />
       <button type="button" className="self-end rounded-lg px-3 py-2 text-sm text-red-700 disabled:opacity-40" onClick={() => onChange(rows.filter((_, i) => i !== index))}>Remove topic {index + 1}</button>
       {Number(row.hours) > 8 && <p role="alert" className="text-sm text-red-700 sm:col-span-4">Each topic can have a maximum of 8 hours.</p>}
@@ -94,6 +115,6 @@ export function AssignmentTimeEntries({ month, entries, onChange, disabled, kind
     {error && <p role="alert">{error} <button type="button" onClick={() => setRetry(value => value + 1)}>Retry calendar</button></p>}
     <button type="button" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" onClick={() => onChange([...rows, { topic: '', hours: '', date: '' }])}>Add topic</button>
     <p className="text-sm font-semibold" aria-live="polite">Total learning time: {Number(assignmentTimeHours(entries).toFixed(2))} hours</p>
-    <p className="text-xs text-slate-600">Dates must be within the assignment month: {month}. Use decimal hours, for example 1.5 for 1 hour 30 minutes.</p>
+    <p className="text-xs text-slate-600">Dates must be within the assignment month: {month}. Use the plus and minus buttons to adjust by half an hour, or type hours directly: 1 = 1 hour, 1.5 = 1 hour 30 minutes.</p>
   </fieldset>;
 }

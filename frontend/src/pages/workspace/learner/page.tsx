@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
-import { BookOpen, CalendarCheck, Clock3, BarChart3, type LucideIcon } from 'lucide-react';
+import { useState, useEffect, useMemo, type CSSProperties } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { ClipboardList, FileText, Monitor } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
@@ -17,7 +17,7 @@ import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
-import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
+import { LearnerDashboardHero } from './LearnerDashboardHero';
 import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE } from '@/lib/format';
 import overviewStyles from './Overview.module.css';
@@ -26,6 +26,11 @@ import { DashboardActivities } from './DashboardActivities';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardPlan } from './useDashboardPlan';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
+import { upcomingEvents } from '@/pages/learner/home/homeData';
+import { SeasonalHoverCards, type SeasonCardProps } from '@/components/lightswind/seasonal-hover-cards';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { learnerLiveSessionHref } from './liveSessionRoute';
+import { learnerNextAction } from './nextActionRoute';
 
 function formatProgrammeStartDate(value?: string | null): string {
   if (!value) return '';
@@ -33,6 +38,13 @@ function formatProgrammeStartDate(value?: string | null): string {
   return Number.isNaN(date.getTime())
     ? value
     : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
+}
+
+function formatSessionTime(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? '' : new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Europe/London' }).format(date);
 }
 
 export default function LearnerOverview() {
@@ -121,25 +133,89 @@ export default function LearnerOverview() {
   const displayLearnerName = heroFullName;
   const displayCohort = heroCohort || EMPTY_VALUE;
   const headerDescription = [heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined;
-  const programmeStartDate = dashboardPlan.data?.programmeStartDate
-    ?? real?.learningAccess?.startDate ?? real?.programmeStartDate;
-  const programmeEndDate = dashboardPlan.data?.programmeEndDate ?? real?.programmeEndDate;
+  const programmeStartDate = real?.learnerStartDate
+    ?? real?.learningAccess?.startDate
+    ?? dashboardPlan.data?.programmeStartDate
+    ?? real?.programmeStartDate;
+  const programmeEndDate = dashboardPlan.auditPlannedEndDate
+    ?? real?.programmeEndDate
+    ?? dashboardPlan.data?.programmeEndDate
+    ?? real?.learnerEndDate;
   const startDateDisplay = formatProgrammeStartDate(programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
-  const plannedEndDisplay = formatProgrammeStartDate(programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const plannedEndDisplay = dashboardPlan.auditLoading
+    ? 'Loading…'
+    : formatProgrammeStartDate(programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
     new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }));
   const planPlaceholder = scheduleRead.loading ? 'Loading...' : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;
   const coachDisplayName = scheduleRead.data?.coach.name || (scheduleRead.data ? 'Not yet assigned' : planPlaceholder);
-  const currentModuleLabel = plan.modules.map(module => module.title).join(' · ') || planPlaceholder;
   const continueLearningHref = learnerModuleHref(kind, id, plan.modules[0]?.id, scheduleRead.data?.moduleLinks);
+
+  // "Your next action" reuses the training-plan module already resolved above; the
+  // other two cards share the same nearest-lecture/nearest-assignment selection
+  // Student Home uses, so all three destinations and empty-state copy stay in sync.
+  const weekRead = dashboardPlan.week;
+  const events = useMemo(() => upcomingEvents(scheduleRead.data, weekRead.data, new Date(now)),
+    [scheduleRead.data, weekRead.data, now]);
+  const [nextLecture, nextAssignment] = events;
+  const learnerDetailRead = useLearnerDetailParam(kind, id);
+  const nextAction = learnerNextAction(learnerDetailRead.real, kind, id, plan.modules.map(module => module.id));
+  const nextLectureActivityHref = learnerLiveSessionHref(learnerDetailRead.real, nextLecture, kind, id)
+    || (nextLecture.moduleId
+      ? learnerModuleHref(kind, id, nextLecture.moduleId, scheduleRead.data?.moduleLinks)
+      : continueLearningHref);
+  const actionCards: SeasonCardProps[] = [
+    {
+      title: 'Your next action',
+      subtitle: nextAction?.title || plan.modules[0]?.title || planPlaceholder,
+      description: plan.modules.length ? `${plan.label} — pick up where you left off.`
+        : 'Your training plan will appear here once it’s ready.',
+      cta: 'Continue learning',
+      status: plan.modules.length ? 'Ready to continue' : planPlaceholder,
+      icon: FileText,
+      variant: 'action',
+      href: nextAction?.href || continueLearningHref,
+      imageSrc: '/assets/dashboard-cards/next-action.svg',
+      imageAlt: 'Continue learning artwork',
+    },
+    {
+      title: 'Next live session',
+      subtitle: nextLecture.date ? nextLecture.title : scheduleRead.loading ? 'Loading…' : 'No upcoming session',
+      description: nextLecture.date
+        ? `${formatProgrammeStartDate(nextLecture.date)} · ${formatSessionTime(nextLecture.date)}`
+        : scheduleRead.loading ? 'Loading…' : 'Check back once your next session is scheduled.',
+      cta: nextLecture.date ? 'Open activity' : 'View schedule',
+      status: nextLecture.date ? 'Scheduled' : scheduleRead.loading ? 'Loading…' : 'No session scheduled',
+      meta: nextLecture.detail,
+      icon: Monitor,
+      variant: 'session',
+      href: nextLecture.date ? nextLectureActivityHref : nextLecture.href,
+      imageSrc: '/assets/dashboard-cards/next-session.svg',
+      imageAlt: 'Next live session artwork',
+    },
+    {
+      title: 'Due soon',
+      subtitle: nextAssignment.date ? nextAssignment.title : weekRead.loading ? 'Loading…' : 'No upcoming assignment',
+      description: nextAssignment.date ? `Due ${formatProgrammeStartDate(nextAssignment.date)}`
+        : weekRead.loading ? 'Loading…' : 'You’re all caught up — nothing due soon.',
+      cta: 'View assignment',
+      status: nextAssignment.date ? 'Pending' : weekRead.loading ? 'Loading…' : 'Nothing due',
+      meta: nextAssignment.detail,
+      icon: ClipboardList,
+      variant: 'due',
+      href: nextAssignment.href,
+      imageSrc: '/assets/dashboard-cards/due-soon.svg',
+      imageAlt: 'Assignment due soon artwork',
+    },
+  ];
+  // The first card is intentionally title/status only; its module context is
+  // already represented by the subtitle and should not repeat in the reveal.
+  actionCards[0].description = '';
 
   const programme = metrics.data?.programme;
   const programmeProgressPercent = programme?.percent ?? null;
   const programmeProgressValue = programmeProgressPercent == null ? EMPTY_VALUE : `${programmeProgressPercent}%`;
-  const programmeProgressCaption = programme?.total != null ? `${programme.completed}/${programme.total} activities complete`
-    : metrics.loading ? 'Loading progress...' : 'Progress unavailable';
-  const programmeTargetDetail = programme?.total != null && programme.total > 0
-    ? `${programme.total.toLocaleString('en-GB')} activities` : 'All assigned activities';
+  const programmeProgressSummary = programme?.total != null ? `${programme.completed} / ${programme.total}` : EMPTY_VALUE;
 
   const attendanceReady = !!attendance || (!attendanceLoading && !attendanceRead.error);
   const attendanceSessions = attendance?.sessions ?? (attendanceReady ? 0 : null);
@@ -147,10 +223,8 @@ export default function LearnerOverview() {
   const attendancePercent = attendance?.attendanceRate ?? null;
   const attendanceValue = attendancePresent?.toLocaleString('en-GB') ?? EMPTY_VALUE;
   const attendanceTotalValue = attendanceSessions?.toLocaleString('en-GB') ?? EMPTY_VALUE;
-  const attendanceCaption = attendancePercent != null ? `${attendancePercent}% attendance`
-    : attendanceLoading ? 'Loading attendance…'
-      : attendanceRead.error ? 'Attendance unavailable' : 'No attendance records yet';
-  const attendanceTone: StatusTone = attendancePercent == null ? 'neutral' : 'brand';
+  const attendanceSummary = attendancePresent == null || attendanceSessions == null
+    ? EMPTY_VALUE : `${attendanceValue} / ${attendanceTotalValue}`;
 
   const otjPlannedHours = !metrics.data ? null : metrics.data.migrated
     ? metrics.data.aptem_planned_total ?? null : dashboardPlan.otjh.planned;
@@ -165,18 +239,10 @@ export default function LearnerOverview() {
     : otjPlannedLoading ? 'Loading…' : 'Unavailable';
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h`
     : metrics.loading ? 'Loading...' : 'Unavailable';
-  const otjCaption = metrics.loading || otjPlannedLoading ? 'Loading recorded time...' : otjActualHours == null ? 'Recorded time unavailable'
-    : otjPlannedHours == null ? 'Training plan target hours are not available yet.' : 'Across your programme';
-  const otjTone: StatusTone = 'brand';
   const ksb = metrics.data?.ksb;
   const ksbPercent = ksb?.percent ?? null;
   const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;
-  const ksbCaption = ksb?.total != null ? `${ksb.completed} of ${ksb.total} points achieved`
-    : ksb?.status === 'unavailable' ? 'KSB progress unavailable.'
-    : metrics.loading ? 'Loading KSB progress...' : 'KSB details unavailable';
-  const ksbTone: StatusTone = ksbPercent == null ? 'neutral'
-    : ksbPercent >= 50 ? 'positive' : ksbPercent >= 30 ? 'caution' : 'critical';
-
+  const ksbSummary = ksb?.total != null ? `${ksb.completed} / ${ksb.total}` : EMPTY_VALUE;
   if (!isRealMode || !learnerKind || !id) {
     return (
       <WorkspaceShell
@@ -325,55 +391,24 @@ export default function LearnerOverview() {
         {/* ================================================================
             PROFILE HEADER
             ================================================================ */}
-        <div>
-            <header
-              className={`learner-super-admin-hero ${overviewStyles.hero}`}
-              aria-label="Learner programme"
-            >
-            <div aria-hidden="true" className={overviewStyles.heroArtwork} />
-            <div className={overviewStyles.heroTop}>
-              <div className={overviewStyles.identity}>
-                <LearnerProfilePhoto
-                  kind={learnerKind} learnerId={id} name={displayLearnerName}
-                  className={overviewStyles.avatar}
-                />
-                <div className="min-w-0">
-                  <p className={overviewStyles.eyebrow}>Learner</p>
-                  <h1 className={`${overviewStyles.name} font-heading`}>{displayLearnerName}</h1>
-                  {headerDescription ? <p className={overviewStyles.description}>{headerDescription}</p> : null}
-                </div>
-              </div>
-              <div className={overviewStyles.heroActions}>
-                <button
-                  type="button"
-                  onClick={() => navigate(continueLearningHref)}
-                  disabled={scheduleRead.loading}
-                  aria-busy={scheduleRead.loading}
-                  className={`${overviewStyles.heroAction} ${overviewStyles.primaryAction}`}
-                >
-                  <AppIcon className="ri-play-line" />
-                  Continue learning
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigate(weeklyPlanHref)}
-                  className={overviewStyles.heroAction}
-                >
-                  <AppIcon className="ri-road-map-line" />
-                  Learner's Map
-                </button>
-              </div>
-            </div>
-            <dl className={overviewStyles.facts}>
-              <ProfileFact icon="ri-group-line" label="Cohort" value={displayCohort} />
-              <ProfileFact icon="ri-book-2-line" label={plan.label} value={currentModuleLabel} />
-              <ProfileFact icon="ri-user-line" label="Coach" value={coachDisplayName} />
-              <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDateDisplay} />
-              <ProfileFact label="Status" value={displayValue(knownLearner?.programmeStatus)} status />
-              <ProfileFact icon="ri-calendar-event-line" label="Planned end" value={plannedEndDisplay} />
-            </dl>
-            </header>
-        </div>
+        <LearnerDashboardHero
+          avatar={<LearnerProfilePhoto kind={learnerKind} learnerId={id} name={displayLearnerName} />}
+          name={displayLearnerName}
+          description={headerDescription}
+          cohort={displayCohort}
+          moduleLabel={plan.label}
+          modules={plan.modules.map(module => ({ id: module.id, title: module.title,
+            href: learnerModuleHref(kind, id, module.id, scheduleRead.data?.moduleLinks) }))}
+          modulePlaceholder={planPlaceholder}
+          allModulesHref={programmeProgressHref}
+          coach={coachDisplayName}
+          status={displayValue(knownLearner?.programmeStatus)}
+          startDate={startDateDisplay}
+          plannedEnd={plannedEndDisplay}
+          loading={scheduleRead.loading}
+          onContinue={() => navigate(continueLearningHref)}
+          onOpenMap={() => navigate(weeklyPlanHref)}
+        />
 
         {metrics.error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
           {metrics.error} <button className="ml-2 font-semibold underline" onClick={metrics.refresh}>Try again</button>
@@ -382,27 +417,25 @@ export default function LearnerOverview() {
           Attendance could not refresh. {attendanceRead.error}
           <button className="ml-2 font-semibold underline" onClick={attendanceRead.refresh}>Retry attendance</button>
         </div>}
-        {/* ================================================================
-            PROGRAMME PROGRESS CARDS
-            ================================================================ */}
-        <div>
-            <div className={overviewStyles.metrics}>
-              <ProgressStat href={programmeProgressHref} icon={BookOpen} label="Programme Progress" value={programmeProgressValue} targetValue="100%" targetDetail={programmeTargetDetail} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
-              <ProgressStat href="/learner/attendance" icon={CalendarCheck} label="Attendance" value={attendanceValue} valueLabel="Attended" targetValue={attendanceTotalValue} targetLabel="Sessions to date" percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
+        <div className={overviewStyles.dashboardCardsRow}>
+          {/* Next steps and programme metrics share one seven-column desktop row. */}
+          <SeasonalHoverCards cards={actionCards} />
+          <div className={`${overviewStyles.metrics} ${overviewStyles.metricsInline}`}>
+              <ProgressStat href={programmeProgressHref} label="Programme Progress" value={programmeProgressValue} summary={programmeProgressSummary} targetValue="100%" percent={programmeProgressPercent} accent="purple" />
+              <ProgressStat href="/learner/attendance" label="Attendance" value={attendanceValue} summary={attendanceSummary} valueLabel="Attended" targetValue={attendanceTotalValue} targetLabel="Sessions to date" percent={attendancePercent} accent="green" />
               <ProgressStat
                 href={otjhProgressHref}
-                icon={Clock3}
                 label="OTJ Hours"
                 value={otjActualValue}
+                summary={`${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjPlannedHours?.toFixed(2) ?? EMPTY_VALUE} h`}
                 valueLabel="Actual"
                 targetValue={otjPlannedValue}
                 targetLabel="Planned hours"
                 percent={otjPercent}
-                caption={otjCaption}
-                tone={otjTone}
+                accent="yellow"
               />
-              <ProgressStat href={ksbProgressHref} icon={BarChart3} label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
-            </div>
+              <ProgressStat href={ksbProgressHref} label="KSB Progress" value={ksbValue} summary={ksbSummary} percent={ksbPercent} accent="purple" />
+          </div>
         </div>
 
         {real && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
@@ -419,69 +452,49 @@ export default function LearnerOverview() {
    SUB-COMPONENTS
    ───────────────────────────────────────────── */
 
-/** One labelled fact in the profile header's meta row. */
-function ProfileFact({ icon, label, value, status = false }: { icon?: string; label: string; value: string; status?: boolean }) {
-  const statusStyle = status ? toneStyle(statusTone(value)) : null;
-  return (
-    <div className={overviewStyles.fact}>
-      {statusStyle ? (
-        <span aria-hidden="true" className={`${overviewStyles.statusIcon} ${statusStyle.dot}`}>
-          <span />
-        </span>
-      ) : <AppIcon aria-hidden="true" className={`${icon} ${overviewStyles.factIcon}`} />}
-      <div className="min-w-0">
-        <dt className={overviewStyles.factLabel}>{label}</dt>
-        <dd className={overviewStyles.factValue}>{value || EMPTY_VALUE}</dd>
-      </div>
-    </div>
-  );
-}
-
 /** Shared linked summary cards; presentation does not change the metric sources. */
-function ProgressStat({ href, icon: Icon, label, value, valueLabel = 'Current', targetValue, targetLabel = 'Target', targetDetail, percent, caption, tone = 'neutral' }: {
+function ProgressStat({ href, label, value, summary, valueLabel = 'Current', targetValue, targetLabel = 'Target', percent, accent }: {
   href: string;
-  icon: LucideIcon;
   label: string;
   value: string;
+  summary: string;
   valueLabel?: string;
   targetValue?: string;
   targetLabel?: string;
-  targetDetail?: string;
   percent: number | null;
-  caption?: string;
-  tone?: StatusTone;
+  accent: 'purple' | 'green' | 'yellow';
 }) {
-  const style = toneStyle(tone);
+  const ringPercent = percent == null ? 0 : Math.min(100, Math.max(0, percent));
+  const ringLabel = percent == null ? EMPTY_VALUE : `${Number.isInteger(percent) ? percent : Number(percent.toFixed(1))}%`;
   return (
     <Link
       to={href}
       aria-label={`Open ${label}`}
-      data-tone={tone}
+      data-accent={accent}
       className={`group ${overviewStyles.metric}`}
     >
       <div className={overviewStyles.metricTop}>
-        <span className={overviewStyles.metricIcon}>
-          <Icon aria-hidden="true" />
+        <span
+          className={overviewStyles.metricRing}
+          role="img"
+          aria-label={`${label}: ${ringLabel}`}
+          style={{ '--metric-progress': `${ringPercent}%` } as CSSProperties}
+        >
+          <span className={overviewStyles.metricRingValue}>{ringLabel}</span>
         </span>
-        <p className={overviewStyles.metricLabel}>{label}</p>
+        <div className={overviewStyles.metricBody}>
+          <div className={overviewStyles.metricHeading}>
+            <p className={overviewStyles.metricLabel}>{label}</p>
+          </div>
+          <p className={overviewStyles.metricDetail}>{summary}</p>
+          <dl className={overviewStyles.metricA11yData}>
+            <div><dt>{valueLabel}</dt><dd>{value}</dd></div>
+            {targetValue != null && <div><dt>{targetLabel}</dt><dd>{targetValue}</dd></div>}
+          </dl>
+          <ProgressBar percent={percent} tone={overviewStyles.metricFill} className={overviewStyles.metricA11yProgress} />
+        </div>
         <AppIcon aria-hidden="true" className={`ri-arrow-right-s-line ${overviewStyles.metricArrow}`} />
       </div>
-      <dl className={overviewStyles.metricValues}>
-        <div className={targetValue == null ? 'col-span-2' : undefined}>
-          <dt className={overviewStyles.metricSubLabel}>{valueLabel}</dt>
-          <dd className={`${overviewStyles.metricValue} ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</dd>
-        </div>
-        {targetValue != null && <div>
-          <dt className={overviewStyles.metricSubLabel}>{targetLabel}</dt>
-          <dd className={`${overviewStyles.metricValue} text-foreground-900`}>{targetValue}
-            {targetDetail && <span className={overviewStyles.metricValueDetail}>{targetDetail}</span>}
-          </dd>
-        </div>}
-      </dl>
-      <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} height="h-3" className={overviewStyles.metricBar} />
-      {caption ? <p className={overviewStyles.metricCaption}>
-        <span>{caption}</span>
-      </p> : null}
     </Link>
   );
 }

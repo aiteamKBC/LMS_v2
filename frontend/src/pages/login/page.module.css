@@ -1,682 +1,218 @@
 .page {
-  --login-purple: #5B21B6;
-  --login-purple-dark: #4B168C;
-  --login-purple-light: #8B5CF6;
-  --form-width: clamp(360px, 40vw, 575px);
-  position: relative;
-  display: flex;
-  width: 100%;
+  --login-purple: #5b21b6;
+  --login-purple-dark: #3f176f;
   height: 100dvh;
-  min-height: 100vh;
   min-height: 100dvh;
-  align-items: stretch;
+  position: relative;
+  display: grid;
+  place-items: center;
   overflow: hidden;
-  margin: 0;
   padding: 0;
-  background: #F7F5FF;
-  color: #241B35;
+  box-sizing: border-box;
+  background: radial-gradient(circle at 15% 20%, rgba(255,255,255,.8), transparent 34%), linear-gradient(135deg, #eee9ff 0%, #f8f6ff 48%, #ded4ff 100%);
+  color: #241b35;
   font-family: 'DM Sans', system-ui, sans-serif;
 }
 
-.card {
+.card { position: relative; z-index: 1; width: 100%; min-height: 0; display: grid; place-items: center; }
+
+.bookStage {
   position: relative;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  border-radius: 0;
-  background: #4B168C;
+  width: min(94vw, calc(100dvh * 1.5));
+  aspect-ratio: 3 / 2;
+  flex: 0 0 auto;
+  z-index: 1;
 }
 
-.curveBand,
+.patterns { position: fixed; z-index: 0; inset: 0; overflow: hidden; background: radial-gradient(circle at 12% 20%, rgba(196, 173, 255, .32), transparent 25%), radial-gradient(circle at 87% 78%, rgba(184, 151, 245, .28), transparent 27%); pointer-events: none; }
+.patternTopLeft, .patternBottomRight { position: absolute; display: block; width: 28%; height: 55%; background-repeat: no-repeat; background-size: contain; opacity: .34; filter: drop-shadow(0 12px 22px rgba(85, 48, 148, .08)); }
+.patternTopLeft { top: -10%; left: -4%; background-image: url('/assets/patterns/kbc-ibis-wreath.png'); background-position: left top; }
+.patternBottomRight { right: -4%; bottom: -13%; background-image: url('/assets/patterns/kbc-horse-growth.png'); background-position: right bottom; }
+.bookImage { position: absolute; z-index: 1; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; user-select: none; }
+
+.logoOverlay { position: absolute; z-index: 2; top: 11.5%; left: 13.2%; width: 7.5%; pointer-events: none; }
+.logo { display: block; width: 100%; height: auto; opacity: .98; }
+
 .formPanel {
   position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--form-width);
-  border-radius: 0 34% 34% 0 / 0 50% 50% 0;
-}
-
-.curveBand {
-  z-index: 1;
-  width: calc(var(--form-width) + 18px);
-  background: linear-gradient(180deg, #4B168C 0%, #5B21B6 52%, #6D28D9 100%);
-  pointer-events: none;
-}
-
-.formPanel {
-  z-index: 2;
-  display: flex;
+  z-index: 3;
+  top: 14.5%;
+  left: 51.5%;
+  width: 40.5%;
+  height: 71.5%;
   box-sizing: border-box;
-  align-items: center;
-  justify-content: center;
-  padding: 48px clamp(42px, 5.2vw, 78px) 48px clamp(42px, 5.6vw, 88px);
-  background: #ffffff;
-}
-
-.formContent {
-  width: min(100%, 420px);
-}
-
-.logo {
-  display: block;
-  width: 154px;
-  height: auto;
-  margin-bottom: 30px;
-  object-fit: contain;
-}
-
-.intro {
-  margin-bottom: 27px;
-}
-
-.intro h1 {
-  margin: 0;
-  color: #111a35;
-  font-family: 'DM Sans', system-ui, sans-serif;
-  font-size: clamp(32px, 3vw, 40px);
-  font-weight: 700;
-  letter-spacing: -0.045em;
-  line-height: 1.08;
-}
-
-.intro p {
-  margin: 9px 0 0;
-  color: #6f7890;
-  font-size: 16px;
-  line-height: 1.45;
-}
-
-.form {
-  display: grid;
-  gap: 18px;
-}
-
-.fieldGroup {
-  display: grid;
-  gap: 8px;
-}
-
-.fieldGroup label,
-.labelRow label {
-  color: #17213a;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.labelRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  overflow: auto;
+  padding: 4.5% 5.5%;
+  scrollbar-width: none;
 }
-
-.forgotButton {
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--login-purple);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.3;
-  transition: color 160ms ease, background-color 160ms ease;
-}
-
-.forgotButton:hover {
-  color: var(--login-purple-dark);
-}
-
-.forgotButton:focus-visible,
-.rememberRow:focus-visible,
-.passwordToggle:focus-visible {
-  outline: 3px solid rgba(91, 36, 232, 0.24);
-  outline-offset: 2px;
-}
-
-.inputShell {
-  position: relative;
-}
-
-.inputShell input {
-  display: block;
-  width: 100%;
-  height: 54px;
-  box-sizing: border-box;
-  border: 1px solid #ded9ee;
-  border-radius: 12px;
-  outline: 0;
-  background: #fbfaff;
-  color: #17213a;
-  font: inherit;
-  font-size: 14px;
-  line-height: 1;
-  padding: 0 50px;
-  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
-}
-
-.inputShell input::placeholder {
-  color: #99a0b2;
-  opacity: 1;
-}
-
-.inputShell input:hover {
-  border-color: #c5b9ee;
-  background: #ffffff;
-}
-
-.inputShell input:focus {
-  border-color: var(--login-purple);
-  background: #ffffff;
-  box-shadow: 0 0 0 4px rgba(91, 36, 232, 0.12);
-}
-
-.inputIcon {
-  position: absolute;
-  z-index: 1;
-  top: 50%;
-  left: 17px;
-  color: #768098;
-  font-size: 18px;
-  line-height: 1;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
-.passwordToggle {
-  position: absolute;
-  z-index: 1;
-  top: 50%;
-  right: 10px;
-  display: grid;
-  width: 35px;
-  height: 35px;
-  place-items: center;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #768098;
-  cursor: pointer;
-  font-size: 18px;
-  transform: translateY(-50%);
-  transition: color 160ms ease, background-color 160ms ease;
-}
-
-.passwordToggle:hover {
-  background: #f0ebff;
-  color: var(--login-purple);
-}
-
-.rememberGroup {
-  display: grid;
-  gap: 6px;
-  justify-items: start;
-}
-
-.rememberRow {
-  display: inline-flex;
-  width: max-content;
-  align-items: center;
-  gap: 9px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #424b60;
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.checkboxVisual {
-  display: grid;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1.5px solid #9ea5b5;
-  border-radius: 5px;
-  background: #ffffff;
-  color: transparent;
-  font-size: 13px;
-  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
-}
-
-.rememberRow:hover .checkboxVisual {
-  border-color: var(--login-purple-light);
-}
-
-.rememberRow[aria-pressed='true'] .checkboxVisual {
-  border-color: var(--login-purple);
-  background: var(--login-purple);
-  color: #ffffff;
-  box-shadow: 0 3px 8px rgba(91, 36, 232, 0.22);
-}
-
-.rememberHint {
-  max-width: 390px;
-  margin: 0;
-  color: #717b91;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.error {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 11px 13px;
-  border: 1px solid #fecaca;
-  border-radius: 11px;
-  background: #fff7f7;
-  color: #b91c1c;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.error svg.app-icon {
-  margin-top: 2px;
-  flex: 0 0 auto;
-}
-
-.primaryButton,
-.microsoftButton {
-  display: flex;
-  width: 100%;
-  height: 52px;
-  box-sizing: border-box;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  cursor: pointer;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1;
-  transition: transform 170ms ease, border-color 170ms ease, box-shadow 170ms ease, background 170ms ease;
-}
-
-.primaryButton {
-  border: 0;
-  background: linear-gradient(100deg, #4B168C 0%, #5B21B6 58%, #6D28D9 100%);
-  color: #ffffff;
-  box-shadow: 0 11px 24px rgba(91, 36, 232, 0.22);
-}
-
-.primaryButton:hover:not(:disabled) {
-  box-shadow: 0 15px 30px rgba(91, 36, 232, 0.3);
-  transform: translateY(-1px);
-}
-
-.primaryButton:active:not(:disabled),
-.microsoftButton:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
-.primaryButton:disabled,
-.microsoftButton:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.loadingLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.ssoBlock {
-  margin-top: 22px;
-}
-
-.divider {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 17px;
-  margin-bottom: 16px;
-  color: #9ca3b2;
-}
-
-.divider span {
-  height: 1px;
-  background: #e5e4ea;
-}
-
-.divider strong {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.microsoftButton {
-  gap: 11px;
-  border: 1px solid #dedce6;
-  background: #ffffff;
-  color: #252c3e;
-  box-shadow: 0 4px 12px rgba(17, 24, 39, 0.03);
-}
-
-.microsoftButton:hover:not(:disabled) {
-  border-color: #b9aaf0;
-  background: #fcfbff;
-  box-shadow: 0 8px 18px rgba(76, 29, 149, 0.08);
-  transform: translateY(-1px);
-}
-
-.microsoftMark {
-  width: 19px;
-  height: 19px;
-  flex: 0 0 auto;
-}
-
-.ssoHint {
-  margin: 8px 0 0;
-  color: #788196;
-  font-size: 11px;
-  line-height: 1.5;
-  text-align: center;
-}
-
-.secureFooter {
-  margin-top: 25px;
-  padding-top: 18px;
-  border-top: 1px solid #e6e4eb;
-  color: #768096;
-  font-size: 11px;
-  text-align: center;
-}
-
-.secureFooter span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.secureFooter svg.app-icon {
-  color: var(--login-purple);
-  font-size: 15px;
-}
-
-.visualPanel {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  background: #4B168C;
-}
-
-.campusImage,
-.visualShade {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.campusImage {
-  display: block;
-  object-fit: cover;
-  object-position: center center;
-}
-
-.visualShade {
-  background:
-    linear-gradient(90deg, rgba(12, 35, 78, 0.22) 0%, transparent 42%),
-    linear-gradient(180deg, rgba(18, 43, 86, 0.07) 0%, rgba(16, 29, 64, 0.02) 42%, rgba(9, 13, 34, 0.62) 100%);
-  pointer-events: none;
-}
-
-.visualTopCard,
-.visualFooterCard {
-  position: absolute;
-  z-index: 1;
-}
-
-.visualTopCard {
-  top: 49px;
-  right: clamp(28px, 4.3vw, 62px);
-  display: flex;
-  width: 220px;
-  min-height: 74px;
-  box-sizing: border-box;
-  align-items: center;
-  gap: 13px;
-  padding: 13px 18px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 12px;
-  background: rgba(203, 219, 246, 0.68);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 13px 28px rgba(22, 38, 78, 0.13);
-}
-
-.visualTopCard p {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  color: #152441;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
-}
-
-.visualTopCard p span:last-child {
-  color: var(--login-purple);
-}
-
-.visualIcon {
-  display: grid;
-  width: 31px;
-  height: 31px;
-  flex: 0 0 auto;
-  place-items: center;
-  color: var(--login-purple);
-  font-size: 29px;
-}
-
-.visualFooterCard {
-  right: clamp(28px, 4.3vw, 62px);
-  bottom: 38px;
-  display: flex;
-  align-items: center;
-  gap: 25px;
-  color: #ffffff;
-}
-
-.footerBrand {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.footerBrand > svg.app-icon {
-  color: #8061f7;
-  font-size: 24px;
-}
-
-.footerBrand > span {
-  display: grid;
-  gap: 2px;
-}
-
-.footerBrand strong,
-.footerBrand small {
-  display: block;
-  white-space: nowrap;
-}
-
-.footerBrand strong {
-  color: #ffffff;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.35;
-}
-
-.footerBrand small {
-  color: rgba(255, 255, 255, 0.78);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.supportLine {
-  display: grid;
-  gap: 2px;
-  min-width: 118px;
-  padding-left: 25px;
-  border-left: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.supportLine span,
-.supportLine b {
-  white-space: nowrap;
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.supportLine span {
-  color: #ffffff;
-}
-
-.supportLine b {
-  color: #8061f7;
-  font-weight: 700;
-}
-
-@media (max-width: 1050px) {
-  .page {
-    --form-width: clamp(340px, 42vw, 470px);
-  }
-
-  .formPanel {
-    padding-inline: 36px 52px;
-  }
-
-  .visualFooterCard {
-    gap: 18px;
-  }
-
-  .supportLine {
-    padding-left: 18px;
-  }
-}
-
-@media (max-width: 820px) {
-  .page {
-    display: block;
-    height: auto;
-    overflow: auto;
-    padding: 0;
-  }
-
-  .card {
-    width: min(100%, 600px);
-    height: auto;
-    min-height: 100dvh;
-    margin: 0 auto;
-    border-radius: 0;
-  }
-
-  .curveBand {
-    display: none;
-  }
-
-  .formPanel {
-    position: relative;
+.formPanel::-webkit-scrollbar { display: none; }
+.formContent { width: 100%; max-width: 390px; margin-inline: auto; }
+
+.intro { margin-bottom: 23px; }
+.intro h1 { margin: 0; color: #291442; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(25px, 2.25vw, 34px); font-weight: 700; letter-spacing: -.035em; line-height: 1.08; }
+.intro p { margin: 8px 0 0; color: #645a73; font-size: clamp(12px, 1vw, 15px); line-height: 1.45; }
+.form { display: grid; gap: 14px; }
+.fieldGroup { display: grid; gap: 7px; }
+.fieldGroup label, .labelRow label { color: #352344; font-size: clamp(11px, .9vw, 14px); font-weight: 700; line-height: 1.3; }
+.labelRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+.forgotButton, .rememberRow, .passwordToggle { border: 0; background: transparent; cursor: pointer; font: inherit; }
+.forgotButton { border-radius: 5px; color: var(--login-purple); font-size: clamp(10px, .82vw, 13px); font-weight: 700; line-height: 1.3; }
+.forgotButton:hover { color: var(--login-purple-dark); }
+.inputShell { position: relative; }
+.inputShell input { display: block; width: 100%; height: clamp(42px, 3.55vw, 52px); box-sizing: border-box; border: 1px solid #d9d0e7; border-radius: 9px; outline: 0; background: rgba(255,255,255,.8); color: #291442; font: inherit; font-size: clamp(12px, .95vw, 15px); line-height: 1; padding: 0 43px; transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease; }
+.inputShell input::placeholder { color: #887c99; opacity: 1; }
+.inputShell input:hover { border-color: #b8a6d2; background: #fff; }
+.inputShell input:focus { border-color: var(--login-purple); background: #fff; box-shadow: 0 0 0 3px rgba(91,33,182,.16); }
+.inputIcon { position: absolute; z-index: 1; top: 50%; left: 14px; color: #77658d; font-size: 17px; line-height: 1; transform: translateY(-50%); pointer-events: none; }
+.passwordToggle { position: absolute; z-index: 1; top: 50%; right: 7px; display: grid; width: 32px; height: 32px; place-items: center; border-radius: 7px; color: #77658d; font-size: 17px; transform: translateY(-50%); }
+.passwordToggle:hover { background: #f0e9ff; color: var(--login-purple); }
+.forgotButton:focus-visible, .rememberRow:focus-visible, .passwordToggle:focus-visible, .primaryButton:focus-visible, .microsoftButton:focus-visible { outline: 3px solid rgba(91,33,182,.3); outline-offset: 2px; }
+
+.rememberGroup { display: grid; gap: 5px; justify-items: start; }
+.rememberRow { display: inline-flex; width: max-content; align-items: center; gap: 8px; padding: 0; color: #4e415b; font-size: clamp(11px, .82vw, 13px); font-weight: 700; line-height: 1.3; }
+.checkboxVisual { display: grid; width: 17px; height: 17px; flex: 0 0 auto; place-items: center; border: 1.5px solid #9586a2; border-radius: 4px; background: #fff; color: transparent; font-size: 12px; }
+.rememberRow[aria-pressed='true'] .checkboxVisual { border-color: var(--login-purple); background: var(--login-purple); color: #fff; }
+.rememberHint { max-width: 300px; margin: 0; color: #766a81; font-size: clamp(9px, .7vw, 11px); line-height: 1.45; }
+
+.error { display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; border: 1px solid #fecaca; border-radius: 8px; background: #fff7f7; color: #b91c1c; font-size: clamp(10px, .78vw, 12px); line-height: 1.4; }
+.primaryButton, .microsoftButton { display: flex; width: 100%; min-height: clamp(42px, 3.55vw, 52px); box-sizing: border-box; align-items: center; justify-content: center; border-radius: 9px; cursor: pointer; font: inherit; font-size: clamp(11px, .9vw, 14px); font-weight: 800; line-height: 1; }
+.primaryButton { border: 0; background: linear-gradient(105deg, #4b168c 0%, #6525b5 100%); color: #fff; box-shadow: 0 9px 18px rgba(91,33,182,.22); transition: transform 170ms ease, box-shadow 170ms ease; }
+.primaryButton:hover:not(:disabled) { box-shadow: 0 12px 24px rgba(91,33,182,.3); transform: translateY(-1px); }
+.primaryButton:active:not(:disabled), .microsoftButton:active:not(:disabled) { transform: translateY(1px); }
+.primaryButton:disabled, .microsoftButton:disabled { cursor: not-allowed; opacity: .55; }
+.loadingLabel { display: inline-flex; align-items: center; gap: 8px; }
+
+.ssoBlock { margin-top: 17px; }
+.divider { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; margin-bottom: 12px; color: #988da2; }
+.divider span { height: 1px; background: #e1dce7; }
+.divider strong { font-size: 9px; letter-spacing: .08em; }
+.microsoftButton { gap: 9px; border: 1px solid #d9d4df; background: rgba(255,255,255,.86); color: #352d3e; }
+.microsoftButton:hover:not(:disabled) { border-color: #b7a5d0; background: #fff; }
+.microsoftMark { width: 17px; height: 17px; flex: 0 0 auto; }
+.ssoHint { margin: 7px 0 0; color: #776c83; font-size: 10px; line-height: 1.45; text-align: center; }
+.secureFooter { margin-top: 17px; padding-top: 12px; border-top: 1px solid rgba(126,104,146,.22); color: #766b80; font-size: 10px; text-align: center; }
+.secureFooter span { display: inline-flex; align-items: center; gap: 6px; }
+.secureFooter svg.app-icon { color: var(--login-purple); font-size: 14px; }
+
+@media (max-width: 1365px) and (min-width: 768px) {
+  .page { padding: 0; overflow-y: auto; overflow-x: hidden; }
+  /* The tablet artwork is a portrait composition with a reserved white
+     panel below the illustration. Keep the form in that panel instead of
+     making it part of the page flow. */
+  .bookStage {
     width: 100%;
-    min-height: 100dvh;
-    border-radius: 0;
-    padding: 48px clamp(32px, 8vw, 64px);
+    height: 100dvh;
+    min-height: 0;
+    aspect-ratio: auto;
+    background: url('/login-tablet-background.png') center top / 100% 100% no-repeat;
   }
-
-  .visualPanel {
+  .bookImage,
+  .patterns {
     display: none;
   }
-}
-
-@media (max-width: 520px) {
-  .page {
+  .logoOverlay {
+    display: block;
+    top: 3.5%;
+    left: 7%;
+    width: 17%;
+  }
+  .formPanel {
+    top: 60%;
+    left: 8%;
+    width: 84%;
+    height: auto;
     padding: 0;
-  }
-
-  .formPanel {
-    min-height: 100dvh;
     align-items: flex-start;
-    padding: 38px 23px 32px;
+    overflow: visible;
   }
-
-  .logo {
-    width: 142px;
-    margin-bottom: 29px;
+  .formContent {
+    max-width: 390px;
   }
-
-  .intro {
-    margin-bottom: 29px;
-  }
-
-  .intro h1 {
-    font-size: 33px;
-  }
-
-  .intro p {
-    font-size: 15px;
-  }
+  .intro { margin-bottom: 10px; }
+  .intro h1 { font-size: clamp(23px, 2.6vw, 31px); }
+  .intro p { margin-top: 4px; font-size: clamp(10px, 1.1vw, 13px); }
+  .form { gap: 7px; }
+  .fieldGroup { gap: 4px; }
+  .fieldGroup label, .labelRow label { font-size: clamp(10px, .95vw, 12px); }
+  .forgotButton, .rememberRow { font-size: clamp(9px, .9vw, 12px); }
+  .inputShell input { height: clamp(36px, 3.2vw, 44px); font-size: clamp(10px, .95vw, 13px); }
+  .inputIcon { left: 12px; font-size: 15px; }
+  .passwordToggle { width: 28px; height: 28px; font-size: 15px; }
+  .rememberHint, .error, .ssoHint, .secureFooter { font-size: clamp(8px, .75vw, 10px); }
+  .primaryButton, .microsoftButton { min-height: clamp(36px, 3.2vw, 44px); font-size: clamp(10px, .95vw, 13px); }
+  .ssoBlock { margin-top: 8px; }
+  .divider { margin-bottom: 7px; }
+  .secureFooter { margin-top: 8px; padding-top: 6px; }
 }
 
-@media (min-width: 821px) and (max-height: 760px) {
-  .page {
-    padding-block: 0;
-  }
-
-  .card {
-    height: 100%;
+@media (max-width: 767px) {
+  .page { height: 100dvh; min-height: 100dvh; overflow-y: auto; overflow-x: hidden; padding: 0; background: #f8f4ff; }
+  .card { width: 100%; height: 100dvh; min-height: 0; }
+  .bookStage {
+    width: 100%;
+    height: 100dvh;
     min-height: 0;
+    aspect-ratio: auto;
+    padding: 0;
+    background: url('/login-mobile-background.png') center top / 100% 100% no-repeat;
   }
-
+  .bookStage::after,
+  .bookImage,
+  .patterns {
+    display: none;
+  }
+  .logoOverlay {
+    display: block;
+    top: 3%;
+    left: 7%;
+    width: 22%;
+  }
   .formPanel {
-    padding-block: 26px;
+    top: 60%;
+    left: 6%;
+    width: 88%;
+    height: auto;
+    padding: 0;
+    align-items: flex-start;
+    overflow: visible;
   }
+  .formContent { max-width: 360px; }
+  .intro { margin-bottom: 12px; }
+  .intro h1 { font-size: clamp(25px, 8vw, 32px); }
+  .intro p { margin-top: 5px; font-size: clamp(12px, 3.4vw, 14px); }
+  .form { gap: 10px; }
+  .fieldGroup { gap: 6px; }
+  .fieldGroup label, .labelRow label, .forgotButton, .rememberRow { font-size: clamp(12px, 3.4vw, 14px); }
+  .inputShell input { height: clamp(44px, 12vw, 52px); font-size: clamp(13px, 3.6vw, 15px); }
+  .inputIcon { left: 11px; font-size: 15px; }
+  .passwordToggle { width: 28px; height: 28px; font-size: 15px; }
+  .rememberHint, .error, .ssoHint, .secureFooter { font-size: clamp(10px, 2.8vw, 12px); }
+  .primaryButton, .microsoftButton { min-height: clamp(44px, 12vw, 52px); font-size: clamp(12px, 3.4vw, 14px); }
+  .ssoBlock { margin-top: 12px; }
+  .divider { margin-bottom: 10px; }
+  .secureFooter { margin-top: 12px; padding-top: 8px; }
+}
 
-  .logo {
-    width: 136px;
-    margin-bottom: 18px;
+/* Very short devices still get the complete action area without introducing
+   an inner scrollbar; the security note is secondary to the sign-in controls. */
+@media (max-width: 1365px) and (max-height: 700px) {
+  .formPanel {
+    transform: scaleY(.8);
+    transform-origin: top center;
   }
+  .secureFooter { display: none; }
+}
 
-  .intro {
-    margin-bottom: 17px;
-  }
-
-  .form {
-    gap: 11px;
-  }
-
-  .inputShell input,
-  .primaryButton,
-  .microsoftButton {
-    height: 48px;
-  }
-
-  .ssoBlock {
-    margin-top: 14px;
-  }
-
-  .secureFooter {
-    margin-top: 15px;
-    padding-top: 11px;
-  }
+/* Mobile keeps the more readable spacing even on short browser viewports;
+   the page itself can scroll instead of vertically squashing the form. */
+@media (max-width: 767px) and (max-height: 700px) {
+  .formPanel { transform: none; }
+  .secureFooter { display: block; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .primaryButton,
-  .microsoftButton,
-  .inputShell input,
-  .passwordToggle,
-  .checkboxVisual,
-  .forgotButton {
-    transition: none;
-  }
+  .primaryButton, .microsoftButton, .inputShell input { transition: none; }
 }

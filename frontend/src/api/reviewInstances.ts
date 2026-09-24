@@ -157,6 +157,9 @@ export interface PreviousReviewSession {
 }
 
 export interface ReviewInstanceFormDefinition {
+  /** Historical adapters can reuse the Review Workspace without enabling writes. */
+  readOnly?: boolean;
+  source?: 'curriculum' | 'aptem' | string;
   pdf?: { available: boolean; reason: string } | null;
   /** Progress Review only, and null until a coach calculates it. */
   progressSnapshot?: ReviewProgressSnapshot | null;

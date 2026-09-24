@@ -244,9 +244,11 @@ def summary_data(learner, *, include_open=False):
                   for month, rows in current_months(learner, signs, include_open=include_open).items())
     months.sort(key=lambda m: m['month'])
     profile = learner.get('_profile') or {}
+    audit_profile = retained.get('profile') or {}
     return {'learner': {'id': learner['id'], 'aptem_id': learner.get('aptem_id'),
                        'name': learner['name'], 'programme': learner['programme'],
-                       'coach_name': profile.get('coach_name') or learner.get('coach_name')},
+                       'coach_name': profile.get('coach_name') or learner.get('coach_name'),
+                       'planned_end_date': audit_profile.get('planned_end_date') or profile.get('end_date')},
             'months': months, 'total_months': len(months),
             'completed_months': sum(m['status'] == 'complete' for m in months),
             'read_only': learner['_view_as']}

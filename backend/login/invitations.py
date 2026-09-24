@@ -119,7 +119,10 @@ def send_invitation(account, *, invited_by=None, ip=None, user_agent=None):
         expires_days=INVITATION_TTL.days,
     )
     sent, detail = email_azure.send_mail(
-        to=account.email, subject=subject, html_body=html, text_body=text
+        to=account.email, subject=subject, html_body=html, text_body=text,
+        # Kept in the sender's Sent Items so staff can see which invitations
+        # went out and when. Password resets do the same (see send_reset).
+        save_to_sent=True,
     )
 
     invitation.sent_at = timezone.now() if sent else None
@@ -243,7 +246,8 @@ def send_reset(account, *, ip=None, user_agent=None):
         expires_hours=int(RESET_TTL.total_seconds() // 3600) or 1,
     )
     sent, detail = email_azure.send_mail(
-        to=account.email, subject=subject, html_body=html, text_body=text
+        to=account.email, subject=subject, html_body=html, text_body=text,
+        save_to_sent=True,
     )
 
     reset.sent_at = timezone.now() if sent else None

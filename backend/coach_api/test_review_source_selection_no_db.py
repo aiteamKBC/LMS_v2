@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
 from coach_api import views
+from coach_api.models import CoachCalendarEvent
 
 
 def learner(profile_id, *, aptem_id=None, source_aptem_id=None):
@@ -128,6 +129,28 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
         self.assertEqual(called_learner_ids, {2})
 
 
+class CoachAttendanceGroupNameTests(SimpleTestCase):
+    def test_final_attendance_payload_preserves_learner_group_name_and_id(self):
+        source = {
+            "id": "1", "name": "Learner", "initials": "L",
+            "learnerType": "commercial", "enrolmentId": "101",
+            "currentModule": None, "currentWeek": None, "componentsTargetToDate": 0,
+            "email": "learner@example.invalid", "programmeName": "Commercial Intelligence",
+            "programmeId": "PROG-CI-L6",
+            "cohortName": "October 2025", "group": "G1 Keith-Commercial Intelligence-Oct 25",
+            "groupName": "G1 Keith-Commercial Intelligence-Oct 25",
+            "groupId": "APTEM-GROUP-stable", "rawProgramStatus": "Active",
+            "enrollmentStatus": "active", "employer": "--", "overallProgress": 0,
+            "otjhCompleted": 0, "otjhPlanned": 0, "otjhTarget": 1, "ksbProgress": 0,
+        }
+
+        result = views.serialize_attendance_learner(source, None)
+
+        self.assertEqual(result["groupName"], "G1 Keith-Commercial Intelligence-Oct 25")
+        self.assertEqual(result["groupId"], "APTEM-GROUP-stable")
+        self.assertEqual(result["programmeId"], "PROG-CI-L6")
+
+
 class DashboardCompletedReviewHistoryTests(SimpleTestCase):
     def test_latest_completed_dates_use_only_completed_at_and_stable_profile_id(self):
         rows = [learner(316), learner(401), learner(402), learner(403), learner(404)]
@@ -184,20 +207,84 @@ class DashboardCompletedReviewHistoryTests(SimpleTestCase):
 
 
 class AptemEventVerificationTests(SimpleTestCase):
+    def test_missing_calendar_overlay_preserves_each_aptem_lifecycle_status(self):
+        for status in ("not-scheduled", "scheduled", "in-progress", "awaiting-signature", "completed"):
+            with self.subTest(status=status):
+                base = {
+                    "eventKey": f"imported-review:{status}",
+                    "reviewSource": "aptem",
+                    "status": status,
+                    "rawStatus": status.replace("-", " ").title(),
+                    "targetDate": "2026-09-23",
+                    "scheduledDate": "2026-09-23",
+                    "scheduledTime": "11:00",
+                    "reviewCompletedAt": "2026-09-23" if status == "completed" else None,
+                }
+
+                event = views.overlay_calendar_record(base, None)
+
+                self.assertEqual(event["status"], status)
+                self.assertEqual(event["rawStatus"], base["rawStatus"])
+
+    def test_confirmed_aptem_review_is_preserved_and_never_becomes_completed(self):
+        base = {
+            "eventKey": "imported-review:confirmed", "reviewSource": "aptem",
+            "status": "confirmed", "rawStatus": "Confirmed",
+            "targetDate": "2026-09-23", "scheduledDate": "2026-09-23",
+            "scheduledTime": "11:00",
+        }
+
+        event = views.overlay_calendar_record(base, None)
+
+        self.assertEqual(event["status"], "confirmed")
+        self.assertEqual(event["scheduledTime"], "11:00")
+
+    def test_native_event_still_uses_calendar_lifecycle_status(self):
+        base = {
+            "eventKey": "review:1:1", "reviewSource": "curriculum",
+            "status": "completed", "targetDate": "2026-09-23",
+        }
+
+        event = views.overlay_calendar_record(base, None)
+
+        self.assertEqual(event["status"], CoachCalendarEvent.STATUS_NOT_SCHEDULED)
+
+    def test_linked_calendar_booking_overlays_the_same_aptem_event_identity(self):
+        base = {
+            "eventKey": "imported-review:R-1", "id": "imported-review:R-1",
+            "source": "mcr", "reviewSource": "aptem", "status": "in-progress",
+            "rawStatus": "In Progress", "targetDate": "2026-09-23", "title": "MCM",
+        }
+        record = CoachCalendarEvent(
+            event_key="imported-review:R-1", owner_email="coach@example.invalid",
+            learner_id=1, event_type="mcr", target_date=date(2026, 9, 23),
+            scheduled_date=date(2026, 9, 24), scheduled_time=time(11, 0),
+            duration_minutes=60, status=CoachCalendarEvent.STATUS_SCHEDULED,
+            meeting_provider="Microsoft Teams", meeting_link="https://teams.example.invalid/join",
+        )
+
+        event = views.overlay_calendar_record(base, record)
+
+        self.assertEqual(event["eventKey"], "imported-review:R-1")
+        self.assertEqual(event["status"], "in-progress")
+        self.assertEqual(event["scheduledDate"], "2026-09-24")
+        self.assertEqual(event["scheduledTime"], "11:00")
+        self.assertEqual(event["meetingLink"], "https://teams.example.invalid/join")
+
     @patch("coach_api.views.connections")
     def test_only_matching_source_learner_id_is_emitted_and_ids_are_deduplicated(self, connections):
         cursor = connections["default"].cursor.return_value.__enter__.return_value
         columns = [
             "learner_id", "id", "aptem_review_id", "review_name", "review_type",
             "reviewer_name", "learner_name", "planned_scheduled_date", "completed_date",
-            "status", "review_data", "extraction_status", "last_error", "source_learner_id",
+            "status", "review_data", "extraction_status", "last_error", "has_review_sections", "source_learner_id",
         ]
         cursor.description = [(column,) for column in columns]
         cursor.fetchall.return_value = [
-            (1, 11, "R-1", "MCM", "MCM", "Coach", "Learner 1", date(2026, 9, 23), None, "Planned", "{}", "complete", None, "101"),
-            (1, 12, "R-1", "MCM", "MCM", "Coach", "Learner 1", date(2026, 9, 23), None, "Planned", "{}", "complete", None, "101"),
-            (1, 13, "R-2", "Progress Review", "Progress Review", "Coach", "Learner 1", None, date(2026, 9, 22), "Finished", "{}", "complete", None, "999"),
-            (1, 14, "R-3", "Gateway Review", "Gateway Review", "Coach", "Learner 1", date(2026, 9, 24), None, "Planned", "{}", "complete", None, None),
+            (1, 11, "R-1", "MCM", "MCM", "Coach", "Learner 1", date(2026, 9, 23), None, "Planned", "{}", "complete", None, True, "101"),
+            (1, 12, "R-1", "MCM", "MCM", "Coach", "Learner 1", date(2026, 9, 23), None, "Planned", "{}", "complete", None, True, "101"),
+            (1, 13, "R-2", "Progress Review", "Progress Review", "Coach", "Learner 1", None, date(2026, 9, 22), "Finished", "{}", "complete", None, True, "999"),
+            (1, 14, "R-3", "Gateway Review", "Gateway Review", "Coach", "Learner 1", date(2026, 9, 24), None, "Planned", "{}", "complete", None, True, None),
         ]
 
         events, contributors = views.fetch_aptem_review_events(
@@ -210,6 +297,44 @@ class AptemEventVerificationTests(SimpleTestCase):
         )
         self.assertEqual(contributors, {1})
         self.assertEqual(events[0]["learnerId"], "1")
+        self.assertTrue(events[0]["hasReviewForm"])
+        self.assertNotIn("reviewInstanceId", events[0])
+        self.assertNotIn("reviewTemplateId", events[0])
+
+    @patch("coach_api.views._sections_by_review")
+    @patch("coach_api.views.connections")
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    def test_imported_definition_reuses_native_form_contract_without_curriculum_identity(
+        self, fetch_profiles, connections, sections_by_review,
+    ):
+        fetch_profiles.return_value = [learner(1, aptem_id=101, source_aptem_id=101)]
+        cursor = connections["default"].cursor.return_value.__enter__.return_value
+        columns = [
+            "id", "learner_id", "aptem_review_id", "review_name", "review_type",
+            "reviewer_name", "learner_name", "planned_scheduled_date", "completed_date",
+            "status", "review_data", "extraction_status", "last_error",
+        ]
+        cursor.description = [(column,) for column in columns]
+        cursor.fetchall.return_value = [
+            (11, 1, "R-1", "Progress Review", "Progress Review", "Coach", "Learner 1",
+             date(2026, 9, 23), None, "Scheduled", {}, "complete", None),
+        ]
+        sections_by_review.return_value = {11: [{
+            "id": 501, "name": "Progress", "order": 2,
+            "fields": [{"label": "What went well?", "value": "Good progress"}],
+            "tables": [], "rawText": "",
+        }]}
+
+        definition = views._imported_review_definition(
+            "coach@example.invalid", "imported-review:R-1",
+        )
+
+        self.assertTrue(definition["readOnly"])
+        self.assertEqual(definition["source"], "aptem")
+        self.assertEqual(definition["instance"]["id"], "imported-review:R-1")
+        self.assertEqual(definition["instance"]["reviewTemplateId"], "")
+        self.assertEqual(definition["sections"][0]["displayOrder"], 2)
+        self.assertEqual(definition["sections"][0]["fields"][0]["answer"], "Good progress")
 
 
 class TimetableResolvedReviewStreamTests(SimpleTestCase):

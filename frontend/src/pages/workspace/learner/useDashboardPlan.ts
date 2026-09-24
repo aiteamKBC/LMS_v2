@@ -16,6 +16,7 @@ export function monthlyLogOtjh(summary: LogSummary) {
   const hasAuditRecord = summary.learner?.aptem_id != null || summary.months.some(month => month.source === 'legacy');
   return {
     cutoffMonth: hasAuditRecord ? AUDIT_OTJH_CUTOFF_MONTH : undefined,
+    plannedEndDate: summary.learner?.planned_end_date ?? null,
     months: Object.fromEntries(summary.months.map(month => [month.month, {
       target: month.training_plan_target == null ? null : hours(month.training_plan_target),
       submitted: hours(month.not_accepted_hours),
@@ -70,7 +71,7 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
     // Monthly Logs is keyed by the numeric enrolment id. Personal-learning
     // preview ids use a different route and have no retained Audit record.
     if (!/^[1-9]\d*$/.test(id)) {
-      setAudit({ identity, data: { months: {}, cutoffMonth: undefined }, error: '' });
+      setAudit({ identity, data: { months: {}, cutoffMonth: undefined, plannedEndDate: null }, error: '' });
       return;
     }
     // The shared reader owns the request deadline and retry. A shorter
@@ -79,14 +80,14 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
     void getLogSummary(id, controller.signal, 'learner').then(summary => {
       if (!controller.signal.aborted) setAudit({ identity, data: monthlyLogOtjh(summary), error: '' });
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setAudit({ identity, data: { months: {}, cutoffMonth: undefined },
+      if (!controller.signal.aborted) setAudit({ identity, data: { months: {}, cutoffMonth: undefined, plannedEndDate: null },
         error: error instanceof Error ? error.message : 'Historical Audit hours could not be loaded.' });
     });
     return () => { controller.abort(); };
   }, [active, id, identity, attempt]);
   const refresh = () => { week.refresh(); schedule.refresh(); retryContract(); };
   const contractData = contract?.identity === identity ? contract.data : { months: {}, contractStatus: 'loading' };
-  const auditData = audit?.identity === identity ? audit.data : { months: {}, cutoffMonth: undefined };
+  const auditData = audit?.identity === identity ? audit.data : { months: {}, cutoffMonth: undefined, plannedEndDate: null };
   const auditError = audit?.identity === identity ? audit.error : '';
   const requiredOtjh = week.data?.metrics?.otjh.planned ?? null;
   const currentAudit = audit?.identity === identity ? audit : null;
@@ -99,7 +100,10 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
       plannedLoading: active && !currentContract,
     },
     data: schedule.data ? { ...schedule.data, ...contractData, monthlyOtjh: week.data?.monthlyOtjh, requiredOtjh,
-      monthlyLogOtjh: auditData.months, auditOtjhCutoffMonth: auditData.cutoffMonth } : null,
+      monthlyLogOtjh: auditData.months, auditOtjhCutoffMonth: auditData.cutoffMonth,
+      auditPlannedEndDate: auditData.plannedEndDate } : null,
+    auditPlannedEndDate: auditData.plannedEndDate,
+    auditLoading: active && !currentAudit,
     subjects: week.data?.planSubjects,
     loading: week.loading || schedule.loading,
     error: week.error || schedule.error || auditError || (week.data && !week.data.planSubjects ? 'Module summaries could not be loaded.' : ''),
