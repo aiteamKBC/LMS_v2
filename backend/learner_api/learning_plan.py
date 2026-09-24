@@ -210,7 +210,7 @@ def _aptem_subject_modules(learner):
                 [aptem_id],
             )
             titles = [_s(row[0]) for row in cursor.fetchall() if _s(row[0])]
-    except DatabaseError:
+    except Exception:
         logger.warning("Could not read Last_audit subjects for learner %s.", getattr(learner, "pk", "?"))
         return {}
     if not titles:

@@ -13,7 +13,7 @@ from login.permissions import learner_self_or_staff
 from old_otjh.coach_booking import booking_url
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile
-from .learning_plan import _effective_plan_ids
+from .learning_plan import _aptem_subject_modules, _effective_plan_ids, stored_training_plan
 from .coach_assignment import current_coach, source_coach
 from .student_activity import _builder_subject_metadata
 from .subject_content import as_list, clean_text, safe_url
@@ -231,6 +231,15 @@ def read_dashboard(source, section=None):
         # Builder metadata enriches those assignments (and supplies legacy
         # links), but a missing builder row must not hide an assigned module.
         current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, {})))
+        # Imported learners can have real assigned subjects in the Aptem
+        # mirror without those ids ever being written to the native learning
+        # plan. Include those subjects in the same dashboard projection unless
+        # staff explicitly limited the learner to a native assignment set.
+        saved_plan = stored_training_plan(source) or []
+        has_explicit_plan = any(entry.get('assignmentMode') == 'explicit' for entry in saved_plan)
+        if not has_explicit_plan:
+            current_module_ids.extend(_aptem_subject_modules(source).keys())
+        current_module_ids = list(dict.fromkeys(current_module_ids))
         refs = [f'current:{module_id}' for module_id in current_module_ids]
         if aptem_id and historical:
             cur.execute('''SELECT gl.group_id FROM "Last_audit".group_learners gl
@@ -240,8 +249,7 @@ def read_dashboard(source, section=None):
         builder_ids = {
             item['id'] for item in links.values() if item.get('id')
         }
-        has_valid_aptem_id = aptem_id is not None and aptem_id > 0
-        authoritative_ids = set() if has_valid_aptem_id else set(current_module_ids)
+        authoritative_ids = set(current_module_ids)
         ids = sorted(builder_ids | authoritative_ids)
         if ids:
             # cohort_id is read so the curriculum scheduler can resolve this
