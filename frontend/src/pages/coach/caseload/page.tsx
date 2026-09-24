@@ -45,7 +45,6 @@ import type {
   AttendanceApiResponse,
   CaseloadApiLearner,
   CaseloadApiResponse,
-  EmbeddedCaseloadLearner,
   FilterOption,
   Learner,
   QuickViewTab,
@@ -55,7 +54,7 @@ import type {
 } from './types';
 import styles from './caseload.module.css';
 
-const CASELOAD_ENDPOINT = '/coach_api/coach/caseload?live=1';
+const CASELOAD_ENDPOINT = '/coach_api/coach/caseload';
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
 
 const PAGE_SIZE = 10;
@@ -131,7 +130,7 @@ function hasAuthoritativePerformanceStatus(value?: string | null): boolean {
   return ['at-risk', 'on-track', 'high', 'new-starter'].includes(normalizedPerformanceStatus(value));
 }
 
-export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { embedded?: boolean; embeddedLearners?: EmbeddedCaseloadLearner[] }) {
+export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean; embeddedLearners?: unknown[] }) {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
   // Whose caseload this is: the signed-in coach, or the coach an administrator
@@ -145,6 +144,11 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [serverTotal, setServerTotal] = useState(0);
+  const [serverTotalPages, setServerTotalPages] = useState(0);
+  const [serverFilterOptions, setServerFilterOptions] = useState<{
+    cohort: FilterOption[]; group: FilterOption[]; programStatus: FilterOption[]; employer: FilterOption[];
+  } | null>(null);
 
   const [filters, setFilters] = useState<CaseloadFilterState>(INITIAL_FILTERS);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -162,6 +166,22 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   // One "today" per mount. Every day-offset on the page is measured from the
   // same instant, so two rows can never disagree about how far away a date is.
   const today = useMemo(() => startOfToday(), []);
+  const caseloadUrl = useMemo(() => {
+    const query = new URLSearchParams({ page: String(currentPage), page_size: String(pageSize) });
+    if (filters.search.trim()) query.set('search', filters.search.trim());
+    if (filters.cohort !== 'all') query.set('cohort', filters.cohort);
+    if (filters.group !== 'all') query.set('group', filters.group);
+    if (filters.programStatus !== 'all') query.set('status', filters.programStatus);
+    // Computed risk states cannot be applied before canonical enrichment. Keep
+    // them in the request identity so changing the tab still refreshes page 1,
+    // while the returned page is filtered with the unchanged canonical rule.
+    if (statusFilter !== 'all') query.set('view_status', statusFilter);
+    if (sortKey === 'name') {
+      query.set('sort', 'name');
+      query.set('direction', sortDirection);
+    }
+    return `${CASELOAD_ENDPOINT}?${query}`;
+  }, [currentPage, filters.cohort, filters.group, filters.programStatus, filters.search, sortDirection, sortKey, statusFilter]);
 
   useEffect(() => {
     if (!isInitialized) return;
@@ -170,28 +190,6 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     async function loadCaseload() {
       setLoading(true);
       setError(null);
-
-      if (embedded) {
-        setOwnerName(authenticatedCoachName);
-        setLearners((embeddedLearners || []).map(source => normalizeLearner({
-          ...source,
-          // Dashboard uses compact names for these already-computed review dates.
-          lastProgressReview: (source as CaseloadApiLearner & { lastProgressReview?: string }).lastProgressReview || source.lastPr,
-          lastReview: (source as CaseloadApiLearner & { lastReview?: string }).lastReview || source.lastMcm,
-        } as CaseloadApiLearner, source.attendanceRateAvailable ? {
-          id: source.id,
-          learner: source.name || '',
-          attendance: source.attendanceRate,
-          hasAttendance: source.attendanceRateAvailable,
-          sessions: source.attendanceSessions,
-          present: source.attendancePresent,
-          absent: source.attendanceAbsent,
-          lastSession: source.attendanceLastSession,
-          lastSessionDate: source.attendanceLastSessionDate,
-        } : null)));
-        setLoading(false);
-        return;
-      }
 
       if (!authenticatedCoachEmail) {
         setOwnerName(authenticatedCoachName);
@@ -206,11 +204,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
       }
 
       try {
-        const [caseloadResponse, attendanceLearners, completedReviews] = await Promise.all([
-          coachFetch(CASELOAD_ENDPOINT, { signal: controller.signal }),
-          fetchAttendanceLearners(controller.signal),
-          fetchLastCompletedReviews(controller.signal),
-        ]);
+        const caseloadResponse = await coachFetch(caseloadUrl, { signal: controller.signal });
         if (!caseloadResponse.ok) {
           const payload = await caseloadResponse.json().catch(() => ({})) as { detail?: string; message?: string };
           throw new Error(payload.detail || payload.message || `Request failed with status ${caseloadResponse.status}`);
@@ -219,15 +213,20 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
         const data: CaseloadApiResponse = await caseloadResponse.json();
         if (controller.signal.aborted) return;
         setOwnerName(data.owner?.name || authenticatedCoachName);
-        setLearners((data.learners || []).map((source) => {
-          const normalized = normalizeLearner(source, findAttendanceRecord(source, attendanceLearners));
-          const reviews = completedReviews.get(normalized.id);
-          return {
-            ...normalized,
-            lastProgressReview: reviews?.pr || normalized.lastProgressReview,
-            lastReview: reviews?.mcm || normalized.lastReview,
-          };
-        }));
+        const pageResults = data.results || data.learners || [];
+        setLearners(pageResults.map((source) => normalizeLearner({
+          ...source,
+          lastProgressReview: source.lastProgressReview || source.lastPr || undefined,
+          lastReview: source.lastReview || source.lastMcm || undefined,
+        }, source.attendanceRateAvailable ? {
+          id: source.id, learner: source.name || '', attendance: source.attendanceRate,
+          hasAttendance: true, sessions: source.attendanceSessions, present: source.attendancePresent,
+          absent: source.attendanceAbsent, lastSession: source.attendanceLastSession,
+          lastSessionDate: source.attendanceLastSessionDate,
+        } : null)));
+        setServerTotal(data.pagination?.total ?? pageResults.length);
+        setServerTotalPages(data.pagination?.totalPages ?? (pageResults.length ? 1 : 0));
+        setServerFilterOptions(data.filterOptions || null);
       } catch (err) {
         if (controller.signal.aborted) return;
         console.error('Unable to load coach caseload', err);
@@ -240,14 +239,14 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
     loadCaseload();
     return () => controller.abort();
-  }, [auth.account, authenticatedCoachEmail, authenticatedCoachName, embedded, embeddedLearners, isInitialized, reloadToken]);
+  }, [authenticatedCoachEmail, authenticatedCoachName, caseloadUrl, isInitialized, reloadToken]);
 
   // --- derived data ---------------------------------------------------------
 
   // The one expensive computation on the page, and the only place risk is
   // decided. Keyed on the learner list, so filtering and sorting never redo it.
   const insights = useMemo(() => buildInsightMap(learners, today), [learners, today]);
-  const filterOptions = useMemo(() => ({
+  const filterOptions = useMemo(() => serverFilterOptions || ({
     cohort: [...new Map(learners.map((learner) => [learner.cohortId, displayValue(learner.cohortName)])).entries()]
       .filter(([, label]) => label !== EMPTY_VALUE)
       .map(([value, label]) => ({ value, label }))
@@ -255,7 +254,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     group: uniqueOptions(learners.map((learner) => displayValue(learner.group))),
     programStatus: uniqueOptions(learners.map((learner) => displayValue(learner.rawProgramStatus))),
     employer: uniqueOptions(learners.map((learner) => displayValue(learner.employer))),
-  }), [learners]);
+  }), [learners, serverFilterOptions]);
 
   const matched = useMemo(() => {
     const search = filters.search.trim().toLowerCase();
@@ -290,12 +289,10 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
           break;
       }
 
-      if (filters.cohort !== 'all' && learner.cohortId !== filters.cohort) return false;
-      if (filters.group !== 'all' && displayValue(learner.group) !== filters.group) return false;
-      if (filters.programStatus !== 'all' && displayValue(learner.rawProgramStatus) !== filters.programStatus) return false;
+      // Search and stable placement filters have already been applied by the server.
       if (filters.employer !== 'all' && displayValue(learner.employer) !== filters.employer) return false;
 
-      if (search) {
+      if (false && search) {
         // Name and email are what a coach types; cohort, group and employer stay
         // searchable because the previous page allowed them and people rely on it.
         const haystack = [
@@ -353,12 +350,9 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     setCurrentPage(1);
   }, [sortKey]);
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const totalPages = Math.max(1, serverTotalPages);
   const safePage = Math.min(currentPage, totalPages);
-  const paginated = useMemo(
-    () => sorted.slice((safePage - 1) * pageSize, (safePage - 1) * pageSize + pageSize),
-    [sorted, safePage, pageSize],
-  );
+  const paginated = sorted;
 
   const matchedIdKey = useMemo(() => sorted.map((learner) => learner.id).join(','), [sorted]);
 
@@ -587,7 +581,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
             <Pagination
               page={safePage}
               totalPages={totalPages}
-              total={sorted.length}
+              total={serverTotal}
               pageSize={pageSize}
               onPageChange={setCurrentPage}
             />
@@ -596,7 +590,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
         {hasFiltersApplied && !loading && !error && sorted.length > 0 ? (
           <p className={styles.footerNote}>
-            Showing {sorted.length} of {learners.length} learners in your caseload.
+            Showing {sorted.length} learners on this page from {serverTotal} matching learners.
           </p>
         ) : null}
       </section>

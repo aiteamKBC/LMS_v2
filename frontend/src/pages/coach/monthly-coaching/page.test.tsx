@@ -32,7 +32,8 @@ function meeting(index: number, overrides: Partial<CoachCalendarEvent> = {}): Co
     id: `meeting-${index}`, eventKey: `mcr:${index}`, title: `Monthly coaching meeting ${index}`,
     type: 'coaching', source: 'mcr', learner: `Learner ${index}`, learnerId: String(index),
     learnerType: 'apprenticeship', status: 'not-scheduled', targetDate: '2026-09-20',
-    group: 'Alpha', durationMinutes: 60, ...overrides,
+    group: 'Alpha', durationMinutes: 60, reviewSource: 'curriculum',
+    reviewTemplateId: 'REV-MCM', enrolmentId: `ENR-${index}`, ...overrides,
   };
 }
 
@@ -166,8 +167,8 @@ describe('restored monthly coaching list', () => {
 
   it('restores Schedule and Reschedule popups for imported Aptem meetings', async () => {
     fetchEvents.mockResolvedValue({ events: [
-      meeting(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled' }),
-      meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00' }),
+      meeting(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: true }),
+      meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
     ] });
     mount('/coach/monthly-coaching?filter=all');
     await screen.findByText('Imported Scheduled');
@@ -178,6 +179,14 @@ describe('restored monthly coaching list', () => {
 
     fireEvent.click(within(screen.getByText('Imported Scheduled').closest('tr')!).getByRole('button', { name: 'Reschedule' }));
     expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByLabelText('Date')).toHaveValue('2026-09-23');
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
+
+    const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
+    expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
+      'Reschedule', 'View', 'View Form', 'Create Slides',
+    ]);
+    fireEvent.click(scheduledRow.getByRole('button', { name: 'View' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('reviewId=21');
   });
 
   it('renders the requested table columns and coaching actions', async () => {
@@ -187,7 +196,7 @@ describe('restored monthly coaching list', () => {
     expect(within(table).getAllByRole('columnheader').map(header => header.textContent)).toEqual([
       'Learner', 'Cohort', 'Date & time', 'Status', 'Schedule', 'Actions',
     ]);
-    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Form' })).toBeVisible();
+    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View Form' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Create Slides' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Reschedule' })).toBeVisible();
@@ -210,14 +219,14 @@ describe('restored monthly coaching list', () => {
     expect(within(screen.getByText('Awaiting Signature Learner').closest('tr')!).queryByRole('button', { name: /Schedule/ })).toBeNull();
   });
 
-  it('shows only View for completed and awaiting-signature meetings', async () => {
+  it('keeps safe completed and awaiting-signature actions without scheduling', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
     for (const learner of ['Completed Learner', 'Awaiting Signature Learner']) {
       const row = within(screen.getByText(learner).closest('tr')!);
       expect(row.getByRole('button', { name: 'View' })).toBeVisible();
-      expect(row.queryByRole('button', { name: 'Form' })).toBeNull();
-      expect(row.queryByRole('button', { name: 'Create Slides' })).toBeNull();
+      expect(row.getByRole('button', { name: 'View Form' })).toBeVisible();
+      expect(row.getByRole('button', { name: 'Create Slides' })).toBeVisible();
       expect(row.queryByRole('button', { name: 'Join' })).toBeNull();
     }
   });
@@ -227,7 +236,7 @@ describe('restored monthly coaching list', () => {
     await screen.findByText('Scheduled Learner');
     const row = within(screen.getByText('In Progress Learner').closest('tr')!);
     expect(row.queryByRole('button', { name: /Schedule/ })).toBeNull();
-    expect(row.getByRole('button', { name: 'Form' })).toBeVisible();
+    expect(row.getByRole('button', { name: 'View Form' })).toBeVisible();
     expect(row.getByRole('button', { name: 'Create Slides' })).toBeVisible();
   });
 
@@ -276,7 +285,7 @@ describe('restored monthly coaching list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
     expect(visibleLearners()).toHaveLength(2);
     const returnTo = screen.getByTestId('route').textContent;
-    fireEvent.click(screen.getAllByRole('button', { name: 'Form' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'View Form' })[0]);
     const back = await screen.findByRole('link', { name: 'Back to Coaching Meetings' });
     expect(back).toHaveAttribute('href', returnTo);
     fireEvent.click(back);

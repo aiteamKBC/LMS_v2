@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CoachCalendarEvent } from './calendarEvents';
 import { latestCompletedReviewDate, reviewScheduleAvailable } from './calendarEvents';
+import { normalizeResolvedReviews, normalizedReviewStatus, reviewActionMatrix } from './resolvedReviewRows';
 
 const event = (overrides: Partial<CoachCalendarEvent>): CoachCalendarEvent => ({
   id: 'event',
@@ -15,6 +16,49 @@ const event = (overrides: Partial<CoachCalendarEvent>): CoachCalendarEvent => ({
 });
 
 describe('resolved review stream dashboard helpers', () => {
+  it('normalizes Aptem and Curriculum Scheduled rows to the same action matrix', () => {
+    const aptem = event({
+      id: 'imported-review:A-1', eventKey: 'imported-review:A-1', reviewSource: 'aptem',
+      aptemReviewId: 'A-1', status: 'confirmed', scheduledTime: '10:00', hasReviewForm: true,
+      enrolmentId: 'ENR-A-1',
+    });
+    const native = event({
+      id: 'native-1', eventKey: 'native-1', reviewSource: 'curriculum', status: 'scheduled',
+      scheduledTime: '10:00', reviewInstanceId: 'REVI-1', enrolmentId: 'ENR-1',
+    });
+
+    expect(normalizedReviewStatus(aptem)).toBe('scheduled');
+    expect(normalizedReviewStatus(native)).toBe('scheduled');
+    expect(reviewActionMatrix(aptem)).toEqual(reviewActionMatrix(native));
+    expect(reviewActionMatrix(aptem)).toEqual({
+      schedule: 'Reschedule', view: true, viewForm: true, presentation: true, join: false,
+    });
+  });
+
+  it('keeps Completed source rows aligned and never offers Reschedule', () => {
+    const aptem = event({ reviewSource: 'aptem', aptemReviewId: 'A-2', hasReviewForm: true });
+    const native = event({ reviewSource: 'curriculum', reviewInstanceId: 'REVI-2' });
+    expect(reviewActionMatrix(aptem)).toMatchObject({ schedule: null, view: true, viewForm: true });
+    expect(reviewActionMatrix(native)).toMatchObject({ schedule: null, view: true, viewForm: true });
+  });
+
+  it('shows Schedule consistently for unbooked rows and never treats confirmed as completed', () => {
+    const aptem = event({ status: 'confirmed', scheduledDate: '2026-09-20', scheduledTime: null });
+    const native = event({ status: 'not-scheduled', scheduledDate: null, scheduledTime: null });
+    expect(normalizedReviewStatus(aptem)).toBe('not-scheduled');
+    expect(reviewActionMatrix(aptem).schedule).toBe('Schedule');
+    expect(reviewActionMatrix(native).schedule).toBe('Schedule');
+  });
+
+  it('deduplicates only by stable event identity and does no fuzzy learner matching', () => {
+    const rows = normalizeResolvedReviews([
+      event({ id: 'stable-1', eventKey: 'stable-1', learner: 'Same Name' }),
+      event({ id: 'duplicate-copy', eventKey: 'stable-1', learner: 'Renamed Learner' }),
+      event({ id: 'stable-2', eventKey: 'stable-2', learner: 'Same Name', email: 'same@example.invalid' }),
+    ]);
+    expect(rows.map(row => row.id)).toEqual(['stable-1', 'stable-2']);
+  });
+
   it('keeps weekly cards available when resolved reviews exist despite an unrelated issue', () => {
     expect(reviewScheduleAvailable(
       { progressReviewRows: 26, mcrRows: 93, learnersWithDates: 31 },

@@ -76,6 +76,7 @@ function expectStructuredSkeleton() {
 
 it('shows only dashboard skeletons while the initial request is pending', async () => {
   vi.useRealTimers();
+  mocks.coachFetch.mockResolvedValue(new Response(JSON.stringify({ results: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } })));
   const finishLoads: Array<(value: unknown) => void> = [];
   mocks.load.mockImplementation(() => new Promise(resolve => { finishLoads.push(resolve); }));
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
@@ -101,6 +102,7 @@ it('shows the learner table only after a successful response', async () => {
 
 it('shows the learner empty state only after an empty response finishes', async () => {
   vi.useRealTimers();
+  mocks.coachFetch.mockResolvedValue(new Response(JSON.stringify({ results: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } })));
   mocks.load.mockImplementation((url: string) => Promise.resolve(
     url.includes('/marking-queue') ? { summary: { pendingItems: 0 } } : { owner: { name: 'Example Coach' }, learners: [], timetable: { events: [] } },
   ));
@@ -124,6 +126,7 @@ it('returns immediately to skeletons when the selected coach changes', async () 
   expect(await within(riskTable).findByText('Example Learner')).toBeVisible();
   const finishLoads: Array<(value: unknown) => void> = [];
   mocks.load.mockImplementation(() => new Promise(resolve => { finishLoads.push(resolve); }));
+  mocks.coachFetch.mockResolvedValue(new Response(JSON.stringify({ results: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } })));
   Object.assign(mocks.coach, { email: 'next-coach@example.invalid', name: 'Next Coach' });
   rerender(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   expectStructuredSkeleton();
@@ -135,6 +138,10 @@ it('returns immediately to skeletons when the selected coach changes', async () 
 
 it('shows serialized latest completed MCM and PR and ignores future or cancelled sessions', async () => {
   vi.useRealTimers();
+  mocks.coachFetch.mockResolvedValue(new Response(JSON.stringify({
+    results: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'at-risk', lastMcm: '12 Sept 2026', lastPr: '15 Sept 2026' }],
+    pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 },
+  })));
   mocks.calendar.mockResolvedValue({ events: [
     { ...meeting, id: 'completed-coaching', status: 'completed', scheduledDate: '2026-09-20', reviewCompletedAt: '2026-09-01T09:00:00Z' },
     { ...meeting, id: 'completed-review', source: 'progress-review', type: 'review', status: 'completed', scheduledDate: '2026-09-22', reviewCompletedAt: '2026-09-02T10:00:00Z' },
@@ -262,7 +269,7 @@ it('shows the six requested workload cards using the current week and marking qu
   mocks.load.mockImplementation((url: string) => Promise.resolve(
     url.includes('/marking-queue')
       ? { summary: { pendingItems: 6 } }
-      : { owner: { name: 'Example Coach' }, learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'at-risk' }], timetable: { events: dashboardEvents } },
+      : { owner: { name: 'Example Coach' }, learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', enrollmentStatus: 'active', status: 'at-risk', otjhStatus: 'at-risk', otjhCompleted: 0, otjhTarget: 100 }], timetable: { events: dashboardEvents } },
   ));
 
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
