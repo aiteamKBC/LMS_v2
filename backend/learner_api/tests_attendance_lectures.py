@@ -64,7 +64,7 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result['session_start_time'].strftime('%H:%M'), '00:30')
         self.assertEqual(result['scheduled_start'].tzinfo, datetime_timezone.utc)
 
-    def test_schedule_requires_assignment_and_accepts_invitation_or_confirmed_attendance(self):
+    def test_schedule_uses_current_module_assignment_without_stale_invitation_gate(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
         cur.fetchall.return_value = [('assigned-module', 'Current module title')]
@@ -75,14 +75,24 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertIn('enrolment."Created_users" WHERE id=%s', assignment_sql)
         self.assertEqual(assignment_params, [12])
         schedule_sql, schedule_params = cur.execute.call_args_list[1].args
-        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module'],
-                                           'learner@example.test', 'learner@example.test',
-                                           'learner@example.test'])
+        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
-        self.assertIn('jsonb_array_elements_text', schedule_sql)
         self.assertIn('curriculum.live_session_attendance', schedule_sql)
-        self.assertIn('a.total_attendance_seconds>0', schedule_sql)
+        self.assertIn('a.total_attendance_seconds>180', schedule_sql)
         self.assertIn('m.title AS module_title', schedule_sql)
+        self.assertNotIn('jsonb_array_elements_text', schedule_sql)
+        self.assertNotIn('live_session_join_launches', schedule_sql)
+
+    def test_empty_json_plan_still_uses_normalized_module_assignments(self):
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = [('assigned-module', 'Current module title')]
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+            read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test'))
+        assignment_sql = cur.execute.call_args_list[0].args[0]
+        self.assertIn('"Learner".learner_training_plan_modules', assignment_sql)
+        self.assertNotIn("WHERE jsonb_typeof(source.plan) IS DISTINCT FROM 'array'", assignment_sql)
 
     def test_confirmed_teams_attendee_is_present_when_the_saved_invite_is_missing(self):
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')

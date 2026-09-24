@@ -1329,7 +1329,10 @@ def learner_calendar_book(request, kind, pk):
                 )
     else:
         if mirror is None:
-            return _error("Only Active learners can book coach sessions.", 400)
+            return _error(
+                "Only Active learners can book coach sessions. "
+                "Book your first learning session first.", 400
+            )
         # The source learner carries the current assignment. A mirror can lag
         # after reassignment, and an explicitly cleared source assignment must
         # not silently send a new invite to the former coach.

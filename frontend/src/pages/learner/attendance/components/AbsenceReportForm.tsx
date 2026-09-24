@@ -207,9 +207,13 @@ export default function AbsenceReportForm({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!canSubmit || !selectedSession || submitting) return;
+  const submitReport = async (bookingOverride?: LearnerCalendarEvent): Promise<boolean> => {
+    const activeBooking = bookingOverride || selectedBooking;
+    const ready = Boolean(sessionId && hasReason && confirmed
+      && (scope === 'meetings' || (recoveryMethod === 'recorded' && recordingDate && recordingTime)
+        || (recoveryMethod === 'catch-up' && activeBooking)
+        || (recoveryMethod === 'alternative' && targetOccurrenceId)));
+    if (!ready || !selectedSession || submitting) return false;
     setSubmitting(true);
     setRequestError('');
     const payload = new FormData();
@@ -221,7 +225,7 @@ export default function AbsenceReportForm({
     payload.append('otherReason', otherReason.trim());
     payload.append('explanation', explanation.trim());
     payload.append('recoveryMethod', recoveryMethod);
-    if (recoveryMethod === 'catch-up' && selectedBooking) payload.append('catchupEventKey', selectedBooking.eventKey);
+    if (recoveryMethod === 'catch-up' && activeBooking) payload.append('catchupEventKey', activeBooking.eventKey);
     if (recoveryMethod === 'alternative' && targetOccurrenceId) payload.append('targetOccurrenceId', targetOccurrenceId);
     if (recoveryMethod === 'recorded') {
       const start = new Date(`${selectedSession.dateIso}T${selectedSession.startTime || '00:00'}`);
@@ -238,11 +242,19 @@ export default function AbsenceReportForm({
       setSubmittedReport(created);
       setSubmitted(true);
       onSubmitted?.(created);
+      return true;
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : 'Could not submit the absence report.');
+      return false;
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!canSubmit) return;
+    await submitReport();
   };
 
   const closeEvidencePreview = () => {
@@ -426,7 +438,7 @@ export default function AbsenceReportForm({
                 <label>Viewing time *<input aria-label="Recording viewing time" type="time" value={recordingTime} onChange={event => { setRecordingTime(event.target.value); setConfirmed(false); }} required /></label>
               </div>
             </div>}
-            {recoveryMethod === 'catch-up' && selectedSession && <CatchupBooking key={selectedSession.id} lecture={selectedSession} selectedKey={selectedBooking?.eventKey || ''} onSelect={selectBooking} onBusyChange={setBookingBusy} disabled={submitting} />}
+            {recoveryMethod === 'catch-up' && selectedSession && <CatchupBooking key={selectedSession.id} lecture={selectedSession} selectedKey={selectedBooking?.eventKey || ''} onSelect={selectBooking} onBooked={submitReport} onBusyChange={setBookingBusy} disabled={submitting} />}
 
             <OptionalDetails compact={compact}>
             <div>

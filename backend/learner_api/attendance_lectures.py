@@ -18,12 +18,38 @@ from .attendance import combined_attendance_rows, _summarize_attendance
 from .dashboard_metrics import as_json
 from .learner_detail import SOURCE_MODELS
 from .progress_rules import progress_record_counts_as_achieved as progress_counts_as_achieved
-from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records
+from .student_activity import _direct_progress_records
 from .student_activity_access import student_activity_available
 from .training_plan_dashboard import rows as dict_rows
 
 log = logging.getLogger(__name__)
 ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id')
+
+# Attendance must use both persisted representations of the current learning
+# plan.  An empty JSON array is common while the normalized learner-plan mirror
+# already contains the assigned modules (for example immediately after a plan
+# rebuild).  The shared student-activity query intentionally treats a JSON
+# array as authoritative, so attendance keeps its own union rather than
+# changing that behaviour for unrelated learner screens.
+ATTENDANCE_SUBJECTS_SQL = '''
+    WITH source AS (
+        SELECT id, CASE WHEN jsonb_typeof("Training_plan"::jsonb)='array'
+            THEN "Training_plan"::jsonb ELSE "Learning_plan"::jsonb END AS plan
+        FROM enrolment."Created_users" WHERE id=%s
+    ), assigned AS (
+        SELECT entry->>'moduleId' AS module_id FROM source
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END
+        ) entry
+        UNION
+        SELECT coalesce(m.curriculum_module_id,nullif(m.module_ref,'')) FROM source
+        JOIN "Learner".learners l ON l.enrolment_id=source.id
+        JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
+    )
+    SELECT DISTINCT cm.module_catalogue_id,cm.title
+    FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
+    WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
+'''
 
 
 def _text(value):
@@ -99,10 +125,9 @@ def report_id(row):
 def read_native_occurrences(source):
     """Current assigned-module occurrences expected for, or attended by, the learner.
 
-    The saved Teams invite list remains authoritative for sessions with no
-    attendance evidence. A completed Teams report is stronger evidence for an
-    attendee, though, and must not be hidden merely because the series invite
-    list is stale (for example after a learner joined the cohort later).
+    Current module assignment is authoritative for the learner's schedule.  A
+    saved Teams invite list may be stale after assignment changes, so it must
+    not hide a module session.  Completed attendance evidence is merged below.
     """
     if not source.email:
         return []
@@ -110,7 +135,7 @@ def read_native_occurrences(source):
         # An old Teams invitation is not a current curriculum assignment.
         # Use the same saved plan as My Learning and Training Plan, then exclude
         # deleted delivery modules and replaced meeting series below.
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.id])
+        cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
         module_ids = [row[0] for row in cur.fetchall()]
         if not module_ids:
             return []
@@ -130,17 +155,7 @@ def read_native_occurrences(source):
               AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
               AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
               AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
-              AND (EXISTS (SELECT 1 FROM jsonb_array_elements_text(
-                    CASE WHEN jsonb_typeof(s.attendees)='array' THEN s.attendees ELSE '[]'::jsonb END) e
-                    WHERE lower(btrim(e))=%s)
-                   OR (o.attendance_report_id IS NOT NULL AND o.attendance_report_id<>''
-                       AND EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
-                           WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s
-                             AND a.total_attendance_seconds>0))
-                   OR EXISTS(SELECT 1 FROM curriculum.live_session_join_launches j
-                       WHERE j.occurrence_id=o.id AND lower(btrim(j.viewer_email))=%s))
-            ORDER BY o.scheduled_start,o.id''', [_key(source.email), module_ids,
-                                                _key(source.email), _key(source.email), _key(source.email)])
+            ORDER BY o.scheduled_start,o.id''', [_key(source.email), module_ids])
         result = dict_rows(cur)
     now = timezone.now()
     for row in result:
@@ -275,7 +290,7 @@ def read_native_components(source, module_refs=None):
     if module_refs is not None and not module_refs:
         return [], _direct_progress_records(source.id)
     with connections['enrolment'].cursor() as cur:
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.id])
+        cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
         modules = [row[0] for row in cur.fetchall() if module_refs is None or row[0] in module_refs]
         cur.execute('''SELECT c.id,c.module_catalogue_id,c.week_id,c.type,c.title,c.description,
             jsonb_build_object(
@@ -314,7 +329,7 @@ def read_assigned_modules(source):
     its zero/upcoming state.
     """
     with connections['enrolment'].cursor() as cur:
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.id])
+        cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
         return [{'id': row[0], 'title': row[1]} for row in cur.fetchall()]
 
 

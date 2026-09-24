@@ -134,6 +134,86 @@ describe('Saved session results', () => {
     expect(screen.getByText('Not requested')).toBeInTheDocument();
   });
 
+  it('keeps unknown Teams identities separate and lets staff link one to a module learner', async () => {
+    const unmatched = { email: 'other@example.invalid', name: 'Other identity', seconds: 600,
+      attendance: 1, status: 'present', rawAttendance: 1, rawStatus: 'present',
+      expected: false, excused: false, catchupCompleted: false };
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session,
+      unmatchedAttendance: [unmatched],
+      attendanceCandidates: [{ learnerProfileId: 7, email: 'learner@example.invalid', name: 'Learner One' }],
+    }] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({
+      aliasEmail: unmatched.email, learnerProfileId: 7,
+      learnerEmail: 'learner@example.invalid', learnerName: 'Learner One',
+    }) } as Response);
+
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    expect(screen.queryByText('Other identity')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Review unmatched participants (1)' }));
+    fireEvent.change(screen.getByLabelText('Match other@example.invalid to learner'), { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
+
+    await waitFor(() => expect(coachFetch).toHaveBeenCalledWith(
+      '/curriculum_api/curriculum/session-results/S1/sessions/1/attendance-alias/',
+      expect.objectContaining({ method: 'POST', body: '{"aliasEmail":"other@example.invalid","learnerProfileId":7,"sourceRecordIds":[]}' }),
+    ));
+    expect(await screen.findByText(/is now matched to Learner One/)).toBeInTheDocument();
+  });
+
+  it('groups email-less Teams records and sends their source identities for manual matching', async () => {
+    const unmatched = { email: '', name: 'Shaz Yousaf', seconds: 6205, sourceRecordIds: ['ROW-1', 'ROW-2', 'ROW-3'],
+      attendance: null, status: 'review', rawAttendance: null, rawStatus: 'review',
+      expected: false, excused: false, catchupCompleted: false };
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session,
+      unmatchedAttendance: [unmatched],
+      attendanceCandidates: [{ learnerProfileId: 7, email: 'learner@example.invalid', name: 'Shezreah Yousaf' }],
+    }] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({
+      aliasEmail: '', sourceRecordIds: unmatched.sourceRecordIds, learnerProfileId: 7,
+      learnerEmail: 'learner@example.invalid', learnerName: 'Shezreah Yousaf',
+    }) } as Response);
+
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review unmatched participants (1)' }));
+    expect(screen.getByText('Unverified Teams identity')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Match Shaz Yousaf to learner'), { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
+
+    await waitFor(() => expect(coachFetch).toHaveBeenCalledWith(
+      '/curriculum_api/curriculum/session-results/S1/sessions/1/attendance-alias/',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ aliasEmail: '', learnerProfileId: 7, sourceRecordIds: unmatched.sourceRecordIds }) }),
+    ));
+  });
+
+  it('preselects a unique name suggestion but waits for staff confirmation', async () => {
+    const unmatched = { email: '', name: 'Learner One', seconds: 600, sourceRecordIds: ['ROW-1'],
+      suggestedLearnerProfileId: 7, attendance: null, status: 'review', rawAttendance: null, rawStatus: 'review',
+      expected: false, excused: false, catchupCompleted: false };
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session,
+      unmatchedAttendance: [unmatched],
+      attendanceCandidates: [{ learnerProfileId: 7, email: 'learner@example.invalid', name: 'Learner One' }],
+    }] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({
+      aliasEmail: '', sourceRecordIds: unmatched.sourceRecordIds, learnerProfileId: 7,
+      learnerEmail: 'learner@example.invalid', learnerName: 'Learner One',
+    }) } as Response);
+
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review unmatched participants (1)' }));
+    const select = screen.getByLabelText('Match Learner One to learner');
+    expect(select).toHaveValue('7');
+    expect(screen.getByText(/Suggested from the Teams name/)).toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
+    fireEvent.change(select, { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Link identity' })).toBeDisabled();
+    fireEvent.change(select, { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
+    await waitFor(() => expect(coachFetch).toHaveBeenCalledTimes(1));
+  });
+
   it('shows a failed archive without attempting playback', async () => {
     fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, artifacts: [{ id: 'A', type: 'recording', state: 'failed' }] }] }));
     render(<SessionResults seriesId="S1" sessionNumber={1} />);

@@ -4,10 +4,11 @@ import type { MissedAttendanceSession } from '@/api/absenceReports';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import styles from '../attendance.module.css';
 
-export default function CatchupBooking({ lecture, selectedKey, onSelect, onBusyChange, disabled = false, standalone = false }: {
+export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooked, onBusyChange, disabled = false, standalone = false }: {
   lecture: MissedAttendanceSession;
   selectedKey: string;
   onSelect: (event: LearnerCalendarEvent | null) => void;
+  onBooked?: (event: LearnerCalendarEvent) => Promise<boolean>;
   onBusyChange: (busy: boolean) => void;
   disabled?: boolean;
   standalone?: boolean;
@@ -78,7 +79,10 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBusyC
         || !result.event.scheduledDate || !result.event.scheduledTime) throw new Error('The session was not booked. Please refresh your bookings before retrying.');
       setEvents(current => [...current.filter(event => event.eventKey !== result.event.eventKey), result.event]);
       onSelect(result.event);
-      setNotice(result.warning || `Catch-up session booked.${standalone ? '' : ' You can now submit your absence report.'}`);
+      const reportLinked = onBooked ? await onBooked(result.event) : false;
+      setNotice(result.warning || (reportLinked
+        ? 'Catch-up session booked and linked to your absence report.'
+        : `Catch-up session booked.${standalone ? '' : ' Submit your absence report to link it to this lecture.'}`));
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not book the catch-up session.'); }
     finally { setBusy(false); onBusyChange(false); }
   };

@@ -10,7 +10,7 @@ from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 from login.permissions import require_role, learner_self_or_staff
 
-from .session_results_policy import session_roster, attendance_csv, instant, session_runs
+from .session_results_policy import attendance_display_name, attendance_name_key, session_roster, attendance_csv, instant, session_runs
 from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
 from .session_sync_runtime import start_requested_sync
 from .session_transfer_progress import summarize_transfers
@@ -39,6 +39,32 @@ def archive_schema_missing(error):
     """Only a missing table allows explicitly degraded saved-result reads."""
     cause = error.__cause__ or error
     return getattr(cause, 'sqlstate', None) == '42P01'
+
+
+def attendance_alias_rows(module_catalogue_id):
+    """Read optional identity aliases without taking session results offline."""
+
+    try:
+        return read('''SELECT alias_email,learner_profile_id,canonical_email
+            FROM curriculum.live_session_attendance_aliases
+            WHERE module_catalogue_id=%s''', [module_catalogue_id or ''])
+    except DatabaseError as error:
+        if not archive_schema_missing(error):
+            raise
+        return []
+
+
+def attendance_identity_link_rows(occurrence_ids):
+    """Read optional reviewed links for raw Teams rows without an email."""
+
+    try:
+        return read('''SELECT occurrence_id,attendance_row_id,learner_profile_id,canonical_email
+            FROM curriculum.live_session_attendance_identity_links
+            WHERE occurrence_id=ANY(%s)''', [list(occurrence_ids)])
+    except DatabaseError as error:
+        if not archive_schema_missing(error):
+            raise
+        return []
 
 
 def launch_expectations(series_ids, emails=None):
@@ -77,6 +103,8 @@ def result_rows(series, *, session_number=None, email=None):
         attendance_status,recovery_status,attended_seconds,attendance_report_id,first_join_at,last_leave_at
         FROM curriculum.live_session_learner_attendance
         WHERE occurrence_id=ANY(%s) ORDER BY learner_name,learner_profile_id''', [ids])
+    aliases = attendance_alias_rows(series.get('module_catalogue_id')) if email is None else []
+    identity_links = attendance_identity_link_rows(ids) if email is None else []
     archive_ready = True
     try:
         artifacts = read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,a.end_datetime,
@@ -97,6 +125,7 @@ def result_rows(series, *, session_number=None, email=None):
     attendance_by_id, register_by_id, artifacts_by_id = defaultdict(list), defaultdict(list), defaultdict(list)
     for record in records:
         record['intervals'] = json_value(record.get('intervals'), [])
+        record['display_name'] = attendance_display_name(record)
         attendance_by_id[record['occurrence_id']].append(record)
     for register_row in register_rows:
         register_by_id[register_row['occurrence_id']].append(register_row)
@@ -117,6 +146,24 @@ def result_rows(series, *, session_number=None, email=None):
                 if artifact['artifact_type'] == 'recording' else [],
         })
     results = []
+    linked_aliases = {
+        str(row.get('alias_email') or '').strip().casefold()
+        for row in aliases if str(row.get('alias_email') or '').strip()
+    }
+    linked_source_ids = {
+        (str(row.get('occurrence_id') or ''), str(row.get('attendance_row_id') or ''))
+        for row in identity_links
+        if str(row.get('attendance_row_id') or '').strip()
+    }
+    protected_emails = {
+        str(value or '').strip().casefold()
+        for key in ('organizer_email', 'presenters', 'co_organizers')
+        for value in (
+            json_value(series.get(key), [])
+            if key != 'organizer_email' else [series.get(key)]
+        )
+        if str(value or '').strip()
+    }
     for item in occurrences:
         complete = bool(item.get('attendance_report_id') and item.get('actual_end'))
         saved_register = register_by_id[item['id']]
@@ -125,6 +172,26 @@ def result_rows(series, *, session_number=None, email=None):
             for row in saved_register if str(row.get('learner_email') or '').strip()
         }
         expected = set(learner_by_email)
+        candidate_emails_by_name = defaultdict(set)
+        for learner_email, learner_row in learner_by_email.items():
+            name_key = attendance_name_key(learner_row.get('learner_name'))
+            if name_key:
+                candidate_emails_by_name[name_key].add(learner_email)
+        unique_email_by_name = {
+            name_key: next(iter(candidate_emails))
+            for name_key, candidate_emails in candidate_emails_by_name.items()
+            if len(candidate_emails) == 1
+        }
+        def saved_exact_name_match(row):
+            if str(row.get('email') or '').strip():
+                return False
+            matched_email = unique_email_by_name.get(attendance_name_key(row.get('display_name')))
+            saved = learner_by_email.get(matched_email) if matched_email else None
+            return bool(
+                saved
+                and saved.get('attendance_status') == 'present'
+                and int(saved.get('attended_seconds') or 0) > 0
+            )
         learner_records = [
             row for row in attendance_by_id[item['id']]
             if str(row.get('email') or '').strip().casefold() in expected
@@ -147,6 +214,30 @@ def result_rows(series, *, session_number=None, email=None):
                 finalOutcome=status,
             )
         runs = session_runs(item, attendance_by_id[item['id']])
+        unmatched_records = [] if email is not None else [
+            row for row in attendance_by_id[item['id']]
+            if str(row.get('email') or '').strip().casefold() not in expected
+            and str(row.get('email') or '').strip().casefold() not in linked_aliases
+            and str(row.get('email') or '').strip().casefold() not in protected_emails
+            and (str(item['id']), str(row.get('id') or '')) not in linked_source_ids
+            and str(row.get('role') or '').strip().casefold() not in {'organizer', 'presenter', 'coorganizer', 'co-organizer'}
+            and not saved_exact_name_match(row)
+        ]
+        unmatched = session_roster(set(), unmatched_records, complete=complete)
+        for person in unmatched:
+            suggested_email = unique_email_by_name.get(attendance_name_key(person.get('name')))
+            suggested = learner_by_email.get(suggested_email) if suggested_email else None
+            person['suggestedLearnerProfileId'] = (
+                suggested.get('learner_profile_id') if suggested else None
+            )
+        candidates = [
+            {
+                'learnerProfileId': row.get('learner_profile_id'),
+                'email': str(row.get('learner_email') or '').strip().casefold(),
+                'name': row.get('learner_name') or row.get('learner_email') or 'Learner',
+            }
+            for row in saved_register
+        ] if email is None else []
         results.append({'id': item['id'], 'seriesId': series['id'], 'sessionNumber': item['session_number'],
                         'title': series.get('module_title') or '',
                         'startsAt': instant(item['scheduled_start']), 'endsAt': instant(item['scheduled_end']),
@@ -155,7 +246,9 @@ def result_rows(series, *, session_number=None, email=None):
                         'runs': runs,
                         'state': item['status'], 'reportReady': complete, 'archiveReady': archive_ready,
                         'syncedAt': instant(item.get('artifacts_synced_at')),
-                        'attendance': roster, 'artifacts': artifacts_by_id[item['id']]})
+                        'attendance': roster, 'unmatchedAttendance': unmatched,
+                        'attendanceCandidates': candidates,
+                        'artifacts': artifacts_by_id[item['id']]})
     apply_recovery(results)
     if email is not None:
         for item in results:
@@ -204,6 +297,121 @@ def apply_recovery(results):
 def unavailable():
     log.exception('Could not read saved session results')
     return JsonResponse({'error': 'Saved session results are unavailable. Check the session archive setup and try again.'}, status=503)
+
+
+@require_POST
+@csrf_protect
+@require_role('admin', 'staff')
+def link_attendance_alias(request, series_id, session_number):
+    """Link one reported Teams identity to a learner already in this module roster."""
+
+    try:
+        payload = json.loads(request.body or b'{}')
+    except (TypeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON body.'}, status=400)
+    alias_email = str(payload.get('aliasEmail') or '').strip().casefold()
+    raw_source_record_ids = payload.get('sourceRecordIds') or []
+    if not isinstance(raw_source_record_ids, list):
+        return JsonResponse({'error': 'Attendance record IDs must be a list.'}, status=400)
+    source_record_ids = sorted({
+        str(value or '').strip() for value in raw_source_record_ids
+        if str(value or '').strip()
+    })
+    try:
+        learner_profile_id = int(payload.get('learnerProfileId'))
+    except (TypeError, ValueError):
+        learner_profile_id = 0
+    if (alias_email and '@' not in alias_email) or (not alias_email and not source_record_ids):
+        return JsonResponse({'error': 'Choose a reported Teams identity to link.'}, status=400)
+    if len(alias_email) > 320 or any(len(value) > 128 for value in source_record_ids):
+        return JsonResponse({'error': 'The reported Teams identity is invalid.'}, status=400)
+    if len(source_record_ids) > 100:
+        return JsonResponse({'error': 'Too many attendance records were selected.'}, status=400)
+    if learner_profile_id <= 0:
+        return JsonResponse({'error': 'Choose a learner from this module.'}, status=400)
+
+    try:
+        occurrence_rows = read('''SELECT o.id,s.module_catalogue_id
+            FROM curriculum.live_session_occurrences o
+            JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+            WHERE s.id=%s AND o.session_number=%s''', [series_id, session_number])
+        if not occurrence_rows:
+            return JsonResponse({'error': 'Session not found.'}, status=404)
+        occurrence = occurrence_rows[0]
+        if alias_email:
+            reported = read('''SELECT id,display_name FROM curriculum.live_session_attendance
+                WHERE occurrence_id=%s AND lower(btrim(email))=%s''', [occurrence['id'], alias_email])
+        else:
+            reported = read('''SELECT id,display_name,raw_data FROM curriculum.live_session_attendance
+                WHERE occurrence_id=%s AND id=ANY(%s) AND coalesce(btrim(email),'')='' ''',
+                [occurrence['id'], source_record_ids])
+            if {str(row.get('id') or '') for row in reported} != set(source_record_ids):
+                reported = []
+        if not reported:
+            return JsonResponse({'error': 'That identity is not present in this Teams attendance report.'}, status=404)
+        candidates = read('''SELECT learner_profile_id,lower(btrim(learner_email)) AS learner_email,learner_name
+            FROM curriculum.live_session_learner_attendance
+            WHERE occurrence_id=%s AND learner_profile_id=%s''', [occurrence['id'], learner_profile_id])
+        if not candidates:
+            return JsonResponse({'error': 'Choose a learner assigned to this module session.'}, status=400)
+        candidate = candidates[0]
+        canonical_email = str(candidate.get('learner_email') or '').strip().casefold()
+        if not canonical_email or (alias_email and canonical_email == alias_email):
+            return JsonResponse({'error': 'This learner already uses that attendance email.'}, status=400)
+        if alias_email:
+            existing = read('''SELECT learner_profile_id FROM curriculum.live_session_attendance_aliases
+                WHERE module_catalogue_id=%s AND alias_email=%s''',
+                [occurrence['module_catalogue_id'], alias_email])
+        else:
+            existing = read('''SELECT attendance_row_id,learner_profile_id
+                FROM curriculum.live_session_attendance_identity_links
+                WHERE occurrence_id=%s AND attendance_row_id=ANY(%s)''',
+                [occurrence['id'], source_record_ids])
+        if any(int(row['learner_profile_id']) != learner_profile_id for row in existing):
+            return JsonResponse({'error': 'This Teams identity is already linked to another learner.'}, status=409)
+
+        actor = getattr(request, 'account', None)
+        actor_label = str(getattr(actor, 'email', '') or getattr(actor, 'subject_id', '') or '').strip()[:320]
+        with transaction.atomic():
+            with connections['default'].cursor() as cursor:
+                if alias_email and not existing:
+                    cursor.execute('''INSERT INTO curriculum.live_session_attendance_aliases
+                        (module_catalogue_id,alias_email,learner_profile_id,canonical_email,created_by)
+                        VALUES (%s,%s,%s,%s,%s)''', [
+                            occurrence['module_catalogue_id'], alias_email, learner_profile_id,
+                            canonical_email, actor_label,
+                        ])
+                if not alias_email:
+                    existing_ids = {str(row.get('attendance_row_id') or '') for row in existing}
+                    names_by_id = {
+                        str(row.get('id') or ''): attendance_display_name(row)
+                        for row in reported
+                    }
+                    for source_record_id in source_record_ids:
+                        if source_record_id in existing_ids:
+                            continue
+                        cursor.execute('''INSERT INTO curriculum.live_session_attendance_identity_links
+                            (occurrence_id,attendance_row_id,learner_profile_id,canonical_email,display_name,created_by)
+                            VALUES (%s,%s,%s,%s,%s,%s)''', [
+                                occurrence['id'], source_record_id, learner_profile_id, canonical_email,
+                                names_by_id.get(source_record_id, '')[:500], actor_label,
+                            ])
+
+        from learner_api.teams_attendance import sync_verified_teams_attendance_reporting
+        sync_verified_teams_attendance_reporting(module_refs=[occurrence['module_catalogue_id']])
+        return JsonResponse({
+            'aliasEmail': alias_email,
+            'sourceRecordIds': source_record_ids,
+            'learnerProfileId': learner_profile_id,
+            'learnerEmail': canonical_email,
+            'learnerName': candidate.get('learner_name') or canonical_email,
+        })
+    except DatabaseError as error:
+        if archive_schema_missing(error):
+            return JsonResponse({
+                'error': 'Attendance identity linking is not set up on this database yet.'
+            }, status=503)
+        return unavailable()
 
 
 def add_sync_progress(jobs):

@@ -2931,27 +2931,15 @@ def graph_item_with_occurrence_link(item, occurrence, launch=None):
 
 
 def attendance_identity(record):
-    identity = record.get('identity') if isinstance(record.get('identity'), dict) else {}
-    for key in ('user', 'guest', 'phone', 'encrypted'):
-        value = identity.get(key)
-        if isinstance(value, dict):
-            display_name = clean_str(value.get('displayName') or value.get('name'))
-            identity_id = clean_str(value.get('id'))
-            if display_name or identity_id:
-                return display_name, identity_id
-    return '', ''
+    from .session_results_policy import attendance_identity as policy_attendance_identity
+    return policy_attendance_identity(record)
 
 
 def attendance_display_name(record):
-    if not isinstance(record, dict):
-        return ''
-    display_name, _identity_id = attendance_identity(record)
+    from .session_results_policy import attendance_display_name as policy_attendance_display_name
+    display_name = policy_attendance_display_name(record)
     if display_name:
         return display_name
-    for key in ('displayName', 'participantDisplayName', 'name'):
-        display_name = clean_str(record.get(key))
-        if display_name:
-            return display_name
     email = clean_str(record.get('emailAddress') or record.get('email')).lower()
     if email and '@' in email:
         local = email.split('@', 1)[0]

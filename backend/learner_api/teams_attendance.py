@@ -1,8 +1,8 @@
 from collections import defaultdict
-from curriculum_api.session_results_policy import evidence_seconds
+from curriculum_api.session_results_policy import attendance_display_name, attendance_name_key, evidence_seconds
 from datetime import datetime, timezone as datetime_timezone
 
-from django.db import connections, router, transaction
+from django.db import connections, DatabaseError, router, transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -10,6 +10,8 @@ from django.utils.dateparse import parse_datetime
 from curriculum_api.models import (
     LiveSession,
     LiveSessionAttendance,
+    LiveSessionAttendanceAlias,
+    LiveSessionAttendanceIdentityLink,
     LiveSessionOccurrence,
     ModuleAuthoringModule,
 )
@@ -20,6 +22,59 @@ from .models import LearnerProfile, LearnerTrainingPlanModule
 
 def _email(value) -> str:
     return str(value or "").strip().casefold()
+
+
+def _canonical_attendance_email(module_ref, value, aliases_by_module) -> str:
+    """Resolve a reviewed module-scoped alias without guessing by display name."""
+
+    email = _email(value)
+    return aliases_by_module.get(str(module_ref or '').strip(), {}).get(email, email)
+
+
+def _attendance_alias_rows(database: str, module_refs):
+    """Keep the existing attendance sync usable before the optional alias table is installed."""
+
+    try:
+        return list(
+            LiveSessionAttendanceAlias.objects.using(database)
+            .filter(module_catalogue_id__in=list(module_refs))
+            .values_list('module_catalogue_id', 'alias_email', 'canonical_email')
+        )
+    except DatabaseError as error:
+        cause = error.__cause__ or error
+        if getattr(cause, 'sqlstate', None) != '42P01':
+            raise
+        return []
+
+
+def _attendance_identity_link_rows(database: str, occurrence_ids):
+    """Return optional staff-reviewed links for email-less Teams rows."""
+
+    try:
+        return list(
+            LiveSessionAttendanceIdentityLink.objects.using(database)
+            .filter(occurrence_id__in=list(occurrence_ids))
+            .values_list('occurrence_id', 'attendance_row_id', 'canonical_email')
+        )
+    except DatabaseError as error:
+        cause = error.__cause__ or error
+        if getattr(cause, 'sqlstate', None) != '42P01':
+            raise
+        return []
+
+
+def _unique_exact_name_email(display_name, expected_emails, learners_by_email):
+    """Match only one exact full name; partial, reordered and ambiguous names stay unmatched."""
+
+    key = attendance_name_key(display_name)
+    if not key:
+        return ''
+    matches = {
+        email for email in expected_emails
+        if email in learners_by_email
+        and attendance_name_key(getattr(learners_by_email[email], 'full_name', '')) == key
+    }
+    return next(iter(matches)) if len(matches) == 1 else ''
 
 
 def _assigned_learner_emails_by_module(database: str, module_refs) -> dict[str, set[str]]:
@@ -152,6 +207,14 @@ def fetch_verified_teams_attendance_rows(
         database,
         [session.module_catalogue_id for session in sessions],
     )
+    aliases_by_module: dict[str, dict[str, str]] = defaultdict(dict)
+    for module_ref, alias_email, canonical_email in _attendance_alias_rows(
+        database, assigned_by_module
+    ):
+        alias_key = _email(alias_email)
+        canonical_key = _email(canonical_email)
+        if alias_key and canonical_key:
+            aliases_by_module[str(module_ref or '').strip()][alias_key] = canonical_key
     expected_emails_by_session: dict[str, set[str]] = {}
     all_expected_emails: set[str] = set()
     for session in sessions:
@@ -243,22 +306,67 @@ def fetch_verified_teams_attendance_rows(
     if not occurrences:
         return []
 
+    occurrences_by_id = {occurrence.id: occurrence for occurrence in occurrences}
+    expected_emails_by_occurrence = {}
+    for occurrence in occurrences:
+        session = sessions_by_id.get(occurrence.live_session_id)
+        if session is None:
+            continue
+        expected_emails_by_occurrence[occurrence.id] = (
+            _module_expected_emails(
+                session,
+                assigned_by_module,
+                identity_learners_by_email.keys() if identity_learners_by_email is not None else None,
+            )
+            | set(approved_guests.get(occurrence.id, set()))
+        )
+    reviewed_identity_links = {
+        (str(occurrence_id), str(attendance_row_id)): _email(canonical_email)
+        for occurrence_id, attendance_row_id, canonical_email
+        in _attendance_identity_link_rows(database, occurrences_by_id)
+        if _email(canonical_email)
+    }
+
     attendance_by_occurrence: dict[str, dict[str, dict]] = defaultdict(dict)
     attendance_records = (
         LiveSessionAttendance.objects.using(database)
         .filter(occurrence_id__in=[occurrence.id for occurrence in occurrences])
         .only(
+            "id",
             "occurrence_id",
             "graph_record_id",
             "email",
             "display_name",
+            "role",
+            "raw_data",
             "total_attendance_seconds",
             "intervals",
         )
     )
     for record in attendance_records:
-        email_key = _email(record.email)
+        raw_email = _email(record.email)
+        occurrence = occurrences_by_id.get(record.occurrence_id)
+        session = sessions_by_id.get(occurrence.live_session_id) if occurrence else None
+        module_ref = str(session.module_catalogue_id or '').strip() if session else ''
+        email_key = _canonical_attendance_email(module_ref, raw_email, aliases_by_module)
+        source_row_id = str(record.id or '').strip()
         if not email_key:
+            email_key = reviewed_identity_links.get((str(record.occurrence_id), source_row_id), '')
+        if (
+            not email_key
+            and str(record.role or '').strip().casefold() in {'', 'attendee'}
+        ):
+            email_key = _unique_exact_name_email(
+                attendance_display_name({
+                    'display_name': record.display_name,
+                    'raw_data': record.raw_data,
+                }),
+                expected_emails_by_occurrence.get(record.occurrence_id, set()),
+                learners_by_email,
+            )
+        if not email_key:
+            continue
+        if email_key not in expected_emails_by_occurrence.get(record.occurrence_id, set()):
             continue
         first_join, last_leave = _attendance_interval_bounds(record.intervals)
         existing = attendance_by_occurrence[record.occurrence_id].get(email_key)
@@ -266,7 +374,7 @@ def fetch_verified_teams_attendance_rows(
             attendance_by_occurrence[record.occurrence_id][email_key] = {
                 "total_attendance_seconds": max(record.total_attendance_seconds or 0, 0),
                 "records": [{"intervals": record.intervals, "total_attendance_seconds": record.total_attendance_seconds}],
-                "source_record_id": str(record.graph_record_id or "").strip(),
+                "source_record_id": str(record.graph_record_id or record.id or "").strip(),
                 "first_join_at": first_join,
                 "last_leave_at": last_leave,
             }
@@ -305,14 +413,7 @@ def fetch_verified_teams_attendance_rows(
         # that can't be found no longer hides an otherwise-valid invite match.
         module = modules_by_id.get(module_ref)
 
-        occurrence_expected = (
-            _module_expected_emails(
-                session,
-                assigned_by_module,
-                identity_learners_by_email.keys() if identity_learners_by_email is not None else None,
-            )
-            | approved_guests[occurrence.id]
-        )
+        occurrence_expected = expected_emails_by_occurrence.get(occurrence.id, set())
         for email in occurrence_expected & expected_emails_by_session.get(session.id, set()):
             learner = learners_by_email.get(email)
             if learner is None:

@@ -340,6 +340,51 @@ class LiveSessionLearnerAttendance(models.Model):
         ]
 
 
+class LiveSessionAttendanceAlias(models.Model):
+    """A reviewed Teams email identity for one delivery module."""
+
+    module_catalogue_id = models.CharField(max_length=128, db_index=True)
+    alias_email = models.EmailField(max_length=320)
+    learner_profile_id = models.BigIntegerField(db_index=True)
+    canonical_email = models.EmailField(max_length=320)
+    created_by = models.CharField(max_length=320, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."live_session_attendance_aliases'
+        managed = False
+        constraints = [
+            models.UniqueConstraint(
+                fields=['module_catalogue_id', 'alias_email'],
+                name='curriculum_live_attendance_alias_uniq',
+            ),
+        ]
+
+
+class LiveSessionAttendanceIdentityLink(models.Model):
+    """A reviewed raw Teams attendance row linked to one module learner."""
+
+    occurrence_id = models.CharField(max_length=128, db_index=True)
+    attendance_row_id = models.CharField(max_length=128)
+    learner_profile_id = models.BigIntegerField(db_index=True)
+    canonical_email = models.EmailField(max_length=320)
+    display_name = models.CharField(max_length=500, blank=True, default='')
+    created_by = models.CharField(max_length=320, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."live_session_attendance_identity_links'
+        managed = False
+        constraints = [
+            models.UniqueConstraint(
+                fields=['occurrence_id', 'attendance_row_id'],
+                name='curriculum_live_attendance_identity_link_uniq',
+            ),
+        ]
+
+
 class LiveSessionAbsence(models.Model):
     """One learner's reported absence and recovery choice for one live session.
 

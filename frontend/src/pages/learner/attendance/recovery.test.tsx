@@ -130,9 +130,13 @@ describe('absence recovery choice', () => {
       'href', '/learner/calendar?kind=apprenticeship&learner=12&event=absence-recording%3A1');
   });
 
-  it('waits for a saved booking before allowing the absence submission', async () => {
+  it('links a newly saved catch-up booking to the absence report automatically', async () => {
     let finish!: (result: BookSessionResponse) => void;
     vi.mocked(bookLearnerCalendarSession).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    vi.mocked(submitAbsenceReport).mockResolvedValue({
+      id: 1, sessionTitle: 'first lecture', sessionDate: lectureDate, reference: 'AR-0001',
+      status: 'approved', recoveryMethod: 'catch-up',
+    } as LearnerAbsenceReport);
     await openForm(); await chooseCatchup();
     fireEvent.click(screen.getByRole('checkbox'));
     expect(submit()).toBeDisabled();
@@ -140,13 +144,6 @@ describe('absence recovery choice', () => {
     expect(submit()).toBeDisabled();
     expect(submitAbsenceReport).not.toHaveBeenCalled();
     finish({ event: booking });
-    await screen.findByText(/Catch-up session booked/);
-    expect(submit()).toBeEnabled();
-    vi.mocked(submitAbsenceReport).mockResolvedValue({
-      id: 1, sessionTitle: 'first lecture', sessionDate: lectureDate, reference: 'AR-0001',
-      status: 'approved', recoveryMethod: 'catch-up',
-    } as LearnerAbsenceReport);
-    fireEvent.click(submit());
     await waitFor(() => expect(submitAbsenceReport).toHaveBeenCalledOnce());
     const data = vi.mocked(submitAbsenceReport).mock.calls[0][2];
     expect(data.get('recoveryMethod')).toBe('catch-up');
@@ -165,6 +162,27 @@ describe('absence recovery choice', () => {
     await screen.findByRole('alert');
     expect(submit()).toBeDisabled();
     expect(submitAbsenceReport).not.toHaveBeenCalled();
+  });
+
+  it('keeps a successful booking selected when automatic report linking fails', async () => {
+    vi.mocked(submitAbsenceReport).mockRejectedValueOnce(new Error('Could not link the absence report.'));
+    await openForm(); await chooseCatchup(); fillBooking();
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'Book Catch-up Session' }));
+
+    expect(await screen.findByText('Could not link the absence report.')).toBeVisible();
+    expect(screen.getByText(/Catch-up session booked\. Submit your absence report/)).toBeVisible();
+    expect(submit()).toBeEnabled();
+    expect(bookLearnerCalendarSession).toHaveBeenCalledOnce();
+
+    vi.mocked(submitAbsenceReport).mockResolvedValue({
+      id: 1, sessionTitle: 'first lecture', sessionDate: lectureDate, reference: 'AR-0001',
+      status: 'approved', recoveryMethod: 'catch-up',
+    } as LearnerAbsenceReport);
+    fireEvent.click(submit());
+    await waitFor(() => expect(submitAbsenceReport).toHaveBeenCalledTimes(2));
+    expect(bookLearnerCalendarSession).toHaveBeenCalledOnce();
+    expect(await screen.findByText('Added to your calendar')).toBeVisible();
   });
 
   it('blocks a catch-up date that is a bank holiday before sending a booking request', async () => {

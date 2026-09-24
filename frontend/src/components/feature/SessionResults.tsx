@@ -5,7 +5,7 @@ import { SessionRecordingPlayer } from './SessionRecordingPlayer';
 import { SessionSyncStatus } from './SessionSyncStatus';
 import { formatSystemTimestamp } from '@/lib/format';
 import {
-  loadSessionResult, requestSessionSync, sessionAttendanceUrl, sessionFileUrl, setRecordingVisibility,
+  linkAttendanceAlias, loadSessionResult, requestSessionSync, sessionAttendanceUrl, sessionFileUrl, setRecordingVisibility,
   type SessionLearner, type SessionPerson, type SessionFile,
 } from '@/api/sessionResults';
 import { useSavedSessionData } from '@/hooks/useSavedSessionData';
@@ -41,6 +41,9 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
   const [tab, setTab] = useState<'recordings' | 'attendance' | 'transcripts'>('recordings');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
+  const [unmatchedOpen, setUnmatchedOpen] = useState(false);
+  const [aliasChoices, setAliasChoices] = useState<Record<string, string>>({});
+  const [aliasBusy, setAliasBusy] = useState('');
   const kind = learner?.kind, learnerId = learner?.id;
   const load = useCallback((signal: AbortSignal) =>
     loadSessionResult(seriesId, sessionNumber, kind && learnerId ? { kind, id: learnerId } : undefined, signal),
@@ -50,6 +53,7 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
   const loading = saved.loading;
   useEffect(() => {
     setError(''); setPage(0); setNotice(''); setTab('recordings');
+    setUnmatchedOpen(false); setAliasChoices({}); setAliasBusy('');
   }, [seriesId, sessionNumber, kind, learnerId]);
   const files = session?.artifacts?.filter(file => (!learner && !preview) || !file.hiddenFromLearners) || [];
   const recordings = files.filter(file => file.type === 'recording');
@@ -69,6 +73,26 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
     try { await setRecordingVisibility(seriesId, file.id, !file.hiddenFromLearners); saved.refresh(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not update visibility.'); }
     finally { setVisibilityBusy(''); }
+  };
+  const identityKey = (person: SessionPerson) => person.email || (person.sourceRecordIds || []).join('|');
+  const selectedLearnerId = (person: SessionPerson) => {
+    const key = identityKey(person);
+    return Object.prototype.hasOwnProperty.call(aliasChoices, key)
+      ? aliasChoices[key]
+      : String(person.suggestedLearnerProfileId || '');
+  };
+  const linkAlias = async (person: SessionPerson) => {
+    const key = identityKey(person);
+    const learnerProfileId = Number(selectedLearnerId(person) || 0);
+    if (!learnerProfileId) return;
+    setAliasBusy(key); setError(''); setNotice('');
+    try {
+      const linked = await linkAttendanceAlias(seriesId, sessionNumber, person.email, learnerProfileId, person.sourceRecordIds || []);
+      setNotice(`${linked.aliasEmail || person.name} is now matched to ${linked.learnerName}. Saved attendance was recalculated.`);
+      await saved.refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not link the reported email.');
+    } finally { setAliasBusy(''); }
   };
   return <section className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-sm" aria-label={`Session ${sessionNumber} results`}>
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 bg-primary-50/50 p-5">
@@ -118,6 +142,32 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
             <div className="flex flex-wrap gap-2"><a href={sessionAttendanceUrl(session)} className="rounded-lg border px-4 py-2 text-sm font-semibold"><AppIcon className="ri-download-line mr-2" />Export attendance CSV</a>
               <a href={sessionAttendanceUrl(session, 'pdf')} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white"><AppIcon className="ri-download-line mr-2" />Export attendance PDF</a></div></div>
           {!session.reportReady && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm">Awaiting a completed Teams report. Pending learners are not marked absent.</p>}
+          {!!session.unmatchedAttendance?.length && <div className="rounded-xl border border-amber-200 bg-amber-50/60">
+            <button type="button" aria-expanded={unmatchedOpen} onClick={() => setUnmatchedOpen(value => !value)}
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left font-semibold text-amber-950">
+              <span><AppIcon className="ri-user-search-line mr-2" />Review unmatched participants ({session.unmatchedAttendance.length})</span>
+              <AppIcon className={unmatchedOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+            </button>
+            {unmatchedOpen && <div className="space-y-3 border-t border-amber-200 p-4">
+              <p className="text-sm text-amber-900">These Teams identities are not assigned to a learner in this module. Link only an identity you have verified.</p>
+              {session.unmatchedAttendance.map(person => { const key = identityKey(person); return <div key={key} className="grid gap-3 rounded-lg border bg-white p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
+                <div><p className="font-semibold">{person.name}</p><p className="text-xs text-foreground-500">{person.email || 'Unverified Teams identity'}</p><p className="mt-1 text-xs">{Math.floor(person.seconds / 60)}m {person.seconds % 60}s in Teams</p></div>
+                <label className="text-xs font-semibold text-foreground-600">Match to module learner
+                  <select aria-label={`Match ${person.email || person.name} to learner`} value={selectedLearnerId(person)}
+                    onChange={event => setAliasChoices(value => ({ ...value, [key]: event.target.value }))}
+                    className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm font-normal">
+                    <option value="">Choose learner…</option>
+                    {(session.attendanceCandidates || []).map(candidate => <option key={candidate.learnerProfileId} value={candidate.learnerProfileId}>{candidate.name} · {candidate.email}</option>)}
+                  </select>
+                  {person.suggestedLearnerProfileId && !Object.prototype.hasOwnProperty.call(aliasChoices, key) && <span className="mt-1 block font-normal text-primary-700">Suggested from the Teams name — confirm before linking.</span>}
+                </label>
+                <button type="button" disabled={aliasBusy === key || !selectedLearnerId(person)}
+                  onClick={() => void linkAlias(person)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  {aliasBusy === key ? 'Linking…' : 'Link identity'}
+                </button>
+              </div>})}
+            </div>}
+          </div>}
           <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-foreground-500"><th className="p-3">Learner</th><th>Duration</th><th>Attendance</th><th>Recovery</th></tr></thead><tbody>
             {people.slice(page * 25, page * 25 + 25).map((person, index) => <tr key={person.email || index} className="border-b"><td className="p-3"><p className="font-semibold">{person.name}</p><p className="text-xs text-foreground-500">{person.email || 'Unmatched identity'}</p></td><td>{Math.floor(person.seconds / 60)}m {person.seconds % 60}s</td><td>{rawLabels[rawStatusOf(person)]}</td><td>{recoveryLabel(person)}</td></tr>)}
           </tbody></table></div>
