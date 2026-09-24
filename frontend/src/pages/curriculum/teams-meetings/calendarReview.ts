@@ -16,6 +16,8 @@ export class TeamsReviewCancelled extends Error {
 
 export const isTeamsReviewCancelled = (error: unknown) => error instanceof TeamsReviewCancelled;
 
+export type CalendarReviewDecision = 'notify' | 'silent';
+
 const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[char]!));
@@ -99,24 +101,37 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
         <div><dt>Language</dt><dd>${displaySetting(input.spokenLanguage, { 'en-GB': 'English (UK)', 'en-US': 'English (US)', 'ar-EG': 'Arabic (Egypt)', 'fr-FR': 'French' })}</dd></div>
       </dl></section>
     </aside></div>
-    <p class="teams-review-send-note">${input.peopleOnly ? 'Only the invitation list and participant roles will be updated.' : 'These are the dates that will be sent to Microsoft.'} Save and send applies this calendar now and may send meeting invitations or updates.${input.summaryEmail ? ' One separate schedule email will also be submitted for each attendee, with the complete timetable and verified Teams links.' : ''} Checking the box alone does not save or send anything.</p>
+    <p class="teams-review-send-note">${input.peopleOnly ? 'Only the invitation list and participant roles will be updated.' : 'These are the dates that will be sent to Microsoft.'} ${input.joinUrl ? 'Choose whether Microsoft should email the affected invitees. Saving silently updates the LMS and organizer calendar, but invitees may keep an older copy in their own calendar.' : 'Creating the calendar sends the initial invitations after Microsoft verifies it.'}${input.summaryEmail ? ' One separate schedule email will also be submitted for each attendee, with the complete timetable and verified Teams links.' : ''} Checking the box alone does not save or send anything.</p>
   </div>`;
 }
 
-export async function reviewCalendar(input: ReviewedCalendar, zone: string): Promise<void> {
+export async function reviewCalendar(input: ReviewedCalendar, zone: string): Promise<CalendarReviewDecision> {
   const html = calendarReviewHtml(input, zone);
+  const existingCalendar = Boolean(input.joinUrl);
+  const reviewMessage = 'Confirm that you have reviewed this calendar.';
   const result = await Swal.fire({
     title: 'Review Teams calendar', html, width: 1120, input: 'checkbox',
     inputPlaceholder: 'I checked the dates, AM/PM, time zone and invitation list.',
-    inputValidator: value => value ? undefined : 'Confirm that you have reviewed this calendar.',
-    showCancelButton: true, cancelButtonText: 'Back to editing', confirmButtonText: 'Save and send',
+    inputValidator: value => value ? undefined : reviewMessage,
+    preDeny: () => {
+      if (Swal.getInput()?.checked) return true;
+      Swal.showValidationMessage(reviewMessage);
+      return false;
+    },
+    showCancelButton: true, cancelButtonText: 'Back to editing',
+    showDenyButton: existingCalendar,
+    denyButtonText: 'Save without email',
+    confirmButtonText: existingCalendar ? 'Save & notify attendees' : 'Create & send invitations',
     focusCancel: true, reverseButtons: true, buttonsStyling: false,
     showCloseButton: true, closeButtonAriaLabel: 'Close review',
     customClass: { popup: 'kbc-standard-swal-popup teams-calendar-review', title: 'teams-calendar-review-title',
       htmlContainer: 'teams-calendar-review-body', input: 'teams-calendar-review-consent',
       actions: 'teams-calendar-review-actions', validationMessage: 'teams-calendar-review-validation',
       closeButton: 'teams-calendar-review-close',
-      confirmButton: 'teams-calendar-review-confirm', cancelButton: 'teams-calendar-review-cancel' },
+      confirmButton: 'teams-calendar-review-confirm', denyButton: 'teams-calendar-review-deny',
+      cancelButton: 'teams-calendar-review-cancel' },
   });
-  if (!result.isConfirmed) throw new TeamsReviewCancelled();
+  if (result.isConfirmed) return 'notify';
+  if (existingCalendar && result.isDenied) return 'silent';
+  throw new TeamsReviewCancelled();
 }

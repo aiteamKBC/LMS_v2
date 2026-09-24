@@ -19,15 +19,24 @@ it('shows the schedule and requires review before confirming', async () => {
   expect(screen.getByRole('table', { name: '1 reviewed session' })).toBeVisible();
   expect(screen.getByLabelText('Thu, 17 Sept 2026, 12:00 PM')).toBeVisible();
   expect(screen.getByLabelText('Thu, 17 Sept 2026, 12:00 PM')).toHaveTextContent('12:00 PM');
-  await userEvent.click(screen.getByRole('button', { name: 'Save and send' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Create & send invitations' }));
   expect(await screen.findByText('Confirm that you have reviewed this calendar.')).toBeVisible();
   expect(confirmed).toBe(false);
   await userEvent.click(screen.getByRole('checkbox'));
   expect(confirmed).toBe(false);
   expect(screen.getByRole('dialog')).toBeVisible();
-  await userEvent.click(screen.getByRole('button', { name: 'Save and send' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Create & send invitations' }));
   await pending;
   await waitFor(() => expect(confirmed).toBe(true));
+});
+
+it('offers notify and silent update choices for an existing calendar', async () => {
+  const pending = reviewCalendar({ ...calendar, joinUrl: 'https://teams.microsoft.com/meet/synthetic' }, 'Europe/London');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save without email' })).toBeVisible());
+  expect(screen.getByRole('button', { name: 'Save & notify attendees' })).toBeVisible();
+  await userEvent.click(screen.getByRole('checkbox'));
+  await userEvent.click(screen.getByRole('button', { name: 'Save without email' }));
+  await expect(pending).resolves.toBe('silent');
 });
 
 it('returns to editing without confirmation', async () => {

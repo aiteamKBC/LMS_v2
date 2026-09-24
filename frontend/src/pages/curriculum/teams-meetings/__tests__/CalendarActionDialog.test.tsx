@@ -28,7 +28,9 @@ it('only sends after explicit confirmation, never on the review checkbox', async
   expect(calendarAction).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole('button', { name: 'Confirm cancellation' }));
   expect(await screen.findByText(/Cancelled/)).toBeInTheDocument();
-  expect(vi.mocked(calendarAction).mock.calls[1]).toEqual(['LIVE-1', { stage: 'confirm', reviewToken: 'signed-review', acknowledgeNotifications: true }]);
+  expect(vi.mocked(calendarAction).mock.calls[1]).toEqual(['LIVE-1', {
+    stage: 'confirm', reviewToken: 'signed-review', notifyAttendees: true, acknowledgeNotifications: true,
+  }]);
   expect(changed).toHaveBeenCalledOnce();
 });
 
@@ -62,4 +64,17 @@ it('converts the edited London clock to UTC before review', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
   await screen.findByRole('checkbox', { name: /I checked/ });
   expect(vi.mocked(calendarAction).mock.calls[0][1].changes).toEqual([{ sessionNumber: 2, startDateTimeUtc: '2099-07-09T11:00:00.000Z', durationMinutes: 120 }]);
+});
+
+it('can save a reschedule without sending an email update', async () => {
+  const user = userEvent.setup();
+  vi.mocked(calendarAction).mockResolvedValueOnce({ ...review, action: 'reschedule', notificationRequired: false })
+    .mockResolvedValueOnce({ status: 'done', message: 'Moved', completed: 1, total: 1 });
+  render(<CalendarActionDialog target={{ ...target, action: 'reschedule' }} onClose={vi.fn()} onChanged={vi.fn(async () => undefined)} />);
+  await user.click(screen.getByRole('button', { name: 'Review changes' }));
+  await user.click(await screen.findByRole('checkbox', { name: /notification choice/ }));
+  await user.click(screen.getByRole('button', { name: 'Save without email' }));
+  expect(vi.mocked(calendarAction).mock.calls[1]).toEqual(['LIVE-1', {
+    stage: 'confirm', reviewToken: 'signed-review', notifyAttendees: false, acknowledgeNotifications: false,
+  }]);
 });

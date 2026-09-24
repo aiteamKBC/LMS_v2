@@ -111,6 +111,8 @@ from curriculum_api.views import (
     AUTHORING_COMPONENTS_TABLE,
     AUTHORING_MODULES_TABLE,
     AUTHORING_WEEKS_TABLE,
+    active_component_rows,
+    active_week_rows,
     authoring_fetch_all,
     authoring_modules_as_training_rows,
     build_module_session_plan,
@@ -5176,7 +5178,7 @@ TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = "Teams calendar sync is not configured. The 
 # recording, nothing transcribed -- so every event this app creates has these
 # applied to the Teams meeting behind it.
 COACH_MEETING_RECORDING = "record-transcribe"
-COACH_MEETING_LOBBY_BYPASS = "invited"
+COACH_MEETING_LOBBY_BYPASS = "everyone"
 TEAMS_SYNC_TEMPORARY_MESSAGE = (
     "Teams calendar sync could not be completed. "
     "The event was saved locally only; try again later or ask an admin to check Microsoft permissions."
@@ -8639,23 +8641,36 @@ def collect_live_session_events(
 
     program_configs_by_id = program_config_by_id(get_program_config_rows())
     weeks_by_module: dict[str, list[dict]] = {}
-    for week in authoring_fetch_all(AUTHORING_WEEKS_TABLE, ensure_tables=False):
+    # Module Builder retains archived/library copies for reuse and audit. They
+    # must not participate in the delivery calendar or they shift the mapping
+    # from authored weeks to Teams occurrences (for example, Oct 9 can vanish
+    # behind an archived copy of an earlier week).
+    for week in active_week_rows(
+        authoring_fetch_all(AUTHORING_WEEKS_TABLE, ensure_tables=False)
+    ):
         module_catalogue_id = clean_text(week.get("module_catalogue_id"))
         if module_catalogue_id:
             weeks_by_module.setdefault(module_catalogue_id, []).append(week)
     component_links_by_week: dict[str, str] = {}
+    live_component_week_ids_by_module: dict[str, set[str]] = {}
     # columns= is load-bearing, not an optimisation: curriculum.components is
     # ~18k rows / 39MB (mostly settings_json) on a remote database -- a plain
     # select * here alone accounts for the "Timetable is taking too long to
     # load" timeout coaches were hitting (~23s vs ~0.5s narrowed).
-    for component in authoring_fetch_all(
+    for component in active_component_rows(authoring_fetch_all(
         AUTHORING_COMPONENTS_TABLE,
         ensure_tables=False,
-        columns=["type", "week_id", "live_sessions_link"],
-    ):
+        columns=[
+            "type", "module_catalogue_id", "week_id", "live_sessions_link",
+            "deleted_at", "is_programme_deleted", "library_state",
+        ],
+    )):
         if clean_text(component.get("type")).lower() != "live_session":
             continue
         week_id = clean_text(component.get("week_id"))
+        module_id = clean_text(component.get("module_catalogue_id"))
+        if module_id and week_id:
+            live_component_week_ids_by_module.setdefault(module_id, set()).add(week_id)
         meeting_link = clean_text(component.get("live_sessions_link"))
         if week_id and meeting_link:
             component_links_by_week[week_id] = meeting_link
@@ -8764,23 +8779,36 @@ def collect_live_session_events(
         delivery_days = delivery_days_per_week(row)
         tracked_series = active_series_by_module.get(module_catalogue_id) or {}
         tracked_series_id = clean_text(tracked_series.get("id"))
+        live_week_ids = live_component_week_ids_by_module.get(module_catalogue_id) or set()
+        has_authored_live_components = bool(live_week_ids)
+        planned_live_sessions = []
         for session in plan["sessions"]:
+            week_index = (session["sessionNumber"] - 1) // delivery_days
+            week = ordered_weeks[week_index] if week_index < len(ordered_weeks) else None
+            week_id = clean_text(week.get("id")) if week else ""
+            # The authored live components are the authority for which weeks
+            # actually have a Teams lecture. A content-only holiday slot has no
+            # component and consumes no occurrence; an explicitly authored
+            # live session is still included even when its date is flagged as a
+            # holiday, preserving the LMS rule that holidays warn rather than
+            # silently cancelling authored delivery.
+            if has_authored_live_components and week_id not in live_week_ids:
+                continue
+            planned_live_sessions.append((session, week, week_id))
+
+        for occurrence_number, (session, week, week_id) in enumerate(planned_live_sessions, start=1):
+            session_for_event = {**session, "sessionNumber": occurrence_number}
             tracked_occurrence = occurrences_by_series_and_number.get(
-                (tracked_series_id, session["sessionNumber"])
+                (tracked_series_id, occurrence_number)
             )
             tracked_start = (tracked_occurrence or {}).get("scheduled_start")
             effective_date = tracked_start.date() if isinstance(tracked_start, datetime) else date.fromisoformat(session["date"])
             if not include_past and effective_date < today:
                 continue
-            # Sessions fold into weeks by the delivery days: for a Mon+Thu module
-            # sessions 1 and 2 are both taught inside week 1.
-            week_index = (session["sessionNumber"] - 1) // delivery_days
-            week = ordered_weeks[week_index] if week_index < len(ordered_weeks) else None
-            week_id = clean_text(week.get("id")) if week else ""
             events.append(
                 build_live_session_calendar_event(
                     row,
-                    session,
+                    session_for_event,
                     programme=programme,
                     cohort=cohort["name"],
                     group=group["name"],

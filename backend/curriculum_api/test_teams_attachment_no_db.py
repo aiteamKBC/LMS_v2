@@ -2,7 +2,9 @@
 import ast
 import copy
 import unittest
+import uuid
 from collections import defaultdict
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -28,6 +30,8 @@ class AttachmentTests(unittest.TestCase):
         self.writes = []
         self.n = dict(datetime=datetime, timezone=timezone, ZoneInfo=ZoneInfo, defaultdict=defaultdict,
             GRAPH_WINDOWS_TO_IANA={'Egypt Standard Time': 'Africa/Cairo'}, graph_timezone_iana=lambda _: 'Europe/London',
+            DEFAULT_TEAMS_LOBBY_BYPASS='everyone',
+            TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES={'cancelled', 'canceled', 'declined', 'deleted', 'removed'},
             AUTHORING_MODULES_TABLE='modules', GROUPS_TABLE='groups', AUTHORING_WEEKS_TABLE='weeks',
             AUTHORING_COMPONENTS_TABLE='components', LIVE_SESSIONS_TABLE='series', LIVE_SESSION_OCCURRENCES_TABLE='occurrences',
             as_json_value=lambda value, default: value or default, parse_json_value=lambda value, default: value or default,
@@ -40,10 +44,14 @@ class AttachmentTests(unittest.TestCase):
             authoring_fetch_all=self.fetch, update_authoring_rows=self.update,
             csrf_exempt=lambda fn: fn, ensure_module_authoring_tables=lambda: None,
             ensure_live_session_tracking_tables=lambda: None, resolve_authoring_catalogue_id=lambda value: value,
+            resolve_stored_module_catalogue_id=lambda value: value,
             authoring_module_exists=lambda value: value == 'MOD-1', json_body=lambda request: {}, truthy=bool,
             get_authoring_structure_payload=lambda module_id: {'catalogueId': module_id},
             stamp_revision_after_write=lambda payload, module_id: {**payload, 'structureRevision': 'new-revision'},
             structure_payload_with_revision=lambda build, module_id: {**build(), 'structureRevision': 'new-revision'},
+            curriculum_read_scope=lambda **kwargs: nullcontext(),
+            cached_curriculum_value=lambda _key, factory, **kwargs: factory(),
+            request_bypasses_curriculum_cache=lambda _request: False,
             JsonResponse=lambda data: data, json_error=lambda message, **kwargs: {'error': message, **kwargs})
         names = {'clean_str', 'parse_int', 'parse_graph_datetime', 'utc_iso_value',
                  'live_session_row_to_component_settings', 'live_occurrence_component_settings',
@@ -88,9 +96,25 @@ class AttachmentTests(unittest.TestCase):
             self.assertEqual(settings['liveSessionUrl'], write['live_sessions_link'])
             self.assertEqual(settings['teamsEventId'], f'EVENT-{i}')
             self.assertEqual(settings['sessionTimeZone'], 'Africa/Cairo')
+            self.assertEqual(settings['sessionDate'], f'2026-10-{23 + i * 7}')
+            self.assertEqual(settings['sessionDay'], 'Friday')
             self.assertEqual(settings['sessionTime'], '09:00')
             self.assertEqual(settings['sessionPurpose'], 'Keep outline')
             self.assertEqual(settings['recordingUrl'], 'https://example.invalid/saved-recording')
+
+    def test_restore_replaces_a_stale_component_date_with_the_verified_occurrence(self):
+        self.components[0]['settings_json'].update(
+            sessionDate='2026-12-04', sessionDay='Friday', sessionTime='15:30',
+            teamsLiveSessionId='LIVE-1', teamsSessionNumber=1,
+        )
+
+        self.restore('POST')
+
+        first = self.writes[0][1]['settings_json']
+        self.assertEqual((first['sessionDate'], first['sessionDay'], first['sessionTime']),
+                         ('2026-10-23', 'Friday', '09:00'))
+        self.assertEqual(first['teamsOccurrenceId'], 'OCC-0')
+        self.assertEqual(first['sessionPurpose'], 'Keep outline')
 
     def test_reading_status_never_attaches_or_changes_rows(self):
         result = self.restore('GET')
@@ -108,6 +132,62 @@ class AttachmentTests(unittest.TestCase):
         self.assertTrue(self.restore('GET')['verificationPending'])
         self.assertEqual(self.restore('POST')['code'], 'teams_calendar_verification_pending')
         self.assertEqual(self.writes, [])
+
+
+class OccurrenceReplacementTests(unittest.TestCase):
+    """A repaired date must not move attendance identity to another session."""
+
+    def test_inserting_25_september_keeps_9_october_identity_and_cancels_the_extra(self):
+        rows = [
+            {'id': 'OCC-SEP18', 'session_number': 1, 'scheduled_start': '2026-09-18T08:00:00Z',
+             'scheduled_end': '2026-09-18T10:00:00Z', 'status': 'completed', 'created_at': 'old'},
+            {'id': 'OCC-OCT09', 'session_number': 2, 'scheduled_start': '2026-10-09T08:00:00Z',
+             'scheduled_end': '2026-10-09T10:00:00Z', 'status': 'scheduled', 'created_at': 'old'},
+            {'id': 'OCC-DEC18', 'session_number': 3, 'scheduled_start': '2026-12-18T09:00:00Z',
+             'scheduled_end': '2026-12-18T11:00:00Z', 'status': 'scheduled', 'created_at': 'old'},
+        ]
+        targets = [
+            {'session_number': 1, 'start': '2026-09-18T08:00:00Z', 'end': '2026-09-18T10:00:00Z'},
+            {'session_number': 2, 'start': '2026-09-25T08:00:00Z', 'end': '2026-09-25T10:00:00Z'},
+            {'session_number': 3, 'start': '2026-10-09T08:00:00Z', 'end': '2026-10-09T10:00:00Z'},
+        ]
+
+        def update(_table, _where, values, payload):
+            row = next(item for item in rows if item['id'] == values[0])
+            row.update(copy.deepcopy(payload))
+
+        def upsert(_table, _keys, payload):
+            rows.append(copy.deepcopy(payload))
+
+        namespace = {
+            'datetime': datetime,
+            'uuid': uuid,
+            'ensure_live_session_tracking_tables': lambda: None,
+            'scheduled_live_session_occurrences': lambda *args: copy.deepcopy(targets),
+            'authoring_fetch_all': lambda *args: rows,
+            'clean_str': lambda value: str(value or '').strip(),
+            'teams_calendar_minute_key': lambda value: str(value or '').replace('.000Z', 'Z'),
+            'update_authoring_rows': update,
+            'authoring_upsert': upsert,
+            'LIVE_SESSION_OCCURRENCES_TABLE': 'occurrences',
+        }
+        tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
+        node = next(node for node in tree.body
+                    if isinstance(node, ast.FunctionDef) and node.name == 'replace_live_session_occurrences')
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'occurrence-replacement', 'exec'), namespace)
+
+        namespace['replace_live_session_occurrences'](
+            'LIVE-1', {}, None, 120, 'weekly', 3,
+            event_id='EVENT-SERIES', join_url='https://teams.microsoft.com/meet/series',
+        )
+
+        by_id = {row['id']: row for row in rows}
+        self.assertEqual((by_id['OCC-SEP18']['session_number'], by_id['OCC-SEP18']['status']), (1, 'completed'))
+        self.assertEqual((by_id['OCC-OCT09']['session_number'], by_id['OCC-OCT09']['scheduled_start']),
+                         (3, '2026-10-09T08:00:00Z'))
+        self.assertEqual(by_id['OCC-DEC18']['status'], 'cancelled')
+        added = next(row for row in rows if row['scheduled_start'] == '2026-09-25T08:00:00Z')
+        self.assertEqual((added['session_number'], added['status']), (2, 'scheduled'))
 
 
 if __name__ == '__main__':

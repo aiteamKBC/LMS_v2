@@ -135,7 +135,7 @@ const definitions: ComponentAuthoringDefinition[] = [
       teamsProvider: '',
       teamsRepeat: 'none',
       teamsRepeatOccurrences: 1,
-      teamsLobbyBypass: 'invited',
+      teamsLobbyBypass: 'everyone',
       teamsRecording: 'record-transcribe',
       teamsSpokenLanguage: 'en-GB',
       teamsMeetingType: 'live-session',

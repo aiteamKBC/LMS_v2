@@ -33,7 +33,7 @@ class CalendarChecksTests(unittest.TestCase):
         self.network = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
         self.network.start()
         self.addCleanup(self.network.stop)
-        self.events, self.instances, self.calls, self.series, self.tracked = {}, [], [], [], []
+        self.events, self.instances, self.calls, self.headers, self.series, self.tracked = {}, [], [], [], [], []
         self.instances_by_master = {}
         self.options_ok = True
         self.attach = Mock()
@@ -43,7 +43,7 @@ class CalendarChecksTests(unittest.TestCase):
         self.v.__dict__.update(datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo,
                               escape=escape, re=re, urllib_parse=urllib_parse, logger=logging.getLogger('calendar-test'),
                               TEAMS_REPEAT_VALUES={'none', 'weekly', 'daily', 'weekdays'},
-                              TEAMS_LOBBY_VALUES={'invited', 'organizer'}, LIVE_SESSIONS_TABLE='series', LIVE_SESSION_OCCURRENCES_TABLE='occurrences',
+                              TEAMS_LOBBY_VALUES={'invited', 'organizer', 'everyone'}, DEFAULT_TEAMS_LOBBY_BYPASS='everyone', LIVE_SESSIONS_TABLE='series', LIVE_SESSION_OCCURRENCES_TABLE='occurrences',
                               csrf_exempt=lambda fn: fn, JsonResponse=Response,
                               json_error=lambda message, status=400, **kwargs: Response({'error': message, **kwargs}, status),
                               graph_timezone_iana=lambda settings: settings.get('_schedule_timezone_iana') or 'Europe/London', teams_calendar_subject=lambda payload, series=None: payload.get('title', 'Synthetic'),
@@ -60,6 +60,8 @@ class CalendarChecksTests(unittest.TestCase):
                               resolve_authoring_catalogue_id=lambda value: value, authoring_module_exists=lambda _: True,
                               authoring_fetch_all=self.fetch_rows, has_column=lambda *args: True,
                               calendar_groups=lambda *args: [], stored_calendar_series=lambda _: [],
+                              teams_non_delivery_reason=lambda *args, **kwargs: '',
+                              truthy=lambda value: str(value).strip().lower() in {'1', 'true', 'yes', 'on'},
                               graph_event_utc=self.utc_event, persist_live_session_series=self.persist_series,
                               replace_live_session_occurrences=self.persist_occurrences,
                               update_authoring_rows=self.update_series, json_db_value=lambda value: value,
@@ -141,6 +143,7 @@ class CalendarChecksTests(unittest.TestCase):
     def graph(self, method, path, payload=None, *, extra_headers=None):
         if extra_headers is not None:
             self.assertEqual(extra_headers, {'Prefer': 'outlook.send-invitations="none"'})
+        self.headers.append((method, path, copy.deepcopy(extra_headers), copy.deepcopy(payload)))
         self.calls.append((method, path, copy.deepcopy(payload)))
         if method == 'POST':
             event_id = f'event-{len(self.events) + 1}'
@@ -169,7 +172,8 @@ class CalendarChecksTests(unittest.TestCase):
                     item['attendees'] = copy.deepcopy(payload['attendees'])
             return copy.deepcopy(event)
         if method == 'DELETE':
-            self.assertFalse(event.get('attendees'), 'Cleanup must happen before invitations')
+            if not self.series:
+                self.assertFalse(event.get('attendees'), 'Initial cleanup must happen before invitations')
             next(items for items in self.instances_by_master.values() if event in items).remove(event)
             return {}
         raise AssertionError(method)
@@ -270,16 +274,57 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(self.create().status_code, 201)
         before = copy.deepcopy(self.instances)
         self.payload.update(peopleOnly=True, attendees=['replacement@example.invalid'])
+        self.v.apply_teams_meeting_options = Mock(return_value=(True, {'id': 'online-1'}, []))
         self.calls.clear()
         result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
         self.assertEqual(result.status_code, 200, result)
         patches = [call[2] for call in self.calls if call[0] == 'PATCH']
-        self.assertEqual(len(patches), 1)
-        self.assertEqual(set(patches[0]), {'attendees'})
+        self.assertEqual(patches, [])
+        self.assertEqual(self.v.apply_teams_meeting_options.call_args.kwargs['attendees'],
+                         ['replacement@example.invalid'])
         self.assertEqual([item['start'] for item in self.instances], [item['start'] for item in before])
         self.calls.clear()
         self.assertEqual(self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC').status_code, 200)
         self.assertFalse([call for call in self.calls if call[0] == 'PATCH'])
+
+    def test_existing_calendar_only_emails_attendees_when_explicitly_requested(self):
+        self.assertEqual(self.create().status_code, 201)
+        self.payload.update(peopleOnly=True, attendees=['replacement@example.invalid'], notifyAttendees=True)
+        self.calls.clear()
+
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+
+        self.assertEqual(result.status_code, 200, result)
+        invitations = [call for call in self.calls if call[0] == 'PATCH' and 'attendees' in call[2]]
+        self.assertEqual(len(invitations), 1)
+
+    def test_notified_date_update_waits_for_silent_repair_then_sends_final_master_state(self):
+        self.assertEqual(self.create().status_code, 201)
+        shifted = []
+        for item in self.payload['scheduledOccurrences']:
+            start = datetime.fromisoformat(item['startDateTimeUtc']) + timedelta(hours=1)
+            shifted.append({**item, 'startDateTimeUtc': start.isoformat()})
+        self.payload.update(
+            localStartDateTime='2026-09-17T01:00:00',
+            startDateTimeUtc=shifted[0]['startDateTimeUtc'],
+            scheduledOccurrences=shifted,
+            notifyAttendees=True,
+        )
+        self.calls.clear()
+        self.headers.clear()
+
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+
+        self.assertEqual(result.status_code, 200, result)
+        master_updates = [item for item in self.headers if item[0] == 'PATCH' and 'recurrence' in (item[3] or {})]
+        self.assertEqual(len(master_updates), 1)
+        self.assertEqual(master_updates[0][2], {'Prefer': 'outlook.send-invitations="none"'})
+        notifications = [item for item in self.headers if item[0] == 'PATCH' and 'attendees' in (item[3] or {})]
+        self.assertEqual(len(notifications), 1)
+        self.assertIsNone(notifications[0][2])
+        self.assertIn('subject', notifications[0][3])
+        attendee_only = [call for call in self.calls if call[0] == 'PATCH' and set(call[2] or {}) == {'attendees'}]
+        self.assertEqual(attendee_only, [])
 
     def test_existing_calendar_options_update_preserves_identity_dates_and_invitation_body(self):
         self.assertEqual(self.create().status_code, 201)
@@ -404,7 +449,7 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(self.series[0]['lobby_bypass'], 'organizer')
         self.assertEqual(self.series[0]['spoken_language'], 'ar-EG')
 
-    def test_pending_invites_resume_without_recreating_or_rewriting_dates(self):
+    def test_pending_invites_repair_silently_without_recreating_or_rewriting_dates(self):
         self.options_ok = False
         self.assertEqual(self.create().status_code, 502)
         self.options_ok = True
@@ -413,8 +458,8 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result)
         self.assertFalse([call for call in self.calls if call[0] in ('POST', 'DELETE')])
         patches = [call[2] for call in self.calls if call[0] == 'PATCH']
-        self.assertEqual(len(patches), 1)
-        self.assertEqual(set(patches[0]), {'attendees'})
+        self.assertEqual(patches, [])
+        self.assertTrue(all(not event['attendees'] for event in self.events.values()))
 
     def test_read_failure_does_not_trigger_blind_calendar_update(self):
         self.assertEqual(self.create().status_code, 201)
@@ -440,6 +485,20 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result[2], first['id'])
         self.assertEqual(checks.event_instant(self.instances[0], 'start'), desired)
         self.assertEqual(self.instances[1:], before[1:])
+        move_call = next(call for call in reversed(self.headers) if call[0] == 'PATCH')
+        self.assertEqual(move_call[2], self.v.GRAPH_SILENT_INVITE_HEADERS)
+
+    def test_single_session_move_notifies_only_when_explicitly_requested(self):
+        self.assertEqual(self.create().status_code, 201)
+        first = self.instances[0]
+        occurrence = {'session_number': 1, 'scheduled_start': first['start']['dateTime'], 'graph_event_id': 'event-1'}
+        desired = checks.event_instant(first, 'start') + timedelta(hours=12)
+        result = self.v.reschedule_single_live_session_occurrence(
+            self.series[0], occurrence, desired, 120, notify_attendees=True,
+        )
+        self.assertFalse(result[3])
+        move_call = next(call for call in reversed(self.headers) if call[0] == 'PATCH')
+        self.assertIsNone(move_call[2])
 
     def test_meeting_spanning_clock_change_keeps_absolute_duration(self):
         start = '2026-10-24T23:00:00Z'  # Sunday midnight BST before the clock goes back.
