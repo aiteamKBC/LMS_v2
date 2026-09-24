@@ -30,7 +30,6 @@ import {
   eventDisplayDate,
   eventIdentity,
   eventPeriodLabel,
-  eventTargetDate,
   fetchCoachCalendarEvents,
   formatDateLabel,
   formatTimeLabel,
@@ -56,6 +55,7 @@ import {
   type ProgressReviewSlidesDeck,
 } from './components/ProgressReviewSlidesModal';
 import ProgressReviewPptxModal from './components/ProgressReviewPptxModal';
+import { slidesTargetFromEvent } from './components/slidesTarget';
 import { bulkGenerateProgressReviews, fetchLatestRun } from '@/api/progressReviews';
 import { openReviewInstanceForEvent } from '@/api/reviewInstances';
 import {
@@ -1068,19 +1068,19 @@ export default function CoachProgressReviews() {
   );
 
   const visibleReviewsKey = paginatedReviews
-    .filter((review) => reviewHasLearnerReference(review) && eventTargetDate(review))
-    .map((review) => `${eventIdentity(review)}:${eventTargetDate(review)}`)
+    .filter((review) => reviewHasLearnerReference(review) && eventDisplayDate(review))
+    .map((review) => `${eventIdentity(review)}:${eventDisplayDate(review)}`)
     .join('|');
 
   useEffect(() => {
     if (!visibleReviewsKey) return;
     let cancelled = false;
-    const candidates = paginatedReviews.filter((review) => !isImportedReviewEvent(review) && reviewHasLearnerReference(review) && eventTargetDate(review));
+    const candidates = paginatedReviews.filter((review) => !isImportedReviewEvent(review) && reviewHasLearnerReference(review) && eventDisplayDate(review));
 
     Promise.all(candidates.map(async (review) => {
       const learnerId = review.enrolmentId || '';
       try {
-        const result = await fetchLatestRun(learnerId, eventTargetDate(review));
+        const result = await fetchLatestRun(learnerId, eventDisplayDate(review));
         return result.exists && result.generationStatus === 'completed' ? eventIdentity(review) : null;
       } catch {
         return null;
@@ -1197,7 +1197,7 @@ export default function CoachProgressReviews() {
   };
 
   const handleCreateSlides = (event: CoachCalendarEvent) => {
-    if (!reviewHasLearnerReference(event) || !eventTargetDate(event)) {
+    if (!reviewHasLearnerReference(event) || !eventDisplayDate(event)) {
       setActionError('This review is missing its learner id or review date, so slides cannot be generated yet.');
       setActionNotice(null);
       return;
@@ -1216,7 +1216,7 @@ export default function CoachProgressReviews() {
   };
 
   const handleBulkGenerateSlides = async () => {
-    const count = events.filter((event) => !isImportedReviewEvent(event) && reviewHasLearnerReference(event) && eventTargetDate(event)).length;
+    const count = events.filter((event) => !isImportedReviewEvent(event) && reviewHasLearnerReference(event) && eventDisplayDate(event)).length;
     if (!count) return;
     if (!window.confirm(`Generate Progress Review PPTX decks for ${count} review(s) with a learner and review date? This may take a while.`)) return;
     setBulkGenerating(true);
@@ -1421,9 +1421,9 @@ export default function CoachProgressReviews() {
         ) : null}
         <ProgressReviewPptxModal
           open={Boolean(pptxModalReview)}
-          review={pptxModalReview}
+          target={pptxModalReview ? slidesTargetFromEvent(pptxModalReview) : null}
           onClose={() => setPptxModalReview(null)}
-          onGenerated={markReviewSlidesGenerated}
+          onGenerated={() => { if (pptxModalReview) markReviewSlidesGenerated(pptxModalReview); }}
         />
       </PageContainer>
     </WorkspaceShell>

@@ -189,3 +189,57 @@ class GenerateProgressReviewPptxTests(SimpleTestCase):
         from .pptx_generator import TEMPLATE_PATH
         prs = Presentation(str(TEMPLATE_PATH))
         self.assertEqual(len(prs.slides), 19)
+
+
+class SamplePhotoLeakTests(SimpleTestCase):
+    """The template's photos come from its source decks (another learner's
+    evidence); none may survive into a generated deck."""
+
+    def test_no_template_sample_photo_survives(self):
+        from .pptx_generator import TEMPLATE_PATH, _photo_shapes
+        from .slide_cloner import R_EMBED
+
+        def photo_blobs(prs):
+            blobs = set()
+            # Evidence Detail slides 8-10 hold the photo frames; the other
+            # picture fills (card shading on slides 2 and 15) are decoration.
+            for slide in list(prs.slides)[8:11]:
+                for shape, blip in _photo_shapes(slide):
+                    rid = blip.get(R_EMBED)
+                    if rid:
+                        blobs.add(slide.part.related_part(rid).blob)
+            return blobs
+
+        template = photo_blobs(Presentation(str(TEMPLATE_PATH)))
+        generated = photo_blobs(Presentation(io.BytesIO(
+            generate_progress_review_pptx(_sample_pack(), fetch_image=lambda _url: None)
+        )))
+        self.assertTrue(template)
+        self.assertFalse(template & generated)
+
+
+class SourceEmployerLogoTests(SimpleTestCase):
+    def test_source_deck_employer_logo_is_blanked_on_every_slide(self):
+        from .evidence_images import transparent_image
+        from .slide_cloner import R_EMBED, _picture_fill_shapes_in
+
+        prs = Presentation(io.BytesIO(generate_progress_review_pptx(_sample_pack(), fetch_image=lambda _url: None)))
+        width, height = prs.slide_width, prs.slide_height
+        checked = 0
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if shape.left is None or not (shape.left > width * 0.7 and shape.top < height * 0.1 and shape.width < width * 0.25):
+                    continue
+                for _picture, blip in _picture_fill_shapes_in([shape]):
+                    self.assertEqual(slide.part.related_part(blip.get(R_EMBED)).blob, transparent_image())
+                    checked += 1
+        self.assertGreater(checked, 0)
+
+
+class DocumentPropertiesTests(SimpleTestCase):
+    def test_file_metadata_names_this_learner_not_the_template_source(self):
+        props = Presentation(io.BytesIO(
+            generate_progress_review_pptx(_sample_pack(), fetch_image=lambda _url: None)
+        )).core_properties
+        self.assertIn("Jordan Example", props.title)
+        self.assertNotIn("Bethanie", props.title + props.last_modified_by)

@@ -65,6 +65,22 @@ def ensure_progress_review_tables():
             'create index if not exists idx_progress_review_runs_learner '
             'on "Learner"."progress_review_runs" (learner_kind, learner_id, review_period_end desc)'
         )
+        # Monthly Coaching Meeting decks share this pipeline and table; the
+        # kind keeps an MCM and a Progress Review on the same date apart.
+        cur.execute(
+            'alter table "Learner"."progress_review_runs" '
+            "add column if not exists review_kind varchar(32) not null default 'progress_review'"
+        )
+        # An edited or re-uploaded deck is a new run pointing at the run it
+        # revises, so the original generated deck is always kept for audit.
+        cur.execute(
+            'alter table "Learner"."progress_review_runs" '
+            'add column if not exists parent_run_id text'
+        )
+        cur.execute(
+            'alter table "Learner"."progress_review_runs" '
+            "add column if not exists revision_source varchar(32) not null default 'generated'"
+        )
         cur.execute(
             'create index if not exists idx_progress_review_runs_status '
             'on "Learner"."progress_review_runs" (generation_status)'

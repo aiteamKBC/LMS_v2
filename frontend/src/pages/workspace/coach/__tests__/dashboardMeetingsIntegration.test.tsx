@@ -181,7 +181,7 @@ it('keeps the live session calendar link while showing the new actions only on c
   useDashboardDate();
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   expect(await screen.findByRole('button', { name: 'Send Reminder' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Generate Presentation' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'View Presentation' })).toBeVisible();
   const meetings = screen.getByRole('region', { name: 'Upcoming meetings and live sessions' });
   const groupedDateCell = meetings.querySelector('td[rowspan="2"]');
   expect(groupedDateCell).not.toBeNull();
