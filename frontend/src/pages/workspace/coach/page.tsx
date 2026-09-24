@@ -5,9 +5,10 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 import { setCoachViewAs, withCoachViewAs } from '@/lib/coachViewAs';
+import { recordAction } from '@/lib/activityTrail';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
-import { roleNavMap } from '@/mocks/navigation';
+import { coachAuditTrailNavItem, roleNavMap } from '@/mocks/navigation';
 import { CoachDirectoryPicker } from './CoachDirectoryPicker';
 import { AllCoachesCalendar } from './AllCoachesCalendar';
 import { DashboardMeetingActions } from './DashboardMeetingActions';
@@ -1107,8 +1108,30 @@ export default function CoachDashboard() {
     setDirectoryCoaches(nextCoaches);
   }, []);
 
-  const openCoachCalendar = useCallback((selected: DirectoryCoach, event: CoachCalendarEvent) => {
+  /**
+   * Open a coach's workspace as somebody else, and say so in the audit trail.
+   *
+   * The selection itself lives in the browser, so nothing on the server knew it
+   * had been made. Every page opened afterwards was recorded against the
+   * administrator who opened it -- a caseload, a marking queue, a set of
+   * meeting notes -- with nothing anywhere saying whose they were. This is the
+   * one row that answers that, and it carries the coach's name and address
+   * only: no caseload, no learner, nothing that was on the screen.
+   */
+  const openCoachWorkspace = useCallback((selected: DirectoryCoach) => {
     setCoachViewAs({ email: selected.email, name: selected.name }, adminEmail);
+    // Guarded the same way `setCoachViewAs` guards itself, so the trail never
+    // claims a workspace was opened when nothing was.
+    if (!selected.email || !adminEmail) return;
+    recordAction(
+      'record_view',
+      { scope: 'coach-workspace' },
+      { type: 'coach', id: selected.email, label: selected.name || selected.email },
+    );
+  }, [adminEmail]);
+
+  const openCoachCalendar = useCallback((selected: DirectoryCoach, event: CoachCalendarEvent) => {
+    openCoachWorkspace(selected);
     navigate('/coach/timetable', {
       state: {
         focusEvent: {
@@ -1123,7 +1146,7 @@ export default function CoachDashboard() {
         },
       },
     });
-  }, [adminEmail, navigate]);
+  }, [openCoachWorkspace, navigate]);
 
   useEffect(() => {
     if (!isInitialized) return;
@@ -1404,17 +1427,23 @@ export default function CoachDashboard() {
   if (coach.canChooseCoach && !coach.isViewingAsCoach) {
     return (
       <WorkspaceShell
-        // No sidebar until a coach is chosen: every coach page reads the
-        // selected coach, so those links would open a caseload, a timetable and
-        // a marking queue belonging to nobody. Picking one is the only thing to
-        // do here, and the nav returns with the choice.
-        role="coach" roleLabel={coachNav.label} navItems={[]} workspaceLabel={coachNav.workspaceLabel}
+        // Almost no sidebar until a coach is chosen: every other coach page
+        // reads the selected coach, so those links would open a caseload, a
+        // timetable and a marking queue belonging to nobody. The rest of the
+        // nav returns with the choice.
+        //
+        // The Audit Trail is the exception, and it belongs here rather than
+        // only inside a chosen workspace: it reads every coach at once, so it
+        // has nothing to be scoped to, and this picker is where somebody asking
+        // "who opened whose workspace" actually starts. `rbac.ts` still decides
+        // who sees it, so a coach lands on an empty rail exactly as before.
+        role="coach" roleLabel={coachNav.label} navItems={[coachAuditTrailNavItem]} workspaceLabel={coachNav.workspaceLabel}
         pageTitle="Coach Workspace" pageSubtitle="Choose a coach to open their workspace"
         userName={auth.account?.displayName || auth.user?.fullName || 'Administrator'} userRole="Administrator"
       >
         <div className="space-y-6 p-3 md:p-6">
           <CoachDirectoryPicker
-            onSelect={selected => setCoachViewAs({ email: selected.email, name: selected.name }, adminEmail)}
+            onSelect={openCoachWorkspace}
             onDirectoryLoaded={handleDirectoryLoaded}
           />
           <AllCoachesCalendar coaches={directoryCoaches} onOpenCoach={openCoachCalendar} />

@@ -1,26 +1,33 @@
 // Imported explicitly rather than left to unplugin-auto-import: the Vitest
 // config deliberately does not load that plugin, so a page that relies on it
 // cannot be rendered in a test at all. Every page with tests spells these out.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { auditEventHref, auditFieldValueLabel, auditValueLabel, auditValueTitle, stampLabel, timeMetaLabel } from './activityTime';
+import { auditEventHref, auditFieldValueLabel, auditValueLabel, auditValueTitle, clockLabel, durationLabel, spanLabel, stampLabel, timeMetaLabel } from './activityTime';
 import { useAuditRecordNames } from './auditNames';
-import { personHref, type AuditTrailScope } from './scope';
+import { DEFAULT_WINDOW_DAYS, personHref, windowLimitFor, windowOptionsFor, type AuditTrailScope } from './scope';
 import { ActivityPrefetcher } from './prefetch';
 import {
   fetchActivityPeople,
   fetchCurriculumAuditTrail,
+  fetchPersonActivity,
+  type CurriculumActivityAction,
+  type CurriculumActivityPage,
   type CurriculumActivityPeople,
   type CurriculumActivityPerson,
+  type CurriculumActivitySignIn,
+  type CurriculumActivityVisit,
   type CurriculumAuditEvent,
   type CurriculumAuditTrail,
+  type CurriculumPersonActivity,
 } from '@/lib/curriculumApi';
 import {
   EntityEmptyState,
   EntityFilterBar,
   EntityHero,
+  EntityPagination,
   EntityTable,
   HeroSecondaryButton,
   InlineError,
@@ -58,13 +65,13 @@ import {
  * than as nobody having done anything.
  */
 
-const WINDOW_OPTIONS = [
-  { value: '1', label: 'Today (last 24 hours)' },
-  { value: '7', label: 'Last 7 days' },
-  { value: '30', label: 'Last 30 days' },
-  { value: '90', label: 'Last 90 days' },
-  { value: '365', label: 'Last 12 months' },
-];
+/**
+ * The Role filter's value for people with no role recorded. A reserved word
+ * rather than an empty string, which the filter bar cannot tell apart from the
+ * filter being unset — it has to match `NO_ROLE` in `system_audit/activity.py`.
+ */
+const NO_ROLE = '__none__';
+
 
 /**
  * The record types offered by the Record type filter, until the server has
@@ -168,13 +175,20 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
   // and no filter is offered, because a Curriculum page that could be switched
   // to show Safeguarding is not a scoped page, it is a mislabelled one.
   const [workspace, setWorkspace] = useState(scope.workspace);
-  const [windowDays, setWindowDays] = useState('30');
+  const [windowDays, setWindowDays] = useState(String(DEFAULT_WINDOW_DAYS));
+  // Leaving Curriculum Studio for a workspace kept for seven days brings a
+  // longer period back inside what that workspace still holds.
+  useEffect(() => {
+    if (Number(windowDays) > windowLimitFor(workspace || scope.workspace)) setWindowDays(String(DEFAULT_WINDOW_DAYS));
+  }, [workspace, windowDays, scope.workspace]);
   const [entity, setEntity] = useState('');
   const [action, setAction] = useState('');
   const [actor, setActor] = useState('');
   const [source, setSource] = useState('');
   const [actorType, setActorType] = useState('');
   const [search, setSearch] = useState('');
+  const [serverSearch, setServerSearch] = useState('');
+  const [changesPage, setChangesPage] = useState(1);
 
   const [trail, setTrail] = useState<CurriculumAuditTrail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -185,34 +199,29 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
   const [peopleLoading, setPeopleLoading] = useState(true);
   const [peopleError, setPeopleError] = useState<string | null>(null);
   const [peopleSearch, setPeopleSearch] = useState('');
-  // Whether this window has more people in it than one response carries.
-  // Latched rather than read from the current response: a server search narrows
-  // its own result below the cap, so reading `truncated` back off it would turn
-  // the server search off again on the very next keystroke.
-  const [peopleCapped, setPeopleCapped] = useState(false);
+  const [peopleRole, setPeopleRole] = useState('');
+  const [peoplePage, setPeoplePage] = useState(1);
   const [serverPeopleSearch, setServerPeopleSearch] = useState('');
 
   // Each tab loads only its own data, and only once it is being looked at. The
   // two reads are unrelated and one of them sweeps a window of visits, so
   // fetching both on arrival would make the page slower at answering the
   // question it opened on.
-  // A different window or workspace is a different population, so the cap has
-  // to be established again rather than carried over from the last one.
-  useEffect(() => { setPeopleCapped(false); }, [windowDays, workspace]);
-
-  // Below the cap the search stays on the client, where it costs nothing. Above
-  // it, the list on screen is not the whole window and a client filter would
-  // report "no matches" for somebody who is simply on a later page, so the
-  // search goes to the server -- debounced, so it is still not a request per
+  // The search goes to the server, because the client only holds one page:
+  // filtering the rows on screen would report "nobody matches" for somebody who
+  // is simply on a later page. Debounced, so it is still not a request per
   // keystroke.
   useEffect(() => {
-    if (!peopleCapped) {
-      setServerPeopleSearch('');
-      return undefined;
-    }
     const timer = setTimeout(() => setServerPeopleSearch(peopleSearch.trim()), 350);
     return () => clearTimeout(timer);
-  }, [peopleCapped, peopleSearch]);
+  }, [peopleSearch]);
+
+  // Any change to what is being asked for puts the reader back on page one.
+  // Staying on page seven of the old result would show page seven of something
+  // they have not asked for, or nothing at all when the new answer is shorter.
+  useEffect(() => {
+    setPeoplePage(1);
+  }, [windowDays, workspace, serverPeopleSearch, peopleRole]);
 
   useEffect(() => {
     if (tab !== 'people') return undefined;
@@ -222,13 +231,18 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
       days: Number(windowDays),
       workspace,
       search: serverPeopleSearch || undefined,
+      role: peopleRole || undefined,
+      page: peoplePage,
       signal: controller.signal,
       revalidate: reloadToken > 0,
     })
       .then(result => {
         if (controller.signal.aborted) return;
         setPeople(result);
-        if (result.truncated) setPeopleCapped(true);
+        // The server clamps a page past the end to the last one, so the control
+        // is told where it actually landed rather than left claiming a page
+        // nobody is looking at.
+        if (result.page && result.page !== peoplePage) setPeoplePage(result.page);
         setPeopleError(null);
       })
       .catch((err: unknown) => {
@@ -239,7 +253,7 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
         if (!controller.signal.aborted) setPeopleLoading(false);
       });
     return () => controller.abort();
-  }, [tab, windowDays, workspace, serverPeopleSearch, reloadToken, scope.subjectLabel]);
+  }, [tab, windowDays, workspace, serverPeopleSearch, peopleRole, peoplePage, reloadToken, scope.subjectLabel]);
 
   // A person's activity is the slow read and the list is the fast one, so the
   // list is never made to wait for it. It is warmed behind the list instead:
@@ -267,15 +281,29 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
     prefetcher.current.prefetch({ email, days: Number(windowDays), workspace: scope.workspace });
   }, [windowDays, scope.workspace]);
 
-  // The window and the two selects are answered by the backend, so they refetch.
-  // Search is not: it is applied to the events already on screen so typing does
-  // not fire a request per keystroke against a query the page can answer itself.
+  // The search is answered by the backend now that the feed is paged: applied
+  // to the events on screen it would search one page of fifty and report that
+  // as the window. Debounced, so it is still not a request per keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setServerSearch(search.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // A different question puts the reader back on page one — see the People half.
+  useEffect(() => {
+    setChangesPage(1);
+  }, [windowDays, workspace, entity, action, actor, source, actorType, serverSearch]);
+
+  // The window, the selects and the search are all answered by the backend, so
+  // each of them refetches.
   useEffect(() => {
     if (tab !== 'changes') return undefined;
     const controller = new AbortController();
     setLoading(true);
     fetchCurriculumAuditTrail({
       days: Number(windowDays),
+      page: changesPage,
+      search: serverSearch || undefined,
       // The same scope the People half uses. Without it the scoped door would
       // show every workspace's saves the moment a second workspace started
       // recording them.
@@ -291,6 +319,7 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
       .then(result => {
         if (controller.signal.aborted) return;
         setTrail(result);
+        if (result.page && result.page !== changesPage) setChangesPage(result.page);
         setError(null);
       })
       .catch((err: unknown) => {
@@ -301,19 +330,14 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [tab, windowDays, workspace, entity, action, actor, source, actorType, reloadToken, scope.subjectLabel]);
+  }, [
+    tab, windowDays, workspace, entity, action, actor, source, actorType,
+    serverSearch, changesPage, reloadToken, scope.subjectLabel,
+  ]);
 
-  const events = useMemo(() => {
-    const rows = trail?.events ?? [];
-    const query = search.trim().toLowerCase();
-    if (!query) return rows;
-    return rows.filter(event => (
-      event.title.toLowerCase().includes(query)
-      || event.context.toLowerCase().includes(query)
-      || event.entityId.toLowerCase().includes(query)
-      || event.actorName.toLowerCase().includes(query)
-    ));
-  }, [trail?.events, search]);
+  // Searched and paged by the server. Filtering again here would hide rows the
+  // count beside them still counts.
+  const events = trail?.events ?? [];
 
   // Names for the ids a save refers to, so a link field reads as the records it
   // points at rather than as a count of them.
@@ -363,8 +387,8 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
   // truth about a newly-wired workspace the day the backend does, not the day
   // somebody remembers to edit this list.
   const changeCoverage = useMemo(() => {
-    const all = people?.workspaces ?? [];
-    const coveredKeys = new Set(people?.changeWorkspaces ?? []);
+    const all = trail?.workspaces ?? people?.workspaces ?? [];
+    const coveredKeys = new Set(trail?.changeWorkspaces ?? people?.changeWorkspaces ?? []);
     const covered = all.filter(entry => coveredKeys.has(entry.value));
     const missing = all.filter(entry => !coveredKeys.has(entry.value));
     return {
@@ -374,19 +398,37 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
         ? `${missing.slice(0, 3).map(entry => entry.label).join(', ')} and ${missing.length - 3} others`
         : missing.map(entry => entry.label).join(', '),
     };
-  }, [people?.workspaces, people?.changeWorkspaces]);
+  }, [trail?.workspaces, trail?.changeWorkspaces, people?.workspaces, people?.changeWorkspaces]);
 
   // Filtered here rather than server-side for the same reason the change feed
   // is: the window is already loaded, and a request per keystroke would answer
   // a question the page can answer itself.
-  const peopleRows = useMemo(() => {
-    const rows = people?.people ?? [];
-    const query = serverPeopleSearch ? '' : peopleSearch.trim().toLowerCase();
-    if (!query) return rows;
-    return rows.filter(person => (
-      person.name.toLowerCase().includes(query) || person.email.toLowerCase().includes(query)
-    ));
-  }, [people?.people, peopleSearch, serverPeopleSearch]);
+  // Named by the server from the whole window, not gathered from the rows on
+  // screen: one page can only name the roles of the people it carries, and a
+  // filter built from it would be missing every role held further down.
+  const peopleRoleOptions = useMemo(() => {
+    const options = (people?.roles ?? []).map(role => ({
+      value: role,
+      label: role.charAt(0).toUpperCase() + role.slice(1),
+    }));
+    return people?.rolesIncludeBlank
+      ? [...options, { value: NO_ROLE, label: 'No role recorded' }]
+      : options;
+  }, [people?.roles, people?.rolesIncludeBlank]);
+
+  // A role that this window does not hold — cleared rather than left applied,
+  // so a stale selection cannot silently filter the list down to nobody.
+  useEffect(() => {
+    if (!people || !peopleRole) return;
+    const held = peopleRole === NO_ROLE
+      ? people.rolesIncludeBlank
+      : people.roles?.includes(peopleRole);
+    if (!held) setPeopleRole('');
+  }, [people, peopleRole]);
+
+  // Already filtered, searched and paged by the server. Nothing is filtered
+  // here: doing it twice would hide rows the count beside them still counts.
+  const peopleRows = people?.people ?? [];
 
   return (
     <WorkspaceShell
@@ -453,10 +495,15 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
             error={peopleError}
             search={peopleSearch}
             onSearch={setPeopleSearch}
+            role={peopleRole}
+            onRole={setPeopleRole}
+            roleOptions={peopleRoleOptions}
             windowDays={windowDays}
             onWindowDays={setWindowDays}
             workspace={workspace}
             onWorkspace={setWorkspace}
+            page={peoplePage}
+            onPage={setPeoplePage}
             onRetry={() => setReloadToken(token => token + 1)}
           />
         )}
@@ -508,9 +555,10 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
         <EntityFilterBar
           search={search}
           onSearch={setSearch}
-          placeholder="Search by record name, parent or id..."
+          placeholder="Search by record name, person or id..."
           selects={[
-            { label: 'Period', value: windowDays, onChange: setWindowDays, options: WINDOW_OPTIONS },
+            { label: 'Period', value: windowDays, onChange: setWindowDays, options: windowOptionsFor(workspace || scope.workspace) },
+            ...(scope.showWorkspaceFilter ? [{ label: 'Workspace', value: workspace, onChange: setWorkspace, options: trail?.workspaces ?? people?.workspaces ?? [] }] : []),
             { label: 'Record type', value: entity, onChange: setEntity, options: entityOptions },
             { label: 'Change', value: action, onChange: setAction, options: ACTION_OPTIONS },
             ...(actorOptions.length
@@ -528,15 +576,16 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
           ]}
           onReset={() => {
             setSearch(''); setEntity(''); setAction(''); setActor('');
-            setSource(''); setActorType(''); setWindowDays('30');
+            setSource(''); setActorType(''); setWindowDays(String(DEFAULT_WINDOW_DAYS)); setWorkspace(scope.workspace);
           }}
-          isDirty={Boolean(search || entity || action || actor || source || actorType) || windowDays !== '30'}
+          isDirty={Boolean(search || entity || action || actor || source || actorType) || windowDays !== String(DEFAULT_WINDOW_DAYS) || workspace !== scope.workspace}
+          loading={loading}
           summary={
             loading
-              ? 'Reading record timestamps...'
-              : trail?.truncated
-                ? `Showing the ${trail.events.length} most recent of ${trail.total} changes in this window. Narrow the period or the record type to see the rest.`
-                : `${events.length} ${events.length === 1 ? 'change' : 'changes'} in this window`
+              ? 'Reading audit records...'
+              // The whole window, not the page: the pagination below says which
+              // part of it is on screen.
+              : `${trail?.total ?? events.length} ${(trail?.total ?? events.length) === 1 ? 'change' : 'changes'} in this window`
           }
         />
 
@@ -575,6 +624,15 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
                 </ol>
               </section>
             ))}
+
+            <EntityPagination
+              page={changesPage}
+              pages={trail?.pages ?? 1}
+              total={trail?.total ?? 0}
+              pageSize={trail?.pageSize ?? events.length}
+              noun="changes"
+              onPage={setChangesPage}
+            />
           </div>
         )}
         </>)}
@@ -600,8 +658,8 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
  * person who did nothing.
  */
 function PeopleView({
-  scope, people, rows, onPersonIntent, loading, error, search, onSearch, windowDays, onWindowDays,
-  workspace, onWorkspace, onRetry,
+  scope, people, rows, onPersonIntent, loading, error, search, onSearch, role, onRole, roleOptions,
+  windowDays, onWindowDays, workspace, onWorkspace, page, onPage, onRetry,
 }: {
   scope: AuditTrailScope;
   people: CurriculumActivityPeople | null;
@@ -612,14 +670,69 @@ function PeopleView({
   error: string | null;
   search: string;
   onSearch: (value: string) => void;
+  role: string;
+  onRole: (value: string) => void;
+  roleOptions: { value: string; label: string }[];
   windowDays: string;
   onWindowDays: (value: string) => void;
   workspace: string;
   onWorkspace: (value: string) => void;
+  page: number;
+  onPage: (page: number) => void;
   onRetry: () => void;
 }) {
   const navigate = useNavigate();
   const visitsRecorded = people?.visitsRecorded ?? true;
+
+  // Which number on which row is open. One at a time: two panels of somebody
+  // else's afternoon stacked on top of each other is not a comparison, it is a
+  // scroll.
+  const [open, setOpen] = useState<{ email: string; metric: CountMetric } | null>(null);
+  const [detail, setDetail] = useState<CurriculumPersonActivity | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  // The numbers are counted over a window, in a workspace, so the panel behind
+  // one has to be read over the same window and workspace. Closing on a change
+  // rather than refetching: the count the reader clicked is gone, so a panel
+  // still open under it would be answering a question nobody asked.
+  useEffect(() => {
+    setOpen(null);
+  }, [windowDays, workspace, page, search, role]);
+
+  useEffect(() => {
+    if (!open) { setDetail(null); setDetailError(null); return undefined; }
+    const controller = new AbortController();
+    setDetailLoading(true);
+    setDetailError(null);
+    fetchPersonActivity(open.email, {
+      days: Number(windowDays),
+      workspace: workspace || undefined,
+      signal: controller.signal,
+    })
+      .then(result => {
+        if (controller.signal.aborted) return;
+        setDetail(result);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setDetail(null);
+        setDetailError(err instanceof Error ? err.message : 'Could not load this activity.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDetailLoading(false);
+      });
+    return () => controller.abort();
+    // `open.email` alone: reopening the same person on a different number is
+    // the same request, and the panel already has its answer.
+  }, [open?.email, windowDays, workspace]);
+
+  const toggle = (email: string, metric: CountMetric) => {
+    setOpen(current => (current && current.email === email && current.metric === metric
+      ? null
+      : { email, metric }));
+  };
+
   // Offered only on the system-wide door, and built from what the server says
   // it recognises rather than from a list held here — a filter the backend
   // would refuse is a filter that silently shows nothing.
@@ -660,20 +773,24 @@ function PeopleView({
         onSearch={onSearch}
         placeholder="Search by name or email..."
         selects={[
-          { label: 'Period', value: windowDays, onChange: onWindowDays, options: WINDOW_OPTIONS },
+          { label: 'Period', value: windowDays, onChange: onWindowDays, options: windowOptionsFor(workspace || scope.workspace) },
+          ...(roleOptions.length
+            ? [{ label: 'Role', value: role, onChange: onRole, options: roleOptions }]
+            : []),
           ...(scope.showWorkspaceFilter && workspaceOptions.length
             ? [{ label: 'Workspace', value: workspace, onChange: onWorkspace, options: workspaceOptions }]
             : []),
         ]}
-        onReset={() => { onSearch(''); onWindowDays('30'); onWorkspace(scope.workspace); }}
-        isDirty={Boolean(search) || windowDays !== '30' || workspace !== scope.workspace}
+        onReset={() => { onSearch(''); onRole(''); onWindowDays(String(DEFAULT_WINDOW_DAYS)); onWorkspace(scope.workspace); }}
+        isDirty={Boolean(search) || Boolean(role) || windowDays !== String(DEFAULT_WINDOW_DAYS) || workspace !== scope.workspace}
+        loading={loading}
         summary={
           loading
             ? `Reading who used ${scope.subjectLabel}...`
-            : people?.truncated
-              ? `${people.totals.people} people used ${scope.subjectLabel} in this period. `
-                + `Showing the ${rows.length} most recently active — search to reach the rest.`
-              : `${rows.length} ${rows.length === 1 ? 'person' : 'people'} used ${scope.subjectLabel} in this period`
+            // The total across every page, not the rows on screen: which of
+            // them is being shown is what the pagination below says.
+            : `${people?.total ?? rows.length} ${(people?.total ?? rows.length) === 1 ? 'person' : 'people'}`
+              + ` used ${scope.subjectLabel} in this period`
         }
       />
 
@@ -695,6 +812,18 @@ function PeopleView({
           : 'grid grid-cols-[minmax(200px,2fr)_110px_minmax(150px,1fr)_70px_100px_100px_80px_80px_150px]'}
         rows={rows}
         rowKey={person => person.email}
+        isRowExpanded={person => open?.email === person.email}
+        renderRowDetail={person => (
+          <CountDetail
+            metric={open?.metric ?? 'pages'}
+            person={person}
+            activity={detail}
+            loading={detailLoading}
+            error={detailError}
+            onClose={() => setOpen(null)}
+            onOpenPerson={() => navigate(href(person.email))}
+          />
+        )}
         getRowHref={person => href(person.email)}
         onRowIntent={person => onPersonIntent(person.email)}
         loading={loading && !people}
@@ -725,11 +854,26 @@ function PeopleView({
             )}
             {/* A dash, not a zero, wherever the source behind the column is not
                 being recorded: zero would be a claim that nothing happened. */}
-            <PlainCell align="right">{visitsRecorded ? person.visits : '—'}</PlainCell>
-            <PlainCell align="right">{visitsRecorded ? person.pageViews : '—'}</PlainCell>
-            <PlainCell align="right">{visitsRecorded ? person.readActions : '—'}</PlainCell>
-            <PlainCell align="right">{people?.changesRecorded ? person.changes : '—'}</PlainCell>
-            <PlainCell align="right">{people?.signInsRecorded ? person.signIns : '—'}</PlainCell>
+            <CountCell recorded={visitsRecorded} value={person.visits} label="visits"
+              person={person.name || person.email}
+              open={open?.email === person.email && open.metric === 'visits'}
+              onToggle={() => toggle(person.email, 'visits')} />
+            <CountCell recorded={visitsRecorded} value={person.pageViews} label="pages opened"
+              person={person.name || person.email}
+              open={open?.email === person.email && open.metric === 'pages'}
+              onToggle={() => toggle(person.email, 'pages')} />
+            <CountCell recorded={visitsRecorded} value={person.readActions} label="read actions"
+              person={person.name || person.email}
+              open={open?.email === person.email && open.metric === 'actions'}
+              onToggle={() => toggle(person.email, 'actions')} />
+            <CountCell recorded={people?.changesRecorded ?? false} value={person.changes} label="changes"
+              person={person.name || person.email}
+              open={open?.email === person.email && open.metric === 'changes'}
+              onToggle={() => toggle(person.email, 'changes')} />
+            <CountCell recorded={people?.signInsRecorded ?? false} value={person.signIns} label="sign-ins"
+              person={person.name || person.email}
+              open={open?.email === person.email && open.metric === 'signIns'}
+              onToggle={() => toggle(person.email, 'signIns')} />
             <NamedActions
               actions={[{
                 icon: 'ri-arrow-right-line',
@@ -743,10 +887,14 @@ function PeopleView({
         empty={
           <EntityEmptyState
             icon="ri-group-line"
-            title={search ? 'Nobody matches that search' : `Nobody used ${scope.subjectLabel} in this window`}
+            title={
+              search || role
+                ? 'Nobody matches these filters'
+                : `Nobody used ${scope.subjectLabel} in this window`
+            }
             message={
-              search
-                ? 'Clear the search, or widen the period above.'
+              search || role
+                ? 'Clear the search or the role, or widen the period above.'
                 : visitsRecorded
                   ? 'No page was opened, nothing was saved, and nobody signed in over this period.'
                   : 'Page opens are not being recorded yet, and nobody saved anything or signed in over this period.'
@@ -754,7 +902,311 @@ function PeopleView({
           />
         }
       />
+
+      <EntityPagination
+        page={page}
+        pages={people?.pages ?? 1}
+        total={people?.total ?? 0}
+        pageSize={people?.pageSize ?? rows.length}
+        noun="people"
+        onPage={onPage}
+      />
     </>
+  );
+}
+
+/**
+ * Which number a reader opened, and therefore what the panel under the row is
+ * answering. Named rather than free text so a cell and its panel cannot drift
+ * into asking and answering different questions.
+ */
+type CountMetric = 'visits' | 'pages' | 'actions' | 'changes' | 'signIns';
+
+/**
+ * One count in the people list, as something you can open.
+ *
+ * Three states, because a number in this table means three different things.
+ * Not recorded at all is a dash: the source behind the column is switched off,
+ * and a zero would be a claim that nothing happened. Recorded and zero is a
+ * plain zero, not a button — offering to open an empty panel is a promise the
+ * list cannot keep. Anything else is a button, because there is something
+ * underneath it to read.
+ *
+ * The click is stopped from bubbling: the whole row already navigates to the
+ * person's own page, and without this, opening a count would leave the list.
+ */
+function CountCell({
+  value, recorded, open, onToggle, label, person,
+}: {
+  value: number;
+  recorded: boolean;
+  open: boolean;
+  onToggle: () => void;
+  label: string;
+  person: string;
+}) {
+  if (!recorded) return <PlainCell align="right">—</PlainCell>;
+  if (!value) return <PlainCell align="right">0</PlainCell>;
+  return (
+    <span className="min-w-0 self-center text-right text-[12px]">
+      <button
+        type="button"
+        onClick={event => { event.stopPropagation(); onToggle(); }}
+        onKeyDown={event => event.stopPropagation()}
+        aria-expanded={open}
+        title={`${open ? 'Hide' : 'Show'} the ${label} recorded for ${person} in this period`}
+        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold tabular-nums transition-smooth ${
+          open
+            ? 'bg-primary-500 text-white'
+            : 'text-primary-600 hover:bg-primary-50 hover:text-primary-700'
+        }`}
+      >
+        {value}
+        <AppIcon className={`text-[11px] ${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></AppIcon>
+      </button>
+    </span>
+  );
+}
+
+const METRIC_TITLE: Record<CountMetric, string> = {
+  visits: 'Visits',
+  pages: 'Pages opened',
+  actions: 'Read actions',
+  changes: 'Changes',
+  signIns: 'Sign-ins',
+};
+
+/** How many lines a panel inside a row carries before it stops being a row. */
+const DETAIL_LIMIT = 50;
+
+/**
+ * What sits behind one number, under the row it belongs to.
+ *
+ * Read from the same person endpoint their own page reads, over the same window
+ * and workspace the list was counted over — so the panel is the number spelled
+ * out, rather than a second answer that happens to be nearby.
+ *
+ * It deliberately does not try to be that page. A panel in a row has room for
+ * the list and the times; the full sitting-by-sitting record, with each page's
+ * actions and diffs, stays where it already lives, and the link at the bottom
+ * goes there.
+ */
+function CountDetail({
+  metric, person, activity, loading, error, onClose, onOpenPerson,
+}: {
+  metric: CountMetric;
+  person: CurriculumActivityPerson;
+  activity: CurriculumPersonActivity | null;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+  onOpenPerson: () => void;
+}) {
+  const pages = useMemo(
+    () => (activity?.visits ?? []).flatMap(visit => visit.pages),
+    [activity],
+  );
+  const actions = useMemo(
+    () => pages.flatMap(page => page.actions.map(action => ({ action, page }))),
+    [pages],
+  );
+
+  return (
+    <div
+      // The panel sits inside a row that navigates on click. Without this, a
+      // click anywhere in it — on a page name, on empty space — would open the
+      // person's page and throw away what the reader just opened.
+      onClick={event => event.stopPropagation()}
+      onKeyDown={event => event.stopPropagation()}
+      role="region"
+      aria-label={`${METRIC_TITLE[metric]} for ${person.name || person.email}`}
+    >
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-heading text-[12px] font-bold text-foreground-800">
+          {METRIC_TITLE[metric]}
+          <span className="ml-1.5 font-sans text-[11px] font-semibold text-foreground-400">
+            {person.name || person.email}
+          </span>
+        </h3>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-foreground-500 transition-smooth hover:bg-background-200/70 hover:text-foreground-700"
+        >
+          <AppIcon className="ri-close-line text-[12px]"></AppIcon>
+          Close
+        </button>
+      </div>
+
+      {loading && !activity && (
+        <div className="space-y-1.5">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="h-8 animate-pulse rounded-lg bg-background-200/70" />
+          ))}
+        </div>
+      )}
+
+      {error && !loading && (
+        <p className="rounded-lg border border-danger-200 bg-danger-50 px-3 py-2 text-[11px] font-semibold text-danger-700">
+          {error}
+        </p>
+      )}
+
+      {activity && !loading && (
+        <>
+          {metric === 'visits' && <VisitLines visits={activity.visits} />}
+          {metric === 'pages' && <PageLines pages={pages} />}
+          {metric === 'actions' && <ActionLines actions={actions} />}
+          {metric === 'changes' && <ChangeLines changes={activity.changes} />}
+          {metric === 'signIns' && <SignInLines signIns={activity.signIns} />}
+          <button
+            type="button"
+            onClick={onOpenPerson}
+            className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-primary-600 transition-smooth hover:text-primary-700"
+          >
+            Open their full activity
+            <AppIcon className="ri-arrow-right-line text-[12px]"></AppIcon>
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Shared shell for the five lists, so they read alike and cap alike. */
+function DetailList({ children, shown, total, noun }: { children: ReactNode; shown: number; total: number; noun: string }) {
+  if (!total) {
+    return (
+      <p className="text-[11px] text-foreground-400">
+        Nothing recorded here in this period.
+      </p>
+    );
+  }
+  return (
+    <>
+      <ol className="divide-y divide-background-200/70 overflow-hidden rounded-lg border border-background-200 bg-background-50">
+        {children}
+      </ol>
+      {shown < total && (
+        // Said, not silently cut: a list that stops at fifty without saying so
+        // reads as the whole answer.
+        <p className="mt-1.5 text-[11px] text-foreground-400">
+          Showing the first {shown} of {total} {noun}. The rest are on their own page.
+        </p>
+      )}
+    </>
+  );
+}
+
+function DetailLine({ at, children }: { at: string; children: ReactNode }) {
+  return (
+    <li className="flex items-start gap-3 px-3 py-2">
+      <span
+        className="mt-px w-32 shrink-0 text-[11px] font-semibold tabular-nums text-foreground-400"
+        title={timeMetaLabel(at)}
+      >
+        {stampLabel(at)}
+      </span>
+      <span className="min-w-0 flex-1 text-[12px] text-foreground-700">{children}</span>
+    </li>
+  );
+}
+
+function VisitLines({ visits }: { visits: CurriculumActivityVisit[] }) {
+  const shown = visits.slice(0, DETAIL_LIMIT);
+  return (
+    <DetailList shown={shown.length} total={visits.length} noun="visits">
+      {shown.map(visit => {
+        const span = spanLabel(visit.startedAt, visit.endedAt);
+        return (
+          <DetailLine key={visit.id} at={visit.startedAt}>
+            <span className="font-semibold text-foreground-800">
+              {visit.pageCount} {visit.pageCount === 1 ? 'page' : 'pages'}
+            </span>
+            {visit.actionCount > 0 && <> · {visit.actionCount} {visit.actionCount === 1 ? 'action' : 'actions'}</>}
+            {visit.changeCount > 0 && <> · {visit.changeCount} {visit.changeCount === 1 ? 'change' : 'changes'}</>}
+            {span && <> · lasted {span}</>}
+            {visit.ip && <span className="ml-1.5 font-mono text-[10px] text-foreground-400">{visit.ip}</span>}
+          </DetailLine>
+        );
+      })}
+    </DetailList>
+  );
+}
+
+function PageLines({ pages }: { pages: CurriculumActivityPage[] }) {
+  const shown = pages.slice(0, DETAIL_LIMIT);
+  return (
+    <DetailList shown={shown.length} total={pages.length} noun="page opens">
+      {shown.map(page => {
+        const duration = durationLabel(page.durationMs);
+        return (
+          <DetailLine key={page.id} at={page.at}>
+            <Link
+              to={page.path}
+              onClick={event => event.stopPropagation()}
+              className="font-semibold text-primary-600 hover:text-primary-700"
+            >
+              {page.pageLabel || page.path}
+            </Link>
+            {page.targetLabel && <span className="text-foreground-500"> · {page.targetLabel}</span>}
+            {duration && <span className="text-foreground-400"> · open {duration}</span>}
+          </DetailLine>
+        );
+      })}
+    </DetailList>
+  );
+}
+
+function ActionLines({ actions }: { actions: Array<{ action: CurriculumActivityAction; page: CurriculumActivityPage }> }) {
+  const shown = actions.slice(0, DETAIL_LIMIT);
+  return (
+    <DetailList shown={shown.length} total={actions.length} noun="read actions">
+      {shown.map(({ action, page }) => {
+        const detail = Object.values(action.detail || {}).filter(Boolean).join(' · ');
+        return (
+          <DetailLine key={action.id} at={action.at}>
+            <span className="font-semibold text-foreground-800">{action.label || action.kind}</span>
+            {detail && <span className="text-foreground-600"> · {detail}</span>}
+            <span className="text-foreground-400"> · on {page.pageLabel || page.path}</span>
+          </DetailLine>
+        );
+      })}
+    </DetailList>
+  );
+}
+
+function ChangeLines({ changes }: { changes: CurriculumAuditEvent[] }) {
+  const shown = changes.slice(0, DETAIL_LIMIT);
+  return (
+    <DetailList shown={shown.length} total={changes.length} noun="changes">
+      {shown.map(change => (
+        <DetailLine key={change.id} at={change.at}>
+          <span className="font-semibold text-foreground-800">{change.actionLabel || change.action}</span>
+          <span className="text-foreground-600"> · {change.entityLabel || change.entity}</span>
+          {change.title && <span className="text-foreground-600"> · {change.title}</span>}
+          {change.changes?.length ? (
+            <span className="text-foreground-400">
+              {' '}· {change.changes.length} {change.changes.length === 1 ? 'field' : 'fields'}
+            </span>
+          ) : null}
+        </DetailLine>
+      ))}
+    </DetailList>
+  );
+}
+
+function SignInLines({ signIns }: { signIns: CurriculumActivitySignIn[] }) {
+  const shown = signIns.slice(0, DETAIL_LIMIT);
+  return (
+    <DetailList shown={shown.length} total={signIns.length} noun="sign-ins">
+      {shown.map((signIn, index) => (
+        <DetailLine key={`${signIn.at}-${index}`} at={signIn.at}>
+          <span className="font-semibold text-foreground-800">Signed in</span>
+          {signIn.ip && <span className="ml-1.5 font-mono text-[10px] text-foreground-400">{signIn.ip}</span>}
+        </DetailLine>
+      ))}
+    </DetailList>
   );
 }
 
@@ -820,6 +1272,9 @@ function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: Readon
                 "Curriculum record", which was wrong on every learner, staff,
                 employer and coaching row in the feed. */}
             <span className="truncate">{event.context || event.entityLabel || 'Record'}</span>
+            <span title={String(event.metadata?.page_path || '')}>
+              Page: {String(event.metadata?.page_path || 'Not recorded')}
+            </span>
             {/* Auto-save is how the save arrived, not what happened. */}
             {event.source && (
               <>

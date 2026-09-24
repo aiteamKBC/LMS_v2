@@ -51,6 +51,7 @@ WORKSPACES = {
     'support': 'Support',
     'finance': 'Finance',
     'admin': 'Administration',
+    'enrolment': 'Enrolment',
     'audit': 'Audit',
     'platform': 'Platform',
 }
@@ -59,7 +60,7 @@ WORKSPACES = {
 # segment is already a workspace key needs no entry.
 SEGMENT_WORKSPACE = {
     'employers': 'employer',
-    'users': 'admin',
+    'users': 'enrolment',
     'internal-panel': 'admin',
     'activity-categories': 'audit',
     'old-otjh': 'learner',
@@ -185,6 +186,8 @@ COACH = (
     ('/coach/ksb-impact', 'ksb-impact', 'KSB impact', '', ''),
     ('/coach/otjh-reports', 'otjh-reports', 'OTJH reports', '', ''),
     ('/coach/reports', 'coach-reports', 'Coach reports', '', ''),
+    ('/coach/audit-trail', 'coach-audit-trail', 'Audit trail', '', ''),
+    ('/coach/audit-trail/people/{id}', 'coach-audit-trail-person', 'Audit trail: one person', 'person', 'id'),
 )
 
 TUTOR = (
@@ -463,7 +466,8 @@ PAGES_BY_WORKSPACE = {
     'safeguarding': SAFEGUARDING,
     'support': SUPPORT,
     'finance': FINANCE,
-    'admin': ADMIN,
+    'admin': tuple(route for route in ADMIN if not route[0].startswith('/users')),
+    'enrolment': tuple(route for route in ADMIN if route[0].startswith('/users')),
     'audit': AUDIT,
     'platform': PLATFORM,
 }
@@ -573,6 +577,10 @@ def resolve(path):
     }
 
 
+# Auditors need every workspace, including ones they do not personally use.
+FILTERABLE_WORKSPACES = tuple(WORKSPACES)
+
+
 def workspace_options():
     """The workspaces, for the audit trail's filter."""
-    return [{'value': key, 'label': label} for key, label in WORKSPACES.items()]
+    return [{'value': key, 'label': WORKSPACES[key]} for key in FILTERABLE_WORKSPACES]

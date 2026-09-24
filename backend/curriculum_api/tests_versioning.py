@@ -78,8 +78,10 @@ class SnapshotShapeTests(SimpleTestCase):
         self.assertEqual(versioning.diff_snapshots(snapshot, snapshot), [])
 
     def test_long_values_are_cut_and_flagged(self):
-        before = versioning.build_snapshot('component', {'id': 'C', 'description': 'a'})
-        after = versioning.build_snapshot('component', {'id': 'C', 'description': 'b' * 500})
+        # Free text is logged as "changed" (see tests_lean_log); a long list is
+        # still shown, cut to size.
+        before = versioning.build_snapshot('component', {'id': 'C', 'ksb_mappings': ['K1']})
+        after = versioning.build_snapshot('component', {'id': 'C', 'ksb_mappings': [f'K{n}' for n in range(200)]})
         change = versioning.diff_snapshots(before, after)[0]
         self.assertTrue(change['truncated'])
         self.assertLessEqual(len(change['to']), versioning.DIFF_VALUE_LIMIT + 1)

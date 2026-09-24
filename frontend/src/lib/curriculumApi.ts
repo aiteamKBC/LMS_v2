@@ -1681,12 +1681,21 @@ export interface CurriculumAuditActor {
 }
 
 export interface CurriculumAuditTrail {
+  workspaces?: { value: string; label: string }[];
+  changeWorkspaces?: string[];
   generatedAt: string;
   windowDays: number;
   since: string;
   limit: number;
+  /** Everything that matched the filters, across every page. */
   total: number;
+  /** Which page this is, 1-based. Clamped to the last page when asked for more. */
+  page: number;
+  pageSize: number;
+  /** How many pages the filtered window holds. Never below 1. */
+  pages: number;
   truncated: boolean;
+  /** Counted over the whole window, not the page, so paging does not move them. */
   actionCounts: Record<CurriculumAuditAction, number>;
   entityCounts: Record<string, number>;
   /** Entities whose table could not be read, so the page can name the gap. */
@@ -1795,6 +1804,21 @@ export interface CurriculumActivityPeople {
   shown: number;
   /** The server-side cap that `truncated` reports against. */
   limit: number;
+  /** Which page this is, 1-based. Clamped to the last page when asked for more. */
+  page: number;
+  pageSize: number;
+  /** How many pages the filtered window holds. Never below 1. */
+  pages: number;
+  /** Everyone who matched the filters, across every page. */
+  total: number;
+  /**
+   * The roles held by the people in this window, for the Role filter. Read
+   * from the whole window rather than from the page on screen, which can only
+   * name the roles of the fifty people it carries.
+   */
+  roles: string[];
+  /** Whether anyone in this window has no role recorded. */
+  rolesIncludeBlank: boolean;
   totals: {
     people: number;
     visits: number;
@@ -1859,6 +1883,9 @@ export interface CurriculumActivitySignIn {
 }
 
 export interface CurriculumPersonActivity {
+  accountEventsRecorded?: boolean;
+  accountEventsTruncated?: boolean;
+  accountEvents?: { id: number; at: string; event: 'login' | 'logout'; succeeded: boolean }[];
   generatedAt: string;
   windowDays: number;
   since: string;
@@ -3513,6 +3540,8 @@ export function fetchCurriculumAuditTrail(
   options: {
     days?: number;
     limit?: number;
+    /** 1-based. Past the last page is answered with the last page. */
+    page?: number;
     entity?: string;
     action?: string;
     search?: string;
@@ -3548,6 +3577,7 @@ export function fetchCurriculumAuditTrail(
   if (options.source && options.source !== 'all') query.set('source', options.source);
   if (options.actorType && options.actorType !== 'all') query.set('actorType', options.actorType);
   if (options.workspace) query.set('workspace', options.workspace);
+  if (options.page && options.page > 1) query.set('page', String(options.page));
   if (options.scope && options.scopeId) {
     query.set('scope', options.scope);
     query.set('scopeId', options.scopeId);
@@ -3569,12 +3599,27 @@ export function fetchCurriculumAuditTrail(
  * response for the next visit.
  */
 export function fetchActivityPeople(
-  options: { days?: number; search?: string; workspace?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
+  options: {
+    days?: number;
+    search?: string;
+    workspace?: string;
+    /** One role, or `__none__` for the people with no role recorded. */
+    role?: string;
+    /** 1-based. Past the last page is answered with the last page. */
+    page?: number;
+    pageSize?: number;
+    signal?: AbortSignal;
+    skipCache?: boolean;
+    revalidate?: boolean;
+  } = {},
 ): Promise<CurriculumActivityPeople> {
   const query = new URLSearchParams();
   if (options.days) query.set('days', String(options.days));
   if (options.search) query.set('search', options.search);
   if (options.workspace) query.set('workspace', options.workspace);
+  if (options.role) query.set('role', options.role);
+  if (options.page && options.page > 1) query.set('page', String(options.page));
+  if (options.pageSize) query.set('pageSize', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumActivityPeople>(`/activity/people/${suffix}`, {
     signal: options.signal,

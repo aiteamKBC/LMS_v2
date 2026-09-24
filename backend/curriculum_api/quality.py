@@ -32,10 +32,25 @@ from . import views as curriculum_views
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WINDOW_DAYS = 30
-MAX_WINDOW_DAYS = 365
+# The Audit Trail reads the last 7 days, matching the page activity it sits
+# beside -- except Curriculum Studio, whose history is kept and read in full.
+# Record History panels are not windowed by this.
+DEFAULT_WINDOW_DAYS = 7
+MAX_WINDOW_DAYS = 7
+UNLIMITED_WORKSPACES = frozenset({'curriculum'})
+UNLIMITED_WINDOW_DAYS = 3650
+
+
+def window_limit(workspace):
+    """The longest window a workspace's Audit Trail may read, in days."""
+    return UNLIMITED_WINDOW_DAYS if workspace in UNLIMITED_WORKSPACES else MAX_WINDOW_DAYS
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 1000
+
+#: One page of the change feed. `DEFAULT_LIMIT` stays what it was for the
+#: callers that ask for a bare window and expect the old cap; a page is what the
+#: Audit Trail reads at a time.
+DEFAULT_PAGE_SIZE = 50
 
 # One entry per authoring table the trail reads. ``title`` and ``context`` are
 # column names, not values: a table that lacks one simply reports it blank.
@@ -472,16 +487,19 @@ def curriculum_quality_audit_trail(request):
         try:
             return revision_trail(request)
         except Exception:
-            # The derived trail is the fallback for a reason: a Quality read must
-            # never be the reason this page fails to open.
             logger.warning('Could not read the revision audit trail.', exc_info=True)
+            return JsonResponse({'error': 'Audit history could not be read. Please retry.'}, status=503)
     return derived_trail(request)
 
 
 def revision_trail(request):
     """The audit trail read from the revision log."""
-    days = parse_bounded_int(request.GET.get('days'), DEFAULT_WINDOW_DAYS, 1, MAX_WINDOW_DAYS)
-    limit = parse_bounded_int(request.GET.get('limit'), DEFAULT_LIMIT, 1, MAX_LIMIT)
+    days = parse_bounded_int(
+        request.GET.get('days'), DEFAULT_WINDOW_DAYS, 1,
+        window_limit(curriculum_views.clean_str(request.GET.get('workspace')).lower()),
+    )
+    limit = parse_bounded_int(request.GET.get('limit'), DEFAULT_PAGE_SIZE, 1, MAX_LIMIT)
+    page = parse_bounded_int(request.GET.get('page'), 1, 1, 10_000)
     entity_filter = curriculum_views.clean_str(request.GET.get('entity')).lower()
     action_filter = curriculum_views.clean_str(request.GET.get('action')).lower()
     actor_filter = curriculum_views.clean_str(request.GET.get('actor')).lower()
@@ -500,12 +518,10 @@ def revision_trail(request):
     # nothing else now that learner, staff and coaching saves land in the same
     # table -- so the workspace narrows the record types rather than the page
     # filtering afterwards and reporting a total that counts what it hid.
-    from system_audit import writes as system_writes
-    if workspace:
-        owned = system_writes.entity_types_for_workspace(workspace)
-        if owned:
-            where.append('entity_type in (' + ','.join(['%s'] * len(owned)) + ')')
-            params.extend(owned)
+    from system_audit import pages as audit_pages, writes as system_writes
+    clause, scope_params = system_writes.revision_workspace_clause(workspace)
+    where.append(clause)
+    params.extend(scope_params)
     if entity_filter and entity_filter != 'all' and entity_filter in versioning.ENTITY_TYPES:
         where.append('entity_type = %s')
         params.append(entity_filter)
@@ -537,6 +553,17 @@ def revision_trail(request):
         clause, clause_params = _scope_clause(scope, scope_id)
         where.append(clause)
         params.extend(clause_params)
+    # Answered in SQL rather than over the rows that came back, now that the feed
+    # is paged: filtering afterwards would search one page and report the result
+    # as the whole window, and the count beside it would not agree with it.
+    # `context` is not searchable here -- it is derived from the snapshot's
+    # ancestry as each event is built, so it is not a column to match on.
+    if search:
+        where.append(
+            '(lower(title) like %s or lower(entity_id) like %s '
+            'or lower(actor_name) like %s or lower(actor_email) like %s)'
+        )
+        params.extend([f'%{search}%'] * 4)
 
     revisions_table = versioning.qualified(versioning.REVISIONS_TABLE)
     columns = (
@@ -546,37 +573,52 @@ def revision_trail(request):
     )
     if structured:
         columns += ', actor_type, triggered_by_email, triggered_by_name, source, metadata'
+    # Counted over everything that matched, not over the page: the page has to
+    # be able to say which page of how many it is showing.
+    count_rows = curriculum_views.fetch_all(
+        f'select count(*) as total from {revisions_table} where {" and ".join(where)}',
+        params,
+    )
+    total = int((count_rows[0] if count_rows else {}).get('total') or 0)
+    pages_total = max(1, -(-total // limit))
+    page = min(page, pages_total)
+    offset = (page - 1) * limit
+
     rows = curriculum_views.fetch_all(
         f'select {columns} '
         f'from {revisions_table} where {" and ".join(where)} '
-        f'order by created_at desc, id desc limit {int(limit) + 1}',
+        f'order by created_at desc, id desc limit {int(limit)} offset {int(offset)}',
         params,
     )
-    truncated = len(rows) > limit
-    rows = rows[:limit]
+    truncated = total > limit
 
     events = [revision_event(row) for row in rows]
-    if search:
-        events = [
-            event for event in events
-            if search in event['title'].lower()
-            or search in event['context'].lower()
-            or search in event['entityId'].lower()
-            or search in event['actorName'].lower()
-        ]
 
+    # Counted in SQL over the whole window rather than over the page, so the
+    # headline figures answer "what happened in this period" and do not change
+    # as somebody pages through it.
     action_counts = {action: 0 for action in ACTIONS}
     entity_counts = {}
-    for event in events:
-        action_counts[event['action']] = action_counts.get(event['action'], 0) + 1
-        entity_counts[event['entity']] = entity_counts.get(event['entity'], 0) + 1
+    for row in curriculum_views.fetch_all(
+        f'select action, entity_type, count(*) as total from {revisions_table} '
+        f'where {" and ".join(where)} group by action, entity_type',
+        params,
+    ):
+        action = curriculum_views.clean_str(row.get('action'))
+        entity = curriculum_views.clean_str(row.get('entity_type'))
+        count = int(row.get('total') or 0)
+        action_counts[action] = action_counts.get(action, 0) + count
+        entity_counts[entity] = entity_counts.get(entity, 0) + count
 
     return JsonResponse({
         'generatedAt': datetime.utcnow().isoformat(),
         'windowDays': days,
         'since': since.isoformat(),
         'limit': limit,
-        'total': len(events),
+        'page': page,
+        'pageSize': limit,
+        'pages': pages_total,
+        'total': total,
         'truncated': truncated,
         'actionCounts': action_counts,
         'entityCounts': entity_counts,
@@ -590,6 +632,8 @@ def revision_trail(request):
         # from a column rather than from a parsed string. The page uses it to
         # decide which filters it can honestly offer.
         'structuredMetadata': structured,
+        'workspaces': audit_pages.workspace_options(),
+        'changeWorkspaces': system_writes.change_workspaces(),
         'sources': sorted(versioning.SOURCES),
         'actorTypes': sorted(versioning.ACTOR_TYPES),
         # The record types this door can actually show, named by the server.
@@ -597,7 +641,7 @@ def revision_trail(request):
         # types -- so the system-wide Audit Trail offered a Record type filter
         # that could not name a learner, a coaching meeting or an employer, and
         # read as though the curriculum were the only thing being audited.
-        'entityTypes': entity_type_options(workspace),
+        'entityTypes': entity_type_options('' if structured else workspace),
         'actors': revision_actors(since, workspace),
         'events': events,
     })
@@ -656,11 +700,9 @@ def revision_actors(since, workspace=''):
     where = ['created_at >= %s', 'coalesce(actor_email, %s) <> %s']
     params = [since, '', '']
     from system_audit import writes as system_writes
-    if workspace:
-        owned = system_writes.entity_types_for_workspace(workspace)
-        if owned:
-            where.append('entity_type in (' + ','.join(['%s'] * len(owned)) + ')')
-            params.extend(owned)
+    clause, scope_params = system_writes.revision_workspace_clause(workspace)
+    where.append(clause)
+    params.extend(scope_params)
     try:
         rows = curriculum_views.fetch_all(
             'select actor_email, max(actor_name) as actor_name, count(*) as changes '
@@ -697,7 +739,8 @@ def revision_event(row):
     # at its week inside Module Builder; the rest are resolved here because the
     # path is a plain function of the id.
     href = system_writes.record_href(entity_type, entity_id, fallback=href)
-    snapshot = versioning.as_dict(row.get('snapshot'))
+    snapshot = {key: versioning.audit_display_value(entity_type, key, value)
+                for key, value in versioning.as_dict(row.get('snapshot')).items()}
     context = snapshot.get(versioning.CONTEXT_KEY) or {}
     if not isinstance(context, dict):
         context = {}
@@ -706,8 +749,8 @@ def revision_event(row):
         {
             'field': curriculum_views.clean_str(change.get('field')),
             'label': field_label(change.get('field')),
-            'before': change.get('from'),
-            'after': change.get('to'),
+            'before': versioning.audit_display_value(entity_type, curriculum_views.clean_str(change.get('field')), change.get('from')),
+            'after': versioning.audit_display_value(entity_type, curriculum_views.clean_str(change.get('field')), change.get('to')),
             'truncated': bool(change.get('truncated')),
         }
         for change in versioning.as_list(row.get('changed_fields'))
@@ -721,7 +764,8 @@ def revision_event(row):
         'entityLabel': label,
         'entityId': entity_id,
         'revisionNo': int(row.get('revision_no') or 0),
-        'title': curriculum_views.clean_str(row.get('title')) or entity_id,
+        'title': (curriculum_views.clean_str(snapshot.get('reason_code')) or entity_id
+                  if entity_type == 'learner_review_addition' else curriculum_views.clean_str(row.get('title')) or entity_id),
         'context': context_line(entity_type, context),
         'parents': context,
         'moduleCatalogueId': curriculum_views.clean_str(row.get('module_catalogue_id')),
@@ -775,8 +819,12 @@ def context_line(entity_type, context):
 
 def derived_trail(request):
     """The older trail, read from record timestamps. No actor, no before/after."""
-    days = parse_bounded_int(request.GET.get('days'), DEFAULT_WINDOW_DAYS, 1, MAX_WINDOW_DAYS)
-    limit = parse_bounded_int(request.GET.get('limit'), DEFAULT_LIMIT, 1, MAX_LIMIT)
+    days = parse_bounded_int(
+        request.GET.get('days'), DEFAULT_WINDOW_DAYS, 1,
+        window_limit(curriculum_views.clean_str(request.GET.get('workspace')).lower()),
+    )
+    limit = parse_bounded_int(request.GET.get('limit'), DEFAULT_PAGE_SIZE, 1, MAX_LIMIT)
+    page = parse_bounded_int(request.GET.get('page'), 1, 1, 10_000)
     entity_filter = curriculum_views.clean_str(request.GET.get('entity')).lower()
     action_filter = curriculum_views.clean_str(request.GET.get('action')).lower()
     search = curriculum_views.clean_str(request.GET.get('search')).lower()
@@ -793,6 +841,8 @@ def derived_trail(request):
         source for source in AUDIT_SOURCES
         if not entity_filter or entity_filter == 'all' or source['entity'] == entity_filter
     ]
+    if curriculum_views.clean_str(request.GET.get('workspace')).lower() not in {'', 'all', 'curriculum'}:
+        sources = []  # Timestamp fallback has no evidence about other workspaces.
 
     events = []
     unreadable = []
@@ -825,17 +875,26 @@ def derived_trail(request):
     events.sort(key=lambda item: item['at'], reverse=True)
     total = len(events)
     truncated = total > limit
-    events = events[:limit]
 
+    # Counted before the page is cut, so the headline figures describe the window
+    # rather than whichever fifty rows are on screen.
     action_counts = {action: 0 for action in ACTIONS}
     for item in events:
         action_counts[item['action']] = action_counts.get(item['action'], 0) + 1
+
+    pages_total = max(1, -(-total // limit))
+    page = min(page, pages_total)
+    start = (page - 1) * limit
+    events = events[start:start + limit]
 
     return JsonResponse({
         'generatedAt': datetime.utcnow().isoformat(),
         'windowDays': days,
         'since': since_iso,
         'limit': limit,
+        'page': page,
+        'pageSize': limit,
+        'pages': pages_total,
         'total': total,
         'truncated': truncated,
         'actionCounts': action_counts,

@@ -9,7 +9,7 @@
 // type ramp); no new visual language is introduced.
 // ============================================================================
 
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { Fragment, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { showCurriculumConfirm, type CurriculumAlertOptions } from '@/components/feature/CurriculumSweetAlert';
@@ -201,6 +201,7 @@ export function EntityFilterBar({
   sort,
   onReset,
   summary,
+  loading,
   trailing,
   isDirty,
   disabled,
@@ -219,6 +220,15 @@ export function EntityFilterBar({
   sort?: EntitySortSelect;
   onReset: () => void;
   summary?: string;
+  /**
+   * A request for `summary`'s answer is in flight. Callers that keep showing
+   * the previous rows while a filter change refetches (so the table does not
+   * flash empty) still need to say so somewhere -- otherwise the only sign
+   * anything happened is the summary text itself changing, which is easy to
+   * miss next to a dropdown the reader just clicked. A spinner next to that
+   * text is the whole fix; it never touches the rows underneath.
+   */
+  loading?: boolean;
   trailing?: ReactNode;
   /** Override when a select is required context rather than a resettable filter. */
   isDirty?: boolean;
@@ -310,7 +320,12 @@ export function EntityFilterBar({
           </button>
         </div>
       </div>
-      {summary && <p className="mt-3 text-[11px] font-semibold text-foreground-400">{summary}</p>}
+      {summary && (
+        <p className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-foreground-400">
+          {loading && <AppIcon className="ri-loader-4-line animate-spin text-sm text-primary-500"></AppIcon>}
+          {summary}
+        </p>
+      )}
     </div>
   );
 }
@@ -333,6 +348,8 @@ export function EntityTable<T>({
   rows,
   rowKey,
   renderRow,
+  renderRowDetail,
+  isRowExpanded,
   getRowHref,
   onRowIntent,
   loading,
@@ -345,6 +362,16 @@ export function EntityTable<T>({
   rows: T[];
   rowKey: (row: T) => string;
   renderRow: (row: T) => ReactNode;
+  /**
+   * A panel drawn under one row, full width, for detail that belongs to that
+   * row rather than to a page of its own -- the rows either side stay where
+   * they are, so the reader keeps the comparison the list was giving them.
+   *
+   * Only ever called for the row `isRowExpanded` names, and only rendered when
+   * both are supplied: a table that passes neither is built exactly as it was.
+   */
+  renderRowDetail?: (row: T) => ReactNode;
+  isRowExpanded?: (row: T) => boolean;
   /**
    * Makes the whole row navigate, not just whichever cell happens to render a
    * link. Row actions (RowActions/NamedActions) already stop their clicks from
@@ -423,9 +450,9 @@ export function EntityTable<T>({
               {rows.map(row => {
                 const key = rowKey(row);
                 const href = getRowHref?.(row);
-                return (
+                const expanded = Boolean(renderRowDetail && isRowExpanded?.(row));
+                const line = (
                   <div
-                    key={key}
                     ref={node => {
                       if (node) rowNodes.current.set(key, node);
                       else rowNodes.current.delete(key);
@@ -445,6 +472,20 @@ export function EntityTable<T>({
                     {renderRow(row)}
                   </div>
                 );
+                // Unexpandable tables keep the DOM they always had: the row is
+                // the child, and the divider between rows is the divider it
+                // was. Only a table that actually draws detail gets a wrapper.
+                if (!renderRowDetail) return <Fragment key={key}>{line}</Fragment>;
+                return (
+                  <div key={key} className={expanded ? 'bg-background-100/40' : undefined}>
+                    {line}
+                    {expanded && (
+                      <div className="border-t border-background-200/70 px-4 py-3">
+                        {renderRowDetail(row)}
+                      </div>
+                    )}
+                  </div>
+                );
               })}
             </div>
           ) : (
@@ -453,6 +494,89 @@ export function EntityTable<T>({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Numbered pages under a table the server sends one page at a time.
+ *
+ * The window of page numbers is centred on the current page, so page 9 of 14 is
+ * one click away rather than six. `noun` names what is being counted, because
+ * "1–50 of 141" without it makes the reader look back up at the table to find
+ * out what they are looking at.
+ *
+ * Rendered as nothing at all when there is only one page: a single disabled
+ * page button is furniture that says the list is paginated and then refuses to
+ * paginate.
+ */
+export function EntityPagination({
+  page,
+  pages,
+  total,
+  pageSize,
+  noun = 'rows',
+  onPage,
+}: {
+  page: number;
+  pages: number;
+  total: number;
+  pageSize: number;
+  noun?: string;
+  onPage: (page: number) => void;
+}) {
+  if (pages <= 1) return null;
+
+  const first = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const last = Math.min(page * pageSize, total);
+  const width = 5;
+  const half = Math.floor(width / 2);
+  const start = pages <= width ? 1 : Math.min(Math.max(1, page - half), pages - width + 1);
+  const numbers = Array.from({ length: Math.min(width, pages) }, (_, index) => start + index);
+
+  return (
+    <nav
+      aria-label={`${noun} pages`}
+      className="flex flex-col items-center justify-between gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-2.5 sm:flex-row"
+    >
+      <p className="text-[12px] text-foreground-500">
+        Showing <strong className="font-semibold tabular-nums text-foreground-800">{first}–{last}</strong> of{' '}
+        <strong className="font-semibold tabular-nums text-foreground-800">{total}</strong> {noun}
+      </p>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          disabled={page <= 1}
+          onClick={() => onPage(page - 1)}
+          aria-label="Previous page"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-foreground-500 transition hover:bg-background-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          <AppIcon className="ri-arrow-left-s-line"></AppIcon>
+        </button>
+        {numbers.map(number => (
+          <button
+            key={number}
+            type="button"
+            onClick={() => onPage(number)}
+            aria-current={number === page ? 'page' : undefined}
+            aria-label={`Page ${number}`}
+            className={`h-8 min-w-[32px] rounded-md px-2 text-[12px] font-semibold tabular-nums transition ${
+              number === page ? 'bg-primary-600 text-white' : 'text-foreground-600 hover:bg-background-100'
+            }`}
+          >
+            {number}
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled={page >= pages}
+          onClick={() => onPage(page + 1)}
+          aria-label="Next page"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-foreground-500 transition hover:bg-background-100 disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          <AppIcon className="ri-arrow-right-s-line"></AppIcon>
+        </button>
+      </div>
+    </nav>
   );
 }
 

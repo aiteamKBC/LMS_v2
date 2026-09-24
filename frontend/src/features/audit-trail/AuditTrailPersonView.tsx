@@ -16,12 +16,13 @@ import {
   EntityEmptyState,
   EntityFilterBar,
   EntityHero,
+  EntityPagination,
   HeroSecondaryButton,
   InlineError,
 } from '@/pages/curriculum/shared/entities/ui';
 import { auditEventHref, auditFieldValueLabel, auditValueLabel, auditValueTitle, clockLabel, durationLabel, parseActivityStamp, spanLabel, stampLabel, timeMetaLabel } from './activityTime';
 import { useAuditRecordNames } from './auditNames';
-import { DEFAULT_WINDOW_DAYS, type AuditTrailScope } from './scope';
+import { DEFAULT_WINDOW_DAYS, windowLimitFor, windowOptionsFor, type AuditTrailScope } from './scope';
 
 /**
  * One person's time in the workspace this door is scoped to: every visit, the
@@ -37,17 +38,14 @@ import { DEFAULT_WINDOW_DAYS, type AuditTrailScope } from './scope';
  *
  * * Every saved change is shown in the activity log. Changes without a linked
  *   page remain clearly labelled rather than being attached to a guessed page.
- * * Account sign-ins are intentionally left out of this focused change log:
- *   the page answers what this person changed, and signing in changes nothing.
+ * * Account access is shown separately because login/logout is account-wide,
+ *   not evidence that a person entered a particular workspace.
  */
 
-const WINDOW_OPTIONS = [
-  { value: '1', label: 'Today (last 24 hours)' },
-  { value: '7', label: 'Last 7 days' },
-  { value: '30', label: 'Last 30 days' },
-  { value: '90', label: 'Last 90 days' },
-  { value: '365', label: 'Last 12 months' },
-];
+
+/** Rows per page of the activity log. Matches the people list's own page size,
+ *  so the two tables in this door feel like the same size of page. */
+const CHANGES_PAGE_SIZE = 50;
 
 const ACTION_ICON: Record<string, string> = {
   search: 'ri-search-line',
@@ -70,7 +68,8 @@ export default function AuditTrailPersonView({ scope }: { scope: AuditTrailScope
   const [searchParams] = useSearchParams();
   const linkedDays = Number(searchParams.get('days'));
   const [windowDays, setWindowDays] = useState(
-    String(Number.isFinite(linkedDays) && linkedDays > 0 ? linkedDays : DEFAULT_WINDOW_DAYS),
+    // Capped: an older link asking for more than is kept opens on what is kept.
+    String(Number.isFinite(linkedDays) && linkedDays > 0 ? Math.min(linkedDays, windowLimitFor(scope.workspace)) : DEFAULT_WINDOW_DAYS),
   );
   const [search, setSearch] = useState('');
   const [timeFilter, setTimeFilter] = useState('all');
@@ -106,7 +105,7 @@ export default function AuditTrailPersonView({ scope }: { scope: AuditTrailScope
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [email, windowDays, reloadToken]);
+  }, [email, windowDays, reloadToken, scope.workspace]);
 
   // Search is applied to every saved change shown in the log. Page visits remain
   // available in the API for the People view, while this page answers what changed.
@@ -136,6 +135,25 @@ export default function AuditTrailPersonView({ scope }: { scope: AuditTrailScope
         || (detailFilter === 'none' ? !change.changes?.length : change.changes?.some(field => field.label === detailFilter)))
     ));
   }, [changes, search, timeFilter, activityFilter, recordFilter, detailFilter]);
+
+  // Grouped once here rather than inside the render, because the grouped list
+  // -- not the raw one -- is what gets paged: a page boundary has to land
+  // between two rows the reader actually sees, not partway through a run of
+  // duplicates that render as one row further down.
+  const groupedChanges = useMemo(() => groupChanges(logChanges), [logChanges]);
+  const [page, setPage] = useState(1);
+  // Any change to what is being asked for puts the reader back on page one.
+  // Staying on page nine of a search that just changed would show whatever
+  // happens to be ninth in a different answer, or nothing at all.
+  useEffect(() => {
+    setPage(1);
+  }, [search, timeFilter, activityFilter, recordFilter, detailFilter, windowDays]);
+  const totalPages = Math.max(1, Math.ceil(groupedChanges.length / CHANGES_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageChanges = useMemo(
+    () => groupedChanges.slice((currentPage - 1) * CHANGES_PAGE_SIZE, currentPage * CHANGES_PAGE_SIZE),
+    [groupedChanges, currentPage],
+  );
 
   const person = activity?.person;
   const counts = activity?.counts;
@@ -178,9 +196,9 @@ export default function AuditTrailPersonView({ scope }: { scope: AuditTrailScope
           search={search}
           onSearch={setSearch}
           placeholder="Search saved changes..."
-          selects={[{ label: 'Period', value: windowDays, onChange: setWindowDays, options: WINDOW_OPTIONS }]}
-          onReset={() => { setSearch(''); setWindowDays('30'); setTimeFilter('all'); setActivityFilter('all'); setRecordFilter('all'); setDetailFilter('all'); }}
-          isDirty={Boolean(search) || windowDays !== '30' || timeFilter !== 'all' || activityFilter !== 'all' || recordFilter !== 'all' || detailFilter !== 'all'}
+          selects={[{ label: 'Period', value: windowDays, onChange: setWindowDays, options: windowOptionsFor(scope.workspace) }]}
+          onReset={() => { setSearch(''); setWindowDays(String(DEFAULT_WINDOW_DAYS)); setTimeFilter('all'); setActivityFilter('all'); setRecordFilter('all'); setDetailFilter('all'); }}
+          isDirty={Boolean(search) || windowDays !== String(DEFAULT_WINDOW_DAYS) || timeFilter !== 'all' || activityFilter !== 'all' || recordFilter !== 'all' || detailFilter !== 'all'}
           summary={
             loading
               ? 'Reading this person’s activity...'
@@ -201,6 +219,24 @@ export default function AuditTrailPersonView({ scope }: { scope: AuditTrailScope
           </div>
         ) : (
           <>
+            {activity?.accountEventsRecorded === false && (
+              <p role="status" className="text-sm text-amber-700">Account access history could not be read.</p>
+            )}
+            {!!activity?.accountEvents?.length && (
+              <section aria-label="Account access" className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
+                <h2 className="text-sm font-bold">Account access</h2>
+                <p className="text-xs text-foreground-500">Sign-ins and sign-outs across the LMS, independent of workspace.</p>
+                {activity.accountEventsTruncated && <p role="status" className="text-xs text-amber-700">Showing the latest 200 account events. Narrow the period to see more.</p>}
+                <ul className="mt-2 space-y-2">
+                  {activity.accountEvents.map(event => (
+                    <li key={event.id} className="flex gap-3 text-xs">
+                      <time dateTime={event.at} title={timeMetaLabel(event.at)}>{stampLabel(event.at)}</time>
+                      <span>{event.event === 'logout' ? 'Signed out' : event.succeeded ? 'Signed in' : 'Sign-in failed'}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
             {logChanges.length > 0 && (
               <section className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
                 <div className="border-b border-background-200 px-4 py-2.5">
@@ -232,13 +268,23 @@ export default function AuditTrailPersonView({ scope }: { scope: AuditTrailScope
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-background-200/70">
-                      {groupChanges(logChanges).map(({ change, count }) => (
+                      {pageChanges.map(({ change, count }) => (
                         <ChangeTableRow key={change.id} change={change} count={count} names={names} />
                       ))}
                     </tbody>
                   </table>
                 </div>
               </section>
+            )}
+            {logChanges.length > 0 && (
+              <EntityPagination
+                page={currentPage}
+                pages={totalPages}
+                total={groupedChanges.length}
+                pageSize={CHANGES_PAGE_SIZE}
+                noun="changes"
+                onPage={setPage}
+              />
             )}
             {!logChanges.length && (
               <div className="rounded-2xl border border-foreground-200/60 bg-background-50">
@@ -392,6 +438,7 @@ function ChangeLine({ change, count = 1 }: { change: CurriculumAuditEvent; count
       <Link to={auditEventHref(change)} className="truncate text-[12px] font-bold text-foreground-900 hover:text-primary-700 hover:underline">
         {change.title}
       </Link>
+      <span className="text-[11px] text-foreground-500">Page: {String(change.metadata?.page_path || 'Not recorded')}</span>
       {count > 1 && (
         <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
           {count} identical records
@@ -433,6 +480,7 @@ function ChangeTableRow({ change, count, names }: { change: CurriculumAuditEvent
               {change.title}
             </Link>
           </div>
+          <p className="mt-1 break-all text-[11px] text-foreground-500">Page: {String(change.metadata?.page_path || 'Not recorded')}</p>
         </td>
         <td className="px-4 py-3 text-[11px] text-foreground-500">
           {count > 1 && <span className="mr-2 rounded-full bg-background-100 px-2 py-0.5 font-bold text-foreground-500">{count} identical records</span>}
@@ -562,7 +610,8 @@ function activityTimeBucket(value: string): string {
 function groupChanges(changes: CurriculumAuditEvent[]): Array<{ change: CurriculumAuditEvent; count: number }> {
   const groups = new Map<string, { change: CurriculumAuditEvent; count: number }>();
   for (const change of changes) {
-    const key = [change.at, change.action, change.entity, change.entityId, change.title, change.href].join('|');
+    const key = JSON.stringify([change.at, change.action, change.entity, change.entityId, change.title,
+      change.href, change.changes, change.snapshot, change.metadata, change.actorEmail, change.revisionNo]);
     const existing = groups.get(key);
     if (existing) existing.count += 1;
     else groups.set(key, { change, count: 1 });

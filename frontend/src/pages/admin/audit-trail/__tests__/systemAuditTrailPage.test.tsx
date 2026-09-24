@@ -58,7 +58,13 @@ function people(overrides: Partial<CurriculumActivityPeople> = {}): CurriculumAc
     signInsRecorded: true,
     truncated: false,
     shown: 1,
-    limit: 200,
+    limit: 50,
+    page: 1,
+    pageSize: 50,
+    pages: 1,
+    total: 1,
+    roles: ['coach'],
+    rolesIncludeBlank: false,
     totals: { people: 1, visits: 3, pageViews: 20, readActions: 4, changes: 2, signIns: 1 },
     people: [{
       email: 'sam@kentbusinesscollege.com',
@@ -154,6 +160,71 @@ describe('system-wide Audit Trail', () => {
     // The honest gap: visits are recorded everywhere, saves are not yet.
     expect(await screen.findByText(/covers Curriculum Studio only/i)).toBeInTheDocument();
     expect(screen.getByText(/Coach, Safeguarding/)).toBeInTheDocument();
+  });
+
+  /**
+   * Three pages of people, answered the way the server answers: echoing back
+   * the page it was asked for. A mock that always claimed page one would send
+   * the page control back to one on every click — and would be testing the
+   * mock rather than the page.
+   */
+  function threePages(overrides: Partial<CurriculumActivityPeople> = {}) {
+    fetchActivityPeople.mockImplementation((options: { page?: number } = {}) =>
+      Promise.resolve(people({
+        total: 141,
+        pages: 3,
+        page: options.page ?? 1,
+        roles: ['admin', 'coach'],
+        ...overrides,
+      })));
+  }
+
+  // The list is one page of a longer answer. Everything that narrows it has to
+  // be asked of the server for that reason: a filter applied to the rows on
+  // screen would search fifty people and report the result as all 141.
+  it('asks the server for the page that was clicked', async () => {
+    threePages();
+    renderSystemPage();
+    await screen.findByText('Sam Hunt');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Page 2' }));
+
+    expect(fetchActivityPeople).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 }));
+  });
+
+  it('asks the server for the role, rather than filtering the page', async () => {
+    threePages();
+    renderSystemPage();
+    await screen.findByText('Sam Hunt');
+
+    await userEvent.click(screen.getByRole('combobox', { name: /role/i }));
+    await userEvent.click(screen.getByRole('option', { name: 'Admin' }));
+
+    expect(fetchActivityPeople).toHaveBeenLastCalledWith(expect.objectContaining({ role: 'admin' }));
+  });
+
+  // A new question is a new list, and page three of the old one is not part of
+  // it -- landing there would show nothing and read as "nobody matched".
+  it('returns to the first page when the filters change', async () => {
+    threePages();
+    renderSystemPage();
+    await screen.findByText('Sam Hunt');
+    await userEvent.click(screen.getByRole('button', { name: 'Page 3' }));
+    expect(fetchActivityPeople).toHaveBeenLastCalledWith(expect.objectContaining({ page: 3 }));
+
+    await userEvent.click(screen.getByRole('combobox', { name: /role/i }));
+    await userEvent.click(screen.getByRole('option', { name: 'Admin' }));
+
+    expect(fetchActivityPeople).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1 }));
+  });
+
+  // Page controls over a single page are furniture that says the list is
+  // paginated and then refuses to paginate.
+  it('shows no page controls when everybody fits on one page', async () => {
+    renderSystemPage();
+    await screen.findByText('Sam Hunt');
+
+    expect(screen.queryByRole('button', { name: 'Page 1' })).not.toBeInTheDocument();
   });
 
   it('drops the coverage notice once every workspace is covered', async () => {
