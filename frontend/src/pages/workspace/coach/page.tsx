@@ -1187,7 +1187,6 @@ export default function CoachDashboard() {
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
   const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<CoachLearner[]>([]);
-  const [embeddedLearners, setEmbeddedLearners] = useState<CaseloadApiLearner[]>([]);
   const [monthlyRisk, setMonthlyRisk] = useState<MonthlyRiskPoint[] | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
   const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>([]);
@@ -1291,7 +1290,6 @@ export default function CoachDashboard() {
             .map(normalizeEvidenceQueueLearner),
         );
         const normalizedLearners = (dashboard.learners || []).map(normalizeLearner);
-        setEmbeddedLearners((dashboard.learners || []) as CaseloadApiLearner[]);
         const reviewHistoryLearners = dashboard.reviewHistory?.learners || [];
         const events = sortEvents(dashboard.timetable?.events || []);
         const completedHistoryEvents = completedSessionHistory.events || [];
@@ -1564,7 +1562,7 @@ export default function CoachDashboard() {
         </section>
 
         <div id="learner-caseload" className={styles.fullWidthCaseload}>
-          <CoachCaseloadContent embedded embeddedLearners={embeddedLearners} />
+          <CoachCaseloadContent embedded />
         </div>
 
         <Panel className={styles.panel}>

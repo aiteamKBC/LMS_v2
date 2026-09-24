@@ -62,6 +62,7 @@ from coach_api.views import (
     normalize_program_status,
 )
 from learner_api.learner_detail import otjh_status_from_variance
+from learner_api.models import LearnerProfile
 
 
 class CoachProgrammeStatusTests(SimpleTestCase):
@@ -741,6 +742,55 @@ class CoachCaseloadLegacyRelationTests(SimpleTestCase):
 class CoachCaseloadViewTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
+
+    class PageQuery:
+        class EmptyValues:
+            def distinct(self): return self
+            def order_by(self, *args): return self
+            def __iter__(self): return iter(())
+        def __init__(self, ids):
+            self.ids = ids
+        def annotate(self, **kwargs): return self
+        def filter(self, *args, **kwargs): return self
+        def exclude(self, **kwargs): return self
+        def count(self): return len(self.ids)
+        def order_by(self, *args): return self
+        def values_list(self, *fields, **kwargs):
+            if fields == ("id",): return self.ids
+            return self.EmptyValues()
+
+    @patch("coach_api.views.coach_staff_display_name", return_value="Coach Example")
+    @patch("coach_api.views.dashboard_attendance_rows", return_value=[])
+    @patch("coach_api.views.dashboard_latest_completed_review_dates", return_value={})
+    @patch("coach_api.views.caseload_aptem_ids", return_value={})
+    @patch("coach_api.views.dashboard_review_history", return_value={})
+    @patch("coach_api.views.caseload_canonical_metrics", return_value={})
+    @patch("coach_api.views.caseload_evidenced_ksb_counts", return_value={})
+    @patch("coach_api.views.caseload_audit_hour_totals", return_value={})
+    @patch("coach_api.views.caseload_latest_learning_activities", return_value={})
+    @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.fetch_caseload_learner_profiles_by_ids")
+    def test_paginated_caseload_enriches_only_requested_page(
+        self, fetch_page, serialize, *_mocks,
+    ):
+        ids = list(range(1, 33))
+        page_rows = [SimpleNamespace(id=value, coach_name="Coach Example") for value in ids[30:32]]
+        fetch_page.return_value = page_rows
+        serialize.side_effect = lambda row, **kwargs: {"id": str(row.id), "coachName": "Coach Example"}
+
+        with patch.object(LearnerProfile, "objects", self.PageQuery(ids)):
+            response = call_coach_view(coach_caseload, self.factory.get(
+                "/coach_api/coach/caseload", {"owner_email": "coach@example.com", "page": 4, "page_size": 10},
+            ))
+        payload = json.loads(response.content)
+
+        self.assertEqual(payload["pagination"], {
+            "page": 4, "pageSize": 10, "total": 32, "totalPages": 4,
+            "hasNext": False, "hasPrevious": True,
+        })
+        self.assertEqual([row["id"] for row in payload["results"]], ["31", "32"])
+        fetch_page.assert_called_once_with("coach@example.com", [31, 32])
+        self.assertEqual([call.args[0].id for call in serialize.call_args_list], [31, 32])
 
     @patch("coach_api.views.serialize_caseload_dashboard_learner")
     @patch("coach_api.views.fetch_caseload_dashboard_profiles")

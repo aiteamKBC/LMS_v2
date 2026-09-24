@@ -51,7 +51,6 @@ export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileT
       </div>
 
       <div className={styles.learningGrid}>
-        <ProgrammeActivityTimeline modules={data.journey} activityStates={activityStates} />
         <section className={styles.panel}>
           <div className={styles.panelHeader}>
             <div className={styles.panelHeading}>
@@ -93,28 +92,6 @@ export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileT
       </div>
     </div>
   );
-}
-
-function ProgrammeActivityTimeline({ modules, activityStates }: { modules: JourneyModule[]; activityStates: CaseFileActivityStates }) {
-  return <section className={styles.panel} aria-label="Module activity timeline">
-    <div className={styles.panelHeader}>
-      <div className={styles.panelHeading}><span className={styles.panelIcon}><AppIcon className="ri-timeline-view" /></span><div>
-        <h2 className={styles.panelTitle}>Module timeline</h2>
-        <p className={styles.panelSubtitle}>Dates show placement; learner activity records determine status.</p>
-      </div></div>
-    </div>
-    <div className="grid gap-2 p-3 md:grid-cols-2 md:p-4 xl:grid-cols-3">
-      {modules.map((module, index) => {
-        const summary = moduleActivitySummary(module, activityStates);
-        return <div key={`${module.module}-${index}`} className="rounded-xl border border-background-200 bg-white p-3">
-          <div className="flex items-start justify-between gap-3"><div className="min-w-0"><span className="text-[11px] font-bold uppercase tracking-wider text-primary-600">Module {index + 1}</span><p className="truncate text-sm font-bold text-foreground-900">{module.module}</p></div><ActivityStatusBadge status={summary.status} /></div>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-background-200"><span className="block h-full rounded-full bg-emerald-500" style={{ width: `${summary.percent}%` }} /></div>
-          <p className="mt-2 text-xs font-semibold text-foreground-600">{summary.completed} / {summary.total} completed · {summary.percent}%</p>
-          {summary.unavailable > 0 && <p className="mt-1 text-[11px] text-amber-700">{summary.unavailable} unavailable</p>}
-        </div>;
-      })}
-    </div>
-  </section>;
 }
 
 function LegendDot({ tone, label }: { tone: string; label: string }) {

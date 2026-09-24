@@ -1667,6 +1667,33 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     return rows
 
 
+def fetch_caseload_learner_profiles_by_ids(owner_email: str, profile_ids: list[int]):
+    """Load the existing full caseload shape for one authorised page only."""
+    if not profile_ids:
+        return []
+    requested_owner = normalize_email(owner_email)
+    learner_alias = get_learner_db_alias()
+    prefetches = [
+        "ksb_assignment__profile_version__definitions", "plan_modules__weeks__components",
+        "progress_entries__ksb_links", "progress_entries__quiz_answers__correct_answers",
+        "progress_entries__quiz_answers__chosen_answers",
+    ]
+    if learner_ksbs_relation_exists(learner_alias):
+        prefetches.insert(0, "assigned_ksbs")
+    if learner_activity_events_relation_exists(learner_alias):
+        prefetches.append("activity_events")
+    rows_by_id = {
+        int(row.id): row
+        for row in LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email"))).filter(
+            coach_email_key=requested_owner, id__in=profile_ids,
+        ).prefetch_related(*prefetches)
+        if clean_text(row.username)
+    }
+    rows = [rows_by_id[profile_id] for profile_id in profile_ids if profile_id in rows_by_id]
+    attach_caseload_source_rows(rows)
+    return rows
+
+
 def fetch_all_learner_profiles(programme: str | None = None, cohort: str | None = None) -> list[LearnerProfile]:
     """Every learner with a resolved enrolment id, prefetched exactly like
     `fetch_caseload_learner_profiles` but WITHOUT the single-coach filter —
@@ -11558,17 +11585,70 @@ def coach_caseload(request):
     owner_email = authenticated_coach_email(request)
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
     summary_only = clean_text(request.GET.get("summary")).casefold() in {"1", "true", "yes", "on"}
+    paginated = any(key in request.GET for key in ("page", "page_size", "search", "status", "cohort", "group", "sort", "direction"))
+    validator = ObjectValidator(request.GET)
+    page = validator.integer("page", default=1, minimum=1)
+    requested_page_size = validator.integer("page_size", default=10, minimum=1)
+    search = validator.text("search", max_length=200)
+    status = validator.text("status", max_length=100)
+    cohort = validator.text("cohort", max_length=255)
+    group = validator.text("group", max_length=255)
+    sort_key = clean_text(request.GET.get("sort") or "name").casefold()
+    direction = clean_text(request.GET.get("direction") or "asc").casefold()
+    if sort_key not in {"name", "programme", "cohort", "group", "status"}:
+        validator.error("sort", "This calculated field cannot be sorted before learner enrichment.")
+    if direction not in {"asc", "desc"}:
+        validator.error("direction", "Select asc or desc.")
+    try:
+        validator.check()
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    page_size = min(requested_page_size, 100)
     # Caseload enrichment is expensive and the page may request it again on a
     # refresh/remount.  Keep a short per-coach snapshot for read-only GETs;
     # live snapshot requests explicitly bypass this cache.
-    caseload_cache_key = f"coach-caseload:v2:{normalize_email(owner_email)}:{int(summary_only)}"
+    cache_scope = hashlib.sha256(request.META.get("QUERY_STRING", "").encode()).hexdigest()[:16]
+    caseload_cache_key = f"coach-caseload:v3:{normalize_email(owner_email)}:{int(summary_only)}:{cache_scope}"
     if not refresh_live_snapshots:
         cached_caseload = cache.get(caseload_cache_key)
         if cached_caseload is not None:
             return JsonResponse(cached_caseload)
 
     try:
-        if summary_only:
+        pagination = None
+        filter_options = None
+        if paginated:
+            requested_owner = normalize_email(owner_email)
+            queryset = LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email"))).filter(
+                coach_email_key=requested_owner,
+            ).exclude(full_name__regex=r"^\s*$")
+            option_queryset = queryset
+            if search:
+                queryset = queryset.filter(Q(full_name__icontains=search) | Q(email__icontains=search) | Q(programme__icontains=search) | Q(cohort__icontains=search) | Q(group_name__icontains=search))
+            if status and status.casefold() != "all":
+                queryset = queryset.filter(programme_status__iexact=status)
+            if cohort and cohort.casefold() != "all":
+                queryset = queryset.filter(Q(cohort_id=cohort) | Q(cohort__iexact=cohort))
+            if group and group.casefold() != "all":
+                queryset = queryset.filter(Q(group_id=group) | Q(group_name__iexact=group))
+            total = queryset.count()
+            sort_fields = {"name": "full_name", "programme": "programme", "cohort": "cohort", "group": "group_name", "status": "programme_status"}
+            primary_sort = sort_fields[sort_key]
+            if direction == "desc":
+                primary_sort = f"-{primary_sort}"
+            offset = (page - 1) * page_size
+            profile_ids = list(queryset.order_by(primary_sort, "full_name", "id").values_list("id", flat=True)[offset:offset + page_size])
+            rows = fetch_caseload_learner_profiles_by_ids(owner_email, profile_ids)
+            learners = [serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots) for row in rows]
+            total_pages = (total + page_size - 1) // page_size if total else 0
+            pagination = {"page": page, "pageSize": page_size, "total": total, "totalPages": total_pages, "hasNext": page < total_pages, "hasPrevious": page > 1}
+            filter_options = {
+                "cohort": [{"value": key or label, "label": label} for key, label in option_queryset.exclude(cohort="").values_list("cohort_id", "cohort").distinct().order_by("cohort") if label],
+                "group": [{"value": key or label, "label": label} for key, label in option_queryset.exclude(group_name="").values_list("group_id", "group_name").distinct().order_by("group_name") if label],
+                "programStatus": [{"value": value, "label": value} for value in option_queryset.exclude(programme_status="").values_list("programme_status", flat=True).distinct().order_by("programme_status") if value],
+                "employer": [],
+            }
+        elif summary_only:
             rows = fetch_caseload_dashboard_profiles(owner_email)
             learners = [serialize_caseload_dashboard_learner(row) for row in rows]
         else:
@@ -11594,6 +11674,7 @@ def coach_caseload(request):
         ksb_counts = run_optional(caseload_evidenced_ksb_counts)
         canonical_metrics = run_optional(caseload_canonical_metrics)
         review_history = run_optional(dashboard_review_history)
+        latest_activities = run_optional(caseload_latest_learning_activities) if paginated else {}
         aptem_by_profile = caseload_aptem_ids(rows)
         for row, learner in zip(rows, learners):
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
@@ -11609,6 +11690,22 @@ def coach_caseload(request):
                 learner["lastReview"] = last_mcm
             if last_pr:
                 learner["lastProgressReview"] = last_pr
+            if paginated:
+                apply_latest_learning_activity(learner, latest_activities.get(int(row.id)))
+        if paginated:
+            review_dates = dashboard_latest_completed_review_dates(
+                rows, owner_email=owner_email, owner_name="Coach",
+            )
+            attendance_rows = dashboard_attendance_rows(
+                rows, learners, aptem_by_profile=aptem_by_profile,
+            )
+            attendance_by_id = {
+                to_int(entry.get("id")): entry for entry in attendance_rows
+                if to_int(entry.get("id")) is not None
+            }
+            for row, learner in zip(rows, learners):
+                learner.update(review_dates.get(int(row.id), {}))
+                apply_attendance_summary(learner, attendance_by_id.get(int(row.id)))
     except Exception:
         logger.exception("coach_caseload_load_failed coach_account_id=%s", owner_email)
         return coach_error(
@@ -11626,6 +11723,8 @@ def coach_caseload(request):
             "owner": {"name": owner_name, "email": owner_email},
             "learners": learners,
         }
+    if paginated:
+        response_payload = {"owner": response_payload["owner"], "results": learners, "pagination": pagination, "filterOptions": filter_options}
     if not refresh_live_snapshots:
         cache.set(caseload_cache_key, response_payload, 30)
     _coach_perf("caseload", "total", endpoint_started, learner_count=len(learners))
