@@ -492,7 +492,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
       </div>
     </header>
 
-    {role && role !== 'coach' && createPortal(
+    {role && role !== 'coach' && role !== 'learner' && createPortal(
       <button
         type="button"
         onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}

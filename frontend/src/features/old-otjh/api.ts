@@ -61,7 +61,8 @@ export type MonthDetail = MonthState & { rows: Activity[]; snapshot_digest: stri
   demo_only?: boolean; provisional?: boolean };
 /** Presentation data shared by retained and current monthly journals. */
 export type JournalSummary = {
-  learner?: { id: number; aptem_id?: number | null; name: string; programme: string; coach_name: string };
+  learner?: { id: number; aptem_id?: number | null; name: string; programme: string; coach_name: string;
+    planned_end_date?: string | null };
   months: MonthState[];
 };
 export type ActivityContent = { id: number; parts: { id: number; title: string; category: string;

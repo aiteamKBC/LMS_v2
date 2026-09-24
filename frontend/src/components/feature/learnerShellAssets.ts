@@ -1,4 +1,5 @@
 export const LEARNER_SIDEBAR_WIDTH = 240;
+export const LEARNER_SIDEBAR_COLLAPSED_WIDTH = 64;
 
 export const LEARNER_SIDEBAR_PATTERN_URL =
   'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/65132273a5e14c4d8011fc90114f65ec.png';

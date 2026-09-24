@@ -9,8 +9,6 @@ import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { overviewSchedule, overviewHome } from '@/api/learnerOverview';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { roleNavMap } from '@/mocks/navigation';
 import { homeActions, greeting, upcomingEvents } from './homeData';
 import { ReferenceIcon } from './ReferenceIcon';
 import { ProgressCard } from './ProgressCard';
@@ -57,11 +55,6 @@ export default function StudentHome() {
 function StaffStudentHome() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
-  // A staff/admin review must be represented by the URL before the learner
-  // reads begin. This makes a bare workspace entry safe across refreshes.
-  if (!urlKind && !urlId && kind && id) {
-    return <Navigate to={`/workspace/learner/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`} replace />;
-  }
   return <LearnerHome key={`${kind}:${id}`} kind={kind} id={id} preview />;
 }
 
@@ -97,20 +90,12 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   const name = profile.real.name?.trim() || (!preview && account.displayName?.trim()) || 'Learner';
   const firstName = name.split(/\s+/)[0];
   const events = upcomingEvents(schedule.error ? null : schedule.data, week.error ? null : week.data, now);
-  return <WorkspaceShell
-    role="learner"
-    roleLabel={roleNavMap.learner.label}
-    navItems={roleNavMap.learner.items}
-    pageTitle="Student Home"
-    pageSubtitle="Your learning, your progress, all in one place"
-    workspaceLabel="Learner"
-    headerExtras={<StudentHomeHeader key={`${account.id}:${kind}:${id}`} name={name} homeHref={homeHref}
-      identity={`${account.id}:${kind}:${id}`} events={events} loading={schedule.loading || week.loading}
-      error={!!schedule.error || !!week.error} onRetry={() => { schedule.refresh(); week.refresh(); }} embedded />}
-  >
-  <div className={styles.home}>
+  return <div className={styles.home}>
     <a href="#student-main" className={styles.skip}>Skip to main content</a>
-    <div id="student-main" className={styles.scene} role="region">
+    <StudentHomeHeader key={`${account.id}:${kind}:${id}`} name={name} homeHref={homeHref}
+      identity={`${account.id}:${kind}:${id}`} events={events} loading={schedule.loading || week.loading}
+      error={!!schedule.error || !!week.error} onRetry={() => { schedule.refresh(); week.refresh(); }}/>
+    <main id="student-main" className={styles.scene}>
       <section className={styles.hero} aria-labelledby="welcome-heading"><p>{greeting(now)}</p>
         <h1 id="welcome-heading">{firstName} <span aria-hidden="true">👋</span></h1>
         <h2>Welcome to Kent Business College</h2><p className={styles.intro}>Your learning journey, your goals, our support.<br/>Let’s make progress together.</p>
@@ -146,7 +131,6 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
         {(schedule.error || week.error) && <div className={styles.empty} role="alert">Some upcoming activity could not be loaded. <button onClick={() => { schedule.refresh(); week.refresh(); }}>Try again</button></div>}
       </aside>
       <footer className={styles.footer}><span>KENT BUSINESS COLLEGE&nbsp;&nbsp; LEARN&nbsp;&nbsp; BELONG&nbsp;&nbsp; ACHIEVE</span><p>A Brighter Kent<br/>A Bolder You</p></footer>
-    </div>
-  </div>
-  </WorkspaceShell>;
+    </main>
+  </div>;
 }

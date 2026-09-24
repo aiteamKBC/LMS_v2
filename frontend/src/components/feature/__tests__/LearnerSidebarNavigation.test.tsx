@@ -137,3 +137,21 @@ it('still gives the full reviewing menu when the SAME admin opens a DIFFERENT le
 
   expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
 });
+
+it('can collapse the learner sidebar and restore it from its top toggle', async () => {
+  viewer.role = 'admin';
+  rememberLearner('commercial', String(++learnerId));
+  vi.mocked(fetchLearnerSummary).mockResolvedValue({
+    learnerType: 'commercial', programmeStatus: 'Delivery', studentActivityAvailable: true,
+  } as Awaited<ReturnType<typeof fetchLearnerSummary>>);
+  render(<MemoryRouter initialEntries={['/workspace/learner/dashboard']}><LearnerPage /></MemoryRouter>);
+
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Collapse learner navigation' })); });
+
+  expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Expand learner navigation' })).toBeVisible();
+
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Expand learner navigation' })); });
+
+  expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
+});

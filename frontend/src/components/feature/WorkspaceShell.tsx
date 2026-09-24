@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, type CSSProperties, type ReactNode, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Sidebar, SidebarIcon, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP, type SidebarNavItem } from './Sidebar';
-import { LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
+import { LEARNER_SIDEBAR_COLLAPSED_WIDTH, LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
 import { CoachViewAsBar } from './CoachViewAsBar';
 import { CoachSidebar } from './CoachSidebar';
 import { Header } from './Header';
@@ -51,6 +51,7 @@ interface BreadcrumbItem {
 const ROUTE_HISTORY_KEY = 'lmsRouteHistory';
 const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
 const COACH_SIDEBAR_COLLAPSED_KEY = 'kbc_coach_sidebar_collapsed';
+const LEARNER_SIDEBAR_COLLAPSED_KEY = 'kbc_learner_sidebar_collapsed';
 const COACH_SIDEBAR_WIDTH = 240;
 const COACH_SIDEBAR_COLLAPSED_WIDTH = 76;
 
@@ -71,6 +72,14 @@ function readPinnedPreference() {
 function readCoachSidebarCollapsed() {
   try {
     return localStorage.getItem(COACH_SIDEBAR_COLLAPSED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function readLearnerSidebarCollapsed() {
+  try {
+    return localStorage.getItem(LEARNER_SIDEBAR_COLLAPSED_KEY) === 'true';
   } catch {
     return false;
   }
@@ -250,6 +259,7 @@ export function WorkspaceShell({
   const accountButtonRef = useRef<HTMLButtonElement>(null);
   const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
   const [coachSidebarCollapsed, setCoachSidebarCollapsed] = useState(readCoachSidebarCollapsed);
+  const [learnerSidebarCollapsed, setLearnerSidebarCollapsed] = useState(readLearnerSidebarCollapsed);
 
   const handlePinChange = (pinned: boolean) => {
     setSidebarPinned(pinned);
@@ -262,6 +272,13 @@ export function WorkspaceShell({
     setCoachSidebarCollapsed(collapsed);
     try {
       localStorage.setItem(COACH_SIDEBAR_COLLAPSED_KEY, String(collapsed));
+    } catch { /* Ignore unavailable browser storage. */ }
+  };
+
+  const handleLearnerSidebarCollapsedChange = (collapsed: boolean) => {
+    setLearnerSidebarCollapsed(collapsed);
+    try {
+      localStorage.setItem(LEARNER_SIDEBAR_COLLAPSED_KEY, String(collapsed));
     } catch { /* Ignore unavailable browser storage. */ }
   };
 
@@ -401,7 +418,7 @@ export function WorkspaceShell({
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
       style={{ '--kbc-sidebar-width': role === 'learner'
-        ? `${LEARNER_SIDEBAR_WIDTH}px`
+        ? `${learnerSidebarCollapsed ? LEARNER_SIDEBAR_COLLAPSED_WIDTH : LEARNER_SIDEBAR_WIDTH}px`
         : role === 'coach'
         ? `${coachSidebarCollapsed ? COACH_SIDEBAR_COLLAPSED_WIDTH : COACH_SIDEBAR_WIDTH}px`
         : `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
@@ -417,6 +434,8 @@ export function WorkspaceShell({
         userRole={displayRole}
         pinned={sidebarPinned}
         onPinChange={handlePinChange}
+        learnerCollapsed={learnerSidebarCollapsed}
+        onLearnerCollapsedChange={handleLearnerSidebarCollapsedChange}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />}
@@ -454,17 +473,17 @@ export function WorkspaceShell({
               title={!canGoBack ? 'You are on the first page' : previousRoute ? 'Back to the previous page' : 'Back'}>
               <ArrowLeft size={16} aria-hidden="true" /><span>Back</span>
             </button>}
-            {!hideBreadcrumbs && <nav className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Breadcrumb">
+            {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${role === 'learner' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
               {roleLabel !== 'Super Admin' && (
                 <>
-                  <Link to="/" className="text-foreground-300 hover:text-foreground-500 transition-smooth">
+                  <Link to="/" className="workspace-breadcrumb-home text-foreground-300 hover:text-foreground-500 transition-smooth">
                     <AppIcon className="ri-home-3-line text-base"></AppIcon>
                   </Link>
-                  <AppIcon className="ri-arrow-right-s-line text-foreground-200 text-xs"></AppIcon>
+                  <AppIcon className="workspace-breadcrumb-home-separator ri-arrow-right-s-line text-foreground-200 text-xs"></AppIcon>
                 </>
               )}
               {breadcrumbs.map((crumb, index) => (
-                <span key={`${crumb.href}-${index}`} className="flex items-center gap-1.5">
+                <span key={`${crumb.href}-${index}`} className={`workspace-breadcrumb-step flex items-center gap-1.5 ${index < breadcrumbs.length - 1 ? 'is-complete' : 'is-current'}`}>
                   {index < breadcrumbs.length - 1 ? (
                     <>
                       {crumb.isLink ? (
