@@ -45,6 +45,27 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
+  it('opens the colour customisation drawer from the learner calendar', async () => {
+    setup();
+    await screen.findAllByRole('button', { name: /Catch-up with your coach/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Customise colours' }));
+    expect(screen.getByRole('dialog', { name: 'Calendar Colour Preferences' })).toBeVisible();
+  });
+
+  it('shows horizontally scrollable source and status filters with distinct status colours', async () => {
+    setup();
+    await screen.findAllByRole('button', { name: /Catch-up with your coach/ });
+
+    const sourceFilters = screen.getByRole('group', { name: 'Calendar source filters' });
+    const statusFilters = screen.getByRole('group', { name: 'Calendar status filters' });
+    expect(within(sourceFilters).getByRole('button', { name: /Catch-up/ })).toBeVisible();
+    const scheduled = within(statusFilters).getByTitle(/Scheduled \(1\)/);
+    const completed = within(statusFilters).getByTitle(/Completed \(/);
+    expect(scheduled).toHaveStyle({ backgroundColor: '#ECFDF5' });
+    expect(completed).toHaveStyle({ backgroundColor: '#D1FAE5' });
+    expect(scheduled).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('shows a written, colour-coded status on month cards', async () => {
     setup();
     const statusBadges = await screen.findAllByLabelText('Scheduled status');

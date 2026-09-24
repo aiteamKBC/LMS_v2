@@ -2188,7 +2188,7 @@ export default function CoachTimetablePage() {
                 className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border-0 bg-[#F1ECF8] px-2.5 text-[11px] font-bold text-[#4F2D7F] shadow-sm transition hover:bg-[#E8DDF3] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/25"
               >
                 <AppIcon className="ri-palette-fill text-[13px]" />
-                Customize colors
+                Customise colours
               </button>
             </div>
           </div>

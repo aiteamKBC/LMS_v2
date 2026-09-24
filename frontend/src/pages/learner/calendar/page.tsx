@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -26,6 +27,15 @@ import {
 } from '@/api/learnerCalendar';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
+import { CalendarColorPreferencesDrawer } from '@/pages/coach/timetable/components/CalendarColorPreferencesDrawer';
+import {
+  getMeetingTypeKey,
+  loadCalendarColors,
+  saveCalendarColors,
+  type CalendarColorPreferences,
+  type CalendarStatusKey,
+  type MeetingTypeKey,
+} from '@/pages/coach/timetable/calendarColors';
 import { meetingBookingWarning } from '../reviews/meetingBooking';
 import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
 import { importedReviewsToEvents, mergeCompletedReviewHistory } from '../reviews/useReviewSessions';
@@ -95,6 +105,50 @@ function CalendarMoreMenu({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function CalendarFilterScrollRow({ ariaLabel, children }: { ariaLabel: string; children: ReactNode }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+
+  const updateEdges = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const maxScroll = element.scrollWidth - element.clientWidth;
+    setEdges({ left: element.scrollLeft > 1, right: maxScroll - element.scrollLeft > 1 });
+  }, []);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    const content = contentRef.current;
+    if (!element) return;
+    updateEdges();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateEdges);
+    observer?.observe(element);
+    if (content) observer?.observe(content);
+    window.addEventListener('resize', updateEdges);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateEdges);
+    };
+  }, [updateEdges]);
+
+  return (
+    <div className="calendar-filter-scroll-shell">
+      <div ref={scrollRef} role="group" aria-label={ariaLabel} className="calendar-filter-row" onScroll={updateEdges}
+        onWheel={event => {
+          if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+            event.currentTarget.scrollLeft += event.deltaY;
+            event.preventDefault();
+          }
+        }}>
+        <div ref={contentRef} className="calendar-filter-row-content">{children}</div>
+      </div>
+      <span aria-hidden="true" className={`calendar-filter-fade calendar-filter-fade-left${edges.left ? ' is-visible' : ''}`} />
+      <span aria-hidden="true" className={`calendar-filter-fade calendar-filter-fade-right${edges.right ? ' is-visible' : ''}`} />
     </div>
   );
 }
@@ -420,6 +474,15 @@ const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: str
   completed: { label: 'Completed', dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-800 ring-emerald-200' },
 };
 
+const LEARNER_STATUS_COLOR_KEYS: Record<LearnerStatusFilter, CalendarStatusKey> = {
+  all: 'all',
+  'needs-schedule': 'not-scheduled',
+  scheduled: 'scheduled',
+  pending: 'pending-due-soon',
+  'in-progress': 'in-progress',
+  completed: 'completed',
+};
+
 function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -485,6 +548,15 @@ function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
   return 'scheduled';
 }
 
+function learnerMeetingTypeColor(event: CalendarEvent, colors: CalendarColorPreferences) {
+  if (!event.source || event.type === 'Busy' || event.type === 'Personal') return null;
+  return colors.meetingTypes[getMeetingTypeKey(event)];
+}
+
+function learnerEventStatusColor(event: CalendarEvent, colors: CalendarColorPreferences) {
+  return colors.statuses[LEARNER_STATUS_COLOR_KEYS[learnerEventStatus(event)]];
+}
+
 function shouldShowMeetingArtifacts(event: CalendarEvent): boolean {
   return Boolean(
     event.eventKey
@@ -530,6 +602,7 @@ export function LearnerCalendarContent() {
 function LearnerCalendarBody() {
   const location = useLocation();
   const myLearner = useLinkedLearner();
+  const calendarColorOwner = `learner:${myLearner.kind}:${myLearner.id}`;
   const loadArtifacts = useCallback((eventKey: string, signal?: AbortSignal) => fetchLearnerMeetingArtifacts(myLearner.kind, myLearner.id, eventKey, signal), [myLearner.id, myLearner.kind]);
   const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options), [myLearner.id, myLearner.kind]);
   const [viewMode, setViewMode] = useState<ViewMode>('monthly');
@@ -549,6 +622,8 @@ function LearnerCalendarBody() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterSource, setFilterSource] = useState<LearnerSourceFilter>('all');
   const [filterStatus, setFilterStatus] = useState<LearnerStatusFilter>('all');
+  const [calendarColors, setCalendarColors] = useState<CalendarColorPreferences>(() => loadCalendarColors(calendarColorOwner));
+  const [colorPreferencesOpen, setColorPreferencesOpen] = useState(false);
   const [myEvents, setMyEvents] = useState<CalendarEvent[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
@@ -627,6 +702,18 @@ function LearnerCalendarBody() {
     return Array.from(unique.values()).map(mapBusySlot).filter((event): event is CalendarEvent => event !== null);
   }, [visibleBusySlots]);
   const displayedEvents = useMemo(() => [...myEvents, ...personalBusyEvents], [myEvents, personalBusyEvents]);
+  const activeMeetingTypeKeys = useMemo<MeetingTypeKey[]>(() => (
+    Array.from(new Set(displayedEvents.filter(event => event.source).map(event => getMeetingTypeKey(event))))
+  ), [displayedEvents]);
+  useEffect(() => {
+    setCalendarColors(loadCalendarColors(calendarColorOwner));
+  }, [calendarColorOwner]);
+  const handleCalendarColorsSave = useCallback((nextColors: CalendarColorPreferences) => {
+    setCalendarColors(nextColors);
+    saveCalendarColors(calendarColorOwner, nextColors);
+    setColorPreferencesOpen(false);
+  }, [calendarColorOwner]);
+  const handleCloseColorPreferences = useCallback(() => setColorPreferencesOpen(false), []);
   const focusedEventKey = useMemo(() => new URLSearchParams(location.search).get('event') || '', [location.search]);
 
   useEffect(() => {
@@ -1631,23 +1718,26 @@ function LearnerCalendarBody() {
                 <div className="space-y-2">
                   {selectedDaySorted.map((ev) => {
                     const [startTime, endTime] = ev.time.split('–');
+                    const meetingColor = learnerMeetingTypeColor(ev, calendarColors);
+                    const statusColor = learnerEventStatusColor(ev, calendarColors);
                     return (
                       <button
                         key={ev.id}
                         type="button"
                         onClick={() => { setShowEventDetails(ev); setShowDayDrawer(false); }}
                         className="group flex w-full items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer"
+                        style={meetingColor ? { backgroundColor: meetingColor.background, borderColor: `${meetingColor.accent}55` } : undefined}
                       >
                         <div className="w-12 shrink-0 pt-0.5">
                           <p className="text-[11px] font-bold leading-tight text-foreground-700">{startTime}</p>
                           {endTime && <p className="text-[10px] leading-tight text-foreground-400">{endTime}</p>}
                         </div>
-                        <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${getEventDotColor(ev.type, ev.color)}`}></span>
+                        <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${meetingColor ? '' : getEventDotColor(ev.type, ev.color)}`} style={meetingColor ? { backgroundColor: meetingColor.accent } : undefined}></span>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-semibold text-foreground-900 transition-colors group-hover:text-primary-700">{ev.title}</p>
                           <div className="mt-0.5 flex items-center gap-2">
                             <span className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">{ev.type}</span>
-                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
+                            <span className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold" style={{ backgroundColor: statusColor.background, color: statusColor.accent }}>{statusConfig[ev.status].label}</span>
                           </div>
                         </div>
                         <AppIcon className="ri-arrow-right-s-line mt-1 shrink-0 text-foreground-300 transition-colors group-hover:text-primary-500"></AppIcon>
@@ -1735,7 +1825,7 @@ function LearnerCalendarBody() {
           </div>
         </Panel>
 
-        <Panel padding="sm" className="border border-foreground-200/70 shadow-sm">
+        <Panel padding="sm" className="calendar-filter-host min-w-0 border border-[#E8DDF3] shadow-[0_4px_18px_rgba(79,45,127,0.06)]">
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="relative w-full xl:max-w-md">
@@ -1757,53 +1847,63 @@ function LearnerCalendarBody() {
                   Clear filters
                 </button>
               )}
+              <button type="button" onClick={() => setColorPreferencesOpen(true)}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border-0 bg-[#F1ECF8] px-2.5 text-[11px] font-bold text-[#4F2D7F] shadow-sm transition hover:bg-[#E8DDF3] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/25">
+                <AppIcon className="ri-palette-fill text-[13px]" />
+                Customise colours
+              </button>
             </div>
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
-              <div className="min-w-0 rounded-xl bg-background-50/70 p-2">
-                <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Source</p>
-                <div className="flex max-h-24 flex-wrap content-start gap-2 overflow-y-auto pr-1">
+            <div className="calendar-filter-layout mt-3 min-w-0">
+              <section className="calendar-filter-card flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#E8DDF3] bg-white shadow-[0_4px_18px_rgba(79,45,127,0.06)]" aria-labelledby="learner-calendar-source-filters-title">
+                <div>
+                  <h3 id="learner-calendar-source-filters-title" className="text-sm font-heading font-bold text-slate-900">Filter by source</h3>
+                  <p className="mt-0.5 text-[11px] text-slate-500">View events by source.</p>
+                </div>
+                <CalendarFilterScrollRow ariaLabel="Calendar source filters">
                   {sourceFilters.map((option) => {
                     const source = option.key;
-                    const meta = { label: option.longLabel, short: option.label, dot: option.dot };
                     const isActive = filterSource === source;
+                    const matchingEvent = displayedEvents.find(event => learnerEventSource(event) === source && event.source);
+                    const fallbackMeetingType: MeetingTypeKey = source === 'live-session' ? 'live-session'
+                      : source === 'catch-up' ? 'catch-up'
+                        : source === 'student-support' ? 'support'
+                          : 'other';
+                    const sourceColor = source === 'all'
+                      ? calendarColors.statuses.all
+                      : calendarColors.meetingTypes[matchingEvent ? getMeetingTypeKey(matchingEvent) : fallbackMeetingType];
                     return (
-                      <button
-                        key={source}
-                        type="button"
-                        onClick={() => setFilterSource(source)}
-                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
-                        title={`${meta.label} (${sourceFilterCounts[source]})`}
-                      >
-                        <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : meta.dot}`}></span>
-                        {meta.short}
-                        <span className={isActive ? 'text-white/80' : 'text-foreground-400'}>{sourceFilterCounts[source]}</span>
+                      <button key={source} type="button" onClick={() => setFilterSource(source)} title={`${option.longLabel} (${sourceFilterCounts[source]})`}
+                        className={`calendar-filter-pill inline-flex items-center gap-2 rounded-xl border text-[11px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20 ${isActive ? 'border-[#C9B9DD] bg-[#F7F3FB] text-[#4F2D7F] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-[#D8CCE8] hover:bg-slate-50'}`}>
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#4F2D7F' : sourceColor.accent }} />
+                        <span>{option.label}</span>
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isActive ? 'bg-[#E8DDF3] text-[#4F2D7F]' : 'bg-slate-100 text-slate-500'}`}>{sourceFilterCounts[source]}</span>
                       </button>
                     );
                   })}
+                </CalendarFilterScrollRow>
+              </section>
+              <section className="calendar-filter-card flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#E8DDF3] bg-white shadow-[0_4px_18px_rgba(79,45,127,0.06)]" aria-labelledby="learner-calendar-status-filters-title">
+                <div>
+                  <h3 id="learner-calendar-status-filters-title" className="text-sm font-heading font-bold text-slate-900">Status colours</h3>
+                  <p className="mt-0.5 text-[11px] text-slate-500">Track your sessions at a glance.</p>
                 </div>
-              </div>
-              <div className="min-w-0 rounded-xl bg-background-50/70 p-2">
-                <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Status</p>
-                <div className="flex flex-wrap gap-2">
+                <CalendarFilterScrollRow ariaLabel="Calendar status filters">
                   {LEARNER_STATUS_FILTERS.map((status) => {
                     const meta = LEARNER_STATUS_META[status];
+                    const color = calendarColors.statuses[LEARNER_STATUS_COLOR_KEYS[status]];
                     const isActive = filterStatus === status;
                     return (
-                      <button
-                        key={status}
-                        type="button"
-                        onClick={() => setFilterStatus(status)}
-                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
-                        title={`${meta.label} (${statusFilterCounts[status]})`}
-                      >
-                        <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : meta.dot}`}></span>
-                        {meta.label}
-                        <span className={isActive ? 'text-white/80' : 'text-foreground-400'}>{statusFilterCounts[status]}</span>
+                      <button key={status} type="button" onClick={() => setFilterStatus(status)} title={`${meta.label} (${statusFilterCounts[status]})`} aria-pressed={isActive}
+                        className="calendar-filter-pill inline-flex items-center gap-2 rounded-xl text-[11px] font-bold shadow-sm transition hover:brightness-[0.98] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20"
+                        style={{ backgroundColor: isActive ? '#4F2D7F' : color.background, color: isActive ? '#FFFFFF' : color.accent, border: `1px solid ${isActive ? '#4F2D7F' : color.accent}40` }}>
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#FFFFFF' : color.accent }} />
+                        <span>{meta.label}</span>
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-white/70'}`}>{statusFilterCounts[status]}</span>
                       </button>
                     );
                   })}
-                </div>
-              </div>
+                </CalendarFilterScrollRow>
+              </section>
             </div>
           </div>
         </Panel>
@@ -1883,6 +1983,8 @@ function LearnerCalendarBody() {
                             }
                             const sourceMeta = learnerSourceMeta(ev);
                             const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
+                            const meetingColor = learnerMeetingTypeColor(ev, calendarColors);
+                            const statusColor = learnerEventStatusColor(ev, calendarColors);
                             return (
                               <button
                                 type="button"
@@ -1890,6 +1992,7 @@ function LearnerCalendarBody() {
                                 key={ev.id}
                                 onClick={(event) => { event.stopPropagation(); setShowEventDetails(ev); }}
                                 className={`w-full rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
+                                style={meetingColor ? { backgroundColor: meetingColor.background, borderColor: `${meetingColor.accent}55`, color: meetingColor.accent } : undefined}
                                 title={`${learnerSourceMeta(ev).label} · ${ev.title}`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
@@ -1901,9 +2004,10 @@ function LearnerCalendarBody() {
                                   {(ev.host || ev.club) && <span className="min-w-0 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</span>}
                                   <span
                                     aria-label={`${statusMeta.label} status`}
-                                    className={`ml-auto inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold leading-none ring-1 ring-inset sm:text-[9px] ${statusMeta.badge}`}
+                                    className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold leading-none ring-1 ring-inset sm:text-[9px]"
+                                    style={{ backgroundColor: statusColor.background, color: statusColor.accent, borderColor: `${statusColor.accent}40` }}
                                   >
-                                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusMeta.dot}`}></span>
+                                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: statusColor.accent }}></span>
                                     {statusMeta.label}
                                   </span>
                                 </div>
@@ -1943,27 +2047,30 @@ function LearnerCalendarBody() {
                       const eventSource = ev.source;
                       const sourceMeta = learnerSourceMeta(ev);
                       const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
+                      const meetingColor = learnerMeetingTypeColor(ev, calendarColors);
+                      const statusColor = learnerEventStatusColor(ev, calendarColors);
                       return (
                         <button
                           key={ev.id}
                           type="button"
                           onClick={() => setShowEventDetails(ev)}
                           className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:shadow-sm cursor-pointer ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
+                          style={meetingColor ? { backgroundColor: meetingColor.background, borderColor: `${meetingColor.accent}55`, color: meetingColor.accent } : undefined}
                         >
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/75 shadow-sm">
                             <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : ev.reviewTemplateId ? 'ri-file-list-3-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'other' ? 'ri-more-line' : ev.type === 'Busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="mb-1 flex min-w-0 items-center gap-1.5">
-                              <span className={`h-2 w-2 shrink-0 rounded-full ${sourceMeta.dot}`}></span>
+                              <span className={`h-2 w-2 shrink-0 rounded-full ${meetingColor ? '' : sourceMeta.dot}`} style={meetingColor ? { backgroundColor: meetingColor.accent } : undefined}></span>
                               <p className="truncate text-sm font-heading font-bold text-foreground-950">{ev.title}</p>
                             </div>
                             <p className="truncate text-xs font-medium text-foreground-500">
                               {ev.timeToBeConfirmed ? 'Time to be confirmed' : ev.time} · {ev.club}
                             </p>
                           </div>
-                          <span aria-label={`${statusMeta.label} status`} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset ${statusMeta.badge}`}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${statusMeta.dot}`}></span>
+                          <span aria-label={`${statusMeta.label} status`} className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset" style={{ backgroundColor: statusColor.background, color: statusColor.accent, borderColor: `${statusColor.accent}40` }}>
+                            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: statusColor.accent }}></span>
                             {statusMeta.label}
                           </span>
                         </button>
@@ -2073,12 +2180,15 @@ function LearnerCalendarBody() {
                           <div className="space-y-1">
                             {eventsInSlot.map((ev) => {
                               const typeColor = getEventColorClass(ev.type, ev.color);
+                              const meetingColor = learnerMeetingTypeColor(ev, calendarColors);
+                              const statusColor = learnerEventStatusColor(ev, calendarColors);
                               return (
                                 <button type="button" aria-haspopup="dialog" key={ev.id} className={`w-full text-left p-3 rounded-xl cursor-pointer hover:shadow-sm hover:brightness-95 transition-all duration-200 border-l-[3px] ${typeColor}`}
+                                  style={meetingColor ? { backgroundColor: meetingColor.background, borderColor: `${meetingColor.accent}55`, borderLeftColor: meetingColor.accent } : undefined}
                                   onClick={() => setShowEventDetails(ev)}>
                                   <div className="flex items-center justify-between mb-1">
                                     <span className="text-sm font-semibold text-foreground-900">{ev.title}</span>
-                                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: statusColor.background, color: statusColor.accent }}>{statusConfig[ev.status].label}</span>
                                   </div>
                                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-foreground-500">
                                     <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-foreground-400 text-xs"></AppIcon>{ev.time}</span>
@@ -2141,6 +2251,13 @@ function LearnerCalendarBody() {
 
         </div>
       </PageContainer>
+      <CalendarColorPreferencesDrawer
+        open={colorPreferencesOpen}
+        value={calendarColors}
+        onClose={handleCloseColorPreferences}
+        onSave={handleCalendarColorsSave}
+        activeMeetingTypeKeys={activeMeetingTypeKeys}
+      />
     </>
   );
 }
