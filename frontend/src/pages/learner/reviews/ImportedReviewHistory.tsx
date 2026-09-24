@@ -14,6 +14,7 @@ interface ImportedReviewHistoryProps {
   learnerId: string;
   category: ReviewHistoryCategory;
   hideHeader?: boolean;
+  reviewId?: string;
 }
 
 const monthOptions = [
@@ -126,7 +127,7 @@ function ReviewSection({ section, open, onToggle }: { section: ImportedReviewSec
   );
 }
 
-export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = false }: ImportedReviewHistoryProps) {
+export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = false, reviewId }: ImportedReviewHistoryProps) {
   const [reviews, setReviews] = useState<ImportedReview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -166,6 +167,13 @@ export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = 
   const title = category === 'monthly-coaching' ? 'Imported coaching history' : category === 'reviews' ? 'Imported review history' : 'Imported progress review history';
 
   useEffect(() => {
+    if (!reviewId || loading) return;
+    const requestedReview = reviews.find((review) => review.id === reviewId || review.aptemReviewId === reviewId);
+    setSelectedId(requestedReview?.id || '');
+    setOpenSections(requestedReview?.sections[0] ? [String(requestedReview.sections[0].id)] : []);
+  }, [loading, reviewId, reviews]);
+
+  useEffect(() => {
     if (selectedId && !filtered.some((review) => review.id === selectedId)) {
       setSelectedId('');
       setOpenSections([]);
@@ -198,14 +206,15 @@ export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = 
         <div className="p-5 text-center text-sm text-foreground-500">No imported {category === 'monthly-coaching' ? 'coaching meetings' : category === 'reviews' ? 'reviews' : 'progress reviews'} were found for this learner.</div>
       ) : (
         <>
-          <div className="grid gap-2 border-b border-background-200 bg-background-100/45 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          {!reviewId && <div className="grid gap-2 border-b border-background-200 bg-background-100/45 p-4 sm:grid-cols-2 lg:grid-cols-4">
             <label className="relative sm:col-span-2 lg:col-span-1"><span className="sr-only">Search reviews</span><AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search reviews" className="h-10 w-full rounded-xl border border-background-300 bg-white pl-9 pr-3 text-xs outline-none focus:border-primary-400" /></label>
             <label><span className="sr-only">Filter by status</span><select value={status} onChange={(event) => setStatus(event.target.value)} className="h-10 w-full rounded-xl border border-background-300 bg-white px-3 text-xs font-semibold text-foreground-700 outline-none focus:border-primary-400"><option value="all">All statuses</option>{statuses.map((value) => <option key={value} value={value}>{statusLabel(value)}</option>)}</select></label>
             <label><span className="sr-only">Filter by year</span><select value={year} onChange={(event) => setYear(event.target.value)} className="h-10 w-full rounded-xl border border-background-300 bg-white px-3 text-xs font-semibold text-foreground-700 outline-none focus:border-primary-400"><option value="all">All years</option>{years.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
             <label><span className="sr-only">Filter by month</span><select value={month} onChange={(event) => setMonth(event.target.value)} className="h-10 w-full rounded-xl border border-background-300 bg-white px-3 text-xs font-semibold text-foreground-700 outline-none focus:border-primary-400"><option value="all">All months</option>{monthOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          </div>
+          </div>}
 
-          {!selected && <div className="overflow-x-auto">
+          {!selected && reviewId && <div className="p-6 text-center text-sm text-foreground-500">The requested imported review form could not be found.</div>}
+          {!selected && !reviewId && <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-left">
               <thead className="border-b border-background-200 bg-primary-50/60 text-[10px] font-bold uppercase tracking-wide text-foreground-500">
                 <tr><th className="px-5 py-3">Review</th><th className="px-5 py-3">Type</th><th className="px-5 py-3">Reviewer</th><th className="px-5 py-3">Planned date</th><th className="px-5 py-3">Status</th><th className="px-5 py-3 text-right">Details</th></tr>
@@ -224,7 +233,7 @@ export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = 
             </table>
           </div>}
           {selected && <div>
-            {selected && <button type="button" onClick={() => { setSelectedId(''); setOpenSections([]); }} className="mb-3 rounded-lg border border-background-300 bg-white px-3 py-2 text-xs font-bold text-primary-700 hover:bg-primary-50">← Back to reviews</button>}
+            {!reviewId && <button type="button" onClick={() => { setSelectedId(''); setOpenSections([]); }} className="mb-3 rounded-lg border border-background-300 bg-white px-3 py-2 text-xs font-bold text-primary-700 hover:bg-primary-50">← Back to reviews</button>}
             <div className="min-w-0 bg-background-100/25 p-4 sm:p-5">
                 <div className="space-y-4">
                   <div className="rounded-2xl border border-primary-100 bg-white p-4 shadow-sm">

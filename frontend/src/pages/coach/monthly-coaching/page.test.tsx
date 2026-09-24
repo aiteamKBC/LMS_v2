@@ -186,7 +186,7 @@ describe('restored monthly coaching list', () => {
       'Reschedule', 'View', 'View Form', 'Create Slides',
     ]);
     fireEvent.click(scheduledRow.getByRole('button', { name: 'View' }));
-    expect(screen.getByTestId('route')).toHaveTextContent('reviewId=21');
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/meetings/imported-review%3A21');
   });
 
   it('renders the requested table columns and coaching actions', async () => {

@@ -7,7 +7,7 @@ import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
 from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
-from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan
+from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan, valid_aptem_id
 
 
 def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, split_header=False, split_total=False):
@@ -153,10 +153,21 @@ class TrainingPlanDashboardTests(SimpleTestCase):
                           'programme_name': '', 'cohort_name': '', 'group_name': ''}
                 with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
                      patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+                     patch('learner_api.training_plan_dashboard._aptem_subject_modules') as aptem_subjects, \
                      patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
                      patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
                     result = read_dashboard(source, section='learning')
                 self.assertEqual([item['id'] for item in result['modules']], ['M1'])
+                aptem_subjects.assert_not_called()
+                sql = ' '.join(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list)
+                self.assertNotIn('Last_audit', sql)
+
+    def test_only_positive_aptem_ids_select_aptem(self):
+        self.assertIsNone(valid_aptem_id(None))
+        self.assertIsNone(valid_aptem_id(''))
+        self.assertIsNone(valid_aptem_id(0))
+        self.assertIsNone(valid_aptem_id(-1))
+        self.assertEqual(valid_aptem_id(' 987 '), 987)
 
 
     def test_coach_fallback_uses_only_the_current_programme_cohort_and_group(self):
