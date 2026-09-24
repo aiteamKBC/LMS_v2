@@ -41,7 +41,10 @@ urlpatterns = [
     path('login_api/', include('login.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/calendar/', include('learner_api.calendar_urls')),
-    path('api/progress-reviews/', include('progress_reviews_api.urls')),
+    # Matches the *_api prefix pattern production LiteSpeed already forwards to
+    # Django (see the comment above) -- keeping this under /api/ would silently
+    # fall through to the SPA index instead of reaching this view.
+    path('progress_reviews_api/', include('progress_reviews_api.urls')),
 ]
 
 if settings.DEBUG:

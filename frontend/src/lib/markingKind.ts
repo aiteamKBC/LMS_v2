@@ -20,7 +20,7 @@
 export type MarkingKind = 'assignment' | 'reflection';
 
 /** Activity types that are assessed as a work product. */
-const ASSIGNMENT_TYPES = new Set(['assignment']);
+const ASSIGNMENT_TYPES = new Set(['assignment', 'extra_activity']);
 
 export function markingKind(activityType: string | null | undefined): MarkingKind {
   return ASSIGNMENT_TYPES.has(String(activityType ?? '').trim().toLowerCase())

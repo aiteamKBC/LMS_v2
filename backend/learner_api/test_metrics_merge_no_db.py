@@ -54,15 +54,26 @@ class MetricsMergeTests(unittest.TestCase):
         single = ns['metrics_from_loaded'](**arguments)
         cursor.execute.reset_mock()
         ns['rows'].reset_mock()
+        ns['read_aptem_planned_total'].reset_mock()
+        ns['read_accepted_ksb_rows'].reset_mock()
         cached = ns['metrics_from_loaded'](**arguments, manual_hours=12,
-                  preloaded={'planned_hours_document': {'otjh': {}}, 'reflection_submissions': []})
+                  preloaded={
+                      'planned_hours_document': {'otjh': {}},
+                      'planned_hours_contract': None,
+                      'aptem_planned_total': 410,
+                      'accepted_ksb_rows': [{'source_ref': 'progress:1'}],
+                      'reflection_submissions': [],
+                  })
         self.assertEqual(single, cached)
         self.assertEqual(cached['aptem_planned_total'], 410)
         self.assertEqual(cached['otjh']['completed_actual'], 12.5)
         self.assertEqual(cached['ksb']['completed'], 2)
         cursor.execute.assert_not_called()
         ns['rows'].assert_not_called()
-        self.assertEqual(ns['read_planned_hours'].call_args.args[-1], {'otjh': {}})
+        ns['read_aptem_planned_total'].assert_not_called()
+        ns['read_accepted_ksb_rows'].assert_not_called()
+        self.assertEqual(ns['read_planned_hours'].call_args.args[-2], {'otjh': {}})
+        self.assertIsNone(ns['read_planned_hours'].call_args.args[-1])
 
     def test_preloaded_unknown_or_zero_hours_are_not_treated_as_absent(self):
         for hours, expected in [(None, None), (0, 0.5)]:

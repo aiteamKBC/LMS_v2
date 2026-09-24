@@ -4,6 +4,19 @@ import { emptyMonthlyAssignment } from '@/api/monthlyAssignment';
 import { useImpactStatements } from './useImpactStatements';
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const draft = 'supported '.repeat(20).trim();
+it.each(['impact', 'action'] as const)('sends the answer and only the selected month activities in %s mode', async mode => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+  vi.stubGlobal('fetch', fetch);
+  const activity = { title: 'Audience research', date: '2026-09-12', reflection: 'I practised grouping interview responses.', ksbs: ['K1'] };
+  const data = emptyMonthlyAssignment([], '2026-09');
+  data.lmsReflection = 'My monthly reflection';
+  const { result } = renderHook(() => useImpactStatements(true, '1', 'a', 'Question', 'My assignment answer', '', data, '', vi.fn(), vi.fn(), mode,
+    [activity, { ...activity, title: 'Previous month', date: '2026-08-12' }]));
+  await waitFor(() => expect(result.current.phase).toBe('info'));
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({ learnerId: '1', mode, context: {
+    month: '2026-09', answer: 'My assignment answer', activities: [activity], lmsReflection: 'My monthly reflection',
+  } });
+});
 it('fills impact drafts without changing existing text or the employer declaration and does not repeat on save', async () => {
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ careerImpact: draft, jobImpact: draft, employerImpact: draft, businessImpact: draft }) });
   vi.stubGlobal('fetch', fetch);

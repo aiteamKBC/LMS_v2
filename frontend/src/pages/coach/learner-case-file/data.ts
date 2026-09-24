@@ -217,12 +217,18 @@ export interface CaseFileReviewMeeting {
   reviewTypeName: string;
   title: string;
   date: string;
+  plannedDate: string;
+  completedDate: string;
   time: string;
   detail: string;
   status: CoachCalendarEvent['status'];
   statusLabel: string;
   isNext: boolean;
   notes?: string;
+  reviewer: string;
+  hasForm: boolean;
+  hasTranscript: boolean;
+  hasAttendance: boolean;
 }
 
 export interface CaseFileReviewGroup {
@@ -965,6 +971,10 @@ function buildReviewMeetingItems(
       reviewTypeName,
       title: event.title || reviewTypeName,
       date: formatCalendarDateLabel(displayDate),
+      plannedDate: formatCalendarDateLabel(event.targetDate || event.scheduledDate),
+      completedDate: event.status === 'completed'
+        ? formatCalendarDateLabel(event.reviewCompletedAt || displayDate)
+        : '--',
       time: formatCalendarTimeLabel(event),
       detail: [
         event.sequence ? (source === 'mcr' ? `Meeting ${event.sequence}` : `Review ${event.sequence}`) : 'Additional review',
@@ -977,6 +987,10 @@ function buildReviewMeetingItems(
       statusLabel: calendarStatusLabel(event.status),
       isNext,
       notes: String(event.notes || '').trim() || undefined,
+      reviewer: String(event.reviewerName || event.ownerName || '').trim() || '--',
+      hasForm: Boolean(event.hasReviewForm ?? event.reviewInstanceId),
+      hasTranscript: Boolean(event.hasTranscript),
+      hasAttendance: Boolean(event.hasAttendance),
     };
   });
 }

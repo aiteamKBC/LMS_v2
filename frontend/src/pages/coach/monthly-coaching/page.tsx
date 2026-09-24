@@ -4,7 +4,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { openReviewInstanceForEvent } from '@/api/reviewInstances';
-import { fetchCoachImportedReviews, importedReviewEvents, isImportedReviewEvent } from '@/api/coachImportedReviews';
+import { isImportedReviewEvent } from '@/api/coachImportedReviews';
 import { monthlyCoachingAgenda } from '@/pages/workspace/coach/monthlyCoachingAgenda';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterSelect, SearchInput } from '@/components/ui/FilterToolbar';
@@ -34,6 +34,7 @@ import {
   isEventInMonth,
   isEventThisMonth,
   isInProgressEvent,
+  hasScheduledSlot,
   isScheduledEvent,
   meetingUrl,
   needsScheduling,
@@ -177,20 +178,14 @@ export default function CoachMonthlyCoaching() {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    Promise.all([
-      fetchCoachCalendarEvents(controller.signal, {
+    fetchCoachCalendarEvents(controller.signal, {
         start: isoDate(startOfMonth(selectedMonth)),
         end: isoDate(endOfMonth(selectedMonth)),
         includeLiveSessions: false,
         includeSchedulerQueues: false,
-      }),
-      fetchCoachImportedReviews(controller.signal).catch(() => []),
-    ])
-      .then(([data, imported]) => {
-        setEvents(sortEvents([
-          ...(data.events || []).filter(event => event.source === 'mcr'),
-          ...importedReviewEvents(imported, 'mcm'),
-        ]));
+      })
+      .then((data) => {
+        setEvents(sortEvents((data.events || []).filter(event => event.source === 'mcr')));
         setOwnerName(data.owner?.name || coach.name);
       })
       .catch((err) => {
@@ -432,14 +427,14 @@ export default function CoachMonthlyCoaching() {
               const url = meetingUrl(event);
               const rowTone = meetingTone(event);
               const imported = isImportedReviewEvent(event);
-              const canSchedule = !imported && !['in-progress', 'completed', 'awaiting-signature'].includes(event.status);
+              const canSchedule = !['in-progress', 'completed', 'awaiting-signature'].includes(event.status);
               const viewOnly = imported || event.status === 'completed' || event.status === 'awaiting-signature';
               return <tr key={eventIdentity(event)} className="ui-action-row border-t border-primary-100/70 transition hover:bg-primary-50/35" onClick={() => openDetails(event)}>
                 <td className="px-4 py-3 align-middle"><div className="flex items-center gap-3"><LearnerAvatar name={event.learner} tone={rowTone} /><div className="min-w-0"><strong className="block text-[13px] font-bold text-primary-900">{event.learner || 'Unknown learner'}</strong><span className="block text-[11px] text-foreground-500">{event.programme || event.email || 'Monthly coaching meeting'}</span></div></div></td>
                 <td className="px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-group-line text-primary-500" />{event.cohort || event.group || '--'}</span></td>
                 <td className="whitespace-nowrap px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex min-w-[150px] flex-col gap-1"><span className="flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-calendar-line shrink-0 text-primary-500" />{event.scheduledDate ? formatDateLabel(event.scheduledDate) : formatDateLabel(event.targetDate)}</span><span className="flex items-center gap-1.5 whitespace-nowrap text-foreground-500"><AppIcon className="ri-time-line shrink-0 text-primary-500" />{formatTimeRangeLabel(event)}</span></span></td>
                 <td className="px-4 py-3 text-center align-middle"><div className="flex flex-wrap justify-center gap-1.5"><StatusBadge tone={statusTone(event.status)} label={statusLabel(event.status)} size="sm" />{isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div></td>
-                <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{canSchedule ? <button type="button" onClick={() => scheduleMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{event.status === 'scheduled' ? 'Reschedule' : 'Schedule'}</button> : null}</td>
+                <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{canSchedule ? <button type="button" onClick={() => scheduleMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{hasScheduledSlot(event) ? 'Reschedule' : 'Schedule'}</button> : null}</td>
                 <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}><div className="flex justify-end gap-1.5">{!viewOnly ? <><button type="button" onClick={() => { void openForm(event); }} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-file-edit-line" />Form</button><button type="button" onClick={() => { void createSlides(event); }} disabled={Boolean(slidesBusyEventKey)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={slidesBusyEventKey === eventIdentity(event) ? 'ri-loader-4-line animate-spin' : 'ri-file-ppt-line'} />{slidesBusyEventKey === eventIdentity(event) ? 'Generating...' : 'Create Slides'}</button></> : null}<button type="button" onClick={() => openDetails(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>{!viewOnly && url && canJoinMeeting(event) ? <button type="button" onClick={() => openMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-video-on-line" />Join</button> : null}</div></td>
               </tr>;
             })}</tbody></table></div> : null}

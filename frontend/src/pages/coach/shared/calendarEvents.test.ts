@@ -60,17 +60,30 @@ describe('Coach calendar time labels', () => {
 });
 
 describe('Coach working week', () => {
-  it('runs from Monday through Friday, including when opened on a weekend', async () => {
-    const { currentWeekRange } = await import('./calendarEvents');
-    const { start, end } = currentWeekRange(new Date('2026-09-20T12:00:00'));
+  it('returns the current Monday through Friday with full-day boundaries', async () => {
+    const { getCurrentWorkWeekRange } = await import('./calendarEvents');
+    const { start, end } = getCurrentWorkWeekRange(new Date('2026-09-23T12:00:00'));
     expect(start.getDay()).toBe(1);
     expect(end.getDay()).toBe(5);
-    expect(start.getDate()).toBe(14);
-    expect(end.getDate()).toBe(18);
+    expect(start).toEqual(new Date(2026, 8, 21, 0, 0, 0, 0));
+    expect(end).toEqual(new Date(2026, 8, 25, 23, 59, 59, 999));
+  });
+
+  it('returns only the following Monday through Friday', async () => {
+    const { getNextWorkWeekRange } = await import('./calendarEvents');
+    const { start, end } = getNextWorkWeekRange(new Date('2026-09-23T12:00:00'));
+    expect(start).toEqual(new Date(2026, 8, 28, 0, 0, 0, 0));
+    expect(end).toEqual(new Date(2026, 9, 2, 23, 59, 59, 999));
   });
 });
 
 describe('Coach calendar status and month boundaries', () => {
+  it('recognizes a confirmed imported event with a booked date and time as reschedulable', async () => {
+    const { hasScheduledSlot } = await import('./calendarEvents');
+    expect(hasScheduledSlot({ status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00' } as never)).toBe(true);
+    expect(hasScheduledSlot({ status: 'confirmed', scheduledDate: '2026-09-23' } as never)).toBe(false);
+  });
+
   it('treats only completed as completed while retaining legacy confirmed as a distinct status', async () => {
     const { isCompletedEvent } = await import('./calendarEvents');
     expect(isCompletedEvent({ status: 'completed' } as never)).toBe(true);

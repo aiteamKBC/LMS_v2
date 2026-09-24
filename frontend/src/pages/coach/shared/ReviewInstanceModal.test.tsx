@@ -288,7 +288,19 @@ describe('coach review signature workflow', () => {
   });
 });
 
-describe('MCM Meeting Summary integration', () => {
+describe('Review Meeting Summary integration', () => {
+  it('exposes the transcript summary controls for a Progress Review', async () => {
+    const existing = mcmDefinition('in-progress');
+    existing.template.reviewTypeCode = 'progress_review';
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(existing);
+    mount();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Meeting Summary/ }));
+    expect(await screen.findByText('AI Meeting Summary')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand editor' }));
+    expect(screen.getByText('Progress Review')).toBeVisible();
+  });
+
   it('uses the semantic marker for the report editor while regular text fields keep the compact control', async () => {
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('in-progress'));
     mount();

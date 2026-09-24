@@ -84,6 +84,7 @@ function MeetingSummaryInlineEditor({
 }
 
 function ExpandedMeetingSummaryEditor({
+  reviewLabel,
   value,
   onChange,
   readOnly,
@@ -91,6 +92,7 @@ function ExpandedMeetingSummaryEditor({
   draftSaved,
   onDone,
 }: {
+  reviewLabel: string;
   value: unknown;
   onChange: (value: string) => void;
   readOnly: boolean;
@@ -138,7 +140,7 @@ function ExpandedMeetingSummaryEditor({
     >
       <header className="flex shrink-0 flex-col gap-3 border-b border-background-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
         <div>
-          <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-primary-600">Monthly Coaching Meeting</p>
+          <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-primary-600">{reviewLabel}</p>
           <h2 id="expanded-meeting-summary-title" className="mt-1 text-xl font-bold text-foreground-900">Edit Meeting Summary</h2>
           <p className="mt-1 text-[13px] text-foreground-500">Changes remain in this Review until you return and select Save draft.</p>
         </div>
@@ -512,6 +514,7 @@ export function ReviewInstanceModal({
     return (
       <ModalShell busy={busy} onClose={closeExpandedSummary}>
         <ExpandedMeetingSummaryEditor
+          reviewLabel={headingLabel}
           value={answers[expandedSummaryFieldId]}
           onChange={(value) => handleAnswerChange(expandedSummaryFieldId, value)}
           readOnly={formReadOnly}

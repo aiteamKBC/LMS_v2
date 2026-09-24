@@ -3,7 +3,7 @@ from datetime import date, time, timedelta
 from decimal import Decimal
 from inspect import unwrap
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.db import DatabaseError
 from django.db.utils import ConnectionDoesNotExist
@@ -34,6 +34,7 @@ from coach_api.views import (
     curriculum_monthly_target_hours,
     curriculum_monthly_target_hours_weeks,
     apply_attendance_summary,
+    apply_aptem_variance_status,
     apply_audit_hour_totals,
     apply_canonical_learner_metrics,
     apply_canonical_ksb_evidence,
@@ -42,8 +43,10 @@ from coach_api.views import (
     caseload_aptem_ids,
     caseload_evidenced_ksb_counts,
     caseload_kbc_attendance_rates,
+    caseload_latest_learning_activities,
     canonical_attendance_detail_rows,
     dashboard_attendance_rows,
+    dashboard_monthly_risk_history,
     dashboard_review_history,
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
@@ -261,6 +264,34 @@ class LatestLearnerActivityTests(SimpleTestCase):
         self.assertEqual(latest["display"], "19 Sep 2026")
         self.assertEqual(latest["label"], "Latest quiz")
 
+    @patch("coach_api.views.LearnerProgressEntry.objects")
+    def test_bulk_query_loads_every_field_used_by_history_serializer(self, progress_entries):
+        queryset = MagicMock()
+        progress_entries.filter.return_value = queryset
+        queryset.only.return_value = queryset
+        queryset.order_by.return_value = []
+
+        self.assertEqual(caseload_latest_learning_activities([SimpleNamespace(id=7)]), {})
+
+        loaded_fields = set(queryset.only.call_args.args)
+        self.assertEqual(loaded_fields, {
+            "learner_id",
+            "kind",
+            "component_ref",
+            "quiz_ref",
+            "attempt",
+            "module_title",
+            "week_title",
+            "component_title",
+            "expected_otjh",
+            "reported_time",
+            "submitted_at",
+            "started_at",
+            "claimed_seconds",
+            "verified_seconds",
+            "time_tracking_source",
+        })
+
 
 class DashboardReviewHistoryTests(SimpleTestCase):
     @patch("coach_api.views.connections")
@@ -371,6 +402,42 @@ class AuditHourOverlayTests(SimpleTestCase):
         self.assertEqual(apply_audit_hour_totals(dict(self.base), None), self.base)
         self.assertEqual(apply_audit_hour_totals(dict(self.base), {}), self.base)
 
+
+class OtjhTargetContractTests(SimpleTestCase):
+    def assert_contract(self, actual, target, planned, variance, status):
+        payload = {
+            "otjhCompleted": actual,
+            "otjhTarget": target,
+            "otjhPlanned": planned,
+        }
+        result = apply_aptem_variance_status(payload, "4317")
+        self.assertEqual(result["otjhVariance"], variance)
+        self.assertEqual(result["otjhStatus"], status)
+        self.assertEqual(result["otjhPlanned"], planned)
+
+    def test_valid_target_is_need_attention(self):
+        self.assert_contract(242, 270, 576, -28.0, "Need Attention")
+
+    def test_large_deficit_is_at_risk(self):
+        self.assert_contract(200, 250, 576, -50.0, "At Risk")
+
+    def test_twenty_hour_gap_needs_attention(self):
+        self.assert_contract(250, 270, 576, -20.0, "Need Attention")
+
+    def test_missing_target_leaves_existing_status_untouched(self):
+        payload = {"otjhCompleted": 242, "otjhTarget": None, "otjhPlanned": 576}
+        result = apply_aptem_variance_status(payload, "4317")
+        self.assertIs(result, payload)
+        self.assertNotIn("otjhVariance", result)
+        self.assertNotIn("otjhStatus", result)
+
+    def test_zero_target_leaves_existing_status_untouched(self):
+        payload = {"otjhCompleted": 0, "otjhTarget": 0, "otjhPlanned": 576}
+        result = apply_aptem_variance_status(payload, "4317")
+        self.assertIs(result, payload)
+        self.assertNotIn("otjhVariance", result)
+        self.assertNotIn("otjhStatus", result)
+
     @patch("coach_api.views.read_audit_hour_totals_bulk")
     @patch("coach_api.views.audit_connection")
     def test_totals_are_keyed_by_profile_id_via_the_enrolment_aptem_id(
@@ -409,7 +476,7 @@ class AuditHourOverlayTests(SimpleTestCase):
 class CanonicalCoachMetricsTests(SimpleTestCase):
     def test_otjh_status_uses_agreed_variance_boundaries(self):
         self.assertEqual(otjh_status_from_variance(Decimal("-19.99")), "On track")
-        self.assertEqual(otjh_status_from_variance(Decimal("-20")), "Need attention")
+        self.assertEqual(otjh_status_from_variance(Decimal("-20")), "On track")
         self.assertEqual(otjh_status_from_variance(Decimal("-39.99")), "Need attention")
         self.assertEqual(otjh_status_from_variance(Decimal("-40")), "Need attention")
         self.assertEqual(otjh_status_from_variance(Decimal("-41")), "At risk")
@@ -484,7 +551,7 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
             "ksb": {"completed": 2, "total": 4, "percent": 50, "status": "ready"},
         }
         result = apply_canonical_learner_metrics(payload, metrics)
-        self.assertEqual(result["ksbStatus"], derive_ksb_status(2, 4))
+        self.assertEqual(result["ksbStatus"], "In Progress")
 
     def test_aptem_canonical_ksb_evidence_is_merged_and_parent_normalized(self):
         payload = {"ksbCompletedDetails": [{"code": "B1", "sources": []}]}
@@ -861,7 +928,7 @@ class CoachDashboardViewTests(SimpleTestCase):
         payload = json.loads(response.content)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(payload["learners"], [{"id": "2"}])
+        self.assertEqual(payload["learners"], [{"id": "2", "lastPr": None, "lastMcm": None}])
         self.assertEqual(payload["monthlyRisk"], [{"month": "2026-08", "label": "Aug", "count": 1}])
         # Attendance is overlaid directly onto each learner (see
         # CoachDashboardAttendanceOverlayTests) rather than shipped as a
@@ -1007,6 +1074,26 @@ class CoachDashboardViewTests(SimpleTestCase):
 
 
 class MonthlyRiskHistoryTests(SimpleTestCase):
+    @patch("coach_api.views.LearnerProgressEntry.objects")
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={})
+    @patch("coach_api.views.monthly_target_training_plan", return_value=[])
+    def test_dashboard_reuses_each_hydrated_plan_in_history_builder(
+        self, training_plan, expected_otjh, progress_entries
+    ):
+        queryset = MagicMock()
+        progress_entries.filter.return_value = queryset
+        queryset.only.return_value = queryset
+        queryset.order_by.return_value = []
+        learners = [
+            SimpleNamespace(id=7, status="active", programme_status="active", start_date=None),
+            SimpleNamespace(id=8, status="active", programme_status="active", start_date=None),
+        ]
+
+        history = dashboard_monthly_risk_history(learners, today=date(2026, 9, 18))
+
+        self.assertEqual(training_plan.call_count, 2)
+        self.assertEqual(len(history), 6)
+
     def test_counts_month_end_otjh_status_and_uses_current_snapshot_for_open_month(self):
         training_plan = [{
             "moduleTitle": "Module 1",
@@ -1186,8 +1273,17 @@ class CoachTimetableWindowTests(SimpleTestCase):
 
     @patch("coach_api.views.fetch_calendar_event_records", return_value={})
     @patch("coach_api.views.fetch_standalone_event_records", return_value=[])
-    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
+    @patch("coach_api.views.resolve_coach_review_events", return_value={
+        "events": [], "reviewGenerationIssues": [], "aptemProfileIds": set(),
+        "sourceCounts": {
+            "progressReviewRows": 0, "mcrRows": 0, "reviewRows": 0,
+            "learnersWithDates": 0, "reviewAnchorSkipped": 0,
+            "reviewAnchorSkipReasons": {}, "aptemReviewRows": 0,
+            "curriculumReviewRows": 0, "aptemLearners": 0, "curriculumLearners": 0,
+        },
+    })
     @patch("coach_api.views.build_learner_profile_map", return_value={})
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
     @patch("coach_api.views.fetch_owner_active_learner_profiles", return_value=[])
     @patch("coach_api.views.coach_staff_display_name", return_value="")
     @patch("coach_api.views.collect_live_session_events", side_effect=RuntimeError("legacy staff profile schema"))
@@ -1196,8 +1292,9 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events,
         coach_staff_display_name,
         fetch_owner_active_learner_profiles,
+        fetch_caseload_dashboard_profiles,
         build_learner_profile_map,
-        fetch_source_schedule_rows,
+        resolve_coach_review_events,
         fetch_standalone_event_records,
         fetch_calendar_event_records,
     ):
@@ -1208,10 +1305,13 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events.assert_called_once()
         coach_staff_display_name.assert_called_once_with("coach@example.com")
         fetch_owner_active_learner_profiles.assert_called_once_with("coach@example.com")
+        fetch_caseload_dashboard_profiles.assert_called_once_with("coach@example.com")
         build_learner_profile_map.assert_called_once_with([])
-        fetch_source_schedule_rows.assert_called_once_with([])
+        resolve_coach_review_events.assert_called_once_with(
+            "coach@example.com", "Med Maher", [], start_date=None, end_date=None,
+        )
         fetch_standalone_event_records.assert_called_once_with("coach@example.com")
-        fetch_calendar_event_records.assert_called_once_with("coach@example.com", [])
+        fetch_calendar_event_records.assert_not_called()
 
 
 class CoachTimetableBookingConflictTests(SimpleTestCase):

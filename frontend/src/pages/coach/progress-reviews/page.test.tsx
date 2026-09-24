@@ -98,4 +98,33 @@ describe('progress review list navigation and filters', () => {
       expect(within(screen.getByText(learner).closest('tr')!).queryByRole('button', { name: /Schedule/ })).toBeNull();
     }
   });
+
+  it('restores Schedule and Reschedule popups for imported Aptem reviews', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      review(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled' }),
+      review(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00' }),
+    ] });
+    mount();
+    await screen.findByText('Imported Scheduled');
+
+    fireEvent.click(within(screen.getByText('Imported Unscheduled').closest('tr')!).getByRole('button', { name: 'Schedule' }));
+    expect(screen.getByRole('dialog', { name: 'Schedule progress review' })).toBeVisible();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule progress review' })).getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(within(screen.getByText('Imported Scheduled').closest('tr')!).getByRole('button', { name: 'Reschedule' }));
+    expect(screen.getByRole('dialog', { name: 'Schedule progress review' })).toBeVisible();
+  });
+
+  it('opens the page scheduler and allows choosing the progress review learner', async () => {
+    mount();
+    await screen.findByText('Needs Schedule');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule review' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Schedule progress review' });
+    const learnerSelect = within(dialog).getByRole('combobox', { name: 'Learner' });
+    expect(learnerSelect).toHaveValue('progress-review:1');
+    fireEvent.change(learnerSelect, { target: { value: 'progress-review:2' } });
+    expect(within(dialog).getByText('Scheduled Review')).toBeVisible();
+  });
 });

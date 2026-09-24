@@ -1024,6 +1024,7 @@ def ensure_program_config_archive_columns():
             'status': 'varchar(32)',
             'ksb_profile_source_id': 'varchar(128)',
             'required_otjh': 'numeric(8, 2)',
+            'display_order': 'integer',
         })
     except Exception as exc:
         logger.warning('Could not inspect programme config archive columns: %s', exc)
@@ -7122,10 +7123,18 @@ def get_skills_england_ksb_rows():
 
 @scoped_curriculum_read
 def get_program_config_rows_raw():
+    # The order the curator dragged the cards into comes first; name orders
+    # anything never dragged, and is the whole order on a database that predates
+    # backend/sql/2026-09-22_programme_display_order.sql.
+    try:
+        ordered_by_hand = has_column('programmes', 'display_order')
+    except Exception:
+        ordered_by_hand = False
+    ordering = 'order by coalesce(display_order, 0), name' if ordered_by_hand else 'order by name'
     return fetch_all(f'''
         select *
         from {table_name("programmes")}
-        order by name
+        {ordering}
     ''')
 
 
@@ -8400,6 +8409,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             'ksbProfileSourceId': normalise_ksb_profile_source_value((config or {}).get('ksb_profile_source_id') or ''),
             'requiredOtjh': parse_required_otjh((config or {}).get('required_otjh')),
             'freeComponents': parse_int(free_counts.get('components'), 0),
+            # The card's place in the hand-picked order. Reading it back is what
+            # lets the grid tell a saved order from the alphabetical fallback.
+            'displayOrder': parse_int((config or {}).get('display_order'), 0),
         })
     return programmes
 
@@ -20129,6 +20141,60 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility):
 
 
 @csrf_exempt
+def curriculum_programme_reorder(request):
+    """Save the order the programme cards were dragged into.
+
+    The body is the ids in the order they should read, top-left first. Only the
+    programmes named are renumbered, and they are renumbered from 1 upward in
+    the order given, so a partial list (one page of the grid) still lands in a
+    stable order relative to itself. 0 stays reserved for "never ordered", which
+    keeps untouched programmes ahead of nothing and still alphabetical among
+    themselves.
+    """
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+    raw_order = payload.get('order')
+    if not isinstance(raw_order, list):
+        return json_error('Missing required fields.', fields=['order'])
+
+    ensure_program_config_archive_columns()
+    if not has_column('programmes', 'display_order'):
+        return json_error(
+            'This database has no programme display_order column yet. Apply '
+            'backend/sql/2026-09-22_programme_display_order.sql first.',
+            status=409,
+        )
+
+    programme_ids = unique(clean_str(value) for value in raw_order if clean_str(value))
+    if not programme_ids:
+        return json_error('No programmes were given to order.')
+
+    configs = get_program_config_rows()
+    configs_by_id = {programme_config_identity(config): config for config in configs}
+    unknown = [programme_id for programme_id in programme_ids if programme_id not in configs_by_id]
+    if unknown:
+        return json_error('Unknown programmes in the order.', fields=unknown, status=404)
+
+    key_column = programme_config_key_column()
+    with transaction.atomic():
+        for position, programme_id in enumerate(programme_ids, start=1):
+            key_value = configs_by_id[programme_id].get(key_column)
+            update_rows(
+                'programmes',
+                f'{quote_ident(key_column)} = %s',
+                [key_value],
+                {'display_order': position, 'updated_at': datetime.utcnow()},
+            )
+    invalidate_curriculum_cache()
+    log_curriculum_decision('programme.reorder', outcome='saved', entity_id=','.join(programme_ids[:10]))
+    return JsonResponse({'saved': True, 'order': programme_ids})
+
+
+@csrf_exempt
 def curriculum_programme_restore(request, identifier):
     """Take a programme back out of the archive, children included."""
     if request.method != 'POST':
@@ -21716,6 +21782,146 @@ def curriculum_free_programme_convert(request, programme_id):
     except Exception as exc:
         logger.exception('Unable to convert free course %s.', clean_str(payload.get('courseId')))
         return json_error('Unable to convert the free course.', status=500, detail=str(exc))
+    return JsonResponse(result, status=201)
+
+
+def build_module_free_course_weeks(structure, course_id):
+    """Inverse of build_free_course_week_structure: a module's authored
+    weekStructure -> free-course ``modules[]`` week entries, all sharing one
+    ``course_id`` so they group into a single free course. Component ``settings``
+    (linked quiz / media / manualUnlock) copy verbatim; KSB mappings and hours
+    are not carried (free courses have neither). No week/component ids are set,
+    so fresh FREEWEEK-/FREECOMP- ids mint on save.
+    """
+    course_id = clean_str(course_id)
+    course_title = clean_str(structure.get('title')) or 'Untitled course'
+    description = clean_str(structure.get('description'))
+    cover = clean_str(structure.get('coverImage'))
+    weeks = []
+    for index, week in enumerate(structure.get('weekStructure') or []):
+        components = []
+        for component in week.get('components') or []:
+            components.append({
+                'type': component.get('type'),
+                'title': component.get('title') or '',
+                'description': component.get('description') or '',
+                'expectedOtjh': component.get('expectedOtjh'),
+                'points': component.get('points'),
+                'reflectionRequired': component.get('reflectionRequired'),
+                'workplaceEvidenceRequired': component.get('workplaceEvidenceRequired'),
+                'tutorValidationRequired': component.get('tutorValidationRequired'),
+                'settings': component.get('settings') if isinstance(component.get('settings'), dict) else {},
+            })
+        weeks.append({
+            'courseId': course_id,
+            'courseName': course_title,
+            'description': description,
+            'coverImageUrl': cover,
+            'weekNumber': parse_int(week.get('weekNumber'), index + 1),
+            'weekTitle': clean_str(week.get('title')) or f'Week {index + 1}',
+            'components': components,
+        })
+    return weeks
+
+
+def _free_module_response_to_input(module):
+    """Map one get_free_programme_modules_payload output row back to the
+    save-input shape, so existing free courses can be re-sent unchanged through
+    the full-replace save (mirrors the frontend savedModuleInput)."""
+    course_name = module.get('courseName') or module.get('title') or ''
+    return {
+        'id': module.get('id'),
+        'courseId': module.get('courseId'),
+        'weekId': module.get('weekId'),
+        'weekNumber': module.get('weekNumber'),
+        'weekTitle': module.get('weekTitle'),
+        'courseName': course_name,
+        'title': course_name,
+        'description': module.get('description') or '',
+        'coverImageUrl': module.get('coverImageUrl') or '',
+        'components': [
+            {
+                'id': component.get('id'),
+                'weekId': component.get('weekId'),
+                'displayOrder': component.get('displayOrder'),
+                'type': component.get('type'),
+                'title': component.get('title'),
+                'description': component.get('description'),
+                'expectedOtjh': component.get('expectedOtjh'),
+                'points': component.get('points'),
+                'reflectionRequired': component.get('reflectionRequired'),
+                'workplaceEvidenceRequired': component.get('workplaceEvidenceRequired'),
+                'tutorValidationRequired': component.get('tutorValidationRequired'),
+                'settings': component.get('settings') if isinstance(component.get('settings'), dict) else {},
+            }
+            for component in module.get('components') or []
+        ],
+    }
+
+
+def convert_module_to_free_course(module_catalogue_id, *, free_programme_id='FREE-COURSES', mode='clone'):
+    """Copy one programme module into a NEW free course (appended to the existing
+    catalogue). ``mode='move'`` additionally archives the source module. Whole
+    body is one transaction so a failure rolls the copy and the archive back
+    together.
+    """
+    module_catalogue_id = clean_str(module_catalogue_id)
+    if not module_catalogue_id:
+        raise ValueError('A module id is required.')
+    mode = clean_str(mode).lower() or 'clone'
+    if mode not in {'clone', 'move'}:
+        raise ValueError('mode must be "clone" or "move".')
+
+    structure = get_authoring_structure_payload(module_catalogue_id)
+    if not structure:
+        raise LookupError('Module not found.')
+    course_title = clean_str(structure.get('title')) or 'Untitled course'
+
+    free_programme_id = clean_str(free_programme_id) or 'FREE-COURSES'
+    with transaction.atomic(), versioning.source('module-to-free-course'):
+        existing_modules = get_free_programme_modules_payload(free_programme_id)
+        existing_ids = {clean_str(row.get('courseId')) for row in existing_modules if clean_str(row.get('courseId'))}
+        course_id = unique_timestamp_prefixed_id('FREECOURSE', existing_ids)
+        new_weeks = build_module_free_course_weeks(structure, course_id)
+        if not new_weeks:
+            raise ValueError('This module has no weeks to convert.')
+        modules_input = [_free_module_response_to_input(row) for row in existing_modules] + new_weeks
+        saved = save_free_programme_modules(free_programme_id, {'programmeName': 'Free Courses', 'modules': modules_input})
+
+        if mode == 'move':
+            delete_module_authoring_structure(module_catalogue_id)
+
+        invalidate_curriculum_cache()
+
+    return {
+        'mode': mode,
+        'freeCourseId': course_id,
+        'courseName': course_title,
+        'moduleCatalogueId': module_catalogue_id,
+        'modules': saved,
+    }
+
+
+@csrf_exempt
+def curriculum_free_programme_import_module(request, programme_id):
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+    try:
+        result = convert_module_to_free_course(
+            clean_str(payload.get('moduleCatalogueId') or payload.get('module_catalogue_id') or payload.get('moduleId')),
+            free_programme_id=clean_str(programme_id),
+            mode=clean_str(payload.get('mode')) or 'clone',
+        )
+    except LookupError as exc:
+        return json_error(str(exc) or 'Module not found.', status=404)
+    except ValueError as exc:
+        return json_error(str(exc), status=400)
+    except Exception as exc:
+        logger.exception('Unable to convert module %s to a free course.', clean_str(payload.get('moduleCatalogueId')))
+        return json_error('Unable to convert the module.', status=500, detail=str(exc))
     return JsonResponse(result, status=201)
 
 

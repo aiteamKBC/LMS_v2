@@ -1,6 +1,7 @@
 """Read-only programme totals using verified legacy results and local progress."""
 import json
 import logging
+from collections import defaultdict
 
 import psycopg
 from django.db import DatabaseError, connections
@@ -15,6 +16,7 @@ from .progress_rules import progress_counts_as_achieved
 from .student_activity_access import student_activity_available
 from .student_activity import _direct_progress_records, _direct_progress_otjh, load_direct_progress_records_bulk
 from .learning_plan import _effective_plan_ids
+from .training_plan_contract import selected_contract
 from .training_plan_dashboard import find_contract, number, rows
 from .otjh_totals import completed_otjh, completed_actual_otjh
 
@@ -171,7 +173,7 @@ def ksb_totals(native, progress, historical=None, attempts=None, links=None, led
             'codes': [{'code': code, **ratio(*counts)} for code, counts in sorted(by_code.items())]}
 
 
-def read_planned_hours(source, kind, cursor, preloaded_document=_MISSING):
+def read_planned_hours(source, kind, cursor, preloaded_document=_MISSING, preloaded_contract=_MISSING):
     if preloaded_document is _MISSING:
         document = (TrainingPlanDocument.objects.using('enrolment')
                     .filter(learner_id=source.pk, learner_kind=kind, status=TrainingPlanDocument.STATUS_ACTIVE)
@@ -184,7 +186,8 @@ def read_planned_hours(source, kind, cursor, preloaded_document=_MISSING):
         if planned is not None:
             return planned
     if student_activity_available(source.aptem_id):
-        contract = find_contract(cursor, int(str(source.aptem_id).strip()))
+        contract = (find_contract(cursor, int(str(source.aptem_id).strip()))
+                    if preloaded_contract is _MISSING else preloaded_contract)
         return number(contract.get('training_plan_planned_hours')) if contract else None
     return None
 
@@ -230,8 +233,14 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     """
     with connections['enrolment'].cursor() as cursor:
         planned_document = (preloaded or {}).get('planned_hours_document', _MISSING)
-        planned = read_planned_hours(source, kind, cursor, planned_document)
-        aptem_planned_total = read_aptem_planned_total(cursor, int(str(source.aptem_id).strip())) if migrated else None
+        planned_contract = (preloaded or {}).get('planned_hours_contract', _MISSING)
+        planned = read_planned_hours(source, kind, cursor, planned_document, planned_contract)
+        aptem_planned_total = (
+            (preloaded or {}).get('aptem_planned_total', _MISSING)
+            if migrated else None
+        )
+        if aptem_planned_total is _MISSING:
+            aptem_planned_total = read_aptem_planned_total(cursor, int(str(source.aptem_id).strip()))
         old_hours = 0 if not migrated else None
         historical_refs = []
         if migrated:
@@ -267,9 +276,12 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     actual_hours = completed_otjh(native, direct_progress, submissions, old_hours)
     ledger = []
     if migrated and history_ready:
-        with connections['enrolment'].cursor() as cursor:
-            ledger = read_accepted_ksb_rows(cursor, source, kind)
-            historical_refs = list(set(historical_refs) | {row['source_ref'] for row in ledger if row.get('source_ref')})
+        if preloaded is not None and 'accepted_ksb_rows' in preloaded:
+            ledger = preloaded['accepted_ksb_rows']
+        else:
+            with connections['enrolment'].cursor() as cursor:
+                ledger = read_accepted_ksb_rows(cursor, source, kind)
+        historical_refs = list(set(historical_refs) | {row['source_ref'] for row in ledger if row.get('source_ref')})
     new_hours = (round(actual_hours - old_hours, 4)
                  if actual_hours is not None and old_hours is not None else round(_direct_progress_otjh(direct_progress), 4))
     # Private evidence rows are consumed by the coach case-file serializer to
@@ -393,7 +405,9 @@ def read_metrics(source, kind, preloaded=None):
                 # Human-readable evidence labels are optional.  Keep this query
                 # separate from the core historical inputs above so a retired or
                 # partially migrated metadata column cannot take metrics down.
-                if history_ready and historical:
+                if history_ready and historical and not (
+                    preloaded is not None and preloaded.get('historical_metadata_loaded')
+                ):
                     try:
                         cursor.execute('''SELECT ga.group_id,ga.activity_id,g.group_name,
                                 a.title,a.activity_date
@@ -535,24 +549,37 @@ def load_reflection_submissions_bulk(keys):
 def load_audit_inputs_bulk(aptem_ids):
     """Load audit identity and historical activity rows by stable Aptem id."""
     ids = list(dict.fromkeys(int(value) for value in (aptem_ids or []) if value not in (None, '')))
-    result = {aptem_id: {'identity': None, 'historical': []} for aptem_id in ids}
+    result = {
+        aptem_id: {'identity': None, 'historical': [], 'aptem_planned_total': None}
+        for aptem_id in ids
+    }
     if not ids:
         return result
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute('SELECT aptem_id, learner_email FROM "Last_audit".learners WHERE aptem_id=ANY(%s)', [ids])
-        for aptem_id, email in cursor.fetchall():
-            result.setdefault(int(aptem_id), {'identity': None, 'historical': []})['identity'] = (email,)
+        cursor.execute('SELECT aptem_id, learner_email, planned_hours_total FROM "Last_audit".learners WHERE aptem_id=ANY(%s)', [ids])
+        identity_rows = defaultdict(list)
+        for aptem_id, email, planned_total in cursor.fetchall():
+            identity_rows[int(aptem_id)].append((email, planned_total))
+        for aptem_id, matches in identity_rows.items():
+            audit = result.setdefault(
+                aptem_id,
+                {'identity': None, 'historical': [], 'aptem_planned_total': None},
+            )
+            audit['identity'] = (matches[0][0],)
+            audit['aptem_planned_total'] = number(matches[0][1]) if len(matches) == 1 else None
         cursor.execute('''SELECT l.aptem_id,gl.group_id,ga.activity_id,r.status,r.video_completed,
             r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
             CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
             CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb
                  THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
             jsonb_path_query_array(CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
-                                   '$[*].code') AS ksb_mappings
+                                   '$[*].code') AS ksb_mappings,
+            g.group_name AS module_title,a.title AS activity_title,a.activity_date
             FROM "Last_audit".learners l
             JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
             JOIN "Last_audit".group_activities ga ON ga.group_id=gl.group_id
             JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
+            LEFT JOIN "Last_audit".groups g ON g.group_id=gl.group_id
             LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
                 ON lk.aptem_id=l.aptem_id AND lk.activity_id=ga.activity_id
             LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=ga.activity_id
@@ -564,7 +591,77 @@ def load_audit_inputs_bulk(aptem_ids):
             WHERE l.aptem_id=ANY(%s)''', [ids])
         for item in rows(cursor):
             aptem_id = int(item.pop('aptem_id'))
-            result.setdefault(aptem_id, {'identity': None, 'historical': []})['historical'].append(item)
+            result.setdefault(
+                aptem_id,
+                {'identity': None, 'historical': [], 'aptem_planned_total': None},
+            )['historical'].append(item)
+    return result
+
+
+def load_contracts_bulk(aptem_ids):
+    """Select the same training-plan contract as ``find_contract``, once per Aptem id."""
+    ids = list(dict.fromkeys(int(value) for value in (aptem_ids or []) if value not in (None, '')))
+    result = {aptem_id: None for aptem_id in ids}
+    if not ids:
+        return result
+    candidates = defaultdict(list)
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute('''SELECT c.learner_id AS aptem_id,c.id,c.azure_path,c.training_plan_planned_hours,
+                c.document_name AS original_name,
+                coalesce(nullif(a.display_name,''),c.document_name) AS document_name,
+                c.date,c.fetched_at,c.fully_signed_date,c.raw AS extraction_metadata,
+                c.program_start_date,c.planned_end_date
+            FROM fetching_evidence.aptem_cv_contracts_probe c
+            LEFT JOIN "Audit".contract_document_archive a ON a.contract_id=c.id
+            WHERE c.learner_id=ANY(%s)
+              AND lower(coalesce(nullif(a.display_name,''),c.document_name)) ~ 'training[[:space:]_-]*plan'
+              AND a.archived_at IS NULL AND a.deleted_at IS NULL
+            ORDER BY c.learner_id,coalesce(c.fully_signed_date,c.date) DESC NULLS LAST,c.id DESC''', [ids])
+        for item in rows(cursor):
+            candidates[int(item.pop('aptem_id'))].append(item)
+    for aptem_id in ids:
+        result[aptem_id] = selected_contract(candidates.get(aptem_id, []))
+    return result
+
+
+def load_accepted_ksb_rows_bulk(keys):
+    """Load accepted KSB ledger rows by stable enrolment/Aptem/kind identity."""
+    triples = list(dict.fromkeys(
+        (int(enrolment_id), int(aptem_id), str(kind))
+        for enrolment_id, aptem_id, kind in (keys or [])
+        if enrolment_id is not None and aptem_id not in (None, '')
+    ))
+    result = {enrolment_id: [] for enrolment_id, _aptem_id, _kind in triples}
+    if not triples:
+        return result
+    placeholders = ','.join(['(%s,%s,%s)'] * len(triples))
+    params = [value for triple in triples for value in triple]
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute(f'''WITH requested(enrolment_id,aptem_id,learner_kind) AS (VALUES {placeholders})
+            SELECT requested.enrolment_id,r.id,r.group_id,r.activity_id,r.source_ref,
+                coalesce(p.component_ref,s.component_ref) AS component_ref,
+                coalesce(j.ksbs,CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
+                         a.raw #> '{{live_lms_component,ksbs}}') AS ksb_mappings
+            FROM requested
+            JOIN structured_manual_activities.manual_learner_activities r
+              ON r.aptem_id=requested.aptem_id
+            LEFT JOIN structured_manual_activities.learner_journal_row_ksbs j
+              ON j.row_id=r.id AND j.aptem_id=r.aptem_id
+            LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
+              ON lk.activity_id=r.activity_id AND lk.aptem_id=r.aptem_id
+            LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=r.activity_id
+            LEFT JOIN "Last_audit".activities a ON a.activity_id=r.activity_id
+            LEFT JOIN "Learner".learners l ON l.enrolment_id=requested.enrolment_id
+            LEFT JOIN "Learner".learner_progress_entries p
+              ON p.learner_id=l.id AND r.source_ref='progress:' || p.id::text
+            LEFT JOIN "Learner".learning_reflection_submissions s
+              ON s.learner_id=requested.enrolment_id::text
+             AND s.learner_kind=requested.learner_kind
+             AND r.source_ref='reflection:' || s.id::text
+            WHERE r.accepted=true AND r.deleted_at IS NULL''', params)
+        for item in rows(cursor):
+            enrolment_id = int(item.pop('enrolment_id'))
+            result.setdefault(enrolment_id, []).append(item)
     return result
 
 

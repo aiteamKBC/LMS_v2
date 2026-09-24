@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo, useCallback } from 'react';
+import { Fragment, useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -18,16 +18,20 @@ import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import { getOtjhGapStatus } from '@/pages/coach/caseload/lib/format';
 import styles from './dashboard.module.css';
 import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
+import { CaseloadLoading } from '@/pages/coach/caseload/components/CaseloadStates';
+import caseloadStyles from '@/pages/coach/caseload/caseload.module.css';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Panel } from '@/components/ui/Panel';
 import { FilterChip } from '@/components/ui/FilterToolbar';
 import type { ImportedReview } from '@/api/reviewHistory';
+import type { EmbeddedCaseloadLearner } from '@/pages/coach/caseload/types';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import {
   type CoachCalendarEvent,
   fetchCoachCalendarEvents,
+  reviewScheduleAvailable,
   eventDisplayDate,
   eventTargetDate,
   eventPeriodLabel,
@@ -35,7 +39,8 @@ import {
   formatTimeLabel,
   formatTimeRangeLabel,
   isAtRiskEvent,
-  currentWeekRange,
+  getCurrentWorkWeekRange,
+  getNextWorkWeekRange,
   isCompletedEvent,
   isEventThisWeek,
   needsScheduling,
@@ -54,7 +59,7 @@ type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
 
 const EMPTY_VALUE = '--';
 const AT_RISK_SCROLL_THRESHOLD = 8;
-const COACHING_CALENDAR_WINDOW_DAYS = 7;
+const UPCOMING_MEETING_SOURCES = new Set(['progress-review', 'mcr', 'catch-up', 'support', 'student-support', 'live-session']);
 
 function coachDashboardEndpoint() {
   return '/coach_api/coach/dashboard';
@@ -145,9 +150,9 @@ interface CoachLearner {
   reviews: ImportedReview[];
 }
 
-interface CaseloadApiLearner extends Partial<CoachLearner> {
+type CaseloadApiLearner = EmbeddedCaseloadLearner & Partial<CoachLearner> & {
   cohortName?: string | null;
-}
+};
 
 interface CaseloadApiResponse {
   owner?: {
@@ -415,7 +420,7 @@ function latestCompletedSessionDate(
   return latest?.value;
 }
 
-function formatCompletedSessionDate(value?: string) {
+function formatCompletedSessionDate(value?: string | null) {
   const date = parseLocalDate(value);
   return date
     ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date)
@@ -433,8 +438,6 @@ function mergeAttendanceRates(
     const hasAttendance = Boolean(learner.attendanceRateAvailable);
     const attendanceDate = hasAttendance ? parseLocalDate(learner.attendanceLastSessionDate) : undefined;
     const completedEventDate = latestCompletedSessionDate(learner, events);
-    const lastMcmDate = latestCompletedSessionDate(learner, events, event => event.source === 'mcr');
-    const lastPrDate = latestCompletedSessionDate(learner, events, event => event.source === 'progress-review');
     const parsedCompletedEventDate = parseLocalDate(completedEventDate);
     const learningActivityDate = parseLocalDate(learner.lastActivityDate);
     const latestAttendanceDate = parsedCompletedEventDate
@@ -463,8 +466,11 @@ function mergeAttendanceRates(
         ? (parsedCompletedEventDate && latestAttendanceDate === parsedCompletedEventDate ? completedEventDate : learner.attendanceLastSessionDate || null)
         : learner.lastActivityDate,
       lastActivityLabel: attendanceIsLatestActivity ? 'Attendance' : learner.lastActivityLabel,
-      lastMcm: formatCompletedSessionDate(lastMcmDate),
-      lastPr: formatCompletedSessionDate(lastPrDate),
+      // The calendar payload is intentionally windowed for performance. The
+      // backend learner fields come from the unbounded shared resolved Review
+      // history and therefore remain authoritative for these two columns.
+      lastMcm: formatCompletedSessionDate(learner.lastMcm),
+      lastPr: formatCompletedSessionDate(learner.lastPr),
     };
   });
 }
@@ -691,8 +697,11 @@ function isFutureCalendarEvent(event: CoachCalendarEvent) {
   return date.getTime() >= start.getTime();
 }
 
-function isWithinCalendarPreviewWindow(event: CoachCalendarEvent) {
-  return isWithinNextDays(event, COACHING_CALENDAR_WINDOW_DAYS - 1);
+function isWithinNextWorkWeek(event: CoachCalendarEvent) {
+  const date = parseLocalDate(eventDisplayDate(event));
+  if (!date || isCompletedEvent(event)) return false;
+  const { start, end } = getNextWorkWeekRange();
+  return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
 }
 
 function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
@@ -732,6 +741,12 @@ function formatCalendarMonth(value?: string | null) {
   const date = parseLocalDate(value);
   if (!date) return EMPTY_VALUE;
   return new Intl.DateTimeFormat('en-GB', { month: 'long' }).format(date).toUpperCase();
+}
+
+function formatCalendarMonthShort(value?: string | null) {
+  const date = parseLocalDate(value);
+  if (!date) return EMPTY_VALUE;
+  return new Intl.DateTimeFormat('en-GB', { month: 'short' }).format(date).toUpperCase().replace('SEPT', 'SEP');
 }
 
 function formatCalendarDayNumber(value?: string | null) {
@@ -990,24 +1005,23 @@ const KPI_FILTER_LABEL: Record<DashboardKpi, string> = {
 };
 
 function formatWeekRangeLabel() {
-  const { start, end } = currentWeekRange();
+  const { start, end } = getCurrentWorkWeekRange();
   return formatDateRangeLabel(start, end);
 }
 
 function formatDateRangeLabel(start: Date, end: Date) {
   const format = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' });
-  return `${format.format(start)} – ${format.format(end)}`;
+  const compact = (value: Date) => format.format(value).replace('Sept', 'Sep');
+  return `${compact(start)} – ${compact(end)}`;
 }
 
 function formatUpcomingRangeLabel() {
-  const start = startOfDay(new Date());
-  const end = new Date(start);
-  end.setDate(start.getDate() + COACHING_CALENDAR_WINDOW_DAYS - 1);
+  const { start, end } = getNextWorkWeekRange();
   return formatDateRangeLabel(start, end);
 }
 
-function LoadingBlock({ className = '' }: { className?: string }) {
-  return <div aria-hidden="true" className={`animate-pulse rounded-lg bg-background-100/90 ${className}`}></div>;
+function LoadingBlock({ className = '', style }: { className?: string; style?: CSSProperties }) {
+  return <div aria-hidden="true" className={`animate-pulse rounded-lg bg-background-100/90 ${className}`} style={style}></div>;
 }
 
 function AttentionSkeleton({ rows = 4 }: { rows?: number }) {
@@ -1063,6 +1077,101 @@ function ScheduleSkeleton() {
   );
 }
 
+// The loading skeletons reuse the loaded dashboard's own layout classes, so
+// every card, table and chart keeps its real size and responsive breakpoints
+// and nothing shifts when the data arrives.
+function MetricCardSkeleton() {
+  return <div className={styles.metric} data-skeleton="metric">
+    <LoadingBlock className={styles.metricSkeletonIcon} />
+    <LoadingBlock className={styles.metricSkeletonLabel} />
+    <LoadingBlock className={styles.metricSkeletonValue} />
+    <LoadingBlock className={styles.metricSkeletonNote} />
+  </div>;
+}
+
+function LearnerTableSkeleton() {
+  return <div className={styles.fullWidthCaseload}>
+    <section className={`${caseloadStyles.page} ${caseloadStyles.embedded}`}>
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div className={caseloadStyles.title}><h1>All Learners</h1></div>
+        <LoadingBlock className="h-9 w-[104px] rounded-md" />
+      </header>
+      <section className={caseloadStyles.panel}>
+        <CaseloadLoading rows={7} />
+      </section>
+    </section>
+  </div>;
+}
+
+function MeetingsSkeleton() {
+  return <Panel className={styles.panel}>
+    <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
+      description={`Your scheduled meetings and live sessions · next work week (${formatUpcomingRangeLabel()})`}
+      actions={<>
+        <LoadingBlock className="h-11 w-11" />
+        <LoadingBlock className="h-11 w-[118px]" />
+        <LoadingBlock className="h-11 w-[172px]" />
+      </>} />
+    <div className={styles.tableScroll}>
+      <table className={`${styles.table} ${styles.meetingsTable}`}>
+        <tbody>
+          <tr><th colSpan={9}><LoadingBlock className="h-3.5 w-32" /></th></tr>
+          {Array.from({ length: 3 }, (_, index) => <tr key={index} data-skeleton="meeting">
+            <td><LoadingBlock className={styles.meetingDateSkeleton} /></td>
+            <td><LoadingBlock className="h-3.5 w-16" /></td>
+            <td><div className={styles.identity}>
+              <LoadingBlock className="h-9 w-9 shrink-0 rounded-full" />
+              <span className="flex-1"><LoadingBlock className="h-3.5 w-36" /><LoadingBlock className="mt-2 h-3 w-20" /></span>
+            </div></td>
+            <td><div className={styles.meetingType}><LoadingBlock className="h-[30px] w-[30px] shrink-0" /><LoadingBlock className="h-3.5 w-28" /></div></td>
+            <td><LoadingBlock className="h-6 w-20 rounded-full" /></td>
+            {Array.from({ length: 4 }, (_, action) => <td key={action}><LoadingBlock className="h-11 w-28" /></td>)}
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
+  </Panel>;
+}
+
+const MONTHLY_BAR_SKELETON_HEIGHTS = ['46%', '64%', '38%', '78%', '52%', '30%'];
+
+function ChartSkeleton({ variant }: { variant: 'distribution' | 'monthly' }) {
+  if (variant === 'distribution') {
+    return <Panel className={styles.panel}>
+      <SectionHeader title="Risk Distribution" icon="ri-bar-chart-line" actions={<span className={styles.chartScope}>By OTJH status</span>} />
+      <div className={styles.distribution}>
+        <div className={`${styles.donut} ${styles.donutSkeleton} animate-pulse`}><div className={styles.donutCenter} /></div>
+        <ul className={styles.legend}>
+          {Array.from({ length: 4 }, (_, index) => <li key={index}>
+            <LoadingBlock className={`${styles.legendDot} rounded-full`} />
+            <LoadingBlock className="h-3.5 w-24" />
+            <LoadingBlock className="h-3.5 w-12" />
+          </li>)}
+        </ul>
+      </div>
+    </Panel>;
+  }
+  return <Panel className={styles.panel}>
+    <SectionHeader title="Monthly Learners at Risk" icon="ri-bar-chart-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
+    <div className={styles.monthlyRisk}>
+      <div className={styles.monthlyRiskChart}>
+        <ol className={styles.monthlyBars}>
+          {MONTHLY_BAR_SKELETON_HEIGHTS.map((height, index) => <li key={index}>
+            <LoadingBlock className="h-3 w-4" />
+            <span className={styles.monthlyBarTrack}><LoadingBlock className={styles.monthlyBarSkeleton} style={{ height }} /></span>
+            <LoadingBlock className="h-2.5 w-6" />
+          </li>)}
+        </ol>
+      </div>
+      <div className={styles.currentRisk}>
+        <LoadingBlock className="h-8 w-10" />
+        <LoadingBlock className="h-3.5 w-16" />
+        <LoadingBlock className="mt-1 h-3 w-20" />
+      </div>
+    </div>
+  </Panel>;
+}
+
 export default function CoachDashboard() {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
@@ -1088,6 +1197,7 @@ export default function CoachDashboard() {
   const [reviewGenerationAvailable, setReviewGenerationAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
+  const [loadedCoachEmail, setLoadedCoachEmail] = useState<string | null>(null);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [liveSessionsLoading, setLiveSessionsLoading] = useState(true);
@@ -1099,7 +1209,7 @@ export default function CoachDashboard() {
   const updateDashboardMeeting = (updated: CoachCalendarEvent) => {
     const replace = (events: CoachCalendarEvent[]) => events.map(event => (event.eventKey || event.id) === (updated.eventKey || updated.id) ? updated : event);
     setCalendarEvents(replace);
-    setCalendarPreviewEvents(events => replace(events).filter(isWithinCalendarPreviewWindow));
+    setCalendarPreviewEvents(events => replace(events).filter(isWithinNextWorkWeek));
   };
   const handleDirectoryLoaded = useCallback((nextCoaches: DirectoryCoach[]) => {
     setDirectoryCoaches(nextCoaches);
@@ -1152,6 +1262,7 @@ export default function CoachDashboard() {
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
+        setLoadedCoachEmail(authenticatedCoachEmail);
         return;
       }
 
@@ -1181,7 +1292,6 @@ export default function CoachDashboard() {
         );
         const normalizedLearners = (dashboard.learners || []).map(normalizeLearner);
         setEmbeddedLearners((dashboard.learners || []) as CaseloadApiLearner[]);
-        const attendanceLearners = dashboard.attendance?.learners || [];
         const reviewHistoryLearners = dashboard.reviewHistory?.learners || [];
         const events = sortEvents(dashboard.timetable?.events || []);
         const completedHistoryEvents = completedSessionHistory.events || [];
@@ -1203,16 +1313,23 @@ export default function CoachDashboard() {
             : toNumber(markingQueue.summary.pendingItems),
         );
         const reviewSummary = dashboard.timetable?.summary;
-        const reviewIssues = dashboard.timetable?.reviewGenerationIssues || [];
-        setReviewGenerationAvailable(!reviewIssues.length && (reviewSummary?.learnersWithDates ?? 0) > 0);
+        // Review-source failures are per learner. A native learner with an
+        // unavailable Curriculum schedule must not hide valid Aptem reviews
+        // belonging to the rest of the caseload.
+        setReviewGenerationAvailable(reviewScheduleAvailable(
+          reviewSummary,
+          nonLiveEvents,
+          dashboard.timetable?.reviewGenerationIssues || [],
+        ));
         setCalendarEvents(nonLiveEvents);
-        setCalendarPreviewEvents(nonLiveEvents.filter(isWithinCalendarPreviewWindow));
+        setCalendarPreviewEvents(nonLiveEvents.filter(isWithinNextWorkWeek));
         setLiveSessionEvents(events.filter(event => event.source === 'live-session'));
         setCalendarError(dashboard.errors?.timetable || null);
         setLiveSessionsError(dashboard.errors?.timetable || null);
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
+        setLoadedCoachEmail(authenticatedCoachEmail);
       } catch (error) {
         if (controller.signal.aborted) return;
         setLearners([]);
@@ -1227,6 +1344,7 @@ export default function CoachDashboard() {
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
+        setLoadedCoachEmail(authenticatedCoachEmail);
       }
     }
 
@@ -1293,14 +1411,14 @@ export default function CoachDashboard() {
       .filter(event => !['completed', 'cancelled'].includes(event.status) && isFutureCalendarEvent(event)),
   ), [liveSessionEvents]);
   const coachingCalendarLiveSessions = useMemo(
-    () => upcomingLiveSessions.filter(isWithinCalendarPreviewWindow),
+    () => upcomingLiveSessions.filter(isWithinNextWorkWeek),
     [upcomingLiveSessions],
   );
 
   /* ── Upcoming Schedule: live sessions + coaching + reviews, one list ── */
   const upcomingScheduleEvents = useMemo(
     () => sortEvents([
-      ...visibleCalendarSourceEvents.filter(isFutureCalendarEvent),
+      ...visibleCalendarSourceEvents.filter(event => UPCOMING_MEETING_SOURCES.has(event.source)),
       ...coachingCalendarLiveSessions,
     ]),
     [coachingCalendarLiveSessions, visibleCalendarSourceEvents],
@@ -1378,6 +1496,7 @@ export default function CoachDashboard() {
   const attentionHasOverflow = attentionRows.length > AT_RISK_SCROLL_THRESHOLD;
 
   const schedulePanelLoading = (calendarLoading || liveSessionsLoading) && !upcomingScheduleEvents.length;
+  const dashboardLoading = loading || loadedCoachEmail !== authenticatedCoachEmail;
 
   const scrollToSection = (id: string) => {
     window.requestAnimationFrame(() => {
@@ -1426,11 +1545,14 @@ export default function CoachDashboard() {
       userName={ownerName} userRole="Progress Coach"
     >
       <div className={styles.dashboard}>
-        {(loading || loadWarning) && (
-          <div className={styles.notice} role={loadWarning ? 'alert' : 'status'}>
-            {loading ? 'Loading live coach dashboard data...' : loadWarning}
-          </div>
-        )}
+        {dashboardLoading ? (
+          <DashboardLoadingSkeleton />
+        ) : loadWarning ? (
+          <Panel className={styles.panel}>
+            <EmptyState icon="ri-error-warning-line" title="Unable to load coach dashboard" description={loadWarning} />
+          </Panel>
+        ) : (
+          <>
 
         <section className={styles.metrics} aria-label="Coach dashboard metrics">
           <DashboardMetric label="Total learners" value={loading || loadWarning ? undefined : totalCaseload} icon="ri-group-line" onClick={() => setSelectedKpi('caseload')} />
@@ -1447,7 +1569,7 @@ export default function CoachDashboard() {
 
         <Panel className={styles.panel}>
           <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
-            description={`Your scheduled meetings and live sessions · next ${COACHING_CALENDAR_WINDOW_DAYS} days (${formatUpcomingRangeLabel()})`}
+            description={`Your scheduled meetings and live sessions · next work week (${formatUpcomingRangeLabel()})`}
             actions={<>
               <button type="button" className={styles.iconButton} onClick={() => setScheduleExpanded(current => !current)}
                 aria-expanded={scheduleExpanded} aria-controls="coach-schedule-content" aria-label={`${scheduleExpanded ? 'Collapse' : 'Expand'} upcoming schedule`}>
@@ -1463,7 +1585,7 @@ export default function CoachDashboard() {
               {!schedulePanelLoading && upcomingScheduleGroups.length > 0 && (
                 <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Upcoming meetings and live sessions">
                   <table className={`${styles.table} ${styles.meetingsTable}`}>
-                    <caption className="sr-only">Meetings and live sessions in the next seven days</caption>
+                    <caption className="sr-only">Meetings and live sessions in the next work week</caption>
                     <thead className="sr-only"><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Learner / session</th><th scope="col">Meeting type</th><th scope="col">Status</th><th scope="col">Reschedule</th><th scope="col">Send Reminder</th><th scope="col">Generate Presentation</th><th scope="col">View Form</th></tr></thead>
                     <tbody>{upcomingScheduleGroups.flatMap(group => group.events.map((event, eventIndex) => (
                       <Fragment key={event.eventKey || event.id}>
@@ -1485,7 +1607,7 @@ export default function CoachDashboard() {
                 </div>
               )}
               {!schedulePanelLoading && !upcomingScheduleGroups.length && (
-                <EmptyState size="sm" icon="ri-calendar-check-line" title="No learner meetings scheduled" description={calendarError || `No learner meetings scheduled in the next ${COACHING_CALENDAR_WINDOW_DAYS} days.`} />
+                <EmptyState size="sm" icon="ri-calendar-check-line" title="No learner meetings scheduled" description={calendarError || 'No learner meetings scheduled in the next work week.'} />
               )}
             </div>
           )}
@@ -1509,6 +1631,9 @@ export default function CoachDashboard() {
           </Panel>
         </section>
 
+          </>
+        )}
+
       </div>
 
       {selectedKpi && (
@@ -1531,9 +1656,23 @@ export default function CoachDashboard() {
   );
 }
 
+function DashboardLoadingSkeleton() {
+  return (
+    <div aria-label="Loading coach dashboard" role="status" className="min-w-0">
+      <span className="sr-only">Loading coach dashboard data</span>
+      <div className={styles.loadingDashboard} aria-hidden="true">
+        <section className={styles.metrics}>{Array.from({ length: 6 }, (_, index) => <MetricCardSkeleton key={index} />)}</section>
+        <LearnerTableSkeleton />
+        <MeetingsSkeleton />
+        <section className={styles.charts}><ChartSkeleton variant="distribution" /><ChartSkeleton variant="monthly" /></section>
+      </div>
+    </div>
+  );
+}
+
 function DashboardMetric({ label, value, note, icon, tone, onClick }: {
   label: string;
-  value?: number;
+  value?: number | string;
   note?: string;
   icon: string;
   tone?: StatusTone;
@@ -1637,8 +1776,8 @@ function AttentionLearnerRow({ learner, onOpen }: {
       </div></td>
       <td><span className={styles.groupName}>{learner.group !== EMPTY_VALUE ? learner.group : learner.programme}</span></td>
       <td>{varianceLabel === EMPTY_VALUE ? <span className={styles.subtle}>{EMPTY_VALUE}</span> : <StatusBadge tone={status.tone} label={varianceLabel} size="lg" className={styles.varianceBadge} />}</td>
-      <td><span className={styles.lastContact}>{displayValue(learner.lastMcm)}</span>{displayValue(learner.lastMcm) === EMPTY_VALUE && <span className={styles.subtle}>No MCM recorded</span>}</td>
-      <td><span className={styles.lastContact}>{displayValue(learner.lastPr)}</span>{displayValue(learner.lastPr) === EMPTY_VALUE && <span className={styles.subtle}>No PR recorded</span>}</td>
+      <td><span className={styles.lastContact}>{displayValue(learner.lastMcm)}</span>{displayValue(learner.lastMcm) === EMPTY_VALUE && <span className={styles.subtle}>No MCM yet</span>}</td>
+      <td><span className={styles.lastContact}>{displayValue(learner.lastPr)}</span>{displayValue(learner.lastPr) === EMPTY_VALUE && <span className={styles.subtle}>No PR yet</span>}</td>
       <td><button type="button" className={styles.textButton} onClick={onOpen} aria-label={`View learner ${learner.name}`}><AppIcon name="ri-user-line" aria-hidden="true" />View Profile</button></td>
     </tr>
   );
@@ -1755,15 +1894,18 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
         <div className="relative my-auto flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-xl">
         {/* shrink-0 so a long caseload cannot squeeze the header away: the body
             below is the flex child that scrolls, and this stays put. */}
-        <header className="relative z-10 shrink-0 overflow-hidden border-b border-foreground-100/80 bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60 px-5 py-5 sm:px-7 sm:py-6">
-          <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-primary-200/25 blur-3xl"></div>
+        <header className={cn(
+          'relative z-10 shrink-0 overflow-hidden border-b border-foreground-100/80 px-5 py-5 sm:px-7 sm:py-6',
+          type === 'mcm-week' || type === 'pr-week' ? 'bg-background-50' : 'bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60',
+        )}>
+          {type !== 'mcm-week' && type !== 'pr-week' && <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-primary-200/25 blur-3xl"></div>}
           <div className="relative flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-center gap-4">
               <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm ring-1 ring-white/80 sm:h-14 sm:w-14 ${current.iconStyle}`}><AppIcon className={`${current.icon} text-xl`}></AppIcon></span>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2.5">
                   <h2 id="kpi-modal-title" className="font-heading text-xl font-bold tracking-tight text-foreground-900 sm:text-2xl">{current.title}</h2>
-                  <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-primary-200/80 bg-background-50 px-2.5 text-xs font-bold text-primary-700 shadow-sm">{detailCount}</span>
+                  <span aria-label={`${detailCount} total`} className="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-primary-200/80 bg-background-50 px-2.5 text-xs font-bold text-primary-700 shadow-sm">{detailCount}</span>
                 </div>
                 <p id="kpi-modal-description" className="mt-1.5 text-xs leading-5 text-foreground-500 sm:text-sm">{current.subtitle}</p>
               </div>
@@ -1772,7 +1914,17 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-background-50 to-background-100/50 p-4 sm:p-6">
+        <div className={cn(
+          'min-h-0 flex-1 overflow-y-auto p-4 sm:p-6',
+          type === 'mcm-week' || type === 'pr-week' ? 'bg-background-50' : 'bg-gradient-to-b from-background-50 to-background-100/50',
+        )}>
+          {(type === 'mcm-week' || type === 'pr-week') && (
+            <CompactWeeklyMeetingDetails
+              events={weeklyDetails}
+              summaryLabel={type === 'mcm-week' ? 'Monthly coaching' : 'Progress review'}
+              emptyIcon={current.icon}
+            />
+          )}
           {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'completed' || type === 'epa') && (
             <div className="space-y-3.5">
               {modalLearners.map(learner => {
@@ -1862,7 +2014,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
             </div>
           )}
 
-          {weeklyEventSource && (
+          {weeklyEventSource && type !== 'mcm-week' && type !== 'pr-week' && (
             <div className="space-y-2">
               {weeklyDetails.map(event => {
                 const date = eventDisplayDate(event);
@@ -1911,7 +2063,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
           )}
         </div>
 
-        <footer className="flex flex-wrap items-center justify-end gap-2.5 border-t border-foreground-100 bg-background-100/60 px-5 py-4 sm:px-7">
+        <footer className="sticky bottom-0 z-10 flex shrink-0 flex-wrap items-center justify-end gap-2.5 border-t border-foreground-100 bg-background-50 px-5 py-4 sm:px-7">
           <button type="button" onClick={onClose} className="rounded-xl border border-foreground-200 bg-background-50 px-4 py-2.5 text-xs font-semibold text-foreground-700 shadow-sm transition-colors hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Close</button>
           {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">View in caseload list</button>}
           {(type === 'evidence' || type === 'pending-marking') && <Link to="/coach/marking-queue" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
@@ -1924,6 +2076,72 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
       </div>
     </div>,
     document.body,
+  );
+}
+
+export function CompactWeeklyMeetingDetails({
+  events,
+  summaryLabel,
+  emptyIcon,
+}: {
+  events: CoachCalendarEvent[];
+  summaryLabel: string;
+  emptyIcon: string;
+}) {
+  const notScheduled = events.filter(event => event.status === 'not-scheduled').length;
+  const scheduled = events.length - notScheduled;
+  const dayGroups = Array.from(events.reduce((groups, event) => {
+    const date = eventDisplayDate(event);
+    const existing = groups.get(date);
+    if (existing) existing.push(event);
+    else groups.set(date, [event]);
+    return groups;
+  }, new Map<string, CoachCalendarEvent[]>()));
+
+  return (
+    <div>
+      <div className="mb-5 flex flex-wrap gap-2" aria-label={`${summaryLabel} summary`}>
+        <span className="inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-semibold text-primary-800">
+          <span className="h-1.5 w-1.5 rounded-full bg-primary-500" aria-hidden="true"></span>
+          Scheduled <strong>{scheduled}</strong>
+        </span>
+        <span className="inline-flex items-center gap-2 rounded-full border border-foreground-200 bg-background-100 px-3 py-1.5 text-xs font-semibold text-foreground-700">
+          <span className="h-1.5 w-1.5 rounded-full bg-foreground-400" aria-hidden="true"></span>
+          Not Scheduled <strong>{notScheduled}</strong>
+        </span>
+      </div>
+      <div className="space-y-6">
+        {dayGroups.map(([date, dayEvents]) => (
+          <section key={date} aria-label={formatDateLabel(date)}>
+            <h3 className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-foreground-500">
+              <span className="text-foreground-800">{formatCalendarWeekday(date)}</span>
+              <span>{formatCalendarDayNumber(date)} {formatCalendarMonthShort(date)}</span>
+            </h3>
+            <div className="divide-y divide-foreground-100 border-y border-foreground-100">
+              {dayEvents.map(event => {
+                const context = [displayValue(event.programme), displayValue(event.group)]
+                  .filter(value => value !== EMPTY_VALUE)
+                  .join(' · ');
+                return (
+                  <div key={event.eventKey || event.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-1 py-2.5 sm:flex-nowrap sm:px-2">
+                    <LearnerAvatar name={displayValue(event.learner || event.title)} size="sm" />
+                    <div className="min-w-0 flex-1 basis-[12rem]">
+                      <p className="truncate text-[13px] font-semibold text-foreground-900">{displayValue(event.learner || event.title)}</p>
+                      {context && <p className="mt-0.5 truncate text-[11px] text-foreground-400">{context}</p>}
+                    </div>
+                    <span className="shrink-0 text-xs font-semibold tabular-nums text-foreground-600">{formatTimeLabel(event)}</span>
+                    <StatusBadge status={event.status} label={statusLabel(event.status)} size="sm" />
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+        {!events.length && (
+          <EmptyState icon={emptyIcon} title="Nothing scheduled this week" description="There are no matching sessions in the current week." />
+        )}
+      </div>
+    </div>
   );
 }
 

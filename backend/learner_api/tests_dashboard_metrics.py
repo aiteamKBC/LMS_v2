@@ -62,11 +62,13 @@ class DashboardMetricsTests(SimpleTestCase):
         result = ksb_totals(native, [{'componentId': 'a', 'kind': 'component'}])
         self.assertEqual((result['completed'], result['total'], result['percent']), (2, 3, 66.67))
 
-    def test_missing_migrated_ksb_data_stays_unknown(self):
+    def test_unmapped_historical_activity_makes_ksb_unavailable(self):
         result = ksb_totals([{'id': 'a', 'ksb_mappings': ['K1']}], [],
                             [{'group_id': 1, 'activity_id': 2, 'ksb_mappings': None}])
-        self.assertEqual(result['status'], 'unavailable')
-        self.assertIsNone(result['total'])
+        self.assertEqual((result['status'], result['reason']), ('unavailable', 'activity_points_missing'))
+        self.assertEqual((result['completed'], result['total'], result['percent']), (None, None, None))
+        self.assertEqual(result['unmappedActivities'], 1)
+        self.assertEqual(result['mappedCompleted'], 0)
         self.assertEqual(result['mappedTotal'], 1)
 
     def test_historical_and_new_ksb_points_union_with_saved_attempts(self):
@@ -97,6 +99,21 @@ class DashboardMetricsTests(SimpleTestCase):
             manager.using.return_value.filter.return_value.order_by.return_value.values.return_value.first.return_value = None
             self.assertEqual(read_planned_hours(SimpleNamespace(pk=125, aptem_id=92), 'commercial', MagicMock()), 867)
             self.assertEqual(imported.call_args.args[1], 92)
+
+    def test_preloaded_contract_preserves_total_without_single_learner_query(self):
+        contract = {'training_plan_planned_hours': 867}
+        with patch('learner_api.dashboard_metrics.find_contract',
+                   side_effect=AssertionError('contract must already be loaded')):
+            self.assertEqual(
+                read_planned_hours(
+                    SimpleNamespace(pk=125, aptem_id=92),
+                    'commercial',
+                    MagicMock(),
+                    None,
+                    contract,
+                ),
+                867,
+            )
 
     def test_new_learner_never_reads_imported_contract(self):
         with patch('learner_api.dashboard_metrics.TrainingPlanDocument.objects') as manager, \
@@ -196,7 +213,15 @@ class DashboardMetricsTests(SimpleTestCase):
                      patch('learner_api.dashboard_metrics.read_accepted_ksb_rows', return_value=[]):
                     cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
                     cursor.fetchone.side_effect = [(source.email,), (1171.34, [])]
-                    cursor.fetchall.side_effect = [saved_attempts, [(2, '10', 'imported')]]
+                    cursor.fetchall.side_effect = [
+                        [
+                            (2, 10, 'Module one', 'Imported activity', date(2026, 1, 1)),
+                            (2, 11, 'Module one', 'Historical activity 11', date(2026, 1, 2)),
+                            (2, 12, 'Module one', 'Historical activity 12', date(2026, 1, 3)),
+                        ],
+                        saved_attempts,
+                        [(2, '10', 'imported')],
+                    ]
                     result = read_metrics(source, 'commercial')
                     self.assertEqual(tuple(result[metric][key] for metric in ('programme', 'ksb')
                                            for key in ('completed', 'total', 'percent')), expected)

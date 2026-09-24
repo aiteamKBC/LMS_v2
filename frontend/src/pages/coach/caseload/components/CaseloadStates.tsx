@@ -50,6 +50,7 @@ function LearnerRowSkeleton() {
     <tr>
       <td>
         <div className={styles.learner}>
+          <SkeletonBlock className="h-[38px] w-[38px] shrink-0 rounded-full" />
           <span className="space-y-2">
             <SkeletonBlock className="h-2.5 w-24" />
             <SkeletonBlock className="h-2 w-32" />
@@ -103,7 +104,7 @@ function ToolbarSkeleton() {
   );
 }
 
-export function CaseloadLoading() {
+export function CaseloadLoading({ rows = 12 }: { rows?: number }) {
   return (
     <div aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading learners</span>
@@ -119,7 +120,7 @@ export function CaseloadLoading() {
             <tr className={styles.progressHead}><th>OTJH</th><th>KSBs</th><th>Activities</th><th>Attendance</th></tr>
           </thead>
           <tbody>
-            {Array.from({ length: 12 }).map((_, index) => (
+            {Array.from({ length: rows }).map((_, index) => (
               <LearnerRowSkeleton key={index} />
             ))}
           </tbody>

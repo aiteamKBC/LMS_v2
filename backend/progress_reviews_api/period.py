@@ -126,7 +126,7 @@ def iter_review_periods(
 ) -> Iterator[ReviewPeriod]:
     """Every review period this programme generates, past and future.
 
-    Powers `GET /api/progress-reviews/{learner_id}/periods`. `programme_end`
+    Powers `GET /progress_reviews_api/{learner_id}/periods`. `programme_end`
     falling back to `today` (or one full interval past start, whichever is
     later) means a learner with no planned end date still gets at least their
     next upcoming review listed.
