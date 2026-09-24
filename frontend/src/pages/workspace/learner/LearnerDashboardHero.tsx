@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, BookOpen, CalendarDays, ChevronRight, Clock, GraduationCap, Map, Play, UserRound, UsersRound } from 'lucide-react';
+import { ArrowRight, BookOpen, BriefcaseBusiness, Building2, CalendarDays, ChevronRight, Clock, GraduationCap, Mail, Map, Phone, Play, UserRound, UsersRound } from 'lucide-react';
 import { statusTone, toneStyle } from '@/lib/statusTone';
+import { SeasonalHoverCards, type SeasonCardProps } from '@/components/lightswind/seasonal-hover-cards';
 import styles from './LearnerDashboardHero.module.css';
 
 interface LearnerDashboardHeroProps {
@@ -13,7 +14,12 @@ interface LearnerDashboardHeroProps {
   modules: { id: string; title: string; href: string }[];
   modulePlaceholder: string;
   allModulesHref: string;
+  actionCards?: SeasonCardProps[];
+  employer: string;
+  organization: string;
   coach: string;
+  coachEmail?: string;
+  coachPhone?: string;
   status: string;
   startDate: string;
   plannedEnd: string;
@@ -25,18 +31,37 @@ interface LearnerDashboardHeroProps {
 /** Presentation only: placement, dates, status and navigation come from the dashboard. */
 export function LearnerDashboardHero(props: LearnerDashboardHeroProps) {
   const { avatar, name, description, cohort, moduleLabel, modules, modulePlaceholder,
-    allModulesHref, coach, status, startDate, plannedEnd, loading, onContinue, onOpenMap } = props;
+    allModulesHref, actionCards = [], employer, organization, coach, coachEmail, coachPhone, status, startDate, plannedEnd, loading, onContinue, onOpenMap } = props;
   const tone = statusTone(status);
   return (
     <header className={styles.hero} aria-label="Learner programme">
       <div className={styles.artwork} aria-hidden="true" />
       <div className={styles.top}>
         <div className={styles.identity}>
-          <div className={styles.avatar}>{avatar}</div>
+          <div className={styles.avatar}>
+            <span role="img" className={styles.statusBadge} data-tone={tone} aria-label={`Status: ${status}`} title={`Status: ${status}`}>
+              <span className={toneStyle(tone).dot} />
+            </span>
+            {avatar}
+          </div>
           <div className={styles.identityText}>
             <p className={styles.eyebrow}>Learner</p>
             <h1 className={styles.name}>{name}</h1>
             {description && <p className={styles.description}>{description}</p>}
+            <div className={styles.headerFacts} aria-label="Programme details">
+              <span className={styles.headerFact}>
+                <UsersRound aria-hidden="true" />
+                <span><span className={styles.headerFactLabel}>Cohort</span><strong>{cohort}</strong></span>
+              </span>
+              <span className={styles.headerFact}>
+                <Clock aria-hidden="true" />
+                <span><span className={styles.headerFactLabel}>Start date</span><strong>{startDate}</strong></span>
+              </span>
+              <span className={styles.headerFact}>
+                <CalendarDays aria-hidden="true" />
+                <span><span className={styles.headerFactLabel}>End date</span><strong>{plannedEnd}</strong></span>
+              </span>
+            </div>
             <p className={styles.quote}>“Progress turns goals into reality.”</p>
           </div>
         </div>
@@ -55,19 +80,28 @@ export function LearnerDashboardHero(props: LearnerDashboardHeroProps) {
         </div>
       </div>
 
-      <div className={styles.cards}>
-        <section className={`${styles.card} ${styles.cohortCard}`} aria-label="Cohort">
+      <div className={`${styles.cards} ${actionCards.length > 0 ? styles.cardsWithActions : ''}`}>
+        <section className={`${styles.card} ${styles.contactCard}`} aria-label="Employer and Organization">
           <div className={styles.factRow}>
-            <span className={styles.icon}><UsersRound aria-hidden="true" /></span>
-            <dl><dt>Cohort</dt><dd>{cohort}</dd></dl>
+            <span className={styles.icon}><BriefcaseBusiness aria-hidden="true" /></span>
+            <dl><dt>Employer</dt><dd>{employer}</dd></dl>
           </div>
-          <svg className={styles.peopleArtwork} viewBox="0 0 160 150" fill="currentColor" aria-hidden="true">
-            <circle cx="80" cy="32" r="20" /><circle cx="28" cy="62" r="13" /><circle cx="135" cy="44" r="14" />
-            <path d="M37 150V106a43 43 0 0 1 86 0v44ZM2 150v-40a26 26 0 0 1 34-25v65Zm122 0V94a28 28 0 0 1 36 27v29Z" />
-          </svg>
-          <p className={styles.cardMotto}>Learning<br />together</p>
+          <div className={styles.factRow}>
+            <span className={styles.icon}><Building2 aria-hidden="true" /></span>
+            <dl><dt>Organization</dt><dd>{organization}</dd></dl>
+          </div>
         </section>
-
+        <section className={`${styles.card} ${styles.coachCard}`} aria-label="Coach">
+          <div className={styles.factRow}>
+            <span className={styles.icon}><UserRound aria-hidden="true" /></span>
+            <dl>
+              <dt>Coach</dt>
+              <dd>{coach}</dd>
+              {coachEmail && <dd className={styles.contactLine}><Mail aria-hidden="true" /><a href={`mailto:${coachEmail}`}>{coachEmail}</a></dd>}
+              {coachPhone && <dd className={styles.contactLine}><Phone aria-hidden="true" /><a href={`tel:${coachPhone.replace(/[^+\d]/g, '')}`}>{coachPhone}</a></dd>}
+            </dl>
+          </div>
+        </section>
         <section className={`${styles.card} ${styles.modulesCard}`} aria-label={moduleLabel}>
           <div className={styles.moduleHeading}>
             <span className={styles.icon}><BookOpen aria-hidden="true" /></span>
@@ -90,36 +124,7 @@ export function LearnerDashboardHero(props: LearnerDashboardHeroProps) {
           </div>
           <p className={styles.cardMotto}>Building your skills.</p>
         </section>
-
-        <div className={styles.stack}>
-          <section className={`${styles.card} ${styles.coachCard}`} aria-label="Coach">
-            <div className={styles.factRow}>
-              <span className={styles.icon}><UserRound aria-hidden="true" /></span>
-              <dl><dt>Coach</dt><dd>{coach}</dd></dl>
-            </div>
-          </section>
-          <section className={`${styles.card} ${styles.statusCard}`} aria-label="Programme status">
-            <div className={styles.factRow}>
-              <span className={styles.statusIcon} data-tone={tone} aria-hidden="true">
-                <span className={toneStyle(tone).dot} />
-              </span>
-              <dl><dt>Status</dt><dd>{status}</dd></dl>
-            </div>
-            <p className={styles.cardMotto}>Keep going</p>
-          </section>
-        </div>
-
-        <section className={`${styles.card} ${styles.datesCard}`} aria-label="Programme dates">
-          <div className={styles.startDate}>
-            <Clock aria-hidden="true" /><dl><dt>Start date</dt><dd>{startDate}</dd></dl>
-          </div>
-          <div className={styles.factRow}>
-            <span className={styles.icon}><CalendarDays aria-hidden="true" /></span>
-            <dl><dt>End date</dt><dd>{plannedEnd}</dd></dl>
-          </div>
-          <CalendarDays className={styles.calendarArtwork} aria-hidden="true" />
-          <p className={styles.cardMotto}>A brighter<br />tomorrow</p>
-        </section>
+        {actionCards.length > 0 && <SeasonalHoverCards cards={actionCards} className={styles.actionCards} theme="hero" layout="inline" />}
       </div>
     </header>
   );

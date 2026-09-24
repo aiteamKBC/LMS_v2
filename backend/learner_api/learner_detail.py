@@ -1896,7 +1896,7 @@ def learner_summary(request, kind, pk):
     try:
         source = model.all_learners.only(
             "id", "username", "email", "phone_number", "programme",
-            "programme_status", "cohort", "group", "employer", "employer_id",
+            "programme_status", "cohort", "group", "employer", "employer_id", "organization",
             "learner_type", "aptem_id", "start_date", "end_date",
             "learner_start_date",
             "practical_period_end_date", "apprenticeship_end_date",
@@ -1921,6 +1921,7 @@ def learner_summary(request, kind, pk):
         "group": _s(source.group),
         "employer": _s(source.employer),
         "employerId": source.employer_id,
+        "organization": _s(getattr(source, "organization", "")),
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "isActive": resolved_status.casefold() == "active",
         "programmeStartDate": _iso_date(start),

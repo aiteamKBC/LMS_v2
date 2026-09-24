@@ -1,11 +1,6 @@
 .cards { display: flex; width: 100%; min-width: 0; gap: .65rem; align-items: stretch; }
-.card { --card-flex: 1; position: relative; display: flex; width: 0; min-width: 0; height: 9.5rem; flex: var(--card-flex) 1 0%; flex-direction: column; gap: 0; padding: .8rem .9rem; overflow: hidden; border: 1px solid #e3e7ef; border-radius: .75rem; background: #fff; box-shadow: 0 2px 8px rgb(25 35 55 / .06), 0 12px 28px -20px rgb(25 35 55 / .2); color: #17233a; text-decoration: none; transition: flex-grow 380ms cubic-bezier(.22,1,.36,1), border-color 220ms ease, box-shadow 220ms ease; }
-.card:hover, .card:focus-visible, .active { border-color: #c8b4e9; box-shadow: 0 10px 28px -18px rgb(82 43 145 / .38); }
-.card:focus-visible { outline: 3px solid rgb(103 58 183 / .3); outline-offset: 3px; }
-.cardPrimary { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; gap: .45rem; transition: padding-bottom 180ms ease; }
-.card:hover .cardPrimary, .card:focus-visible .cardPrimary, .active .cardPrimary { padding-bottom: 1.5rem; }
-.cardReveal { position: absolute; right: .9rem; bottom: .75rem; left: .9rem; display: flex; min-width: 0; min-height: 0; flex-direction: column; gap: .35rem; overflow: hidden; opacity: 0; pointer-events: none; transform: translateY(.25rem); transition: opacity 180ms ease, transform 180ms ease; }
-.card:hover .cardReveal, .card:focus-visible .cardReveal, .active .cardReveal { opacity: 1; pointer-events: auto; transform: translateY(0); }
+.card { position: relative; display: flex; width: 0; min-width: 0; height: 9.5rem; flex: 1 1 0%; flex-direction: column; gap: 0; padding: .8rem .9rem; overflow: hidden; border: 1px solid #e3e7ef; border-radius: .75rem; background: #fff; box-shadow: 0 2px 8px rgb(25 35 55 / .06), 0 12px 28px -20px rgb(25 35 55 / .2); color: #17233a; }
+.cardPrimary { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; gap: .45rem; }
 .topLine { display: flex; min-width: 0; align-items: flex-start; gap: .6rem; }
 .icon { display: grid; width: 2.65rem; height: 2.65rem; flex: 0 0 2.65rem; place-items: center; border-radius: .7rem; background: #f0e9ff; color: #5523a0; }
 .icon svg { width: 1.35rem; height: 1.35rem; stroke-width: 2; }
@@ -23,6 +18,10 @@
 .meta { color: #64748b; font-size: .68rem; }
 .status { display: inline-flex; width: fit-content; align-items: center; gap: .3rem; margin-top: .15rem; padding: .28rem .55rem; border: 1px solid #e4e8ef; border-radius: 999px; background: #f3f5f8; color: #39465a; font-size: .68rem; font-weight: 700; line-height: 1; }
 .status > span { width: .38rem; height: .38rem; border-radius: 999px; background: #64748b; }
+.actionButton { display: inline-flex; width: fit-content; min-height: 1.75rem; align-items: center; justify-content: center; gap: .3rem; align-self: flex-end; margin-top: .15rem; padding: .28rem .55rem; border: 1px solid #e4e8ef; border-radius: 999px; background: #f3f5f8; color: #39465a; cursor: pointer; font-size: .68rem; font-weight: 700; line-height: 1; text-decoration: none; }
+.actionButton svg { width: .8rem; height: .8rem; }
+.actionButton:hover, .actionButton:focus-visible { border-color: #c8b4e9; background: #eee8fb; color: #5523a0; }
+.actionButton:focus-visible { outline: 2px solid rgb(103 58 183 / .3); outline-offset: 2px; }
 .session .status { border-color: #e8ddfb; background: #faf7ff; color: #5523a0; }
 .session .status > span { background: #673ab7; }
 .due .status { border-color: #f6e7b9; background: #fff9e9; color: #775500; }
@@ -32,5 +31,21 @@
 .session .cta { background: #193a5e; }
 .due .cta { background: #f8c940; color: #302100; }
 .card:hover .cta, .card:focus-visible .cta { filter: brightness(1.03); }
-@media (max-width: 760px) { .cards { flex-direction: column; } .card { width: auto; height: 9.5rem; flex: 0 0 auto !important; } }
-@media (prefers-reduced-motion: reduce) { .card, .cardReveal { transition: none; } }
+.inline { display: flex; }
+.hero { gap: .625rem; }
+.hero .card { width: auto; height: 7.25rem; min-height: 7.25rem; flex: 1 1 0%; padding: .6rem; border-color: rgb(204 174 255 / .25); border-radius: 1.125rem; background: linear-gradient(125deg, rgb(184 139 243 / .17), rgb(183 153 228 / .07)); box-shadow: inset 0 1px 0 rgb(255 255 255 / .06); color: #fff; }
+.hero .icon { width: 2rem; height: 2rem; flex-basis: 2rem; border-radius: 1.15rem; background: linear-gradient(145deg, rgb(184 142 247 / .36), rgb(162 123 228 / .22)); color: #fff; }
+.hero .icon svg { width: 1.2rem; height: 1.2rem; }
+.hero .eyebrow { color: #f5eeff; font-size: .7rem; font-weight: 400; }
+.hero .subtitle { color: #fff; font-size: .8rem; font-weight: 650; }
+.hero .chevron { color: #e3d0ff; }
+.hero .status { border-color: rgb(213 188 255 / .2); background: rgb(29 16 64 / .24); color: #e7d8ff; }
+.hero .actionButton { border-color: rgb(213 188 255 / .2); background: rgb(29 16 64 / .24); color: #e7d8ff; }
+.hero .actionButton:hover, .hero .actionButton:focus-visible { border-color: rgb(213 188 255 / .48); background: rgb(128 74 212 / .4); color: #fff; }
+.hero .status > span { background: #b196d7; }
+.hero .session .status { border-color: rgb(213 188 255 / .2); background: rgb(29 16 64 / .24); color: #e7d8ff; }
+.hero .session .status > span { background: #77e3ff; }
+.hero .due .status { border-color: rgb(213 188 255 / .2); background: rgb(29 16 64 / .24); color: #e7d8ff; }
+.hero .due .status > span { background: #fff394; }
+.hero .description { margin-top: .1rem; color: #ddccef; }
+@media (max-width: 760px) { .cards { flex-direction: column; } .card { width: auto; height: 9.5rem; flex: 0 0 auto !important; } .hero .card { height: 9.5rem; min-height: 9.5rem; } }

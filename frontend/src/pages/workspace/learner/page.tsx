@@ -26,11 +26,12 @@ import { DashboardActivities } from './DashboardActivities';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardPlan } from './useDashboardPlan';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
-import { upcomingEvents } from '@/pages/learner/home/homeData';
-import { SeasonalHoverCards, type SeasonCardProps } from '@/components/lightswind/seasonal-hover-cards';
+import { upcomingEvents, upcomingReviewOrMcm } from '@/pages/learner/home/homeData';
+import type { SeasonCardProps } from '@/components/lightswind/seasonal-hover-cards';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { learnerLiveSessionHref } from './liveSessionRoute';
-import { learnerNextAction } from './nextActionRoute';
+import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
+import MeetingBookingDialog from '@/pages/learner/reviews/MeetingBookingDialog';
 
 function formatProgrammeStartDate(value?: string | null): string {
   if (!value) return '';
@@ -132,7 +133,7 @@ export default function LearnerOverview() {
   const ksbProgressHref = kind && id ? `/learner/ksbs/${kind}/${id}` : '/learner/ksbs';
   const displayLearnerName = heroFullName;
   const displayCohort = heroCohort || EMPTY_VALUE;
-  const headerDescription = [heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined;
+  const headerDescription = heroProgramme || undefined;
   const programmeStartDate = real?.learnerStartDate
     ?? real?.learningAccess?.startDate
     ?? dashboardPlan.data?.programmeStartDate
@@ -158,23 +159,60 @@ export default function LearnerOverview() {
   const events = useMemo(() => upcomingEvents(scheduleRead.data, weekRead.data, new Date(now)),
     [scheduleRead.data, weekRead.data, now]);
   const [nextLecture, nextAssignment] = events;
+  const nextReviewOrMcm = useMemo(() => upcomingReviewOrMcm(scheduleRead.data, new Date(now)),
+    [scheduleRead.data, now]);
+  const [bookingSession, setBookingSession] = useState<LearnerCalendarEvent | null>(null);
   const learnerDetailRead = useLearnerDetailParam(kind, id);
-  const nextAction = learnerNextAction(learnerDetailRead.real, kind, id, plan.modules.map(module => module.id));
   const nextLectureActivityHref = learnerLiveSessionHref(learnerDetailRead.real, nextLecture, kind, id)
     || (nextLecture.moduleId
       ? learnerModuleHref(kind, id, nextLecture.moduleId, scheduleRead.data?.moduleLinks)
       : continueLearningHref);
+  const reviewOrMcmHref = nextReviewOrMcm && kind && id
+    ? `/learner/calendar?kind=${encodeURIComponent(kind)}&learner=${encodeURIComponent(id)}&event=${encodeURIComponent(nextReviewOrMcm.eventKey)}${nextReviewOrMcm.scheduledDate ? '' : '&action=schedule'}`
+    : '/learner/calendar';
+  const reviewPageHref = nextReviewOrMcm
+    ? `/learner/${nextReviewOrMcm.source === 'mcr' ? 'monthly-coaching' : 'progress-reviews'}/${encodeURIComponent(nextReviewOrMcm.sessionId)}`
+    : undefined;
+  const reviewBookingSession = useMemo<LearnerCalendarEvent | null>(() => {
+    if (!nextReviewOrMcm) return null;
+    const source = nextReviewOrMcm.source;
+    return {
+      id: nextReviewOrMcm.eventKey,
+      eventKey: nextReviewOrMcm.eventKey,
+      title: nextReviewOrMcm.title,
+      source,
+      type: source === 'mcr' ? 'coaching' : 'review',
+      sequence: 1,
+      status: nextReviewOrMcm.scheduledDate ? 'scheduled' : 'not-scheduled',
+      date: nextReviewOrMcm.date,
+      targetDate: nextReviewOrMcm.date,
+      scheduledDate: nextReviewOrMcm.scheduledDate,
+      scheduledTime: nextReviewOrMcm.scheduledTime,
+      durationMinutes: 60,
+      coachName: scheduleRead.data?.coach.name || '',
+      coachEmail: scheduleRead.data?.coach.email || '',
+      meetingProvider: 'teams',
+      meetingLink: nextReviewOrMcm.meetingLink || '',
+      notes: '',
+    };
+  }, [nextReviewOrMcm, scheduleRead.data?.coach.email, scheduleRead.data?.coach.name]);
+  const reviewActionHref = nextReviewOrMcm?.scheduledDate
+    ? reviewPageHref
+    : nextReviewOrMcm ? (reviewBookingSession ? undefined : reviewOrMcmHref) : reviewOrMcmHref;
+  const reviewDateLabel = nextReviewOrMcm?.date
+    ? `${formatProgrammeStartDate(nextReviewOrMcm.date)}${nextReviewOrMcm.scheduledTime ? ` · ${nextReviewOrMcm.scheduledTime.slice(0, 5)} UK time` : ''}`
+    : '';
   const actionCards: SeasonCardProps[] = [
     {
-      title: 'Your next action',
-      subtitle: nextAction?.title || plan.modules[0]?.title || planPlaceholder,
-      description: plan.modules.length ? `${plan.label} — pick up where you left off.`
-        : 'Your training plan will appear here once it’s ready.',
-      cta: 'Continue learning',
-      status: plan.modules.length ? 'Ready to continue' : planPlaceholder,
+      title: nextReviewOrMcm?.source === 'mcr' ? 'MCM' : 'Review',
+      subtitle: nextReviewOrMcm?.title || 'No upcoming review or MCM',
+      description: reviewDateLabel || 'Your next review or MCM will appear here.',
+      cta: nextReviewOrMcm?.scheduledDate ? 'Attend' : 'Schedule',
+      status: nextReviewOrMcm ? (nextReviewOrMcm.scheduledDate ? 'Scheduled' : 'Ready to schedule') : planPlaceholder,
       icon: FileText,
       variant: 'action',
-      href: nextAction?.href || continueLearningHref,
+      href: reviewActionHref || (!nextReviewOrMcm ? reviewOrMcmHref : undefined),
+      onClick: !nextReviewOrMcm?.scheduledDate && reviewBookingSession ? () => setBookingSession(reviewBookingSession) : undefined,
       imageSrc: '/assets/dashboard-cards/next-action.svg',
       imageAlt: 'Continue learning artwork',
     },
@@ -184,9 +222,8 @@ export default function LearnerOverview() {
       description: nextLecture.date
         ? `${formatProgrammeStartDate(nextLecture.date)} · ${formatSessionTime(nextLecture.date)}`
         : scheduleRead.loading ? 'Loading…' : 'Check back once your next session is scheduled.',
-      cta: nextLecture.date ? 'Open activity' : 'View schedule',
+      cta: nextLecture.date ? 'Attend' : 'View schedule',
       status: nextLecture.date ? 'Scheduled' : scheduleRead.loading ? 'Loading…' : 'No session scheduled',
-      meta: nextLecture.detail,
       icon: Monitor,
       variant: 'session',
       href: nextLecture.date ? nextLectureActivityHref : nextLecture.href,
@@ -198,9 +235,8 @@ export default function LearnerOverview() {
       subtitle: nextAssignment.date ? nextAssignment.title : weekRead.loading ? 'Loading…' : 'No upcoming assignment',
       description: nextAssignment.date ? `Due ${formatProgrammeStartDate(nextAssignment.date)}`
         : weekRead.loading ? 'Loading…' : 'You’re all caught up — nothing due soon.',
-      cta: 'View assignment',
+      cta: nextAssignment.date ? 'Open assignment' : 'View assignments',
       status: nextAssignment.date ? 'Pending' : weekRead.loading ? 'Loading…' : 'Nothing due',
-      meta: nextAssignment.detail,
       icon: ClipboardList,
       variant: 'due',
       href: nextAssignment.href,
@@ -208,10 +244,6 @@ export default function LearnerOverview() {
       imageAlt: 'Assignment due soon artwork',
     },
   ];
-  // The first card is intentionally title/status only; its module context is
-  // already represented by the subtitle and should not repeat in the reveal.
-  actionCards[0].description = '';
-
   const programme = metrics.data?.programme;
   const programmeProgressPercent = programme?.percent ?? null;
   const programmeProgressValue = programmeProgressPercent == null ? EMPTY_VALUE : `${programmeProgressPercent}%`;
@@ -401,7 +433,12 @@ export default function LearnerOverview() {
             href: learnerModuleHref(kind, id, module.id, scheduleRead.data?.moduleLinks) }))}
           modulePlaceholder={planPlaceholder}
           allModulesHref={programmeProgressHref}
+          actionCards={actionCards}
+          employer={knownLearner?.employer || EMPTY_VALUE}
+          organization={knownLearner?.organization || EMPTY_VALUE}
           coach={coachDisplayName}
+          coachEmail={scheduleRead.data?.coach.email}
+          coachPhone={scheduleRead.data?.coach.phone}
           status={displayValue(knownLearner?.programmeStatus)}
           startDate={startDateDisplay}
           plannedEnd={plannedEndDisplay}
@@ -410,6 +447,15 @@ export default function LearnerOverview() {
           onOpenMap={() => navigate(weeklyPlanHref)}
         />
 
+        {bookingSession && kind && id && <MeetingBookingDialog
+          session={bookingSession}
+          title={bookingSession.title}
+          learner={{ kind, id }}
+          rules={null}
+          onClose={() => setBookingSession(null)}
+          onBooked={() => { setBookingSession(null); dashboardPlan.refresh(); }}
+        />}
+
         {metrics.error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
           {metrics.error} <button className="ml-2 font-semibold underline" onClick={metrics.refresh}>Try again</button>
         </div>}
@@ -417,25 +463,21 @@ export default function LearnerOverview() {
           Attendance could not refresh. {attendanceRead.error}
           <button className="ml-2 font-semibold underline" onClick={attendanceRead.refresh}>Retry attendance</button>
         </div>}
-        <div className={overviewStyles.dashboardCardsRow}>
-          {/* Next steps and programme metrics share one seven-column desktop row. */}
-          <SeasonalHoverCards cards={actionCards} />
-          <div className={`${overviewStyles.metrics} ${overviewStyles.metricsInline}`}>
-              <ProgressStat href={programmeProgressHref} label="Programme Progress" value={programmeProgressValue} summary={programmeProgressSummary} targetValue="100%" percent={programmeProgressPercent} accent="purple" />
-              <ProgressStat href="/learner/attendance" label="Attendance" value={attendanceValue} summary={attendanceSummary} valueLabel="Attended" targetValue={attendanceTotalValue} targetLabel="Sessions to date" percent={attendancePercent} accent="green" />
-              <ProgressStat
-                href={otjhProgressHref}
-                label="OTJ Hours"
-                value={otjActualValue}
-                summary={`${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjPlannedHours?.toFixed(2) ?? EMPTY_VALUE} h`}
-                valueLabel="Actual"
-                targetValue={otjPlannedValue}
-                targetLabel="Planned hours"
-                percent={otjPercent}
-                accent="yellow"
-              />
-              <ProgressStat href={ksbProgressHref} label="KSB Progress" value={ksbValue} summary={ksbSummary} percent={ksbPercent} accent="purple" />
-          </div>
+        <div className={`${overviewStyles.metrics} ${overviewStyles.metricsInline}`}>
+          <ProgressStat href={programmeProgressHref} label="Programme Progress" value={programmeProgressValue} summary={programmeProgressSummary} targetValue="100%" percent={programmeProgressPercent} accent="purple" />
+          <ProgressStat href="/learner/attendance" label="Attendance" value={attendanceValue} summary={attendanceSummary} valueLabel="Attended" targetValue={attendanceTotalValue} targetLabel="Sessions to date" percent={attendancePercent} accent="green" />
+          <ProgressStat
+            href={otjhProgressHref}
+            label="OTJ Hours"
+            value={otjActualValue}
+            summary={`${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjPlannedHours?.toFixed(2) ?? EMPTY_VALUE} h`}
+            valueLabel="Actual"
+            targetValue={otjPlannedValue}
+            targetLabel="Planned hours"
+            percent={otjPercent}
+            accent="yellow"
+          />
+          <ProgressStat href={ksbProgressHref} label="KSB Progress" value={ksbValue} summary={ksbSummary} percent={ksbPercent} accent="purple" />
         </div>
 
         {real && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
