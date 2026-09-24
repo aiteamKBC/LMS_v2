@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import Swal from 'sweetalert2';
 import 'sweetalert2/dist/sweetalert2.min.css';
@@ -63,6 +63,59 @@ const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/timetable';
 const SCHEDULE_ENDPOINT = '/coach_api/coach/timetable/events/schedule';
 const ACTION_ENDPOINT = '/coach_api/coach/timetable/events/action';
+
+function CalendarFilterScrollRow({ ariaLabel, children }: { ariaLabel: string; children: ReactNode }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+
+  const updateEdges = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const maxScroll = element.scrollWidth - element.clientWidth;
+    setEdges({
+      left: element.scrollLeft > 1,
+      right: maxScroll - element.scrollLeft > 1,
+    });
+  }, []);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    const content = contentRef.current;
+    if (!element) return;
+    updateEdges();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateEdges);
+    observer?.observe(element);
+    if (content) observer?.observe(content);
+    window.addEventListener('resize', updateEdges);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateEdges);
+    };
+  }, [updateEdges]);
+
+  return (
+    <div className="calendar-filter-scroll-shell">
+      <div
+        ref={scrollRef}
+        role="group"
+        aria-label={ariaLabel}
+        className="calendar-filter-row"
+        onScroll={updateEdges}
+        onWheel={event => {
+          if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+            event.currentTarget.scrollLeft += event.deltaY;
+            event.preventDefault();
+          }
+        }}
+      >
+        <div ref={contentRef} className="calendar-filter-row-content">{children}</div>
+      </div>
+      <span aria-hidden="true" className={`calendar-filter-fade calendar-filter-fade-left${edges.left ? ' is-visible' : ''}`} />
+      <span aria-hidden="true" className={`calendar-filter-fade calendar-filter-fade-right${edges.right ? ' is-visible' : ''}`} />
+    </div>
+  );
+}
 
 function isReviewDetailEvent(event: TimetableEvent) {
   return event.type === 'review'
@@ -567,7 +620,7 @@ const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'need
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All',
-  overdue: 'Overdue',
+  overdue: 'Missed',
   'due-soon': 'Due Soon',
   'needs-schedule': 'Not Scheduled',
   scheduled: 'Scheduled',
@@ -1277,8 +1330,10 @@ export default function CoachTimetablePage() {
   }, [calendarColors.meetingTypes, calendarEvents]);
 
   const statusFilterColor = useCallback((status: StatusFilter) => {
-    const key = status === 'overdue'
-      ? 'missed-overdue'
+    const key = status === 'all'
+      ? 'all'
+      : status === 'overdue'
+        ? 'missed-overdue'
       : status === 'due-soon'
         ? 'pending-due-soon'
         : status === 'needs-schedule'
@@ -1292,7 +1347,7 @@ export default function CoachTimetablePage() {
                 : status === 'completed'
                   ? 'completed'
                   : null;
-    return key ? calendarColors.statuses[key] : { accent: '#6B7280', background: '#F3F4F6' };
+    return key ? calendarColors.statuses[key] : calendarColors.statuses['not-scheduled'];
   }, [calendarColors.statuses]);
 
   const sourceFilteredVisibleRangeEvents = useMemo(() => {
@@ -2008,7 +2063,7 @@ export default function CoachTimetablePage() {
             className={`${showNavigationSkeleton ? 'pointer-events-none select-none opacity-0' : ''} calendar-layout-grid grid grid-cols-1 items-start gap-5 xl:gap-4`}
             aria-hidden={showNavigationSkeleton}
           >
-        <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02]">
+        <div className="calendar-filter-host min-w-0 rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02]">
           <div className="grid gap-3 xl:grid-cols-[auto_minmax(420px,1fr)] xl:items-center xl:justify-between">
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1 rounded-lg bg-background-100 p-1">
@@ -2138,42 +2193,39 @@ export default function CoachTimetablePage() {
             </div>
           </div>
 
-          <div className="mt-3 grid min-w-0 grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.72fr)]">
-            <section className="h-fit min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="Calendar source filters">
-            <div className="px-3.5 py-3">
-                <div role="group" aria-label="Source filters" className="grid w-full max-w-none grid-cols-2 gap-1.5 bg-white p-1.5 md:grid-cols-3 xl:grid-cols-4">
-                  <p className="col-span-2 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400 md:col-span-3 xl:col-span-4">Filter by source</p>
-                  {sourceFilterOptions.filter(option => option.value !== 'other').map(option => {
-                    const isActive = filterSource === option.value;
-                    const sourceColor = sourceFilterColor(option.value);
-                    return (
-                      <button
-                        key={`menu-${option.value}`}
-                        type="button"
-                        onClick={() => setFilterSource(option.value)}
-                        className={`flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] font-semibold shadow-sm transition ${isActive ? 'border-0 bg-[#F1ECF8] text-[#4F2D7F]' : 'bg-white text-slate-700 hover:bg-slate-50'}`}
-                      >
-                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#4F2D7F' : sourceColor.accent }} />
-                        <span className="min-w-0 flex-1 truncate">{option.value === 'all' ? 'All Sources' : option.label}</span>
-                        <span className="text-slate-400">{option.count}</span>
-                        {isActive && <AppIcon className="ri-check-line shrink-0 text-sm text-[#4F2D7F]" />}
-                      </button>
-                    );
-                  })}
-                </div>
-            </div>
-
+          <div className="calendar-filter-layout mt-3 min-w-0">
+            <section className="calendar-filter-card flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#E8DDF3] bg-white shadow-[0_4px_18px_rgba(79,45,127,0.06)]" aria-labelledby="calendar-source-filters-title">
+              <div>
+                <h3 id="calendar-source-filters-title" className="text-sm font-heading font-bold text-slate-900">Filter by source</h3>
+                <p className="mt-0.5 text-[11px] text-slate-500">View meetings by source.</p>
+              </div>
+              <CalendarFilterScrollRow ariaLabel="Source filters">
+                {sourceFilterOptions.filter(option => option.value !== 'other').map(option => {
+                  const isActive = filterSource === option.value;
+                  const sourceColor = sourceFilterColor(option.value);
+                  return (
+                    <button
+                      key={`menu-${option.value}`}
+                      type="button"
+                      onClick={() => setFilterSource(option.value)}
+                      className={`calendar-filter-pill inline-flex items-center gap-2 rounded-xl border text-[11px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20 ${isActive ? 'border-[#C9B9DD] bg-[#F7F3FB] text-[#4F2D7F] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-[#D8CCE8] hover:bg-slate-50'}`}
+                    >
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#4F2D7F' : sourceColor.accent }} />
+                      <span>{option.value === 'all' ? 'All Sources' : option.label}</span>
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isActive ? 'bg-[#E8DDF3] text-[#4F2D7F]' : 'bg-slate-100 text-slate-500'}`}>{option.count}</span>
+                    </button>
+                  );
+                })}
+              </CalendarFilterScrollRow>
             </section>
 
-            <section className="h-fit min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm" aria-labelledby="calendar-status-colours-title">
+            <section className="calendar-filter-card flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#E8DDF3] bg-white shadow-[0_4px_18px_rgba(79,45,127,0.06)]" aria-labelledby="calendar-status-colours-title">
               <div>
-                <div>
-                  <h3 id="calendar-status-colours-title" className="text-sm font-heading font-bold text-slate-900">Status colours</h3>
-                  <p className="mt-0.5 text-[11px] text-slate-500">Track meeting status at a glance.</p>
-                </div>
+                <h3 id="calendar-status-colours-title" className="text-sm font-heading font-bold text-slate-900">Status colours</h3>
+                <p className="mt-0.5 text-[11px] text-slate-500">Track meeting status at a glance.</p>
               </div>
-              <div className="mt-2.5 grid min-w-0 grid-cols-2 gap-1.5 pb-1 sm:grid-cols-3">
-                {STATUS_FILTER_ORDER.map(status => {
+              <CalendarFilterScrollRow ariaLabel="Status filters">
+                {STATUS_FILTER_ORDER.filter(status => status !== 'overdue').map(status => {
                   const isActive = filterStatus === status;
                   const statusColor = statusFilterColor(status);
                   return (
@@ -2183,19 +2235,19 @@ export default function CoachTimetablePage() {
                       onClick={() => setFilterStatus(isActive ? 'all' : status)}
                       title={`${STATUS_FILTER_LABELS[status]} (${statusFilterCounts[status]})`}
                       aria-pressed={isActive}
-                      className="inline-flex min-w-0 items-center justify-center gap-1 rounded-lg px-1.5 py-1 text-[9px] font-bold shadow-sm transition hover:brightness-[0.98] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20"
+                      className="calendar-filter-pill inline-flex items-center gap-2 rounded-xl text-[11px] font-bold shadow-sm transition hover:brightness-[0.98] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20"
                       style={{
                         backgroundColor: isActive ? '#4F2D7F' : statusColor.background,
                         color: isActive ? '#FFFFFF' : statusColor.accent,
                       }}
                     >
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: isActive ? '#FFFFFF' : statusColor.accent }} />
-                      {status === 'overdue' ? 'Missed' : STATUS_FILTER_LABELS[status]}
-                      <span className={isActive ? 'opacity-90' : 'opacity-70'}>{statusFilterCounts[status]}</span>
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#FFFFFF' : statusColor.accent }} />
+                      <span>{STATUS_FILTER_LABELS[status]}</span>
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-white/70'}`}>{statusFilterCounts[status]}</span>
                     </button>
                   );
                 })}
-              </div>
+              </CalendarFilterScrollRow>
             </section>
           </div>
         </div>
