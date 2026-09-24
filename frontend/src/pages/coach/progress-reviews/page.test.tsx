@@ -121,7 +121,7 @@ describe('progress review list navigation and filters', () => {
       'Reschedule', 'View', 'View Form', 'Create Slides',
     ]);
     fireEvent.click(scheduledRow.getByRole('button', { name: 'View' }));
-    expect(screen.getByTestId('route')).toHaveTextContent('reviewId=21');
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/progress-reviews/imported-review%3A21');
   });
 
   it('opens the page scheduler and allows choosing the progress review learner', async () => {

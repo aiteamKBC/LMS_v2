@@ -1164,16 +1164,16 @@ export default function CoachProgressReviews() {
   };
 
   const openDetails = (event: CoachCalendarEvent) => {
-    if (isImportedReviewEvent(event)) {
-      const params = new URLSearchParams({ tab: 'reviews' });
-      if (event.aptemReviewId) params.set('reviewId', event.aptemReviewId);
-      if (event.learnerId) params.set('id', event.learnerId);
-      if (event.learnerType) params.set('kind', event.learnerType);
-      if (event.enrolmentId) params.set('enrolmentId', event.enrolmentId);
-      navigate(`/coach/learner-case-file?${params.toString()}`, { state: { learnerId: event.learnerId, learnerName: event.learner, kind: event.learnerType, enrolmentId: event.enrolmentId, tab: 'reviews' } });
-      return;
-    }
     navigate(`/coach/progress-reviews/${encodeURIComponent(eventIdentity(event))}`, { state: { returnTo: listUrl() } });
+  };
+
+  const openImportedReviewForm = (event: CoachCalendarEvent) => {
+    const params = new URLSearchParams({ tab: 'reviews' });
+    if (event.aptemReviewId) params.set('reviewId', event.aptemReviewId);
+    if (event.learnerId) params.set('id', event.learnerId);
+    if (event.learnerType) params.set('kind', event.learnerType);
+    if (event.enrolmentId) params.set('enrolmentId', event.enrolmentId);
+    navigate(`/coach/learner-case-file?${params.toString()}`, { state: { learnerId: event.learnerId, learnerName: event.learner, kind: event.learnerType, enrolmentId: event.enrolmentId, tab: 'reviews' } });
   };
 
   const handleSchedule = async (event: CoachCalendarEvent) => {
@@ -1374,7 +1374,7 @@ export default function CoachProgressReviews() {
                           <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>
                             <div className="flex justify-end gap-1.5">
                               <button type="button" onClick={() => openDetails(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>
-                              {actions.viewForm ? <button type="button" onClick={() => { if (review.reviewSource === 'aptem') openDetails(review); else void openCompletionForm(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-file-edit-line" />View Form</button> : null}
+                              {actions.viewForm ? <button type="button" onClick={() => { if (review.reviewSource === 'aptem') openImportedReviewForm(review); else void openCompletionForm(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-file-edit-line" />View Form</button> : null}
                               {actions.presentation ? <button type="button" onClick={() => { handleCreateSlides(review); }} disabled={!reviewHasLearnerReference(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={hasSlides ? 'ri-slideshow-2-line' : 'ri-file-ppt-line'} />{hasSlides ? 'View Slides' : 'Create Slides'}</button> : null}
                               {actions.join ? <button type="button" onClick={() => { handleJoin(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-video-on-line" />Join</button> : null}
                             </div>

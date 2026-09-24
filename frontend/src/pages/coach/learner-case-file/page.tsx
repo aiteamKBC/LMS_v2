@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import { DashboardTrainingPlan } from '@/pages/workspace/learner/DashboardTrainingPlan';
 import { useDashboardPlan } from '@/pages/workspace/learner/useDashboardPlan';
+import { ImportedReviewHistory } from '@/pages/learner/reviews/ImportedReviewHistory';
 import OTJHTab from './components/OTJHTab';
 import KSBsTab from './components/KSBsTab';
 import EvidenceTab from './components/EvidenceTab';
@@ -126,6 +127,7 @@ export default function LearnerCaseFile() {
   const state = (location.state || {}) as LocationState;
 
   const requestedTab = searchParams.get('tab') || state.tab;
+  const requestedReviewId = searchParams.get('reviewId') || undefined;
   const learnerId = searchParams.get('id') || state.learnerId;
   const learnerName = state.learnerName;
   const explicitKind = parseLearnerKind(searchParams.get('kind') || state.kind);
@@ -217,6 +219,7 @@ export default function LearnerCaseFile() {
         return <ReferenceReviewsContent
           data={data}
           onOpen={handleOpenReviewMeeting}
+          requestedReviewId={requestedReviewId}
         />;
       case 'coach-notes':
         return <DocumentsTab data={data} />;
@@ -1040,9 +1043,11 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
 function ReferenceReviewsContent({
   data,
   onOpen,
+  requestedReviewId,
 }: {
   data: CoachLearnerCaseFileData;
   onOpen: (item: CaseFileReviewMeeting) => void;
+  requestedReviewId?: string;
 }) {
   type ReviewFilter = 'all' | 'progress-review' | 'mcr' | 'completed' | 'upcoming';
   const pageSize = 10;
@@ -1089,6 +1094,13 @@ function ReferenceReviewsContent({
 
   return (
     <div className={styles.stack}>
+      {requestedReviewId ? <ImportedReviewHistory
+        kind={data.kind}
+        learnerId={data.enrolmentId || data.learnerId}
+        category="reviews"
+        reviewId={requestedReviewId}
+      /> : null}
+      {!requestedReviewId && <>
       {data.reviewGenerationIssues.map(issue => (
         <div key={issue.code} className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900" role="status">
           <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-[18px]"></AppIcon>
@@ -1154,6 +1166,7 @@ function ReferenceReviewsContent({
             </div>
           </nav>}</>}
       </ReferencePanel>
+      </>}
     </div>
   );
 }
