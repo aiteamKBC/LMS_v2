@@ -5,8 +5,9 @@ import type { ReactNode } from 'react';
 import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachProgressReviews from './page';
 
-const { fetchEvents, coach } = vi.hoisted(() => ({
+const { fetchEvents, openReview, coach } = vi.hoisted(() => ({
   fetchEvents: vi.fn(),
+  openReview: vi.fn(),
   coach: { email: 'coach@example.com', name: 'Coach Example', isInitialized: true, isViewingAsCoach: false },
 }));
 
@@ -22,6 +23,7 @@ vi.mock('@/api/progressReviews', () => ({
   fetchLatestRun: vi.fn().mockResolvedValue({ exists: false }),
   bulkGenerateProgressReviews: vi.fn(),
 }));
+vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview }));
 
 function review(index: number, overrides: Partial<CoachCalendarEvent> = {}): CoachCalendarEvent {
   return {
@@ -59,6 +61,8 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date('2026-09-14T10:00:00'));
   fetchEvents.mockReset();
+  openReview.mockReset();
+  openReview.mockResolvedValue({ instanceId: 'REVI-APTEM' });
   fetchEvents.mockResolvedValue({ owner: { name: 'Coach Example' }, events: reviews });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -126,13 +130,23 @@ describe('progress review list navigation and filters', () => {
 
   it('opens an imported Aptem View Form directly instead of the learner profile', async () => {
     fetchEvents.mockResolvedValue({ events: [
-      review(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
+      review(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Completed', status: 'completed', scheduledDate: '2026-09-23', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
     ] });
     mount();
-    const row = within((await screen.findByText('Imported Scheduled')).closest('tr')!);
+    const row = within((await screen.findByText('Imported Completed')).closest('tr')!);
     fireEvent.click(row.getByRole('button', { name: 'View Form' }));
-    expect(screen.getByTestId('route')).toHaveTextContent('/coach/imported-review-forms/apprenticeship/ENR-21/21');
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
     expect(screen.getByTestId('route')).not.toHaveTextContent('/coach/learner-case-file');
+  });
+
+  it('opens Curriculum questions for a non-terminal imported Aptem review', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      review(22, { id: 'imported-review:22', eventKey: 'imported-review:22', learner: 'Imported Draft', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '22', hasReviewForm: true, reviewTemplateId: undefined }),
+    ] });
+    mount();
+    fireEvent.click(within((await screen.findByText('Imported Draft')).closest('tr')!).getByRole('button', { name: 'View Form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A22');
+    expect(openReview).not.toHaveBeenCalled();
   });
 
   it('opens the page scheduler and allows choosing the progress review learner', async () => {

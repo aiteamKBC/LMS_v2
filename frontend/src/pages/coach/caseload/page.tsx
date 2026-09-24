@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { useListQueryState } from '@/hooks/useListQueryState';
 import { coachFetch } from '@/lib/coachFetch';
 import { fetchCoachCalendarEvents, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 
@@ -58,6 +59,10 @@ const CASELOAD_ENDPOINT = '/coach_api/coach/caseload';
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
 
 const PAGE_SIZE = 10;
+const QUERY_DEFAULTS = {
+  search: '', cohort: 'all', group: 'all', programmeStatus: 'all', employer: 'all',
+  view: 'all', sort: 'risk', direction: 'desc', page: 1,
+};
 
 const INITIAL_FILTERS: CaseloadFilterState = {
   search: '',
@@ -150,12 +155,15 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean;
     cohort: FilterOption[]; group: FilterOption[]; programStatus: FilterOption[]; employer: FilterOption[];
   } | null>(null);
 
-  const [filters, setFilters] = useState<CaseloadFilterState>(INITIAL_FILTERS);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [sortKey, setSortKey] = useState<SortKey>('risk');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const pageSize = PAGE_SIZE;
-  const [currentPage, setCurrentPage] = useState(1);
+  const { state: query, setValues: setQueryValues, reset: resetQuery } = useListQueryState(QUERY_DEFAULTS);
+  const filters: CaseloadFilterState = useMemo(() => ({
+    search: String(query.search), cohort: String(query.cohort), group: String(query.group),
+    programStatus: String(query.programmeStatus), employer: String(query.employer),
+  }), [query.cohort, query.employer, query.group, query.programmeStatus, query.search]);
+  const statusFilter = String(query.view) as StatusFilter;
+  const sortKey = String(query.sort) as SortKey;
+  const sortDirection = String(query.direction) as SortDirection;
+  const currentPage = Number(query.page);
 
   const [quickView, setQuickView] = useState<{ learnerId: string; tab: QuickViewTab } | null>(null);
 
@@ -167,7 +175,7 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean;
   // same instant, so two rows can never disagree about how far away a date is.
   const today = useMemo(() => startOfToday(), []);
   const caseloadUrl = useMemo(() => {
-    const query = new URLSearchParams({ page: String(currentPage), page_size: String(pageSize) });
+    const query = new URLSearchParams({ page: String(currentPage), page_size: String(PAGE_SIZE) });
     if (filters.search.trim()) query.set('search', filters.search.trim());
     if (filters.cohort !== 'all') query.set('cohort', filters.cohort);
     if (filters.group !== 'all') query.set('group', filters.group);
@@ -257,8 +265,6 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean;
   }), [learners, serverFilterOptions]);
 
   const matched = useMemo(() => {
-    const search = filters.search.trim().toLowerCase();
-
     return learners.filter((learner) => {
       const insight = insights.get(learner.id);
       const performanceStatus = normalizedPerformanceStatus(learner.status);
@@ -291,20 +297,6 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean;
 
       // Search and stable placement filters have already been applied by the server.
       if (filters.employer !== 'all' && displayValue(learner.employer) !== filters.employer) return false;
-
-      if (false && search) {
-        // Name and email are what a coach types; cohort, group and employer stay
-        // searchable because the previous page allowed them and people rely on it.
-        const haystack = [
-          learner.name,
-          learner.email,
-          learner.cohortName,
-          learner.group,
-          learner.employer,
-          learner.programmeName,
-        ];
-        if (!haystack.some((field) => field?.toLowerCase().includes(search))) return false;
-      }
 
       return true;
     });
@@ -345,10 +337,11 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean;
   }, [matched, insights, sortDirection, sortKey]);
 
   const handleSort = useCallback((key: SortKey) => {
-    setSortDirection((current) => sortKey === key ? (current === 'asc' ? 'desc' : 'asc') : 'asc');
-    setSortKey(key);
-    setCurrentPage(1);
-  }, [sortKey]);
+    setQueryValues({
+      sort: key,
+      direction: sortKey === key ? (sortDirection === 'asc' ? 'desc' : 'asc') : 'asc',
+    }, { resetPage: true });
+  }, [setQueryValues, sortDirection, sortKey]);
 
   const totalPages = Math.max(1, serverTotalPages);
   const safePage = Math.min(currentPage, totalPages);
@@ -380,20 +373,22 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean;
   // --- handlers ------------------------------------------------------------
 
   const handleFilterChange = useCallback((patch: Partial<CaseloadFilterState>) => {
-    setFilters((current) => ({ ...current, ...patch }));
-    setCurrentPage(1);
-  }, []);
+    setQueryValues({
+      ...(patch.search !== undefined ? { search: patch.search } : {}),
+      ...(patch.cohort !== undefined ? { cohort: patch.cohort } : {}),
+      ...(patch.group !== undefined ? { group: patch.group } : {}),
+      ...(patch.programStatus !== undefined ? { programmeStatus: patch.programStatus } : {}),
+      ...(patch.employer !== undefined ? { employer: patch.employer } : {}),
+    }, { resetPage: true });
+  }, [setQueryValues]);
 
   const handleStatusFilterChange = useCallback((next: StatusFilter) => {
-    setStatusFilter(next);
-    setCurrentPage(1);
-  }, []);
+    setQueryValues({ view: next }, { resetPage: true });
+  }, [setQueryValues]);
 
   const handleClearAll = useCallback(() => {
-    setFilters(INITIAL_FILTERS);
-    setStatusFilter('all');
-    setCurrentPage(1);
-  }, []);
+    resetQuery(['search', 'cohort', 'group', 'programmeStatus', 'employer', 'view', 'page']);
+  }, [resetQuery]);
 
   const handleToggleSelect = useCallback((learnerId: string) => {
     setSelectedLearnerIds((current) => {
@@ -582,8 +577,8 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean;
               page={safePage}
               totalPages={totalPages}
               total={serverTotal}
-              pageSize={pageSize}
-              onPageChange={setCurrentPage}
+              pageSize={PAGE_SIZE}
+              onPageChange={(nextPage) => setQueryValues({ page: nextPage }, { replace: false })}
             />
           ) : null}
         </section>

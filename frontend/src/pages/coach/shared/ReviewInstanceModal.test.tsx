@@ -79,6 +79,23 @@ beforeEach(() => {
 });
 
 describe('review reopen flow', () => {
+  it('renders an imported Aptem definition in the same workspace without write actions', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue({
+      ...definition('scheduled'),
+      readOnly: true,
+      source: 'aptem',
+      instance: { ...definition('scheduled').instance, id: 'imported-review:A-1', reviewTemplateId: '' },
+      template: { ...definition('scheduled').template, id: '', name: 'Imported progress review', reviewTypeCode: 'aptem_progress_review' },
+    });
+    mount();
+    expect(await screen.findByText('Historical Aptem review')).toBeVisible();
+    expect(screen.getByDisplayValue('Review the next module')).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+  });
+
   it('reopens a completed review with a reason and returns it to editing', async () => {
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(definition('completed'));
     const { onStatusChange } = mount();
