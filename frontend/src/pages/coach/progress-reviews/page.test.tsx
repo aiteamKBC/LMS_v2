@@ -28,7 +28,8 @@ function review(index: number, overrides: Partial<CoachCalendarEvent> = {}): Coa
     id: `review-${index}`, eventKey: `progress-review:${index}`, title: `Progress review ${index}`,
     type: 'review', source: 'progress-review', learner: `Learner ${index}`, learnerId: String(index),
     learnerType: 'apprenticeship', status: 'not-scheduled', targetDate: '2026-09-20',
-    programme: 'Final Test', durationMinutes: 60, ...overrides,
+    programme: 'Final Test', durationMinutes: 60, reviewSource: 'curriculum',
+    reviewTemplateId: 'REV-PR', enrolmentId: `ENR-${index}`, ...overrides,
   };
 }
 
@@ -101,8 +102,8 @@ describe('progress review list navigation and filters', () => {
 
   it('restores Schedule and Reschedule popups for imported Aptem reviews', async () => {
     fetchEvents.mockResolvedValue({ events: [
-      review(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled' }),
-      review(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00' }),
+      review(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: true }),
+      review(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
     ] });
     mount();
     await screen.findByText('Imported Scheduled');
@@ -112,7 +113,26 @@ describe('progress review list navigation and filters', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule progress review' })).getByRole('button', { name: 'Cancel' }));
 
     fireEvent.click(within(screen.getByText('Imported Scheduled').closest('tr')!).getByRole('button', { name: 'Reschedule' }));
-    expect(screen.getByRole('dialog', { name: 'Schedule progress review' })).toBeVisible();
+    expect(screen.getByRole('dialog', { name: 'Reschedule progress review' })).toBeVisible();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Reschedule progress review' })).getByRole('button', { name: 'Cancel' }));
+
+    const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
+    expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
+      'Reschedule', 'View', 'View Form', 'Create Slides',
+    ]);
+    fireEvent.click(scheduledRow.getByRole('button', { name: 'View' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/progress-reviews/imported-review%3A21');
+  });
+
+  it('opens an imported Aptem View Form directly instead of the learner profile', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      review(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
+    ] });
+    mount();
+    const row = within((await screen.findByText('Imported Scheduled')).closest('tr')!);
+    fireEvent.click(row.getByRole('button', { name: 'View Form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/imported-review-forms/apprenticeship/ENR-21/21');
+    expect(screen.getByTestId('route')).not.toHaveTextContent('/coach/learner-case-file');
   });
 
   it('opens the page scheduler and allows choosing the progress review learner', async () => {

@@ -38,6 +38,11 @@ vi.mock('@/pages/workspace/learner/DashboardTrainingPlan', () => ({
     <span>{showRewards === false ? 'Rewards hidden' : 'Rewards visible'}</span>
   </div>,
 }));
+vi.mock('@/pages/learner/reviews/ImportedReviewHistory', () => ({
+  ImportedReviewHistory: ({ kind, learnerId, category, reviewId }: { kind: string; learnerId: string; category: string; reviewId?: string }) => (
+    <div data-testid="imported-review-form">{`${kind}:${learnerId}:${category}:${reviewId}`}</div>
+  ),
+}));
 vi.mock('./data', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./data')>();
   return {
@@ -200,6 +205,14 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Upcoming' }));
     expect(screen.getByText('Monthly Coaching Meeting', { selector: 'td' })).toBeInTheDocument();
     expect(screen.queryByText('Progress Review', { selector: 'td' })).not.toBeInTheDocument();
+  });
+
+  it('opens the requested imported review form instead of the general review history', () => {
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&kind=apprenticeship&enrolmentId=125&tab=reviews&reviewId=A72']}><LearnerCaseFile /></MemoryRouter>);
+
+    expect(screen.getByTestId('imported-review-form')).toHaveTextContent('apprenticeship:125:reviews:A72');
+    expect(screen.queryByRole('heading', { name: 'Review History' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Review summary')).not.toBeInTheDocument();
   });
 
   it('keeps the reviews loading skeleton distinct from the empty state', () => {
@@ -455,7 +468,7 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Learning Plan' }));
 
     expect(screen.getByText('1 / 2 completed')).toBeInTheDocument();
-    expect(screen.getByText('Completed', { selector: 'span' }).parentElement).toHaveTextContent('1 / 2');
+    expect(screen.getByText('1 / 2', { selector: 'span' }).parentElement).toHaveTextContent('Completed');
     expect(screen.queryByRole('heading', { name: 'Recent Assessments' })).not.toBeInTheDocument();
   });
 

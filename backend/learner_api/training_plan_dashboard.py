@@ -30,6 +30,15 @@ def number(value):
         return None
 
 
+def valid_aptem_id(value):
+    """Only a positive stable Aptem identifier selects the Aptem projection."""
+    try:
+        parsed = int(str(value or '').strip())
+    except (ValueError, TypeError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def rows(cursor):
     return [dict(zip([field[0] for field in cursor.description], row)) for row in cursor.fetchall()]
 
@@ -198,10 +207,7 @@ def contract_plan(source, contract):
 
 
 def read_dashboard(source, section=None):
-    try:
-        aptem_id = int(str(source.aptem_id or '').strip())
-    except (ValueError, TypeError):
-        aptem_id = None
+    aptem_id = valid_aptem_id(source.aptem_id)
     email = str(source.email or '').strip().casefold()
     actual, modules, sessions = [], [], []
     historical = None
@@ -237,7 +243,7 @@ def read_dashboard(source, section=None):
         # staff explicitly limited the learner to a native assignment set.
         saved_plan = stored_training_plan(source) or []
         has_explicit_plan = any(entry.get('assignmentMode') == 'explicit' for entry in saved_plan)
-        if not has_explicit_plan:
+        if aptem_id and not has_explicit_plan:
             current_module_ids.extend(_aptem_subject_modules(source).keys())
         current_module_ids = list(dict.fromkeys(current_module_ids))
         refs = [f'current:{module_id}' for module_id in current_module_ids]

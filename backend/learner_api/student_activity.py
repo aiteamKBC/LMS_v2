@@ -22,7 +22,9 @@ from .learning_plan import _effective_plan_ids
 from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
                                     read_student_activity, read_student_material)
 from .student_activity_access import student_activity_available
-from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules, read_activity_sources
+from .student_activity_data import (summarize_activities, read_curriculum_schedules,
+                                    apply_curriculum_schedules, read_activity_sources,
+                                    read_activity_source_issues)
 from . import subject_store, subject_source
 import logging
 from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list, original_is_pdf)
@@ -202,7 +204,15 @@ def _live_subjects(source, aptem_id):
 def _activity_sources(enrolment_id, group_ids):
     with connections['enrolment'].cursor() as cursor:
         cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
-        return read_activity_sources(cursor, group_ids, [row[0] for row in cursor.fetchall()])
+        module_ids = [row[0] for row in cursor.fetchall()]
+        return read_activity_sources(cursor, group_ids, module_ids)
+
+
+def _activity_source_issues(enrolment_id, group_ids):
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
+        module_ids = [row[0] for row in cursor.fetchall()]
+        return read_activity_source_issues(cursor, group_ids, module_ids)
 
 
 @require_GET
@@ -280,7 +290,9 @@ def student_activity(request, kind, pk):
     payload = subject_source.overlay_subjects(payload, live, schedules)
     payload['source_status'] = 'live' if live is not None else 'historical'
     try:
-        payload['activity_sources'] = _activity_sources(pk, [row['id'] for row in payload.get('subjects', [])])
+        group_ids = [row['id'] for row in payload.get('subjects', [])]
+        payload['activity_sources'] = _activity_sources(pk, group_ids)
+        payload['activity_source_issues'] = _activity_source_issues(pk, group_ids)
     except DatabaseError:
         return _error('Could not verify the links between your current and previous activities. Please try again.', 503)
     payload.update(summarize_activities(subject_store.overlay_progress(payload['activities'], saved['progress'])))
