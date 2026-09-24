@@ -10,7 +10,7 @@ export const homeActions = [
 
 export interface HomeEvent {
   id: string; kind: 'lecture' | 'assignment' | 'review'; title: string;
-  date: string | null; detail: string; href: string;
+  date: string | null; detail: string; href: string; moduleId?: string;
 }
 type DatedHomeEvent = HomeEvent & { date: string; time?: string };
 const inactive = new Set(['cancelled', 'canceled', 'completed', 'deleted', 'failed', 'superseded', 'awaiting-signature']);
@@ -21,7 +21,8 @@ export function upcomingEvents(schedule?: TrainingPlanDashboard | null, week?: O
   const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
   const events: DatedHomeEvent[] = [
     ...(schedule?.sessions ?? []).filter(item => !inactive.has(item.status.trim().toLowerCase())).map(item => ({
-      id: `session-${item.id}`, kind: 'lecture' as const, title: item.title, date: item.start, detail: 'Learning session', href: '/learner/attendance' })),
+      id: `session-${item.id}`, kind: 'lecture' as const, title: item.title, date: item.start, detail: 'Learning session',
+      href: '/learner/attendance', moduleId: item.moduleId })),
     ...(week?.deadlines ?? []).filter(item => item.type === 'assignment').map(item => ({
       id: `deadline-${item.id}`, kind: 'assignment' as const, title: item.title, date: item.date,
       detail: 'Assignment due', href: '/learner/monthly-submission' })),

@@ -20,7 +20,12 @@ export function learnerHeaderPlan(modules: PlanModule[], placement: Placement, t
     !normalise(expected) || !normalise(module[key]) || normalise(module[key]) === normalise(expected)));
   const exact = compatible.filter(module => fields.every(([key, expected]) =>
     !normalise(expected) || normalise(module[key]) === normalise(expected)));
-  const candidates = (exact.length ? exact : compatible).filter(module => module.title.trim());
+  // The dashboard schedule is already scoped to this learner's assignments.
+  // Imported Aptem subjects may carry catalogue placement labels that differ
+  // from the learner identity, so keep those assigned modules visible when no
+  // placement-labelled candidate matches.
+  const placementCandidates = (exact.length ? exact : compatible).filter(module => module.title.trim());
+  const candidates = (placementCandidates.length ? placementCandidates : modules).filter(module => module.title.trim());
   const sorted = [...candidates].sort((a, b) => (dateKey(a.start_date) || '9999').localeCompare(dateKey(b.start_date) || '9999')
     || a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
   const active = sorted.filter(module => dateKey(module.start_date) && dateKey(module.end_date)
