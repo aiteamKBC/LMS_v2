@@ -423,6 +423,50 @@ def employer_portal(request, employer_id):
 
 @csrf_exempt
 @employer_or_staff()
+def employer_portal_documents(request, employer_id):
+    """Every signable item across this employer's learners, in one list.
+
+    The same rows the learner page's Documents tab shows (reviews wanting an
+    employer signature, then compliance PDFs), each tagged with its learner so
+    the portal can sign or open it without visiting that learner first. The
+    learners are exactly the employer's own — the same query as the landing
+    page's cards — so no learner id from the client is trusted here.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return err
+
+    model = SOURCE_MODELS["apprenticeship"]
+    try:
+        learners = list(model.all_learners.filter(employer_id=employer.pk).order_by("username", "id"))
+    except DatabaseError:
+        logger.exception("employer_portal_documents: lookup failed for employer %s", employer.pk)
+        return _error("Could not load documents. Please try again.", 503)
+
+    items = []
+    for learner in learners:
+        kind = _learner_kind(learner)
+        owner = {
+            "id": str(learner.pk),
+            "kind": kind,
+            "name": _s(learner.username),
+            "programme": _s(learner.programme),
+        }
+        for item in (*_review_signing_rows(kind, learner.pk), *_document_signing_rows(kind, learner.pk)):
+            items.append({**item, "learner": owner})
+
+    return JsonResponse({
+        "employer": {"id": str(employer.pk), "name": employer.full_name},
+        "items": items,
+        "outstandingTotal": len([i for i in items if i["signable"] and not i["signed"]]),
+    })
+
+
+@csrf_exempt
+@employer_or_staff()
 def employer_portal_learner(request, employer_id, kind, learner_id):
     """One learner, as their employer sees them.
 
@@ -470,6 +514,9 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
             "phone": _s(learner.phone_number),
             "programme": _s(learner.programme),
             "cohort": _s(learner.cohort),
+            # The learner record's employer display name, as the learner's own
+            # dashboard header shows it.
+            "employer": _s(learner.employer),
             "programmeStatus": status,
             "onboardingStatus": _s(learner.onboarding_status),
             "startDate": _s(learner.start_date),
@@ -592,6 +639,325 @@ def employer_portal_learner_plan(request, employer_id, kind, learner_id):
         return JsonResponse(build_learner_detail(learner, learner.pk))
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
+
+
+#: The learner-dashboard reads behind the employer's Overview tab. Each part is
+#: served by the same reader as the learner's own endpoint (overview-week,
+#: training-plan-dashboard, monthly-logs, profile-photo), so the employer sees
+#: the learner's timeline and progress rather than a second calculation of them.
+OVERVIEW_PARTS = frozenset({"week", "schedule", "contract", "hours", "photo"})
+
+#: Monthly-log fields the dashboard's hours figures need. The employer gets the
+#: per-month totals only, never the activity rows or signatures behind them.
+_HOURS_MONTH_FIELDS = ("month", "source", "training_plan_target", "not_accepted_hours", "actual_hours")
+
+
+def _without_meeting_links(payload):
+    """Drop join and booking links: the employer's view is read-only.
+
+    Teaching-session join URLs, review meeting links and the coach's booking
+    link are the learner's to use. The cards render without them.
+    """
+    return {
+        **payload,
+        "sessions": [{**session, "joinUrl": None} for session in payload.get("sessions") or []],
+        "reviews": [{**review, "meetingLink": None} for review in payload.get("reviews") or []],
+        "coach": {**(payload.get("coach") or {}), "bookingUrl": None},
+    }
+
+
+def _overview_part(part, learner):
+    if part == "week":
+        from .overview_week import read_week
+
+        return read_week(learner)
+    if part in ("schedule", "contract"):
+        from .training_plan_dashboard import read_dashboard
+
+        if part == "contract":
+            return read_dashboard(learner, section="contract")
+        return _without_meeting_links(read_dashboard(learner, section="overview"))
+
+    from old_otjh import service as old_service
+    from . import monthly_log_sources, monthly_logs
+
+    record = old_service.resolve_record(learner.pk)
+    summary = monthly_logs.summary_data(
+        {**record, "_profile": monthly_log_sources.profile(learner.pk), "_view_as": True},
+        include_open=True,
+    )
+    return {
+        "learner": {"aptem_id": summary["learner"].get("aptem_id")},
+        "months": [{key: month.get(key) for key in _HOURS_MONTH_FIELDS} for month in summary["months"]],
+    }
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_learner_overview(request, employer_id, kind, learner_id, part):
+    """The learner's dashboard timeline and progress — for their employer.
+
+    The learner's own dashboard endpoints admit only the learner and staff, so
+    an employer signed in to their portal could not load them. This serves the
+    same payloads behind the same employer-owns-this-learner check as the rest
+    of the portal. GET only, with meeting and booking links removed.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    if part not in OVERVIEW_PARTS:
+        return _error("Unknown overview part.", 404)
+
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return err
+
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return _error(f"Unknown kind: {kind!r}.", 404)
+
+    try:
+        learner = model.all_learners.get(pk=learner_id)
+    except model.DoesNotExist:
+        return _error("Learner not found.", 404)
+    except DatabaseError:
+        logger.exception("employer_portal_learner_overview: learner lookup failed")
+        return _error("Could not load this learner. Please try again.", 503)
+
+    if learner.employer_id != employer.pk:
+        return _error("That learner does not belong to this employer.", 403)
+
+    if part == "photo":
+        from azure.core.exceptions import AzureError
+        from django.http import HttpResponse
+        from .profile_photo import photo_bytes
+
+        try:
+            content = photo_bytes(learner.pk)
+        except (AzureError, RuntimeError):
+            logger.warning("Profile photo storage unavailable for learner %s", learner.pk)
+            return _error("The photo could not be loaded.", 503)
+        response = HttpResponse(content, content_type="image/jpeg") if content is not None else HttpResponse(status=204)
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    from old_otjh.service import ServiceError
+
+    try:
+        payload = _overview_part(part, learner)
+    except ServiceError as exc:
+        return _error(str(exc), exc.status)
+    except LookupError as exc:
+        return _error(str(exc), 404)
+    except DatabaseError:
+        logger.exception("employer_portal_learner_overview: %s unavailable for %s", part, learner.pk)
+        return _error("Could not load this learner's progress. Please try again.", 503)
+    response = JsonResponse(payload)
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+def _owned_learner(employer_id, kind, learner_id):
+    """(learner, None) when this learner belongs to this employer, else (None, error response)."""
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return None, err
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return None, _error(f"Unknown kind: {kind!r}.", 404)
+    try:
+        learner = model.all_learners.get(pk=learner_id)
+    except model.DoesNotExist:
+        return None, _error("Learner not found.", 404)
+    except DatabaseError:
+        logger.exception("_owned_learner: learner lookup failed")
+        return None, _error("Could not load this learner. Please try again.", 503)
+    if learner.employer_id != employer.pk:
+        return None, _error("That learner does not belong to this employer.", 403)
+    return learner, None
+
+
+#: A learner's handed-in assignments: every status except an unsent draft.
+_SUBMITTED_ASSIGNMENTS_SQL = """
+    select activity_id, activity_title, module_title, week_title, status, submitted_at, date_completed
+    from "Learner"."learning_reflection_submissions"
+    where learner_kind = %s and learner_id = %s and activity_type = 'assignment' and status <> 'draft'
+    order by coalesce(submitted_at, date_completed) desc nulls last, activity_title
+"""
+
+#: Scanned-clean uploads, keyed by the activity they were uploaded to.
+_ASSIGNMENT_FILES_SQL = """
+    select id, original_filename, section_ref, uploaded_at
+    from "Learner"."evidence_files"
+    where learner_kind = %s and learner_id = %s and status = 'approved' and section_ref = any(%s)
+    order by uploaded_at
+"""
+
+
+def _iso_any(value):
+    return value.isoformat() if hasattr(value, "isoformat") else (_s(value) or None)
+
+
+def _learner_assignments(kind, learner):
+    """The learner's submitted assignments, LMS then legacy Aptem, without marks or feedback.
+
+    The employer sees what was handed in, when, and where it stands; the tutor's
+    score, written feedback and the Aptem assessment report are left out.
+    """
+    from django.db import connections
+
+    from . import legacy_assignments
+
+    with connections["enrolment"].cursor() as cur:
+        cur.execute(_SUBMITTED_ASSIGNMENTS_SQL, [kind, str(learner.pk)])
+        submissions = cur.fetchall()
+        files_by_activity = {}
+        activity_ids = [row[0] for row in submissions]
+        if activity_ids:
+            cur.execute(_ASSIGNMENT_FILES_SQL, [kind, str(learner.pk), activity_ids])
+            for file_id, name, section_ref, uploaded_at in cur.fetchall():
+                files_by_activity.setdefault(section_ref, []).append(
+                    {"source": "lms", "id": str(file_id), "name": _s(name) or "Uploaded file"},
+                )
+
+    items = [{
+        "id": f"lms:{activity_id}",
+        "source": "lms",
+        "title": _s(title) or "Assignment",
+        "moduleTitle": _s(module),
+        "weekTitle": _s(week),
+        "status": _s(status),
+        "submittedAt": _iso_any(submitted_at) or _iso_any(completed),
+        "files": files_by_activity.get(activity_id, []),
+    } for activity_id, title, module, week, status, submitted_at, completed in submissions]
+
+    for row in legacy_assignments.classified_rows(kind, learner.pk):
+        submission = legacy_assignments.classified_submission(row, kind, learner.pk)
+        documents = submission["legacyAssignment"]["documents"]
+        items.append({
+            "id": submission["id"],
+            "source": "aptem",
+            "title": submission["activityTitle"] or "Assignment",
+            "moduleTitle": submission["moduleTitle"] or "",
+            "weekTitle": "",
+            "status": submission["status"],
+            "submittedAt": submission["submittedAt"] or submission["dateCompleted"] or None,
+            # The learner's own upload only; the "report" part is the assessor's.
+            "files": [
+                {"source": "aptem", "id": str(doc["evidenceId"]), "activityId": submission["activityId"], "name": doc["name"]}
+                for doc in documents if doc["part"] == "file"
+            ],
+        })
+    return items
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_learner_assignments(request, employer_id, kind, learner_id):
+    """Every assignment this learner has handed in, with their uploaded files."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err:
+        return err
+    try:
+        items = _learner_assignments(kind, learner)
+    except DatabaseError:
+        logger.exception("employer_portal_learner_assignments: unavailable for %s", learner.pk)
+        return _error("Could not load assignments. Please try again.", 503)
+    response = JsonResponse({"assignments": items})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_assignment_file(request, employer_id, kind, learner_id, file_id):
+    """A short-lived link to one uploaded assignment file.
+
+    Only a scanned-clean file, uploaded by this learner, to an assignment they
+    have handed in — an evidence upload with no submitted assignment behind it
+    is not the employer's to open.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err:
+        return err
+    from django.conf import settings
+    from django.db import connections
+
+    from .evidence_storage import azure_configured, get_download_sas
+
+    if not azure_configured():
+        return _error("Document storage is not configured.", 503)
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
+                select f.blob_name, f.original_filename
+                from "Learner"."evidence_files" f
+                where f.id = %s and f.learner_kind = %s and f.learner_id = %s and f.status = 'approved'
+                  and exists (
+                    select 1 from "Learner"."learning_reflection_submissions" s
+                    where s.learner_kind = f.learner_kind and s.learner_id = f.learner_id
+                      and s.activity_type = 'assignment' and s.status <> 'draft'
+                      and s.activity_id = f.section_ref
+                  )
+                """,
+                [str(file_id), kind, str(learner.pk)],
+            )
+            row = cur.fetchone()
+    except DatabaseError:
+        logger.exception("employer_portal_assignment_file: lookup failed")
+        return _error("Could not open the file. Please try again.", 503)
+    if not row:
+        return _error("File not found.", 404)
+    blob_name, name = row
+    try:
+        url = get_download_sas(settings.AZURE_APPROVED_CONTAINER, blob_name, filename=_s(name) or None)
+    except Exception:
+        logger.warning("employer_portal_assignment_file: SAS failed for %s", file_id)
+        return _error("Could not open the file. Please try again.", 503)
+    response = JsonResponse({"url": url})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_legacy_assignment_file(request, employer_id, kind, learner_id, evidence_id):
+    """A short-lived link to a legacy (Aptem) assignment upload — the learner's file, never the assessor's report."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err:
+        return err
+    from . import evidence_storage, legacy_assignments
+
+    activity_id = _s(request.GET.get("activityId"))
+    if not activity_id:
+        return _error("activityId is required.", 400)
+    if not evidence_storage.azure_configured():
+        return _error("Document storage is not configured.", 503)
+    try:
+        rows = legacy_assignments.classified_rows(kind, learner.pk, activity_id)
+    except DatabaseError:
+        logger.exception("employer_portal_legacy_assignment_file: lookup failed")
+        return _error("Could not open the file. Please try again.", 503)
+    if not rows or str(rows[0]["evidence_id"]) != str(evidence_id) or not rows[0].get("file_blob"):
+        return _error("File not found.", 404)
+    document = rows[0]
+    try:
+        url = evidence_storage.get_download_sas(
+            "fetch-aptem-evidences", document["file_blob"], filename=_s(document["evidence_name"]) or None,
+        )
+    except Exception:
+        logger.warning("employer_portal_legacy_assignment_file: SAS failed for %s", evidence_id)
+        return _error("Could not open the file. Please try again.", 503)
+    response = JsonResponse({"url": url})
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 def _performance(kind, learner):

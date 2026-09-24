@@ -12,12 +12,14 @@ import layout from './ModuleTimeline.module.css';
 type Props = {
   data: TrainingPlanDashboard; modules: TimelineModule[]; kind: string; learnerId: string;
   today: string; selectedMonth: string; selectedId?: string; canOpenActivities?: boolean;
+  /** Review markers link to the learner's calendar; off for viewers who cannot open it. */
+  canOpenCalendar?: boolean;
   detailsMode?: 'inspector' | 'overview';
   programmeStartDate?: string | null;
   onMonthChange: (month: string) => void; onModuleSelect: (module: TimelineModule) => void;
 };
 
-export function ModuleTimeline({ data, modules, kind, learnerId, today, selectedMonth, selectedId, onMonthChange, onModuleSelect, canOpenActivities = true, detailsMode = 'inspector', programmeStartDate }: Props) {
+export function ModuleTimeline({ data, modules, kind, learnerId, today, selectedMonth, selectedId, onMonthChange, onModuleSelect, canOpenActivities = true, canOpenCalendar = true, detailsMode = 'inspector', programmeStartDate }: Props) {
   const [fullscreen, setFullscreen] = useState(false);
   const [inspectedId, setInspectedId] = useState('');
   const [jumpId, setJumpId] = useState('');
@@ -161,8 +163,15 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
           {!modules.length && <p className={layout.empty}>Your modules will appear here when they are assigned.</p>}
           {!!reviewDays.length && <div className={layout.reviewRow}><div className={layout.reviewLabel}><CalendarDays size={15} /><strong>Coaching reviews</strong><span>{reviewDays.reduce((sum, day) => sum + day.items.length, 0)}</span></div><div className={layout.track}>
             {months.map(key => <span key={key} className={layout.monthCell} />)}
-            {reviewDays.map(day => <Link key={day.date} className={layout.reviewMarker} to={calendarHref(day.items[0].eventKey)} style={{ left: `clamp(14px, ${positionFor(day.date, day.date)?.left || 0}%, calc(100% - 14px))` }}
-              aria-label={`${day.items.map(review => review.title).join(', ')} on ${dateLabel(day.date)}`} title={`${dateLabel(day.date)} · ${day.items.map(review => `${review.title}: ${reviewStatus(review)}`).join(' · ')}`}><CalendarDays size={13} />{day.items.length > 1 && <small>{day.items.length}</small>}</Link>)}
+            {reviewDays.map(day => {
+              const marker = { className: layout.reviewMarker, style: { left: `clamp(14px, ${positionFor(day.date, day.date)?.left || 0}%, calc(100% - 14px))` },
+                'aria-label': `${day.items.map(review => review.title).join(', ')} on ${dateLabel(day.date)}`,
+                title: `${dateLabel(day.date)} · ${day.items.map(review => `${review.title}: ${reviewStatus(review)}`).join(' · ')}` };
+              const content = <><CalendarDays size={13} />{day.items.length > 1 && <small>{day.items.length}</small>}</>;
+              return canOpenCalendar
+                ? <Link key={day.date} to={calendarHref(day.items[0].eventKey)} {...marker}>{content}</Link>
+                : <span key={day.date} role="img" {...marker}>{content}</span>;
+            })}
           </div></div>}
         </div>
       </div>

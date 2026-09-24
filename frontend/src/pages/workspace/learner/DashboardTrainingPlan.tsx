@@ -11,10 +11,11 @@ import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.m
 
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */
 export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities = true, programmeStartDate, programmeEndDate,
-  canOpenRewards = true, showRewards = true, activityOverviewOnly = false, timelineOnly = false, programmeSnapshot }: {
+  canOpenRewards = true, showRewards = true, activityOverviewOnly = false, timelineOnly = false, cardsOnly = false, canOpenCalendar = true, simpleModuleOverview = false,
+  programmeSnapshot }: {
   kind: LearnerKind; learnerId: string; plan: DashboardPlanState; canOpenActivities?: boolean;
   programmeStartDate?: string | null; programmeEndDate?: string | null; canOpenRewards?: boolean;
-  showRewards?: boolean; activityOverviewOnly?: boolean; timelineOnly?: boolean;
+  showRewards?: boolean; activityOverviewOnly?: boolean; timelineOnly?: boolean; cardsOnly?: boolean; canOpenCalendar?: boolean; simpleModuleOverview?: boolean;
   programmeSnapshot?: ProgrammeProgressSnapshot;
 }) {
   const { data, subjects: summaries, loading, error, refresh, retryContract, week, schedule } = plan;
@@ -40,7 +41,7 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
   return <div ref={anchor} className={`${styles.root} ${activityOverviewOnly || timelineOnly ? styles.embeddedLearnerTheme : ''}`}>
     {error && <div role="alert" className={styles.error}><span>Your monthly learning could not refresh. {error}</span><button onClick={refresh}>Retry monthly learning</button></div>}
     {hasSnapshot && data ? <TrainingPlanDetails key={destination} data={data} subjects={subjects} kind={kind} learnerId={learnerId}
-      weeklyFocus={weeklyFocus} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} activityOverviewOnly={activityOverviewOnly} timelineOnly={timelineOnly} programmeSnapshot={programmeSnapshot} />
+      weeklyFocus={weeklyFocus} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} activityOverviewOnly={activityOverviewOnly} timelineOnly={timelineOnly} cardsOnly={cardsOnly} canOpenCalendar={canOpenCalendar} simpleModuleOverview={simpleModuleOverview} programmeSnapshot={programmeSnapshot} />
       : <>
         <div className={`${styles.topRow} ${weeklyFocus && !timelineOnly ? styles.withWeeklyFocus : ''}`}>
           {!timelineOnly && weeklyFocus}

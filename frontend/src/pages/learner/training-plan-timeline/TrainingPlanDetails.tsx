@@ -22,6 +22,10 @@ type Props = {
   programmeStartDate?: string | null; programmeEndDate?: string | null;
   activityOverviewOnly?: boolean;
   timelineOnly?: boolean;
+  /** Only the module timeline, module overview and progress panels, without the monthly plan above them. */
+  cardsOnly?: boolean;
+  simpleModuleOverview?: boolean;
+  canOpenCalendar?: boolean;
   programmeSnapshot?: ProgrammeProgressSnapshot;
 };
 
@@ -45,7 +49,7 @@ function bookingEvent(review: PlanReview): LearnerCalendarEvent {
 /** Weekly learning and monthly coaching share the dashboard above the linked module panels. */
 export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh, refreshing = false,
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
-  activityOverviewOnly = false, timelineOnly = false, programmeSnapshot }: Props) {
+  activityOverviewOnly = false, timelineOnly = false, cardsOnly = false, canOpenCalendar = true, simpleModuleOverview = false, programmeSnapshot }: Props) {
   const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -121,11 +125,23 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
     'awaiting-signature': 'Awaiting signatures', 'in-progress': 'In progress' }[review.status] || 'Not booked');
   const progressCharts = <ProgressCharts modules={modules} selected={selected} data={data} onModuleSelect={module => setSelectedId(module.id)}
     programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} />;
+  const moduleTimeline = <ModuleTimeline canOpenActivities={canOpenActivities} canOpenCalendar={canOpenCalendar} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
+    programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id}
+    onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />;
+  const moduleOverview = <ModuleOverview module={selected} hasModules={modules.length > 0} coachName={data.coach.name}
+    href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} simple={simpleModuleOverview} />;
   if (timelineOnly) {
+    return <div className={`${styles.root} ${layout.root}`}>{moduleTimeline}</div>;
+  }
+  if (cardsOnly) {
     return <div className={`${styles.root} ${layout.root}`}>
-      <ModuleTimeline canOpenActivities={canOpenActivities} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
-        programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id}
-        onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />
+      {/* The timeline and the module it focuses on share a row; the progress
+          cards take the full width beneath, so neither column trails empty. */}
+      <div className={layout.cards}>
+        <div className={layout.learningVisuals}>{moduleTimeline}</div>
+        {moduleOverview}
+      </div>
+      <div className={layout.cardsBelow}>{progressCharts}</div>
     </div>;
   }
   return <div className={`${styles.root} ${layout.root}`}>
@@ -230,12 +246,10 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
     </>}
     <div className={`${layout.cards} ${activityOverviewOnly ? layout.activityOverviewCards : ''}`}>
       <div className={layout.learningVisuals}>
-      {!activityOverviewOnly && <ModuleTimeline canOpenActivities={canOpenActivities} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
-        programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id} onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />}
+      {!activityOverviewOnly && moduleTimeline}
       {progressCharts}
       </div>
-      {!activityOverviewOnly && <ModuleOverview module={selected} hasModules={modules.length > 0} coachName={data.coach.name}
-        href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} />}
+      {!activityOverviewOnly && moduleOverview}
     </div>
     </section>}
     {bookingReview && <MeetingBookingDialog

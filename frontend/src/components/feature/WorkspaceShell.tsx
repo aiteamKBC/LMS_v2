@@ -37,6 +37,11 @@ interface WorkspaceShellProps {
   hideBreadcrumbs?: boolean;
   /** The transition portal has its own menu before programme delivery starts. */
   filterLearnerNavigation?: boolean;
+  /**
+   * Borrow another workspace's colours and sidebar (e.g. 'learner') while
+   * keeping this workspace's own navigation and behaviour. Defaults to `role`.
+   */
+  appearance?: string;
 }
 
 interface BreadcrumbItem {
@@ -182,6 +187,7 @@ export function WorkspaceShell({
   hidePageChrome = false,
   hideBreadcrumbs = false,
   filterLearnerNavigation = true,
+  appearance,
 }: WorkspaceShellProps) {
   // A learner who is still onboarding, or who has finished enrolment but is not
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
@@ -303,7 +309,7 @@ export function WorkspaceShell({
   return (
     <div
       className={`dashboard-theme workspace-shell flex h-screen overflow-hidden ${design.shell}`}
-      data-workspace-role={chromeRole}
+      data-workspace-role={appearance ?? chromeRole}
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
@@ -316,6 +322,7 @@ export function WorkspaceShell({
         collapsed={coachSidebarCollapsed} onCollapsedChange={handleCoachSidebarCollapsedChange}
         onOpenAccount={() => { accountButtonRef.current?.focus(); accountButtonRef.current?.click(); }} /> : <Sidebar
         role={role}
+        appearance={appearance}
         roleLabel={roleLabel}
         navItems={workspaceNavItems}
         userName={displayName}

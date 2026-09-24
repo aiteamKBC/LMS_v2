@@ -7,6 +7,11 @@ export type LogDetail = MonthDetail & { source: 'legacy' | 'lms'; is_open?: bool
 export type LogSummary = Omit<JournalSummary, 'months'> & {
   months: LogMonth[]; total_months: number; completed_months: number; read_only: boolean; csrf_token: string;
 };
+/** The per-month hour totals the dashboard reads; a LogSummary satisfies it. */
+export type MonthlyLogHours = {
+  learner?: { aptem_id?: number | null } | null;
+  months: Pick<LogMonth, 'month' | 'source' | 'training_plan_target' | 'not_accepted_hours' | 'actual_hours'>[];
+};
 export type LogLearner = { id: number; name: string; programme: string };
 export type LogPerspective = 'learner' | 'coach';
 

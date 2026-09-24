@@ -124,6 +124,11 @@ urlpatterns = [
     # the signature route is declared before the learner route for clarity.
     path("employer-portal/<int:employer_id>/", employer_portal.employer_portal, name="employer-portal"),
     path(
+        "employer-portal/<int:employer_id>/documents/",
+        employer_portal.employer_portal_documents,
+        name="employer-portal-documents",
+    ),
+    path(
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/",
         employer_portal.employer_portal_learner,
         name="employer-portal-learner",
@@ -132,6 +137,26 @@ urlpatterns = [
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/plan/",
         employer_portal.employer_portal_learner_plan,
         name="employer-portal-learner-plan",
+    ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/overview/<str:part>/",
+        employer_portal.employer_portal_learner_overview,
+        name="employer-portal-learner-overview",
+    ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/assignments/",
+        employer_portal.employer_portal_learner_assignments,
+        name="employer-portal-learner-assignments",
+    ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/assignments/files/<uuid:file_id>/",
+        employer_portal.employer_portal_assignment_file,
+        name="employer-portal-assignment-file",
+    ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/assignments/legacy/<str:evidence_id>/",
+        employer_portal.employer_portal_legacy_assignment_file,
+        name="employer-portal-legacy-assignment-file",
     ),
     path(
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/events/<path:event_key>/review/",

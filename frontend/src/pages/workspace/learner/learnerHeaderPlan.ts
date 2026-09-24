@@ -4,6 +4,15 @@ import { dateKey } from '@/pages/learner/training-plan-timeline/model';
 type Placement = { programme?: string; cohort?: string; group?: string };
 const normalise = (value?: string) => (value || '').trim().toLowerCase();
 
+/** A programme date as the learner header shows it, e.g. "3 August 2026". */
+export function formatProgrammeStartDate(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
+}
+
 /** Resolve `current` when opening learning, after activity delivery dates have loaded. */
 export function learnerModuleHref(kind?: string, learnerId?: string, moduleId?: string, links: TrainingPlanDashboard['moduleLinks'] = {}) {
   const base = kind && learnerId ? `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}` : '/learner/my-learning';

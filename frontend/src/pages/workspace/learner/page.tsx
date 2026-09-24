@@ -17,23 +17,16 @@ import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
-import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
+import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE } from '@/lib/format';
 import overviewStyles from './Overview.module.css';
 import { DashboardTrainingPlan } from './DashboardTrainingPlan';
 import { DashboardActivities } from './DashboardActivities';
-import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
+import { formatProgrammeStartDate, learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardPlan } from './useDashboardPlan';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
-
-function formatProgrammeStartDate(value?: string | null): string {
-  if (!value) return '';
-  const date = new Date(`${value.slice(0, 10)}T00:00:00`);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
-}
+import { ProfileFact } from './ProfileFact';
 
 export default function LearnerOverview() {
   const navigate = useNavigate();
@@ -418,24 +411,6 @@ export default function LearnerOverview() {
 /* ─────────────────────────────────────────────
    SUB-COMPONENTS
    ───────────────────────────────────────────── */
-
-/** One labelled fact in the profile header's meta row. */
-function ProfileFact({ icon, label, value, status = false }: { icon?: string; label: string; value: string; status?: boolean }) {
-  const statusStyle = status ? toneStyle(statusTone(value)) : null;
-  return (
-    <div className={overviewStyles.fact}>
-      {statusStyle ? (
-        <span aria-hidden="true" className={`${overviewStyles.statusIcon} ${statusStyle.dot}`}>
-          <span />
-        </span>
-      ) : <AppIcon aria-hidden="true" className={`${icon} ${overviewStyles.factIcon}`} />}
-      <div className="min-w-0">
-        <dt className={overviewStyles.factLabel}>{label}</dt>
-        <dd className={overviewStyles.factValue}>{value || EMPTY_VALUE}</dd>
-      </div>
-    </div>
-  );
-}
 
 /** Shared linked summary cards; presentation does not change the metric sources. */
 function ProgressStat({ href, icon: Icon, label, value, valueLabel = 'Current', targetValue, targetLabel = 'Target', targetDetail, percent, caption, tone = 'neutral' }: {

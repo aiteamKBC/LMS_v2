@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { overviewSchedule, overviewWeek } from '@/api/learnerOverview';
-import { fetchTrainingPlanContract, type TrainingPlanContract } from '@/api/trainingPlanDashboard';
-import { getLogSummary, type LogSummary } from '@/features/monthly-logs/api';
+import { overviewSchedule, overviewWeek, type OverviewWeek } from '@/api/learnerOverview';
+import { fetchTrainingPlanContract, type TrainingPlanContract, type TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import { getLogSummary, type MonthlyLogHours } from '@/features/monthly-logs/api';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 
 const AUDIT_OTJH_CUTOFF_MONTH = '2026-08';
@@ -12,7 +12,7 @@ function hours(value: number | string | null | undefined) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
-export function monthlyLogOtjh(summary: LogSummary) {
+export function monthlyLogOtjh(summary: MonthlyLogHours) {
   const hasAuditRecord = summary.learner?.aptem_id != null || summary.months.some(month => month.source === 'legacy');
   return {
     cutoffMonth: hasAuditRecord ? AUDIT_OTJH_CUTOFF_MONTH : undefined,
@@ -36,10 +36,29 @@ export function contractPlannedOtjh(contract: TrainingPlanContract | undefined) 
   return Math.round(months.reduce((total, month) => total + month.planned!, 0) * 10_000) / 10_000;
 }
 
-export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true) {
+type SourceRead<T> = { read: (kind: LearnerKind, id: string, signal?: AbortSignal, fresh?: boolean) => Promise<T>;
+  peek: (kind: LearnerKind, id: string) => T | undefined };
+
+/** Where the dashboard reads come from. Callers outside the learner's own session (the employer portal) supply their own. */
+export type DashboardPlanSources = {
+  week: SourceRead<OverviewWeek>;
+  schedule: SourceRead<TrainingPlanDashboard>;
+  contract: (kind: LearnerKind, id: string, signal?: AbortSignal) => Promise<TrainingPlanContract>;
+  logSummary: (kind: LearnerKind, id: string, signal?: AbortSignal) => Promise<MonthlyLogHours>;
+};
+
+const LEARNER_SOURCES: DashboardPlanSources = {
+  week: overviewWeek,
+  schedule: overviewSchedule,
+  contract: fetchTrainingPlanContract,
+  logSummary: (_kind, id, signal) => getLogSummary(id, signal, 'learner'),
+};
+
+/** `sources` must be stable across renders (module constant or memoised). */
+export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true, sources: DashboardPlanSources = LEARNER_SOURCES) {
   const active = enabled && !!kind && !!id;
-  const week = useLiveLearnerRead(kind, id, active, overviewWeek.read, overviewWeek.peek);
-  const schedule = useLiveLearnerRead(kind, id, active, overviewSchedule.read, overviewSchedule.peek);
+  const week = useLiveLearnerRead(kind, id, active, sources.week.read, sources.week.peek);
+  const schedule = useLiveLearnerRead(kind, id, active, sources.schedule.read, sources.schedule.peek);
   const identity = `${kind}:${id}`;
   const [attempt, setAttempt] = useState(0);
   const [contract, setContract] = useState<{ identity: string; data: TrainingPlanContract } | null>(null);
@@ -55,15 +74,15 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
       controller.abort();
       setContract({ identity, data: { months: {}, contractStatus: 'unavailable' } });
     }, 30_000);
-    void fetchTrainingPlanContract(kind, id, controller.signal).then(data => {
+    void sources.contract(kind, id, controller.signal).then(data => {
       if (!controller.signal.aborted) setContract({ identity, data });
     }).catch(() => {
       if (!controller.signal.aborted) setContract({ identity, data: { months: {}, contractStatus: 'unavailable' } });
     }).finally(() => window.clearTimeout(timer));
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [active, kind, id, identity, attempt]);
+  }, [active, kind, id, identity, attempt, sources]);
   useEffect(() => {
-    if (!active || !id) {
+    if (!active || !kind || !id) {
       setAudit(null);
       return;
     }
@@ -76,14 +95,14 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
     // The shared reader owns the request deadline and retry. A shorter
     // dashboard timer would discard a successful response after a cold connection.
     const controller = new AbortController();
-    void getLogSummary(id, controller.signal, 'learner').then(summary => {
+    void sources.logSummary(kind, id, controller.signal).then(summary => {
       if (!controller.signal.aborted) setAudit({ identity, data: monthlyLogOtjh(summary), error: '' });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setAudit({ identity, data: { months: {}, cutoffMonth: undefined },
         error: error instanceof Error ? error.message : 'Historical Audit hours could not be loaded.' });
     });
     return () => { controller.abort(); };
-  }, [active, id, identity, attempt]);
+  }, [active, kind, id, identity, attempt, sources]);
   const refresh = () => { week.refresh(); schedule.refresh(); retryContract(); };
   const contractData = contract?.identity === identity ? contract.data : { months: {}, contractStatus: 'loading' };
   const auditData = audit?.identity === identity ? audit.data : { months: {}, cutoffMonth: undefined };

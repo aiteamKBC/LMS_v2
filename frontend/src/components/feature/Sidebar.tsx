@@ -127,6 +127,8 @@ interface SidebarProps {
   mobileOpen: boolean;
   onCloseMobile: () => void;
   onHoverChange?: (hovered: boolean) => void;
+  /** Borrow another workspace's look (e.g. 'learner') without its behaviour. Defaults to `role`. */
+  appearance?: string;
 }
 
 /**
@@ -273,7 +275,9 @@ export function Sidebar({
   mobileOpen,
   onCloseMobile,
   onHoverChange,
+  appearance,
 }: SidebarProps) {
+  const look = appearance ?? role;
   const location = useLocation();
   const secondaryNavigationId = `${role}-secondary-navigation`;
   const { canSeeNavItem } = useAuth();
@@ -518,10 +522,10 @@ export function Sidebar({
 
   return (
     <>
-      {role === 'learner' ? (
+      {look === 'learner' ? (
         <aside
           aria-label={`${roleLabel} sidebar`}
-          data-workspace-role={role}
+          data-workspace-role={look}
           className="fixed bottom-3 left-3 top-3 z-40 hidden flex-col overflow-hidden rounded-[24px] bg-brand-deep shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex"
           style={{ width: pinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH }}
         >
@@ -579,7 +583,7 @@ export function Sidebar({
       <aside
           aria-label={`${roleLabel} sidebar`}
           className="fixed bottom-3 left-3 top-3 z-40 hidden overflow-hidden rounded-[24px] shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex"
-          data-workspace-role={role}
+          data-workspace-role={look}
           style={{ width: pinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH }}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={() => {

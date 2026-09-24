@@ -220,3 +220,17 @@
   .compactRow > :last-child { grid-column: 3; grid-row: 1 / 3; }
   .assignmentRow > :last-child { grid-row: 1 / 2; }
 }
+
+/* Employer overview: timeline beside a compact module card, progress below. */
+.cardsBelow { margin-top: 1.25rem; min-width: 0; }
+.root .overview.simpleOverview .overviewGroups { grid-template-columns: minmax(0, 1fr); }
+.root .overview.simpleOverview .scheduleFacts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.root .overview.simpleOverview > .moduleProgress { margin-top: auto; padding-top: 1.25rem; }
+@container moduleOverview (min-width: 28rem) {
+  .root .overview.simpleOverview .overviewGroups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .root .overview.simpleOverview .scheduleGroup { grid-column: auto; }
+  .root .overview.simpleOverview .overviewGroups > :last-child { grid-column: 1 / -1; }
+}
+@container trainingDetails (max-width: 39.99rem) {
+  .cardsBelow { margin-top: 1rem; }
+}
