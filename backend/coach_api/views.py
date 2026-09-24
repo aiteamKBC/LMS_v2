@@ -2755,6 +2755,8 @@ def serialize_caseload_learner(
     row: LearnerProfile | SimpleNamespace,
     *,
     refresh_live_snapshots: bool = True,
+    expected_otjh_by_component_id: dict[str, float] | None = None,
+    curriculum_ksbs: list[dict] | None = None,
 ) -> dict:
     live_snapshot = {}
     source_row = getattr(row, "_caseload_source", None)
@@ -2777,7 +2779,12 @@ def serialize_caseload_learner(
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = learner_activity_feed_entries(row)
     latest_activity = latest_learning_activity(progress_entries, activity_entries)
-    otjh_completed_entries = build_otjh_completed_entries(progress_entries, activity_entries, row.training_plan)
+    otjh_completed_entries = build_otjh_completed_entries(
+        progress_entries,
+        activity_entries,
+        row.training_plan,
+        expected_by_id=expected_otjh_by_component_id,
+    )
     planned_components = int(live_snapshot.get("componentsPlanned") or count_planned_components(row.training_plan))
     completed_components = count_completed_components(progress_entries)
     component_available = planned_components > 0
@@ -2791,11 +2798,12 @@ def serialize_caseload_learner(
     hours_available = bool(clean_text(row.completed_hours) or target_hours_value)
     hours_progress = percentage(row.completed_hours, target_hours_value) if target_hours_value else 0
 
-    curriculum_ksbs = current_curriculum_ksb_items_for_learner(
-        row,
-        source=source_row,
-        training_plan=getattr(row, "training_plan", None),
-    )
+    if curriculum_ksbs is None:
+        curriculum_ksbs = current_curriculum_ksb_items_for_learner(
+            row,
+            source=source_row,
+            training_plan=getattr(row, "training_plan", None),
+        )
     target_ksbs = curriculum_ksbs or row.ksbs
     target_ksb_lookup = ksb_target_lookup(target_ksbs)
     target_ksb_codes = set(target_ksb_lookup)
@@ -3634,6 +3642,8 @@ def build_otjh_completed_entries(
     progress_entries: list[dict],
     activity_entries: list[dict],
     training_plan,
+    *,
+    expected_by_id: dict[str, float] | None = None,
 ) -> list[dict]:
     component_lookup = training_plan_component_lookup(training_plan)
     activity_by_quiz: dict[str, dict] = {}
@@ -3653,11 +3663,12 @@ def build_otjh_completed_entries(
             activity_by_component.setdefault(component_id, activity)
 
     entries: list[dict] = []
-    expected_by_id = curriculum_expected_otjh_by_component_id([
-        clean_text(entry.get("componentId"))
-        for entry in progress_entries
-        if isinstance(entry, dict)
-    ])
+    if expected_by_id is None:
+        expected_by_id = curriculum_expected_otjh_by_component_id([
+            clean_text(entry.get("componentId"))
+            for entry in progress_entries
+            if isinstance(entry, dict)
+        ])
     for index, entry in enumerate(dedupe_otjh_progress_records(progress_entries)):
         if not isinstance(entry, dict):
             continue
@@ -11613,6 +11624,24 @@ def coach_caseload(request):
         cached_caseload = cache.get(caseload_cache_key)
         if cached_caseload is not None:
             return JsonResponse(cached_caseload)
+    # A cold page can span several remote databases. React remounts, retries or
+    # two tabs must not run that identical work concurrently and exhaust the
+    # per-process pools. The winner fills the ordinary response cache; followers
+    # wait only for that same scoped coach/page/filter key.
+    caseload_lock_key = f"{caseload_cache_key}:building"
+    owns_caseload_lock = True
+    if paginated and not refresh_live_snapshots:
+        owns_caseload_lock = cache.add(caseload_lock_key, "1", 120)
+        if not owns_caseload_lock:
+            wait_deadline = perf_counter() + 120
+            while perf_counter() < wait_deadline:
+                _sleep(0.1)
+                cached_caseload = cache.get(caseload_cache_key)
+                if cached_caseload is not None:
+                    return JsonResponse(cached_caseload)
+                if cache.add(caseload_lock_key, "1", 120):
+                    owns_caseload_lock = True
+                    break
 
     try:
         pagination = None
@@ -11639,7 +11668,49 @@ def coach_caseload(request):
             offset = (page - 1) * page_size
             profile_ids = list(queryset.order_by(primary_sort, "full_name", "id").values_list("id", flat=True)[offset:offset + page_size])
             rows = fetch_caseload_learner_profiles_by_ids(owner_email, profile_ids)
-            learners = [serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots) for row in rows]
+            # Two serializer projections used to repeat remote curriculum SQL
+            # per learner. They are identical calculations, but their inputs
+            # can be collected from this already-selected page: expected OTJH
+            # is one component-id query, and authored KSBs are one lookup per
+            # distinct programme/assigned-plan shape rather than per learner.
+            page_component_ids = [
+                clean_text(entry.component_ref)
+                for row in rows
+                for entry in (
+                    row.progress_entries.all()
+                    if getattr(row, "progress_entries", None) is not None
+                    else []
+                )
+                if clean_text(entry.component_ref)
+            ]
+            expected_otjh_by_component = curriculum_expected_otjh_by_component_id(page_component_ids)
+            curriculum_ksb_cache: dict[tuple, list[dict]] = {}
+            curriculum_ksbs_by_profile: dict[int, list[dict]] = {}
+            for row in rows:
+                plan = getattr(row, "training_plan", [])
+                source = getattr(row, "_caseload_source", None)
+                programme = clean_text(getattr(source, "programme", None) or getattr(row, "programme", None))
+                module_ids = tuple(
+                    clean_text(module.get("moduleId") or module.get("moduleCatalogueId"))
+                    for module in plan
+                    if isinstance(module, dict)
+                    and clean_text(module.get("moduleId") or module.get("moduleCatalogueId"))
+                )
+                cache_key = (programme.casefold(), module_ids)
+                if cache_key not in curriculum_ksb_cache:
+                    curriculum_ksb_cache[cache_key] = current_curriculum_ksb_items_for_learner(
+                        row, source=source, training_plan=plan,
+                    )
+                curriculum_ksbs_by_profile[int(row.id)] = curriculum_ksb_cache[cache_key]
+            learners = [
+                serialize_caseload_learner(
+                    row,
+                    refresh_live_snapshots=refresh_live_snapshots,
+                    expected_otjh_by_component_id=expected_otjh_by_component,
+                    curriculum_ksbs=curriculum_ksbs_by_profile[int(row.id)],
+                )
+                for row in rows
+            ]
             total_pages = (total + page_size - 1) // page_size if total else 0
             pagination = {"page": page, "pageSize": page_size, "total": total, "totalPages": total_pages, "hasNext": page < total_pages, "hasPrevious": page > 1}
             filter_options = {
@@ -11673,7 +11744,10 @@ def coach_caseload(request):
         audit_totals = run_optional(caseload_audit_hour_totals)
         ksb_counts = run_optional(caseload_evidenced_ksb_counts)
         canonical_metrics = run_optional(caseload_canonical_metrics)
-        review_history = run_optional(dashboard_review_history)
+        # Paginated rows use the shared OLD/Aptem vs NEW/Curriculum resolver
+        # below. Loading imported Aptem history here as well duplicated review
+        # I/O and could not improve the selected source's result.
+        review_history = run_optional(dashboard_review_history) if not paginated else {}
         latest_activities = run_optional(caseload_latest_learning_activities) if paginated else {}
         aptem_by_profile = caseload_aptem_ids(rows)
         for row, learner in zip(rows, learners):
@@ -11704,10 +11778,17 @@ def coach_caseload(request):
                 if to_int(entry.get("id")) is not None
             }
             for row, learner in zip(rows, learners):
-                learner.update(review_dates.get(int(row.id), {}))
+                dates = review_dates.get(int(row.id), {})
+                learner.update(dates)
+                if dates.get("lastPr"):
+                    learner["lastProgressReview"] = dates["lastPr"]
+                if dates.get("lastMcm"):
+                    learner["lastReview"] = dates["lastMcm"]
                 apply_attendance_summary(learner, attendance_by_id.get(int(row.id)))
     except Exception:
         logger.exception("coach_caseload_load_failed coach_account_id=%s", owner_email)
+        if paginated and not refresh_live_snapshots and owns_caseload_lock:
+            cache.delete(caseload_lock_key)
         return coach_error(
             request,
             code="database_unavailable",
@@ -11726,7 +11807,9 @@ def coach_caseload(request):
     if paginated:
         response_payload = {"owner": response_payload["owner"], "results": learners, "pagination": pagination, "filterOptions": filter_options}
     if not refresh_live_snapshots:
-        cache.set(caseload_cache_key, response_payload, 30)
+        cache.set(caseload_cache_key, response_payload, 300 if paginated else 30)
+    if paginated and not refresh_live_snapshots and owns_caseload_lock:
+        cache.delete(caseload_lock_key)
     _coach_perf("caseload", "total", endpoint_started, learner_count=len(learners))
     return JsonResponse(response_payload)
 

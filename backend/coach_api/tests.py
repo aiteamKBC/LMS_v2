@@ -768,29 +768,46 @@ class CoachCaseloadViewTests(SimpleTestCase):
     @patch("coach_api.views.caseload_evidenced_ksb_counts", return_value={})
     @patch("coach_api.views.caseload_audit_hour_totals", return_value={})
     @patch("coach_api.views.caseload_latest_learning_activities", return_value={})
+    @patch("coach_api.views.current_curriculum_ksb_items_for_learner", return_value=[])
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={})
     @patch("coach_api.views.serialize_caseload_learner")
     @patch("coach_api.views.fetch_caseload_learner_profiles_by_ids")
     def test_paginated_caseload_enriches_only_requested_page(
         self, fetch_page, serialize, *_mocks,
     ):
         ids = list(range(1, 33))
-        page_rows = [SimpleNamespace(id=value, coach_name="Coach Example") for value in ids[30:32]]
-        fetch_page.return_value = page_rows
+        fetch_page.side_effect = lambda _owner, selected: [
+            SimpleNamespace(id=value, coach_name="Coach Example") for value in selected
+        ]
         serialize.side_effect = lambda row, **kwargs: {"id": str(row.id), "coachName": "Coach Example"}
 
         with patch.object(LearnerProfile, "objects", self.PageQuery(ids)):
+            first_response = call_coach_view(coach_caseload, self.factory.get(
+                "/coach_api/coach/caseload", {"owner_email": "coach@example.com", "page": 1, "page_size": 10},
+            ))
             response = call_coach_view(coach_caseload, self.factory.get(
                 "/coach_api/coach/caseload", {"owner_email": "coach@example.com", "page": 4, "page_size": 10},
             ))
+        first_payload = json.loads(first_response.content)
         payload = json.loads(response.content)
 
+        self.assertEqual(len(first_payload["results"]), 10)
+        self.assertEqual(first_payload["pagination"]["totalPages"], 4)
         self.assertEqual(payload["pagination"], {
             "page": 4, "pageSize": 10, "total": 32, "totalPages": 4,
             "hasNext": False, "hasPrevious": True,
         })
         self.assertEqual([row["id"] for row in payload["results"]], ["31", "32"])
-        fetch_page.assert_called_once_with("coach@example.com", [31, 32])
-        self.assertEqual([call.args[0].id for call in serialize.call_args_list], [31, 32])
+        self.assertEqual(fetch_page.call_args_list[-1].args, ("coach@example.com", [31, 32]))
+        self.assertEqual([call.args[0].id for call in serialize.call_args_list[-2:]], [31, 32])
+
+        with patch.object(LearnerProfile, "objects", self.PageQuery(list(range(1, 74)))):
+            large_response = call_coach_view(coach_caseload, self.factory.get(
+                "/coach_api/coach/caseload", {"owner_email": "coach@example.com", "page": 8, "page_size": 10},
+            ))
+        large_payload = json.loads(large_response.content)
+        self.assertEqual(large_payload["pagination"]["totalPages"], 8)
+        self.assertEqual([row["id"] for row in large_payload["results"]], ["71", "72", "73"])
 
     @patch("coach_api.views.serialize_caseload_dashboard_learner")
     @patch("coach_api.views.fetch_caseload_dashboard_profiles")

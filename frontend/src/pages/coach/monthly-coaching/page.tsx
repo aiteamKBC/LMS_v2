@@ -24,7 +24,6 @@ import {
   type CoachCalendarEvent,
   eventDisplayDate,
   eventIdentity,
-  canJoinMeeting,
   fetchCoachCalendarEvents,
   formatDateLabel,
   formatTimeRangeLabel,
@@ -34,7 +33,6 @@ import {
   isEventInMonth,
   isEventThisMonth,
   isInProgressEvent,
-  hasScheduledSlot,
   isScheduledEvent,
   meetingUrl,
   needsScheduling,
@@ -43,6 +41,7 @@ import {
   sortEvents,
   statusLabel,
 } from '../shared/calendarEvents';
+import { normalizeResolvedReview, normalizeResolvedReviews, reviewActionMatrix } from '../shared/resolvedReviewRows';
 
 const coachNav = roleNavMap.coach;
 
@@ -185,7 +184,7 @@ export default function CoachMonthlyCoaching() {
         includeSchedulerQueues: false,
       })
       .then((data) => {
-        setEvents(sortEvents((data.events || []).filter(event => event.source === 'mcr')));
+        setEvents(sortEvents(normalizeResolvedReviews((data.events || []).filter(event => event.source === 'mcr'))));
         setOwnerName(data.owner?.name || coach.name);
       })
       .catch((err) => {
@@ -327,6 +326,7 @@ export default function CoachMonthlyCoaching() {
 
   const openLearnerReviews = (event: CoachCalendarEvent) => {
     const params = new URLSearchParams({ tab: 'reviews' });
+    if (event.aptemReviewId) params.set('reviewId', event.aptemReviewId);
     if (event.learnerId) params.set('id', event.learnerId);
     if (event.learnerType) params.set('kind', event.learnerType);
     if (event.enrolmentId) params.set('enrolmentId', event.enrolmentId);
@@ -380,7 +380,7 @@ export default function CoachMonthlyCoaching() {
         time: scheduleTime,
         durationMinutes: scheduleDuration,
       });
-      setEvents(current => current.map(event => eventIdentity(event) === eventIdentity(data.event) ? data.event : event));
+      setEvents(current => current.map(event => eventIdentity(event) === eventIdentity(data.event) ? normalizeResolvedReview(data.event) : event));
       setScheduleModalOpen(false);
     } catch (err) {
       setScheduleError(err instanceof Error ? err.message : 'Unable to schedule this meeting.');
@@ -424,18 +424,15 @@ export default function CoachMonthlyCoaching() {
             {loading ? <RowsSkeleton rows={6} /> : null}
             {!loading && !error && sortedFiltered.length === 0 ? <EmptyState variant={tabFiltered.length === 0 ? 'empty' : 'no-matches'} icon={tabFiltered.length === 0 ? 'ri-calendar-check-line' : 'ri-user-search-line'} title={tabFiltered.length === 0 ? 'No coaching meetings found.' : 'No learner matches this search.'} /> : null}
             {!loading && sortedFiltered.length > 0 ? <div className="overflow-x-auto rounded-xl border border-primary-100 bg-white shadow-sm"><table className="w-full min-w-[1120px] border-collapse text-left"><caption className="sr-only">Coaching meetings for {selectedMonthLabel}</caption><thead><tr className="bg-primary-50/70 text-[11px] font-bold uppercase tracking-wide text-primary-800"><th className="whitespace-nowrap px-4 py-3 align-middle">Learner</th><th className="whitespace-nowrap px-4 py-3 align-middle">Cohort</th><th className="whitespace-nowrap px-4 py-3 align-middle">Date &amp; time</th><th className="whitespace-nowrap px-4 py-3 text-center align-middle">Status</th><th className="whitespace-nowrap px-4 py-3 align-middle">Schedule</th><th className="whitespace-nowrap px-4 py-3 text-right align-middle">Actions</th></tr></thead><tbody>{paginatedEvents.map(event => {
-              const url = meetingUrl(event);
               const rowTone = meetingTone(event);
-              const imported = isImportedReviewEvent(event);
-              const canSchedule = !['in-progress', 'completed', 'awaiting-signature'].includes(event.status);
-              const viewOnly = imported || event.status === 'completed' || event.status === 'awaiting-signature';
+              const actions = reviewActionMatrix(event);
               return <tr key={eventIdentity(event)} className="ui-action-row border-t border-primary-100/70 transition hover:bg-primary-50/35" onClick={() => openDetails(event)}>
                 <td className="px-4 py-3 align-middle"><div className="flex items-center gap-3"><LearnerAvatar name={event.learner} tone={rowTone} /><div className="min-w-0"><strong className="block text-[13px] font-bold text-primary-900">{event.learner || 'Unknown learner'}</strong><span className="block text-[11px] text-foreground-500">{event.programme || event.email || 'Monthly coaching meeting'}</span></div></div></td>
                 <td className="px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-group-line text-primary-500" />{event.cohort || event.group || '--'}</span></td>
                 <td className="whitespace-nowrap px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex min-w-[150px] flex-col gap-1"><span className="flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-calendar-line shrink-0 text-primary-500" />{event.scheduledDate ? formatDateLabel(event.scheduledDate) : formatDateLabel(event.targetDate)}</span><span className="flex items-center gap-1.5 whitespace-nowrap text-foreground-500"><AppIcon className="ri-time-line shrink-0 text-primary-500" />{formatTimeRangeLabel(event)}</span></span></td>
                 <td className="px-4 py-3 text-center align-middle"><div className="flex flex-wrap justify-center gap-1.5"><StatusBadge tone={statusTone(event.status)} label={statusLabel(event.status)} size="sm" />{isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div></td>
-                <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{canSchedule ? <button type="button" onClick={() => scheduleMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{hasScheduledSlot(event) ? 'Reschedule' : 'Schedule'}</button> : null}</td>
-                <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}><div className="flex justify-end gap-1.5">{!viewOnly ? <><button type="button" onClick={() => { void openForm(event); }} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-file-edit-line" />Form</button><button type="button" onClick={() => { void createSlides(event); }} disabled={Boolean(slidesBusyEventKey)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={slidesBusyEventKey === eventIdentity(event) ? 'ri-loader-4-line animate-spin' : 'ri-file-ppt-line'} />{slidesBusyEventKey === eventIdentity(event) ? 'Generating...' : 'Create Slides'}</button></> : null}<button type="button" onClick={() => openDetails(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>{!viewOnly && url && canJoinMeeting(event) ? <button type="button" onClick={() => openMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-video-on-line" />Join</button> : null}</div></td>
+                <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{actions.schedule ? <button type="button" onClick={() => scheduleMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{actions.schedule}</button> : null}</td>
+                <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}><div className="flex justify-end gap-1.5"><button type="button" onClick={() => openDetails(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>{actions.viewForm ? <button type="button" onClick={() => { if (event.reviewSource === 'aptem') openDetails(event); else void openForm(event); }} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-file-edit-line" />View Form</button> : null}{actions.presentation ? <button type="button" onClick={() => { void createSlides(event); }} disabled={Boolean(slidesBusyEventKey)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={slidesBusyEventKey === eventIdentity(event) ? 'ri-loader-4-line animate-spin' : 'ri-file-ppt-line'} />{slidesBusyEventKey === eventIdentity(event) ? 'Generating...' : 'Create Slides'}</button> : null}{actions.join ? <button type="button" onClick={() => openMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-video-on-line" />Join</button> : null}</div></td>
               </tr>;
             })}</tbody></table></div> : null}
             {!loading && sortedFiltered.length > 0 ? <div className="mt-4 flex flex-col gap-3 text-[12px] text-foreground-500 sm:flex-row sm:items-center sm:justify-between"><span>Showing {Math.min(sortedFiltered.length, paginatedEvents.length)} of {sortedFiltered.length} meetings</span>{pageCount > 1 ? <Pagination page={activePage} totalPages={pageCount} total={sortedFiltered.length} pageSize={MEETINGS_PER_PAGE} onPageChange={setCurrentPage} noun="meetings" /> : null}</div> : null}
