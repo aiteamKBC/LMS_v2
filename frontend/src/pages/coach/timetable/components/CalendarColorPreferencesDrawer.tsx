@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
 import {
   CALENDAR_STATUS_DEFINITIONS,
   DEFAULT_CALENDAR_COLORS,
@@ -167,8 +168,8 @@ export function CalendarColorPreferencesDrawer({
           <div className="flex min-w-0 items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F1ECF8] text-[#4F2D7F]"><AppIcon className="ri-palette-line text-lg" /></span>
             <div>
-              <h2 id="calendar-color-preferences-title" className="text-lg font-heading font-bold tracking-tight text-slate-950">Calendar Color Preferences</h2>
-              <p className="mt-1 text-xs leading-5 text-slate-500">Customize the colors used for meeting types and statuses in your calendar.</p>
+              <h2 id="calendar-color-preferences-title" className="text-lg font-heading font-bold tracking-tight text-slate-950">Calendar Colour Preferences</h2>
+              <p className="mt-1 text-xs leading-5 text-slate-500">Customise the colours used for meeting types and statuses in your calendar.</p>
             </div>
           </div>
           <button ref={closeButtonRef} type="button" onClick={onClose} aria-label="Close color preferences" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/30"><AppIcon className="ri-close-line text-lg" /></button>
