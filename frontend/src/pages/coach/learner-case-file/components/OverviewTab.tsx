@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { completedComponentIds, isComponentComplete, trainingPlanWeekPosition, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
+import { trainingPlanWeekPosition, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
+import { buildCaseFileActivityStates, moduleActivitySummary, type ActivityStatus, type CaseFileActivityStates } from '../activityState';
 import {
   flattenJourney,
   formatAttemptGrade,
@@ -25,8 +26,19 @@ type CaseFileKsbSummary = {
 export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileTabProps & { ksbSummary?: CaseFileKsbSummary; onOpenNotes?: () => void }) {
   const flatComponents = flattenJourney(data);
   const totalWeeks = data.journey.reduce((count, module) => count + module.weeks.length, 0);
-  const completedIds = completedComponentIds(data.detail);
   const weekPosition = trainingPlanWeekPosition(data.detail);
+  const activityStates = data.activityStates && Object.keys(data.activityStates).length > 0
+    ? data.activityStates
+    : buildCaseFileActivityStates(data.journey, data.detail, null);
+  const programmeSummary = data.journey.reduce((totals, module) => {
+    const summary = moduleActivitySummary(module, activityStates);
+    totals.total += summary.total;
+    totals.completed += summary.completed;
+    totals.inProgress += summary['in-progress'];
+    totals.notStarted += summary['not-started'];
+    totals.unavailable += summary.unavailable;
+    return totals;
+  }, { total: 0, completed: 0, inProgress: 0, notStarted: 0, unavailable: 0 });
 
   return (
     <div className="space-y-5">
@@ -39,6 +51,7 @@ export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileT
       </div>
 
       <div className={styles.learningGrid}>
+        <ProgrammeActivityTimeline modules={data.journey} activityStates={activityStates} />
         <section className={styles.panel}>
           <div className={styles.panelHeader}>
             <div className={styles.panelHeading}>
@@ -52,6 +65,10 @@ export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileT
               <SummaryPill label="Modules" value={String(data.journey.length)} />
               <SummaryPill label="Weeks" value={String(totalWeeks)} />
               <SummaryPill label="Components" value={String(flatComponents.length)} />
+              <SummaryPill label="Completed" value={String(programmeSummary.completed)} />
+              <SummaryPill label="In progress" value={String(programmeSummary.inProgress)} />
+              <SummaryPill label="Not started" value={String(programmeSummary.notStarted)} />
+              {programmeSummary.unavailable > 0 && <SummaryPill label="Unavailable" value={String(programmeSummary.unavailable)} />}
             </div>
           </div>
 
@@ -67,15 +84,37 @@ export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileT
           ) : (
             <div className="max-h-[680px] overflow-y-auto bg-background-100/20 p-3 md:p-4">
               <div className="mb-3 flex flex-wrap items-center gap-3 border-b border-background-200 pb-3 text-[11px] text-foreground-500">
-                <span className="font-semibold text-foreground-700">Status</span><LegendDot tone="bg-emerald-500" label="Complete" /><LegendDot tone="bg-primary-500" label="In progress" /><LegendDot tone="bg-background-300" label="Not started" />
+                <span className="font-semibold text-foreground-700">Status</span><LegendDot tone="bg-emerald-500" label="Complete" /><LegendDot tone="bg-primary-500" label="In progress" /><LegendDot tone="bg-background-300" label="Not started" /><LegendDot tone="bg-amber-500" label="Unavailable" />
               </div>
-              <CoachPlanView modules={data.journey} completedComponentIds={completedIds} weekPosition={weekPosition?.current ?? null} />
+              <CoachPlanView modules={data.journey} activityStates={activityStates} weekPosition={weekPosition?.current ?? null} />
             </div>
           )}
         </section>
       </div>
     </div>
   );
+}
+
+function ProgrammeActivityTimeline({ modules, activityStates }: { modules: JourneyModule[]; activityStates: CaseFileActivityStates }) {
+  return <section className={styles.panel} aria-label="Module activity timeline">
+    <div className={styles.panelHeader}>
+      <div className={styles.panelHeading}><span className={styles.panelIcon}><AppIcon className="ri-timeline-view" /></span><div>
+        <h2 className={styles.panelTitle}>Module timeline</h2>
+        <p className={styles.panelSubtitle}>Dates show placement; learner activity records determine status.</p>
+      </div></div>
+    </div>
+    <div className="grid gap-2 p-3 md:grid-cols-2 md:p-4 xl:grid-cols-3">
+      {modules.map((module, index) => {
+        const summary = moduleActivitySummary(module, activityStates);
+        return <div key={`${module.module}-${index}`} className="rounded-xl border border-background-200 bg-white p-3">
+          <div className="flex items-start justify-between gap-3"><div className="min-w-0"><span className="text-[11px] font-bold uppercase tracking-wider text-primary-600">Module {index + 1}</span><p className="truncate text-sm font-bold text-foreground-900">{module.module}</p></div><ActivityStatusBadge status={summary.status} /></div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-background-200"><span className="block h-full rounded-full bg-emerald-500" style={{ width: `${summary.percent}%` }} /></div>
+          <p className="mt-2 text-xs font-semibold text-foreground-600">{summary.completed} / {summary.total} completed · {summary.percent}%</p>
+          {summary.unavailable > 0 && <p className="mt-1 text-[11px] text-amber-700">{summary.unavailable} unavailable</p>}
+        </div>;
+      })}
+    </div>
+  </section>;
 }
 
 function LegendDot({ tone, label }: { tone: string; label: string }) {
@@ -101,11 +140,11 @@ function LearningMetric({
 
 function CoachPlanView({
   modules,
-  completedComponentIds,
+  activityStates,
   weekPosition,
 }: {
   modules: JourneyModule[];
-  completedComponentIds: Set<string>;
+  activityStates: CaseFileActivityStates;
   weekPosition: number | null;
 }) {
   const moduleOffsets = modules.map((_, index) => modules.slice(0, index).reduce((sum, item) => sum + item.weeks.length, 0));
@@ -117,7 +156,7 @@ function CoachPlanView({
           module={module}
           moduleIndex={index}
           defaultOpen={index === 0}
-          completedComponentIds={completedComponentIds}
+          activityStates={activityStates}
           currentWeek={weekPosition != null && weekPosition > moduleOffsets[index] && weekPosition <= moduleOffsets[index] + module.weeks.length ? weekPosition - moduleOffsets[index] : null}
         />
       ))}
@@ -129,21 +168,22 @@ function CoachModuleSection({
   module,
   moduleIndex,
   defaultOpen,
-  completedComponentIds,
+  activityStates,
   currentWeek,
 }: {
   module: JourneyModule;
   moduleIndex: number;
   defaultOpen: boolean;
-  completedComponentIds: Set<string>;
+  activityStates: CaseFileActivityStates;
   currentWeek: number | null;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const weekCount = module.weeks.length;
   const moduleComponents = module.weeks.flatMap((week) => week.components);
   const componentCount = moduleComponents.length;
-  const completedCount = moduleComponents.filter((component) => isComponentComplete(component, completedComponentIds)).length;
-  const progress = componentCount ? Math.round((completedCount / componentCount) * 100) : 0;
+  const summary = moduleActivitySummary(module, activityStates);
+  const completedCount = summary.completed;
+  const progress = summary.percent;
   const moduleOtjh = module.weeks.reduce((total, week) => total + (week.otjh || 0), 0);
 
   return (
@@ -165,6 +205,7 @@ function CoachModuleSection({
         </span>
         <span className="hidden shrink-0 items-center gap-2 sm:flex">
           {currentWeek && <StatusBadge tone="info" label="Current module" size="sm" />}
+          <ActivityStatusBadge status={summary.status} />
           {moduleOtjh > 0 && <SummaryPill label="OTJH" value={formatHours(moduleOtjh)} compact />}
           <SummaryPill label="Completed" value={`${completedCount} / ${componentCount}`} compact />
           <SummaryPill label="Items" value={String(componentCount)} compact />
@@ -187,7 +228,7 @@ function CoachModuleSection({
                     key={`${module.module}-${week.week}-${index}`}
                     week={week}
                     defaultOpen={defaultOpen && index === 0}
-                    completedComponentIds={completedComponentIds}
+                    activityStates={activityStates}
                   />
                 ))}
               </div>
@@ -202,15 +243,15 @@ function CoachModuleSection({
 function CoachWeekCard({
   week,
   defaultOpen,
-  completedComponentIds,
+  activityStates,
 }: {
   week: JourneyWeek;
   defaultOpen: boolean;
-  completedComponentIds: Set<string>;
+  activityStates: CaseFileActivityStates;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const componentCount = week.components.length;
-  const completedCount = week.components.filter((component) => isComponentComplete(component, completedComponentIds)).length;
+  const completedCount = week.components.filter((component) => activityStates[String(component.componentId || '')]?.status === 'completed').length;
 
   return (
     <div className="relative pl-6 md:pl-7">
@@ -248,7 +289,7 @@ function CoachWeekCard({
                   <CoachComponentRow
                     key={component.componentId || `${component.title}-${index}`}
                     component={component}
-                    completed={Boolean(component.componentId && completedComponentIds.has(component.componentId))}
+                    state={activityStates[String(component.componentId || '')] || { status: 'not-started', completedAt: null }}
                   />
                 ))}
               </div>
@@ -260,7 +301,7 @@ function CoachWeekCard({
   );
 }
 
-function CoachComponentRow({ component, completed }: { component: JourneyComponent; completed: boolean }) {
+function CoachComponentRow({ component, state }: { component: JourneyComponent; state: { status: ActivityStatus; completedAt: string | null; unavailableReason?: string } }) {
   const display = componentDisplay(component);
   const attempts = component.quizAttempts || [];
   const latestAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
@@ -295,12 +336,33 @@ function CoachComponentRow({ component, completed }: { component: JourneyCompone
             showIcon
           />
         )}
-        {completed && !component.isQuiz && (
-          <StatusBadge tone="positive" label="Done" size="sm" showIcon />
-        )}
+        {state.completedAt && <span className="text-[11px] text-foreground-400">{new Date(state.completedAt).toLocaleDateString('en-GB')}</span>}
+        {state.unavailableReason && <span className="hidden text-[11px] text-amber-700 lg:inline">{unavailableReasonLabel(state.unavailableReason)}</span>}
+        <ActivityStatusBadge status={state.status} />
       </div>
     </div>
   );
+}
+
+function ActivityStatusBadge({ status }: { status: ActivityStatus }) {
+  const config = status === 'completed'
+    ? { tone: 'positive' as const, label: '✓ Completed' }
+    : status === 'in-progress'
+      ? { tone: 'caution' as const, label: '• In progress' }
+      : status === 'unavailable'
+        ? { tone: 'caution' as const, label: 'Unavailable' }
+      : { tone: 'neutral' as const, label: '○ Not started' };
+  return <StatusBadge tone={config.tone} label={config.label} size="sm" />;
+}
+
+function unavailableReasonLabel(reason: string) {
+  return ({
+    missing_source_component_id: 'Missing source component ID',
+    missing_group_id_activity_id: 'Missing group/activity ID',
+    no_aptem_result: 'No Aptem result',
+    ambiguous_lineage: 'Ambiguous lineage',
+    activity_source_unavailable: 'Activity source unavailable',
+  } as Record<string, string>)[reason] || 'Activity unavailable';
 }
 
 type ComponentStyle = {

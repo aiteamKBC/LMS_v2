@@ -455,7 +455,7 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Learning Plan' }));
 
     expect(screen.getByText('1 / 2 completed')).toBeInTheDocument();
-    expect(screen.getByText('Completed', { selector: 'span' }).parentElement).toHaveTextContent('1 / 2');
+    expect(screen.getByText('1 / 2', { selector: 'span' }).parentElement).toHaveTextContent('Completed');
     expect(screen.queryByRole('heading', { name: 'Recent Assessments' })).not.toBeInTheDocument();
   });
 

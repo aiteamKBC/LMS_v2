@@ -222,16 +222,6 @@ export default function LearnerCaseFile() {
         return <DocumentsTab data={data} />;
       case 'support':
         return <div className="space-y-5">
-          {dashboardKind ? <DashboardTrainingPlan
-            kind={dashboardKind}
-            learnerId={data.enrolmentId || data.learnerId}
-            plan={dashboardPlan}
-            programmeStartDate={data.detail?.programmeStartDate}
-            programmeEndDate={data.detail?.programmeEndDate}
-            canOpenActivities
-            showRewards={false}
-            timelineOnly
-          /> : null}
           <LearningPlanTab data={data} ksbSummary={headerKsb || undefined} onOpenNotes={() => setActiveTab('coach-notes')} />
         </div>;
       case 'otjh':
