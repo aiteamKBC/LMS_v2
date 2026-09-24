@@ -1,79 +1,55 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { coachFetch } from '@/lib/coachFetch';
 import CoachAttendance from './page';
-
-vi.mock('@/hooks/useCoachIdentity', () => ({
-  useCoachIdentity: () => ({ isInitialized: true, email: 'coach@example.com', name: 'Coach Sara' }),
-}));
-
+vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ isInitialized: true, email: 'coach@example.com', name: 'Coach Sara' }) }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
-
-vi.mock('@/components/feature/WorkspaceShell', () => ({
-  WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</>,
-}));
-
-const attendanceRecords = [
-  {
-    learnerId: '42', learnerName: 'Aya Khater', learnerEmail: 'aya@example.com', sessionId: 'session-1',
-    sessionTitle: 'Data Analysis — Session 1', sessionDate: '2026-09-10', sessionDateLabel: '10 Sep 2026', status: 'present',
-  },
-  {
-    learnerId: '7', learnerName: 'Ayman Learner', learnerEmail: 'ayman@example.com', sessionId: 'session-1',
-    sessionTitle: 'Data Analysis — Session 1', sessionDate: '2026-09-10', sessionDateLabel: '10 Sep 2026', status: 'absent',
-  },
-  {
-    learnerId: '42', learnerName: 'Aya Khater', learnerEmail: 'aya@example.com', sessionId: 'session-2',
-    sessionTitle: 'Data Analysis — Session 2', sessionDate: '2026-09-17', sessionDateLabel: '17 Sep 2026', status: 'absent',
-  },
-  {
-    learnerId: '9', learnerName: 'Mona Test', learnerEmail: 'mona@example.com', sessionId: 'session-3',
-    sessionTitle: 'Safeguarding — Session 1', sessionDate: '2026-09-11', sessionDateLabel: '11 Sep 2026', status: 'present',
-  },
+vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
+const learners = [
+  { id: '42', learner: 'Aya Khater', email: 'same@example.com', group: '--', groupName: 'Cairo A', groupId: 'group-1', programme: 'Data', programmeId: 'programme-1', programStatus: 'Active' },
+  { id: '7', learner: 'Ayman Learner', email: 'same@example.com', group: '--', groupName: 'Cairo A', groupId: 'group-1', programme: 'Cyber', programmeId: 'programme-2', programStatus: 'Paused' },
+  { id: '9', learner: 'Mona Test', email: 'mona@example.com', group: 'Cairo B', groupId: 'group-2', programme: 'Data', programmeId: 'programme-1', programStatus: 'Active' },
 ];
-
-describe('coach lecture attendance page', () => {
-  beforeEach(() => {
-    vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ attendanceRecords })));
-  });
-
-  it('shows only the two dependent filters and the selected lecture register', async () => {
+const attendanceRecords = [
+  { learnerId: '42', sessionId: 'one', sessionDate: '2026-09-16', status: 'present' },
+  { learnerId: '42', sessionId: 'two', sessionDate: '2026-09-09', status: 'absent' },
+];
+function Location() { return <output>{useLocation().pathname}</output>; }
+describe('coach attendance overview', () => {
+  beforeEach(() => vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ learners, attendanceRecords }))));
+  it('filters by stable ids and shows recent status chips', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
-
-    const subject = await screen.findByRole('combobox', { name: 'Subject' });
-    const lectureDate = screen.getByRole('combobox', { name: 'Lecture date' });
-
-    expect(screen.getAllByRole('combobox')).toHaveLength(2);
-    expect(lectureDate).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText(/Search by learner/i)).not.toBeInTheDocument();
-
-    fireEvent.change(subject, { target: { value: 'Data Analysis' } });
-    expect(lectureDate).toBeEnabled();
-    expect(within(lectureDate).getByRole('option', { name: '10 Sep 2026' })).toBeInTheDocument();
-    expect(within(lectureDate).getByRole('option', { name: '17 Sep 2026' })).toBeInTheDocument();
-    expect(within(lectureDate).queryByRole('option', { name: '11 Sep 2026' })).not.toBeInTheDocument();
-
-    fireEvent.change(lectureDate, { target: { value: '2026-09-10' } });
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    expect(within(screen.getByRole('combobox', { name: 'Group' })).getByRole('option', { name: 'Cairo A' })).toHaveValue('group-1');
+    const programme = screen.getByRole('combobox', { name: 'Programme' });
+    expect(within(programme).getByRole('option', { name: 'Data' })).toHaveValue('programme-1');
+    fireEvent.change(programme, { target: { value: 'programme-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     expect(screen.getByText('Aya Khater')).toBeInTheDocument();
-    expect(screen.getByText('Ayman Learner')).toBeInTheDocument();
-    expect(screen.getByText('Present')).toBeInTheDocument();
-    expect(screen.getByText('Absent')).toBeInTheDocument();
-    expect(screen.queryByText('Mona Test')).not.toBeInTheDocument();
+    expect(screen.queryByText('Ayman Learner')).not.toBeInTheDocument();
+    expect(screen.getByText('P 09-16')).toBeInTheDocument();
+    expect(screen.getByText('A 09-09')).toBeInTheDocument();
   });
-
-  it('clears the lecture date when the subject changes', async () => {
+  it('supports selection, clear, and prepared days', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
-
-    const subject = await screen.findByRole('combobox', { name: 'Subject' });
-    const lectureDate = screen.getByRole('combobox', { name: 'Lecture date' });
-    fireEvent.change(subject, { target: { value: 'Data Analysis' } });
-    fireEvent.change(lectureDate, { target: { value: '2026-09-10' } });
-    fireEvent.change(subject, { target: { value: 'Safeguarding' } });
-
-    expect(lectureDate).toHaveValue('');
-    expect(screen.getByText('Select a lecture date')).toBeInTheDocument();
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(screen.getByText('Selected students: 2')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-09-24' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add day' }));
+    expect(screen.getByRole('button', { name: 'Apply bulk update' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.getByRole('button', { name: 'Apply bulk update' })).toBeDisabled();
+  });
+  it('navigates with the stable learner id', async () => {
+    render(<MemoryRouter><Routes><Route path="*" element={<><CoachAttendance /><Location /></>} /></Routes></MemoryRouter>);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
+    expect(screen.getByText('/coach/attendance/42')).toBeInTheDocument();
   });
 });

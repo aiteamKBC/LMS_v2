@@ -358,6 +358,26 @@ describe('Dashboard training plan controls', () => {
     expect(within(chart).queryByRole('tooltip')).not.toBeInTheDocument();
   });
 
+  it('allows desktop mouse dragging across the OTJH chart', () => {
+    const data = fixture();
+    data.monthlyOtjh = {
+      '2026-09': { planned: 18, submitted: 14, actual: 11.5, missingPlannedHours: 0 },
+      '2026-10': { planned: 20, submitted: 8, actual: 6, missingPlannedHours: 0 },
+    } as typeof data.monthlyOtjh;
+    data.actual = [];
+    renderBoard(data, summarySubjects);
+    const scroll = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }))
+      .getByRole('region', { name: /Monthly off-the-job hours chart/ });
+    scroll.scrollLeft = 100;
+
+    fireEvent.pointerDown(scroll, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 200 });
+    fireEvent.pointerMove(scroll, { pointerId: 1, pointerType: 'mouse', clientX: 150 });
+
+    expect(scroll.scrollLeft).toBe(150);
+    fireEvent.pointerUp(scroll, { pointerId: 1, pointerType: 'mouse' });
+    expect(scroll).not.toHaveAttribute('data-panning', 'true');
+  });
+
   it('keeps pending hours separate from completed hours and uses the programme total for overall progress', () => {
     const data = fixture();
     data.monthlyOtjh = {

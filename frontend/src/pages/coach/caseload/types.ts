@@ -167,6 +167,21 @@ export interface CaseloadApiResponse {
     email?: string;
   };
   learners?: CaseloadApiLearner[];
+  results?: CaseloadApiLearner[];
+  pagination?: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrevious: boolean;
+  };
+  filterOptions?: {
+    cohort: FilterOption[];
+    group: FilterOption[];
+    programStatus: FilterOption[];
+    employer: FilterOption[];
+  };
 }
 
 export interface AttendanceApiLearner {

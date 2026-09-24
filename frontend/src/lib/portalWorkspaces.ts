@@ -104,6 +104,18 @@ export const PORTAL_WORKSPACES: PortalWorkspace[] = [
     blurb: 'Programmes, modules and their content',
   },
   {
+    // Every employer contact as a card, each opening their existing side page
+    // (/employers/:id). Under /workspace/admin so only a super-admin reaches it,
+    // and no demoEmail: the list is the whole employer directory, not a demo
+    // account's own view. Before AUDIT so AUDIT stays the last row.
+    slug: 'employer',
+    label: 'Employer',
+    icon: 'ri-briefcase-line',
+    path: '/workspace/admin/employers',
+    demoEmail: null,
+    blurb: 'Employer contacts, their learners and documents',
+  },
+  {
     slug: 'audit',
     label: 'AUDIT',
     icon: 'ri-file-search-line',

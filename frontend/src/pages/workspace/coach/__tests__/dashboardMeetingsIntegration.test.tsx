@@ -2,8 +2,8 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
-import CoachDashboard from '../page';
+import { formatDateLabel, getCurrentWorkWeekRange, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
+import CoachDashboard, { CompactWeeklyMeetingDetails } from '../page';
 
 const mocks = vi.hoisted(() => ({
   load: vi.fn(), schedule: vi.fn(), calendar: vi.fn(), coachFetch: vi.fn(),
@@ -76,6 +76,7 @@ function expectStructuredSkeleton() {
 
 it('shows only dashboard skeletons while the initial request is pending', async () => {
   vi.useRealTimers();
+  mocks.coachFetch.mockResolvedValue(new Response(JSON.stringify({ results: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } })));
   const finishLoads: Array<(value: unknown) => void> = [];
   mocks.load.mockImplementation(() => new Promise(resolve => { finishLoads.push(resolve); }));
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
@@ -101,6 +102,7 @@ it('shows the learner table only after a successful response', async () => {
 
 it('shows the learner empty state only after an empty response finishes', async () => {
   vi.useRealTimers();
+  mocks.coachFetch.mockResolvedValue(new Response(JSON.stringify({ results: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } })));
   mocks.load.mockImplementation((url: string) => Promise.resolve(
     url.includes('/marking-queue') ? { summary: { pendingItems: 0 } } : { owner: { name: 'Example Coach' }, learners: [], timetable: { events: [] } },
   ));
@@ -124,6 +126,7 @@ it('returns immediately to skeletons when the selected coach changes', async () 
   expect(await within(riskTable).findByText('Example Learner')).toBeVisible();
   const finishLoads: Array<(value: unknown) => void> = [];
   mocks.load.mockImplementation(() => new Promise(resolve => { finishLoads.push(resolve); }));
+  mocks.coachFetch.mockResolvedValue(new Response(JSON.stringify({ results: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } })));
   Object.assign(mocks.coach, { email: 'next-coach@example.invalid', name: 'Next Coach' });
   rerender(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   expectStructuredSkeleton();
@@ -135,9 +138,13 @@ it('returns immediately to skeletons when the selected coach changes', async () 
 
 it('shows serialized latest completed MCM and PR and ignores future or cancelled sessions', async () => {
   vi.useRealTimers();
+  mocks.coachFetch.mockResolvedValue(new Response(JSON.stringify({
+    results: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'at-risk', lastMcm: '12 Sept 2026', lastPr: '15 Sept 2026' }],
+    pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 },
+  })));
   mocks.calendar.mockResolvedValue({ events: [
-    { ...meeting, id: 'completed-coaching', status: 'completed', scheduledDate: '2026-09-12' },
-    { ...meeting, id: 'completed-review', source: 'progress-review', type: 'review', status: 'completed', scheduledDate: '2026-09-15' },
+    { ...meeting, id: 'completed-coaching', status: 'completed', scheduledDate: '2026-09-20', reviewCompletedAt: '2026-09-01T09:00:00Z' },
+    { ...meeting, id: 'completed-review', source: 'progress-review', type: 'review', status: 'completed', scheduledDate: '2026-09-22', reviewCompletedAt: '2026-09-02T10:00:00Z' },
     { ...meeting, id: 'completed-live', source: 'live-session', status: 'completed', scheduledDate: '2026-09-16' },
     { ...meeting, id: 'future-live', source: 'live-session', status: 'scheduled', scheduledDate: '2026-09-21' },
     { ...meeting, id: 'cancelled-live', source: 'live-session', status: 'cancelled', scheduledDate: '2026-09-17' },
@@ -167,7 +174,18 @@ it('shows serialized latest completed MCM and PR and ignores future or cancelled
   expect(within(riskTable).queryByText('17 Sept 2026')).not.toBeInTheDocument();
 });
 
+it('shows the requested empty Last PR and Last MCM labels when no completed review exists', async () => {
+  vi.useRealTimers();
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const riskTable = await screen.findByRole('region', { name: 'Coach learner caseload' });
+  const row = (await within(riskTable).findByText('Example Learner')).closest('tr');
+  expect(row).not.toBeNull();
+  expect(within(row!).getByText('No PR yet').parentElement).toHaveTextContent('--No PR yet');
+  expect(within(row!).getByText('No MCM yet').parentElement).toHaveTextContent('--No MCM yet');
+});
+
 it('keeps the live session calendar link while showing the new actions only on coaching meetings', async () => {
+  useDashboardDate();
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   expect(await screen.findByRole('button', { name: 'Send Reminder' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Generate Presentation' })).toBeVisible();
@@ -251,7 +269,7 @@ it('shows the six requested workload cards using the current week and marking qu
   mocks.load.mockImplementation((url: string) => Promise.resolve(
     url.includes('/marking-queue')
       ? { summary: { pendingItems: 6 } }
-      : { owner: { name: 'Example Coach' }, learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'at-risk' }], timetable: { events: dashboardEvents } },
+      : { owner: { name: 'Example Coach' }, learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', enrollmentStatus: 'active', status: 'at-risk', otjhStatus: 'at-risk', otjhCompleted: 0, otjhTarget: 100 }], timetable: { events: dashboardEvents } },
   ));
 
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
@@ -271,6 +289,125 @@ it('shows the six requested workload cards using the current week and marking qu
   expect(within(metrics).queryByText('PR 12-week')).not.toBeInTheDocument();
   expect(within(metrics).queryByText('Referred closure')).not.toBeInTheDocument();
   expect(within(metrics).queryByText('MCM 4-week')).not.toBeInTheDocument();
+});
+
+it('uses the current work week for KPI cards and only the next work week for upcoming meetings', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-09-23T10:00:00Z'));
+  const event = (id: string, source: string, scheduledDate: string): CoachCalendarEvent => ({
+    ...meeting,
+    id,
+    eventKey: id,
+    title: id,
+    learner: '',
+    source,
+    scheduledDate,
+  });
+  const dashboardEvents = [
+    event('Current Monday PR', 'progress-review', '2026-09-21'),
+    event('Current Tuesday MCM', 'mcr', '2026-09-22'),
+    event('Current Friday Catch-up', 'catch-up', '2026-09-25'),
+    event('Next Monday PR', 'progress-review', '2026-09-28'),
+    event('Next Tuesday MCM', 'mcr', '2026-09-29'),
+    event('Next Wednesday Catch-up', 'catch-up', '2026-09-30'),
+    event('Next Thursday Support', 'student-support', '2026-10-01'),
+    event('Next Friday Live Session', 'live-session', '2026-10-02'),
+    event('Next Saturday PR', 'progress-review', '2026-10-03'),
+    event('After Next Friday MCM', 'mcr', '2026-10-05'),
+  ];
+  mocks.load.mockImplementation((url: string) => Promise.resolve(
+    url.includes('/marking-queue')
+      ? { summary: { pendingItems: 0 } }
+      : {
+          owner: { name: 'Example Coach' },
+          learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' }],
+          timetable: { events: dashboardEvents },
+        },
+  ));
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+
+  const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  for (const label of ['PR this week', 'MCM this week', 'Catch-ups this week']) {
+    const card = within(metrics).getByRole('button', { name: `Open ${label} details` });
+    expect(card.querySelector('[class*="metricValue"]')).toHaveTextContent('1');
+    expect(card).toHaveTextContent('21 Sep');
+    expect(card).toHaveTextContent('25 Sep');
+  }
+
+  expect(screen.getByText(/next work week \(28 Sep .* 02 Oct\)/)).toBeVisible();
+  const upcoming = screen.getByRole('region', { name: 'Upcoming meetings and live sessions' });
+  for (const title of ['Next Monday PR', 'Next Tuesday MCM', 'Next Wednesday Catch-up', 'Next Thursday Support', 'Next Friday Live Session']) {
+    expect(within(upcoming).getAllByText(title)[0]).toBeVisible();
+  }
+  for (const title of ['Current Friday Catch-up', 'Next Saturday PR', 'After Next Friday MCM']) {
+    expect(within(upcoming).queryAllByText(title)).toHaveLength(0);
+  }
+  expect(upcoming.querySelector('time[datetime="2026-09-28"]')).not.toBeNull();
+  expect(upcoming.querySelector('time[datetime="2026-10-02"]')).not.toBeNull();
+});
+
+it('shows resolved Aptem weekly counts when the 119-event payload also has a generation issue', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-09-23T10:00:00Z'));
+  const progressReviews = Array.from({ length: 26 }, (_, index): CoachCalendarEvent => ({
+    ...meeting,
+    id: `pr-${index}`,
+    eventKey: `pr-${index}`,
+    source: 'progress-review',
+    type: 'review',
+    scheduledDate: index < 3 ? `2026-09-${21 + index}` : '2026-10-01',
+  }));
+  const monthlyCoaching = Array.from({ length: 93 }, (_, index): CoachCalendarEvent => ({
+    ...meeting,
+    id: `mcm-${index}`,
+    eventKey: `mcm-${index}`,
+    scheduledDate: index < 14 ? `2026-09-${21 + (index % 5)}` : '2026-10-01',
+  }));
+  mocks.load.mockImplementation((url: string) => Promise.resolve(
+    url.includes('/marking-queue')
+      ? { summary: { pendingItems: 0 } }
+      : {
+          owner: { name: 'Example Coach' },
+          learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' }],
+          timetable: {
+            events: [...progressReviews, ...monthlyCoaching],
+            summary: { totalEvents: 119, progressReviewRows: 26, mcrRows: 93, learnersWithDates: 31, aptemReviewRows: 119, aptemLearners: 32, curriculumLearners: 0 },
+            reviewGenerationIssues: [{ learnerId: 'unrelated-native-learner', code: 'review_schedule_unavailable' }],
+          },
+        },
+  ));
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  const prCard = within(metrics).getByRole('button', { name: 'Open PR this week details' });
+  const mcmCard = within(metrics).getByRole('button', { name: 'Open MCM this week details' });
+  expect(prCard.querySelector('[class*="metricValue"]')).toHaveTextContent('3');
+  expect(mcmCard.querySelector('[class*="metricValue"]')).toHaveTextContent('14');
+  expect(within(metrics).queryByText('Review schedule data unavailable')).not.toBeInTheDocument();
+});
+
+it('shows review cards as unavailable when generation failed without usable review data', async () => {
+  useDashboardDate();
+  mocks.load.mockImplementation((url: string) => Promise.resolve(
+    url.includes('/marking-queue')
+      ? { summary: { pendingItems: 0 } }
+      : {
+          owner: { name: 'Example Coach' },
+          learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' }],
+          timetable: {
+            events: [],
+            summary: { progressReviewRows: 0, mcrRows: 0, learnersWithDates: 0 },
+            reviewGenerationIssues: [{ learnerId: '1', code: 'review_schedule_unavailable' }],
+          },
+        },
+  ));
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  expect(within(metrics).getAllByText('Review schedule data unavailable')).toHaveLength(2);
+  expect(within(metrics).getByRole('button', { name: 'Open PR this week details' })).toHaveTextContent('--');
+  expect(within(metrics).getByRole('button', { name: 'Open MCM this week details' })).toHaveTextContent('--');
 });
 
 it('counts delivery learners with active learners on the coach dashboard', async () => {
@@ -333,4 +470,50 @@ it('opens a detail popup and full-page link from every workload card', async () 
     fireEvent.click(within(dialog).getByText('Close'));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   }
+});
+
+it('renders monthly coaching details as compact day groups with status summaries', async () => {
+  vi.useRealTimers();
+  const { start: monday } = getCurrentWorkWeekRange();
+  const tuesday = new Date(monday);
+  tuesday.setDate(monday.getDate() + 1);
+  const localIso = (value: Date) => [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, '0'),
+    String(value.getDate()).padStart(2, '0'),
+  ].join('-');
+  const mondayIso = localIso(monday);
+  const tuesdayIso = localIso(tuesday);
+  const dashboardEvents: CoachCalendarEvent[] = [
+    { ...meeting, id: 'mcm-mon-one', eventKey: 'mcm-mon-one', learner: 'Alex Reed', programme: 'Business Admin', group: 'Group A', scheduledDate: mondayIso, scheduledTime: '09:00', status: 'scheduled' },
+    { ...meeting, id: 'mcm-mon-two', eventKey: 'mcm-mon-two', learner: 'Jamie Cole', programme: 'Customer Service', group: 'Group B', scheduledDate: mondayIso, scheduledTime: null, status: 'not-scheduled' },
+    { ...meeting, id: 'mcm-tue', eventKey: 'mcm-tue', learner: 'Morgan Shah', programme: 'Team Leader', group: 'Group C', scheduledDate: tuesdayIso, scheduledTime: '14:00', status: 'confirmed' },
+  ];
+  render(<CompactWeeklyMeetingDetails events={dashboardEvents} summaryLabel="Monthly coaching" emptyIcon="ri-history-line" />);
+  expect(screen.getByLabelText('Monthly coaching summary')).toHaveTextContent('Scheduled 2');
+  expect(screen.getByLabelText('Monthly coaching summary')).toHaveTextContent('Not Scheduled 1');
+  expect(screen.getByRole('region', { name: formatDateLabel(mondayIso) })).toBeVisible();
+  expect(screen.getByRole('region', { name: formatDateLabel(tuesdayIso) })).toBeVisible();
+  expect(screen.getByText('Alex Reed')).toBeVisible();
+  expect(screen.getByText('Business Admin · Group A')).toBeVisible();
+  expect(screen.getByText('09:00 - 60 min')).toBeVisible();
+  expect(screen.queryByText('Monthly Coaching')).not.toBeInTheDocument();
+});
+
+it('uses the same compact grouped layout for weekly progress reviews', () => {
+  const progressReviews: CoachCalendarEvent[] = [
+    { ...meeting, id: 'pr-one', eventKey: 'pr-one', source: 'progress-review', learner: 'Hollie Hylton', programme: 'Business Admin', group: 'Group A', scheduledDate: '2026-09-24', scheduledTime: null, status: 'scheduled', title: 'Review 1' },
+    { ...meeting, id: 'pr-two', eventKey: 'pr-two', source: 'progress-review', learner: 'Alex Reed', programme: 'Business Admin', group: 'Group B', scheduledDate: '2026-09-24', scheduledTime: '14:00', status: 'not-scheduled', title: 'Review 2' },
+  ];
+
+  render(<CompactWeeklyMeetingDetails events={progressReviews} summaryLabel="Progress review" emptyIcon="ri-focus-3-line" />);
+
+  expect(screen.getByLabelText('Progress review summary')).toHaveTextContent('Scheduled 1');
+  expect(screen.getByLabelText('Progress review summary')).toHaveTextContent('Not Scheduled 1');
+  expect(screen.getByRole('region', { name: '24 Sept 2026' })).toHaveTextContent('THU24 SEP');
+  expect(screen.getByText('Hollie Hylton')).toBeVisible();
+  expect(screen.getByText('Business Admin · Group A')).toBeVisible();
+  expect(screen.getByText('Time TBC')).toBeVisible();
+  expect(screen.queryByText('Review 1')).not.toBeInTheDocument();
+  expect(screen.queryByText('Progress Review')).not.toBeInTheDocument();
 });

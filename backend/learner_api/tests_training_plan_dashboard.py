@@ -7,7 +7,7 @@ import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
 from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
-from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan
+from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan, valid_aptem_id
 
 
 def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, split_header=False, split_total=False):
@@ -106,17 +106,22 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.assertEqual([item['id'] for item in result['modules']], ['M1'])
         self.assertEqual(result['moduleLinks'], {})
 
-    def test_valid_aptem_does_not_project_unlinked_effective_current_module(self):
+    def test_valid_aptem_projects_effective_current_module_when_catalogue_row_exists(self):
         source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
         connection = MagicMock()
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '',
+                  'start_date': date(2026, 10, 5), 'end_date': date(2027, 2, 11),
+                  'weeks_number': 1, 'total_otjh': 10, 'sessions_number': 1,
+                  'session_week_day': 'Thursday', 'session_start_time': '09:00',
+                  'session_end_time': '10:00', 'coach_name': '',
+                  'programme_name': '', 'cohort_name': '', 'group_name': ''}
         with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
-             patch('learner_api.training_plan_dashboard.rows', return_value=[]):
+             patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
             result = read_dashboard(source, section='learning')
 
-        self.assertEqual(result['modules'], [])
-        sql = ' '.join(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list)
-        self.assertNotIn('FROM curriculum.modules', sql)
+        self.assertEqual([item['id'] for item in result['modules']], ['M1'])
 
     def test_valid_aptem_keeps_builder_linked_current_module(self):
         source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
@@ -148,10 +153,21 @@ class TrainingPlanDashboardTests(SimpleTestCase):
                           'programme_name': '', 'cohort_name': '', 'group_name': ''}
                 with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
                      patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+                     patch('learner_api.training_plan_dashboard._aptem_subject_modules') as aptem_subjects, \
                      patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
                      patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
                     result = read_dashboard(source, section='learning')
                 self.assertEqual([item['id'] for item in result['modules']], ['M1'])
+                aptem_subjects.assert_not_called()
+                sql = ' '.join(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list)
+                self.assertNotIn('Last_audit', sql)
+
+    def test_only_positive_aptem_ids_select_aptem(self):
+        self.assertIsNone(valid_aptem_id(None))
+        self.assertIsNone(valid_aptem_id(''))
+        self.assertIsNone(valid_aptem_id(0))
+        self.assertIsNone(valid_aptem_id(-1))
+        self.assertEqual(valid_aptem_id(' 987 '), 987)
 
 
     def test_coach_fallback_uses_only_the_current_programme_cohort_and_group(self):

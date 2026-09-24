@@ -315,6 +315,8 @@ class CoachAttendanceContractTests(unittest.TestCase):
             "learnerEmail": "one@example.invalid",
             "sessionId": "occurrence-1",
             "sessionTitle": "Data Analysis — Session 2",
+            "subjectId": "occurrence-1",
+            "subjectTitle": "Data Analysis — Session 2",
             "sessionDate": "2026-09-10",
             "sessionDateLabel": "10 Sep 2026",
             "status": "present",

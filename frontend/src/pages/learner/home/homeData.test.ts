@@ -24,6 +24,15 @@ describe('student home data', () => {
       { id: '4', title: 'Old assignment', date: '2026-09-01', type: 'assignment' }] } as OverviewWeek;
     expect(upcomingEvents(schedule, week, new Date('2026-09-13T12:00:00Z')).map(item => item.title)).toEqual(['Personal session', 'My assignment', 'Next review']);
   });
+  it('keeps the next session module so callers can open its learning activity', () => {
+    const schedule = { sessions: [
+      { id: 'session-1', moduleId: 'module-12', title: 'Personal session', start: '2026-09-15T09:00:00Z', status: 'scheduled' },
+    ], reviews: [] } as unknown as TrainingPlanDashboard;
+
+    expect(upcomingEvents(schedule, null, new Date('2026-09-13T12:00:00Z'))[0]).toMatchObject({
+      title: 'Personal session', moduleId: 'module-12',
+    });
+  });
   it('finds a review beyond many earlier lectures and does not replace categories with coaching or checkpoints', () => {
     const schedule = { sessions: Array.from({ length: 8 }, (_, index) => ({ id: String(index), title: `Lecture ${index}`, start: `2026-09-${15 + index}T09:00:00Z`, status: 'scheduled' })),
       reviews: [
