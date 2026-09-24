@@ -429,6 +429,114 @@
   animation: none !important;
 }
 
+/* Learner breadcrumbs use connected step segments: the primary colour marks
+   completed route levels and the secondary colour marks the current level. */
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumbs) {
+  min-height: 1.95rem;
+  height: 1.95rem;
+  margin: 0 .75rem .25rem 0;
+  padding: 0 .35rem;
+  overflow: visible;
+  border: 0;
+  border-radius: .85rem;
+  background: transparent;
+}
+
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.learner-step-breadcrumb) {
+  height: 100%;
+  gap: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-home) {
+  display: grid;
+  width: 1.45rem;
+  height: 1.45rem;
+  flex: 0 0 1.45rem;
+  place-items: center;
+  margin-right: .55rem;
+  border: 1px solid oklch(var(--primary-200) / .7);
+  border-radius: 999px;
+  background: oklch(var(--primary-50));
+  color: oklch(var(--primary-700));
+}
+
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-home-separator) {
+  display: none;
+}
+
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step) {
+  position: relative;
+  z-index: 1;
+  min-width: 9.5rem;
+  height: 100%;
+  flex: 1 1 0;
+  justify-content: flex-start;
+  padding: .25rem 2.05rem .25rem 1.65rem;
+  color: #fff;
+  background: oklch(var(--primary-600));
+  clip-path: polygon(0 0, calc(100% - 1.35rem) 0, 100% 50%, calc(100% - 1.35rem) 100%, 0 100%, 1.35rem 50%);
+  white-space: nowrap;
+}
+
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step + .workspace-breadcrumb-step) {
+  margin-left: -1.15rem;
+  padding-left: 2.4rem;
+}
+
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step.is-current) {
+  z-index: 2;
+  background: oklch(var(--secondary-500));
+}
+
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step)::before {
+  display: grid;
+  width: 1.05rem;
+  height: 1.05rem;
+  flex: 0 0 1.05rem;
+  place-items: center;
+  margin-right: .55rem;
+  border-radius: 999px;
+  background: oklch(var(--secondary-300));
+  color: oklch(var(--primary-800));
+  content: '✓';
+  font-size: .6rem;
+  font-weight: 800;
+}
+
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step.is-current)::before {
+  background: oklch(var(--primary-100));
+  color: oklch(var(--secondary-700));
+}
+
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step > a),
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step > span) {
+  min-width: 0;
+  overflow: hidden;
+  color: #fff !important;
+  text-overflow: ellipsis;
+  text-decoration: none;
+  font-size: .72rem;
+  font-weight: 600;
+}
+
+:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step > .ri-arrow-right-s-line) {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  :global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumbs) {
+    margin-right: 0;
+    padding-inline: 0;
+  }
+
+  :global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step) {
+    min-width: 8.5rem;
+    font-size: .8rem;
+  }
+}
+
 @media (max-width: 640px) {
   :global(.dashboard-theme[data-workspace-role="learner"]).shell :global(.workspace-main) {
     width: 100% !important;

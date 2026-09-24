@@ -238,8 +238,33 @@ export function barPosition(start: string, end: string, year: number, startMonth
   return { left: position(first), width: position(last) - position(first) };
 }
 
+/** Position a date range against the same twelve-month period using weekly columns. */
+export function periodPosition(start: string, end: string, year: number, startMonth = 0) {
+  const from = Date.UTC(year, startMonth, 1), to = Date.UTC(year + 1, startMonth, 1);
+  const first = Date.parse(start), last = Date.parse(end) + 86400000;
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first >= to || last <= from || last < first) return null;
+  const position = (time: number) => Math.min(100, Math.max(0, (time - from) / (to - from) * 100));
+  return { left: position(first), width: position(last) - position(first) };
+}
+
+/** Position a date range against weekly columns anchored to the first real programme week. */
+export function weeklyPosition(start: string, end: string, anchor: string, weekCount: number) {
+  const from = Date.parse(anchor), to = from + weekCount * 7 * 86400000;
+  const first = Date.parse(start), last = Date.parse(end) + 86400000;
+  if (!Number.isFinite(from) || !Number.isFinite(first) || !Number.isFinite(last) || first >= to || last <= from || last < first) return null;
+  const position = (time: number) => Math.min(100, Math.max(0, (time - from) / (to - from) * 100));
+  return { left: position(first), width: position(last) - position(first) };
+}
+
 export function timelineMonthKeys(year: number, startMonth = 0) {
   return Array.from({ length: 12 }, (_, index) => new Date(Date.UTC(year, startMonth + index, 1)).toISOString().slice(0, 7));
+}
+
+export function timelineWeekKeys(year: number, startMonth = 0, anchor?: string) {
+  const from = anchor && Number.isFinite(Date.parse(anchor)) ? Date.parse(anchor) : Date.UTC(year, startMonth, 1);
+  const to = anchor ? from + 52 * 7 * 86400000 : Date.UTC(year + 1, startMonth, 1);
+  const count = anchor ? 52 : Math.ceil((to - from) / (7 * 86400000));
+  return Array.from({ length: count }, (_, index) => new Date(from + index * 7 * 86400000).toISOString().slice(0, 10));
 }
 
 export function timelinePeriodYear(month: string, startMonth = 0) {
